@@ -245,23 +245,16 @@ func isRedirect(status int) bool {
 func origin(u whatwg.URL) string { return u.Protocol + "//" + u.Host }
 
 // checkURL is fetch's own refusals before it connects: a URL that does not
-// parse, one with credentials. A URL is shown without its user name and
-// password (diagnostics never print credential values), and where it holds
-// an at-sign the explanation follows it, since the CLI's fail-safe keeps
-// what follows the last at-sign (go/README.md, "Diagnostics never print
-// credential values"). A URL that does not parse and holds none keeps
-// fetch's wording.
+// parse, one with credentials. The refused URL is named as every server
+// URL is shown (clientctx.DisplayServer; go/README.md, the accepted
+// difference "server-display"), never as it is.
 func checkURL(raw string) (whatwg.URL, error) {
 	u, ok := whatwg.ParseURL(raw)
 	if !ok {
-		shown := clientctx.MaskUserinfo(raw)
-		if clientctx.HasAtSign(shown) {
-			return u, &FetchError{Message: shown + ": can't be parsed as a URL"}
-		}
-		return u, &FetchError{Message: "Failed to parse URL from " + shown}
+		return u, &FetchError{Message: "Failed to parse URL from " + clientctx.DisplayServer(raw)}
 	}
 	if u.Username != "" || u.Password != "" {
-		return u, &FetchError{Message: clientctx.MaskUserinfo(raw) + ": a server URL with a user name or password can't be used; remove them and try again"}
+		return u, &FetchError{Message: clientctx.DisplayServer(raw) + ": a server URL with a user name or password can't be used; remove them and try again"}
 	}
 	return u, nil
 }

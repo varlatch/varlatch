@@ -9932,6 +9932,10 @@
       }
     },
     {
+      "differences": [
+        "json-scalars",
+        "user-agent"
+      ],
       "id": "env.list.odd-marks.json",
       "title": "the same in JSON: missing fields left out",
       "args": [
@@ -9977,9 +9981,6 @@
             "nextCursor": null
           }
         }
-      ],
-      "differences": [
-        "user-agent"
       ],
       "expect": {
         "status": 0,

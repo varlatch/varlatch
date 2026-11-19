@@ -3,8 +3,16 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand/v2"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
 // TestRedactDiagnostic: the fail-safe every diagnostic goes through masks a
@@ -47,6 +55,125 @@ func TestParserEchoesNoOptionValue(t *testing.T) {
 		var o *OptionsError
 		if !errors.As(err, &o) || o.Message != c.want {
 			t.Errorf("%q: %v, want %q", c.args, err, c.want)
+		}
+	}
+}
+
+// TestJSONKeysAreLeftAlone: printJSON redacts every string value and leaves
+// keys as they are, so two keys that look like tokens stay two distinct
+// keys and the document stays valid JSON.
+func TestJSONKeysAreLeftAlone(t *testing.T) {
+	var stdout bytes.Buffer
+	r := &Run{IO: IO{Stdout: &stdout, Stderr: &bytes.Buffer{}}}
+	doc := jsjson.Object{
+		{Key: "vlt_cli_firstAAAA", Value: "vlt_cli_valueAAAA"},
+		{Key: "vlt_cli_secondBBBB", Value: jsjson.Object{{Key: "url", Value: "see https://u:pass@h.example/x"}}},
+	}
+	if err := r.printJSON(doc); err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
+		t.Fatalf("not valid JSON: %v\n%s", err, stdout.String())
+	}
+	want := "{\n  \"vlt_cli_firstAAAA\": \"[redacted]\",\n  \"vlt_cli_secondBBBB\": {\n    \"url\": \"see https:[redacted]@h.example/x\"\n  }\n}\n"
+	if stdout.String() != want || len(parsed) != 2 {
+		t.Errorf("stdout\n%s\nwant\n%s", stdout.String(), want)
+	}
+}
+
+// TestOutJSONTakesOnlyARedactedDocument: outJSON's parameter is the
+// redactedJSON type, which only redactJSON makes (its field is unexported,
+// and the write guard fails on any other composite literal), so a method
+// value of outJSON cannot print arbitrary text; redactJSON redacts every
+// string value, a []string included.
+func TestOutJSONTakesOnlyARedactedDocument(t *testing.T) {
+	if got := reflect.TypeOf((*Run).outJSON).In(1); got != reflect.TypeOf(redactedJSON{}) {
+		t.Fatalf("outJSON takes %v, want redactedJSON", got)
+	}
+	doc := redactJSON(jsjson.Object{{Key: "list", Value: []string{"vlt_cli_listAAAA", "https://u:pass@h.example"}}, {Key: "n", Value: 5}})
+	want := "{\n  \"list\": [\n    \"[redacted]\",\n    \"https:[redacted]@h.example\"\n  ],\n  \"n\": 5\n}"
+	if doc.document != want {
+		t.Errorf("redactJSON:\n%s\nwant\n%s", doc.document, want)
+	}
+}
+
+// TestNoPasswordInOutput is the output side of clientctx's property test,
+// with a fixed seed: generated secrets (a password after a user name, or a
+// token as the user name with no colon; two or three runs of 6 to 10
+// random letters and digits joined by userinfo's other characters) in a
+// URL, nested in another's query or path, percent-encoded in a query,
+// scheme-relative behind a URL, quoted and in prose, with each at-sign
+// form, go through a --json document (redactJSON) and the stderr
+// fail-safe (RedactDiagnostic). A colon comes before the secret in every
+// context, so no run of it ever shows; no case is skipped.
+func TestNoPasswordInOutput(t *testing.T) {
+	r := rand.New(rand.NewPCG(8, 278))
+	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	seps := []string{"-", ".", "_", "~", "!", "$", "&", "(", ")", "*", "+", ",", ";", "=", "é", "字", "%2F", "%3A", ":"}
+	secret := func(colon bool) (string, []string) {
+		var b strings.Builder
+		var runs []string
+		for i := range 2 + r.IntN(2) {
+			if i > 0 {
+				sep := seps[r.IntN(len(seps))]
+				for !colon && sep == ":" {
+					sep = seps[r.IntN(len(seps))]
+				}
+				b.WriteString(sep)
+			}
+			run := make([]byte, 6+r.IntN(5))
+			for j := range run {
+				run[j] = alnum[r.IntN(len(alnum))]
+			}
+			runs = append(runs, string(run))
+			b.Write(run)
+		}
+		return b.String(), runs
+	}
+	pct := func(s string) string {
+		var b strings.Builder
+		for _, c := range []byte(s) {
+			if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+				b.WriteByte(c)
+			} else {
+				fmt.Fprintf(&b, "%%%02X", c)
+			}
+		}
+		return b.String()
+	}
+	contexts := []func(s, ui, at string) string{
+		func(s, ui, at string) string { return s + "://" + ui + at + "h.example/x" },
+		func(s, ui, at string) string { return "https://a.example/?next=" + s + "://" + ui + at + "h.example" },
+		func(s, ui, at string) string { return "see " + s + "://" + ui + at + "h.example here" },
+		func(s, ui, at string) string { return "https://gw.example/?next=//" + ui + at + "h.example" },
+		func(s, ui, at string) string { return "//outer:o-pw@gw/?next=//" + ui + at + "h" },
+		func(s, ui, at string) string { return "https://gw.example/?next=" + pct(s+"://"+ui+"@h.example") },
+		func(s, ui, at string) string { return `"` + s + "://" + ui + at + `h.example"` },
+		func(s, ui, at string) string { return s + "://gw.example/next/" + s + "://" + ui + at + "h.example" },
+	}
+	for range 4000 {
+		var userinfo string
+		pass, runs := secret(true)
+		switch r.IntN(3) {
+		case 0: // a token as the user name: no colon
+			pass, runs = secret(false)
+			userinfo = pass
+		case 1:
+			userinfo = "ci-bot_" + []string{"", "%40x", "é"}[r.IntN(3)] + ":" + pass
+		default:
+			userinfo = ":" + pass
+		}
+		scheme := []string{"https", "http", "postgres", "foo"}[r.IntN(4)]
+		at := []string{"@", "%40", `\u0040`}[r.IntN(3)]
+		in := contexts[r.IntN(len(contexts))](scheme, userinfo, at)
+		doc := redactJSON(jsjson.Object{{Key: "value", Value: in}, {Key: "list", Value: []string{in}}}).document
+		for name, got := range map[string]string{"--json": doc, "stderr": RedactDiagnostic("varlatch: " + in + ": refused")} {
+			for _, run := range runs {
+				if strings.Contains(got, run) {
+					t.Fatalf("%s of %q: %q shows %q of the secret %q", name, in, got, run, pass)
+				}
+			}
 		}
 	}
 }

@@ -10,12 +10,10 @@ import (
 	"testing"
 )
 
-// TestSessionExplanationsSurvive: login, logout and whoami put the
-// explanation of a failure after a server URL that holds an at-sign (an
-// accepted wording difference from TypeScript; with no at-sign the
-// TypeScript wording is kept), so what the fail-safe keeps, after the
-// last at-sign, still says what went wrong. Pinned through Main, the
-// fail-safe included, as TestFailureExplanationsSurvive does.
+// TestSessionExplanationsSurvive: login, logout and whoami name a server
+// URL holding a user name and password by its display form, which holds no
+// at-sign, so the TypeScript wording is kept and the fail-safe leaves it as
+// it is. Pinned through Main, the fail-safe included.
 func TestSessionExplanationsSurvive(t *testing.T) {
 	dir := t.TempDir()
 	write := func(rel, text string) {
@@ -37,13 +35,13 @@ func TestSessionExplanationsSurvive(t *testing.T) {
 		args        []string
 		want        string
 	}{
-		{"several", "", []string{"logout"}, "Multiple servers stored:[redacted]@a.example, https://b.example\nPass --server <url> or --all.\n"},
-		{"one", "repo", []string{"logout"}, "No server here; stored:[redacted]@a.example\nPass --server <url> or --all.\n"},
-		{"one", "", []string{"logout", "--server", "https://v:fake@nosuch.example"}, "varlatch logout:[redacted]@nosuch.example: no credential is stored for this server\n"},
-		{"several", "", []string{"whoami"}, "varlatch whoami:[redacted]@a.example, https://b.example: credentials are stored for each of these; pass --server <url>\n" + whoamiUsage + "\n"},
-		{"one", "", []string{"whoami"}, "varlatch:[redacted]@a.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again\n"},
-		{"one", "", []string{"login", "--server", "https://u:fake@a.example", "--token", "vlt_cli_fake"}, "varlatch:[redacted]@a.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again\n"},
-		// Without an at-sign, the TypeScript wording, byte for byte.
+		{"several", "", []string{"logout"}, "Multiple servers stored (https://a.example, https://b.example). Pass --server <url> or --all.\n"},
+		{"one", "repo", []string{"logout"}, "No server here: pass --server <url> or --all (stored: https://a.example).\n"},
+		{"one", "", []string{"logout", "--server", "https://v:fake@nosuch.example"}, "No stored credential for https://nosuch.example\n"},
+		{"several", "", []string{"whoami"}, "varlatch whoami: credentials are stored for https://a.example, https://b.example; pass --server <url>\n" + whoamiUsage + "\n"},
+		{"one", "", []string{"whoami"}, "varlatch: https://a.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again\n"},
+		{"one", "", []string{"login", "--server", "https://u:fake@a.example", "--token", "vlt_cli_fake"}, "varlatch: https://a.example/v1/meta: a server URL with a user name or password can't be used; remove them and try again\n"},
+		// A server without one: the TypeScript wording, byte for byte.
 		{"plain", "", []string{"logout"}, "Multiple servers stored (https://a.example, https://b.example). Pass --server <url> or --all.\n"},
 		{"plain", "", []string{"logout", "--server", "https://nosuch.example"}, "No stored credential for https://nosuch.example\n"},
 		{"plain", "", []string{"whoami"}, "varlatch whoami: credentials are stored for https://a.example, https://b.example; pass --server <url>\n" + whoamiUsage + "\n"},

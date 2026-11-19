@@ -627,7 +627,8 @@
         }
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "json-scalars"
       ],
       "expect": {
         "status": 0,
@@ -4468,7 +4469,8 @@
         "config/credentials.json": "{\n  \"servers\": {\n    \"not a url\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
       },
       "differences": [
-        "user-agent"
+        "user-agent",
+        "server-display"
       ],
       "expect": {
         "status": 0,

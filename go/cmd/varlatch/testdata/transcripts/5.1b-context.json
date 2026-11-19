@@ -512,6 +512,9 @@
       "files": {
         "config/credentials.json": "{\"servers\": [{\"token\": \"vlt_cli_fakeAAAA\", \"name\": \"first\"}]}\n"
       },
+      "differences": [
+        "server-display"
+      ],
       "expect": {
         "status": 0,
         "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"0\",\n      \"name\": \"first\",\n      \"issuedAt\": null,\n      \"expiresAt\": null,\n      \"credentialId\": null,\n      \"expired\": null,\n      \"expiring\": null\n    }\n  ],\n  \"repo\": null\n}\n",
@@ -543,6 +546,9 @@
       "files": {
         "config/credentials.json": "{\"servers\": \"ab\"}\n"
       },
+      "differences": [
+        "server-display"
+      ],
       "expect": {
         "status": 0,
         "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"0\",\n      \"name\": null,\n      \"issuedAt\": null,\n      \"expiresAt\": null,\n      \"credentialId\": null,\n      \"expired\": null,\n      \"expiring\": null\n    },\n    {\n      \"server\": \"1\",\n      \"name\": null,\n      \"issuedAt\": null,\n      \"expiresAt\": null,\n      \"credentialId\": null,\n      \"expired\": null,\n      \"expiring\": null\n    }\n  ],\n  \"repo\": null\n}\n",
@@ -669,6 +675,9 @@
       "files": {
         "config/credentials.json": "{\"servers\": {\"https://a.example/\\ud800\": {\"token\": \"t\"}}}\n"
       },
+      "differences": [
+        "server-display"
+      ],
       "expect": {
         "status": 0,
         "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"https://a.example/\\ud800\",\n      \"name\": null,\n      \"issuedAt\": null,\n      \"expiresAt\": null,\n      \"credentialId\": null,\n      \"expired\": null,\n      \"expiring\": null\n    }\n  ],\n  \"repo\": null\n}\n",
@@ -699,6 +708,9 @@
       "files": {
         "config/credentials.json": "{\"servers\": {\"https://a.example/\\ud800\": {\"token\": \"t\"}}}\n"
       },
+      "differences": [
+        "server-display"
+      ],
       "expect": {
         "status": 0,
         "stdout": "https://a.example/�  (no expiry recorded)\n",
@@ -2094,6 +2106,9 @@
         "repo/.varlatch/local.json": "{\n  \"serverOverride\": {\n    \"url\": \"x\"\n  }\n}\n"
       },
       "cwd": "repo",
+      "differences": [
+        "server-display"
+      ],
       "expect": {
         "status": 0,
         "stdout": "{\n  \"version\": 1,\n  \"server\": {\n    \"url\": \"x\"\n  },\n  \"serverSource\": \"local-override\",\n  \"defaultServer\": null,\n  \"signedIn\": []\n}\n",
@@ -2254,7 +2269,7 @@
         "config/settings.json": "{\"defaultServer\": \"https://example.com\\\\path@segment\"}\n"
       },
       "differences": [
-        "backslash-path"
+        "server-display"
       ],
       "expect": {
         "status": 0,
@@ -2292,7 +2307,7 @@
         "config/credentials.json": "{\n  \"servers\": {\n    \"https://example.com\\\\path@segment\": {\n      \"token\": \"vlt_cli_fakeAAAA\"\n    }\n  }\n}\n"
       },
       "differences": [
-        "backslash-path"
+        "server-display"
       ],
       "expect": {
         "status": 0,
@@ -2699,6 +2714,9 @@
         "server",
         "use",
         "b.example"
+      ],
+      "differences": [
+        "server-display"
       ],
       "expect": {
         "status": 64,
@@ -3660,6 +3678,9 @@
         "repo/.varlatch/local.json": "{\n  \"selectedEnvironment\": 5,\n  \"serverOverride\": [\n    \"a\",\n    \"b\"\n  ],\n  \"selectedTier\": \"x\"\n}\n"
       },
       "cwd": "repo",
+      "differences": [
+        "server-display"
+      ],
       "expect": {
         "status": 0,
         "stdout": "{\n  \"version\": 1,\n  \"server\": [\n    \"a\",\n    \"b\"\n  ],\n  \"organization\": \"acme\",\n  \"project\": \"web\",\n  \"environment\": 5,\n  \"environmentSource\": \"local-selection\",\n  \"repoRoot\": \"{{dir}}/repo\",\n  \"tier\": \"x\",\n  \"tierCachedAt\": null,\n  \"serverSource\": \"local-override\"\n}\n",
@@ -3700,6 +3721,9 @@
         "repo/.varlatch/local.json": "{\n  \"selectedEnvironment\": 5,\n  \"serverOverride\": [\n    \"a\",\n    \"b\"\n  ]\n}\n"
       },
       "cwd": "repo",
+      "differences": [
+        "server-display"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Server        a,b\nOrganization  acme\nProject       web\nEnvironment   5\nSource        local-selection\nRepo root     {{dir}}/repo\n",

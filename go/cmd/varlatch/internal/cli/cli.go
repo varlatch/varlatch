@@ -119,6 +119,11 @@ func UsageErrorWithUsage(message, usage string) error {
 	return &exitError{message: message, usage: usage, code: ExitUsage}
 }
 
+// UsageOnly is UsageError(usage), usage being one of this binary's usage
+// texts and the whole message: printed outside the fail-safe, byte for
+// byte as TypeScript prints it, never masked.
+func UsageOnly(usage string) error { return UsageErrorWithUsage("", usage) }
+
 // Main runs the CLI with args (the process's arguments without the program
 // name) and returns the exit status, as apps/cli/src/main.ts main() does.
 func Main(args []string, env Env, streams IO) int {
@@ -268,8 +273,25 @@ func RedactValue(v any) any {
 			out[i] = RedactValue(e)
 		}
 		return out
+	case []string:
+		out := make([]string, len(x))
+		for i, e := range x {
+			out[i] = RedactOutput(clientctx.MaskURLInValue(e))
+		}
+		return out
 	}
-	return v
+	return v // nil, bool, float64, int: nothing to redact
+}
+
+// scalar is v when it is a JSON scalar (null, a boolean, a number or a
+// string), and false for an object or an array: a field a document defines
+// as a scalar never passes a server's nested value through.
+func scalar(v any) (any, bool) {
+	switch v.(type) {
+	case nil, bool, float64, string:
+		return v, true
+	}
+	return nil, false
 }
 
 // storedTokens is safeText.ts's heldCredentials' stored half: every stored
@@ -303,6 +325,26 @@ func (r *Run) println(text string) error {
 // (RedactOutput). TestEveryWriteGoesThroughTheFailSafe fails on any other.
 func (r *Run) out(text string) error {
 	_, err := io.WriteString(r.Stdout, jsval.NodeText(RedactOutput(text)))
+	return err
+}
+
+// redactedJSON is a --json document serialised after every string value in
+// it went through RedactValue. Only redactJSON makes one (its field is
+// unexported, and TestEveryWriteGoesThroughTheFailSafe fails on any other
+// composite literal of it), so outJSON can never print arbitrary text.
+type redactedJSON struct{ document string }
+
+// redactJSON is JSON.stringify(doc, null, 2) of doc with RedactValue
+// applied: keys are left alone (they come from the API's schema and the
+// CLI's own documents), so no two keys are ever made the same.
+func redactJSON(doc jsjson.Object) redactedJSON {
+	return redactedJSON{document: string(jsjson.StringifyIndent(RedactValue(doc), 2))}
+}
+
+// outJSON writes a redacted --json document and a newline, as it is: the
+// text redactor never touches it.
+func (r *Run) outJSON(doc redactedJSON) error {
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(doc.document)+"\n")
 	return err
 }
 

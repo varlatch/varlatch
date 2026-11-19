@@ -6147,7 +6147,8 @@
         "--no-agent-files"
       ],
       "differences": [
-        "toml-escaped"
+        "toml-escaped",
+        "server-display"
       ],
       "expect": {
         "status": 0,
