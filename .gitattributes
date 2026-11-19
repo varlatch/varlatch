@@ -1,0 +1,5 @@
+# The Typed Accessor runtimes the Go CLI's `types` embeds are byte-exact
+# copies of what the TypeScript CLI embeds in every generated module: never
+# converted at checkout (Git for Windows converts text to CRLF by default,
+# core.autocrlf).
+go/cmd/varlatch/internal/typegen/embedded/** -text

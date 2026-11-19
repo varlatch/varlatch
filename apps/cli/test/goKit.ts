@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { EMBEDDED_RELEASE } from "@varlatch/backup";
 
 /**
  * The CLI kit's recorder (internal docs/design/go-cli.md, decision 3): runs
@@ -72,7 +73,11 @@ export interface TranscriptCase {
    * ISO 8601 timestamp with milliseconds (Date.prototype.toISOString's
    * form) between the start and the end of the run, written as {{now}};
    * "generated": the value `--generate` made, in each request body,
-   * written as `{{generated <spec>}}` (generatedPattern).
+   * written as `{{generated <spec>}}` (generatedPattern); "release": the
+   * CLI's own release, `varlatch <version>` in the output (the Generator
+   * lines and literals of a module `varlatch types` writes), written as
+   * `varlatch {{release}}`, and `{{release}}` in the case's files, given
+   * as that version (releasePattern).
    */
   patterns?: string[];
 }
@@ -187,6 +192,18 @@ function uncaught(stderr: string): string {
 /** Date.prototype.toISOString's form, as `login` and `env use` write the time. */
 const ISO_TIMESTAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
 
+/**
+ * The "release" pattern: `varlatch <version>` (the CLI's own release) as
+ * `varlatch {{release}}` in what the CLI did, and `{{release}}` in a
+ * case's files as the version. Another release a case names stays as it is.
+ */
+export function releasePattern(version: string): { fill: (text: string) => string; unfill: (text: string) => string } {
+  return {
+    fill: (text) => text.split("{{release}}").join(version),
+    unfill: (text) => text.split(`varlatch ${version}`).join("varlatch {{release}}"),
+  };
+}
+
 /** The "now" pattern: each timestamp from `start` to `end` (milliseconds) as {{now}}. */
 export function nowPattern(text: string, start: number, end: number): string {
   return text.replace(ISO_TIMESTAMP, (t) => {
@@ -272,9 +289,10 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
+    const release = c.patterns?.includes("release") ? releasePattern(EMBEDDED_RELEASE.version) : { fill: (t: string) => t, unfill: (t: string) => t };
     for (const [path, content] of Object.entries(c.files ?? {})) {
       mkdirSync(dirname(join(dir, path)), { recursive: true });
-      writeFileSync(join(dir, path), fill(content, origin, dir));
+      writeFileSync(join(dir, path), release.fill(fill(content, origin, dir)));
     }
     const cwd = join(dir, c.cwd ?? ".");
     mkdirSync(cwd, { recursive: true });
@@ -301,8 +319,9 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       child.stdin.end(c.stdin ?? "");
     });
     const end = Date.now();
-    const now = c.patterns?.includes("now") ? (t: string) => nowPattern(t, start, end) : (t: string) => t;
-    for (const name of c.patterns ?? []) if (name !== "now" && name !== "generated") throw new Error(`case ${c.id}: no pattern ${name}`);
+    const timed = c.patterns?.includes("now") ? (t: string) => nowPattern(t, start, end) : (t: string) => t;
+    const now = (t: string) => release.unfill(timed(t));
+    for (const name of c.patterns ?? []) if (!["now", "generated", "release"].includes(name)) throw new Error(`case ${c.id}: no pattern ${name}`);
     const generated = (r: RecordedRequest[]) => (c.patterns?.includes("generated") ? generatedPattern(c.args, r, result.stdout + result.stderr) : r);
     const files = listTree(dir, (t) => now(unfill(t, origin, dir)));
     return {

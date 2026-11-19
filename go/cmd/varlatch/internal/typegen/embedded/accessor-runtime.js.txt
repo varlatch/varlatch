@@ -1,0 +1,448 @@
+function varlatchAccessorRuntime() {
+var module = { exports: {} };
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
+// src/runtime.ts
+var runtime_exports = {};
+__export(runtime_exports, {
+  ConfigError: () => ConfigError,
+  RUN_CONTEXT: () => RUN_CONTEXT,
+  SCHEMA_FORMAT: () => SCHEMA_FORMAT,
+  implementedSemanticsVersions: () => implementedSemanticsVersions,
+  lazyConfig: () => lazyConfig,
+  loadConfig: () => loadConfig,
+  parseRunContext: () => parseRunContext
+});
+module.exports = __toCommonJS(runtime_exports);
+
+// ../contract/dist/semantics.js
+var SEMANTICS_VERSIONS = [1, 2, 3];
+var UnsupportedSemanticsVersionError = class extends Error {
+  constructor(version) {
+    super(`Contract semantics version ${String(version)} is not supported (supported: ${SEMANTICS_VERSIONS.join(", ")})`);
+    __publicField(this, "name", "UnsupportedSemanticsVersionError");
+    __publicField(this, "version");
+    this.version = version;
+  }
+};
+function requiredApplies(item, env) {
+  switch (item.required.kind) {
+    case "always":
+      return true;
+    case "never":
+      return false;
+    case "selector": {
+      const sel = item.required.selector;
+      if (sel.kind === "tier")
+        return sel.tier === env.tier;
+      return sel.environmentIds.includes(env.rootId);
+    }
+  }
+}
+var V1 = {
+  version: 1,
+  requiredApplies,
+  missingWhenAbsent: (item, env) => requiredApplies(item, env) && item.defaultValue === void 0,
+  validate(item, value) {
+    switch (item.type) {
+      case "string":
+        return null;
+      case "number":
+        return /^-?\d+(\.\d+)?$/.test(value) ? null : "must be a number";
+      case "boolean":
+        return /^(true|false|1|0)$/i.test(value) ? null : "must be a boolean";
+      case "url":
+        try {
+          new URL(value);
+          return null;
+        } catch {
+          return "must be a valid URL";
+        }
+      case "email":
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? null : "must be an email address";
+      case "enum":
+        return item.enumValues?.includes(value) ? null : `must be one of: ${item.enumValues?.join(", ")}`;
+      case "integer":
+        return BEFORE_INTEGER;
+    }
+  }
+};
+var BEFORE_INTEGER = "has a type this Contract Semantics version does not define (integer needs version 3)";
+var MAX_EXACT = "9007199254740991";
+var NUMBER_V2 = /^-?(\d+)(?:\.(\d+))?$/;
+function parseNumberV2(value) {
+  const match = NUMBER_V2.exec(value);
+  if (!match)
+    return { ok: false, reason: "must be a number" };
+  const integer = match[1].replace(/^0+(?=\d)/, "");
+  const fractionNonZero = match[2] !== void 0 && /[1-9]/.test(match[2]);
+  const tooLarge = integer.length > MAX_EXACT.length || integer.length === MAX_EXACT.length && (integer > MAX_EXACT || integer === MAX_EXACT && fractionNonZero);
+  if (tooLarge) {
+    return { ok: false, reason: "must be a number no larger in magnitude than 2^53 - 1" };
+  }
+  return { ok: true, value: Number(value) };
+}
+function parseV2(item, value) {
+  if (item.type === "number")
+    return parseNumberV2(value);
+  if (item.type === "integer")
+    return { ok: false, reason: BEFORE_INTEGER };
+  const reason = V1.validate(item, value);
+  if (reason !== null)
+    return { ok: false, reason };
+  if (item.type === "boolean")
+    return { ok: true, value: /^(true|1)$/i.test(value) };
+  return { ok: true, value };
+}
+var V2 = {
+  version: 2,
+  requiredApplies,
+  missingWhenAbsent: V1.missingWhenAbsent,
+  parse: parseV2,
+  validate(item, value) {
+    const result = parseV2(item, value);
+    return result.ok ? null : result.reason;
+  }
+};
+var INTEGER_V3 = /^-?([0-9]+)$/;
+function parseIntegerV3(value) {
+  const match = INTEGER_V3.exec(value);
+  if (!match)
+    return { ok: false, reason: "must be a whole number" };
+  const digits = match[1].replace(/^0+(?=\d)/, "");
+  if (digits.length > MAX_EXACT.length || digits.length === MAX_EXACT.length && digits > MAX_EXACT) {
+    return { ok: false, reason: "must be a whole number no larger in magnitude than 2^53 - 1" };
+  }
+  const converted = Number(value);
+  return { ok: true, value: converted === 0 ? 0 : converted };
+}
+function parseV3(item, value) {
+  if (item.type === "integer")
+    return parseIntegerV3(value);
+  return parseV2(item, value);
+}
+var V3 = {
+  version: 3,
+  requiredApplies,
+  missingWhenAbsent: V1.missingWhenAbsent,
+  parse: parseV3,
+  validate(item, value) {
+    const result = parseV3(item, value);
+    return result.ok ? null : result.reason;
+  }
+};
+var BY_VERSION = /* @__PURE__ */ new Map([
+  [1, V1],
+  [2, V2],
+  [3, V3]
+]);
+function semanticsFor(version) {
+  const semantics = BY_VERSION.get(version);
+  if (!semantics)
+    throw new UnsupportedSemanticsVersionError(version);
+  return semantics;
+}
+
+// ../contract/dist/types.js
+var TIERS = ["development", "staging", "production"];
+
+// src/runtime.ts
+var RUN_CONTEXT = "VARLATCH_RUN_CONTEXT";
+var SCHEMA_FORMAT = 1;
+function formatIssues(issues) {
+  const count = `${issues.length} ${issues.length === 1 ? "problem" : "problems"}`;
+  return [`Varlatch configuration is invalid (${count}):`, ...issues.map((i) => `  ${i.name}: ${i.reason}`)].join("\n");
+}
+var ConfigError = class extends Error {
+  constructor(issues) {
+    super(formatIssues(issues));
+    __publicField(this, "name", "ConfigError");
+    __publicField(this, "issues");
+    this.issues = Object.freeze(issues.map((i) => Object.freeze({ name: i.name, reason: i.reason })));
+  }
+};
+var SERVER_STATUSES = ["delivered", "withheld", "notStored"];
+var DELIVERIES = ["varlatch", "inherited", "default", "absent"];
+var IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
+var CONTENT_HASH = /^sha256:[0-9a-f]{64}$/;
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function contextProblem(reason) {
+  return new ConfigError([{ name: RUN_CONTEXT, reason }]);
+}
+function typesProblem(reason) {
+  return new ConfigError([{ name: "generated types", reason }]);
+}
+function parseRunContext(raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw contextProblem("is not valid JSON");
+  }
+  if (!isRecord(data)) throw contextProblem("is not a JSON object");
+  if (data.v !== 1) {
+    throw contextProblem(
+      "has a version this accessor does not read (it reads v 1); regenerate the types with the varlatch CLI that starts the application"
+    );
+  }
+  const malformed = (field) => contextProblem(`is malformed: ${field}`);
+  if (data.mode !== "strict" && data.mode !== "exported") throw malformed("mode");
+  if (typeof data.contractRevisionId !== "string" || !IDENTIFIER.test(data.contractRevisionId)) {
+    throw malformed("contractRevisionId");
+  }
+  if (typeof data.contractHash !== "string" || !CONTENT_HASH.test(data.contractHash)) throw malformed("contractHash");
+  if (typeof data.semanticsVersion !== "number" || !Number.isInteger(data.semanticsVersion)) {
+    throw malformed("semanticsVersion");
+  }
+  const environment = data.environment;
+  if (!isRecord(environment) || typeof environment.rootId !== "string" || !TIERS.includes(environment.tier)) {
+    throw malformed("environment");
+  }
+  if (!isRecord(data.items)) throw malformed("items");
+  const items = /* @__PURE__ */ new Map();
+  for (const [name, entry] of Object.entries(data.items)) {
+    if (!isRecord(entry) || !SERVER_STATUSES.includes(entry.server) || !DELIVERIES.includes(entry.delivery)) {
+      throw malformed("an entry in items");
+    }
+    items.set(name, { server: entry.server, delivery: entry.delivery });
+  }
+  return {
+    mode: data.mode,
+    contractRevisionId: data.contractRevisionId,
+    contractHash: data.contractHash,
+    semanticsVersion: data.semanticsVersion,
+    environment: { rootId: environment.rootId, tier: environment.tier },
+    items
+  };
+}
+function implementedSemanticsVersions() {
+  return SEMANTICS_VERSIONS.filter((v) => semanticsFor(v).parse !== void 0);
+}
+function currentProcess() {
+  return globalThis.process;
+}
+function defaultWarning(message) {
+  const proc = currentProcess();
+  if (typeof proc?.emitWarning === "function") {
+    proc.emitWarning(message, "VarlatchWarning");
+    return;
+  }
+  globalThis.console?.warn(`VarlatchWarning: ${message}`);
+}
+function own(source, name) {
+  return Object.prototype.hasOwnProperty.call(source, name) ? source[name] : void 0;
+}
+function absentReason(recorded) {
+  if (recorded?.server === "withheld") return "required in this environment, withheld by the server, and absent";
+  if (recorded && recorded.delivery !== "absent") {
+    return "required in this environment; the run context records it as delivered, but it is absent from the environment";
+  }
+  return "required in this environment and absent";
+}
+function evaluate(schema, options) {
+  if (options.staleTypes !== void 0 && options.staleTypes !== "warn" && options.staleTypes !== "throw") {
+    throw new TypeError('staleTypes must be "warn" or "throw"');
+  }
+  if (!isRecord(schema) || schema.format !== SCHEMA_FORMAT || !Array.isArray(schema.items)) {
+    throw typesProblem("are in a format this accessor does not read; regenerate them with varlatch types");
+  }
+  const version = schema.semanticsVersion;
+  let semantics;
+  try {
+    semantics = semanticsFor(version);
+  } catch {
+    throw typesProblem(
+      `use Contract Semantics version ${String(version)}, which this accessor does not implement (it implements ${implementedSemanticsVersions().join(", ")}); regenerate them with varlatch types`
+    );
+  }
+  const parse = semantics.parse;
+  if (!parse) {
+    throw typesProblem(
+      `use Contract Semantics version ${version}, which defines no conversion; activate a revision at version ${implementedSemanticsVersions().join(" or ")} and regenerate them with varlatch types`
+    );
+  }
+  const source = options.env ?? currentProcess()?.env ?? {};
+  const warnings = [];
+  const warn = (message) => {
+    warnings.push(message);
+    (options.onWarning ?? defaultWarning)(message);
+  };
+  const rawContext = own(source, RUN_CONTEXT);
+  let context = null;
+  if (rawContext !== void 0) {
+    if (typeof rawContext !== "string") throw contextProblem("is not a string");
+    context = parseRunContext(rawContext);
+    if (context.semanticsVersion !== version) {
+      throw contextProblem(
+        `names Contract Semantics version ${context.semanticsVersion}, but these types use version ${version}; regenerate them with varlatch types`
+      );
+    }
+    if (context.contractHash !== schema.contentHash) {
+      const message = `the types are stale: they were generated from the Contract with content hash ${schema.contentHash}, and this run uses ${context.contractHash} (revision ${context.contractRevisionId}); regenerate them with varlatch types`;
+      if (options.staleTypes === "throw") throw contextProblem(message);
+      warn(message);
+    }
+  } else if (options.requireContext) {
+    throw contextProblem(
+      "is not set, and requireContext is on: start the application with varlatch run --strict or varlatch run --export-context"
+    );
+  }
+  const issues = [];
+  const values = /* @__PURE__ */ Object.create(null);
+  const defaulted = [];
+  const notEvaluated = [];
+  for (const item of schema.items) {
+    const contractItem = item;
+    const raw = own(source, item.name);
+    if (raw !== void 0) {
+      if (typeof raw !== "string") {
+        issues.push({ name: item.name, reason: "is not a string in the environment" });
+        continue;
+      }
+      const result = parse(contractItem, raw);
+      if (result.ok) values[item.name] = result.value;
+      else issues.push({ name: item.name, reason: result.reason });
+      continue;
+    }
+    const recorded = context?.items.get(item.name);
+    if (context?.mode === "strict") {
+      if (semantics.requiredApplies(contractItem, context.environment)) {
+        issues.push({ name: item.name, reason: absentReason(recorded) });
+      }
+      continue;
+    }
+    const withheld = recorded?.server === "withheld";
+    if (options.applyDefaults === true && item.defaultValue !== void 0 && !withheld) {
+      const result = parse(contractItem, item.defaultValue);
+      if (result.ok) {
+        values[item.name] = result.value;
+        defaulted.push(item.name);
+      } else {
+        issues.push({ name: item.name, reason: `the Contract default ${result.reason}` });
+      }
+      continue;
+    }
+    if (context) {
+      const missing = withheld ? semantics.requiredApplies(contractItem, context.environment) : semantics.missingWhenAbsent(contractItem, context.environment);
+      if (missing) issues.push({ name: item.name, reason: absentReason(recorded) });
+    } else if (item.required.kind === "selector") {
+      if (item.defaultValue === void 0) notEvaluated.push(item.name);
+    } else if (semantics.missingWhenAbsent(contractItem, { rootId: "", tier: "production" })) {
+      issues.push({ name: item.name, reason: "required in every environment and absent" });
+    }
+  }
+  if (issues.length > 0) throw new ConfigError(issues);
+  return {
+    values,
+    report: {
+      defaulted: Object.freeze(defaulted),
+      notEvaluated: Object.freeze(notEvaluated),
+      context: context?.mode ?? null,
+      warnings: Object.freeze(warnings)
+    }
+  };
+}
+var INSPECT = /* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom");
+function readOnly(action, key) {
+  return new TypeError(`The Varlatch configuration is read-only: cannot ${action} ${String(key)}`);
+}
+function view(load) {
+  const target = /* @__PURE__ */ Object.create(null);
+  let ready = false;
+  let failure = null;
+  const ensure = () => {
+    if (ready) return;
+    if (failure) throw failure.error;
+    let values;
+    try {
+      values = load();
+    } catch (error) {
+      failure = { error };
+      throw error;
+    }
+    for (const name of Object.keys(values)) {
+      Object.defineProperty(target, name, { value: values[name], enumerable: true, writable: false, configurable: false });
+    }
+    Object.freeze(target);
+    ready = true;
+  };
+  Object.defineProperty(target, INSPECT, {
+    value: () => {
+      ensure();
+      return Object.assign(/* @__PURE__ */ Object.create(null), target);
+    },
+    enumerable: false,
+    writable: false,
+    configurable: false
+  });
+  const proxy = new Proxy(target, {
+    get(t, key) {
+      ensure();
+      return Reflect.get(t, key);
+    },
+    has(t, key) {
+      ensure();
+      return Reflect.has(t, key);
+    },
+    ownKeys(t) {
+      ensure();
+      return Reflect.ownKeys(t);
+    },
+    getOwnPropertyDescriptor(t, key) {
+      ensure();
+      return Reflect.getOwnPropertyDescriptor(t, key);
+    },
+    isExtensible(t) {
+      ensure();
+      return Reflect.isExtensible(t);
+    },
+    preventExtensions(t) {
+      ensure();
+      return Reflect.preventExtensions(t);
+    },
+    set(_t, key) {
+      throw readOnly("assign", key);
+    },
+    deleteProperty(_t, key) {
+      throw readOnly("delete", key);
+    },
+    defineProperty(_t, key) {
+      throw readOnly("define", key);
+    },
+    setPrototypeOf() {
+      throw readOnly("change the prototype of", "it");
+    }
+  });
+  return { proxy, ensure };
+}
+function loadConfig(schema, options) {
+  const { values, report } = evaluate(schema, options ?? {});
+  const { proxy, ensure } = view(() => values);
+  ensure();
+  return Object.freeze({ config: proxy, ...report });
+}
+function lazyConfig(schema) {
+  return view(() => evaluate(schema, {}).values).proxy;
+}
+return module.exports;
+}

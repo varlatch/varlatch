@@ -17,6 +17,7 @@ const inventory = {
   checks: {
     "a.scan": { suite: "a", kind: "conformance", feature: "scan" },
     "a.plain": { suite: "a", kind: "conformance", cliNeeds: ["run"] },
+    "a.scan-run": { suite: "a", kind: "conformance", feature: "scan", cliNeeds: ["run"] },
     "b.free": { suite: "b", kind: "conformance" },
   },
 };
@@ -24,12 +25,15 @@ const inventory = {
 test("a check needs its suite's setup features, its own, and its cliNeeds", () => {
   assert.deepEqual(featuresNeeded(inventory, "a.scan"), ["login-token", "scan"]);
   assert.deepEqual(featuresNeeded(inventory, "a.plain"), ["login-token", "run"]);
+  assert.deepEqual(featuresNeeded(inventory, "a.scan-run"), ["login-token", "run", "scan"]);
   assert.deepEqual(featuresNeeded(inventory, "b.free"), []);
 });
 
 test("the lacking checks are those that need a lacking feature, and none without lacks", () => {
-  assert.deepEqual([...clientLackingChecks(inventory, new Map([["scan", {}]]))], [["a.scan", ["scan"]]]);
-  assert.deepEqual([...clientLackingChecks(inventory, new Map([["login-token", {}]])).keys()], ["a.scan", "a.plain"]);
+  assert.deepEqual([...clientLackingChecks(inventory, new Map([["scan", {}]]))], [["a.scan", ["scan"]], ["a.scan-run", ["scan"]]]);
+  // A check with a feature of its own still lacks what its cliNeeds lists.
+  assert.deepEqual([...clientLackingChecks(inventory, new Map([["run", {}]]))], [["a.plain", ["run"]], ["a.scan-run", ["run"]]]);
+  assert.deepEqual([...clientLackingChecks(inventory, new Map([["login-token", {}]])).keys()], ["a.scan", "a.plain", "a.scan-run"]);
   assert.equal(clientLackingChecks(inventory, new Map()).size, 0);
 });
 

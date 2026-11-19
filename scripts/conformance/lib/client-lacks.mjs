@@ -50,8 +50,8 @@ export function validateClientLacks(file, inventory) {
 }
 
 /**
- * The CLI features check `id` needs: its suite's setup's, and its own
- * feature, or, for a check without one, those its `cliNeeds` lists.
+ * The CLI features check `id` needs: its suite's setup's, its own feature,
+ * and those its `cliNeeds` lists (beside its feature, or instead of one).
  */
 export function featuresNeeded(inventory, id) {
   const check = inventory.checks[id];

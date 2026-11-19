@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -166,9 +167,13 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	fill := func(s string) string {
 		return strings.ReplaceAll(strings.ReplaceAll(s, "{{server}}", srv.origin), "{{dir}}", dir)
 	}
+	release := slices.Contains(c.Patterns, "release")
 	// Inputs get Node.js's default modes (0666 and 0777, less the umask), as
 	// the recorder's writeFileSync and mkdirSync give them.
 	for rel, content := range c.Files {
+		if release {
+			content = ReleaseFill(content)
+		}
 		p := filepath.Join(dir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(p), 0o777); err != nil {
 			return Outcome{}, nil, err
@@ -213,7 +218,7 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	for _, name := range c.Patterns {
-		if name != "now" && name != "generated" {
+		if name != "now" && name != "generated" && name != "release" {
 			return Outcome{}, nil, fmt.Errorf("case %s: no pattern %q", c.ID, name)
 		}
 	}
@@ -237,6 +242,9 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		s = strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir, "{{dir}}")
 		if slices.Contains(c.Patterns, "now") {
 			s = NowPattern(s, began, end)
+		}
+		if release {
+			s = ReleaseUnfill(s)
 		}
 		return s
 	}
@@ -336,6 +344,19 @@ var generatorSpec = regexp.MustCompile(`^(hex|base64|base64url|alnum):([0-9]+)$`
 
 // isoTimestamp is Date.prototype.toISOString's form.
 var isoTimestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z`)
+
+// ReleaseFill and ReleaseUnfill are goKit.ts's releasePattern, the
+// "release" pattern, for this build's release: `{{release}}` in a case's
+// files is the version, and `varlatch <version>` in what the CLI did is
+// `varlatch {{release}}`. Another release a case names stays as it is.
+func ReleaseFill(text string) string {
+	return strings.ReplaceAll(text, "{{release}}", buildinfo.Version)
+}
+
+// ReleaseUnfill is the "release" pattern on what the CLI did.
+func ReleaseUnfill(text string) string {
+	return strings.ReplaceAll(text, "varlatch "+buildinfo.Version, "varlatch {{release}}")
+}
 
 // NowPattern is goKit.ts's nowPattern, the "now" pattern: each ISO 8601
 // timestamp with milliseconds from start to end (Unix milliseconds) as

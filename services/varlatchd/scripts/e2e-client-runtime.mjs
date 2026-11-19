@@ -307,7 +307,7 @@ function expectedContext(items) {
 const delivered = { server: "delivered", delivery: "varlatch" };
 const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) => !text.includes(v));
 
-{
+if (kit.supports("run-export-context")) {
   const r = await record(admin, ["--export-context"], {
     RT_SECRET: PARENT_COPY,
     RT_UNSTORED: INHERITED,
@@ -333,9 +333,9 @@ const noValueIn = (text) => [SECRET, PARENT_COPY, INHERITED, PLAIN].every((v) =>
     canonical(context) === canonical(expected),
     `${r.received?.context} expected ${canonical(expected)}`,
   );
-  check("client-runtime.export-context-context-holds-no-value", "--export-context: the context holds no value", r.received?.context !== null && noValueIn(r.received.context));
+  check("client-runtime.export-context-context-holds-no-value", "--export-context: the context holds no value", typeof r.received?.context === "string" && noValueIn(r.received.context));
 }
-if (identities) {
+if (identities && kit.supports("run-export-context")) {
   const r = await record(readerWs, ["--export-context"], { RT_SECRET: PARENT_COPY });
   check("client-runtime.export-context-identity-without-secret-reveal", "--export-context: an identity without secret.reveal still starts the child", r.code === 0 && r.received !== null, r.out);
   check("client-runtime.export-context-withheld-secret-left-parent", "--export-context: a withheld Secret is left to the parent's copy", r.received?.RT_SECRET === PARENT_COPY);
@@ -355,9 +355,9 @@ if (identities) {
     canonical(context) === canonical(expected),
     `${r.received?.context} expected ${canonical(expected)}`,
   );
-  check("client-runtime.export-context-withheld-run-context-holds-no", "--export-context: the withheld run's context holds no value", r.received?.context !== null && noValueIn(r.received.context));
+  check("client-runtime.export-context-withheld-run-context-holds-no", "--export-context: the withheld run's context holds no value", typeof r.received?.context === "string" && noValueIn(r.received.context));
 }
-if (identities) {
+if (identities && kit.supports("run-export-context")) {
   // The disclosure check also reads the audit export.
   const audited = kit.runs("client-runtime.export-context-run-cannot-export-context");
   let before = [];
@@ -488,7 +488,7 @@ async function startApp(ws) {
     r.report?.context === "exported" && r.report?.warnings?.length === 0 && r.report?.generatedFrom?.revisionId === active.id,
     JSON.stringify(r.report),
   );
-  check("client-runtime.types-application-output-holds-no-secret", "types: the application's output holds no Secret", !r.out.includes(SECRET));
+  check("client-runtime.types-application-output-holds-no-secret", "types: the application's output holds no Secret", r.report !== null && !r.out.includes(SECRET), r.out);
 }
 
 // --- varlatch types for Python, and the module it writes -------------------------------

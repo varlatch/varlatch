@@ -263,6 +263,29 @@ var differences = map[string]transcript.Difference{
 		if recordedActivation.MatchString(o.Stdout) && got.Stdout == "Activated the revision.\n" {
 			o.Stdout = got.Stdout
 		}
+		// `types` names a revision, the server's or --revision's, only by
+		// an id of the server's shape, and its --check hint repeats only
+		// such a --revision.
+		unshaped := func(text string) string {
+			text = recordedRevisionName.ReplaceAllStringFunc(text, func(m string) string {
+				if id := strings.TrimPrefix(m, "Contract Revision "); !revisionShape.MatchString(id) {
+					return "Contract Revision " + cli.UnrecognizedID
+				}
+				return m
+			})
+			return recordedRevisionHint.ReplaceAllStringFunc(text, func(m string) string {
+				if id := strings.TrimSuffix(strings.TrimPrefix(m, " --revision "), ".\n"); !revisionShape.MatchString(id) {
+					return " --revision <revision-id>.\n"
+				}
+				return m
+			})
+		}
+		if accepted := unshaped(o.Stdout); accepted == got.Stdout {
+			o.Stdout = accepted
+		}
+		if accepted := unshaped(o.Stderr); accepted == got.Stderr {
+			o.Stderr = accepted
+		}
 	},
 	// `contract show` shows a sensitive item's default as [redacted]
 	// (go/README.md, "No message holds a value"). Accepted only where Go's
@@ -284,6 +307,15 @@ var schemaFragment = regexp.MustCompile(`(?s)^(\.env\.schema line [0-9]+: (?:Unr
 
 // recordedActivation is a recorded `contract activate` success.
 var recordedActivation = regexp.MustCompile(`^Activated .+\.\n$`)
+
+// recordedRevisionName is a revision `types` names; recordedRevisionHint is
+// the --revision its --check hint repeats; revisionShape is the server's
+// revision ids' shape.
+var (
+	recordedRevisionName = regexp.MustCompile(`Contract Revision [A-Za-z0-9_-]+`)
+	recordedRevisionHint = regexp.MustCompile(` --revision \S+\.\n$`)
+	revisionShape        = regexp.MustCompile(`^rev_[a-z2-7]{26}$`)
+)
 
 // recordedVersion is the version a recorded `values set` names.
 var recordedVersion = regexp.MustCompile(` set \(version (.*)\)\.\n$`)

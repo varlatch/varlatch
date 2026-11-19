@@ -18,7 +18,12 @@
  * `kit.supports("<feature>")`: with a CLI older than the feature, that call
  * reports every check of the group `PREDATES-CLI` and returns false, and the
  * suite skips the group. The runner confirms each such result against the
- * CLI's verified version; a suite cannot claim it on its own.
+ * CLI's verified version; a suite cannot claim it on its own. It is false,
+ * too, when the CLI lacks something every check of the group needs (the Go
+ * CLI's client-go.json: the runner says which checks, in
+ * CONFORMANCE_CLIENT_LACKING, and reports them client-lacks itself), so a
+ * check that would pass with nothing run (a Secret that never appears) is
+ * never run without the feature.
  *
  * A suite split into operation groups (inventory `suites.<name>.groups`)
  * runs each group's setup and checks behind `kit.group("<group>")`: false
@@ -56,6 +61,8 @@ export function cliVersion() {
  */
 /** The checks of this suite the runner reports target-lacks (CONFORMANCE_LACKING). */
 const lacking = () => new Set(JSON.parse(process.env.CONFORMANCE_LACKING || "[]"));
+/** The checks of this suite the runner reports client-lacks (CONFORMANCE_CLIENT_LACKING). */
+const clientLacking = () => new Set(JSON.parse(process.env.CONFORMANCE_CLIENT_LACKING || "[]"));
 
 export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
   let failures = 0;
@@ -94,6 +101,8 @@ export function reporter({ detailOnFailure = false, separator = " - " } = {}) {
     if (!suite) throw new Error("CONFORMANCE_SUITE is not set: run the suite through scripts/conformance/run.mjs");
     const ids = Object.entries(inv.checks).filter(([, c]) => c.suite === suite && c.feature === feature).map(([id]) => id);
     if (!(feature in (inv.features ?? {})) || ids.length === 0) throw new Error(`${suite} has no checks of feature ${feature} in the inventory`);
+    // The runner reports these client-lacks itself.
+    if (ids.every((id) => clientLacking().has(id))) return false;
     const version = cliVersion();
     if (!predates(inv, feature, version)) return true;
     if (!skipped.has(feature)) {
