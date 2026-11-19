@@ -66,10 +66,12 @@ func slowBackups(o *backups.Options) {
 }
 
 // stalledIn paces a backup as slowBackups does, except its phase (snapshot
-// or sealing), which it slows so much (a page every 200 ms; sealing at
-// 32 KiB/s) that it does not end within a test's minutes: a kill made once
-// the phase is reached lands in it, however small the database or fast the
-// machine.
+// or sealing), which it slows so that a kill made once the phase is
+// reached lands in it, however fast the machine: the snapshot at a page
+// every 200 ms, which does not end within a test's minutes; the sealing at
+// 1 MiB/s. The manifest's hashing before the sealing goes at the same rate
+// (the backup's one pace), so with killDuringBackup's 16 MiB filler the
+// sealing starts after about 16 s and then lasts about as long.
 func stalledIn(phase string) func(*backups.Options) {
 	return func(o *backups.Options) {
 		slowBackups(o)
@@ -77,7 +79,7 @@ func stalledIn(phase string) func(*backups.Options) {
 		case "snapshot":
 			o.Snapshot = storage.SnapshotOptions{StepPages: 1, Pause: 200 * time.Millisecond}
 		case "sealing":
-			o.SealRate = 32 << 10
+			o.SealRate = 1 << 20
 		}
 	}
 }

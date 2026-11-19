@@ -634,11 +634,12 @@ daemon's maintenance admission and its one backup at a time.
   reads the archive's metadata from the snapshot itself (the
   installation, its Root KEK version and canary, the schema version),
   refusing an incomplete Root KEK rotation as `archiveMetadata` does and
-  a canary the loaded Root KEK does not open, seals the snapshot and
-  `configuration.json` at 32 MiB/s, opens the archive again to record its
-  check, uploads it, records the delivery, and removes the archives
-  beyond `backup_keep` from this host. A stop ends a run at its next
-  snapshot step or sealed MiB, and leaves no archive.
+  a canary the loaded Root KEK does not open, hashes the components for
+  the manifest, seals the snapshot and `configuration.json`, and opens the
+  archive again to record its check, each at 32 MiB/s and with the archive
+  key derived once for the run, then uploads it, records the delivery, and
+  removes the archives beyond `backup_keep` from this host. A stop ends a
+  run at its next snapshot step or paced MiB, and leaves no archive.
 - **The schedule** first looks a minute after start, then takes a backup
   whenever the newest archive is `backup_interval` old (at that first look
   when there is none), retries an hour after a run that made no archive,
