@@ -85,7 +85,8 @@ export interface TranscriptCase {
    * release, `varlatch <version>` in the output (the Generator lines and
    * literals of a module `varlatch types` writes), written as
    * `varlatch {{release}}`, and `{{release}}` in the case's files, given
-   * as that version (releasePattern).
+   * as that version (releasePattern); "agent-run": an agent-safe run's
+   * identifier, Placeholders and Broker port (agentRunPattern).
    */
   patterns?: string[];
   /**
@@ -148,8 +149,12 @@ export async function bundleCli(dir: string): Promise<string> {
   return outfile;
 }
 
-const fill = (text: string, server: string, dir: string): string => text.split("{{server}}").join(server).split("{{dir}}").join(dir);
-const unfill = (text: string, server: string, dir: string): string => text.split(server).join("{{server}}").split(dir).join("{{dir}}");
+/** The fake server's host and port: `{{server-host}}`, as an agent-safe run's proxy address names it. */
+const hostOf = (server: string): string => server.replace(/^http:\/\//, "");
+const fill = (text: string, server: string, dir: string): string =>
+  text.split("{{server}}").join(server).split("{{server-host}}").join(hostOf(server)).split("{{dir}}").join(dir);
+const unfill = (text: string, server: string, dir: string): string =>
+  text.split(server).join("{{server}}").split(hostOf(server)).join("{{server-host}}").split(dir).join("{{dir}}");
 
 function fillDeep(value: unknown, server: string, dir: string): unknown {
   if (typeof value === "string") return fill(value, server, dir);
@@ -344,6 +349,19 @@ export function callbackPattern(text: string): string {
   return text.replace(CALLBACK_PORT, "$1{{port}}$2");
 }
 
+/**
+ * The "agent-run" pattern: what an agent-safe run makes at random, each as
+ * a name: the run's identifier as run_{{id}}, a Placeholder as
+ * {{placeholder}}, and the Broker's loopback port as 127.0.0.1:{{port}}
+ * (the fake server's own address is {{server}} or {{server-host}} by then).
+ */
+export function agentRunPattern(text: string): string {
+  return text
+    .replace(/run_[0-9a-f]{16}(?![0-9a-f])/g, "run_{{id}}")
+    .replace(/vlch_ph_v1_[0-9a-f]{32}/g, "{{placeholder}}")
+    .replace(/127\.0\.0\.1:\d+/g, "127.0.0.1:{{port}}");
+}
+
 /** The patterns a case names, applied in order to a recorded text. */
 export function applyPatterns(patterns: readonly string[], text: string, start: number, end: number): string {
   let out = text;
@@ -352,6 +370,7 @@ export function applyPatterns(patterns: readonly string[], text: string, start: 
     if (name === "now") out = nowPattern(out, start, end);
     else if (later) out = laterPattern(out, start, end, Number(later[1]));
     else if (name === "callback") out = callbackPattern(out);
+    else if (name === "agent-run") out = agentRunPattern(out);
     else if (name === "release") out = releasePattern(EMBEDDED_RELEASE.version).unfill(out);
     else if (name !== "generated") throw new Error(`no pattern ${name}`); // generated applies to request bodies (generatedPattern)
   }

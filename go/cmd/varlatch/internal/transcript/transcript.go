@@ -269,7 +269,8 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	}
 	defer srv.close()
 	fill := func(s string) string {
-		return strings.ReplaceAll(strings.ReplaceAll(s, "{{server}}", srv.origin), "{{dir}}", dir)
+		s = strings.ReplaceAll(strings.ReplaceAll(s, "{{server}}", srv.origin), "{{server-host}}", srv.host())
+		return strings.ReplaceAll(s, "{{dir}}", dir)
 	}
 	release := slices.Contains(c.Patterns, "release")
 	// Inputs get Node.js's default modes (0666 and 0777, less the umask), as
@@ -351,7 +352,8 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	callbacks := watch.callbacksDone()
 	end := time.Now().UnixMilli()
 	unfill := func(s string) string {
-		s = strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir, "{{dir}}")
+		s = strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), srv.host(), "{{server-host}}")
+		s = strings.ReplaceAll(s, dir, "{{dir}}")
 		s, _ = ApplyPatterns(c.Patterns, s, began, end)
 		return s
 	}
@@ -504,10 +506,25 @@ var callbackPort = regexp.MustCompile(`(callback=http%3A%2F%2F127\.0\.0\.1%3A)\d
 // laterName is a "now+<s>" pattern's name.
 var laterName = regexp.MustCompile(`^now\+(\d+)$`)
 
+var (
+	agentRunID       = regexp.MustCompile(`run_[0-9a-f]{16}([^0-9a-f]|$)`)
+	agentPlaceholder = regexp.MustCompile(`vlch_ph_v1_[0-9a-f]{32}`)
+	loopbackPort     = regexp.MustCompile(`127\.0\.0\.1:\d+`)
+)
+
+// AgentRunPattern is goKit.ts's agentRunPattern, the "agent-run" pattern:
+// an agent-safe run's identifier as run_{{id}}, a Placeholder as
+// {{placeholder}}, and the Broker's loopback port as 127.0.0.1:{{port}}.
+func AgentRunPattern(text string) string {
+	text = agentRunID.ReplaceAllString(text, "run_{{id}}$1")
+	text = agentPlaceholder.ReplaceAllString(text, "{{placeholder}}")
+	return loopbackPort.ReplaceAllString(text, "127.0.0.1:{{port}}")
+}
+
 // ApplyPatterns is goKit.ts's applyPatterns: the patterns a case names,
-// in order: "now", "now+<s>", "callback" (the loopback port as {{port}})
-// and "release" (ReleaseUnfill); "generated" applies to request bodies
-// (GeneratedPattern).
+// in order: "now", "now+<s>", "callback" (the loopback port as {{port}}),
+// "agent-run" (AgentRunPattern) and "release" (ReleaseUnfill); "generated"
+// applies to request bodies (GeneratedPattern).
 func ApplyPatterns(patterns []string, text string, start, end int64) (string, error) {
 	for _, name := range patterns {
 		switch m := laterName.FindStringSubmatch(name); {
@@ -518,6 +535,8 @@ func ApplyPatterns(patterns []string, text string, start, end int64) (string, er
 			text = LaterPattern(text, start, end, seconds)
 		case name == "callback":
 			text = callbackPort.ReplaceAllString(text, "${1}{{port}}${2}")
+		case name == "agent-run":
+			text = AgentRunPattern(text)
 		case name == "release":
 			text = ReleaseUnfill(text)
 		case name == "generated":
@@ -893,7 +912,13 @@ func newServer(script []Exchange, dir string) (*server, error) {
 			}
 		}
 		s.mu.Lock()
-		s.got = append(s.got, Request{Method: r.Method, Path: r.URL.RequestURI(), Headers: headers, Body: recorded})
+		// An absolute URI (a request sent to a proxy, as `varlatch request`
+		// sends one) is recorded as received, as Node.js's server gives it.
+		target := r.URL.RequestURI()
+		if !strings.HasPrefix(r.RequestURI, "/") {
+			target = r.RequestURI
+		}
+		s.got = append(s.got, Request{Method: r.Method, Path: target, Headers: headers, Body: recorded})
 		var next *Exchange
 		if len(s.script) > 0 {
 			next = &s.script[0]
@@ -902,9 +927,10 @@ func newServer(script []Exchange, dir string) (*server, error) {
 		s.mu.Unlock()
 		fill := func(t string) string {
 			t = strings.ReplaceAll(t, "{{server}}", s.origin)
+			t = strings.ReplaceAll(t, "{{server-host}}", s.host())
 			return strings.ReplaceAll(t, "{{dir}}", string(escapedDir[1:len(escapedDir)-1]))
 		}
-		if next == nil || next.Method != r.Method || fill(next.Path) != r.URL.RequestURI() {
+		if next == nil || next.Method != r.Method || fill(next.Path) != target {
 			w.Header().Set("content-type", "text/plain")
 			w.WriteHeader(599)
 			_, _ = io.WriteString(w, "unexpected request")
@@ -945,6 +971,9 @@ func latin1(s string) string {
 	}
 	return b.String()
 }
+
+// host is the server's host and port: `{{server-host}}`.
+func (s *server) host() string { return strings.TrimPrefix(s.origin, "http://") }
 
 func (s *server) received() []Request {
 	s.mu.Lock()

@@ -22,9 +22,9 @@ import (
 // VARLATCH_RUN_CONTEXT; --omit leaves named items out; in assisted mode the
 // output is masked by internal/matcher and a Secret too short to mask stops
 // the run (78) unless the human allowed it (--allow-unmasked, outside
-// assisted mode). --strict (5.4f), --redact outside assisted mode (5.4c),
-// --agent-safe and a run inside an agent-safe run (5.5b) say they are not
-// built yet.
+// assisted mode). --agent-safe (agentrun.go) and a run inside an
+// agent-safe run (nestedrun.go) are slice 5.5b's. --strict (5.4f) and
+// --redact outside assisted mode (5.4c) say they are not built yet.
 
 const runUsage = "Usage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]... " +
 	"[--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]"
@@ -184,8 +184,8 @@ func runCommand(r *Run) error {
 	if err != nil {
 		return err
 	}
-	if clientctx.AgentRunOf(r.Env) != "" {
-		return runNotBuilt("a run inside an agent-safe run", "5.5b")
+	if agentRun := clientctx.AgentRunOf(r.Env); agentRun != "" {
+		return r.nestedRun(agentRun, pre, command, commandArgs, omit)
 	}
 	agentSafe, noRedact, redact := hasArg(pre, "--agent-safe"), hasArg(pre, "--no-redact"), hasArg(pre, "--redact")
 	allowUnmasked, _ := allowUnmaskedNames(pre)
@@ -234,14 +234,15 @@ func runCommand(r *Run) error {
 	}
 	humanOverride := !r.Assisted.On && !agentSafe && len(allowUnmasked) > 0
 	assistedRedaction := (r.Assisted.On && !agentSafe) || humanOverride
+	if redact && agentSafe {
+		return UsageError("varlatch: --redact does not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets, " +
+			"so no Secret is delivered to it to mask, and an agent-safe run never fetches Secrets to build a filter. Nothing was started.")
+	}
 	if redact && !r.Assisted.On && !agentSafe {
 		return runNotBuilt("--redact outside assisted mode", "5.4c")
 	}
 	if hasArg(pre, "--strict") {
 		return runNotBuilt("--strict", "5.4f")
-	}
-	if agentSafe {
-		return runNotBuilt("--agent-safe", "5.5b")
 	}
 	if humanOverride {
 		r.eprintln("varlatch: showing " + strings.Join(allowUnmasked, ", ") + " unmasked in this run only, if too short to mask; every other known Secret stays masked.")
@@ -251,6 +252,14 @@ func runCommand(r *Run) error {
 		return contextError(err)
 	}
 	api := r.client(ctx)
+	if agentSafe {
+		// ADR-0022: Placeholders and a local Broker; the Agent gets no bearer.
+		opts, err := agentRunFlags(pre)
+		if err != nil {
+			return err
+		}
+		return agentSafeFailure(r.runAgentSafe(ctx, api, opts, command, commandArgs))
+	}
 	c, err := api.get()
 	if err != nil {
 		return err

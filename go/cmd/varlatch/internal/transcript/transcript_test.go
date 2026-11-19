@@ -208,3 +208,21 @@ func TestGeneratedPatternIsExact(t *testing.T) {
 		t.Errorf("a value shown on stdout: recorded %s", got[0].Body)
 	}
 }
+
+// TestAgentRunPattern: the "agent-run" pattern names exactly a run's
+// identifier, a Placeholder and a loopback port, as goKit.ts's does.
+func TestAgentRunPattern(t *testing.T) {
+	for in, want := range map[string]string{
+		"agent-safe run run_0123456789abcdef \u2014 broker on 127.0.0.1:41234": "agent-safe run run_{{id}} \u2014 broker on 127.0.0.1:{{port}}",
+		`{"runId":"run_0123456789abcdef"}`:                                     `{"runId":"run_{{id}}"}`,
+		"run_0123456789abcdef0":                                                "run_0123456789abcdef0",
+		"run_0123456789ABCDEF":                                                 "run_0123456789ABCDEF",
+		"API_KEY=vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":                  "API_KEY={{placeholder}}",
+		"vlch_ph_v1_short":                                                     "vlch_ph_v1_short",
+		"http://10.0.0.1:8080":                                                 "http://10.0.0.1:8080",
+	} {
+		if got := AgentRunPattern(in); got != want {
+			t.Errorf("AgentRunPattern(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

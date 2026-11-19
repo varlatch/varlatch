@@ -640,9 +640,9 @@ comes. `verify-release`, which the installers run, is Go's own.
   - **Finding the command.** As libuv does: in the command's own `PATH` on
     POSIX; on Windows, `.com` or `.exe` only, a `.bat` or `.cmd` file
     refused (decision 4, `TestLookCommandAsLibuv`).
-  - **Not built yet.** `--strict` (5.4f), `--redact` outside assisted mode
-    (5.4c), `--agent-safe` and a run inside an agent-safe run (5.5b) refuse
-    with the CLI's not-built message (64).
+  - **Not built yet.** `--strict` (5.4f) and `--redact` outside assisted
+    mode (5.4c) refuse with the CLI's not-built message (64); so does
+    `--agent-safe --strict` until 5.4f is in.
 - The local Broker (slice 5.5a; ADR-0022, ADR-0039 Decisions 1 to 37):
   `internal/broker` is `broker.ts`, `placement.ts` and `scrub.ts`. It
   listens on 127.0.0.1 only and answers nothing without the per-run proxy
@@ -665,6 +665,41 @@ comes. `verify-release`, which the installers run, is Go's own.
   and `broker.json` (53 scenarios through a scripted TLS destination: the
   request it received, the Agent's response, the events, nothing held
   after), all recorded from the TypeScript Broker.
+- Agent-safe runs and `request` (slice 5.5b; ADR-0022, ADR-0039,
+  ADR-0043 Decisions 5 and 6): `internal/cli`'s `agentrun.go`,
+  `nestedrun.go` and `request.go` (`agentRun.ts`, `request.ts`, main.ts's
+  `run` and `request` cases):
+  - **`run --agent-safe`.** Every stored Secret is targeted or omitted, and
+    a flag naming anything else is refused, before anything is issued. The
+    Capability is issued with the Broker credential (`--broker-credential-file`
+    or `VARLATCH_BROKER_CREDENTIAL`) and refused unless the server recorded
+    exactly the targets asked for. The Agent starts with the plain values,
+    a Placeholder for each Secret, and every spelling of the proxy
+    variables naming the Broker (`NODE_USE_ENV_PROXY=1`; each no-proxy
+    spelling keeps what it inherited but an entry that exempts every
+    host, and gains the Broker's address). It never gets a Secret's value,
+    the Broker credential or the operator's bearer; Secrets inherited from
+    the shell under a stored or Contract name are removed and named. It
+    gets a configuration directory of its own (mode 0700, removed at exit)
+    and `VARLATCH_AGENT_RUN`. The per-run proxy credential is only in the
+    Agent's proxy URLs, never printed. `--agent-metadata` mints a
+    read-only agent-run credential after the Broker starts; it and the
+    Capability are revoked when the Agent exits. The Broker's diagnostics
+    are names, rules and counts only.
+  - **A run inside an agent-safe run** never discloses and never uses the
+    operator's credential: the command gets this run's environment (less
+    `--omit`), the run's own credentials masked in its output, and a note
+    naming any tunnel the Broker refused meanwhile.
+  - **`varlatch request`** sends one request to the run's Broker with the
+    absolute URI and the per-run credential, and relays the response (with
+    `-o`, to a file replaced only when the whole response arrived). Its
+    statuses: 0 when the destination answered, 1 for a Broker refusal or
+    a cut-off response, 77 when the Broker refused the credential, 69 when
+    the Broker cannot be reached or answers 503, 64 for the command line
+    or no Broker to send through.
+  - Transcripts `5.5b-agent-run` and `5.5b-request`; the `agent-isolation`,
+    `broker-connect-errors`, `request-e2e` and `request-failures` process
+    tests; the conformance suite `broker` on the Go client.
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
@@ -700,6 +735,7 @@ it to the recording.
 | The Broker's own requests and relays (`broker.json`) | headers to the destination in the Agent's order and spelling, `Connection: keep-alive`; a relayed response's headers in the destination's order; the Agent's connection kept alive after a substituted request | headers to the destination in net/http's order and spelling, `Connection: close`, no `User-Agent` added; relayed headers sorted by name (a pass-through response's names lower-cased, as Node.js writes them); the Agent's connection closed after a substituted request | Header order and spelling carry no meaning; net/http owns its connection. Closing after a substituted response leaves no state between it and the next request |
 | A 101 Switching Protocols to a request the Broker passes through (`broker.json`, `pass.upgrade`) | no answer: the Agent's request waits until it gives up (step 5 defect 43, below) | 502, `the destination switched protocols; the Broker relays HTTP only` | The Agent hears at once that the Broker relays HTTP only; a substituted request's switch is refused the same way |
 | An aborted response's body (`broker.json`) | the bytes relayed before the abort are those its reads happened to get | the same rule, so an aborted body may stop at another byte; both stop without a terminating chunk and release nothing held | Where the destination's bytes arrive in pieces is the network's |
+| `broker-reply-once`: a reply the Broker generated itself, as `varlatch request` prints it | its text twice (step 5 defect 44, below), then the closing line | its text once, then the closing line | Each line of the Broker's refusal is said once; the status is the same |
 | The Broker's events on an abort after the headers | (step 5 defect 42, below) | one `aborted` event per abort; a destination that resets the connection after the headers is an abort (`the destination's response failed mid-stream`), its held bytes discarded | Diagnostics count each abort once and name its cause |
 | `version` | `varlatch --version` prints `varlatch <version> (migration <n>)` | `varlatch <version>` | Decision 6: the migration number is the TypeScript release manifest's; every consumer (installers, menu bar app, tray, omarchy plugin, tap) reads the first two words |
 | `uncaught`: an error no command handles (for example a `credentials.json` entry or a `.varlatch/local.json` holding `null`, or a `varlatch.toml` that is a directory) | escapes `main()`; Node.js prints the source line, its stack trace and its version, and exits 1 (the recorder keeps `{{uncaught <name>: <message>}}`) | `varlatch: <error>`, one line on stderr, exit 1 | A stack trace is not output anyone parses; the status and stdout are compared as recorded |
@@ -2646,6 +2682,7 @@ Not reproduced:
 | `packages/matcher` `matcher.ts` `StreamMatcher.push`, a chunk of output holding many matches (step 5 defect 29, not a security defect) | each match is merged by walking every pending segment, and a chunk's matches all stay pending until it is merged, so masking a chunk takes time quadratic in its matches: a 64 KB chunk of a repeated Secret in 170 ms, 1 MB in 45 s; `run --redact` slows down, and still masks correctly | the merge looks only at the segments that end after the match's start, with the same result; linear | `internal/matcher` `TestMatcherIsLinear` and the vectors | none |
 | `apps/cli/src/broker.ts` and `scrub.ts`, a substituted response aborted after its headers (step 5 defect 42, not a security defect) | the abort is reported twice, once by the relay and once more by the request's handler, so a run's diagnostics count two aborts (`limit.idle-after-headers`, `abort.agent-leaves`) | one event per abort | `internal/broker` `TestBrokerScenarios` | none |
 | `apps/cli/src/broker.ts` `forward`, a 101 Switching Protocols answered to a request passed through (step 5 defect 43, not a security defect) | Node.js's client has no `upgrade` listener, so the upstream socket is dropped and the request neither answers nor fails: the Agent gets no reply and waits until its own timeout | a 502 refusal, at once | `internal/broker` `TestBrokerScenarios` (`pass.upgrade`) | none |
+| `apps/cli/src/request.ts` `sendThroughBroker`, a reply the Broker generated itself (step 5 defect 44, not a security defect) | its text goes to stderr from a handler of both the response's `end` and its `close`, so each line is printed twice | once | `testdata/transcripts/5.5b-request.json`, the `refused.*` cases (`broker-reply-once`) | none |
 | `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 
 The TypeScript admin CLI refuses an ordinary command during maintenance

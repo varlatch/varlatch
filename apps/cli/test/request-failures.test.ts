@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generatePlaceholder, startBroker, type BrokerEvent, type RunningBroker } from "../src/broker.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch request`'s failure paths, against the production Broker (in
@@ -106,7 +107,7 @@ afterAll(async () => {
 
 function request(args: string[], proxy = broker.proxyUrl): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, "request", ...args], {
+    const child = spawn(...cliCommand(bundle, ["request", ...args]), {
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_AGENT_RUN: "run_0123456789abcdef", HTTPS_PROXY: proxy, VARLATCH_ASSISTED: "0" },
       stdio: ["ignore", "pipe", "pipe"],
     });

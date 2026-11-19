@@ -56,6 +56,10 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		// or through internal/matcher's redaction): its own bytes, never the
 		// CLI's text, so the fail-safe does not rewrite them (5.4b).
 		"internal/cli/runchild.go:runChild": false,
+		// `varlatch request` relays the destination's response as the
+		// Broker relayed it, already scrubbed: the destination's bytes,
+		// never the CLI's text (5.5b).
+		"internal/cli/request.go:relayResponse": false,
 	}
 	// newFileSites may call os.NewFile: each wraps a handle it opened
 	// itself for reading, never a stream.
