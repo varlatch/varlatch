@@ -1811,6 +1811,23 @@ const admin57a: TranscriptCase[] = [
   a({ id: "member.unknown-option", title: "member is parsed strictly", args: ["member", "list", "--all"] }),
 ];
 
+// ---- 5.8a: guided init, and what it never does off a terminal ---------------
+//
+// Guided `init` runs only with a terminal on both ends, outside assisted
+// mode; a transcript has none, so these cases show the flags path taking
+// over: a usage error (64), nothing written, nothing asked. The guided run
+// itself is in the guided-init vectors (go/cmd/varlatch/testdata/vectors/
+// guided-init.json) and the Go pseudo-terminal tests.
+
+const guided58a: TranscriptCase[] = [
+  { id: "init.no-flags", title: "off a terminal, init without --org and --project is a usage error; nothing is asked or written", args: ["init"] },
+  { id: "init.no-project", title: "--org alone: --project is needed", args: ["init", "--org", "acme"] },
+  { id: "init.no-org", title: "--project alone: the usage", args: ["init", "--project", "web"] },
+  { id: "init.server-only", title: "--server alone: the usage", args: ["init", "--server", "https://varlatch.example.com"] },
+  { id: "init.assisted", title: "assisted mode: the same, a terminal or not", args: ["--assisted", "init"] },
+  { id: "init.marker", title: "a coding agent's marker: the same", args: ["init", "--org", "acme"], env: { CLAUDECODE: "1" } },
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
@@ -1825,4 +1842,5 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,
   "5.7a-admin": admin57a,
+  "5.8a-guided-init": guided58a,
 };

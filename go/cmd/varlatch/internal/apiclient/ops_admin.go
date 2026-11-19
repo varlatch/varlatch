@@ -13,6 +13,7 @@ import (
 // identity, credential, invite, member, tailnet, audit list), as
 // packages/sdk sends them. A body is built by the caller in the order the
 // TypeScript CLI builds it, since JSON.stringify keeps that order.
+// ListProjects and ListAuditEvents are in ops_mcp.go (slice 5.6b).
 
 func orgPath(org string) string { return "/v1/organizations/" + EncodeURIComponent(org) }
 
