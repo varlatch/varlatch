@@ -347,8 +347,11 @@ jobs:
       # trigger fires in two minutes, and backups are slowed so that they
       # overlap it. The 50/s backup starts from the WAL's size (95 % of that
       # bound) and must run and hold a size-triggered TRUNCATE off: slowed to
-      # 256 pages a step it lasts seconds, longer than the checkpointer's
-      # 2 s tick, while the WAL passes 512 KiB within one. A converge run
+      # 64 pages a step at the production pause (100 ms), the smoke's small
+      # database (about 1,700 pages) takes about 2.7 s, longer than the
+      # checkpointer's 2 s tick, while the WAL passes 512 KiB within one. Both
+      # are set here: at 256 pages a step and a 100 ms pause the snapshot
+      # takes 0.6 s and holds nothing off. A converge run
       # alone writes more than twice that bound, so the WAL-peak criterion
       # is the one failure allowed; the scaled plan is the only reason
       # allowed for an inconclusive verdict. The g9a build's settings must
@@ -376,7 +379,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/g9a-smoke"
           (cd go && go build -o "$RUNNER_TEMP/g9a" ./bench/g9a/cmd/g9a && go build -tags g9a -o "$RUNNER_TEMP/varlatchd-g9a" ./cmd/varlatchd)
-          "$RUNNER_TEMP/g9a" plan -scale 0.05 -wal-bound 524288 -backup-step-pages 256 > "$RUNNER_TEMP/smoke-plan.json"
+          "$RUNNER_TEMP/g9a" plan -scale 0.05 -wal-bound 524288 -backup-step-pages 64 -backup-pause-ms 100 > "$RUNNER_TEMP/smoke-plan.json"
           status=0
           G9A_BIN="$RUNNER_TEMP/g9a" G9A_VARLATCHD="$RUNNER_TEMP/varlatchd-g9a" G9A_PROFILE=60 \
             G9A_SCOPE="sudo systemd-run --scope --quiet --uid=$(id -u) --gid=$(id -g) -p MemoryMax=1G -p MemorySwapMax=0" \

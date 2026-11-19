@@ -22,8 +22,10 @@ package backup
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -34,6 +36,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"golang.org/x/crypto/scrypt"
 )
@@ -87,11 +91,89 @@ func PassphraseBEK(passphrase []byte) (BEK, error) {
 // Clear overwrites the BEK's material.
 func (b BEK) Clear() { clear(b.material) }
 
+// derivations counts the archive keys derived (scrypt), for tests and
+// diagnostics (Derivations).
+var derivations atomic.Int64
+
+// Derivations is how many archive keys this process has derived: each is
+// scrypt with N = 32768, r = 8 (32 MiB, about 0.2 s of a CPU).
+func Derivations() int64 { return derivations.Load() }
+
 func (b BEK) derive(salt []byte) ([]byte, error) {
 	if len(b.material) == 0 {
 		return nil, &Error{"No Backup Encryption Key"}
 	}
+	derivations.Add(1)
 	return scrypt.Key(b.material, salt, 32768, 8, 1, 32)
+}
+
+// KeyCache holds the key derived for one archive's salt and one BEK, so a
+// backup that seals an archive and then checks it derives the key once
+// (ADR-0059 Decision 7: the backup's CPU). Seal and OpenWith use it through
+// their options. A hit needs both the salt and the BEK: the cache keeps an
+// HMAC of the BEK under a random key of its own (never the BEK itself) and
+// compares it in constant time, so another BEK, an empty one or a cleared
+// one always takes the full derivation and fails as it would without the
+// cache. A miss derives again and replaces the entry. Clear zeroes it: call
+// it when the run that owns the cache ends. The archive format is
+// unchanged: only how often the same key is derived.
+type KeyCache struct {
+	mu   sync.Mutex
+	mac  []byte // the cache's own HMAC key, random, made on first use
+	salt []byte
+	bek  []byte // HMAC-SHA256(mac, the BEK's kind and material)
+	key  []byte
+}
+
+// bekTag is the HMAC of b's kind and material under the cache's key.
+func (c *KeyCache) bekTag(b BEK) []byte {
+	if c.mac == nil {
+		c.mac = make([]byte, 32)
+		_, _ = rand.Read(c.mac)
+	}
+	h := hmac.New(sha256.New, c.mac)
+	if b.passphrase {
+		h.Write([]byte{1})
+	} else {
+		h.Write([]byte{0})
+	}
+	h.Write(b.material)
+	return h.Sum(nil)
+}
+
+// derive is the archive key for salt and b, from the cache when it holds
+// that pair's, else derived (and kept); a nil cache derives. The caller
+// clears the copy it gets.
+func (c *KeyCache) derive(b BEK, salt []byte) ([]byte, error) {
+	if c == nil || len(b.material) == 0 {
+		return b.derive(salt)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	tag := c.bekTag(b)
+	if c.key == nil || !bytes.Equal(c.salt, salt) || subtle.ConstantTimeCompare(c.bek, tag) != 1 {
+		key, err := b.derive(salt)
+		if err != nil {
+			return nil, err
+		}
+		clear(c.key)
+		c.salt, c.bek, c.key = bytes.Clone(salt), tag, key
+	}
+	return bytes.Clone(c.key), nil
+}
+
+// Clear zeroes the cached key, its HMAC key and the BEK's tag, and forgets
+// them.
+func (c *KeyCache) Clear() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clear(c.key)
+	clear(c.mac)
+	clear(c.bek)
+	c.mac, c.salt, c.bek, c.key = nil, nil, nil, nil
 }
 
 var keyPattern = regexp.MustCompile(`^(?:[a-fA-F0-9]{64}|[A-Za-z0-9+/]{43}=)$`)
@@ -128,6 +210,10 @@ type SealOptions struct {
 	// Decision 7's paced sealing). An error from it ends the sealing: Seal
 	// returns it, and no archive is written.
 	Pace func(sealed int64) error
+	// Keys, when set, keeps the archive key, so a check of the same
+	// archive with the same cache (OpenOptions.Keys) does not derive it
+	// again.
+	Keys *KeyCache
 }
 
 // LinkedError is a sealed archive in place whose directory could not be
@@ -191,7 +277,7 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 	if _, err := rand.Read(header[8:]); err != nil {
 		return err
 	}
-	key, err := bek.derive(header[8:24])
+	key, err := o.Keys.derive(bek, header[8:24])
 	if err != nil {
 		return err
 	}
@@ -311,7 +397,25 @@ func (o *Opened) Close() error { return os.RemoveAll(o.dir) }
 // plaintext goes to a file in a new directory under scratch, the GCM tag
 // is checked, and only then are the manifest parsed and the components
 // split out, each checked against its size and SHA-256.
-func Open(path string, bek BEK, scratch string) (_ *Opened, err error) {
+func Open(path string, bek BEK, scratch string) (*Opened, error) {
+	return OpenWith(path, bek, scratch, OpenOptions{})
+}
+
+// OpenOptions tune OpenWith.
+type OpenOptions struct {
+	// Keys, when set, gives the archive key a Seal with the same cache
+	// derived (the backup's own check), and keeps one it derives.
+	Keys *KeyCache
+	// Pace, when set, is called after each chunk (about 1 MiB) of either
+	// pass, the decryption and the components' SHA-256, with the bytes of
+	// both passes so far; opening waits for it, as Seal waits for
+	// SealOptions.Pace. An error from it ends the opening: OpenWith
+	// returns it. It changes only the timing: every check is made.
+	Pace func(done int64) error
+}
+
+// OpenWith is Open with options.
+func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -336,7 +440,7 @@ func Open(path string, bek BEK, scratch string) (_ *Opened, err error) {
 	if _, err := f.ReadAt(tag, size-gcmTagSize); err != nil {
 		return nil, err
 	}
-	key, err := bek.derive(header[8:24])
+	key, err := o.Keys.derive(bek, header[8:24])
 	if err != nil {
 		return nil, err
 	}
@@ -349,8 +453,11 @@ func Open(path string, bek BEK, scratch string) (_ *Opened, err error) {
 	if err != nil {
 		return nil, err
 	}
+	// The decrypted files are removed on any way out (an error, a panic)
+	// until the caller owns them through the Opened returned.
+	owned := false
 	defer func() {
-		if err != nil {
+		if !owned {
 			_ = os.RemoveAll(dir)
 		}
 	}()
@@ -362,6 +469,14 @@ func Open(path string, bek BEK, scratch string) (_ *Opened, err error) {
 	defer plain.Close()
 	body := io.NewSectionReader(f, headerBytes, size-headerBytes-gcmTagSize)
 	buf := make([]byte, chunk)
+	var done int64
+	pace := func(n int) error {
+		done += int64(n)
+		if o.Pace != nil {
+			return o.Pace(done)
+		}
+		return nil
+	}
 	for {
 		n, rerr := body.Read(buf)
 		if n > 0 {
@@ -369,6 +484,9 @@ func Open(path string, bek BEK, scratch string) (_ *Opened, err error) {
 				return nil, ErrIntegrity
 			}
 			if _, err := plain.Write(buf[:n]); err != nil {
+				return nil, err
+			}
+			if err := pace(n); err != nil {
 				return nil, err
 			}
 		}
@@ -413,7 +531,7 @@ func Open(path string, bek BEK, scratch string) (_ *Opened, err error) {
 			return nil, err
 		}
 		h := sha256.New()
-		_, cerr := io.Copy(io.MultiWriter(out, h), io.NewSectionReader(plain, offset, c.Bytes))
+		_, cerr := copyPaced(io.MultiWriter(out, h), io.NewSectionReader(plain, offset, c.Bytes), buf, pace)
 		if err := out.Close(); cerr == nil {
 			cerr = err
 		}
@@ -429,21 +547,59 @@ func Open(path string, bek BEK, scratch string) (_ *Opened, err error) {
 	if err := os.Remove(plainPath); err != nil {
 		return nil, err
 	}
+	owned = true
 	return &Opened{Manifest: m, ManifestJSON: raw, dir: dir}, nil
 }
 
 // Describe gives a component's manifest entry from its file: its size and
 // SHA-256.
 func Describe(name, path string) (Component, error) {
+	return DescribeWith(name, path, nil)
+}
+
+// DescribeWith is Describe with its hashing paced: pace, when set, is
+// called after each chunk (about 1 MiB) with the bytes hashed so far, and
+// the hashing waits for it; an error from it ends the hashing.
+func DescribeWith(name, path string, pace func(hashed int64) error) (Component, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Component{}, err
 	}
 	defer f.Close()
 	h := sha256.New()
-	n, err := io.Copy(h, f)
+	var hashed int64
+	n, err := copyPaced(h, f, make([]byte, chunk), func(n int) error {
+		hashed += int64(n)
+		if pace != nil {
+			return pace(hashed)
+		}
+		return nil
+	})
 	if err != nil {
 		return Component{}, err
 	}
 	return Component{Name: name, Bytes: n, SHA256: hex.EncodeToString(h.Sum(nil))}, nil
+}
+
+// copyPaced copies src to dst through buf, calling pace after each chunk.
+func copyPaced(dst io.Writer, src io.Reader, buf []byte, pace func(n int) error) (int64, error) {
+	var total int64
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if _, err := dst.Write(buf[:n]); err != nil {
+				return total, err
+			}
+			total += int64(n)
+			if err := pace(n); err != nil {
+				return total, err
+			}
+		}
+		if rerr == io.EOF {
+			return total, nil
+		}
+		if rerr != nil {
+			return total, rerr
+		}
+	}
 }

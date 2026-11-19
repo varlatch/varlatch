@@ -16,11 +16,18 @@
 //     version and canary, and the schema version. It refuses a snapshot
 //     taken during an incomplete Root KEK rotation, and one whose canary
 //     the loaded Root KEK does not open;
-//  4. seals the snapshot and the non-key configuration into a format-3
-//     archive, paced (SealRate), as backups/<archive id>.vltbak;
-//  5. opens it again and records the verification (integrity,
-//     compatibility with this release, the Root KEK match) in
-//     backups/<archive id>.json, the TypeScript server's status record;
+//  4. hashes the components for the manifest and seals the snapshot and
+//     the non-key configuration into a format-3 archive, staged in the
+//     run's work directory;
+//  5. opens it again (integrity, compatibility with this release, the Root
+//     KEK match). Steps 4 and 5 each go at SealRate (pace), and derive the
+//     archive key (scrypt) once between them (a KeyCache, zeroed when the
+//     run ends). Only a check that passed, in a run not stopped, publishes:
+//     the archive is renamed to backups/<archive id>.vltbak, then its
+//     verification is recorded in backups/<archive id>.json, the
+//     TypeScript server's status record. A run stopped or killed before
+//     that leaves no archive under its final name, so retention and the
+//     status list never count an unchecked one;
 //  6. uploads it to the configured destination, when there is one, and
 //     records the delivery;
 //  7. keeps the newest backup_keep archives in the data directory and
@@ -61,9 +68,13 @@ import (
 // Dir is the backups' directory in the data directory.
 const Dir = "backups"
 
-// DefaultSealRate is how fast sealing reads the snapshot: 32 MiB/s, so a
-// backup never takes the disk from the requests.
-const DefaultSealRate = 32 << 20
+// DefaultSealRate is the backup's pace after the snapshot: 16 MiB/s, for
+// the manifest's hashing, the sealing and the archive's check alike, so a
+// backup never takes the disk, or a CPU, from the requests. At 32 MiB/s the
+// three, beside 1.7 times W1's writes, kept varlatchd at 0.91 to 0.95 of its
+// one CPU and throttled (G9's measurements on the experiments server,
+// 2026-11-19).
+const DefaultSealRate = 16 << 20
 
 // APIMajor is the /v1 API's major version, recorded in an archive.
 const APIMajor = 1
@@ -77,8 +88,9 @@ type Options struct {
 	Log       *slog.Logger
 	// Now is the clock (time.Now).
 	Now func() time.Time
-	// SealRate is sealing's pace in bytes per second: 0 is
-	// DefaultSealRate, below 0 unpaced (tests).
+	// SealRate is the backup's pace after the snapshot, in bytes per
+	// second: the manifest's hashing, the sealing and the archive's check
+	// each go at it (pace). 0 is DefaultSealRate, below 0 unpaced (tests).
 	SealRate int64
 	// Snapshot paces the snapshot (zero: lib/storage's defaults).
 	Snapshot storage.SnapshotOptions
@@ -262,15 +274,22 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	if err := writeConfiguration(configuration, cfg); err != nil {
 		return Result{}, err
 	}
-	manifest, err := s.manifest(id, createdAt, meta, snapshot, configuration)
+	manifest, err := s.manifest(ctx, id, createdAt, meta, snapshot, configuration)
 	if err != nil {
 		return Result{}, err
 	}
 
-	// Paced sealing.
+	// Paced sealing. The archive key is derived once for the run: the
+	// sealing derives it, the check below reuses it (keys), and it is
+	// zeroed when the run ends.
+	keys := &backup.KeyCache{}
+	defer keys.Clear()
+	// Staged in the work directory until the check passes: the final name
+	// is only ever a checked archive.
+	staged := filepath.Join(work, id+".vltbak")
 	archive := filepath.Join(backups, id+".vltbak")
 	sealStart := time.Now()
-	if err := backup.Seal(archive, manifest, []string{snapshot, configuration}, bek, backup.SealOptions{Pace: s.pace(ctx, sealStart)}); err != nil {
+	if err := backup.Seal(staged, manifest, []string{snapshot, configuration}, bek, backup.SealOptions{Pace: s.pace(ctx, sealStart), Keys: keys}); err != nil {
 		var linked *backup.LinkedError
 		if !errors.As(err, &linked) {
 			return Result{}, fmt.Errorf("sealing the archive failed: %w", err)
@@ -290,21 +309,41 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	// The snapshot is not needed any more: free its room before the check.
 	_ = os.Remove(snapshot)
 
-	verification := s.verify(archive, bek, work)
-	record := backup.StatusRecord{
-		ArchiveID: id, InstallationID: meta.installationID, CreatedAt: createdAt, Release: buildinfo.Version,
-		RequiredKeyVersions: []int{meta.keyVersion}, Verification: &verification, Capture: &stats,
+	verification, err := s.verify(ctx, staged, bek, work, keys)
+	if testHooks.verified != nil {
+		testHooks.verified()
 	}
-	if err := backup.SaveStatus(s.dir, record); err != nil {
-		return Result{}, fmt.Errorf("the archive %s was written, but its status could not be recorded: %w", id, err)
+	// The publication boundary: a stop during the paced check, or after its
+	// last pacing step, leaves no archive (the work directory, which holds
+	// the staged one, is removed when the run returns).
+	if err == nil {
+		err = ctx.Err()
 	}
-	info, err := os.Stat(archive)
+	if err != nil {
+		return Result{}, fmt.Errorf("the archive's check was stopped: %w", err)
+	}
+	info, err := os.Stat(staged)
 	if err != nil {
 		return Result{}, err
 	}
 	res := Result{ArchiveID: id, Path: archive, Bytes: info.Size(), CreatedAt: createdAt, Verification: &verification, Capture: stats, Removed: []string{}, Snapshot: st}
 	if !verification.Integrity || !verification.Compatibility || !verification.KeyMatch {
+		// Not published: the staged archive goes with the work directory.
+		res.Path = ""
 		return res, fmt.Errorf("the archive %s failed its check (integrity %t, compatibility %t, Root KEK match %t)", id, verification.Integrity, verification.Compatibility, verification.KeyMatch)
+	}
+	if err := os.Rename(staged, archive); err != nil {
+		return Result{}, fmt.Errorf("the archive %s was checked, but could not be moved into place: %w", id, err)
+	}
+	if err := backup.SyncDir(backups); err != nil {
+		s.o.Log.Warn("backup: the archive was moved into place but its directory could not be synced", "archiveId", id, "error", err)
+	}
+	record := backup.StatusRecord{
+		ArchiveID: id, InstallationID: meta.installationID, CreatedAt: createdAt, Release: buildinfo.Version,
+		RequiredKeyVersions: []int{meta.keyVersion}, Verification: &verification, Capture: &stats,
+	}
+	if err := backup.SaveStatus(s.dir, record); err != nil {
+		return res, fmt.Errorf("the archive %s was written, but its status could not be recorded: %w", id, err)
 	}
 
 	if cfg.BackupDestinationsFile != "" {
@@ -324,6 +363,12 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 		return res, errors.New(res.UploadError)
 	}
 	return res, nil
+}
+
+// testHooks are set by tests only: verified runs when the archive's check
+// has returned, before the publication boundary.
+var testHooks struct {
+	verified func()
 }
 
 // bek reads the Backup Encryption Key, which must not be the Root KEK.
@@ -352,7 +397,8 @@ func (s *Service) bek() (backup.BEK, error) {
 	return bek, nil
 }
 
-// clean removes what a killed run left: its work directory and a partial
+// clean removes what a killed run left: its work directory (with an archive
+// staged there, sealed or being checked, never published) and a partial
 // archive, and a killed bucket test's directory when no bucket test runs.
 // Nothing else in the directory is touched.
 func (s *Service) clean(backups string) {
@@ -509,14 +555,14 @@ func writeConfiguration(path string, cfg *config.Config) error {
 	return os.WriteFile(path, b, 0o600)
 }
 
-func (s *Service) manifest(id, createdAt string, meta metadata, snapshot, configuration string) ([]byte, error) {
+func (s *Service) manifest(ctx context.Context, id, createdAt string, meta metadata, snapshot, configuration string) ([]byte, error) {
 	release, err := json.Marshal(backup.GoRelease{Version: buildinfo.Version, APIMajor: APIMajor, DatabaseSchema: meta.schemaVersion})
 	if err != nil {
 		return nil, err
 	}
 	var components []backup.Component
 	for _, c := range []struct{ name, path string }{{backup.ComponentDatabase, snapshot}, {backup.ComponentConfiguration, configuration}} {
-		d, err := backup.Describe(c.name, c.path)
+		d, err := backup.DescribeWith(c.name, c.path, s.pace(ctx, time.Now()))
 		if err != nil {
 			return nil, err
 		}
@@ -539,9 +585,14 @@ func Compatible(m backup.Manifest) bool {
 
 // verify opens the archive again (its integrity), and checks this release
 // restores it and the Root KEK opens its canaries.
-func (s *Service) verify(archive string, bek backup.BEK, scratch string) backup.Verification {
+func (s *Service) verify(ctx context.Context, archive string, bek backup.BEK, scratch string, keys *backup.KeyCache) (backup.Verification, error) {
 	v := backup.Verification{TargetRelease: buildinfo.Version}
-	o, err := backup.Open(archive, bek, scratch)
+	// Every check of an unpaced Open, paced like the sealing, with the key
+	// the sealing derived.
+	o, err := backup.OpenWith(archive, bek, scratch, backup.OpenOptions{Keys: keys, Pace: s.pace(ctx, time.Now())})
+	if err != nil && ctx.Err() != nil {
+		return v, ctx.Err()
+	}
 	if err != nil {
 		s.o.Log.Warn("backup: the archive does not open", "archive", archive, "error", err)
 	} else {
@@ -555,7 +606,7 @@ func (s *Service) verify(archive string, bek backup.BEK, scratch string) backup.
 		_ = o.Close()
 	}
 	v.CheckedAt = iso(s.o.Now())
-	return v
+	return v, nil
 }
 
 // client is the configured destination's client, with its write key.
