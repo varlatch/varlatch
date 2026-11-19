@@ -240,6 +240,9 @@ const err = (s) => new Promise((r) => process.stderr.write(s, r));
   await out("token=" + t.slice(0, 5)); await pause(40); await out(t.slice(5) + "\\n");
   await out("json=" + JSON.stringify({ t }).replace(/\\//g, "\\\\/") + "\\n");
   await out("pct=" + encodeURIComponent(t) + "\\n");
+  // stdout and stderr reach a shared terminal through two relays, in no
+  // set order: the stdout lines are relayed before stderr is written to.
+  await pause(150);
   await err("b64=" + Buffer.from(t).toString("base64") + "\\n");
   await out("legacy=" + e.LEGACY_KEY + " withheld=" + e.WITHHELD_KEY + "\\n");
   await err("unknown=" + e.UNKNOWN_TOKEN + " pin=" + e.PIN + " port=" + e.PORT + "\\n");
