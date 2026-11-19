@@ -3038,6 +3038,350 @@
       "error": ".env.schema line 2: Unrecognized line: lowercase=yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
       "line": 2,
       "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=\tone\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one\t\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one\t\t\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one\r \nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one\rtwo\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: Malformed decorator: @rotationHint=one\rtwo",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one \nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint= one\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: Malformed decorator: @rotationHint= one",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=\"one\t\"\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint(rotate it)\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint needs a value: @rotationHint=How to rotate it",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=\"\"\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint cannot be empty; leave it out instead",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one\ttwo\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=one‮two\nADMIN_KEY=\n",
+      "error": ".env.schema line 1: @rotationHint: a rotation hint is one paragraph: no tabs, line breaks, control or bidirectional formatting characters",
+      "line": 1,
+      "kind": "parse"
+    },
+    {
+      "source": "# @rotationHint=  Rotate it.  \nADMIN_KEY=\n",
+      "draft": {
+        "defaults": {
+          "sensitive": true,
+          "required": {
+            "kind": "never"
+          }
+        },
+        "items": [
+          {
+            "name": "ADMIN_KEY",
+            "required": null,
+            "sensitive": null,
+            "type": "string",
+            "rotationHint": "Rotate it."
+          }
+        ],
+        "environmentNames": []
+      },
+      "contract": {
+        "schemaVersion": 1,
+        "items": [
+          {
+            "name": "ADMIN_KEY",
+            "required": {
+              "kind": "never"
+            },
+            "sensitive": true,
+            "type": "string",
+            "rotationHint": "Rotate it."
+          }
+        ]
+      },
+      "canonical": "{\"items\":[{\"name\":\"ADMIN_KEY\",\"required\":{\"kind\":\"never\"},\"rotationHint\":\"Rotate it.\",\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:540db367b56c243e0a24324efd52e071c5947ecfa5873d89e27edf6fb7ece8f3"
+    },
+    {
+      "source": "# @rotationHint=' Rotate it. '\nADMIN_KEY=\n",
+      "draft": {
+        "defaults": {
+          "sensitive": true,
+          "required": {
+            "kind": "never"
+          }
+        },
+        "items": [
+          {
+            "name": "ADMIN_KEY",
+            "required": null,
+            "sensitive": null,
+            "type": "string",
+            "rotationHint": " Rotate it. "
+          }
+        ],
+        "environmentNames": []
+      },
+      "contract": {
+        "schemaVersion": 1,
+        "items": [
+          {
+            "name": "ADMIN_KEY",
+            "required": {
+              "kind": "never"
+            },
+            "sensitive": true,
+            "type": "string",
+            "rotationHint": " Rotate it. "
+          }
+        ]
+      },
+      "canonical": "{\"items\":[{\"name\":\"ADMIN_KEY\",\"required\":{\"kind\":\"never\"},\"rotationHint\":\" Rotate it. \",\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:9c15e9c7f452ba8ee96bfc8142be40ce05f9df56929dc82eb6d308a69b46fa4d"
+    },
+    {
+      "source": "# @rotationHint=Rotate it.\r\nADMIN_KEY=\r\n",
+      "draft": {
+        "defaults": {
+          "sensitive": true,
+          "required": {
+            "kind": "never"
+          }
+        },
+        "items": [
+          {
+            "name": "ADMIN_KEY",
+            "required": null,
+            "sensitive": null,
+            "type": "string",
+            "rotationHint": "Rotate it."
+          }
+        ],
+        "environmentNames": []
+      },
+      "contract": {
+        "schemaVersion": 1,
+        "items": [
+          {
+            "name": "ADMIN_KEY",
+            "required": {
+              "kind": "never"
+            },
+            "sensitive": true,
+            "type": "string",
+            "rotationHint": "Rotate it."
+          }
+        ]
+      },
+      "canonical": "{\"items\":[{\"name\":\"ADMIN_KEY\",\"required\":{\"kind\":\"never\"},\"rotationHint\":\"Rotate it.\",\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:540db367b56c243e0a24324efd52e071c5947ecfa5873d89e27edf6fb7ece8f3"
+    }
+  ],
+  "resolutions": [
+    {
+      "source": "# @required=env(staging)\nKEY=\n",
+      "environments": [
+        {
+          "id": "env_old",
+          "name": "staging",
+          "parentEnvironmentId": null
+        }
+      ],
+      "canonical": "{\"items\":[{\"name\":\"KEY\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"env_old\"],\"kind\":\"environments\"}},\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:fc54f5c0f39ad02645c40c4f77b1f471429a0f43051d58d1dddc4611ee312e31"
+    },
+    {
+      "source": "# @required=env(staging)\nKEY=\n",
+      "environments": [
+        {
+          "id": "env_new",
+          "name": "staging",
+          "parentEnvironmentId": null
+        }
+      ],
+      "canonical": "{\"items\":[{\"name\":\"KEY\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"env_new\"],\"kind\":\"environments\"}},\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:a77d77d6c154d7d8ee9e031a0044ea7e4ba0795c2c6c51e4f08a9b92cee4d10e"
+    },
+    {
+      "source": "# @defaultSensitive=false\n# @defaultRequired=false\n\n# Primary database connection string\n# @required\n# @sensitive\n# @type=url\nDATABASE_URL=\n\n# @type=number\nPORT=3000\n\n# @type=enum(debug, info, warn, error)\nLOG_LEVEL=info\n\n# @required=env(production)\n# @sensitive\n# @example=sk_test_000\nSTRIPE_SECRET_KEY=op(op://vault/stripe)\n\n# @required=tier(staging)\nSENTRY_DSN=\n",
+      "environments": [
+        {
+          "id": "env_dev",
+          "name": "development",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_staging",
+          "name": "staging",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_prod",
+          "name": "production",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_pr1",
+          "name": "pr-1",
+          "parentEnvironmentId": "env_dev"
+        },
+        {
+          "id": "env_other",
+          "name": "other",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_other2",
+          "name": "other",
+          "parentEnvironmentId": null
+        }
+      ],
+      "canonical": "{\"items\":[{\"description\":\"Primary database connection string\",\"name\":\"DATABASE_URL\",\"required\":{\"kind\":\"always\"},\"sensitive\":true,\"type\":\"url\"},{\"defaultValue\":\"info\",\"enumValues\":[\"debug\",\"error\",\"info\",\"warn\"],\"name\":\"LOG_LEVEL\",\"required\":{\"kind\":\"never\"},\"sensitive\":false,\"type\":\"enum\"},{\"defaultValue\":\"3000\",\"name\":\"PORT\",\"required\":{\"kind\":\"never\"},\"sensitive\":false,\"type\":\"number\"},{\"name\":\"SENTRY_DSN\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"staging\"}},\"sensitive\":false,\"type\":\"string\"},{\"example\":\"sk_test_000\",\"name\":\"STRIPE_SECRET_KEY\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"env_prod\"],\"kind\":\"environments\"}},\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:aa37e790537bff579561c4e6de26c11a6b8b50986582a8a88f085d63de3b2690"
+    },
+    {
+      "source": "# @defaultSensitive=false\n# @defaultRequired=false\n\n# Primary database connection string\n# @required\n# @sensitive\n# @type=url\nDATABASE_URL=\n\n# @type=number\nPORT=3000\n\n# @type=enum(debug, info, warn, error)\nLOG_LEVEL=info\n\n# @required=env(production)\n# @sensitive\n# @example=sk_test_000\nSTRIPE_SECRET_KEY=op(op://vault/stripe)\n\n# @required=tier(staging)\nSENTRY_DSN=\n",
+      "environments": [
+        {
+          "id": "env_other2",
+          "name": "other",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_other",
+          "name": "other",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_pr1",
+          "name": "pr-1",
+          "parentEnvironmentId": "env_dev"
+        },
+        {
+          "id": "env_prod",
+          "name": "production",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_staging",
+          "name": "staging",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_dev",
+          "name": "development",
+          "parentEnvironmentId": null
+        }
+      ],
+      "canonical": "{\"items\":[{\"description\":\"Primary database connection string\",\"name\":\"DATABASE_URL\",\"required\":{\"kind\":\"always\"},\"sensitive\":true,\"type\":\"url\"},{\"defaultValue\":\"info\",\"enumValues\":[\"debug\",\"error\",\"info\",\"warn\"],\"name\":\"LOG_LEVEL\",\"required\":{\"kind\":\"never\"},\"sensitive\":false,\"type\":\"enum\"},{\"defaultValue\":\"3000\",\"name\":\"PORT\",\"required\":{\"kind\":\"never\"},\"sensitive\":false,\"type\":\"number\"},{\"name\":\"SENTRY_DSN\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"staging\"}},\"sensitive\":false,\"type\":\"string\"},{\"example\":\"sk_test_000\",\"name\":\"STRIPE_SECRET_KEY\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"env_prod\"],\"kind\":\"environments\"}},\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:aa37e790537bff579561c4e6de26c11a6b8b50986582a8a88f085d63de3b2690"
+    },
+    {
+      "source": "# @required=tier(production)\nKEY=\n",
+      "environments": [],
+      "canonical": "{\"items\":[{\"name\":\"KEY\",\"required\":{\"kind\":\"selector\",\"selector\":{\"kind\":\"tier\",\"tier\":\"production\"}},\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:52e3c56b1df7a54e2dd322bc6d2b5d064ae137202ebdb81af31b930de18f37cd"
+    },
+    {
+      "source": "# @required=env(staging)\nKEY=\n",
+      "environments": [],
+      "error": "unknown environment name(s) in env(...): staging. This project's root environments: (none).",
+      "kind": "environments"
+    },
+    {
+      "source": "# @required=env(production, development)\nA=\n# @required=env(development)\nB=\n",
+      "environments": [
+        {
+          "id": "env_other2",
+          "name": "other",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_other",
+          "name": "other",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_pr1",
+          "name": "pr-1",
+          "parentEnvironmentId": "env_dev"
+        },
+        {
+          "id": "env_prod",
+          "name": "production",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_staging",
+          "name": "staging",
+          "parentEnvironmentId": null
+        },
+        {
+          "id": "env_dev",
+          "name": "development",
+          "parentEnvironmentId": null
+        }
+      ],
+      "canonical": "{\"items\":[{\"name\":\"A\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"env_dev\",\"env_prod\"],\"kind\":\"environments\"}},\"sensitive\":true,\"type\":\"string\"},{\"name\":\"B\",\"required\":{\"kind\":\"selector\",\"selector\":{\"environmentIds\":[\"env_dev\"],\"kind\":\"environments\"}},\"sensitive\":true,\"type\":\"string\"}],\"schemaVersion\":1}",
+      "hash": "sha256:d8bd99080d38c0bd21fd2c64e167009558ddbcd6d805d2ce52018d038c7aee70"
     }
   ],
   "push": [

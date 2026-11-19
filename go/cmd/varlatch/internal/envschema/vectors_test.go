@@ -208,3 +208,60 @@ func toObject(v any) any {
 	}
 	return v
 }
+
+// TestEnvSchemaResolutions: one draft against different Environment lists,
+// as the package's tests resolve it: a name reused by a new Environment
+// selects it (another hash), the list's order changes nothing, and a schema
+// naming no Environment needs none.
+func TestEnvSchemaResolutions(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/vectors/envschema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Resolutions []struct {
+			Source       string
+			Environments []struct {
+				ID, Name            string
+				ParentEnvironmentID *string `json:"parentEnvironmentId"`
+			}
+			Canonical, Hash string
+			Error           *string
+		}
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Resolutions) < 5 {
+		t.Fatalf("only %d resolutions", len(f.Resolutions))
+	}
+	hashes := map[string]bool{}
+	for _, v := range f.Resolutions {
+		var envs []Environment
+		for _, e := range v.Environments {
+			env := Environment{ID: e.ID, Name: e.Name, HasParent: e.ParentEnvironmentID != nil}
+			if e.ParentEnvironmentID != nil {
+				env.ParentID = *e.ParentEnvironmentID
+			}
+			envs = append(envs, env)
+		}
+		draft, err := Parse(v.Source)
+		if err != nil {
+			t.Fatalf("%q: %v", v.Source, err)
+		}
+		c, err := Resolve(draft, envs)
+		if v.Error != nil {
+			if err == nil || err.Error() != *v.Error {
+				t.Errorf("%q: got %v, want %q", v.Source, err, *v.Error)
+			}
+			continue
+		}
+		if err != nil || string(c.Bytes()) != v.Canonical || c.Hash() != v.Hash {
+			t.Errorf("%q against %d environments: got %s %s %v, want %s %s", v.Source, len(envs), c.Bytes(), c.Hash(), err, v.Canonical, v.Hash)
+		}
+		hashes[v.Hash] = true
+	}
+	if len(hashes) < 3 {
+		t.Errorf("the resolutions give only %d distinct revisions", len(hashes))
+	}
+}

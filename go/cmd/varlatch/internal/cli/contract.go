@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
@@ -53,7 +54,13 @@ func contractCommand(r *Run) error {
 		if _, err := c.ActivateContractRevision(context.Background(), ctx.Organization, ctx.Project, revision); err != nil {
 			return err
 		}
-		return r.println("Activated " + revision + ".")
+		// The id as given only when it has the server's shape: a refused or
+		// mistyped argument is not repeated (go/README.md, "No message holds a
+		// value").
+		if serverID("rev").MatchString(revision) {
+			return r.println("Activated " + revision + ".")
+		}
+		return r.println("Activated the revision.")
 	case len(r.Args) > 0 && sub == "show":
 		c, err := api.get()
 		if err != nil {
@@ -63,8 +70,14 @@ func contractCommand(r *Run) error {
 		if err != nil {
 			return err
 		}
-		// The revision as the server sent it, through the fail-safe.
-		return r.printValue(active)
+		// The revision as the server sent it, a sensitive item's default as
+		// [redacted], every string through the composed masker and the
+		// fail-safe.
+		// Its sensitive defaults are values: redacted wherever the document
+		// repeats them, too.
+		contractDoc, _ := jsval.Get(active, "contract")
+		r.holdSensitiveDefaults(contractDoc)
+		return r.printValue(r.maskShown(withoutSensitiveDefaults(active)))
 	}
 	return UsageError("Usage: varlatch contract <push|activate|show>")
 }
@@ -123,6 +136,9 @@ func (r *Run) contractPush(ctx *clientctx.Context, api *lazyClient) error {
 	default:
 		return UsageError(contractPushUsage)
 	}
+	// A sensitive item's default is a value: no output or diagnostic shows
+	// it, a server's echo of it included.
+	r.holdSensitiveDefaults(body)
 	if semantics, given := flagArg(r.Args, "--semantics"); given {
 		// An explicit pin; without one the server keeps the active revision's
 		// version (the newest for a project's first revision).
@@ -178,6 +194,10 @@ func (r *Run) contractPush(ctx *clientctx.Context, api *lazyClient) error {
 	}
 	hash, _ := jsval.Get(revision, "contentHash")
 	active, activeOK := jsval.Get(revision, "active")
+	if _, isBool := active.(bool); !isBool {
+		// Only the protocol's boolean: anything else is not "active".
+		active, activeOK = false, false
+	}
 	version, versionOK := jsval.Get(revision, "semanticsVersion")
 	// The server's identifiers, hash and version only of their shapes.
 	shownRev := idOrUnrecognized(id, idOK, "rev")
@@ -222,7 +242,92 @@ func (r *Run) contractPush(ctx *clientctx.Context, api *lazyClient) error {
 // ContractFileBody is the Contract `contract push --file` sends: the file
 // as readFileSync(path, "utf8") and JSON.parse read it.
 func ContractFileBody(b []byte) (any, error) {
-	return jsjson.Parse([]byte(jsval.DecodeUTF8(b)))
+	text := jsval.DecodeUTF8(b)
+	// readFileSync keeps a byte order mark, and JSON.parse refuses it.
+	if strings.HasPrefix(text, "\uFEFF") {
+		return nil, errors.New("a byte order mark is not JSON")
+	}
+	return jsjson.Parse([]byte(text))
+}
+
+// holdSensitiveDefaults registers the defaultValue of each item of the
+// Contract being pushed that is not marked sensitive: false as a value in
+// flight (Run.holdValue).
+func (r *Run) holdSensitiveDefaults(body any) {
+	items, _ := jsval.Get(body, "items")
+	list, _ := items.([]any)
+	for _, item := range list {
+		if sensitive, _ := jsval.Get(item, "sensitive"); sensitive == false {
+			continue
+		}
+		if v, ok := jsval.Get(item, "defaultValue"); ok {
+			if s, isString := v.(string); isString {
+				r.holdValue(s)
+			}
+		}
+	}
+}
+
+// withoutSensitiveDefaults is a Contract revision with the defaultValue of
+// each item not marked sensitive: false shown as [redacted]; the rest as
+// it is.
+func withoutSensitiveDefaults(revision any) any {
+	o, ok := revision.(jsjson.Object)
+	if !ok {
+		return revision
+	}
+	c, ok := o.Value("contract").(jsjson.Object)
+	if !ok {
+		return revision
+	}
+	items, ok := c.Value("items").([]any)
+	if !ok {
+		return revision
+	}
+	shown := make([]any, len(items))
+	for i, item := range items {
+		shown[i] = item
+		fields, isObject := item.(jsjson.Object)
+		if !isObject {
+			continue
+		}
+		if sensitive, _ := fields.Get("sensitive"); sensitive == false {
+			continue
+		}
+		if _, has := fields.Get("defaultValue"); has {
+			shown[i] = append(jsjson.Object(nil), fields...).Set("defaultValue", Redacted)
+		}
+	}
+	return append(jsjson.Object(nil), o...).Set("contract", append(jsjson.Object(nil), c...).Set("items", shown))
+}
+
+// ContractShowView is a Contract revision as `contract show` shows it:
+// each sensitive item's default as [redacted] (the transcripts' accepted
+// difference contract-show-sensitive-default).
+func ContractShowView(revision any) any { return withoutSensitiveDefaults(revision) }
+
+// maskShown is the composed masker over every string of a value a server
+// sent: what this run knows as secret (the bearer, VARLATCH_TOKEN, the
+// stored credentials, the values it sends) and every token format, before
+// printValue's fail-safe.
+func (r *Run) maskShown(v any) any {
+	switch x := v.(type) {
+	case string:
+		return r.Secrets.Mask(x)
+	case jsjson.Object:
+		out := make(jsjson.Object, len(x))
+		for i, m := range x {
+			out[i] = jsjson.Member{Key: m.Key, Value: r.maskShown(m.Value)}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = r.maskShown(e)
+		}
+		return out
+	}
+	return v
 }
 
 // rootEnvironments are the project's Environments as name resolution
@@ -246,16 +351,20 @@ func (r *Run) rootEnvironments(ctx *clientctx.Context, api *lazyClient) ([]envsc
 	}
 	out := make([]envschema.Environment, len(list))
 	for i, e := range list {
-		id, idOK, err := read(e, true, "id")
-		if err != nil {
-			return nil, err
+		// The protocol's types only (Environment: id and name strings, a
+		// parent id a string or null): anything else is refused before it
+		// could become an id in the Contract.
+		fields, isObject := e.(jsjson.Object)
+		id, idOK := fields.Get("id")
+		name, nameOK := fields.Get("name")
+		parent, parentOK := fields.Get("parentEnvironmentId")
+		idText, idIsString := id.(string)
+		nameText, nameIsString := name.(string)
+		parentText, parentIsString := parent.(string)
+		if !isObject || !idOK || !idIsString || !nameOK || !nameIsString || parentOK && parent != nil && !parentIsString {
+			return nil, Fail("varlatch: the server's list of environments has an unexpected shape (items["+strconv.Itoa(i)+"]); nothing was pushed", ExitFailure)
 		}
-		name, nameOK, _ := read(e, true, "name")
-		parent, parentOK := jsval.Get(e, "parentEnvironmentId")
-		out[i] = envschema.Environment{ID: jsTemplate(id, idOK), Name: jsTemplate(name, nameOK), HasParent: parentOK && parent != nil}
-		if parentOK && parent != nil {
-			out[i].ParentID = jsjson.String(parent)
-		}
+		out[i] = envschema.Environment{ID: idText, Name: nameText, HasParent: parentIsString, ParentID: parentText}
 	}
 	return out, nil
 }

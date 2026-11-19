@@ -2973,6 +2973,58 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
+        "repo/c.json": "﻿{\"schemaVersion\":1,\"items\":[]}"
+      },
+      "cwd": "repo",
+      "id": "push.file.bom",
+      "title": "a file that begins with a byte order mark: JSON.parse refuses it (TypeScript lets the SyntaxError escape)",
+      "args": [
+        "contract",
+        "push",
+        "--file",
+        "c.json"
+      ],
+      "differences": [
+        "user-agent",
+        "uncaught"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "{{uncaught SyntaxError: Unexpected token '﻿', \"﻿{\"schemaV\"... is not valid JSON}}\n",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/c.json": {
+            "mode": "0644",
+            "content": "﻿{\"schemaVersion\":1,\"items\":[]}"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
         "repo/c.json": "[1, 2]"
       },
       "cwd": "repo",
@@ -4613,7 +4665,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env.schema": "# @type=integer\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n"
+        "repo/.env.schema": "# @defaultSensitive=false\n\n# @type=integer\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n"
       },
       "cwd": "repo",
       "id": "push.schema.no-environments",
@@ -4711,7 +4763,7 @@
                     "required": {
                       "kind": "never"
                     },
-                    "sensitive": true,
+                    "sensitive": false,
                     "type": "enum",
                     "enumValues": [
                       "debug",
@@ -4724,7 +4776,7 @@
                     "required": {
                       "kind": "never"
                     },
-                    "sensitive": true,
+                    "sensitive": false,
                     "type": "integer",
                     "defaultValue": "4"
                   }
@@ -4756,7 +4808,7 @@
           },
           "repo/.env.schema": {
             "mode": "0644",
-            "content": "# @type=integer\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n"
+            "content": "# @defaultSensitive=false\n\n# @type=integer\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n"
           },
           "repo/varlatch.toml": {
             "mode": "0644",
@@ -5012,6 +5064,85 @@
     {
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
+        "repo/.env.schema": "# @required=env(production)\nA=\n"
+      },
+      "cwd": "repo",
+      "id": "push.schema.environments-shape",
+      "title": "an environment without an id: refused before the push (TypeScript lets the Contract's error escape)",
+      "args": [
+        "contract",
+        "push",
+        "--schema",
+        ".env.schema"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "production",
+                "parentEnvironmentId": null
+              }
+            ],
+            "nextCursor": null
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "uncaught"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "{{uncaught ContractValidationError: Invalid Configuration Contract: items.0.required.selector.environmentIds.0: Invalid input: expected string, received undefined}}\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env.schema": {
+            "mode": "0644",
+            "content": "# @required=env(production)\nA=\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
       },
       "cwd": "repo",
@@ -5059,7 +5190,7 @@
       "files": {
         "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n",
-        "repo/.env.schema": "# @type=number\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n",
+        "repo/.env.schema": "# @defaultSensitive=false\n\n# @type=number\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n",
         "repo/c.json": "{}"
       },
       "cwd": "repo",
@@ -5112,7 +5243,7 @@
                     "required": {
                       "kind": "never"
                     },
-                    "sensitive": true,
+                    "sensitive": false,
                     "type": "enum",
                     "enumValues": [
                       "debug",
@@ -5125,7 +5256,7 @@
                     "required": {
                       "kind": "never"
                     },
-                    "sensitive": true,
+                    "sensitive": false,
                     "type": "number",
                     "defaultValue": "4"
                   }
@@ -5157,7 +5288,7 @@
           },
           "repo/.env.schema": {
             "mode": "0644",
-            "content": "# @type=number\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n"
+            "content": "# @defaultSensitive=false\n\n# @type=number\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n"
           },
           "repo/c.json": {
             "mode": "0644",
@@ -5687,6 +5818,72 @@
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
       },
       "cwd": "repo",
+      "id": "activate.odd-id",
+      "title": "an id of another shape is not repeated (Go)",
+      "args": [
+        "contract",
+        "activate",
+        "rev-not-the-shape"
+      ],
+      "server": [
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/contract/revisions/rev-not-the-shape/activate",
+          "status": 200,
+          "answer": {}
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "unrecognized-id"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "Activated rev-not-the-shape.\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/contract/revisions/rev-not-the-shape/activate",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {}
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
       "id": "activate.missing",
       "title": "activate without an id",
       "args": [
@@ -5941,6 +6138,98 @@
       "expect": {
         "status": 0,
         "stdout": "{\n  \"id\": \"crv_active\",\n  \"contentHash\": \"sha256:aaaa\",\n  \"active\": true,\n  \"contract\": {\n    \"schemaVersion\": 1,\n    \"semanticsVersion\": 3,\n    \"items\": [\n      {\n        \"name\": \"API_KEY\",\n        \"required\": {\n          \"kind\": \"never\"\n        },\n        \"sensitive\": true,\n        \"type\": \"string\",\n        \"rotationHint\": \"Issue a new key at the provider, then revoke the old one.\"\n      },\n      {\n        \"name\": \"PORT\",\n        \"required\": {\n          \"kind\": \"never\"\n        },\n        \"sensitive\": false,\n        \"type\": \"integer\"\n      }\n    ]\n  }\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "show.sensitive-default",
+      "title": "a sensitive item's default is shown as [redacted] (Go)",
+      "args": [
+        "contract",
+        "show"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 200,
+          "answer": {
+            "id": "crv_active",
+            "contentHash": "sha256:aaaa",
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 3,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": true,
+                  "type": "string",
+                  "defaultValue": "s3cr3t-default"
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string",
+                  "defaultValue": "8080"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent",
+        "contract-show-sensitive-default"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"id\": \"crv_active\",\n  \"contentHash\": \"sha256:aaaa\",\n  \"active\": true,\n  \"contract\": {\n    \"schemaVersion\": 1,\n    \"semanticsVersion\": 3,\n    \"items\": [\n      {\n        \"name\": \"API_KEY\",\n        \"required\": {\n          \"kind\": \"never\"\n        },\n        \"sensitive\": true,\n        \"type\": \"string\",\n        \"defaultValue\": \"s3cr3t-default\"\n      },\n      {\n        \"name\": \"PORT\",\n        \"required\": {\n          \"kind\": \"never\"\n        },\n        \"sensitive\": false,\n        \"type\": \"string\",\n        \"defaultValue\": \"8080\"\n      }\n    ]\n  }\n}\n",
         "stderr": "",
         "requests": [
           {
