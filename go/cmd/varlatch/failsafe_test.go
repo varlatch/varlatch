@@ -58,8 +58,11 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		// Every exemption and site is a slash path: on Windows, WalkDir
+		// gives backslashes.
+		rel := slashed(path, filepath.Separator)
 		if d.IsDir() {
-			if path == "internal/transcript" || path == "testdata" {
+			if failSafeSkipsDir(rel) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -76,7 +79,7 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 				return nil // a generator, never part of the CLI
 			}
 		}
-		path = filepath.ToSlash(path)
+		path = rel
 		for _, imp := range f.Imports {
 			if p, _ := strconv.Unquote(imp.Path.Value); p == "log" {
 				t.Errorf("%s imports log", path)
@@ -198,4 +201,55 @@ func redacts(call *ast.CallExpr) bool {
 		})
 	}
 	return found
+}
+
+// slashed is path with sep, the platform's separator, written as "/", so
+// the fail-safe guard's exemptions and allow-listed sites match the same
+// files on every platform. A parameter rather than filepath.Separator, so a
+// test on Linux can give it Windows paths.
+func slashed(path string, sep byte) string {
+	if sep == '/' {
+		return path
+	}
+	return strings.ReplaceAll(path, string(sep), "/")
+}
+
+// failSafeSkipsDir reports whether the guard skips a directory (a slash
+// path): the test-only transcript replayer and the test data.
+func failSafeSkipsDir(rel string) bool {
+	return rel == "internal/transcript" || rel == "testdata"
+}
+
+// TestFailSafeGuardPathsOnWindows: with Windows separators, the guard skips
+// the same directories and names the same sites as with slashes (the
+// replayer was flagged on windows-latest because its exemption compared a
+// backslash path with a slash one).
+func TestFailSafeGuardPathsOnWindows(t *testing.T) {
+	for _, c := range []struct {
+		path string
+		want string
+		skip bool
+	}{
+		{`internal\transcript`, "internal/transcript", true},
+		{`testdata`, "testdata", true},
+		{`internal\cli`, "internal/cli", false},
+		{`internal\transcript\transcript.go`, "internal/transcript/transcript.go", false},
+		{`internal\cli\cli.go`, "internal/cli/cli.go", false},
+	} {
+		got := slashed(c.path, '\\')
+		if got != c.want {
+			t.Errorf("slashed(%q) = %q, want %q", c.path, got, c.want)
+		}
+		if failSafeSkipsDir(got) != c.skip {
+			t.Errorf("failSafeSkipsDir(%q) = %v, want %v", got, !c.skip, c.skip)
+		}
+	}
+	// The same paths with slashes are left as they are.
+	if got := slashed("internal/transcript", '/'); got != "internal/transcript" || !failSafeSkipsDir(got) {
+		t.Errorf("slashed on a slash platform changed %q to %q", "internal/transcript", got)
+	}
+	// An allow-listed site is named the same from a Windows path.
+	if site := slashed(`internal\cli\cli.go`, '\\') + ":finish"; site != "internal/cli/cli.go:finish" {
+		t.Errorf("site %q", site)
+	}
 }
