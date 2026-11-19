@@ -67,47 +67,117 @@ func TestLexShell(t *testing.T) {
 	}
 }
 
-// bestOf3 is the fastest of three runs of f, each after a garbage
-// collection: noise (a shared runner's pauses, another job's load) only
-// ever adds time, so the minimum is the closest to the work itself.
-func bestOf3(f func()) time.Duration {
-	var fastest time.Duration
-	for i := range 3 {
-		runtime.GC()
-		start := time.Now()
-		f()
-		if took := time.Since(start); i == 0 || took < fastest {
-			fastest = took
-		}
-	}
-	return fastest
+// growsLinearly is the timing tests' criterion: for an input eight times
+// as large, the time may grow at most 24-fold. Linear work grows about
+// eightfold and quadratic about 64-fold (on shared CI runners, which blur
+// the growth, about 38-fold), and 24 sits near their geometric middle, so
+// the limit separates them with room for noise on either side; it judges
+// growth only, never a machine's absolute speed. 20 ms of slack keeps a
+// shape that takes a few milliseconds from failing on jitter.
+func growsLinearly(small, large time.Duration) bool {
+	return large <= 24*small+20*time.Millisecond
 }
 
-// growsLinearly is the timing tests' criterion: for an input four times as
-// large, the time may grow at most tenfold. Linear work grows about
-// fourfold and quadratic about sixteenfold, so the limit separates them
-// with room for noise on either side; it judges growth only, never a
-// machine's absolute speed. 20 ms of slack keeps a shape that takes a few
-// milliseconds from failing on jitter.
-func growsLinearly(small, large time.Duration) bool {
-	return large <= 10*small+20*time.Millisecond
+// minSmall is how long the smaller size must take before growth is
+// judged, so that the 20 ms of slack never decides.
+const minSmall = 50 * time.Millisecond
+
+// timed is one run of f, after a garbage collection.
+func timed(f func()) time.Duration {
+	runtime.GC()
+	began := time.Now()
+	f()
+	return time.Since(began)
+}
+
+// interleaved times small and large three times each, alternately (small,
+// large, small, large, ...), each after a garbage collection, and gives the
+// fastest of each, after one untimed run of small: noise only ever adds
+// time, and a runner's CPU that is still cold or clocking up slows the
+// first runs, so neither size's runs all come before the other's.
+func interleaved(small, large func()) (time.Duration, time.Duration) {
+	small() // warm up
+	var s, l time.Duration
+	for i := range 3 {
+		ts := timed(small)
+		tl := timed(large)
+		if i == 0 || ts < s {
+			s = ts
+		}
+		if i == 0 || tl < l {
+			l = tl
+		}
+	}
+	return s, l
+}
+
+// growth sizes n and times run(n) and run(8n) by interleaved. n starts at
+// an eighth of startLarge and grows by half again until run(n) takes at
+// least minSmall, measured, or 8n would pass limitLarge (which the log
+// says): small
+// steps keep the larger run, which for quadratic work is 64 times the
+// smaller, from overshooting. The log gives the n chosen, each time, and
+// the time per operation (ops(n) of them; n when ops is nil) for each
+// size: equal for linear work, so a size measured slower per operation
+// shows a bias in the measurement.
+func growth(t *testing.T, name string, startLarge, limitLarge int, ops func(n int) float64, run func(n int) func()) (small, large time.Duration) {
+	t.Helper()
+	n := max(startLarge/8, 1)
+	capped := false
+	for {
+		next := n + max(n/2, 1)
+		capped = 8*next > limitLarge
+		if !capped {
+			f := run(n)
+			f() // warm up
+			if timed(f) < minSmall {
+				n = next
+				continue
+			}
+		}
+		small, large = interleaved(run(n), run(8*n))
+		// The measured smaller run decides: a single run before it can be
+		// slower than the work (a cold CPU).
+		if small >= minSmall || capped {
+			break
+		}
+		n = next
+	}
+	note := ""
+	if capped && small < minSmall {
+		note = " (at its size limit)"
+	}
+	if ops == nil {
+		ops = func(n int) float64 { return float64(n) }
+	}
+	perOp := func(d time.Duration, n int) float64 { return float64(d.Nanoseconds()) / ops(n) }
+	t.Logf("%s: n=%d %v (%.3g ns/op), n=%d %v (%.3g ns/op): %.1fx%s",
+		name, n, small, perOp(small, n), 8*n, large, perOp(large, 8*n), float64(large)/float64(small), note)
+	return small, large
 }
 
 // TestTheLinearityCriterion: linear growth with noise passes
 // growsLinearly, quadratic growth fails it, and so does a deliberately
 // quadratic implementation timed the way TestHookLinearTime times the
-// hook.
+// hook. The figures are measured (a busy 2026 workstation; eight times the
+// input): the linear shapes of TestHookLinearTime grew 4.9 to 13.4 times,
+// the quadratic merge 77 to 91 times. CI's runners blur quadratic growth:
+// on Windows the merge grew 10.0 times for four times the input (110 ms to
+// 1.10 s), about 32 times for eight at that rate.
 func TestTheLinearityCriterion(t *testing.T) {
 	ms := time.Millisecond
 	for _, c := range []struct {
 		small, large time.Duration
 		linear       bool
 	}{
-		{630 * ms, 4190 * ms, true},
-		{200 * ms, 900 * ms, true},
-		{1060 * ms, 3310 * ms, true},
-		{250 * ms, 4000 * ms, false},
-		{1000 * ms, 16000 * ms, false},
+		{84 * ms, 883 * ms, true},   // keys, 10.5x
+		{54 * ms, 720 * ms, true},   // a walk past a long --exclude-dir, 13.4x
+		{105 * ms, 762 * ms, true},  // nesting, 7.2x
+		{100 * ms, 2400 * ms, true}, // 24x, the limit
+		{100 * ms, 2500 * ms, false},
+		{110 * ms, 3480 * ms, false}, // Windows CI's quadratic rate, 32x
+		{96 * ms, 7398 * ms, false},  // the quadratic merge, 77x
+		{85 * ms, 7695 * ms, false},  // 91x
 	} {
 		if growsLinearly(c.small, c.large) != c.linear {
 			t.Errorf("%v then %v: judged linear %v", c.small, c.large, !c.linear)
@@ -130,11 +200,9 @@ func TestTheLinearityCriterion(t *testing.T) {
 			}
 		}
 	}
-	// Large enough that its growth, not the 20 ms slack, decides (the race
-	// detector only makes it slower, which helps).
-	n := 10_000
-	small, large := bestOf3(quadratic(n)), bestOf3(quadratic(4*n))
-	t.Logf("a quadratic merge: %d items %v, %d items %v (%.1fx)", n, small, 4*n, large, float64(large)/float64(small))
+	// Sized until its smaller run takes minSmall, so its growth, not the
+	// 20 ms slack, decides; the larger run is capped at 320,000 items.
+	small, large := growth(t, "a quadratic merge", 40_000, 320_000, func(n int) float64 { return float64(n) * float64(n-1) / 2 }, quadratic)
 	if growsLinearly(small, large) {
 		t.Errorf("a quadratic merge (%v then %v) was judged linear", small, large)
 	}
@@ -143,12 +211,12 @@ func TestTheLinearityCriterion(t *testing.T) {
 // TestHookLinearTime: the hook reads a long word in every shape, an
 // object with many keys, a deeply nested event and a search past a long
 // filter in time linear in the input, by growsLinearly: each size timed as
-// the best of three runs (bestOf3), the largest 1.6 MB. No absolute time
-// bound: a slow runner is not a failure. Every run still decides: `cat
-// .env` after a long word is denied, and so is a search past a long
-// filter. Globs are compiled afresh in each run, as each run of the hook
-// is a process of its own. Under the race detector the inputs are a
-// quarter the size.
+// the fastest of three, interleaved with the other size's after a warm-up
+// run (growth), the smaller sized until it takes minSmall, the larger
+// eight times its size. No absolute time bound: a slow runner is not a
+// failure. Every run still decides: `cat .env` after a long word is
+// denied, and so is a search past a long filter. Globs are compiled afresh
+// in each run, as each run of the hook is a process of its own.
 func TestHookLinearTime(t *testing.T) {
 	env := envMap{"HOME": "/home/dev", "XDG_CONFIG_HOME": "/home/dev/.xdg"}
 	event := func(command, padding string) string {
@@ -180,32 +248,28 @@ func TestHookLinearTime(t *testing.T) {
 	}
 	a := func(n int) string { return strings.Repeat("a", n) }
 	cases := []struct {
-		name  string
-		event func(n int) string // an event whose size grows with n
-		unit  int                // n for the smaller size
+		name       string
+		event      func(n int) string // an event whose size grows with n
+		start, max int                // the larger size to start from, and its limit
 	}{
-		{"plain word", func(n int) string { return event("cat "+a(n)+" .env", "") }, 400 * 1024},
-		{"single-quoted word", func(n int) string { return event("cat '"+a(n)+"' .env", "") }, 400 * 1024},
-		{"double-quoted word", func(n int) string { return event(`cat "`+a(n)+`" .env`, "") }, 400 * 1024},
-		{"escaped word", func(n int) string { return event("cat "+strings.Repeat(`\a`, n/2)+" .env", "") }, 400 * 1024},
-		{"non-ASCII word", func(n int) string { return event("cat "+strings.Repeat("é", n/2)+" .env", "") }, 400 * 1024},
-		{"option cluster", func(n int) string { return event("grep -"+a(n)+" x .env", "") }, 400 * 1024},
-		{"glob", func(n int) string { return event("cat "+a(n)+"* .env", "") }, 400 * 1024},
-		{"dot-leading glob", func(n int) string { return event("cat ."+a(n)+"* .env", "") }, 400 * 1024},
-		{"keys", func(n int) string { return event("cat .env", keys(n)) }, 50_000},
-		{"keys at the top", func(n int) string { return `{` + keys(n) + event("cat .env", "")[1:] }, 50_000},
+		{"plain word", func(n int) string { return event("cat "+a(n)+" .env", "") }, 1600 * 1024, 32 << 20},
+		{"single-quoted word", func(n int) string { return event("cat '"+a(n)+"' .env", "") }, 1600 * 1024, 32 << 20},
+		{"double-quoted word", func(n int) string { return event(`cat "`+a(n)+`" .env`, "") }, 1600 * 1024, 32 << 20},
+		{"escaped word", func(n int) string { return event("cat "+strings.Repeat(`\a`, n/2)+" .env", "") }, 1600 * 1024, 32 << 20},
+		{"non-ASCII word", func(n int) string { return event("cat "+strings.Repeat("é", n/2)+" .env", "") }, 1600 * 1024, 32 << 20},
+		{"option cluster", func(n int) string { return event("grep -"+a(n)+" x .env", "") }, 1600 * 1024, 32 << 20},
+		{"glob", func(n int) string { return event("cat "+a(n)+"* .env", "") }, 1600 * 1024, 32 << 20},
+		{"dot-leading glob", func(n int) string { return event("cat ."+a(n)+"* .env", "") }, 1600 * 1024, 32 << 20},
+		{"keys", func(n int) string { return event("cat .env", keys(n)) }, 200_000, 4 << 20},
+		{"keys at the top", func(n int) string { return `{` + keys(n) + event("cat .env", "")[1:] }, 200_000, 4 << 20},
 		{"nesting", func(n int) string {
 			return event("cat .env", `"p":`+strings.Repeat("[", n)+strings.Repeat("]", n)+`,`)
-		}, 25_000},
-		{"walk, long --exclude-dir", func(n int) string { return walk("--exclude-dir=." + a(n) + "*") }, 400 * 1024},
-		{"walk, long --exclude", func(n int) string { return walk("--exclude=." + a(n) + "*") }, 400 * 1024},
-		{"walk, long --include", func(n int) string { return walk("--include=." + a(n) + "* --include=.env*") }, 400 * 1024},
+		}, 100_000, 4 << 20},
+		{"walk, long --exclude-dir", func(n int) string { return walk("--exclude-dir=." + a(n) + "*") }, 1600 * 1024, 32 << 20},
+		{"walk, long --exclude", func(n int) string { return walk("--exclude=." + a(n) + "*") }, 1600 * 1024, 32 << 20},
+		{"walk, long --include", func(n int) string { return walk("--include=." + a(n) + "* --include=.env*") }, 1600 * 1024, 32 << 20},
 	}
 	for _, c := range cases {
-		unit := c.unit
-		if raceSlowdown > 1 {
-			unit /= 4
-		}
 		run := func(n int) func() {
 			e := c.event(n)
 			return func() {
@@ -218,11 +282,9 @@ func TestHookLinearTime(t *testing.T) {
 				}
 			}
 		}
-		run(unit / 4)() // warm up
-		small, large := bestOf3(run(unit)), bestOf3(run(4*unit))
-		t.Logf("%s: %v, then %v at four times the size (%.1fx)", c.name, small, large, float64(large)/float64(small))
+		small, large := growth(t, c.name, c.start, c.max, nil, run)
 		if !growsLinearly(small, large) {
-			t.Errorf("%s: %v, then %v at four times the size: not linear", c.name, small, large)
+			t.Errorf("%s: %v, then %v at eight times the size: not linear", c.name, small, large)
 		}
 	}
 }
