@@ -5,6 +5,34 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## 0.22.3 (2026-11-19)
+
+A security release for the web image. Nothing else changes.
+
+### Web
+
+- **nginx 1.31.9.** The `varlatch-web` image moves from `nginx:1.29-alpine`
+  to `nginx:1.31.9-alpine`, which fixes the nginx2root vulnerabilities
+  disclosed on 2026-11-18. The 1.29 line gets no fix. The image's
+  `/convex/` location uses `resolver` with a variable `proxy_pass`, which is
+  the setup CVE-2026-123634 (a use-after-free in nginx's DNS resolver)
+  needs. Any installation that serves the web image is affected, whatever
+  proxy sits in front of it.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The server: move the `varlatch-web` image to 0.22.3. Upgrade the
+  other images too, so every image runs the same version. To move an
+  installation to 0.22.3, follow the 0.22.1 notes below with the 0.22.3
+  CLI and version.
+- The CLI: unchanged apart from its version.
+
+Backups: archives of 0.22.2 and earlier still restore into this release.
+
 ## 0.22.2 (2026-11-17)
 
 A CLI release: security hardening of agent file installation and of
