@@ -479,8 +479,16 @@ func tailnetCommand(r *Run) error {
 			target, targetOK, _ := get(req, "target")
 			selector, selectorOK, _ := get(req, "selector")
 			// JSON.stringify of each, every string in it through the fail-safe first.
-			shownTarget := Printable(stringifyOr(RedactValue(target, r.inFlight...), targetOK))
-			shownSelector := Printable(stringifyOr(RedactValue(selector, r.inFlight...), selectorOK))
+			redactedTarget, err := RedactValue(target, r.inFlight...)
+			if err != nil {
+				return err
+			}
+			redactedSelector, err := RedactValue(selector, r.inFlight...)
+			if err != nil {
+				return err
+			}
+			shownTarget := Printable(stringifyOr(redactedTarget, targetOK))
+			shownSelector := Printable(stringifyOr(redactedSelector, selectorOK))
 			if err := r.println(text(id, idOK) + "  " + shownTarget + "  " + shownSelector); err != nil {
 				return err
 			}

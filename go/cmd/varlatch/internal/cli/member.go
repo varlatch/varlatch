@@ -494,7 +494,11 @@ func withKind(kind string, head jsjson.Object, rest any) jsjson.Object {
 // outJSONLine is console.log(JSON.stringify(doc)): one NDJSON record, every
 // string through the fail-safe (RedactValue).
 func (r *Run) outJSONLine(doc jsjson.Object) error {
-	return r.println(string(jsjson.Stringify(RedactValue(doc, r.inFlight...))))
+	redacted, err := RedactValue(doc, r.inFlight...)
+	if err != nil {
+		return err
+	}
+	return r.println(string(jsjson.Stringify(redacted)))
 }
 
 var wayWords = map[string]string{

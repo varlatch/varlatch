@@ -11,3 +11,7 @@ apps/cli/skill/** text eol=lf
 # signed release files): never converted.
 go/cmd/varlatch/testdata/** -text
 go/lib/**/testdata/** -text
+# The Typed Accessor runtimes the Go CLI's `types` embeds: byte-exact
+# copies of what the TypeScript CLI embeds in every generated module, never
+# converted.
+go/cmd/varlatch/internal/typegen/embedded/** -text

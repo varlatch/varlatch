@@ -79,6 +79,17 @@ on:
       - "scripts/conformance/client-go.json"
       # Line ends on checkout (the Windows jobs).
       - ".gitattributes"
+      # The Typed Accessor runtimes the Go CLI's `types` embeds
+      # (go/cmd/varlatch/internal/typegen/embedded/, from these packages'
+      # build scripts): "Generated code is current" fails on a stale copy.
+      - "packages/accessor/src/**"
+      - "packages/accessor/scripts/**"
+      - "packages/accessor/package.json"
+      - "packages/accessor-python/src/**"
+      - "packages/accessor-python/scripts/**"
+      - "packages/accessor-python/package.json"
+      # The esbuild that bundles the accessor runtime is pinned in
+      # pnpm-lock.yaml (below).
       # CONFORMANCE_PATTERNS: what the conformance cells build and read.
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -168,6 +179,13 @@ jobs:
             apps/cli/src/agents/skillFiles.generated.ts
             scripts/conformance/client-go.json
             .gitattributes
+            packages/accessor/src/*
+            packages/accessor/scripts/*
+            packages/accessor/package.json
+            packages/accessor-python/src/*
+            packages/accessor-python/scripts/*
+            packages/accessor-python/package.json
+            pnpm-lock.yaml
           # The Go CLI (internal docs/design/go-cli.md, decision 14): its
           # code, the shared libraries it may use, every file its tests read
           # from outside go/ (the skill files and the TypeScript CLI's copy of
@@ -328,7 +346,12 @@ jobs:
       #     packages/protocol/openapi.yaml by oapi-codegen; ci.yml checks the
       #     TypeScript types generated from the same document;
       #   - the typed queries (go/server/db/query/), from
-      #     go/server/db/schema.sql and queries/ by sqlc.
+      #     go/server/db/schema.sql and queries/ by sqlc;
+      #   - the Typed Accessor runtimes the CLI's `types` embeds
+      #     (go/cmd/varlatch/internal/typegen/embedded/), built by
+      #     packages/accessor's and packages/accessor-python's own scripts
+      #     (esbuild pinned in the lockfile) through embed-runtimes.mjs, so
+      #     the Go CLI's modules keep the TypeScript CLI's bytes.
       # A stale or hand-edited file fails here; `go generate ./...` in go/
       # repairs it. go generate ./server/web also builds the dashboard into
       # go/server/web/dist/, which is not committed (so not compared) and

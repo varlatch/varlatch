@@ -3142,24 +3142,36 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the application starts under --export-context"
     },
     "client-runtime.types-accessor-returns-typed-values-number": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the accessor returns typed values (number, boolean, enum)"
     },
     "client-runtime.types-accessor-reads-exported-context-same": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the accessor reads the exported context of the same revision, without warnings"
     },
     "client-runtime.types-application-output-holds-no-secret": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the application's output holds no Secret"
     },
     "client-runtime.types-python-module-generated-active-revision": {
@@ -3178,12 +3190,18 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-python",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types (Python): the module reads the exported context of the same revision, with typed values and no warnings"
     },
     "client-runtime.types-python-output-holds-no-secret": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-python",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types (Python): the application's output holds no Secret"
     },
     "client-runtime.types-check-fails-once-changed-contract": {
@@ -3196,6 +3214,9 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the old module warns that its types are stale for this run"
     },
     "client-runtime.types-regenerating-makes-check-pass-again": {
@@ -3214,6 +3235,9 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the regenerated module reads the run without warnings"
     },
     "client-runtime.types-required-secret-withheld-server-one": {
@@ -3221,18 +3245,27 @@
       "kind": "conformance",
       "group": "service-identities",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: a required Secret withheld by the server is one ConfigError issue"
     },
     "client-runtime.types-invalid-values-throw-one-configerror": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: invalid values throw one ConfigError listing every item"
     },
     "client-runtime.types-error-names-items-reasons-never": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the error names items and reasons, never a value"
     },
     "client-runtime.scan-nothing-staged-scan-reads-nothing": {
@@ -3308,28 +3341,12 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "group": "audit-export",
-      "title": "the audit export holds no value",
-      "cliNeeds": [
-        "run",
-        "run-export-context",
-        "run-redact",
-        "scan",
-        "types-python",
-        "types-typescript"
-      ]
+      "title": "the audit export holds no value"
     },
     "client-runtime.varlatchd-logs-hold-no-value": {
       "suite": "client-runtime",
       "kind": "conformance",
-      "title": "varlatchd logs hold no value",
-      "cliNeeds": [
-        "run",
-        "run-export-context",
-        "run-redact",
-        "scan",
-        "types-python",
-        "types-typescript"
-      ]
+      "title": "varlatchd logs hold no value"
     },
     "strict-run.valid-configuration-starts-child": {
       "suite": "strict-run",
