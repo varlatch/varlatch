@@ -488,7 +488,7 @@ type redactedJSON struct{ document string }
 // applied, the values in flight included: keys are left alone (they come
 // from the API's schema and the CLI's own documents), so no two keys are
 // ever made the same.
-func redactJSON(doc jsjson.Object, values ...string) redactedJSON {
+func redactJSON(doc any, values ...string) redactedJSON {
 	return redactedJSON{document: string(jsjson.StringifyIndent(RedactValue(doc, values...), 2))}
 }
 

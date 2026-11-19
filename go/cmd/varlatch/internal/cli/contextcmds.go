@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -66,8 +67,18 @@ func (r *Run) resolveArgs(cwd string, args []string) (*clientctx.Context, error)
 // then straight to stdout (outJSON): keys are left alone, never redacted
 // or made the same. Every --json document goes through it;
 // TestEveryWriteGoesThroughTheFailSafe fails on any other way to stdout.
-func (r *Run) printJSON(doc jsjson.Object) error {
+func (r *Run) printJSON(doc any) error {
 	return r.outJSON(redactJSON(doc, r.inFlight...))
+}
+
+// printValue writes JSON.stringify(v, null, 2) of any value a server sent
+// (console.log of undefined for none), every string through the fail-safe
+// first (RedactValue): `contract show`.
+func (r *Run) printValue(v any) error {
+	if v == apiclient.Undefined {
+		return r.println("undefined")
+	}
+	return r.printJSON(v)
 }
 
 // statusSchemaVersion is status.ts's STATUS_SCHEMA_VERSION, the version of

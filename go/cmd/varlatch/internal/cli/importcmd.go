@@ -895,8 +895,11 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 		isActive, activeOK, _ := read(revision, true, "active")
 		// The server's identifiers and hash only when they have its shapes.
 		shownRev := idOrUnrecognized(id, idOK, "rev")
+		if r.holdsValue(shownRev) {
+			shownRev = UnrecognizedID // redaction would rewrite it: not shown
+		}
 		shownHash := UnrecognizedHash
-		if h, ok := hash.(string); ok && contentHash.MatchString(h) {
+		if h, ok := hash.(string); ok && contentHash.MatchString(h) && !r.holdsValue(h) {
 			shownHash = h
 		}
 		p := jsjson.Object{{Key: "id", Value: shownRev}, {Key: "contentHash", Value: shownHash}}

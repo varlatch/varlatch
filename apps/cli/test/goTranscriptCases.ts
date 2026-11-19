@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
 import { EMBEDDED_RELEASE } from "@varlatch/backup";
 import { agentsBlock } from "../src/agents/install.js";
 import { skillFiles } from "../src/agents/skill.js";
@@ -1094,6 +1095,95 @@ const values53a: TranscriptCase[] = [
   v({ id: "import.usage.replace-missing-value", title: "--replace needs a value", args: ["import", ".env", "--replace"] }),
 ];
 
+
+// ---- 5.3b: Contracts ---------------------------------------------------------
+//
+// contract push, activate and show against the fake server, in the 5.3a
+// repository. Every valid Contract of lib/contract's normalization vectors
+// is pushed with --file, so Go sends the same revision TypeScript does.
+
+const NORMALIZE_VECTORS = (JSON.parse(readFileSync(new URL("../../../go/lib/contract/testdata/ts-vectors.json", import.meta.url), "utf8")) as {
+  normalize: { name: string; input: string; canonical?: string }[];
+}).normalize.filter((n) => n.canonical !== undefined);
+const REVISIONS = `${CONTRACT_PATH}/revisions`;
+const META_PATH = "/v1/meta";
+const ENVS = "/v1/organizations/acme/projects/web/environments";
+const pushed = (extra: Record<string, unknown> = {}): Exchange => ({ method: "POST", path: REVISIONS, status: 201, answer: { id: sid("rev", "pushed"), contentHash: HASH, active: false, semanticsVersion: 3, ...extra } });
+const meta = (semanticsVersions: unknown = [1, 2, 3]): Exchange => ok(META_PATH, { serverVersion: "0.22.0", apiMajor: 1, capabilities: [], semanticsVersions });
+const NO_ACTIVE = denied(CONTRACT_PATH, "GET", 404, "NOT_FOUND");
+const usesInteger = (input: string): boolean => /"type":\s*"integer"/.test(input);
+const ENV_LIST = ok(ENVS, { items: [
+  { id: sid("env", "dev"), name: "development", parentEnvironmentId: null },
+  { id: sid("env", "prod"), name: "production", parentEnvironmentId: null },
+  { id: sid("env", "preview"), name: "pr-1", parentEnvironmentId: sid("env", "dev") },
+], nextCursor: null });
+const SCHEMA_FULL = "# @defaultSensitive=false\n\n# Primary database connection string\n# @required\n# @sensitive\n# @type=url\nDATABASE_URL=\n\n# @type=number\nPORT=3000\n\n# @required=env(production)\n# @sensitive\nSTRIPE_SECRET_KEY=op(op://vault/stripe)\n\n# @required=tier(staging)\n# @rotationGrace=3600\n# @rotationHint=Issue a new DSN, then revoke the old one.\nSENTRY_DSN=\n";
+const SCHEMA_PLAIN = "# @defaultSensitive=false\n\n# @type=integer\nWORKERS=4\n\n# @type=enum(debug, info)\nLOG_LEVEL=info\n";
+const ITEMS_INTEGER = `${JSON.stringify({ schemaVersion: 1, items: [{ name: "WORKERS", required: { kind: "never" }, sensitive: false, type: "integer" }] })}\n`;
+const withSchema = (text: string, name = ".env.schema") => ({ ...SIGNED_IN, [`repo/${name}`]: text });
+const SCHEMA_VALUE_FREE = ["env-schema-value-free"];
+
+const contracts53b: TranscriptCase[] = [
+  // contract push --file: every vector Contract
+  ...NORMALIZE_VECTORS.map((n, i): TranscriptCase => v({
+    id: `push.file.${i}`,
+    title: `--file: the normalization vector "${n.name}" is sent as the file holds it`,
+    args: ["contract", "push", "--file", "c.json"],
+    files: { ...SIGNED_IN, "repo/c.json": n.input },
+    server: usesInteger(n.input) ? [meta(), NO_ACTIVE, pushed()] : [pushed()],
+  })),
+  v({ id: "push.file.json", title: "--json: the revision's id, hash, state and version", args: ["contract", "push", "--file", "c.json", "--json"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [pushed({ extra: "not shown" })] }),
+  v({ id: "push.file.active", title: "an active revision: no activation hint", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [pushed({ active: true })] }),
+  v({ id: "push.file.no-version", title: "an answer without a semantics version", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [pushed({ semanticsVersion: undefined })] }),
+  v({ id: "push.file.missing", title: "no such file", args: ["contract", "push", "--file", "nosuch.json"] }),
+  v({ id: "push.file.not-json", title: "a file that is not JSON (TypeScript lets the SyntaxError escape)", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": "{ nope" }, differences: ["uncaught"] }),
+  v({ id: "push.file.bom", title: "a file that begins with a byte order mark: JSON.parse refuses it (TypeScript lets the SyntaxError escape)", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": `\uFEFF${NORMALIZE_VECTORS[0]?.input ?? "{}"}` }, differences: ["uncaught"] }),
+  v({ id: "push.file.array", title: "a Contract that is not an object is sent as it is; the server refuses it", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": "[1, 2]" }, server: [{ method: "POST", path: REVISIONS, status: 400, answer: apiError(400, "VALIDATION_FAILED", "Invalid Configuration Contract") }] }),
+  // --semantics
+  v({ id: "push.semantics.latest", title: "--semantics latest pins the server's newest version", args: ["contract", "push", "--file", "c.json", "--semantics", "latest"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [meta(), pushed()] }),
+  v({ id: "push.semantics.number", title: "--semantics 2", args: ["contract", "push", "--file", "c.json", "--semantics", "2"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [meta(), pushed({ semanticsVersion: 2 })] }),
+  v({ id: "push.semantics.unknown", title: "--semantics the server does not evaluate: a usage error naming its versions", args: ["contract", "push", "--file", "c.json", "--semantics", "9"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [meta()] }),
+  v({ id: "push.semantics.not-a-number", title: "--semantics that is not a number", args: ["contract", "push", "--file", "c.json", "--semantics", "two"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [meta()] }),
+  v({ id: "push.semantics.old-server", title: "a server without semantics versions", args: ["contract", "push", "--file", "c.json", "--semantics", "latest"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [ok(META_PATH, { serverVersion: "0.10.0", apiMajor: 1, capabilities: [] })] }),
+  // the version check (ADR-0042)
+  v({ id: "push.integer.first", title: "an integer item, no active revision: the newest version suffices", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": ITEMS_INTEGER }, server: [meta(), NO_ACTIVE, pushed()] }),
+  v({ id: "push.integer.active-v2", title: "an integer item, the active revision at version 2: refused before the push", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": ITEMS_INTEGER }, server: [meta(), contractAnswer({ ...ACTIVE, semanticsVersion: 2 })] }),
+  v({ id: "push.integer.pinned-v2", title: "an integer item with --semantics 2: refused", args: ["contract", "push", "--file", "c.json", "--semantics", "2"], files: { ...SIGNED_IN, "repo/c.json": ITEMS_INTEGER }, server: [meta(), meta(), NO_ACTIVE] }),
+  v({ id: "push.integer.active-v3", title: "an integer item, the active revision at version 3: pushed", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": ITEMS_INTEGER }, server: [meta(), contractAnswer({ ...ACTIVE, semanticsVersion: 3 }), pushed()] }),
+  v({ id: "push.integer.pinned-v3", title: "an integer item, --semantics 3 over an active version 1: pushed", args: ["contract", "push", "--file", "c.json", "--semantics", "3"], files: { ...SIGNED_IN, "repo/c.json": ITEMS_INTEGER }, server: [meta(), meta(), contractAnswer({ ...ACTIVE, semanticsVersion: 1 }), pushed()] }),
+  v({ id: "push.integer.old-server", title: "an integer item on a server without version 3", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": ITEMS_INTEGER }, server: [meta([1, 2]), NO_ACTIVE] }),
+  v({ id: "push.integer.active-denied", title: "the active revision unreadable (403): the error", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": ITEMS_INTEGER }, server: [meta(), denied(CONTRACT_PATH)] }),
+  // --schema
+  v({ id: "push.schema", title: "--schema: parsed, env(...) resolved to root ids, pushed with its provenance", args: ["contract", "push", "--schema", ".env.schema"], files: withSchema(SCHEMA_FULL), server: [ENV_LIST, pushed()] }),
+  v({ id: "push.schema.no-environments", title: "a schema naming no environment needs no environment list", args: ["contract", "push", "--schema", ".env.schema", "--json"], files: withSchema(SCHEMA_PLAIN), server: [meta(), NO_ACTIVE, pushed()] }),
+  v({ id: "push.schema.unknown-environment", title: "an unknown and a derived name fail loudly, listing the roots", args: ["contract", "push", "--schema", ".env.schema"], files: withSchema("# @required=env(nosuch, pr-1)\nA=\n"), server: [ENV_LIST] }),
+  v({ id: "push.schema.parse-error", title: "a decorator twice: the line and the reason", args: ["contract", "push", "--schema", ".env.schema"], files: withSchema("# @rotationGrace=1\n# @rotationGrace=2\nA=\n") , differences: SCHEMA_VALUE_FREE}),
+  v({ id: "push.schema.unrecognized-line", title: "a line that is not an item: the Go CLI does not quote it", args: ["contract", "push", "--schema", ".env.schema"], files: withSchema("api_key=s3cr3t-schema-value\n"), differences: SCHEMA_VALUE_FREE }),
+  v({ id: "push.schema.text-after-value", title: "text after a quoted value: not quoted (Go)", args: ["contract", "push", "--schema", ".env.schema"], files: withSchema("A='it\\'s-s3cr3t'\n"), differences: SCHEMA_VALUE_FREE }),
+  v({ id: "push.schema.environments-shape", title: "an environment without an id: refused before the push (TypeScript lets the Contract's error escape)", args: ["contract", "push", "--schema", ".env.schema"], files: withSchema("# @required=env(production)\nA=\n"), server: [ok(ENVS, { items: [{ name: "production", parentEnvironmentId: null }], nextCursor: null })], differences: ["uncaught"] }),
+  v({ id: "push.schema.missing", title: "no such file", args: ["contract", "push", "--schema", "nosuch.schema"] }),
+  v({ id: "push.schema.over-file", title: "--schema wins over --file", args: ["contract", "push", "--file", "c.json", "--schema", ".env.schema"], files: { ...withSchema(SCHEMA_PLAIN.replace("integer", "number")), "repo/c.json": "{}" }, server: [pushed()] }),
+  v({ id: "push.schema.empty-flag", title: "an empty --schema is none: --file is read", args: ["contract", "push", "--schema", "", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": NORMALIZE_VECTORS[0]?.input ?? "{}" }, server: [pushed()] }),
+  // the command line and the server
+  v({ id: "push.usage", title: "neither --schema nor --file", args: ["contract", "push"] }),
+  v({ id: "push.usage.last", title: "--file as the last argument has no value", args: ["contract", "push", "--file"] }),
+  v({ id: "push.not-signed-in", title: "no credential: 77", args: ["contract", "push", "--file", "c.json"], files: { ...NOT_SIGNED_IN, "repo/c.json": "{}" } }),
+  v({ id: "push.denied", title: "a refused push", args: ["contract", "push", "--file", "c.json"], files: { ...SIGNED_IN, "repo/c.json": "{}" }, server: [{ method: "POST", path: REVISIONS, status: 403, answer: apiError(403, "PERMISSION_DENIED") }] }),
+  v({ id: "push.outside", title: "outside a repository: the context error first", args: ["contract", "push", "--file", "c.json"], cwd: "." }),
+  v({ id: "push.environment", title: "-e changes nothing a push sends", args: ["contract", "push", "--file", "c.json", "-e", "prod"], files: { ...SIGNED_IN, "repo/c.json": "{}" }, server: [pushed()] }),
+  v({ id: "activate", title: "activate a revision", args: ["contract", "activate", sid("rev", "pushed")], server: [{ method: "POST", path: `${REVISIONS}/${sid("rev", "pushed")}/activate`, status: 200, answer: { ...ACTIVE, id: sid("rev", "pushed") } }] }),
+  v({ id: "activate.odd-id", title: "an id of another shape is not repeated (Go)", args: ["contract", "activate", "rev-not-the-shape"], server: [{ method: "POST", path: `${REVISIONS}/rev-not-the-shape/activate`, status: 200, answer: {} }], differences: ["unrecognized-id"] }),
+  v({ id: "activate.missing", title: "activate without an id", args: ["contract", "activate"] }),
+  v({ id: "activate.unknown", title: "an unknown revision: the server's 404", args: ["contract", "activate", "rev_nosuch"], server: [denied(`${REVISIONS}/rev_nosuch/activate`, "POST", 404, "NOT_FOUND")] }),
+  v({ id: "show", title: "show prints the active revision as the server sent it", args: ["contract", "show"], server: [contractAnswer()] }),
+  v({ id: "show.server", title: "--server names the server", args: ["contract", "show", "--server", "{{server}}"], server: [contractAnswer()] }),
+  v({ id: "show.sensitive-default", title: "a sensitive item's default is shown as [redacted] (Go)", args: ["contract", "show"], server: [contractAnswer({ ...ACTIVE, contract: { ...ACTIVE.contract, items: [item("API_KEY", { defaultValue: "s3cr3t-default" }), item("PORT", { sensitive: false, defaultValue: "8080" })] } })], differences: ["contract-show-sensitive-default"] }),
+  v({ id: "show.none", title: "no active Contract: the server's 404", args: ["contract", "show"], server: [NO_ACTIVE] }),
+  v({ id: "show.not-signed-in", title: "show without a credential", args: ["contract", "show"], files: NOT_SIGNED_IN }),
+  v({ id: "contract.none", title: "contract without a subcommand", args: ["contract"] }),
+  v({ id: "contract.unknown", title: "an unknown subcommand", args: ["contract", "list"] }),
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
@@ -1102,4 +1192,5 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1e-session": session51e,
   "5.2-sign-in": signIn52,
   "5.3a-values": values53a,
+  "5.3b-contracts": contracts53b,
 };

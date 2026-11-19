@@ -287,6 +287,9 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 		if err != nil {
 			return err
 		}
+		if shown != UnrecognizedID && r.holdsValue(shown) {
+			shown = UnrecognizedID // redaction would rewrite it: not shown
+		}
 		return r.println(item + " set (version " + shown + ")" + how + ".")
 	}
 	var graceSeconds *float64
@@ -305,6 +308,9 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	shown, err := shownID(primary, pOK, "ver")
 	if err != nil {
 		return err
+	}
+	if shown != UnrecognizedID && r.holdsValue(shown) {
+		shown = UnrecognizedID // redaction would rewrite it: not shown
 	}
 	deadline, _, _ := read(rot, true, "rotationDeadline")
 	if err := r.println(item + " rotating" + how + " — new primary " + shown + ", previous value valid until " + templateTime(deadline) +
