@@ -15,6 +15,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/envschema"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/secretinput"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/transcript"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
@@ -230,6 +231,25 @@ var differences = map[string]transcript.Difference{
 			return
 		}
 	},
+	// The .env.schema parser never quotes the file in an error (a file given
+	// as --schema by mistake may be a .env holding values; go/README.md, "No
+	// message holds a value"): the package repeats part of the line it cannot
+	// read. And a reason holding a decorator ("@rotationGrace") is put
+	// before the line's place, so the fail-safe never reads the colon and the
+	// at-sign as a password. Accepted only where Go's stderr is the
+	// recording as envschema.GoWording words it, and holds no part of a
+	// quoted fragment.
+	"env-schema-value-free": func(o *transcript.Outcome, got transcript.Outcome) {
+		first, rest, _ := strings.Cut(o.Stderr, "\n")
+		accepted := envschema.GoWording(first) + "\n" + rest
+		if q := schemaFragment.FindStringSubmatch(o.Stderr); q != nil && strings.Contains(got.Stderr, strings.TrimSpace(q[2])) {
+			return // the quoted fragment must be gone
+		}
+		if got.Stderr == accepted {
+			o.Stderr = accepted
+		}
+	},
+
 	// A server's identifier that does not have the server's shape (a
 	// prefix and 26 characters of lower-case base32) is shown as "an
 	// unrecognized id" (go/README.md, "No message holds a value").
@@ -239,8 +259,31 @@ var differences = map[string]transcript.Difference{
 				o.Stdout = accepted
 			}
 		}
+		// `contract activate` repeats only an id of the server's shape.
+		if recordedActivation.MatchString(o.Stdout) && got.Stdout == "Activated the revision.\n" {
+			o.Stdout = got.Stdout
+		}
+	},
+	// `contract show` shows a sensitive item's default as [redacted]
+	// (go/README.md, "No message holds a value"). Accepted only where Go's
+	// stdout is the recorded document with exactly those defaults replaced.
+	"contract-show-sensitive-default": func(o *transcript.Outcome, got transcript.Outcome) {
+		doc, err := jsjson.Parse([]byte(o.Stdout))
+		if err != nil {
+			return
+		}
+		if accepted := string(jsjson.StringifyIndent(cli.ContractShowView(doc), 2)) + "\n"; accepted == got.Stdout {
+			o.Stdout = accepted
+		}
 	},
 }
+
+// schemaFragment is a packages/env-schema error that quotes the file: the
+// message and the quoted fragment.
+var schemaFragment = regexp.MustCompile(`(?s)^(\.env\.schema line [0-9]+: (?:Unrecognized line|Unexpected text after the value|Malformed decorator|Unsupported @required form|Unsupported @sensitive form|Unsupported @type)): (.*)\n$`)
+
+// recordedActivation is a recorded `contract activate` success.
+var recordedActivation = regexp.MustCompile(`^Activated .+\.\n$`)
 
 // recordedVersion is the version a recorded `values set` names.
 var recordedVersion = regexp.MustCompile(` set \(version (.*)\)\.\n$`)

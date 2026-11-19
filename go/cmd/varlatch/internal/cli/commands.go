@@ -35,7 +35,7 @@ var commands = []command{
 	{name: "request", slice: "5.5b"},
 	{name: "import", slice: "5.3a", run: importCommand},
 	{name: "sync", slice: "5.8b"},
-	{name: "contract", slice: "5.3b"},
+	{name: "contract", slice: "5.3b", run: contractCommand},
 	{name: "types", slice: "5.3c"},
 	{name: "invite", slice: "5.7a"},
 	{name: "tailnet", slice: "5.7a"},

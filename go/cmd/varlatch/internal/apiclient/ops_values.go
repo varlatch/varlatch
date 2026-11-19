@@ -69,3 +69,8 @@ func (c *Client) GetActiveContract(ctx context.Context, org, project string) (an
 func (c *Client) PushContractRevision(ctx context.Context, org, project string, body jsjson.Object) (any, error) {
 	return c.Request(ctx, "POST", projectPath(org, project)+"/contract/revisions", body, nil)
 }
+
+// ActivateContractRevision is POST .../contract/revisions/<id>/activate with {}.
+func (c *Client) ActivateContractRevision(ctx context.Context, org, project, revisionID string) (any, error) {
+	return c.Request(ctx, "POST", projectPath(org, project)+"/contract/revisions/"+EncodeURIComponent(revisionID)+"/activate", jsjson.Object{}, nil)
+}
