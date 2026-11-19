@@ -84,9 +84,19 @@ var differences = map[string]transcript.Difference{
 			for k, v := range o.Requests[i].Headers {
 				headers[k] = v
 			}
-			headers["user-agent"] = cli.FormatUserAgent(buildinfo.Version, m[1] != "", cli.NodePlatform(), cli.NodeArch())
+			headers["user-agent"] = cli.FormatUserAgent(buildinfo.Version, m[2] != "", cli.NodePlatform(), cli.NodeArch())
+			if m[1] == "mcp" {
+				// `varlatch mcp`'s own (run.ts's mcpUserAgent), which has no assisted token.
+				headers["user-agent"] = cli.FormatMCPUserAgent(buildinfo.Version, cli.NodePlatform(), cli.NodeArch())
+			}
 			o.Requests[i].Headers = headers
 		}
+	},
+	// `varlatch mcp` reports its own version to the MCP host (initialize's
+	// serverInfo): the recording's TypeScript version becomes this build's,
+	// as the User-Agent's does.
+	"mcp-version": func(o *transcript.Outcome, _ transcript.Outcome) {
+		o.Stdout = mcpServerInfo.ReplaceAllString(o.Stdout, `${1}"`+buildinfo.Version+`"`)
 	},
 	// The skill files `agents install` writes name the CLI that wrote them
 	// (SKILL.md's metadata, each reference's first line): the recording's
@@ -430,14 +440,18 @@ var serverDisplayFixtures = []struct {
 	{`"server": "not a url",`, `"server": "%[1]s",`, []string{"not a url"}},
 	{`"detail": "Failed to parse URL from not a url/v1/meta"`, `"detail": "Failed to parse URL from %[1]s"`, []string{"not a url/v1/meta"}},
 	{"for https://x.example/p q. Commit", "for %[1]s. Commit", []string{"https://x.example/p q"}},
+	{"not authenticated to http://[redacted]@127.0.0.1:9;", "not authenticated to %[1]s;", []string{"http://user:pw-canary@127.0.0.1:9"}},
 	{"login: varlatch.example.com is not a URL", "login: %[1]s is not a URL", []string{"varlatch.example.com"}},
 }
 
 // verbatimTOMLLine is a line init writes, `key = "<value as given>"`.
 var verbatimTOMLLine = regexp.MustCompile(`^([a-z_]+) = "(.*)"$`)
 
+// mcpServerInfo is the serverInfo an MCP initialize answer names.
+var mcpServerInfo = regexp.MustCompile(`("serverInfo":\{"name":"varlatch","version":)"[^"]*"`)
+
 // recordedUserAgent is the TypeScript CLI's User-Agent in a recording.
-var recordedUserAgent = regexp.MustCompile(`^varlatch-cli/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
+var recordedUserAgent = regexp.MustCompile(`^varlatch-(cli|mcp)/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
 
 // loopbackNonce is the Go callback's random path in a printed sign-in
 // address, the port already a pattern.
