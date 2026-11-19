@@ -1417,6 +1417,52 @@ const run54b: TranscriptCase[] = [
   v({ id: "override.short-other", title: "another short Secret still stops the run", args: ["run", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM, { name: "PIN2", sensitive: true, source: "self", value: null }])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }, { name: "PIN2", value: "5678" }]), CONTRACT_NONE] }),
 ];
 
+// ---- 5.4e: scan --find-files --------------------------------------------------
+//
+// Files that look like copies of secrets, by name, each with whether Git
+// ignores it: 1 when one is found, 2 when none is but the search was
+// incomplete, 0 otherwise; every failure is 1, as for all of scan. The
+// repositories are written file by file (a transcript makes no links and
+// runs no git init); trees with links, modes and unusual repositories are in
+// the find-files vectors (go/cmd/varlatch/testdata/vectors/findfiles.json).
+
+const FF = (...rest: string[]) => ["scan", "--find-files", ...rest];
+const gitRepo = (at: string, ignore?: string): Record<string, string> => ({
+  [`${at}/.git/HEAD`]: "ref: refs/heads/main\n",
+  [`${at}/.git/config`]: "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+  [`${at}/.git/objects/.keep`]: "",
+  [`${at}/.git/refs/.keep`]: "",
+  ...(ignore === undefined ? {} : { [`${at}/.gitignore`]: ignore }),
+});
+const COPIES = { ...gitRepo("repo", ".env\n"), "repo/.env": "A=1\n", "repo/.env.local": "B=2\n", "repo/keys/id.key": "k\n", "repo/.env.example": "A=\n", "loose/server.pem": "p\n" };
+const DEEP = { [`deep/${"d/".repeat(21)}notes.md`]: "x\n" };
+
+const findFiles54e: TranscriptCase[] = [
+  { id: "found", title: "copies found: each with its Git state, and what to do; 1", args: FF("."), files: COPIES },
+  { id: "found.json", title: "the same with --json", args: FF(".", "--json"), files: COPIES },
+  { id: "found.repo", title: "searching the repository alone", args: FF("repo"), files: COPIES },
+  { id: "found.cwd", title: "no directory: the working directory", args: FF(), files: COPIES, cwd: "repo" },
+  { id: "clean", title: "nothing that looks like a copy: 0", args: FF("."), files: { "src/app.ts": "x\n", ".env.example": "A=\n" } },
+  { id: "clean.json", title: "the same with --json", args: ["scan", "--json", "--find-files", "."], files: { "src/app.ts": "x\n" } },
+  { id: "incomplete", title: "nothing found, but a directory was below the depth bound: 2", args: FF("deep"), files: DEEP },
+  { id: "incomplete.json", title: "the same with --json", args: FF("deep", "--json"), files: DEEP },
+  { id: "found-and-incomplete", title: "a copy found and a directory not searched: 1", args: FF("."), files: { ...DEEP, ".env": "A=1\n" } },
+  { id: "global-config", title: "GIT_CONFIG_GLOBAL names the global configuration, and its core.excludesFile", args: FF("repo"), files: { ...COPIES, "g/config": "[core]\n\texcludesFile = ~/my-ignore\n", "home/my-ignore": "*.key\n" }, env: { GIT_CONFIG_GLOBAL: "{{dir}}/g/config" } },
+  { id: "global-config.include", title: "a global configuration that includes another: every state unknown", args: FF("repo"), files: { ...COPIES, "g/config": "[include]\n\tpath = other\n" }, env: { GIT_CONFIG_GLOBAL: "{{dir}}/g/config" } },
+  { id: "xdg", title: "XDG_CONFIG_HOME: git/ignore there is the default excludes file", args: FF("repo"), files: { ...COPIES, "xdg/git/ignore": "*.key\n" }, env: { XDG_CONFIG_HOME: "{{dir}}/xdg" } },
+  { id: "home-gitconfig", title: "~/.gitconfig's core.excludesFile", args: FF("repo"), files: { ...COPIES, "home/.gitconfig": "[core]\n\texcludesFile = ~/ign\n", "home/ign": ".env.local\n" } },
+  { id: "unusual", title: "an include in the repository's configuration: unknown, with why", args: FF("repo"), files: { ...COPIES, "repo/.git/config": "[include]\n\tpath = x\n" } },
+  { id: "missing", title: "a directory that does not exist: 1", args: FF("nope") },
+  { id: "not-a-directory", title: "a file, not a directory: 1", args: FF("notes.md"), files: { "notes.md": "x\n" } },
+  { id: "usage.two", title: "two directories: 1, with the usage", args: FF("a", "b") },
+  { id: "usage.staged", title: "--find-files with --staged", args: FF("--staged") },
+  { id: "usage.environment", title: "--find-files with -e", args: FF("-e", "dev") },
+  { id: "usage.unknown", title: "an unknown option", args: FF("--bogus") },
+  { id: "usage.needs-value", title: "-e without its value", args: ["scan", "-e", "--find-files"] },
+  { id: "usage.size", title: "a size that is no size, before the find-files rule", args: FF("--max-file-size", "lots") },
+  { id: "after-dashes", title: "after --, a directory named --find-files... is a path", args: ["scan", "--find-files", "--", "-odd"], files: { "-odd/.env": "A=1\n" } },
+];
+
 // ---- 5.6a: the guardrail hook ---------------------------------------------------
 //
 // `agents hook --format <agent>` as a coding agent runs it: one pre-tool-use
@@ -1457,5 +1503,6 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.3b-contracts": contracts53b,
   "5.3c-types": types53c,
   "5.4b-run": run54b,
+  "5.4e-find-files": findFiles54e,
   "5.6a-hook": hook56a,
 };
