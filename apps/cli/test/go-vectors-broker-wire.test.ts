@@ -104,6 +104,11 @@ function cases(): Case[] {
     { name: "connect.then-tunnels", raw: `CONNECT api.example.com:443 HTTP/1.1\r\nHost: x\r\n${A}\r\n\r\n` },
     { name: "expect.continue", raw: `POST ${T} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nExpect: 100-continue\r\n${A}\r\n\r\n` },
     { name: "expect.other", raw: `POST ${T} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nExpect: something\r\n${A}\r\n\r\n` },
+    { name: "expect.continue-no-auth", raw: `POST http://${CLOSED}/ HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n` },
+    { name: "expect.other-no-auth", raw: `POST ${T} HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nExpect: something\r\n\r\n` },
+    { name: "size.cl-16-digits", raw: `POST http://${CLOSED}/ HTTP/1.1\r\nHost: x\r\nContent-Length: 1234567890123456\r\n${A}\r\n\r\n` },
+    { name: "size.cl-20-digits", raw: `POST http://${CLOSED}/ HTTP/1.1\r\nHost: x\r\nContent-Length: 18446744073709551615\r\n${A}\r\n\r\n` },
+    { name: "size.cl-overflow", raw: `POST http://${CLOSED}/ HTTP/1.1\r\nHost: x\r\nContent-Length: 18446744073709551616\r\n${A}\r\n\r\n` },
   ];
 }
 

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,7 +24,8 @@ import (
 // that is not a token or a space before its colon, a header value with a
 // control character (CR, LF and NUL included; a tab and bytes above 0x7f
 // are kept), Content-Length with Transfer-Encoding, a repeated
-// Content-Length (even an equal one), a Content-Length that is not digits,
+// Content-Length (even an equal one), a Content-Length that is not digits
+// or past 64 bits,
 // a Transfer-Encoding that is not exactly "chunked", a method Node.js does
 // not know, an HTTP/1.1 request without Host. Stricter than Node.js
 // (go/README.md): a version other than HTTP/1.1 or HTTP/1.0, a request
@@ -240,10 +242,17 @@ func readHead(r *bufio.Reader) (*head, error) {
 		}
 		h.framing = "chunked"
 	case len(lengths) == 1:
-		if lengths[0] == "" || strings.Trim(lengths[0], "0123456789") != "" || len(lengths[0]) > 15 {
+		// Digits only, of any length a 64-bit length holds, as Node.js
+		// reads it (a larger one is refused); over the body's bound is the
+		// request handler's 413.
+		if lengths[0] == "" || strings.Trim(lengths[0], "0123456789") != "" {
 			return nil, errBadRequest
 		}
-		h.length, _ = strconv.ParseInt(lengths[0], 10, 64)
+		n, err := strconv.ParseUint(lengths[0], 10, 64)
+		if err != nil {
+			return nil, errBadRequest
+		}
+		h.length = int64(min(n, math.MaxInt64))
 		h.framing = "length"
 	}
 	if !host && !h.http10() && h.method != "CONNECT" {

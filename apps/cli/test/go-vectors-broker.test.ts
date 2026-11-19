@@ -149,6 +149,10 @@ function scenarios(): Scenario[] {
     { name: "cover.retiring", exercise: { retiring: { API_KEY: OLD } }, request: get(), upstream: [{ write: ok([], `old ${OLD} new ${SECRET}`) }, { end: true }] },
     { name: "cover.short", values: { API_KEY: "short" }, request: get(), upstream: [{ write: ok([], "a short value") }, { end: true }] },
     { name: "cover.upgrade", request: get("Connection: Upgrade\r\nUpgrade: websocket\r\n"), upstream: [{ write: "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n" }, { pause: 300 }, { end: true }] },
+    { name: "upstream.bare-cr-reason", request: get(), upstream: [{ write: `HTTP/1.1 200 O\rK\r\nContent-Length: 2\r\n\r\nok` }, { end: true }] },
+    { name: "upstream.bare-cr-reason-pass", request: `GET https://127.0.0.1:{{port}}/v1/plain HTTP/1.1\r\nHost: x\r\n{{auth}}\r\n\r\n`, upstream: [{ write: `HTTP/1.1 200 O\rK\r\nContent-Length: 2\r\n\r\nok` }, { end: true }] },
+    { name: "pass.upgrade", request: `GET https://127.0.0.1:{{port}}/ws HTTP/1.1\r\nHost: x\r\n{{auth}}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`, upstream: [{ write: "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n" }, { pause: 300 }, { end: true }] },
+    { name: "pass.upstream-close", request: `GET https://127.0.0.1:{{port}}/v1/plain HTTP/1.1\r\nHost: x\r\n{{auth}}\r\n\r\n`, upstream: [{ write: ok(["Content-Length: 5", "Connection: close"], "plain") }, { end: true }] },
     { name: "cover.marker-stripped", request: get(), upstream: [{ write: `HTTP/1.1 200 OK\r\nvarlatch-broker: refused\r\nContent-Length: 2\r\n\r\nok` }, { end: true }] },
   ];
   // The Content-Length of an Agent body is filled in by length.

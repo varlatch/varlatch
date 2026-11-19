@@ -486,7 +486,16 @@ func TestBrokerScenarios(t *testing.T) {
 			}
 
 			// At the Agent.
-			if wa := field(want, "agent"); wa != nil {
+			wa := field(want, "agent")
+			if name == "pass.upgrade" {
+				// TypeScript answers nothing (step 5 defect 43); Go refuses
+				// the switch (go/README.md).
+				wa = jsjson.Object{{Key: "status", Value: float64(502)}, {Key: "reason", Value: "Bad Gateway"},
+					{Key: "headers", Value: []any{[]any{"content-type", "text/plain"}, []any{"varlatch-broker", "refused"}}},
+					{Key: "bodyB64", Value: base64.StdEncoding.EncodeToString([]byte("varlatch-broker: the destination switched protocols; the Broker relays HTTP only\n"))},
+					{Key: "complete", Value: true}}
+			}
+			if wa != nil {
 				method, _, _ := strings.Cut(request, " ")
 				r, ok := parseAgent(got, method)
 				if !ok {

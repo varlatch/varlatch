@@ -103,3 +103,47 @@ func TestWrongCredentialReachesNothing(t *testing.T) {
 func noExercise(context.Context, string, int, []Placement) (Exercised, error) {
 	return Exercised{}, nil
 }
+
+// TestPortZeroDialsTheSchemesPort: a URL naming port 0 is checked against
+// the scheme's port, and the Broker connects to that port, as broker.ts
+// does; the Host header keeps the URL's authority.
+func TestPortZeroDialsTheSchemesPort(t *testing.T) {
+	for _, c := range []struct{ url, dial string }{
+		{"http://127.0.0.1:0/x", "127.0.0.1:80"},
+		{"https://api.example.com:0/x", "api.example.com:443"},
+		{"https://[::1]:0/x", "[::1]:443"},
+		{"https://api.example.com/x", "api.example.com:443"},
+	} {
+		b, err := Start(Options{Destinations: []string{"127.0.0.1:80"}, Exercise: noExercise})
+		if err != nil {
+			t.Fatal(err)
+		}
+		basic := base64.StdEncoding.EncodeToString([]byte("vlt:" + b.Token))
+		var dialled string
+		b.b.transport.DialContext = func(_ context.Context, _, addr string) (net.Conn, error) {
+			dialled = addr
+			return nil, io.EOF
+		}
+		b.b.transport.DialTLSContext = b.b.transport.DialContext
+		wireSend(t, b.Port, []byte("GET "+c.url+" HTTP/1.1\r\nHost: x\r\nProxy-Authorization: Basic "+basic+"\r\n\r\n"))
+		b.Close()
+		if dialled != c.dial {
+			t.Errorf("%s: dialled %q, want %q", c.url, dialled, c.dial)
+		}
+	}
+}
+
+// TestLimitsKeepTheirDefaults: a partial override changes only the bounds
+// it gives, as {...SCRUB_LIMITS, ...limits} does.
+func TestLimitsKeepTheirDefaults(t *testing.T) {
+	b, err := Start(Options{Limits: Limits{MaxDecodedBytes: 10}, Exercise: noExercise})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	want := DefaultLimits
+	want.MaxDecodedBytes = 10
+	if b.b.opts.Limits != want {
+		t.Fatalf("%+v, want %+v", b.b.opts.Limits, want)
+	}
+}

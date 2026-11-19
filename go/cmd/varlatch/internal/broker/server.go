@@ -136,8 +136,15 @@ func Start(opts Options) (*Running, error) {
 	if opts.Report == nil {
 		opts.Report = func(Event) {}
 	}
-	if opts.Limits == (Limits{}) {
-		opts.Limits = DefaultLimits
+	// Each bound not given is the default's, as {...SCRUB_LIMITS, ...limits}.
+	if opts.Limits.MaxDecodedBytes == 0 {
+		opts.Limits.MaxDecodedBytes = DefaultLimits.MaxDecodedBytes
+	}
+	if opts.Limits.IdleMillis == 0 {
+		opts.Limits.IdleMillis = DefaultLimits.IdleMillis
+	}
+	if opts.Limits.BufferedBytes == 0 {
+		opts.Limits.BufferedBytes = DefaultLimits.BufferedBytes
 	}
 	targets := map[string][]Target{}
 	for item, list := range opts.Targets {
@@ -348,20 +355,21 @@ func isMaintenance(err error) bool {
 
 // handle is handleRequest for one request; false ends the connection.
 func (b *broker) handle(conn net.Conn, r *bufio.Reader, w *bufio.Writer, h *head) bool {
-	if !b.checkProxyAuth(h) {
-		_ = nodeReply(w, h.http10(), 407, []Pair{{"Proxy-Authenticate", "Basic"}, {"Connection", "close"}, {ReplyHeader, "refused"}}, "")
-		return false
-	}
-	if expect, ok := h.first("expect"); ok {
+	// Expect is answered before anything else, as Node.js's server does for
+	// HTTP/1.1: a 100 invites a body that is read only once the credential
+	// is checked.
+	if expect, ok := h.first("expect"); ok && !h.http10() {
 		if !strings.EqualFold(strings.TrimSpace(expect), "100-continue") {
 			// As Node.js answers it: the connection stays open when the
 			// request has no body left to read.
 			_, _ = conn.Write([]byte("HTTP/1.1 417 Expectation Failed\r\nDate: " + nodeDate() + "\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"))
 			return h.framing == "none" || h.framing == "length" && h.length == 0
 		}
-		if !h.http10() {
-			_, _ = conn.Write([]byte("HTTP/1.1 100 Continue\r\n\r\n"))
-		}
+		_, _ = conn.Write([]byte("HTTP/1.1 100 Continue\r\n\r\n"))
+	}
+	if !b.checkProxyAuth(h) {
+		_ = nodeReply(w, h.http10(), 407, []Pair{{"Proxy-Authenticate", "Basic"}, {"Connection", "close"}, {ReplyHeader, "refused"}}, "")
+		return false
 	}
 	if h.target == TunnelsPath {
 		if h.method != "GET" {
@@ -434,7 +442,7 @@ func (b *broker) handle(conn net.Conn, r *bufio.Reader, w *bufio.Writer, h *head
 		}
 	}
 	_, hadLength := h.first("content-length")
-	out := forwardTo{b: b, conn: conn, w: w, h: h, target: target, host: hostname, path: path}
+	out := forwardTo{b: b, conn: conn, w: w, h: h, target: target, host: hostname, dial: hostname + ":" + jsjson.Number(port), path: path}
 
 	// Traffic to other destinations passes through unchanged, Placeholders inert.
 	if !allowed {
@@ -582,14 +590,17 @@ type forwardTo struct {
 	h      *head
 	target whatwg.URL
 	host   string
-	path   string
+	// dial is the authority the Broker connects to: the URL's host and the
+	// port the allowance was checked against (its scheme's for none or 0).
+	dial string
+	path string
 }
 
 // request is the upstream request: headers in order as JavaScript strings
 // (one character per byte; a character above U+00FF cannot be sent, as
 // Node.js refuses it), Content-Length from the body sent.
 func (f forwardTo) request(ctx context.Context, r Request, hadLength bool) (*http.Request, error) {
-	u := &url.URL{Scheme: strings.TrimSuffix(f.target.Protocol, ":"), Host: f.target.Host, Opaque: f.path}
+	u := &url.URL{Scheme: strings.TrimSuffix(f.target.Protocol, ":"), Host: f.dial, Opaque: f.path}
 	if r.Query != nil {
 		u.RawQuery = *r.Query
 	}
@@ -660,6 +671,15 @@ func (f forwardTo) pass(r Request, hadLength bool) bool {
 		return false
 	}
 	defer resp.Body.Close()
+	if strings.ContainsRune(resp.Status, '\r') {
+		// A status line Node.js's client refuses never reaches the Agent.
+		deny(f.w, f.h, 502, "Parse Error: Expected LF after CR")
+		return false
+	}
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		deny(f.w, f.h, 502, "the destination switched protocols; the Broker relays HTTP only")
+		return false
+	}
 	var headers []Pair
 	for _, p := range upstreamHeaders(resp) {
 		// The Broker's own marker is never relayed from a destination.
@@ -667,7 +687,9 @@ func (f forwardTo) pass(r Request, hadLength bool) bool {
 			headers = append(headers, Pair{strings.ToLower(p.Name), p.Value})
 		}
 	}
-	res := &agentResponse{w: f.w, http10: f.h.http10(), closeAfter: f.h.wantsClose(), aborted: func() { _ = f.conn.Close() }}
+	// The destination's Connection: close ends the Agent's connection too, as
+	// Node.js does with the header it relays.
+	res := &agentResponse{w: f.w, http10: f.h.http10(), closeAfter: f.h.wantsClose() || resp.Close, aborted: func() { _ = f.conn.Close() }}
 	length := resp.ContentLength
 	if f.h.method == "HEAD" || resp.StatusCode == 204 || resp.StatusCode == 304 {
 		length = -2
@@ -738,6 +760,12 @@ func (f forwardTo) substituted(r Request, hadLength bool, s *Scrubber) {
 			}
 		}
 		deny(f.w, f.h, 502, s.mask(failure(err)))
+		return
+	}
+	if strings.ContainsRune(resp.Status, '\r') {
+		stop()
+		resp.Body.Close()
+		deny(f.w, f.h, 502, "Parse Error: Expected LF after CR")
 		return
 	}
 	if resp.StatusCode == http.StatusSwitchingProtocols {
