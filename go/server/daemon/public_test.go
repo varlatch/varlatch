@@ -232,9 +232,26 @@ func TestIngressModesSideBySide(t *testing.T) {
 		t.Errorf("the loopback listener did not believe its trusted proxy: client %q", clients["203.0.113.7"])
 	}
 
-	// Another Host on the HTTPS listener: 421, never served.
-	if res := get(client, public+"/readyz", map[string]string{"Host": "other.varlatch.test"}); res.StatusCode != http.StatusMisdirectedRequest {
+	// Another Host on the HTTPS listener: 421, never served, and in the
+	// access log like any other request.
+	if res := get(client, public+"/readyz?probe=misdirected", map[string]string{"Host": "other.varlatch.test"}); res.StatusCode != http.StatusMisdirectedRequest {
 		t.Errorf("another Host over HTTPS: %d", res.StatusCode)
+	}
+	logged := false
+	for deadline := time.Now().Add(10 * time.Second); !logged && time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		raw, _ := os.ReadFile(in.accessLog)
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			var e struct {
+				Client, Path string
+				Status       int
+			}
+			if json.Unmarshal([]byte(line), &e) == nil && e.Status == http.StatusMisdirectedRequest && e.Path == "/readyz" && e.Client == "127.0.0.1" {
+				logged = true
+			}
+		}
+	}
+	if !logged {
+		t.Error("the 421 is not in the access log")
 	}
 	if res := get(client, public+"/readyz", map[string]string{"Host": strings.ToUpper(host) + ":5001"}); res.StatusCode != 200 {
 		t.Errorf("the public host in capitals, with its port: %d", res.StatusCode)

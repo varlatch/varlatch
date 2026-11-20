@@ -29,6 +29,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -595,11 +596,36 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The public HTTPS listener serves the public URL's host only: a
+	// request for another name gets 421, logged (and, on the API,
+	// charged to the request window) like any other.
+	if s.misdirected(r) {
+		rec.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		rec.Header().Set("Cache-Control", "no-store")
+		rec.WriteHeader(http.StatusMisdirectedRequest)
+		_, _ = io.WriteString(rec, "Misdirected request: this listener serves "+s.opts.PublicURL.Hostname()+" only.\n")
+		return
+	}
 	if !isAPI {
 		s.serveWeb(rec, r)
 		return
 	}
 	s.serveAPI(rec, r)
+}
+
+// misdirected is whether r came over the public HTTPS listener (a direct
+// connection, DirectConnContext) for a host other than the public URL's,
+// its port aside: the handshake was for that name, and a request for
+// another one is never served under its certificate.
+func (s *Server) misdirected(r *http.Request) bool {
+	if !direct(r) || s.opts.PublicURL == nil {
+		return false
+	}
+	name := r.Host
+	if h, _, err := net.SplitHostPort(name); err == nil {
+		name = h
+	}
+	return !strings.EqualFold(name, s.opts.PublicURL.Hostname())
 }
 
 // bodyless reports whether the Node adapter passes a request of this

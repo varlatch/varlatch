@@ -1661,7 +1661,7 @@ loopback address (`listen` elsewhere is refused at start), so nothing is
 served in plain text beyond the machine; it still serves the API to the
 host (and to a proxy there, with `trusted_proxies`), but a ceremony from
 its own origin is refused, as is one from any origin but `public_url`'s.
-The HTTPS listener answers 421 to a `Host` other than `public_url`'s host.
+The HTTPS listener answers 421 to a `Host` other than `public_url`'s host, logged in the access log (and, on the API, charged to the request window) like any other request.
 A `public_url` naming an IP address starts with a warning: browsers refuse
 an IP address as an RP ID, so the dashboard cannot sign in there (use
 `http://localhost` on one machine). Pinned by `httpserver`'s

@@ -3,9 +3,12 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/server/auth"
@@ -150,5 +153,45 @@ func TestTailnetListenerRunsNoCeremony(t *testing.T) {
 				t.Errorf("POST %s from %s on a tailnet listener: %d", p, origin, w.Code)
 			}
 		}
+	}
+}
+
+// TestMisdirectedIsLoggedAndCharged: on a direct connection (the public
+// HTTPS listener), a request for a host other than the public URL's gets
+// 421 and goes through the access log (with its status) and, on the API,
+// the request window, like any other request; the public host, in any
+// case and with a port, is served; a connection that is not direct (the
+// plain listener) is never refused for its Host.
+func TestMisdirectedIsLoggedAndCharged(t *testing.T) {
+	s, _, _, logBuf := newTestServer(t, func(o *Options) { o.PublicURL, _ = url.Parse("https://vault.example.com") })
+	send := func(host, path string, directConn bool) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Host = host
+		r.RemoteAddr = "192.0.2.10:40000"
+		if directConn {
+			r = r.WithContext(context.WithValue(r.Context(), directKey{}, true))
+		}
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		return w
+	}
+	if w := send("other.example.com", "/v1/meta", true); w.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("another host, direct: %d %s", w.Code, w.Body.String())
+	}
+	var rec AccessRecord
+	lines := strings.Split(strings.TrimSpace(logBuf.String()), "\n")
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &rec); err != nil || rec.Status != http.StatusMisdirectedRequest || rec.Path != "/v1/meta" || !rec.Window {
+		t.Errorf("the 421's access record: %+v %v", rec, err)
+	}
+	if w := send("other.example.com", "/", true); w.Code != http.StatusMisdirectedRequest {
+		t.Errorf("another host, direct, a page: %d", w.Code)
+	}
+	for _, host := range []string{"vault.example.com", "VAULT.example.com:443", "vault.example.com:8443"} {
+		if w := send(host, "/v1/meta", true); w.Code != 200 {
+			t.Errorf("%s, direct: %d", host, w.Code)
+		}
+	}
+	if w := send("other.example.com", "/v1/meta", false); w.Code != 200 {
+		t.Errorf("another host on the plain listener: %d", w.Code)
 	}
 }
