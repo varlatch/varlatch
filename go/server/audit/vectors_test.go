@@ -220,6 +220,20 @@ func exec(t *testing.T, s *storage.DB, stmts ...string) {
 	}
 }
 
+// TestGoOnlyEventTypes: the Go-only event types are none of the
+// TypeScript server's (its list is frozen), and Record accepts them.
+func TestGoOnlyEventTypes(t *testing.T) {
+	ts := load(t).EventTypes
+	for _, typ := range audit.GoOnlyEventTypes {
+		if slices.Contains(ts, typ) || slices.Contains(audit.EventTypes, typ) {
+			t.Errorf("%s is both Go-only and in AUDIT_EVENT_TYPES", typ)
+		}
+	}
+	if !slices.IsSorted(audit.GoOnlyEventTypes) {
+		t.Error("GoOnlyEventTypes is not sorted")
+	}
+}
+
 func TestEventTypesMatchTypeScript(t *testing.T) {
 	if v := load(t); !slices.Equal(v.EventTypes, audit.EventTypes) {
 		t.Fatalf("EventTypes differ from AUDIT_EVENT_TYPES:\n go %v\n ts %v", audit.EventTypes, v.EventTypes)
