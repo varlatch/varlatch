@@ -14,6 +14,10 @@ type command struct {
 	name  string
 	slice string
 	run   func(*Run) error
+	// partial runs the forms of a command not built yet that an earlier
+	// slice builds (`scan --find-files`, slice 5.4e, of `scan`, 5.4d): it
+	// says whether the command line is one of them.
+	partial func(*Run) (handled bool, err error)
 }
 
 // commands is the table, in the TypeScript CLI's dispatch order.
@@ -27,29 +31,29 @@ var commands = []command{
 	{name: "server", slice: "5.1b", run: serverCommand},
 	{name: "context", slice: "5.1b", run: contextCommand},
 	{name: "env", slice: "5.1e", run: envCommand},
-	{name: "run", slice: "5.4b"},
+	{name: "run", slice: "5.4b", run: runCommand},
 	{name: "validate", slice: "5.3a", run: validateCommand},
-	{name: "scan", slice: "5.4d"},
+	{name: "scan", slice: "5.4d", run: scanCommand},
 	{name: "values", slice: "5.3a", run: valuesCommand},
-	{name: "mcp", slice: "5.6b"},
+	{name: "mcp", slice: "5.6b", run: mcpCommand},
 	{name: "request", slice: "5.5b"},
 	{name: "import", slice: "5.3a", run: importCommand},
 	{name: "sync", slice: "5.8b"},
 	{name: "contract", slice: "5.3b", run: contractCommand},
-	{name: "types", slice: "5.3c"},
-	{name: "invite", slice: "5.7a"},
-	{name: "tailnet", slice: "5.7a"},
-	{name: "audit", slice: "5.7a"},
-	{name: "org", slice: "5.7a"},
-	{name: "project", slice: "5.7a"},
-	{name: "env-create", slice: "5.7a"},
-	{name: "env-delete", slice: "5.7a"},
-	{name: "identity", slice: "5.7a"},
-	{name: "member", slice: "5.7a"},
-	{name: "credential", slice: "5.7a"},
+	{name: "types", slice: "5.3c", run: typesCommand},
+	{name: "invite", slice: "5.7a", run: inviteCommand},
+	{name: "tailnet", slice: "5.7a", run: tailnetCommand},
+	{name: "audit", slice: "5.7a", run: auditCommand},
+	{name: "org", slice: "5.7a", run: orgCommand},
+	{name: "project", slice: "5.7a", run: projectCommand},
+	{name: "env-create", slice: "5.7a", run: envCreateCommand},
+	{name: "env-delete", slice: "5.7a", run: envDeleteCommand},
+	{name: "identity", slice: "5.7a", run: identityCommand},
+	{name: "member", slice: "5.7a", run: memberCommand},
+	{name: "credential", slice: "5.7a", run: credentialCommand},
 	{name: "audit-export", slice: "5.7c"},
 	{name: "security", slice: "5.7b"},
-	{name: "admin", slice: "step 6"},
+	{name: "admin", slice: "step 6", partial: adminCommand},
 	{name: "setup", slice: "step 6"},
 	{name: "move", slice: "step 6"},
 	{name: "adopt", slice: "never"},

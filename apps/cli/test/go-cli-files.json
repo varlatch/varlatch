@@ -1,13 +1,24 @@
 {
-  "comment": "The process tests that must pass against the Go CLI (VARLATCH_TEST_CLI, cliUnderTest.ts); each slice of internal docs/design/go-cli.md adds its files. A test of a command a later slice builds is skipped against Go with goLacks or goLacksCommand, which read the inventory's built slices, so it runs once its slice is built.",
+  "comment": "The process tests that must pass against the Go CLI (VARLATCH_TEST_CLI, cliUnderTest.ts); each slice of internal docs/design/go-cli.md adds its files. A test of a command a later slice builds is skipped against Go with goLacks or goLacksCommand, which read the built slices (go/cmd/varlatch/testdata/built/), so it runs once its slice is built.",
   "files": [
+    "test/agents-guardrails.test.ts",
     "test/agents-install.test.ts",
     "test/agents-mcp.test.ts",
+    "test/assisted-cli.test.ts",
     "test/browser-login.test.ts",
+    "test/credential-issue.test.ts",
     "test/device-login.test.ts",
+    "test/exportContextCli.test.ts",
+    "test/identity-reach-cli.test.ts",
     "test/login-token-stdin.test.ts",
     "test/machine-interface.test.ts",
+    "test/mcp-cli.test.ts",
+    "test/member-cli.test.ts",
+    "test/redact-run.test.ts",
+    "test/run-signals.test.ts",
+    "test/scan-cli.test.ts",
     "test/server-text-cli.test.ts",
-    "test/token-expiry-warning.test.ts"
+    "test/token-expiry-warning.test.ts",
+    "test/typesCli.test.ts"
   ]
 }

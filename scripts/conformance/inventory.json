@@ -212,9 +212,12 @@
       ]
     },
     "cli-handover": {
-      "title": "the hand-over between the Go CLI and the TypeScript CLI: token and device sign-in both ways (internal docs/design/go-cli.md, decision 11)",
+      "title": "the hand-over between the Go CLI and the TypeScript CLI: token and device sign-in both ways, the shared store, and run (internal docs/design/go-cli.md, decision 11)",
       "script": "scripts/conformance/suites/cli-handover.mjs",
       "client": "go",
+      "needs": [
+        "probe:expire-pending-device-sign-ins"
+      ],
       "operations": [
         "admin-recover",
         "seed",
@@ -761,6 +764,39 @@
         "securityApprovalKeys"
       ]
     },
+    "admin-cli": {
+      "title": "Organization administration with the CLI under test (slice 5.7a): one smoke check per command, exit 0 and --json parsing, in an Organization of its own",
+      "script": "scripts/conformance/suites/admin-cli.mjs",
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "listOrganizations",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "listProjects",
+        "renameProject",
+        "createEnvironment",
+        "listEnvironments",
+        "deleteEnvironment",
+        "createInvitation",
+        "listIdentities",
+        "changeMemberRole",
+        "memberExposure",
+        "createServiceIdentity",
+        "renameIdentity",
+        "machineReach",
+        "issueIdentityCredential",
+        "listIdentityCredentials",
+        "revokeIdentityCredential",
+        "retireIdentity",
+        "reactivateIdentity",
+        "createRequirement",
+        "listRequirements",
+        "deleteRequirement",
+        "listAuditEvents"
+      ]
+    },
     "deletion": {
       "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce; an Organization's deletion scheduled, approved by a second admin, cancelled and run when due, and the audit-access tombstone's readers; what the due run tears down (a Sync Target and its Connection, a webhook, the GitHub App) and the audit export's drain, completed or abandoned at its deadline",
       "script": "scripts/conformance/suites/deletion.mjs",
@@ -1122,6 +1158,63 @@
       "kind": "go-client",
       "feature": "login-device",
       "title": "inside an agent-safe run, both CLIs refuse to start a device sign-in (64) and write no pending sign-in"
+    },
+    "cli-handover.ts-login-go-runs": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "run",
+      "title": "signed in with the TypeScript CLI, the Go CLI runs a command with the development environment's values (varlatch run)"
+    },
+    "cli-handover.store-holds-both": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "after interleaved logins (the TypeScript CLI to one address of the server, the Go CLI to another), the store holds both entries, the first byte for byte, and both CLIs read both: status --json alike, whoami of each"
+    },
+    "cli-handover.default-server-both-ways": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "a default server set with `server use` by one CLI is the one the other uses (whoami outside a repository), both ways, and both write settings.json alike"
+    },
+    "cli-handover.corrupt-store-both": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "a corrupt credentials.json and settings.json are an empty store to both CLIs (status --json and whoami alike: no server, not authenticated), and a login by either replaces them with a store the other reads"
+    },
+    "cli-handover.device-ts-start-go-expired": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "expired before approval, a device sign-in started with the TypeScript CLI ends for the other with 77, the entry removed and the stored credential kept"
+    },
+    "cli-handover.device-ts-slow-down-go-keeps": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a slow_down the TypeScript CLI was answered (a longer interval) is kept by the other: its --wait reaches its deadline (75) without polling, the entry as it was; the file 0600 in a 0700 directory"
+    },
+    "cli-handover.device-ts-collects-go-recovers": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a credential the TypeScript CLI collected but could not store is named for revocation by the other: --wait ends with 77 naming it, the entry removed, nothing stored"
+    },
+    "cli-handover.device-go-start-ts-expired": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "expired before approval, a device sign-in started with the Go CLI ends for the other with 77, the entry removed and the stored credential kept"
+    },
+    "cli-handover.device-go-slow-down-ts-keeps": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a slow_down the Go CLI was answered (a longer interval) is kept by the other: its --wait reaches its deadline (75) without polling, the entry as it was; the file 0600 in a 0700 directory"
+    },
+    "cli-handover.device-go-collects-ts-recovers": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a credential the Go CLI collected but could not store is named for revocation by the other: --wait ends with 77 naming it, the entry removed, nothing stored"
     },
     "dashboard.enrollment-dashboard-origin": {
       "suite": "dashboard",
@@ -3109,24 +3202,36 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the application starts under --export-context"
     },
     "client-runtime.types-accessor-returns-typed-values-number": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the accessor returns typed values (number, boolean, enum)"
     },
     "client-runtime.types-accessor-reads-exported-context-same": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the accessor reads the exported context of the same revision, without warnings"
     },
     "client-runtime.types-application-output-holds-no-secret": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the application's output holds no Secret"
     },
     "client-runtime.types-python-module-generated-active-revision": {
@@ -3145,12 +3250,18 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-python",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types (Python): the module reads the exported context of the same revision, with typed values and no warnings"
     },
     "client-runtime.types-python-output-holds-no-secret": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-python",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types (Python): the application's output holds no Secret"
     },
     "client-runtime.types-check-fails-once-changed-contract": {
@@ -3163,6 +3274,9 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the old module warns that its types are stale for this run"
     },
     "client-runtime.types-regenerating-makes-check-pass-again": {
@@ -3181,6 +3295,9 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the regenerated module reads the run without warnings"
     },
     "client-runtime.types-required-secret-withheld-server-one": {
@@ -3188,18 +3305,27 @@
       "kind": "conformance",
       "group": "service-identities",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: a required Secret withheld by the server is one ConfigError issue"
     },
     "client-runtime.types-invalid-values-throw-one-configerror": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: invalid values throw one ConfigError listing every item"
     },
     "client-runtime.types-error-names-items-reasons-never": {
       "suite": "client-runtime",
       "kind": "conformance",
       "feature": "types-typescript",
+      "cliNeeds": [
+        "run-export-context"
+      ],
       "title": "types: the error names items and reasons, never a value"
     },
     "client-runtime.scan-nothing-staged-scan-reads-nothing": {
@@ -3275,28 +3401,12 @@
       "suite": "client-runtime",
       "kind": "conformance",
       "group": "audit-export",
-      "title": "the audit export holds no value",
-      "cliNeeds": [
-        "run",
-        "run-export-context",
-        "run-redact",
-        "scan",
-        "types-python",
-        "types-typescript"
-      ]
+      "title": "the audit export holds no value"
     },
     "client-runtime.varlatchd-logs-hold-no-value": {
       "suite": "client-runtime",
       "kind": "conformance",
-      "title": "varlatchd logs hold no value",
-      "cliNeeds": [
-        "run",
-        "run-export-context",
-        "run-redact",
-        "scan",
-        "types-python",
-        "types-typescript"
-      ]
+      "title": "varlatchd logs hold no value"
     },
     "strict-run.valid-configuration-starts-child": {
       "suite": "strict-run",
@@ -3618,6 +3728,121 @@
       "suite": "security",
       "kind": "conformance",
       "title": "the approval keys list the Organization's admins with their passkeys' trust, names and dates, never a credential id or key"
+    },
+    "admin-cli.org-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "org create makes an organization the caller administers"
+    },
+    "admin-cli.org-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "org list --json lists it"
+    },
+    "admin-cli.project-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project create --org makes a project"
+    },
+    "admin-cli.project-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project list --json lists it"
+    },
+    "admin-cli.project-rename": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project rename renames it (project list shows the new name)"
+    },
+    "admin-cli.env-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "env-create makes a root environment (the environment list has it)"
+    },
+    "admin-cli.env-delete": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "env-delete deletes it (the environment list has it no more)"
+    },
+    "admin-cli.invite": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "invite prints a one-time enrollment link with its invitation token"
+    },
+    "admin-cli.member-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member list --json lists the caller"
+    },
+    "admin-cli.member-role": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member role to the role the caller has changes nothing (member list agrees)"
+    },
+    "admin-cli.member-exposure-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member exposure --json is NDJSON, the member first"
+    },
+    "admin-cli.identity-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity list --json lists the machine"
+    },
+    "admin-cli.identity-rename": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity rename renames it"
+    },
+    "admin-cli.identity-reach-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity reach --json shows its reach"
+    },
+    "admin-cli.credential-issue-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential issue --json writes the token to a new 0600 file only, and refuses an --out that exists"
+    },
+    "admin-cli.credential-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential list --json lists it"
+    },
+    "admin-cli.credential-revoke": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential revoke revokes it"
+    },
+    "admin-cli.identity-retire": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity retire --confirm retires it (identity list shows it retired)"
+    },
+    "admin-cli.identity-reactivate": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity reactivate reactivates it (identity list shows it active)"
+    },
+    "admin-cli.tailnet-require": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet require makes a Tailnet Requirement"
+    },
+    "admin-cli.tailnet-requirements-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet requirements --json lists it"
+    },
+    "admin-cli.tailnet-remove": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet remove removes it"
+    },
+    "admin-cli.audit-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "audit list --json lists the organization's events"
     },
     "deletion.project-deleted": {
       "suite": "deletion",

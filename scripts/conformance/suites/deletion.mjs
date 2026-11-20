@@ -450,6 +450,19 @@ try {
     );
   }
 
+  // ---- An audit export that cannot drain (its bucket is gone), in a third
+  // Organization, scheduled and made due now, beside the first: the loops
+  // run every minute on both servers and each pass takes every due deletion
+  // and every export, so one deletion pass deletes both and one export pass
+  // settles both drains, instead of two more minutes after the first's.
+  // Checked last (deletion.audit-export-drain-deadline).
+  const lorg = ok(await api("POST", "/v1/organizations", { body: { name: `Lost ${suffix}`, slug: `lost-${suffix}` } }), "creating the third Organization");
+  const L = `/v1/organizations/${lorg.slug}`;
+  const lexport = await exportOf(L, `lost-${suffix}`, false);
+  await removeBucket(s3, `lost-${suffix}`);
+  const lrequest = ok(await api("POST", `${L}/deletion`, { body: {} }), "scheduling its deletion");
+  targetOp("probe", ["deletion-due", lrequest.id]);
+
   // ---- The due run: made due, then run by the deletion loop's next pass
   // (every minute on both servers).
   targetOp("probe", ["deletion-due", request.id]);
@@ -484,6 +497,11 @@ try {
       allRevoked(stored.webhooks) && stored.githubApps?.length === 1 && stored.githubApps[0].removed === true && stored.githubApps[0].keyKept === false,
     JSON.stringify({ audit: orgDeleted?.metadata ?? null, stored }),
   );
+
+  // The third Organization went in the same pass; its drain deadline is
+  // made due before the export worker's next pass, which settles both.
+  const lgone = await waitFor(async () => (await api("GET", L)).status === 404, 90_000);
+  if (lgone) targetOp("probe", ["audit-export-drain-due", lorg.id]);
 
   // The audit export drains: its final events, organization.deleted among
   // them, reach the bucket, and the drain completes.
@@ -525,16 +543,9 @@ try {
     JSON.stringify({ secondReads, exported: exported.status, types: exportedTypes.slice(-3), listed: listed ?? null, removed: removed.status, secondAfter }),
   );
 
-  // ---- An audit export that cannot drain (its bucket is gone) is
-  // abandoned once its deadline passes.
-  const lorg = ok(await api("POST", "/v1/organizations", { body: { name: `Lost ${suffix}`, slug: `lost-${suffix}` } }), "creating the third Organization");
-  const L = `/v1/organizations/${lorg.slug}`;
-  const lexport = await exportOf(L, `lost-${suffix}`, false);
-  await removeBucket(s3, `lost-${suffix}`);
-  const lrequest = ok(await api("POST", `${L}/deletion`, { body: {} }), "scheduling its deletion");
-  targetOp("probe", ["deletion-due", lrequest.id]);
-  const lgone = await waitFor(async () => (await api("GET", L)).status === 404, 90_000);
-  if (lgone) targetOp("probe", ["audit-export-drain-due", lorg.id]);
+  // ---- The third Organization's export, which cannot drain (its bucket is
+  // gone), is abandoned once its deadline passes; deleted and made due
+  // above, beside the first Organization.
   const LT = `/v1/deleted-organizations/${lorg.id}/audit-events`;
   const abandoned = lgone && await waitFor(async () => ((await api("GET", `${LT}?limit=500`)).json?.items ?? []).find((e) => e.eventType === "audit_export.abandoned") ?? null, 90_000);
   const lastEvents = (await api("GET", `${LT}?limit=500`)).json?.items ?? [];

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { EMBEDDED_RELEASE } from "@varlatch/backup";
 
 /**
  * The CLI kit's recorder (internal docs/design/go-cli.md, decision 3): runs
@@ -79,7 +81,11 @@ export interface TranscriptCase {
    * written as `{{generated <spec>}}` (generatedPattern);
    * "now+<s>": one between the start and the end plus <s> seconds, written
    * as {{now+<s>}}; "callback": the browser sign-in's loopback port in its
-   * printed address, written as {{port}}.
+   * printed address, written as {{port}}; "release": the CLI's own
+   * release, `varlatch <version>` in the output (the Generator lines and
+   * literals of a module `varlatch types` writes), written as
+   * `varlatch {{release}}`, and `{{release}}` in the case's files, given
+   * as that version (releasePattern).
    */
   patterns?: string[];
   /**
@@ -91,6 +97,15 @@ export interface TranscriptCase {
   callback?: { body: string; times?: number };
   /** Ctrl-C: SIGINT once standard error holds `after`. */
   signal?: { after: string };
+  /**
+   * Runs the CLI on a pseudo-terminal (util-linux script(1)): its
+   * controlling terminal and stdin, and its stdout, its stderr or both; the
+   * other stream is captured as usual, and what the terminal displayed is
+   * `expect.terminal`, its "\r\n" as "\n". The Go replay opens the
+   * terminal itself (transcript.onTerminal), and skips the case where it
+   * has none.
+   */
+  terminal?: "stdout" | "stderr" | "both";
 }
 
 export interface RecordedRequest {
@@ -107,6 +122,8 @@ export interface RecordedCase extends TranscriptCase {
     stderr: string;
     /** What each callback POST got: its status, or "refused" when nothing took the connection. */
     callbacks?: string[];
+    /** What a terminal case's terminal displayed (TranscriptCase.terminal). */
+    terminal?: string;
     requests: RecordedRequest[];
     /**
      * The case directory's final tree (listTree): a file's content (UTF-8)
@@ -143,7 +160,20 @@ export async function bundleCli(dir: string): Promise<string> {
 }
 
 const fill = (text: string, server: string, dir: string): string => text.split("{{server}}").join(server).split("{{dir}}").join(dir);
-const unfill = (text: string, server: string, dir: string): string => text.split(server).join("{{server}}").split(dir).join("{{dir}}");
+const unfill = (text: string, server: string, dir: string): string => unfillDir(text.split(server).join("{{server}}"), dir);
+
+/**
+ * The case directory as {{dir}}, both as it is printed and as a JSON string
+ * holds it (each backslash doubled: on Windows `C:\\Users\\...` in a --json
+ * document or a JSON file the CLI wrote is the directory too). On Linux and
+ * macOS a directory holds no backslash, so the two forms are the same. The Go
+ * replay's transcript.UnfillDir is the same.
+ */
+export function unfillDir(text: string, dir: string): string {
+  const escaped = dir.split("\\").join("\\\\");
+  const out = escaped === dir ? text : text.split(escaped).join("{{dir}}");
+  return out.split(dir).join("{{dir}}");
+}
 
 function fillDeep(value: unknown, server: string, dir: string): unknown {
   if (typeof value === "string") return fill(value, server, dir);
@@ -205,6 +235,18 @@ function uncaught(stderr: string): string {
 /** Date.prototype.toISOString's form, as `login` and `env use` write the time. */
 const ISO_TIMESTAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
 
+/**
+ * The "release" pattern: `varlatch <version>` (the CLI's own release) as
+ * `varlatch {{release}}` in what the CLI did, and `{{release}}` in a
+ * case's files as the version. Another release a case names stays as it is.
+ */
+export function releasePattern(version: string): { fill: (text: string) => string; unfill: (text: string) => string } {
+  return {
+    fill: (text) => text.split("{{release}}").join(version),
+    unfill: (text) => text.split(`varlatch ${version}`).join("varlatch {{release}}"),
+  };
+}
+
 /** The "now" pattern: each timestamp from `start` to `end` (milliseconds) as {{now}}. */
 export function nowPattern(text: string, start: number, end: number): string {
   return text.replace(ISO_TIMESTAMP, (t) => {
@@ -253,6 +295,66 @@ function generatedBy(spec: string, value: string): boolean {
   return new RegExp(shape).test(value);
 }
 
+/**
+ * The shortest value a run's masking replaces wherever it occurs (the
+ * matcher's MIN_LENGTH, and the stored Secrets' minimum).
+ */
+const MASKABLE_LENGTH = 8;
+
+/**
+ * The texts a case gives the CLI that it may treat as values: `values` are
+ * its variables, its stdin and its arguments (a value in flight, such as
+ * `values set PORT 8080`'s, is masked whatever its length); `maskable` are
+ * its variables and stdin of MASKABLE_LENGTH bytes or more, which masking
+ * replaces wherever they occur. A PORT=8080 case once ran in a directory
+ * whose random name held 8080, and masking the value rewrote the path. The
+ * Go replay's transcript.CaseValues is the same.
+ */
+export function caseValues(c: TranscriptCase): { values: string[]; maskable: string[] } {
+  const usable = (v: string) => v.length >= 2 && !v.includes("{{");
+  const own = [...Object.values(c.env ?? {}), c.stdin ?? ""].filter(usable);
+  return {
+    values: [...own, ...c.args.filter(usable)],
+    maskable: own.filter((v) => Buffer.byteLength(v) >= MASKABLE_LENGTH),
+  };
+}
+
+/**
+ * A new directory for one case, varlatch-transcript- and sixteen random
+ * consonants (no digit, no word), as its real path (macOS's temporary
+ * directory is behind a symbolic link). Only the random name is the
+ * harness's: one that any of the case's values overlaps is discarded and
+ * another drawn. The rest of the path is the system's
+ * (C:\Users\runneradmin\AppData\Local\Temp on a Windows runner holds "run"
+ * and "admin"): it fails only when it holds a maskable value, which would
+ * rewrite it on every run. The Go replay's transcript.CaseDir is the same.
+ */
+export function caseDir({ values, maskable }: { values: string[]; maskable: string[] }): string {
+  const letters = "bcdfghjklmnpqrstvwxz";
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const name = Array.from(randomBytes(16), (b) => letters[b % letters.length]).join("");
+    const dir = join(tmpdir(), `varlatch-transcript-${name}`);
+    try {
+      mkdirSync(dir, { mode: 0o700 });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw err;
+    }
+    // The native realpath: on Windows it gives the long name of each part
+    // (C:\Users\runneradmin, not RUNNER~1), as the CLI prints it and Go's
+    // filepath.EvalSymlinks gives it.
+    const real = realpathSync.native(dir);
+    if (maskable.some((v) => real.includes(v))) {
+      rmSync(dir, { recursive: true, force: true });
+      throw new Error(`the temporary directory ${tmpdir()} holds one of the case's variables or its stdin`);
+    }
+    // An occurrence that takes in any of the name's characters.
+    if (!values.some((v) => real.slice(Math.max(0, real.length - name.length - v.length + 1)).includes(v))) return real;
+    rmSync(dir, { recursive: true, force: true });
+  }
+  throw new Error(`no name in ${tmpdir()} that none of the case's values overlaps`);
+}
+
 /** The "now+<s>" pattern: each timestamp from `start` to `end` plus `seconds`, as {{now+<s>}}. */
 export function laterPattern(text: string, start: number, end: number, seconds: number): string {
   return text.replace(ISO_TIMESTAMP, (t) => {
@@ -277,6 +379,7 @@ export function applyPatterns(patterns: readonly string[], text: string, start: 
     if (name === "now") out = nowPattern(out, start, end);
     else if (later) out = laterPattern(out, start, end, Number(later[1]));
     else if (name === "callback") out = callbackPattern(out);
+    else if (name === "release") out = releasePattern(EMBEDDED_RELEASE.version).unfill(out);
     else if (name !== "generated") throw new Error(`no pattern ${name}`); // generated applies to request bodies (generatedPattern)
   }
   return out;
@@ -297,8 +400,7 @@ function postOnce(url: string, body: string): Promise<string> {
 /** Runs one case against the bundle and records it. */
 export async function recordCase(bundle: string, c: TranscriptCase): Promise<RecordedCase> {
   if (process.platform !== "win32") process.umask(TRANSCRIPT_UMASK);
-  // The real path, as process.cwd() reports it (macOS's temporary directory is behind a symbolic link).
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "varlatch-transcript-")));
+  const dir = caseDir(caseValues(c));
   const script = [...(c.server ?? [])];
   const requests: RecordedRequest[] = [];
   const server = http.createServer((req, res) => {
@@ -331,9 +433,10 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
+    const release = c.patterns?.includes("release") ? releasePattern(EMBEDDED_RELEASE.version) : { fill: (t: string) => t, unfill: (t: string) => t };
     for (const [path, content] of Object.entries(c.files ?? {})) {
       mkdirSync(dirname(join(dir, path)), { recursive: true });
-      writeFileSync(join(dir, path), fill(content, origin, dir));
+      writeFileSync(join(dir, path), release.fill(fill(content, origin, dir)));
     }
     const cwd = join(dir, c.cwd ?? ".");
     mkdirSync(cwd, { recursive: true });
@@ -346,12 +449,16 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       // that records, and the Go CLI has none: never part of a recording.
       VARLATCH_NODE_CHECK: "off",
     };
+    // On Windows the home directory is USERPROFILE (os.homedir()), as the
+    // Go replay sets it.
+    if (process.platform === "win32") env.USERPROFILE = join(dir, "home");
     for (const name of c.unset ?? []) delete env[name];
     for (const [k, v] of Object.entries(c.env ?? {})) env[k] = fill(v, origin, dir);
     const start = Date.now();
     const callbacks: string[] = [];
-    const result = await new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(process.execPath, [bundle, ...c.args.map((a) => fill(a, origin, dir))], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    const argv = [bundle, ...c.args.map((a) => fill(a, origin, dir))];
+    const result = c.terminal ? await onTerminal(c, argv, cwd, env) : await new Promise<{ status: number; stdout: string; stderr: string; terminal?: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, argv, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
       let called = false;
@@ -394,12 +501,44 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
         requests: generated(JSON.parse(now(JSON.stringify(unfillDeep(requests, origin, dir)))) as RecordedRequest[]),
         files,
         ...(c.callback ? { callbacks } : {}),
+        ...(result.terminal === undefined ? {} : { terminal: now(unfill(result.terminal, origin, dir)) }),
       },
     };
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Runs a terminal case (TranscriptCase.terminal): `node <argv>` under
+ * util-linux script(1), which gives it a new pseudo-terminal, with the
+ * stream that is not the terminal redirected to a file outside the case
+ * directory. Asynchronous: the case's server answers in this process.
+ */
+function onTerminal(c: TranscriptCase, argv: string[], cwd: string, env: Record<string, string>): Promise<{ status: number; stdout: string; stderr: string; terminal: string }> {
+  if (c.signal || c.callback || c.stdin) throw new Error(`case ${c.id}: a terminal case has no signal, callback or stdin`);
+  const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  const streams = mkdtempSync(join(tmpdir(), "varlatch-terminal-"));
+  const outFile = join(streams, "stdout");
+  const errFile = join(streams, "stderr");
+  const redirect = { both: "", stdout: `2>${quote(errFile)}`, stderr: `>${quote(outFile)}` }[c.terminal ?? "both"];
+  const line = `exec ${[process.execPath, ...argv].map(quote).join(" ")} ${redirect}`;
+  return new Promise((resolve, reject) => {
+    const child = spawn("script", ["-qec", line, "/dev/null"], { cwd, env: { ...env, SHELL: "/bin/sh" }, stdio: ["pipe", "pipe", "pipe"] });
+    let shown = "";
+    child.stdout.on("data", (d: Buffer) => (shown += d.toString("utf8")));
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      const read = (f: string) => (existsSync(f) ? readFileSync(f, "utf8") : "");
+      // script(1) ended by a signal: 128 plus its number, as a shell reports it (the replay's exitStatus).
+      const status = code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1);
+      const out = { status, stdout: read(outFile), stderr: read(errFile), terminal: shown.replace(/\r\n/g, "\n") };
+      rmSync(streams, { recursive: true, force: true });
+      resolve(out);
+    });
+    child.stdin.end();
+  });
 }
 
 /**

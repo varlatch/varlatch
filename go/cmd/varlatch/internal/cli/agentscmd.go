@@ -3,16 +3,21 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"golang.org/x/term"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/agents"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/toml"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -21,10 +26,58 @@ import (
 // The commands of slice 5.1d (internal docs/design/go-cli.md): `agents
 // guide`, `agents install` with every option, and `init` with its flags
 // off a terminal, ported from apps/cli/src/main.ts over internal/agents.
-// `agents hook` is slice 5.6a; `init` on a terminal (guided) is 5.8a.
+// `agents hook` is slice 5.6a's (agents/hook.go); `init` on a terminal
+// (guided) is slice 5.8a's (guidedinit.go).
 
 const agentsUsage = "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]" +
 	"|hook --format <claude|codex>>"
+
+// agentsHook is `varlatch agents hook --format <claude|codex>` (ADR-0043
+// Decision 8): the handler every guardrail hook calls. It reads one
+// pre-tool-use event on stdin and answers on stdout; an event it cannot
+// read gets no decision, so the tool call proceeds.
+func (r *Run) agentsHook(args []string) error {
+	opts, err := strictOptions("agents hook", args, OptionSpec{Values: []string{"--format"}}, agentsUsage)
+	if err != nil {
+		return err
+	}
+	format, ok := opts.Value("--format")
+	if !ok || !slices.Contains(agents.HookFormats, format) {
+		return UsageErrorWithUsage("varlatch agents hook: --format must be one of "+strings.Join(agents.HookFormats, ", "), "\n"+agentsUsage)
+	}
+	data, err := io.ReadAll(r.Stdin)
+	if err != nil {
+		return err
+	}
+	cwd, err := Cwd()
+	if err != nil {
+		return err
+	}
+	answer, err := runHookSafely(format, jsval.DecodeUTF8(data), r.Env, cwd)
+	if err != nil {
+		_ = r.warn("varlatch agents hook: " + err.Error() + "; no decision")
+		return nil
+	}
+	if answer == "" {
+		return nil
+	}
+	return r.out(answer)
+}
+
+// runHookSafely is agents.RunHook with a panic turned into an error: as
+// hook.ts's caller does with a throw, the hook then gives no decision
+// and exits 0, so the tool call goes ahead.
+func runHookSafely(format, stdin string, env clientctx.Env, cwd string) (answer string, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			answer, err = "", fmt.Errorf("%v", p)
+		}
+	}()
+	return hookRunner(format, stdin, env, cwd)
+}
+
+// hookRunner is agents.RunHook; a test swaps it for one that panics.
+var hookRunner = agents.RunHook
 
 // agentsCommand is `varlatch agents` (ADR-0043 Decision 7): the
 // agent-neutral skill, printed or installed.
@@ -58,7 +111,7 @@ func agentsCommand(r *Run) error {
 		}
 		return r.out(text)
 	case "hook":
-		return UsageError("varlatch agents hook: not in this build of the Go CLI yet (slice 5.6a); use the TypeScript CLI for it until then")
+		return r.agentsHook(rest)
 	case "install":
 		return r.agentsInstall(rest)
 	}
@@ -176,7 +229,7 @@ func initCommand(r *Run) error {
 	// ADR-0058 Decision 2: guided only on a terminal (both ends), outside
 	// assisted mode, when --org or --project is missing (slice 5.8a).
 	if !r.Assisted.On && isTerminal(r.Stdin) && isTerminal(r.Stdout) && (!hasOrg || !hasProject) {
-		return UsageError("varlatch init: guided init on a terminal is not in this build of the Go CLI yet (slice 5.8a); pass --org and --project, or use the TypeScript CLI for it until then")
+		return r.runGuidedInit(cwd, opts)
 	}
 	if !hasOrg {
 		return UsageOnly(initUsage)
@@ -200,14 +253,20 @@ func initCommand(r *Run) error {
 	if !ok {
 		environment = "development"
 	}
-	serverText := jsjson.String(resolved.Server)
+	return r.writeRepository(cwd, repoConfig{jsjson.String(resolved.Server), org, project, environment}, said, opts.Has("--no-agent-files"))
+}
+
+// writeRepository writes varlatch.toml and, unless noAgentFiles, the files
+// coding agents read: init's writer, with its flags and guided.
+func (r *Run) writeRepository(cwd string, config repoConfig, said string, noAgentFiles bool) error {
+	serverText := config.server
 	// Each value as a TOML basic string, escaped, so the file reads back as
 	// exactly what was given.
 	lines := []string{
 		"server = " + TOMLString(serverText),
-		"organization = " + TOMLString(org),
-		"project = " + TOMLString(project),
-		"default_environment = " + TOMLString(environment),
+		"organization = " + TOMLString(config.organization),
+		"project = " + TOMLString(config.project),
+		"default_environment = " + TOMLString(config.defaultEnvironment),
 		"",
 	}
 	// varlatch.toml is committed: a user name or password in the server URL,
@@ -227,7 +286,7 @@ func initCommand(r *Run) error {
 	}
 	// ADR-0043 Decision 7: the files coding agents read, unless
 	// --no-agent-files. A failure here leaves the project initialized.
-	if opts.Has("--no-agent-files") {
+	if noAgentFiles {
 		return nil
 	}
 	result, err := agents.RunInstall(agents.Options{Scope: "project", Root: cwd, Version: buildinfo.Version, Mode: "install"})
@@ -251,6 +310,94 @@ func initCommand(r *Run) error {
 		}
 	}
 	return nil
+}
+
+// runGuidedInit is main.ts's guided init (ADR-0058 Decision 2): on a
+// terminal, asking for what the flags leave out.
+func (r *Run) runGuidedInit(cwd string, opts *ParsedOptions) error {
+	serverFlag, _ := opts.Value("--server")
+	here := ""
+	resolved, err := clientctx.ResolveServer(cwd, serverFlag, r.Env)
+	if _, isContext := clientctx.IsContextError(err); err != nil && !isContext {
+		return err
+	}
+	if err == nil && resolved != nil {
+		here = jsjson.String(resolved.Server)
+	}
+	deps := guidedDeps{
+		cwd:            cwd,
+		prompt:         newTerminalPrompter(r),
+		out:            r.println,
+		err:            r.warn,
+		server:         here,
+		validateServer: validatePublicURL,
+		signIn:         r.guidedClient,
+		writeRepository: func(config repoConfig) error {
+			return r.writeRepository(cwd, config, "", opts.Has("--no-agent-files"))
+		},
+		holdValue: r.holdValue,
+	}
+	deps.organization, _ = opts.Value("--org")
+	deps.project, _ = opts.Value("--project")
+	deps.defaultEnvironment, _ = opts.Value("--default-environment")
+	code, err := guidedInit(deps)
+	if err != nil {
+		return err
+	}
+	if code != ExitOK {
+		return ExitWith(code)
+	}
+	return nil
+}
+
+// guidedClient is main.ts's signIn for guided init: a client for the
+// server with the stored credential when the server accepts it (any answer
+// but 401 is the run's failure), else after varlatch login's browser
+// hand-off (guidedSignIn), which prints nothing a server sent.
+func (r *Run) guidedClient(server string) (guidedAPI, error) {
+	existing, err := r.loadToken(server)
+	if err != nil {
+		return nil, err
+	}
+	// A bearer the run sends is held from the moment it is read, whatever
+	// its length: VARLATCH_TOKEN or the stored one.
+	r.holdSecret(existing)
+	if existing != "" {
+		api := r.plainClient(server, existing)
+		_, err := api.ListOrganizations(context.Background())
+		if err == nil {
+			return api, nil
+		}
+		var refused *apiclient.APIError
+		if !errors.As(err, &refused) || refused.Status != 401 {
+			return nil, err
+		}
+	}
+	_, err = guidedSignIn(server, signInParts{
+		browserLogin: r.browserLogin,
+		client:       func(token string) guidedSignInAPI { return r.plainClient(server, token) },
+		save: func(credential jsjson.Object) error {
+			if err := clientctx.SaveCredential(server, credential, r.Env); err != nil {
+				return err
+			}
+			r.noteDefaultServer(server)
+			return nil
+		},
+		out:  r.println,
+		hold: r.holdSecret,
+	})
+	if err != nil {
+		return nil, err
+	}
+	token, err := r.loadToken(server)
+	if err != nil {
+		return nil, err
+	}
+	r.holdSecret(token)
+	if token == "" {
+		return nil, Fail("Not authenticated to "+shownServer(server), ExitDenied)
+	}
+	return r.plainClient(server, token), nil
 }
 
 // TOMLString is s as a TOML basic string: quotes, backslashes and control

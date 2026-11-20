@@ -548,6 +548,21 @@ func writeConfiguration(path string, cfg *config.Config) error {
 			settings["tailnet_browser_origins"] = strings.Join(t.BrowserOrigins, ",")
 		}
 	}
+	// Public HTTPS's settings, never its certificate or ACME account: both
+	// stay in this host's data directory (acme/), outside every archive,
+	// and a restored installation obtains its certificate again. The CA's
+	// root file is a path on this host, left out as the key files are.
+	if p := cfg.PublicHTTPS; p != nil {
+		settings["listen_https"] = p.Listen
+		settings["listen_http_redirect"] = "off"
+		if p.RedirectListen != "" {
+			settings["listen_http_redirect"] = p.RedirectListen
+		}
+		settings["acme_ca"] = p.CA
+		if p.Email != "" {
+			settings["acme_email"] = p.Email
+		}
+	}
 	b, err := json.Marshal(Configuration{FormatVersion: 1, Settings: settings})
 	if err != nil {
 		return err

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/rand/v2"
 	"runtime"
 	"strings"
@@ -201,16 +200,16 @@ func TestPushNeverKeepsTheCallersBuffer(t *testing.T) {
 
 // growth times the small and the large work: each runs once untimed first
 // (a cold or still clocking-up CPU would make whichever runs first look
-// slow), then they are timed in turn, small, large, small, large, for the
-// given rounds, each run after a garbage collection, and the fastest of
-// each is given. Noise (a shared runner's pauses, another job's load) only
-// ever adds time, and timing the two in turn makes a busy spell slow both
-// alike instead of one.
-func growth(small, large func(), rounds int) (time.Duration, time.Duration) {
+// slow), then they are timed in turn, small, large, small, large, small,
+// large, each run after a garbage collection, and the fastest of each is
+// given. Noise (a shared runner's pauses, another job's load) only ever
+// adds time, and timing the two in turn makes a busy spell slow both alike
+// instead of one.
+func growth(small, large func()) (time.Duration, time.Duration) {
 	small()
 	large()
 	var bestSmall, bestLarge time.Duration
-	for i := range rounds {
+	for i := range 3 {
 		for _, f := range []struct {
 			run  func()
 			best *time.Duration
@@ -279,19 +278,24 @@ func TestTheLinearityCriterion(t *testing.T) {
 			}
 		}
 	}
-	// Sized on this machine from one probe: a quadratic run's time goes with
-	// n squared, so n = probe * sqrt(55 ms / its time) makes the small run
-	// about 55 ms and the large one about 3.5 s (within 2000 to 32000). The
-	// slack is then negligible, and the margin (64 against 24 times) does
-	// not depend on the size.
-	const probe = 4000
-	quadratic(probe)() // warm up
-	runtime.GC()
-	start := time.Now()
-	quadratic(probe)()
-	took := max(time.Since(start), time.Microsecond)
-	n := min(max(int(float64(probe)*math.Sqrt(float64(55*time.Millisecond)/float64(took))), 2000), 32000)
-	small, large := growth(quadratic(n), quadratic(8*n), 2)
+	// Sized on this machine: n doubles from 2000 until the small run takes
+	// at least 50 ms (capped), so the 20 ms slack is negligible and the
+	// growth decides. The faster of two probes decides: one stalled probe
+	// never stops the sizing early and shrinks the control's margin.
+	n := 2000
+	for n < 32000 {
+		probe := func() time.Duration {
+			runtime.GC()
+			start := time.Now()
+			quadratic(n)()
+			return time.Since(start)
+		}
+		if min(probe(), probe()) >= 50*time.Millisecond {
+			break
+		}
+		n *= 2
+	}
+	small, large := growth(quadratic(n), quadratic(8*n))
 	// Per operation (n(n-1)/2 steps each): equal when nothing biases one
 	// size, so the growth is the work's own.
 	perOp := func(d time.Duration, items int) float64 {
@@ -358,7 +362,7 @@ func TestMatcherIsLinear(t *testing.T) {
 		}
 		small := large / 8
 		for _, chunk := range []int{64 * 1024, 4 << 20} { // a pipe's reads, and one huge chunk
-			tSmall, tLarge := growth(stream(small, chunk), stream(large, chunk), 3)
+			tSmall, tLarge := growth(stream(small, chunk), stream(large, chunk))
 			t.Logf("%s, %d-byte chunks: %d bytes %v, %d bytes %v (%.1fx)", c.name, chunk, small, tSmall, large, tLarge, float64(tLarge)/float64(tSmall))
 			if !growsLinearly(tSmall, tLarge) {
 				t.Errorf("%s, %d-byte chunks: %d bytes %v, %d bytes %v: not linear", c.name, chunk, small, tSmall, large, tLarge)
@@ -445,5 +449,32 @@ func noFormSurvives(t *testing.T, out []byte, entries []SecretEntry) {
 				}
 			}
 		}
+	}
+}
+
+// TestNoStaleSegments: once addMatch rewrites the pending segments, and
+// once emitFinal hands them on, no slot outside the live segments (past
+// their length, or in the scratch space) still holds a segment, so none
+// keeps a caller's chunk alive (#298's review).
+func TestNoStaleSegments(t *testing.T) {
+	entries := []SecretEntry{{Item: "A", Value: "abababab"}, {Item: "B", Value: "babababa"}}
+	m := NewStreamMatcher(entries, Marker)
+	stale := func(where string, slots []segment) {
+		t.Helper()
+		for i, s := range slots {
+			if s.bytes != nil || s.region || s.start != 0 {
+				t.Fatalf("%s: slot %d holds %+v", where, i, s)
+			}
+		}
+	}
+	for _, chunk := range []string{"xxabab", "ababab", "abxx yy abab", "abababababab", "zz"} {
+		if _, err := m.Push([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+		stale("past the segments", m.segments[len(m.segments):cap(m.segments)])
+		stale("the scratch space", m.scratch[:cap(m.scratch)])
+	}
+	if _, err := m.End(); err != nil {
+		t.Fatal(err)
 	}
 }

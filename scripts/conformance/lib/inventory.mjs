@@ -225,9 +225,13 @@ export function validateInventory(inventory) {
     for (const key of ["introducedIn", "core"]) {
       if (key in check) problems.push(`${where}: ${key} belongs on the check's feature, not the check`);
     }
-    // The CLI features a check without a feature of its own still needs (lib/client-lacks.mjs).
+    // The CLI features a check needs besides its own feature, if it has one
+    // (lib/client-lacks.mjs): a types check that starts its application
+    // under `run --export-context`, say.
     if ("cliNeeds" in check) {
-      if ("feature" in check) problems.push(`${where}: cliNeeds belongs to a check without a feature`);
+      if ("feature" in check && Array.isArray(check.cliNeeds) && check.cliNeeds.includes(check.feature)) {
+        problems.push(`${where}: cliNeeds repeats the check's own feature ${check.feature}`);
+      }
       if (!Array.isArray(check.cliNeeds)) problems.push(`${where}: cliNeeds must list CLI features`);
       else for (const f of check.cliNeeds) if (!(f in features)) problems.push(`${where}: cliNeeds names unknown feature ${f}`);
     }
