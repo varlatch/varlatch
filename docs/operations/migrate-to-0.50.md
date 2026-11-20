@@ -296,6 +296,20 @@ undoes them in reverse order.
 
 The rename needs authority over the tailnet, for the migration only.
 
+Two things on the tailnet itself:
+
+- **The auth key must be reusable.** The new node joins with it, and the
+  final check joins a short-lived probe node with it too, so a single-use
+  key would be spent before the check.
+- **The tailnet's access rules must let the node's tags see each other.**
+  The final check looks for the name from a probe node with the new
+  node's tags. If the rules hide the node from it, the check cannot prove
+  the name reaches the new node, so the transfer is undone; the message
+  names the tags.
+
+<!-- pending: the 0.50 server's handoff commands (enroll, reaches; not
+     opened yet), whose probe needs the reusable key and the access rule. -->
+
 - **Tailscale**: an OAuth client with the **`devices:core`** scope and no
   other, generated in the Tailscale admin console. The migration refuses a
   client with any other scope. Each operation exchanges the client for a
