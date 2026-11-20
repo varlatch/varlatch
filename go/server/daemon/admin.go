@@ -16,6 +16,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/config"
@@ -72,6 +73,20 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		rest = append(rest, args[i])
+	}
+	// In the single-container image, admin refuses a key in its
+	// environment as serve does (lib/keyenv): the keys the configuration
+	// names, as far as they can be read, and the key variable names.
+	if os.Getenv(keyenv.ImageMarker) != "" {
+		keys := keyenv.Configured(path)
+		why := keyenv.Refusal(os.Environ(), keys...)
+		for _, k := range keys {
+			clear(k.Bytes)
+		}
+		if why != "" {
+			fmt.Fprintln(stderr, "varlatchd admin: "+why)
+			return ExitConfig
+		}
 	}
 	switch {
 	case sub == "outbound":

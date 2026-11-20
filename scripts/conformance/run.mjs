@@ -13,7 +13,8 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *
  *   --target   the server under test (targets/index.mjs): ts-source,
  *              ts-release:<version> (a signed release, verified and pulled
- *              by digest), go-binary:<path> (the Go varlatchd at <path>)
+ *              by digest), go-binary:<path> (the Go varlatchd at <path>),
+ *              go-container:<image> (the Go varlatchd in the image <image>)
  *   --cli      the CLI under test: `source` is apps/cli/dist/varlatch.cjs; a
  *              version is a released CLI pinned in clients.json, downloaded
  *              and verified before anything starts (clients.mjs). The sdk
@@ -86,7 +87,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function usage(message) {
   console.error(
-    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
+    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path>|go-container:<image> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
       " [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]",
   );
   process.exit(64);
@@ -230,8 +231,8 @@ async function main() {
   } catch (err) {
     usage(err.message);
   }
-  const { name: targetName, argument: targetArgument, target, capabilities, expectKey } = loaded;
-  const expectations = loadExpectations(targetName, inventory, openapi);
+  const { name: targetName, argument: targetArgument, target, capabilities, expectKey, as: expectName } = loaded;
+  const expectations = loadExpectations(expectName, inventory, openapi);
   // The target's declared gaps, and the checks that need one.
   const lacks = lacksFor(expectations, expectKey);
   const lacking = lackingChecks(inventory, lacks.keys());
@@ -568,7 +569,7 @@ async function main() {
     report.lacks.stale = await probeLacks({ inventory, openapi, lacks: [...lacks.keys()], origin, target, state });
     for (const { operation, why } of report.lacks.stale) {
       console.log(`STALE-LACKS  ${operation}: ${why}`);
-      errors.push({ suite: "runner", message: `expect/${targetName}.json lacks ${operation}, but ${why}` });
+      errors.push({ suite: "runner", message: `expect/${expectName}.json lacks ${operation}, but ${why}` });
     }
     if (report.lacks.stale.length === 0) console.log(`--- every one answered ${NOT_IMPLEMENTED_YET}`);
   }
