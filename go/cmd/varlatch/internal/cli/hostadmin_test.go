@@ -740,9 +740,13 @@ func TestTailnetRepinFront(t *testing.T) {
 			t.Errorf("%v: varlatchd ran %q", c.args, got)
 		}
 	}
-	// The rest of `tailnet` is still slice 5.7a's.
+	// The rest of `tailnet` is slice 5.7a's: a repository's command, which
+	// never runs varlatchd.
 	var stdout, stderr bytes.Buffer
-	if code := Main([]string{"tailnet", "requirements"}, MapEnv{"PATH": dir, "HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}); code != 64 || !strings.Contains(stderr.String(), "not in this build of the Go CLI yet (slice 5.7a)") {
+	if code := Main([]string{"tailnet", "requirements"}, MapEnv{"PATH": dir, "HOME": t.TempDir(), "VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr}); code != 1 || !strings.Contains(stderr.String(), "No varlatch.toml found") {
 		t.Errorf("tailnet requirements: %d %q", code, stderr.String())
+	}
+	if got := calls(t, dir); got != nil {
+		t.Errorf("tailnet requirements: varlatchd ran %q", got)
 	}
 }

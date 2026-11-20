@@ -8,6 +8,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/orgdeletion"
 	"github.com/varlatch/varlatch/go/server/outbound"
+	"github.com/varlatch/varlatch/go/server/publictls"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/syncs"
@@ -135,6 +137,12 @@ type hooks struct {
 	// Let's Encrypt).
 	tailnetControl string
 	tailnetCerts   tailnet.CertSource
+	// publicTLS tunes public HTTPS's certificate manager (tests: Pebble's
+	// root for its API, a short check interval and backoff), and
+	// publicReady receives the HTTPS and plain HTTP listeners' addresses
+	// (nil when that listener is off).
+	publicTLS   func(*publictls.Options)
+	publicReady func(https, http net.Addr)
 }
 
 // productionStorage is the storage engine's options for serving: the
@@ -472,6 +480,35 @@ func serve(opts Options, h *hooks) int {
 		apps.RunSweepLoop(ctx, githubapps.SweepInterval, admission.Enter)
 	}()
 	defer func() { cancel(); <-sweepDone }()
+	// Public HTTPS (step 6's decision 4), when listen_https is set: the
+	// certificate manager first, so the listeners report can show it.
+	var public *publictls.Manager
+	if p := cfg.PublicHTTPS; p != nil {
+		popts := publictls.Options{
+			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
+			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
+		}
+		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
+		if p.CARootFile != "" {
+			pem, err := os.ReadFile(p.CARootFile)
+			if err != nil {
+				return fail(ExitFailure, "cannot read acme_ca_root", "file", p.CARootFile, "error", err)
+			}
+			roots := x509.NewCertPool()
+			if !roots.AppendCertsFromPEM(pem) {
+				return fail(ExitConfig, "acme_ca_root holds no PEM certificate", "file", p.CARootFile)
+			}
+			popts.CARoots = roots
+		}
+		if h.publicTLS != nil {
+			h.publicTLS(&popts)
+		}
+		public, err = publictls.New(popts)
+		if err != nil {
+			return fail(ExitFailure, "public HTTPS", "error", err)
+		}
+		defer public.Close()
+	}
 	hopts := httpserver.Options{
 		Outbound:       policy,
 		Version:        buildinfo.Version,
@@ -491,6 +528,9 @@ func serve(opts Options, h *hooks) int {
 		Maintenance:    admission,
 		Backups:        env.backups,
 		Log:            log,
+	}
+	if public != nil {
+		hopts.PublicListener = func() any { return public.Report() }
 	}
 	if tn != nil {
 		hopts.TailnetListeners = tn.manager.Report
@@ -551,6 +591,22 @@ func serve(opts Options, h *hooks) int {
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)
+	var publicServers []*http.Server
+	publicDone := make(chan struct{})
+	if public != nil {
+		servers, err := servePublic(cfg, public, root, log, served, h)
+		if err != nil {
+			_ = srv.Close()
+			return fail(ExitFailure, "cannot listen", "error", err)
+		}
+		publicServers = servers
+		go func() {
+			defer close(publicDone)
+			public.Run(ctx)
+		}()
+	} else {
+		close(publicDone)
+	}
 	if tn != nil {
 		go tn.serve(ctx, tailnetHandler, browserHandler)
 	}
@@ -575,14 +631,23 @@ func serve(opts Options, h *hooks) int {
 	}
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), StopTimeout)
 	defer stopCancel()
+	for _, ps := range publicServers {
+		go func() { _ = ps.Shutdown(stopCtx) }()
+	}
 	if err := srv.Shutdown(stopCtx); err != nil {
 		log.Warn("requests still in flight at the stop deadline were cut off", "error", err)
 		_ = srv.Close()
+	}
+	for _, ps := range publicServers {
+		if err := ps.Shutdown(stopCtx); err != nil {
+			_ = ps.Close()
+		}
 	}
 	if h.stopped != nil {
 		h.stopped()
 	}
 	cancel()
+	<-publicDone
 	if tn != nil {
 		tn.stop(stopCtx)
 		<-tn.done

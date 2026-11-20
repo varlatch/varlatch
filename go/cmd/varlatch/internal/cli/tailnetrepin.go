@@ -29,8 +29,8 @@ const repinUsage = "Usage: varlatch tailnet repin [--yes] [--adopt] [--json] [--
 // terminal); a variable so the tests can answer.
 var repinTerminal = func(r *Run) bool { return isTerminal(r.Stdin) && isTerminal(r.Stdout) }
 
-// tailnetRepin is `tailnet`'s partial: `tailnet repin`. The rest of
-// `tailnet` is slice 5.7a's.
+// tailnetRepin is `tailnet repin`: tailnetCommand (slice 5.7a's) runs it
+// first, and it says whether the command line is that form.
 func tailnetRepin(r *Run) (bool, error) {
 	if len(r.Args) == 0 || r.Args[0] != "repin" {
 		return false, nil

@@ -212,7 +212,9 @@ func (o *operations) GetTailnetContext(ctx context.Context, _ api.GetTailnetCont
 // GetInstallationListeners is GET /v1/installation/listeners, for
 // Installation Admins: the tailnet listeners as configured and as
 // varlatchd last observed them, null without a tailnet listener; never
-// reachability from a client, which only the client can see.
+// reachability from a client, which only the client can see. With public
+// HTTPS on, also its state (public), which the TypeScript server, behind
+// its own proxy, never had.
 func (o *operations) GetInstallationListeners(ctx context.Context, _ api.GetInstallationListenersRequestObject) (api.GetInstallationListenersResponseObject, error) {
 	if err := installationAdmin(ctx); err != nil {
 		return nil, err
@@ -221,7 +223,11 @@ func (o *operations) GetInstallationListeners(ctx context.Context, _ api.GetInst
 	if o.s.opts.TailnetListeners != nil {
 		report = o.s.opts.TailnetListeners()
 	}
-	return ok(jsvalue.Object{{Key: "tailnet", Value: report}}), nil
+	listeners := jsvalue.Object{{Key: "tailnet", Value: report}}
+	if o.s.opts.PublicListener != nil {
+		listeners = append(listeners, jsvalue.Member{Key: "public", Value: o.s.opts.PublicListener()})
+	}
+	return ok(listeners), nil
 }
 
 // browserEndpoint is the browser endpoint's URL now, "" for none.
