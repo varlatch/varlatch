@@ -132,9 +132,12 @@ type TailnetRecord struct {
 	IncomingID   string `json:"incomingId"`
 	StableID     string `json:"stableId"`
 	// Handoff is the forward handoff's state; Reverse the one that undoes
-	// it, when it was done and the migration is undone before its switch.
-	Handoff *tailhandoff.State `json:"handoff,omitempty"`
-	Reverse *tailhandoff.State `json:"reverse,omitempty"`
+	// it, when it was done and the migration is undone before its switch;
+	// Rollback a reverse migration's (--rollback), under its own operation.
+	Handoff           *tailhandoff.State `json:"handoff,omitempty"`
+	Reverse           *tailhandoff.State `json:"reverse,omitempty"`
+	Rollback          *tailhandoff.State `json:"rollback,omitempty"`
+	RollbackOperation string             `json:"rollbackOperation,omitempty"`
 	// Checked is when the combined final check passed (decision 12).
 	Checked string `json:"checked,omitempty"`
 }
@@ -156,23 +159,36 @@ func (e *Engine) tailnetSides() (TailnetSource, TailnetTarget, error) {
 	return ts, tt, nil
 }
 
-// handoffJournal keeps the handoff's state in migrate's journal (forward
-// or reverse slot), written in both places before the handoff goes on.
+// handoffSlot is which of the journal's handoffs: the forward one, the
+// reverse that undoes it before the switch, or a rollback's.
+type handoffSlot int
+
+const (
+	slotForward handoffSlot = iota
+	slotUndo
+	slotRollback
+)
+
+// handoffJournal keeps the handoff's state in migrate's journal (its
+// slot), written in both places before the handoff goes on.
 type handoffJournal struct {
-	e       *Engine
-	j       *Journal
-	reverse bool
+	e    *Engine
+	j    *Journal
+	slot handoffSlot
 }
 
-func (h handoffJournal) slot() **tailhandoff.State {
-	if h.reverse {
+func (h handoffJournal) at() **tailhandoff.State {
+	switch h.slot {
+	case slotUndo:
 		return &h.j.Tailnet.Reverse
+	case slotRollback:
+		return &h.j.Tailnet.Rollback
 	}
 	return &h.j.Tailnet.Handoff
 }
 
 func (h handoffJournal) Load(_ context.Context, op string) (*tailhandoff.State, error) {
-	s := *h.slot()
+	s := *h.at()
 	if s == nil || s.Plan.Operation != op {
 		return nil, nil
 	}
@@ -182,7 +198,7 @@ func (h handoffJournal) Load(_ context.Context, op string) (*tailhandoff.State, 
 
 func (h handoffJournal) Save(ctx context.Context, s *tailhandoff.State) error {
 	c := *s
-	*h.slot() = &c
+	*h.at() = &c
 	return h.e.save(ctx, h.j)
 }
 
@@ -268,7 +284,8 @@ func (r handoffResolver) Reaches(ctx context.Context, name, nodeID string) (bool
 }
 
 // handoffEngine is tailhandoff's engine for this migration.
-func (e *Engine) handoffEngine(j *Journal, reverse bool) (*tailhandoff.Engine, error) {
+func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engine, error) {
+	reverse := slot != slotForward
 	ts, tt, err := e.tailnetSides()
 	if err != nil {
 		return nil, err
@@ -285,7 +302,7 @@ func (e *Engine) handoffEngine(j *Journal, reverse bool) (*tailhandoff.Engine, e
 		Ledger:     &fileLedger{path: filepath.Join(e.Source.Dir(), LedgerFile)},
 		Endpoints:  handoffEndpoints{src: ts, tgt: tt, target: e.Target, reverse: reverse},
 		Resolver:   handoffResolver{tgt: tt},
-		Journal:    handoffJournal{e: e, j: j, reverse: reverse},
+		Journal:    handoffJournal{e: e, j: j, slot: slot},
 		Deadline:   o.Deadline,
 		UndoWait:   o.UndoWait,
 		RetryEvery: o.RetryEvery,
@@ -423,7 +440,7 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 	if err := e.save(ctx, j); err != nil {
 		return err
 	}
-	he, err := e.handoffEngine(j, false)
+	he, err := e.handoffEngine(j, slotForward)
 	if err != nil {
 		return err
 	}
@@ -443,7 +460,7 @@ func (e *Engine) switchTailnet(ctx context.Context, j *Journal) error {
 	if rec == nil || rec.Checked != "" {
 		return nil
 	}
-	he, err := e.handoffEngine(j, false)
+	he, err := e.handoffEngine(j, slotForward)
 	if err != nil {
 		return err
 	}
@@ -501,7 +518,7 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 		return nil
 	case tailhandoff.Done:
 	default:
-		he, err := e.handoffEngine(j, false)
+		he, err := e.handoffEngine(j, slotForward)
 		if err != nil {
 			return err
 		}
@@ -519,7 +536,7 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 	if rec.Reverse != nil && rec.Reverse.Phase == tailhandoff.Done {
 		return nil
 	}
-	he, err := e.handoffEngine(j, true)
+	he, err := e.handoffEngine(j, slotUndo)
 	if err != nil {
 		return err
 	}
@@ -543,6 +560,106 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 		return fmt.Errorf("giving the tailnet name back: %v", errors.Join(err, errors.New("the reverse handoff did not finish")))
 	}
 	return nil
+}
+
+// rollbackTailnet gives the tailnet name back to the retained old node in
+// a reverse migration (decision 17), after the address answers from the
+// TypeScript release: the reverse handoff, under an operation of its own,
+// Go's node closing (stopped) and the sidecar opening. A failure undone by
+// the handoff undoes the reverse (the address back to Go); one pending
+// waits for --resume. Nothing when the forward migration moved no name.
+func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
+	rec := j.Tailnet
+	if rec == nil || rec.Handoff == nil || rec.Handoff.Phase != tailhandoff.Done {
+		return nil
+	}
+	if rec.Rollback != nil && rec.Rollback.Phase == tailhandoff.Done {
+		return nil
+	}
+	if e.Tailnet == nil || e.Tailnet.Control == nil {
+		return fmt.Errorf("%w: the reverse gives the tailnet name back; varlatch migrate --resume with them goes on", ErrNoTailnetAuthority)
+	}
+	he, err := e.handoffEngine(j, slotRollback)
+	if err != nil {
+		return err
+	}
+	var st *tailhandoff.State
+	switch {
+	case rec.Rollback == nil || rec.Rollback.Phase == tailhandoff.Undone:
+		op, err := tailcontrol.NewOperationID()
+		if err != nil {
+			return err
+		}
+		retained, err := tailcontrol.TempName(rec.Name, rec.Operation, tailcontrol.RoleOld)
+		if err != nil {
+			return err
+		}
+		rec.RollbackOperation, rec.Rollback = op, nil
+		plan := tailhandoff.NewReverse(op, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)
+		e.say("Tailnet: the name %s goes back to the TypeScript release's node.", rec.Name)
+		if _, err := he.Prepare(ctx, plan); err != nil {
+			return e.undoReverse(ctx, j, fmt.Errorf("the tailnet name back: %w", err))
+		}
+		crashPoint("rollback tailnet switch")
+		st, err = he.Switch(ctx, op)
+		if err != nil {
+			return e.rollbackTailnetFailed(ctx, j, err)
+		}
+	case rec.Rollback.Phase == tailhandoff.Prepared:
+		if st, err = he.Switch(ctx, rec.RollbackOperation); err != nil {
+			return e.rollbackTailnetFailed(ctx, j, err)
+		}
+	default:
+		e.say("Tailnet: the name's return was interrupted (%s): it is resumed.", rec.Rollback.Phase)
+		if st, err = he.Resume(ctx, rec.RollbackOperation); err != nil {
+			return e.rollbackTailnetFailed(ctx, j, err)
+		}
+	}
+	if st == nil || st.Phase != tailhandoff.Done {
+		return fmt.Errorf("the tailnet name back ended %v, not done; varlatch migrate --resume goes on", st)
+	}
+	return nil
+}
+
+func (e *Engine) rollbackTailnetFailed(ctx context.Context, j *Journal, err error) error {
+	var herr *tailhandoff.HandoffError
+	if errors.As(err, &herr) && (herr.Phase == tailhandoff.Undone || herr.Phase == tailhandoff.Prepared) {
+		return e.undoReverse(ctx, j, fmt.Errorf("the tailnet name back: %w", err))
+	}
+	return fmt.Errorf("the tailnet name back: %w; varlatch migrate --resume goes on", err)
+}
+
+// unwindRollbackTailnet, in the reverse's undo before the address goes
+// back to Go: a return of the name interrupted is resumed (tailhandoff
+// undoes it, the name with Go's node again). One done cannot be undone
+// here: the TypeScript release holds the name, so the reverse goes on.
+func (e *Engine) unwindRollbackTailnet(ctx context.Context, j *Journal) error {
+	rec := j.Tailnet
+	if rec == nil || rec.Rollback == nil {
+		return nil
+	}
+	switch rec.Rollback.Phase {
+	case tailhandoff.Prepared, tailhandoff.Undone:
+		return nil
+	case tailhandoff.Done:
+		return errors.New("the tailnet name is the TypeScript release's again: the reverse cannot be undone now; varlatch migrate --resume finishes it")
+	}
+	if e.Tailnet == nil || e.Tailnet.Control == nil {
+		return fmt.Errorf("%w: the tailnet name must go back to Go's node first", ErrNoTailnetAuthority)
+	}
+	he, err := e.handoffEngine(j, slotRollback)
+	if err != nil {
+		return err
+	}
+	st, err := he.Resume(ctx, rec.RollbackOperation)
+	if st != nil && st.Phase == tailhandoff.Done {
+		return errors.New("the tailnet name went back to the TypeScript release's node meanwhile: varlatch migrate --resume finishes the reverse")
+	}
+	var herr *tailhandoff.HandoffError
+	if err == nil || (errors.As(err, &herr) && herr.Phase == tailhandoff.Undone) {
+		return nil
+	}
+	return fmt.Errorf("giving the tailnet name back to Go's node: %w", err)
 }
 
 // tailnetEstimate is the tailnet name's share of the transfer (decision

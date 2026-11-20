@@ -293,6 +293,10 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 			return err
 		}
 	}
+	// The tailnet name after the address (decision 12's order).
+	if err := e.rollbackTailnet(ctx, j); err != nil {
+		return err
+	}
 	return e.rolledBack(ctx, j)
 }
 
@@ -401,6 +405,10 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	}
 	var problems []error
 	if from == RollbackTransfer {
+		// The tailnet name back to Go's node first, then the address.
+		if err := e.unwindRollbackTailnet(ctx, j); err != nil {
+			return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, err)
+		}
 		if err := rs.StopServing(ctx, j.Ingress); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release: %w", err))
 		}

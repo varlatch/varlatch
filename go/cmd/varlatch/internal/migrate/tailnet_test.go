@@ -374,3 +374,54 @@ func TestTheLedgerFile(t *testing.T) {
 		t.Fatal("an unknown attempt ended")
 	}
 }
+
+// A reverse migration gives the name back (decision 17): after the
+// forward migration moved it, the retained old node takes it from the
+// target's under an operation of its own, the target's node closing
+// (stopped) and the sidecar opening; run again, it changes nothing.
+func TestTheRollbackGivesTheNameBack(t *testing.T) {
+	w := newTailnetWorld(t)
+	j, err := w.eng.Run(context.Background(), false)
+	if err != nil || j.Phase != Open {
+		t.Fatalf("%v %+v", err, j)
+	}
+	// Where the reverse gives the name back: its transfer, the address
+	// answering from the TypeScript release and Go stopped.
+	reverseAt := func(w *tnWorld, j *Journal) {
+		j.Phase = RollbackTransfer
+		w.tgt.journal = &JournalHead{ID: j.ID, Phase: RollbackTransfer}
+		w.tgt.running = false
+	}
+	reverseAt(w, j)
+	if err := w.eng.rollbackTailnet(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	rec := j.Tailnet
+	if rec.Rollback == nil || rec.Rollback.Phase != tailhandoff.Done || rec.RollbackOperation == "" || rec.RollbackOperation == rec.Operation {
+		t.Fatalf("the rollback's handoff: %+v", rec)
+	}
+	goTemp, _ := tailcontrol.TempName("vault", rec.RollbackOperation, tailcontrol.RoleNew)
+	if n := w.names(); n["old"] != "vault" || n["new"] != goTemp {
+		t.Fatalf("names %v", n)
+	}
+	if !w.src.running || w.tgt.running {
+		t.Fatalf("sidecar running %v, target running %v", w.src.running, w.tgt.running)
+	}
+	if err := w.eng.rollbackTailnet(context.Background(), j); err != nil {
+		t.Fatalf("again: %v", err)
+	}
+	if n := w.names(); n["old"] != "vault" {
+		t.Fatalf("names after again %v", n)
+	}
+	// Without the authority, the reverse says what it needs.
+	w2 := newTailnetWorld(t)
+	j2, err := w2.eng.Run(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reverseAt(w2, j2)
+	w2.eng.Tailnet = nil
+	if err := w2.eng.rollbackTailnet(context.Background(), j2); !errors.Is(err, ErrNoTailnetAuthority) {
+		t.Fatalf("no authority: %v", err)
+	}
+}

@@ -187,3 +187,50 @@ func TestTheTailnetAuthKeyAndState(t *testing.T) {
 		t.Fatalf("an auth key without the tailnet: %d %q", code, errOut)
 	}
 }
+
+// The tailnet handoff's journal writes beside the running varlatchd
+// (go-step7 decisions 11 and 14): the forward handoff runs in the
+// transfer, beside the varlatchd serving under the transfer's gate, and
+// saves its state before each act, so each is the same phase again; a
+// rollback's runs in the reverse's phases, beside the varlatchd the
+// reverse reverses. Every write is taken and read back; open beside it
+// still waits for it to stop.
+func TestTheHandoffsJournalBesideARunningVarlatchd(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	for _, phase := range []string{"started", "transfer"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	withHandoff := func(phase, slot, state string) []byte {
+		return []byte(`{"format":1,"id":"` + migA + `","phase":"` + phase + `","tailnet":{"name":"vault","operation":"abcdefghij","` + slot +
+			`":{"version":1,"phase":"` + state + `","plan":{"kind":"forward","operation":"abcdefghij","name":"vault"}}},"history":[]}`)
+	}
+	r := start(t, in)
+	for _, state := range []string{"prepared", "switching", "done"} {
+		if code, _, errOut := migrateWith(t, in.conf, withHandoff("transfer", "handoff", state), "state", "--write"); code != ExitOK {
+			t.Fatalf("the handoff %s beside the running varlatchd: %d %q", state, code, errOut)
+		}
+		if code, out, _ := migrateWith(t, in.conf, nil, "state"); code != ExitOK || !strings.Contains(out, `"phase":"`+state+`"`) {
+			t.Fatalf("the handoff %s read back: %q", state, out)
+		}
+	}
+	if code, _, errOut := migrateWith(t, in.conf, withHandoff("open", "handoff", "done"), "state", "--write"); code != ExitFailure || !strings.Contains(errOut, "varlatchd is running") {
+		t.Fatalf("an open beside the running varlatchd: %d %q", code, errOut)
+	}
+	r.stop(t)
+	if code, _, errOut := migrateWith(t, in.conf, withHandoff("open", "handoff", "done"), "state", "--write"); code != ExitOK {
+		t.Fatal(errOut)
+	}
+	// The reverse, beside the varlatchd it reverses.
+	r = start(t, in)
+	for _, step := range [][2]string{{"rollback", "prepared"}, {"rollback-exported", "prepared"}, {"rollback-transfer", "switching"}, {"rollback-transfer", "done"}} {
+		if code, _, errOut := migrateWith(t, in.conf, withHandoff(step[0], "rollback", step[1]), "state", "--write"); code != ExitOK {
+			t.Fatalf("%s with the rollback's handoff %s beside the running varlatchd: %d %q", step[0], step[1], code, errOut)
+		}
+	}
+	if code, out, _ := migrateWith(t, in.conf, nil, "state"); code != ExitOK || !strings.Contains(out, `"rollback":{`) || !strings.Contains(out, `"phase":"rollback-transfer"`) {
+		t.Fatalf("the reverse's journal read back: %q", out)
+	}
+	r.stop(t)
+}
