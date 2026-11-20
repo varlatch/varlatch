@@ -73,7 +73,7 @@ import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacki
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, declared429, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
-import { endProblem, parseSuiteOutput, resultLine } from "./lib/results.mjs";
+import { endProblem, lastError, parseSuiteOutput, resultLine } from "./lib/results.mjs";
 import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
 import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
@@ -537,7 +537,11 @@ async function main() {
       const unfinished = out.timedOut ? "timed out" : endProblem(out.endChannel, { suite: entry.suite, nonce: out.nonce, code: out.code, signal: out.signal });
       const ended = unfinished === null;
       if (!ended && !out.timedOut) {
-        errors.push({ suite: entry.suite, message: `did not finish: ${unfinished}; the checks it did not report fail` });
+        // Its exit and the error it last wrote say why: a suite that
+        // crashed is named with its cause, not only by what it left out.
+        const crash = lastError(out.stderr);
+        const exit = out.signal ? `killed by ${out.signal}` : `exit ${out.code}`;
+        errors.push({ suite: entry.suite, message: `did not finish: ${unfinished}; ${exit}${crash ? `; its last error: ${crash}` : ""}; the checks it did not report fail` });
       }
       const reportedIds = new Set(parsed.results.map((r) => r.id));
       const unreported = ended ? new Set() : new Set([...clientLacked].filter((id) => !reportedIds.has(id) && !observedNotBuilt.has(id)));
