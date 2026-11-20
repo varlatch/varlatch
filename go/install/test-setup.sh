@@ -17,8 +17,11 @@
 # keys root's (0600) and their copies (0600) holding them, the custody
 # attested for both keys, the first backup verified, and no key in its
 # output, its journal, the configuration, the unit's journal or a backup;
-# a rerun must change nothing and restart nothing. Then setup stopped
-# after each step and run again ends as a run in one go.
+# a rerun must change nothing and restart nothing. G13 through setup: the
+# localhost installation's latest archive and its two keys' copies, on the
+# host emptied again, restored by `setup --restore` (the administrator and
+# their passkey back, no link issued, a backup verified). Then setup
+# stopped after each step and run again ends as a run in one go.
 #
 # It touches only a disposable machine: it refuses to start unless
 # VARLATCH_TEST_DISPOSABLE_ROOT=1, as root, with nothing of a Varlatch
@@ -196,6 +199,43 @@ check_installation() {
 # The ingress modes, each from an empty host.
 setup_once localhost --ingress localhost
 check_installation localhost --ingress localhost
+# What a restore starts from (G13): the latest archive and the two keys'
+# copies, kept off the host; nothing else survives the teardown.
+mkdir -m 700 "$work/g13"
+# The archive check_installation's backup run made, by the path it gave.
+archive=$(sed -n 's/.*"path": *"\([^"]*\.vltbak\)".*/\1/p' "$work/localhost.backup" | head -n 1)
+cp "$archive" "$work/g13/archive.vltbak"
+cp "$work/localhost-root-kek" "$work/g13/root-kek"
+cp "$work/localhost-backup-key" "$work/g13/backup-key"
+admin_before=$(/usr/local/bin/varlatchd admin bootstrap-status --config /etc/varlatch/varlatchd.conf | grep -o '"id":"[^"]*"')
+teardown
+
+# G13 through setup: a fresh host, only the archive and the two keys.
+set +e
+/usr/local/bin/varlatch setup --ingress localhost --backups host --accept-slow-disk --attest --admin-wait 0s \
+  --admin-link-out "$work/g13-link" --restore "$work/g13/archive.vltbak" \
+  --root-kek-file "$work/g13/root-kek" --backup-key-file "$work/g13/backup-key" </dev/null >"$work/g13.out" 2>&1
+status=$?
+set -e
+if [ "$status" = 0 ]; then pass "g13: setup --restore exits 0"; else fail "g13: setup --restore exited $status: $(tail -n 5 "$work/g13.out")"; fi
+if [ "$(systemctl is-active varlatchd.service)" = active ] && [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8686/readyz || true)" = 200 ]; then
+  pass "g13: the restored installation is ready"
+else
+  fail "g13: the restored installation is not ready"
+fi
+status_after=$(/usr/local/bin/varlatchd admin bootstrap-status --config /etc/varlatch/varlatchd.conf 2>&1 || true)
+if [ -n "$admin_before" ] && printf '%s' "$status_after" | grep -q "$admin_before,\"enabled\":true,\"hasPasskey\":true"; then
+  pass "g13: the administrator and their passkey are restored"
+else
+  fail "g13: bootstrap-status after the restore: $status_after"
+fi
+if [ -e "$work/g13-link" ] || grep -q 'enrollment link' "$work/g13.out"; then fail "g13: a restore issued an enrollment link"; else pass "g13: no enrollment link"; fi
+for k in root-kek backup-key; do
+  if cmp -s "$work/g13/$k" /etc/varlatch/$k && [ "$(mode_of /etc/varlatch/$k)" = "600 root:root" ]; then pass "g13: /etc/varlatch/$k is your key, 600 root"; else fail "g13: /etc/varlatch/$k"; fi
+done
+if grep -q '"firstBackup": "bak_' /etc/varlatch/setup.json && grep -q 'is made and verified' "$work/g13.out"; then pass "g13: a backup of the restored installation is verified"; else fail "g13: no verified backup after the restore"; fi
+journalctl -u varlatchd.service --no-pager >"$work/g13.journal" 2>&1 || true
+if keys_leak_into "$work/g13.out" /etc/varlatch/setup.json /etc/varlatch/varlatchd.conf "$work/g13.journal"; then fail "g13: a key in setup's output, its journal, the configuration or the unit's journal"; else pass "g13: no key in setup's output or any journal"; fi
 teardown
 
 setup_once proxy --ingress proxy --public-url https://vault.varlatch.test

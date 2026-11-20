@@ -4,6 +4,7 @@ package setup
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -46,6 +47,8 @@ type fakeHost struct {
 	backups               int
 	backupUnverified      bool
 	adminCalls            []string
+	// restoreURL is the restored archive's public_url.
+	restoreURL string
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -104,6 +107,18 @@ func (h *fakeHost) CheckConfig(string) (string, error) { return h.checkMsg, nil 
 // once (the operator's browser), unless manualEnroll.
 func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 	h.adminCalls = append(h.adminCalls, strings.Join(args, " "))
+	if args[0] == "backup" && args[1] == "restore" {
+		// Offline, before the unit: the restored installation's database,
+		// its administrator with a passkey and its attestations.
+		if err := os.WriteFile(h.Path(DataDir+"/varlatch.db"), []byte("restored"), 0o600); err != nil {
+			return nil, err
+		}
+		h.admin, h.bootstrapped, h.passkey = "idn_restored", true, true
+		h.attested = map[string]bool{"root-kek": true, "backup-key": true}
+		return []byte("Restore completed for inst_old from archive bak_old (created 2026-11-01T00:00:00.000Z): the database is restored and its canary verified.\n" +
+			"The archive's settings, to compare with this host's varlatchd.conf:\n  backup_interval = 24h\n  public_url = " + h.restoreURL + "\n" +
+			"Next: start varlatchd, then take and check a fresh archive (`varlatchd admin backup run`).\n"), nil
+	}
 	if !h.active {
 		return nil, errors.New("varlatchd is not running")
 	}
@@ -974,5 +989,133 @@ func TestDoctorStep(t *testing.T) {
 	}
 	if slices.ContainsFunc(h.adminCalls[calls:], func(c string) bool { return c == "bootstrap" || strings.HasPrefix(c, "custody attest") }) {
 		t.Errorf("a rerun repeated %q", h.adminCalls[calls:])
+	}
+}
+
+// operatorKeys writes two key files as an operator keeps them, made at
+// run time.
+func operatorKeys(t *testing.T, dir string) (kek, bek string) {
+	t.Helper()
+	write := func(name string) string {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(hex.EncodeToString(b)+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	return write("my-root-kek"), write("my-backup-key")
+}
+
+// TestRestore: setup --restore on a fresh host installs the operator's
+// keys (root, 0600, never shown, copied or said), restores the archive
+// before the unit first starts, makes the restored files the unit's, issues
+// no enrollment link (the restored administrator has a passkey), and
+// verifies a first backup; a rerun without --restore continues it.
+func TestRestore(t *testing.T) {
+	skipOffUnix(t)
+	h, said, out := newFakeHost(t), &recorder{}, t.TempDir()
+	h.restoreURL = "http://localhost:8686"
+	kek, bek := operatorKeys(t, out)
+	o := options(h, said, out)
+	o.RootKEKOut, o.BackupKeyOut = "", ""
+	o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	for in, p := range map[string]string{kek: RootKEK, bek: BackupKey} {
+		want, _ := os.ReadFile(in)
+		got, _ := os.ReadFile(h.Path(p))
+		if string(got) != string(want) || mode(t, h.Path(p)) != 0o600 {
+			t.Errorf("%s: not the operator's key, or mode %v", p, mode(t, h.Path(p)))
+		}
+		for _, line := range said.lines {
+			if strings.Contains(line, strings.TrimSpace(string(want))) {
+				t.Error("a key in setup's output")
+			}
+		}
+	}
+	restoreAt := slices.Index(h.adminCalls, "backup restore --in /srv/backups/old.vltbak --backup-key-file "+BackupKey)
+	if restoreAt != 0 || len(h.links) != 0 || h.backups != 1 || !slices.Contains(h.adminCalls, "bootstrap-status") {
+		t.Errorf("admin calls %q, links %q, backups %d", h.adminCalls, h.links, h.backups)
+	}
+	if h.chowns["/var/lib/varlatch/varlatch.db"] != [2]int{990, 990} {
+		t.Errorf("the restored database is not the unit's: %v", h.chowns)
+	}
+	if _, err := os.Stat(filepath.Join(out, "root-kek.copy")); err == nil {
+		t.Error("a restore wrote a key copy")
+	}
+	var j JournalDoc
+	raw, _ := os.ReadFile(h.Path(Journal))
+	if json.Unmarshal(raw, &j) != nil || j.Restore == nil || j.Restore.ArchiveID != "bak_old" || j.Restore.InstallationID != "inst_old" {
+		t.Errorf("journal %s", raw)
+	}
+	// A rerun without --restore continues the restore's installation.
+	o2 := options(h, &recorder{}, out)
+	o2.RootKEKOut, o2.BackupKeyOut = "", ""
+	calls := len(h.adminCalls)
+	if err := Run(context.Background(), o2); err != nil || slices.ContainsFunc(h.adminCalls[calls:], func(c string) bool { return strings.HasPrefix(c, "backup") }) {
+		t.Errorf("a rerun: %v %q", err, h.adminCalls[calls:])
+	}
+}
+
+// TestRestoreRefusals: a restore is refused onto a host already set up,
+// over another key, with the same key twice, with keys that are not keys,
+// and at another address than the archive's (before the unit starts).
+func TestRestoreRefusals(t *testing.T) {
+	skipOffUnix(t)
+	restoreOpts := func(h *fakeHost, out string) Options {
+		kek, bek := operatorKeys(t, out)
+		o := options(h, &recorder{}, out)
+		o.RootKEKOut, o.BackupKeyOut = "", ""
+		o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
+		return o
+	}
+	// A host already set up.
+	h, out := newFakeHost(t), t.TempDir()
+	if err := Run(context.Background(), options(h, &recorder{}, out)); err != nil {
+		t.Fatal(err)
+	}
+	var usage *UsageError
+	if err := Run(context.Background(), restoreOpts(h, t.TempDir())); !errors.As(err, &usage) || !strings.Contains(err.Error(), "a restore goes onto a fresh host") {
+		t.Errorf("onto a host set up: %v", err)
+	}
+	// Another key already there.
+	h2 := newFakeHost(t)
+	if err := os.MkdirAll(h2.Path(EtcDir), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h2.Path(RootKEK), []byte(strings.Repeat("cd", 32)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), restoreOpts(h2, t.TempDir())); err == nil || !strings.Contains(err.Error(), "already holds another Root KEK") {
+		t.Errorf("over another key: %v", err)
+	}
+	// The same key twice; and a file that holds no key.
+	h3, out3 := newFakeHost(t), t.TempDir()
+	o3 := restoreOpts(h3, out3)
+	o3.BackupKeyIn = o3.RootKEKIn
+	if err := Run(context.Background(), o3); !errors.As(err, &usage) || !strings.Contains(err.Error(), "hold the same key") {
+		t.Errorf("the same key twice: %v", err)
+	}
+	h4, out4 := newFakeHost(t), t.TempDir()
+	o4 := restoreOpts(h4, out4)
+	if err := os.WriteFile(o4.BackupKeyIn, []byte("not a key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), o4); !errors.As(err, &usage) || !strings.Contains(err.Error(), "does not hold a key") || strings.Contains(err.Error(), "not a key\n") {
+		t.Errorf("not a key: %v", err)
+	}
+	// Another address than the archive's: refused before the unit starts.
+	h5, out5 := newFakeHost(t), t.TempDir()
+	h5.restoreURL = "https://vault.example.com"
+	if err := Run(context.Background(), restoreOpts(h5, out5)); !errors.As(err, &usage) || !strings.Contains(err.Error(), "--public-url https://vault.example.com") {
+		t.Errorf("another address: %v", err)
+	}
+	if slices.Contains(h5.systemctl, "enable --now varlatchd.service") {
+		t.Error("the unit started at another address than the archive's")
 	}
 }

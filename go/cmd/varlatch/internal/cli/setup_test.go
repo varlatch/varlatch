@@ -13,7 +13,7 @@ import (
 
 // TestSetupRefusals: what `varlatch setup` refuses before it changes
 // anything: a Compose installation (--dir, the TypeScript CLI's), the
-// restore (slice 6.4c), unknown options, an answers file that is not one
+// restore without its keys, unknown options, an answers file that is not one
 // or disagrees with a flag, half of the keys' copies; and a run that is
 // not root's, which it says before anything.
 func TestSetupRefusals(t *testing.T) {
@@ -32,7 +32,9 @@ func TestSetupRefusals(t *testing.T) {
 		has  string
 	}{
 		{[]string{"--dir", "/srv/varlatch"}, 64, "varlatch-ts setup --dir"},
-		{[]string{"--restore", "a.vltbak"}, 64, "slice 6.4c"},
+		{[]string{"--restore", "/srv/a.vltbak"}, 64, "--restore needs your two keys"},
+		{[]string{"--root-kek-file", "/root/k"}, 64, "give them with --restore"},
+		{[]string{"--restore", "/srv/a.vltbak", "--root-kek-file", "/root/k", "--backup-key-file", "/root/b", "--root-kek-out", "/x", "--backup-key-out", "/y"}, 64, "it writes no copies"},
 		{[]string{"--nope"}, 64, "unknown option --nope"},
 		{[]string{"extra"}, 64, "unexpected argument extra"},
 		{[]string{"--public-url"}, 64, "--public-url needs a value"},

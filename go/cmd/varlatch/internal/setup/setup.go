@@ -50,7 +50,7 @@ const (
 )
 
 // Steps, in order. The journal records each once it is done.
-var Steps = []string{"answers", "user", "data-dir", "probe", "keys", "config", "unit", "ready", "admin", "key-copies", "custody", "backup", "doctor"}
+var Steps = []string{"answers", "user", "data-dir", "probe", "keys", "config", "restore", "unit", "ready", "admin", "key-copies", "custody", "backup", "doctor"}
 
 // Host is what setup changes on the host; tests replace it.
 type Host interface {
@@ -122,6 +122,10 @@ type Options struct {
 	// RootKEKOut and BackupKeyOut are where a run without a terminal
 	// writes the keys' copies.
 	RootKEKOut, BackupKeyOut string
+	// Restore is a restore onto this fresh host (slice 6.4c): the archive,
+	// and the operator's two key files, installed in place of new keys.
+	Restore                string
+	RootKEKIn, BackupKeyIn string
 	// AcceptSlowDisk continues on a disk the probe found slow.
 	AcceptSlowDisk bool
 	// AcceptExistingUser uses a varlatch user that exists already and is
@@ -141,6 +145,16 @@ type JournalDoc struct {
 	Probe         *ProbeRecord      `json:"probe,omitempty"`
 	// FirstBackup is the first backup's archive id, once verified.
 	FirstBackup string `json:"firstBackup,omitempty"`
+	// Restore is set on a restore: the archive, and once restored what it
+	// held.
+	Restore *RestoreRecord `json:"restore,omitempty"`
+}
+
+// RestoreRecord is a restore's account in the journal.
+type RestoreRecord struct {
+	Archive        string `json:"archive"`
+	ArchiveID      string `json:"archiveId,omitempty"`
+	InstallationID string `json:"installationId,omitempty"`
 }
 
 // ProbeRecord is what the fsync probe measured, and whether a slow disk
@@ -193,7 +207,10 @@ func Run(ctx context.Context, o Options) error {
 	}
 	// Without a terminal, the keys' copies need their files: refused
 	// before anything is changed, as a missing answer is.
-	if o.Ask == nil && r.j.Done["key-copies"] == "" && (o.RootKEKOut == "" || o.BackupKeyOut == "") {
+	if err := r.restoreIntent(); err != nil {
+		return err
+	}
+	if o.Ask == nil && r.j.Restore == nil && r.j.Done["key-copies"] == "" && (o.RootKEKOut == "" || o.BackupKeyOut == "") {
 		return fmt.Errorf("%w: without a terminal the keys are written to files you name: give --root-kek-out <file> and --backup-key-out <file>", ErrNotAnswered)
 	}
 	if o.Ask == nil && r.j.Done["admin"] == "" && o.AdminLinkOut == "" {
@@ -216,6 +233,8 @@ func Run(ctx context.Context, o Options) error {
 			err = r.keyCopies()
 		case "config":
 			err = r.config()
+		case "restore":
+			err = r.restore(ctx)
 		case "unit":
 			err = r.unit()
 		case "ready":
@@ -531,6 +550,9 @@ func (r *run) keys() error {
 	if err := r.removeLeftovers(); err != nil {
 		return err
 	}
+	if r.j.Restore != nil {
+		return r.restoreKeys()
+	}
 	for _, k := range []struct{ name, path string }{{"the Root KEK", RootKEK}, {"the backup key", BackupKey}} {
 		p := r.path(k.path)
 		_, err := os.Stat(p)
@@ -578,6 +600,9 @@ func (r *run) keys() error {
 func (r *run) keyCopies() error {
 	if r.j.Done["key-copies"] != "" {
 		return nil
+	}
+	if r.j.Restore != nil {
+		return r.o.Say("The keys are the ones you gave: setup shows them nowhere and writes no copy.")
 	}
 	kek, err := os.ReadFile(r.path(RootKEK))
 	if err != nil {

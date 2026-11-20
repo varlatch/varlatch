@@ -39,6 +39,7 @@ const setupUsage = `Usage:
                       [--backups host|bucket] [--backup-destinations-file <file>] [--backup-destination <name>]
                       [--root-kek-out <file> --backup-key-out <file>] [--accept-slow-disk] [--accept-existing-user]
                       [--admin-link-out <file>] [--admin-wait <duration>] [--attest]
+  sudo varlatch setup --restore <archive> --root-kek-file <file> --backup-key-file <file> [the flags above]
                (a Go installation on this host: the varlatch user, /etc/varlatch/varlatchd.conf, the Root KEK and
                 the backup key (root, 0600), the data directory after an fsync probe of its disk, and the varlatchd
                 unit started; then the first administrator's passkey, from a one-time link shown on a terminal or,
@@ -49,8 +50,11 @@ const setupUsage = `Usage:
                 has its flag (--name value or --name=value); --answers names a JSON file of them (the same names,
                 as publicUrl). A varlatch user that exists already must be a system account, or
                 --accept-existing-user uses it anyway. A rerun continues where setup stopped and changes nothing
-                once done; its journal is /etc/varlatch/setup.json. Exit 75 when setup waits for you (the passkey,
-                the keys' custody). A Compose installation's setup is the TypeScript CLI's, varlatch-ts)`
+                once done; its journal is /etc/varlatch/setup.json. --restore restores an archive onto this fresh
+                host with your two keys (installed root-only, never shown or copied) before varlatchd first
+                starts; the archive's installation keeps its address (--public-url) and its passkeys. Exit 75
+                when setup waits for you (the passkey, the keys' custody). A Compose installation's setup is the
+                TypeScript CLI's, varlatch-ts)`
 
 // SetupHelp is setupUsage, for the transcripts' accepted difference.
 const SetupHelp = setupUsage
@@ -63,6 +67,7 @@ type setupArgs struct {
 	linkOut                string
 	adminWait              time.Duration
 	attest                 bool
+	restore, kekIn, bekIn  string
 }
 
 // parseSetupArgs reads setup's command line and the answers file it names.
@@ -95,8 +100,6 @@ func parseSetupArgs(argv []string) (setupArgs, error) {
 		switch {
 		case a == "--dir":
 			return p, UsageError("varlatch setup: --dir names a Compose installation, which the Go CLI does not set up; run varlatch-ts setup --dir <directory> for one")
-		case a == "--restore":
-			return p, UsageError("varlatch setup --restore is not in this build of the Go CLI yet (slice 6.4c)")
 		case (a == "--accept-slow-disk" || a == "--accept-existing-user" || a == "--attest") && hasValue:
 			return p, usage(a + " takes no value")
 		case a == "--attest":
@@ -121,6 +124,19 @@ func parseSetupArgs(argv []string) (setupArgs, error) {
 			p.acceptSlow = true
 		case a == "--accept-existing-user":
 			p.acceptUser = true
+		case a == "--restore" || a == "--root-kek-file" || a == "--backup-key-file":
+			v, err := value()
+			if err != nil {
+				return p, err
+			}
+			switch a {
+			case "--restore":
+				p.restore = v
+			case "--root-kek-file":
+				p.kekIn = v
+			default:
+				p.bekIn = v
+			}
 		case a == "--answers" || a == "--root-kek-out" || a == "--backup-key-out":
 			v, err := value()
 			if err != nil {
@@ -161,6 +177,14 @@ func parseSetupArgs(argv []string) (setupArgs, error) {
 	if (p.kekOut == "") != (p.bekOut == "") {
 		return p, usage("--root-kek-out and --backup-key-out go together")
 	}
+	switch {
+	case p.restore == "" && (p.kekIn != "" || p.bekIn != ""):
+		return p, usage("--root-kek-file and --backup-key-file are a restore's keys: give them with --restore <archive>")
+	case p.restore != "" && (p.kekIn == "" || p.bekIn == ""):
+		return p, usage("--restore needs your two keys: --root-kek-file <file> --backup-key-file <file>")
+	case p.restore != "" && p.kekOut != "":
+		return p, usage("--restore installs the keys you give: it writes no copies (--root-kek-out, --backup-key-out)")
+	}
 	return p, nil
 }
 
@@ -184,6 +208,7 @@ func setupCommand(r *Run) (bool, error) {
 		Host:  setup.SystemHost{Varlatchd: varlatchd, Env: varlatchdEnviron(r)},
 		Given: args.given, RootKEKOut: args.kekOut, BackupKeyOut: args.bekOut, AcceptSlowDisk: args.acceptSlow, AcceptExistingUser: args.acceptUser,
 		AdminLinkOut: args.linkOut, AdminWait: args.adminWait, Attest: args.attest,
+		Restore: args.restore, RootKEKIn: args.kekIn, BackupKeyIn: args.bekIn,
 		Doctor:    func(context.Context) (bool, error) { return r.setupDoctor() },
 		Say:       func(line string) error { return r.out(line + "\n") },
 		StopAfter: r.Getenv("VARLATCH_SETUP_STOP_AFTER"),
