@@ -22,6 +22,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/migration/bundle"
 	"github.com/varlatch/varlatch/go/server/migration/check"
 	"github.com/varlatch/varlatch/go/server/migration/manifest"
@@ -559,6 +560,41 @@ func TestAnotherRunKey(t *testing.T) {
 		t.Fatalf("another run key:\n%s", rep.Text())
 	}
 	scan(t, seeded{secrets: [][]byte{other}}, "the report", []byte(rep.Text()))
+}
+
+// An audit export that ended holds no credential: no item of either
+// audit-export class, and nothing for the class check to fault. The same
+// export in the source and the target (a seed export ended in both).
+func TestAnEndedAuditExportHoldsNoItem(t *testing.T) {
+	s := setUp(t)
+	src := s.source
+	src.Rows = map[string][]jsvalue.Object{}
+	for k, v := range s.source.Rows {
+		src.Rows[k] = v
+	}
+	var ended []jsvalue.Object
+	for _, r := range s.source.Rows["audit_exports"] {
+		r = slices.Clone(r)
+		if st, _ := r.Get("state"); st == "active" && len(ended) == 0 {
+			r = r.Set("state", "completed").Set("credential_envelope", nil).Set("drain_deadline", "2026-11-17T08:05:00.000Z")
+		}
+		ended = append(ended, r)
+	}
+	src.Rows["audit_exports"] = ended
+	b := migrationtest.Bundle(t, src, migrationtest.Options{Sections: &migrationtest.Sections{Digests: migrationtest.Digests(t, src, s.runKey)}})
+	dir := t.TempDir()
+	if _, err := migrate.Import(context.Background(), bytes.NewReader(b), migrate.Options{DataDir: dir, RootKEK: src.RootKEK, Release: "0.50.0-test"}); err != nil {
+		t.Fatal(err)
+	}
+	db := openRO(t, filepath.Join(dir, config.DatabaseFile))
+	defer db.Close()
+	rep, err := check.Run(context.Background(), db, bytes.NewReader(b), check.Options{RootKEK: src.RootKEK, RunKey: s.runKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := rep.Result(check.Classes); !r.Passed {
+		t.Fatalf("an ended audit export:\n%s", rep.Text())
+	}
 }
 
 // A bundle without its decision table fails the authorization check: a

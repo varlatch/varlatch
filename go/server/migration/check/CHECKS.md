@@ -54,7 +54,7 @@ cleared once digested.
 | `webhook-secret` | `webhooks.secret_envelope` | org KEK | `organizationId`, `webhookId` |
 | `platform-credential` | `platform_connections.credential_envelope` | org KEK | `organizationId`, `connectionId` |
 | `github-app-key` | `github_apps.key_envelope` (`gha_` ids) and `github_app_registrations.pending_key_envelope` (`ghr_` ids) | org KEK | `organizationId`, `githubAppId` |
-| `audit-export-credential` | `audit_exports.credential_envelope`, state not `draining` | org KEK | `organizationId`, `exportId` |
+| `audit-export-credential` | `audit_exports.credential_envelope`, state not `draining` (an export that ended, `removed`, `completed` or `abandoned`, holds none) | org KEK | `organizationId`, `exportId` |
 | `audit-export-drain` | `audit_exports.credential_envelope`, state `draining` | Root KEK | `organizationId`, `exportId` |
 | `jwt-signing-key` | `signing_keys.private_key_wrapped` | Root KEK | `keyId` |
 

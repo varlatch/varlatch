@@ -226,7 +226,7 @@ func (c *checker) targetDigests(ctx context.Context) ([]bundle.Digest, error) {
 		{envelope.PurposePlatformCredential, "SELECT organization_id, id, credential_envelope FROM platform_connections WHERE credential_envelope IS NOT NULL", envelope.PlatformCredentialContext},
 		{envelope.PurposeGitHubAppKey, "SELECT organization_id, id, key_envelope FROM github_apps WHERE key_envelope IS NOT NULL", envelope.GitHubAppKeyContext},
 		{envelope.PurposeGitHubAppKey, "SELECT organization_id, id, pending_key_envelope FROM github_app_registrations WHERE pending_key_envelope IS NOT NULL", envelope.GitHubAppKeyContext},
-		{envelope.PurposeAuditExportCredential, "SELECT organization_id, id, credential_envelope FROM audit_exports WHERE state <> 'draining'", envelope.AuditExportCredentialContext},
+		{envelope.PurposeAuditExportCredential, "SELECT organization_id, id, credential_envelope FROM audit_exports WHERE credential_envelope IS NOT NULL AND state <> 'draining'", envelope.AuditExportCredentialContext},
 	} {
 		rows, err := q(s.query, 3)
 		if err != nil {
@@ -238,7 +238,7 @@ func (c *checker) targetDigests(ctx context.Context) ([]bundle.Digest, error) {
 			}
 		}
 	}
-	rows, err = q("SELECT organization_id, id, credential_envelope FROM audit_exports WHERE state = 'draining'", 3)
+	rows, err = q("SELECT organization_id, id, credential_envelope FROM audit_exports WHERE credential_envelope IS NOT NULL AND state = 'draining'", 3)
 	if err != nil {
 		return nil, err
 	}
