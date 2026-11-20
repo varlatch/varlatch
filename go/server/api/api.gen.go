@@ -5594,6 +5594,9 @@ type TailnetListenerReport struct {
 
 		// Node The node as varlatchd last read it, at checkedAt. Absent before the first successful LocalAPI read and after a failed one, and from older servers.
 		Node *ObservedNode `json:"node,omitempty"`
+
+		// Warnings What the last check found that does not close access, each a sentence for the operator: a node on a self-hosted control server that joined with no tags (its tags are its pre-auth key's). Absent when there is none, and from older servers.
+		Warnings *[]string `json:"warnings,omitempty"`
 	} `json:"observed"`
 }
 

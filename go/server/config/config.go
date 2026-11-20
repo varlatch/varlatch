@@ -590,14 +590,18 @@ func selfHostedControlURL(v string) (string, string) {
 	if err != nil {
 		return "", why
 	}
-	if addr.Zone() != "" || addr.IsUnspecified() || addr.IsMulticast() {
-		return "", "not an address a control server listens on (no zone, unspecified or multicast address); " + why
+	// Judged as it is written back: an IPv4-mapped address is its IPv4
+	// one, so ::ffff:0.0.0.0 is the unspecified address it unmaps to.
+	if addr.Zone() != "" {
+		return "", "a zoned address is not a control server's; " + why
+	}
+	addr = addr.Unmap()
+	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
+		return "", "not an address a control server listens on (an unspecified, multicast, link-local or broadcast address); " + why
 	}
 	host := addr.String()
-	if addr.Is6() && !addr.Is4In6() {
+	if addr.Is6() {
 		host = "[" + host + "]"
-	} else if addr.Is4In6() {
-		host = addr.Unmap().String()
 	}
 	if p := u.Port(); p != "" {
 		n, err := strconv.Atoi(p)

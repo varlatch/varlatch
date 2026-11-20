@@ -117,6 +117,11 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
         }
       >
         <NodeDetails node={observed.node} />
+        {(observed.warnings ?? []).map((w) => (
+          <Callout key={w} tone="warn" icon={<TriangleAlert size={17} />} className="mx-5 my-4" data-testid="tailnet-warning">
+            {w}
+          </Callout>
+        ))}
         <div className="flex items-center gap-2 border-b border-bd px-5 py-3">
           <span data-testid="tailnet-summary" data-tone={summary.tone}>
             <Status tone={summary.tone}>{summary.headline}</Status>

@@ -141,3 +141,39 @@ func TestHeadscaleJoinAndPin(t *testing.T) {
 		t.Errorf("another configured control server: %q", other.Closed())
 	}
 }
+
+// An untagged pre-auth key (a user's) joins the node untagged: access
+// stays open, and the listeners report says it (step 7.5c c1; c3 closes
+// access when the tags are not tailnet_tags).
+func TestHeadscaleUntaggedKey(t *testing.T) {
+	headscaletest.Skip(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	hs := headscaletest.Start(t, headscaleCA)
+	dir := t.TempDir()
+	if err := BeginEnrolment(dir); err != nil {
+		t.Fatal(err)
+	}
+	node, err := StartNode(NodeConfig{Dir: filepath.Join(dir, StateDir), Hostname: "varlatch", ControlURL: hs.URL, AuthKey: hs.PreauthKey(t), Tags: []string{"tag:varlatch"}, KeyTags: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = node.Close() })
+	if err := node.Up(ctx); err != nil {
+		t.Fatalf("the node did not join Headscale: %v\nHeadscale's log:\n%s", err, hs.Logs())
+	}
+	m, err := NewManager(node, hs.URL, dir, 8687, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Check(ctx)
+	if st, err := node.Status(ctx); err != nil || len(st.Tags) != 0 {
+		t.Fatalf("the node's tags with an untagged key: %+v, %v", st.Tags, err)
+	}
+	if m.Closed() != "" {
+		t.Errorf("access closed: %q", m.Closed())
+	}
+	if report := string(jsvalueStringify(m.Report())); !strings.Contains(report, `"warnings":["`+UntaggedWarning+`"]`) {
+		t.Errorf("the listeners report does not say the node is untagged:\n%s", report)
+	}
+}

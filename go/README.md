@@ -1949,13 +1949,18 @@ serves the tailnet listener on the node's own addresses
     a message naming the IP form and why. The URL is kept canonical
     (`https://192.0.2.10:8443`, `https://[2001:db8::10]`; `:443` dropped),
     as the pin compares it; plain http, a user, a path, a query, an
-    unspecified, multicast or zoned address are refused. The server's
+    unspecified, multicast, link-local, broadcast or zoned address
+    (judged after an IPv4-mapped address is unmapped) are refused. The server's
     certificate must be valid for that address and trusted by the host
     (the system's roots, or `SSL_CERT_FILE`).
   - **Tags** come from the auth key there: Headscale refuses a node that
     registers with a pre-auth key and advertises tags (0.29.7), so the
     node advertises none, and its key must be a tagged pre-auth key
-    (`headscale preauthkeys create --tags <tailnet_tags>`).
+    (`headscale preauthkeys create --tags <tailnet_tags>`). A node that
+    joined with no tags (an untagged key) keeps access open for now: it
+    is logged once and the listeners report carries a warning
+    (`observed.warnings`, shown in the dashboard's Tailnet tab); access
+    closes on tags other than `tailnet_tags` in a later slice.
   - **No browser endpoint** with it: `tailnet_https_port` serves the
     node's Tailscale certificate, which a self-hosted server does not
     issue, so the two together are refused.

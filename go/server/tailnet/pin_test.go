@@ -693,3 +693,32 @@ func TestReportWithTheBrowserEndpoint(t *testing.T) {
 		t.Errorf("a renamed node: %s", report)
 	}
 }
+
+// A node on a self-hosted control server takes its tags from its pre-auth
+// key: one that joined with none is said in the listeners report (a
+// warning; access stays open), and stops being said once it has tags. On
+// Tailscale's control server (controlURL "") there is no such warning.
+func TestAnUntaggedSelfHostedNodeIsSaid(t *testing.T) {
+	ctx := context.Background()
+	untagged := running("", "g10.example")
+	untagged.Tags = nil
+	node := &statusNode{st: untagged}
+	m := enrolling(t, node, "https://192.0.2.10", t.TempDir(), nil)
+	m.Check(ctx)
+	if m.Closed() != "" {
+		t.Fatalf("access closed for an untagged node: %q", m.Closed())
+	}
+	if report := string(jsvalueStringify(m.Report())); !strings.Contains(report, `"warnings":["`+UntaggedWarning+`"]`) {
+		t.Errorf("no warning for an untagged node:\n%s", report)
+	}
+	node.set(running("", "g10.example"), nil)
+	m.Check(ctx)
+	if report := string(jsvalueStringify(m.Report())); strings.Contains(report, "warnings") {
+		t.Errorf("a warning once tagged:\n%s", report)
+	}
+	ts := enrolling(t, &statusNode{st: untagged}, "", t.TempDir(), nil)
+	ts.Check(ctx)
+	if report := string(jsvalueStringify(ts.Report())); strings.Contains(report, "warnings") {
+		t.Errorf("a warning on Tailscale's control server:\n%s", report)
+	}
+}
