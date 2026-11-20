@@ -191,8 +191,9 @@ func TestFailSafeMasksEveryReproducer(t *testing.T) {
 
 // TestFailSafeRule: what the fail-safe does, exactly: the whole-text span
 // (from just after the first colon, whatever precedes it, tab, CR and LF
-// passed over, to the last at-sign) and, per at-sign, the span of its run
-// (from just after the nearest "//", or the run's start).
+// passed over, to the last at-sign that may end a credential) and, per such
+// at-sign, the span of its run (from just after the nearest "//", or the
+// run's start). An at-sign in a URL's path is TestFailSafeAtSignsInAPath's.
 func TestFailSafeRule(t *testing.T) {
 	for in, want := range map[string]string{
 		"https://u:p@h": "https:[redacted]@h",

@@ -166,8 +166,10 @@ func DisplayServerValue(v any) any {
 // to the at-sign. The at-sign is kept, and nothing about what precedes the
 // colon matters. On top of these per-at-sign spans, the whole-text span:
 // from just after the first colon of the text, whatever precedes it, to
-// its last at-sign (so a password holding "//", whitespace, quotes or line
-// breaks is covered too). The union is replaced once, each span with
+// its last at-sign that may end a credential (so a password holding "//",
+// whitespace, quotes or line breaks is covered too). An at-sign in a
+// URL's path, query or fragment, when nothing about it is ambiguous, ends
+// no span (failSafeSpans). The union is replaced once, each span with
 // "[redacted]@". Error text may be over-masked, never under-masked. A
 // stretch without a colon (an email, `@AGENTS.md`) keeps its bytes;
 // `mailto:a@b` reads `[redacted]@b`, an accepted over-mask.
@@ -345,9 +347,13 @@ func replaceSpans(text string, spans [][2]int) string {
 // the fail-safe's own detection (forAtSigns, nextAtSign): tab, CR and LF
 // ignored, and "@", "\u0040", "\x40", "\U00000040" and "%40" counted. A
 // message whose echoed value holds one puts its explanation after the
-// value, since the fail-safe keeps only what follows the last at-sign (the
-// explanation follows the URL); a varlatch.toml that holds one has its
-// parse errors shown without the file's lines (LoadRepoConfig).
+// value, since the fail-safe keeps only what follows the last at-sign
+// that may end a credential (the explanation follows the URL); a
+// varlatch.toml that holds one has its parse errors shown without the
+// file's lines (LoadRepoConfig). It counts every at-sign, also one in a
+// URL's path that the fail-safe passes over, so "masks iff HasAtSign"
+// has such counterexamples: harmless, since the value-first order only
+// keeps more of the explanation visible.
 func HasAtSign(s string) bool {
 	kept, _ := forAtSigns(s)
 	i, _ := nextAtSign(kept, 0)
