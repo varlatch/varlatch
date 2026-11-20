@@ -256,6 +256,21 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   Root KEK and BEK as systemd credentials, user `varlatch`, a strict
   sandbox). CI checks it with `systemd-analyze verify` and `security`, and
   runs `install/unitprobe` under it (`install/test-unit.sh`).
+- `release/build-assets.sh` and `release/check-assets.sh` (step 6.1a):
+  the Go release assets, built reproducibly from the commit (CGO off,
+  `-trimpath`, no VCS stamp or build ID, the version through
+  `lib/buildinfo`): `varlatch` for the six platforms, `varlatchd` for Linux
+  amd64 and arm64 with the dashboard generated from that commit (a release
+  refuses the placeholder, or a dashboard built from changed sources), the
+  installers stamped with the version, the unit and its example
+  configuration, and `SHA256SUMS`; then checked: exactly the files the
+  installers fetch for every platform they accept, each listed once with
+  its hash, each binary of its platform's format, the version reported.
+  `release.yml` runs both for a tag of 0.50.0 or later, signs
+  `SHA256SUMS`, verifies the signature with the release's own `varlatch`,
+  and publishes (a prerelease for `-rc.N`); `go.yml`'s conformance job
+  runs both on every pull request it selects, signing and publishing
+  nothing.
 - `bench/g9a/`: the G9a storage benchmark harness (`run.sh`, the k6
   script, the `g9a` command): G9a's load profile, every checkpoint and the
   WAL size logged, paced backups, converge runs, the disk record, and a
@@ -2766,11 +2781,12 @@ blocked`, but that error reaches its generic handler, which prints
   them, webhook secrets, Platform credentials, GitHub App keys and audit
   export credentials and drain copies are proven at the envelope level
   only, and the check fails.
-- The Go release workflow: binaries named `varlatch-<version>-<os>-<arch>`
-  (`.exe` on Windows) and `varlatchd-<version>-linux-<arch>`, plus
-  `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with
-  `@VARLATCH_VERSION@` replaced by the version; varlatch.com serving the
-  latest one with a `Content-Length`.
+- The Go release workflow (built in step 6.1a: `release.yml`'s Go line,
+  `release/`): binaries named `varlatch-<version>-<os>-<arch>` (`.exe` on
+  Windows) and `varlatchd-<version>-linux-<arch>`, plus
+  `varlatchd.service`, all in `SHA256SUMS`; `install.sh` and `install.ps1`
+  attached with `@VARLATCH_VERSION@` replaced by the version. Still open:
+  varlatch.com serving the latest one with a `Content-Length`.
 - Done: THIRD-PARTY-NOTICES.md lists every Go module linked into
   `varlatch` and `varlatchd` for the release platforms (125, go-webauthn,
   modernc.org/sqlite and tailscale.com with their dependencies included),
