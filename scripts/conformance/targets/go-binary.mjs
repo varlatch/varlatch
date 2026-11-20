@@ -170,6 +170,7 @@ export async function up({ argument, onState = () => {} }) {
     // The runner's process: a target operation run in a process of its
     // own (serve-cli's restart) hands its supervisor to it.
     ownerPid: process.pid,
+    ownerStart: processStart(process.pid),
     receiverPort,
     receiverPidFile: join(dir, "receiver.pid"),
     objectStorePort,
@@ -256,7 +257,8 @@ async function start(state) {
     // of its own, which ends at once), the supervisor watches the runner
     // instead of a pipe from this process.
     const handedOver = state.ownerPid && state.ownerPid !== process.pid;
-    child = spawn(process.execPath, [SUPERVISOR, ...(handedOver ? ["--owner", String(state.ownerPid)] : []), state.dir, state.pidFile, state.serverLog, state.binary, "serve", "--config", state.conf], {
+    const owner = `${state.ownerPid}${state.ownerStart ? `:${state.ownerStart}` : ""}`;
+    child = spawn(process.execPath, [SUPERVISOR, ...(handedOver ? ["--owner", owner] : []), state.dir, state.pidFile, state.serverLog, state.binary, "serve", "--config", state.conf], {
       stdio: [handedOver ? "ignore" : "pipe", log, log],
       detached: Boolean(handedOver),
       // The system's roots, the oidc suite's issuer certificate and the
@@ -464,6 +466,20 @@ export async function serveCli(state, on) {
   appendFileSync(state.serverLog, "--- conformance: serve_cli is not a varlatchd setting yet; started again without it\n");
   await start(state);
   throw new NotImplementedYet("varlatchd has no serve_cli setting yet");
+}
+
+/**
+ * A process's start time on Linux (field 22 of /proc/<pid>/stat), null
+ * elsewhere: with its PID, it names the runner a handed-over supervisor
+ * watches, so a reused PID is not taken for it (go-binary-supervisor.mjs).
+ */
+function processStart(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** The release serve_cli serves in a conformance run, once prepared. */

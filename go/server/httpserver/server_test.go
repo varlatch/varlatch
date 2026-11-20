@@ -22,6 +22,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
@@ -485,6 +486,24 @@ func TestCLIDownloadOn(t *testing.T) {
 	off, _, _, _ := newTestServer(t, nil)
 	if w := do(off, "GET", "/cli/v0.50.0/SHA256SUMS", "", nil); w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
 		t.Errorf("off, a /cli/ path: %d %v", w.Code, w.Header())
+	}
+}
+
+// The tailnet listener never serves the CLI, serve_cli on or not: its
+// /install.sh and /cli/ paths answer as with serving off, and it lists no
+// cli.download either (the public listener's alone).
+func TestCLIDownloadNotOnTheTailnetListener(t *testing.T) {
+	served := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("served " + r.URL.Path)) })
+	name := "laptop"
+	peer := tailnet.Resolution{Context: &authz.TailnetContext{Tailnet: "corp.ts.net", NodeID: "n1", NodeName: &name}}
+	s, _, _, _ := newTestServer(t, func(o *Options) {
+		o.CLI = func() http.Handler { return served }
+		tailnetListener(peer)(o)
+	})
+	for _, p := range []string{"/install.sh", "/install.ps1", "/cli/v0.50.0/varlatch-0.50.0-linux-amd64", "/cli/v0.50.0/SHA256SUMS"} {
+		if w := do(s, "GET", p, "", nil); w.Code != 404 || strings.Contains(w.Body.String(), "served") {
+			t.Errorf("%s on the tailnet listener: %d %q", p, w.Code, w.Body.String())
+		}
 	}
 }
 

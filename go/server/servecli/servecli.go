@@ -123,7 +123,10 @@ func (r *Release) Names() []string {
 // origin is an address an installer may name: https, or http on this
 // machine, scheme and host only, nothing a script would read as anything
 // but text in single quotes.
-var origin = regexp.MustCompile(`^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?|https://\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?|http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?)$`)
+var origin = regexp.MustCompile(`^(https://[A-Za-z0-9.-]+` + port + `|https://\[[0-9A-Fa-f:.]+\]` + port + `|http://(localhost|127\.0\.0\.1|\[::1\])` + port + `)$`)
+
+// port is an optional port, 1 to 65535, without leading zeros.
+const port = `(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?`
 
 // Options are what Prepare works with.
 type Options struct {

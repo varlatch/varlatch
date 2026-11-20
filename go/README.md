@@ -1908,11 +1908,17 @@ The server's packages:
 - `server/servecli` (step 6.8; ADR-0058 Decision 3, internal
   docs/design/go-step6.md decision 12): `serve_cli = on` serves this
   release's `varlatch` for Linux, macOS and Windows and the installers,
-  stamped with the public URL's origin (required; https, or http on this
-  machine). In the background, varlatchd downloads the release's
+  stamped with the public URL's origin (required, without a path; https,
+  or http on this machine). Sigstore's TUF repository is read through the
+  policy's client, which follows no redirect: its CDN answers directly,
+  and a redirect makes the attempt fail and retry, never a stale root
+  used. `go/server/stages/check-release.sh` holds release binaries to none
+  of the conformance-only parts below. In the background, varlatchd downloads the release's
   `SHA256SUMS` and its signature from github.com through the outbound
   policy (`lib/release`'s `Downloader`: github.com and its storage hosts
-  only, every redirect checked, sizes bounded), verifies the signature
+  only, sizes bounded; it follows github.com's redirect to storage
+  itself, each Location checked and fetched as a request of its own
+  through the policy, at most five), verifies the signature
   for the release workflow's identity of its own version (Sigstore's
   trusted root through its TUF repository, cached in `<data_dir>/sigstore`)
   before anything else is downloaded, checks each file against its line,

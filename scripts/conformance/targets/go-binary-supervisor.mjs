@@ -18,25 +18,44 @@
  *     remove <dir>, which must be a conformance-go- directory under the
  *     temporary directory.
  *
- * With --owner <pid> (a supervisor started by a target operation run in a
- * process of its own, which ends at once: a restart for serve-cli), the
- * runner is that process instead, watched every second; its end is the
- * pipe's closing. Its standard input is then not read.
+ * With --owner <pid>[:<start>] (a supervisor started by a target operation
+ * run in a process of its own, which ends at once: a restart for
+ * serve-cli), the runner is that process instead, watched every second;
+ * its end is the pipe's closing. Its standard input is then not read. A
+ * PID can be reused once its process ends: on Linux <start> is the
+ * runner's start time (/proc/<pid>/stat), and a process with that PID but
+ * another start time counts as the runner gone; elsewhere only whether the
+ * PID runs is known, and a reused PID keeps the installation until that
+ * process ends too (the runner's own `down` still removes it).
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 const STOP_TIMEOUT_MS = 25_000;
 const argv = process.argv.slice(2);
 let owner = null;
+let ownerStart = null;
 if (argv[0] === "--owner") {
-  owner = Number(argv[1]);
+  const [pid, start] = String(argv[1]).split(":");
+  owner = Number(pid);
+  ownerStart = start ?? null;
   argv.splice(0, 2);
   if (!Number.isInteger(owner) || owner <= 1) {
     console.error("go-binary-supervisor: --owner needs a process ID");
     process.exit(2);
+  }
+}
+
+/** A process's start time on Linux (field 22 of /proc/<pid>/stat), or null. */
+function processStart(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    // The command name, in parentheses, may hold spaces: fields after it.
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
+  } catch {
+    return null;
   }
 }
 const [dir, pidFile, logFile, binary, ...args] = argv;
@@ -100,7 +119,9 @@ if (owner === null) {
       process.kill(owner, 0);
     } catch (err) {
       if (err.code === "ESRCH") orphaned();
+      return;
     }
+    if (ownerStart !== null && process.platform === "linux" && processStart(owner) !== ownerStart) orphaned();
   }, 1000);
 }
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, orphaned);

@@ -45,7 +45,12 @@ func init() {
 			return root.NewTrustedRootFromPath(filepath.Join(dir, trustedRootFile))
 		}
 	}
-	conformanceSignRelease = signRelease
+	conformanceSignRelease = func(args []string, stdout, stderr io.Writer) (int, bool) {
+		if len(args) == 0 || args[0] != "conformance-sign-release" {
+			return 0, false
+		}
+		return signRelease(args[1:], stdout, stderr), true
+	}
 }
 
 // dirSource gives a release's files from a directory, by the fixed names

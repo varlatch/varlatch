@@ -308,6 +308,11 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		if c.PublicURL == nil {
 			return nil, at("serve_cli", "on needs public_url: the installers it serves download from that address")
 		}
+		// The installers download from the origin; a path would be dropped,
+		// so the address they name would not be the one configured.
+		if p := c.PublicURL.EscapedPath(); p != "" && p != "/" {
+			return nil, at("serve_cli", "on needs a public_url without a path (%q has %q): the installers it serves name the origin alone", c.PublicURL.String(), p)
+		}
 		c.ServeCLI = true
 	default:
 		return nil, at("serve_cli", "%q must be on or off", v)

@@ -69,48 +69,69 @@ func strip(u *url.URL) string {
 
 // Get fetches rawURL, at most limit bytes of its body. A cut-off answer,
 // one longer than limit, or any status but 200 is an error.
+//
+// Redirects are followed here, never by the HTTP client: each Location is
+// resolved against the request it answers, checked against the allowed
+// hosts (HTTPS only), and fetched as a new request through the same
+// Transport, at most maxRedirects times. Every hop is then a first request
+// of its own to a transport such as varlatchd's outbound policy, which
+// refuses a request the client made from a redirect response, and checks
+// each destination's addresses when it connects.
 func (d Downloader) Get(ctx context.Context, rawURL string, limit int64) ([]byte, error) {
+	if d.Transport == nil {
+		return nil, errors.New("release: a Downloader needs a Transport")
+	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
 	}
-	if err := d.allowed(u); err != nil {
-		return nil, err
-	}
-	if d.Transport == nil {
-		return nil, errors.New("release: a Downloader needs a Transport")
-	}
-	var refused error
 	client := &http.Client{
-		Transport: d.Transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) > maxRedirects {
-				refused = errors.New("release: too many redirects")
-				return refused
-			}
-			refused = d.allowed(req.URL)
-			return refused
-		},
+		Transport:     d.Transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	timer := time.AfterFunc(requestTimeout, cancel) // fetch.go's bound, as for a TUF download
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	if d.UserAgent != "" {
-		req.Header.Set("User-Agent", d.UserAgent)
-	}
-	res, err := client.Do(req)
-	timer.Stop()
-	if err != nil {
-		if refused != nil {
-			return nil, refused
+	for hop := 0; ; hop++ {
+		if err := d.allowed(u); err != nil {
+			return nil, err
 		}
-		return nil, &UnreachableError{fmt.Errorf("release: could not download %s: %w", strip(u), err)}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		if d.UserAgent != "" {
+			req.Header.Set("User-Agent", d.UserAgent)
+		}
+		timer := time.AfterFunc(requestTimeout, cancel) // fetch.go's bound, as for a TUF download
+		res, err := client.Do(req)
+		timer.Stop()
+		if err != nil {
+			return nil, &UnreachableError{fmt.Errorf("release: could not download %s: %w", strip(u), err)}
+		}
+		switch res.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			location := res.Header.Get("Location")
+			_ = res.Body.Close()
+			if location == "" {
+				return nil, fmt.Errorf("release: %s answered %d without a location", strip(u), res.StatusCode)
+			}
+			if hop >= maxRedirects {
+				return nil, errors.New("release: too many redirects")
+			}
+			next, err := u.Parse(location)
+			if err != nil {
+				return nil, fmt.Errorf("release: %s redirected to an address that is not a URL", strip(u))
+			}
+			u = next
+			continue
+		}
+		defer res.Body.Close()
+		return d.read(u, res, limit)
 	}
-	defer res.Body.Close()
+}
+
+// read is a final answer's body.
+func (d Downloader) read(u *url.URL, res *http.Response, limit int64) ([]byte, error) {
 	switch {
 	case res.StatusCode == http.StatusNotFound:
 		return nil, fmt.Errorf("%s: %w", strip(u), ErrNotFound)

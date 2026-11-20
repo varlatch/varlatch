@@ -241,6 +241,9 @@ func TestPrepareRefuses(t *testing.T) {
 		"an origin with a path":  {o: func(o *Options) { o.Origin = "https://vault.example.com/x" }, want: "not one an installer may name"},
 		"an origin with a quote": {o: func(o *Options) { o.Origin = "https://vault.example.com'" }, want: "not one an installer may name"},
 		"plain http elsewhere":   {o: func(o *Options) { o.Origin = "http://vault.example.com" }, want: "not one an installer may name"},
+		"port zero":              {o: func(o *Options) { o.Origin = "https://vault.example.com:0" }, want: "not one an installer may name"},
+		"port too large":         {o: func(o *Options) { o.Origin = "https://vault.example.com:65536" }, want: "not one an installer may name"},
+		"port with a leading 0":  {o: func(o *Options) { o.Origin = "http://127.0.0.1:08686" }, want: "not one an installer may name"},
 		"an unreachable source":  {change: func(f *fakeSource) { f.fail = &release.UnreachableError{Err: errors.New("no route")} }, want: "no route"},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -49,8 +49,10 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return adminUsage(stderr, "no command")
 	}
 	sub := args[0]
-	if sub == "conformance-sign-release" && conformanceSignRelease != nil {
-		return conformanceSignRelease(args[1:], stdout, stderr)
+	if conformanceSignRelease != nil {
+		if code, handled := conformanceSignRelease(args, stdout, stderr); handled {
+			return code
+		}
 	}
 	conformance := sub == "conformance-probe" && conformanceProbe != nil ||
 		sub == "conformance-fixture" && conformanceFixture != nil
@@ -418,8 +420,9 @@ var conformanceCLIRelease func(o *servecli.Options, log *slog.Logger)
 
 // conformanceSignRelease is `varlatchd admin conformance-sign-release`,
 // in a conformance build only (servecli_conformance.go): it needs no
-// installation.
-var conformanceSignRelease func(args []string, stdout, stderr io.Writer) int
+// installation. It answers whether args name it (the command's name is
+// the conformance file's alone, so a release binary does not hold it).
+var conformanceSignRelease func(args []string, stdout, stderr io.Writer) (code int, handled bool)
 
 // conformanceFixture is `varlatchd admin conformance-fixture`, in a build
 // with the conformance tag only (fixture_conformance.go); nil otherwise.
