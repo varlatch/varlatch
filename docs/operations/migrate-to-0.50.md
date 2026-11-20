@@ -32,15 +32,25 @@ before the new server opens.
   Applications that already hold their values keep running. Do not
   schedule CI deploys during the window. The dry run measures how long it
   will be (see [The dry run](#the-dry-run)).
+
+  <!-- pending: the TypeScript release's barrier answering 503 with
+       Retry-After (0.23.0, release/0.22); check against it. -->
 - **Unfinished sign-ins are retried.** A passkey ceremony or sign-in that
   was in flight at the barrier fails and is started again. The dry run
   counts them.
+
+  <!-- pending: the TypeScript release's export reporting the unfinished
+       ceremonies it leaves out (0.23.0); the dry run's report does not
+       show a count yet. -->
 - **Dashboards and live views reconnect** to the new server on their own.
 
 Sync Targets, webhooks and audit export are drained at the barrier and
 resume on the new server from where they stopped: nothing already
 delivered is sent again, and a failed delivery is retried under the same
 rules. The final report lists each one's last delivery.
+
+<!-- pending: the TypeScript release's drain, and the report's list of
+     last deliveries; neither is in the report yet. -->
 
 ## Before you start
 
@@ -53,6 +63,9 @@ its registry digest). Upgrade to it first, the usual way
 and let it run. Check that its exposure backfill has finished, and that no
 key rotation is in progress: the migration refuses a source in either
 state.
+
+<!-- pending: the TypeScript release's export refusing an unfinished
+     backfill and a key rotation in progress (0.23.0). -->
 
 <!-- pending: 0.23.0 published and its digest pinned in varlatch migrate
      (LastTypeScriptDigest, #357); until then every source is refused. -->
@@ -96,14 +109,16 @@ On the installation's host, as root:
   migration onto another address is refused; move afterwards with
   [`varlatch move`](move-installation.md).
 
-<!-- pending 7.4e: migrate creating the host install with setup's files
+<!-- pending (not opened yet): migrate creating the host install with setup's files
      code (user, data directory, /etc/varlatch, configuration, unit; keys
      from the source through admin migrate keys, never generated), and
      accepting a prepared one (empty data directory, not started). Check
      the options it takes for the configuration it writes (listen,
      listen_https, public_url from the source) when it lands. -->
 
-`varlatch migrate --help` lists every option.
+Run `varlatch migrate` from the Compose directory of the installation, or
+name that directory with `--from`. `varlatch migrate --help` lists every
+option.
 
 ## The dry run
 
@@ -126,7 +141,7 @@ Its report:
 
 ```text
 Dry run: 41 tables, 182340 rows; checks passed true.
-Projected downtime 2m10s fits the budget of 10m0s: drain up to 30s,
+Projected downtime 3m0s fits the budget of 10m0s: drain up to 1m0s,
 export 25s, import 20s, checks 15s, address transfer 1m0s (estimated for
 public ingress, the target's restart included; included in the projection).
 ```
@@ -145,7 +160,7 @@ public ingress, the target's restart included; included in the projection).
   and nothing new starts.
 
 `varlatch migrate --status` shows where a migration stands, from the
-source's directory. Add `--json` for the full report.
+Compose directory (or with `--from`). Add `--json` for the full report.
 
 ## The migration
 
@@ -171,6 +186,8 @@ Compose directory and in the target's data directory) before it starts:
 6. **The switch**: the TypeScript installation is marked migrated out. It
    no longer starts writable, and answers `503` to every request, reads
    included, so no application reads a stale value from it.
+   <!-- pending: the TypeScript release's migrated-out marker refusing
+        reads (0.23.0). -->
 7. **Open**: the new server serves the installation at its address.
 
 The journal holds no key and no value. The new server does not start on a
@@ -190,14 +207,15 @@ from the journal and never guesses:
 | During the address transfer | Closed, the new server isolated behind its gate | Checks the address again (or your step, on Coolify); if it does not answer from the new server, gives it back and undoes |
 | After the switch | The new server serves, or is about to; the old one refuses writes | Finishes the open |
 
-Any failure after the barrier undoes the migration the same way. If the
-control plane of the tailnet cannot be reached during an undo, both
-installations stay closed until `--resume` finishes it. `varlatch
+Any failure from the barrier to the switch undoes the migration. After the
+switch it goes forward: `--resume` finishes the open. If the control
+plane of the tailnet cannot be reached during an undo, both installations
+stay closed until `--resume` finishes it. `varlatch
 migrate --abort` undoes a migration that has not switched yet, the address
 first.
 
-<!-- pending #364: the interrupted phases' stated states, as G5's
-     interrupted half pins them. -->
+<!-- pending #364: the interrupted states, as its tests pin them (the
+     migration killed at every phase, then resumed or aborted). -->
 
 ## The address transfer
 
@@ -246,7 +264,7 @@ domain. `--abort` undoes the migration: it tells you to move the domain
 back to the TypeScript application first.
 
 <!-- pending #361: the image target's operator steps on Coolify (Deploy,
-     Stop) and the exit-75 stops; 7.8b's Coolify rehearsal confirms them. -->
+     Stop) and the exit-75 stops; the Coolify rehearsal confirms them. -->
 
 ### The tailnet
 
@@ -254,7 +272,8 @@ When the installation serves its tailnet address, the migration hands the
 tailnet name over to a new node, by rename, in the same transfer:
 
 - Before the barrier, the new server's node joins under a temporary name
-  (`<name>-vl-<id>-n`) and gets a certificate for it, which proves
+  (`<name>-vl-<id>-n`, where `<id>` is the migration's id) and gets a
+  certificate for it, which proves
   issuance works now. The old node's certificate is renewed first if it
   would expire within the rollback window and seven days.
 - Under the barrier, the old node is renamed to `<name>-vl-<id>-o` and the
@@ -269,9 +288,9 @@ is fixed: the domain first, checked through the public URL; then the
 tailnet name, checked from a client node; then both together. A failure
 undoes them in reverse order.
 
-<!-- pending 7.5b part 2 (not opened yet): the tailnet handoff wired into
-     varlatch migrate, its options for the authority and the auth key, and
-     the combined order. The engine is #365, the control plane #360. -->
+<!-- pending: the handoff's engine (#365) and control plane (#360), both
+     open, and its wiring into varlatch migrate (not opened yet): the
+     options for the authority and the auth key, and the combined order. -->
 
 #### The tailnet authority
 
@@ -290,8 +309,10 @@ The rename needs authority over the tailnet, for the migration only.
   full administrator, so a longer-lived one is refused, and the migration
   expires the key when it ends.
 
-<!-- pending 7.5b part 2: the options that take the OAuth client, the API
-     key and the auth key, and how each is read (never an argument). -->
+<!-- pending: the handoff's wiring into varlatch migrate (not opened yet):
+     the options that take the OAuth client, the API key and the auth key,
+     and how each is read (never an argument). Headscale support in the
+     0.50 server is still to come. -->
 
 ## The image target
 
@@ -341,11 +362,13 @@ release that cannot keep the window says so instead
 > TypeScript release (0.23.0). Its data stays; only the way back goes.
 
 <!-- pending #368: reversibleTo / endsRollbackWindow in release.json.
-     pending 6.6b wiring: varlatch upgrade saying the notice and asking. -->
+     pending (not built yet): varlatch upgrade (#330) saying the notice and
+     asking. -->
 
 ### Roll back
 
-From the Compose directory of the migration, with the new server running:
+From the Compose directory of the migration (or with `--from`), with the
+new server running:
 
 ```sh
 sudo varlatch migrate --rollback --config /etc/varlatch/varlatchd.conf
@@ -400,18 +423,54 @@ or by the installation a later forward migration makes.
 ### Finish
 
 `varlatch migrate --finish` ends the window, after its 30 days or earlier
-when you decide:
+when you decide. **It cannot be undone**: from then on `--rollback`
+refuses.
 
-- it deletes the old tailnet node's retained state and certificate;
-- it removes the old containers;
-- with `--delete-old-data` only, it makes a final archive of the retained
-  PostgreSQL and Convex volumes, verifies it, and then removes them.
+```sh
+sudo varlatch migrate --finish --config /etc/varlatch/varlatchd.conf
+```
 
-Without `--finish`, the old installation stays as it is: marked migrated
-out, refusing every request, its data untouched.
+(or the image target's `--to-*` options), from the Compose directory or
+with `--from`.
 
-<!-- pending 7.6a-3 (not opened yet): --finish is still being built; this
-     section is written from the design and must be checked against it. -->
+**After a migration**, it removes the TypeScript installation's containers
+and the old tailnet node's state and certificates (its Tailscale and Caddy
+volumes). Its data volumes stay, unless you add `--delete-old-data`:
+
+```sh
+sudo varlatch migrate --finish --delete-old-data \
+  --config /etc/varlatch/varlatchd.conf \
+  --bek-file /path/to/backup-key \
+  --backup-destination offsite --read-credentials-file /path/to/read.json
+```
+
+- First, a final archive of the whole old installation is made, uploaded
+  to the destination, then downloaded back and verified. The backup
+  options are this archive's.
+- Only once the journal records the verified archive are the old
+  PostgreSQL and Convex volumes removed.
+- After that, the old data can be restored only through that final
+  archive (with the [converter](#old-archives-the-converter)).
+
+**After a rollback**, the TypeScript release runs again, and `--finish`
+closes the window on the 0.50 side. Without `--delete-old-data`, the 0.50
+server's copy is kept as it is. With it, a final archive of that copy is
+made and verified (format 3, restorable with `setup --restore`), then the
+copy is discarded and the volumes from before the migration, unused since
+the rollback rebuilt the database, are removed.
+
+On Coolify, the removals are yours: `--finish` names each resource to
+delete in Coolify, and does not reach Coolify itself.
+
+Until `--finish`, after a migration the old installation stays as it is:
+marked migrated out, refusing every request, its data untouched. After a
+rollback, the 0.50 server's copy and the volumes from before the
+migration stay.
+
+<!-- pending #371: --finish and --delete-old-data. It is being reworked
+     (a two-step flow, the volume names read from compose config, the
+     rollback's archive verified remotely): match this section to its
+     final behaviour when it lands. -->
 
 ## Old archives: the converter
 
