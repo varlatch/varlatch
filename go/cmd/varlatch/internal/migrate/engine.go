@@ -217,6 +217,9 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	}
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
 		Drain: int64(e.drain() / time.Second), Ingress: e.Options.Ingress, Transfer: &TransferRecord{Origin: origin}, History: []Step{}}
+	if e.Options.Ingress == Proxy {
+		j.Transfer.Publish = ing.WebAddress
+	}
 	if reuse {
 		// The same migration goes on only to the same target.
 		if prev.Target.Config != tgt.Config || prev.Target.DataDir != tgt.DataDir {
@@ -846,7 +849,7 @@ func (e *Engine) finishReleased(ctx context.Context, j *Journal) error {
 	}
 	if st.Running {
 		if err := e.Target.Stop(ctx); err != nil {
-			return err
+			return e.waitForHuman(err, "Then run varlatch migrate --resume (or --abort) again.")
 		}
 	}
 	return e.Target.WriteJournal(ctx, j)

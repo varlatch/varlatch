@@ -508,7 +508,7 @@ func TestTheSwitchBesideARunningVarlatchd(t *testing.T) {
 	if code, out, _ := migrateWith(t, in.conf, nil, "state"); code != ExitOK || !strings.Contains(out, `"verifiedAt":"2026-11-20T17:00:00Z"`) {
 		t.Fatalf("the rewritten journal: %q", out)
 	}
-	for _, j := range [][]byte{journalText(migA, "checked"), journalText(migA, "released"), journalText(migB, "transfer")} {
+	for _, j := range [][]byte{journalText(migA, "checked"), journalText(migA, "released"), journalText(migB, "transfer"), journalText(migB, "switched")} {
 		if code, _, errOut := migrateWith(t, in.conf, j, "state", "--write"); code != ExitFailure {
 			t.Fatalf("%s beside the running varlatchd: %d %q", j, code, errOut)
 		}

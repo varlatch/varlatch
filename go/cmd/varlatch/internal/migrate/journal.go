@@ -124,7 +124,10 @@ type CopyRecord struct {
 // the operator was asked (the Coolify shape), and when the public URL
 // answered with the migrated installation.
 type TransferRecord struct {
-	Origin     string `json:"origin"`
+	Origin string `json:"origin"`
+	// Publish is, for an own proxy, the address the proxy targets (the
+	// source's dashboard's), which the target must take over.
+	Publish    string `json:"publish,omitempty"`
 	Asked      bool   `json:"asked"`
 	VerifiedAt string `json:"verifiedAt,omitempty"`
 }

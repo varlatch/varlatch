@@ -222,11 +222,8 @@ func (t *fakeTarget) WriteJournal(_ context.Context, j *Journal) error {
 	if err := t.call("journal " + string(j.Phase)); err != nil {
 		return err
 	}
-	// As varlatchd: beside a running varlatchd, only the switch, or the
-	// same migration's journal in the phase it holds already.
-	same := t.journal != nil && t.journal.ID == j.ID && t.journal.Phase == j.Phase && j.Phase != Open && j.Phase != Released
-	if t.running && j.Phase != Switched && !same {
-		return errors.New("varlatchd is running: stop it first; nothing was written")
+	if err := t.refuses(j); err != nil {
+		return err
 	}
 	b, _ := j.Encode()
 	t.journals = append(t.journals, b)
@@ -239,6 +236,40 @@ func (t *fakeTarget) WriteJournal(_ context.Context, j *Journal) error {
 	}
 	return nil
 }
+
+// refuses is what varlatchd's admin migrate state --write refuses
+// (runMigrateState and runMigrate): another migration's journal over one
+// not released; a journal going back, but to started before the barrier
+// or to released before the switch; and, beside a running varlatchd,
+// anything but the switch or the same migration's journal in the phase it
+// holds (open and released excepted).
+func (t *fakeTarget) refuses(j *Journal) error {
+	old := t.journal
+	if t.running {
+		same := old != nil && old.ID == j.ID && old.Phase == j.Phase && j.Phase != Open && j.Phase != Released
+		if j.Phase != Switched && !same {
+			return errors.New("varlatchd is running: stop it first; nothing was written")
+		}
+	}
+	if old == nil {
+		return nil
+	}
+	if old.ID != j.ID && old.Phase != Released {
+		return errors.New("the data directory holds another migration; nothing was written")
+	}
+	if old.ID == j.ID {
+		back := slices.Index(Phases, j.Phase) < slices.Index(Phases, old.Phase)
+		redone := j.Phase == Started && slices.Contains(beforeBarrier, old.Phase)
+		if back && j.Phase != Released && !redone {
+			return errors.New("the journal does not go back; nothing was written")
+		}
+		if (old.Phase == Switched || old.Phase == Open) && j.Phase == Released {
+			return errors.New("a switched migration is not undone; nothing was written")
+		}
+	}
+	return nil
+}
+
 func (t *fakeTarget) Import(_ context.Context, bundle, scratch string) (CopyRecord, error) {
 	what := "import"
 	if scratch != "" {
@@ -975,5 +1006,70 @@ func TestStageLeftovers(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(base, d)); os.IsNotExist(err) != gone {
 			t.Errorf("%s: gone %v, want %v", d, os.IsNotExist(err), gone)
 		}
+	}
+}
+
+// The fake target refuses what varlatchd refuses (TestTheSwitchBeside
+// ARunningVarlatchd holds varlatchd to the same table).
+func TestTheFakeTargetRefusesAsVarlatchd(t *testing.T) {
+	j := func(id string, p Phase) *Journal { return &Journal{Format: 1, ID: id, Phase: p} }
+	a, b := "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", "mig_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+	for _, c := range []struct {
+		held    *JournalHead
+		running bool
+		write   *Journal
+		ok      bool
+	}{
+		{nil, true, j(a, Switched), true},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(b, Switched), false},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(a, Transfer), true},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(a, Checked), false},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(a, Open), false},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(a, Released), false},
+		{&JournalHead{ID: a, Phase: Transfer}, false, j(a, Released), true},
+		{&JournalHead{ID: a, Phase: Switched}, false, j(a, Released), false},
+		{&JournalHead{ID: a, Phase: DryRun}, false, j(a, Started), true},
+		{&JournalHead{ID: a, Phase: Barrier}, false, j(a, Started), false},
+		{&JournalHead{ID: a, Phase: Released}, false, j(b, Started), true},
+		{&JournalHead{ID: a, Phase: Copied}, false, j(b, Started), false},
+	} {
+		ft := &fakeTarget{journal: c.held, running: c.running, fail: map[string]error{}}
+		if err := ft.WriteJournal(context.Background(), c.write); (err == nil) != c.ok {
+			t.Errorf("held %+v running %v, writing %s %s: %v", c.held, c.running, c.write.ID, c.write.Phase, err)
+		}
+	}
+}
+
+// An image's service behind an own proxy: the start step names the port to
+// publish, the dashboard's address the proxy targets.
+func TestAnImageBehindAProxyNamesThePort(t *testing.T) {
+	w := newWorld(t)
+	w.eng.Options.Ingress = Proxy
+	w.tgt.human, w.tgt.info.Kind, w.tgt.info.Listen, w.tgt.info.ListenHTTPS = true, "image", "0.0.0.0:8686", ""
+	j, err := w.eng.Run(context.Background(), false)
+	said := strings.Join(w.said, "\n")
+	if !errors.Is(err, ErrAwaitingOperator) || j.Transfer.Publish != "127.0.0.1:8787" ||
+		!strings.Contains(said, "Publish its listen (0.0.0.0:8686) on 127.0.0.1:8787, the address your proxy targets") {
+		t.Fatalf("%+v %v\n%s", j.Transfer, err, said)
+	}
+}
+
+// An undo left at released with the image's service running: the stop is
+// asked for, with what to run after.
+func TestAReleaseWaitsForTheImagesStop(t *testing.T) {
+	w := newWorld(t)
+	w.tgt.human = true
+	j := &Journal{Format: 1, ID: "mig_eeeeeeeeeeeeeeeeeeeeeeeeee", Phase: Released, History: []Step{}}
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	w.tgt.journal, w.tgt.running, w.tgt.gate = &JournalHead{ID: j.ID, Phase: Transfer}, true, true
+	if _, err := w.eng.Resume(context.Background()); !errors.Is(err, ErrAwaitingOperator) ||
+		!strings.Contains(strings.Join(w.said, "\n"), "Stop the Go service varlatch-go (in Coolify, Stop it). Then run varlatch migrate --resume (or --abort) again.") {
+		t.Fatalf("%v %v", err, w.said)
+	}
+	w.tgt.running = false
+	if _, err := w.eng.Resume(context.Background()); err != nil || w.tgt.journal.Phase != Released || w.tgt.gate {
+		t.Fatalf("after the stop: %v %+v gate %v", err, w.tgt.journal, w.tgt.gate)
 	}
 }

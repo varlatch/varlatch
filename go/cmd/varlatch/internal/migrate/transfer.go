@@ -155,7 +155,15 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 		}
 		n := 1
 		if human != nil {
-			e.say("Address transfer, by hand, step %d: %s", n, human.Instruction)
+			publish := ""
+			if kind == Proxy && j.Transfer.Publish != "" {
+				// An image's service publishes its port as Docker or
+				// Coolify maps it: the operator maps it to what the proxy
+				// targets.
+				publish = fmt.Sprintf(" Publish its listen (%s) on %s, the address your proxy targets, which the source's dashboard has freed.",
+					orNone(j.Target.Listen), j.Transfer.Publish)
+			}
+			e.say("Address transfer, by hand, step %d: %s%s", n, human.Instruction, publish)
 			n++
 		}
 		if kind == Coolify {
