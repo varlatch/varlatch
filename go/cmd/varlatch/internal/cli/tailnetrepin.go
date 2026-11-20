@@ -111,12 +111,13 @@ func (r *Run) confirmRepin(doc jsjson.Object, code int, adopt bool, config strin
 	}
 	prompter := newTerminalPrompter(r)
 	for asked := 0; ; asked++ {
-		// The pinned and the observed tailnet, and what varlatchd offers;
-		// an adoption's refusal is the question instead.
+		// The pinned and the observed tailnet, and what varlatchd says of
+		// its offer, whatever its status: an adoption (adoption-needed,
+		// status 1) carries the caveat the question rests on.
 		if err := r.showRepinLines(doc); err != nil {
 			return true, err
 		}
-		if msg, _ := doc.Value("message").(string); code == 0 && msg != "" {
+		if msg, _ := doc.Value("message").(string); msg != "" {
 			if err := r.out(msg + "\n"); err != nil {
 				return true, err
 			}
@@ -147,7 +148,7 @@ func (r *Run) confirmRepin(doc jsjson.Object, code int, adopt bool, config strin
 			}
 			return true, Fail("varlatch tailnet repin: nothing was re-pinned; run it again to see the tailnet as it is then", code)
 		}
-		code, doc = 0, withoutMessage(doc)
+		doc = withoutMessage(doc)
 	}
 }
 

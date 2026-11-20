@@ -656,7 +656,8 @@ func TestTailnetRepinFront(t *testing.T) {
 	adoptMsg := "the pin is missing, but this node was enrolled before: tailnet access stays closed. If the observed tailnet is the one this installation trusts, run again with --yes --adopt."
 	answer(t, dir, repinView("adoption-needed", adoptMsg, "null"), "", 1)
 	answerYes(t, dir, repinView("adopted", "Adopted corp.ts.net as the pinned tailnet; tailnet access is open.", newPin), "", 0)
-	if code, out, _ := run("yes\n", "--adopt"); code != 0 || !strings.Contains(out, "Adopt the observed tailnet as the pin and open tailnet access? [y/N] Adopted corp.ts.net") {
+	// The question comes with varlatchd's caveat (#319 review P3).
+	if code, out, _ := run("yes\n", "--adopt"); code != 0 || !strings.Contains(out, shown+adoptMsg+"\nAdopt the observed tailnet as the pin and open tailnet access? [y/N] Adopted corp.ts.net") {
 		t.Fatalf("adopt: %d %q", code, out)
 	}
 	if got := calls(t, dir); len(got) != 2 || !slices.Equal(got[0], []string{"admin", "tailnet", "repin", "--json"}) || !slices.Equal(got[1], []string{"admin", "tailnet", "repin", "--json", "--yes", "--adopt", "--offer", offerA}) {
