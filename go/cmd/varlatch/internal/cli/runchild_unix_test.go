@@ -6,8 +6,10 @@ package cli
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -55,5 +57,55 @@ func TestLookCommandAsksTheSystem(t *testing.T) {
 	}
 	if got, err := lookCommand("tool", first+string(os.PathListSeparator)+second); err != nil || got != filepath.Join(second, "tool") {
 		t.Errorf("tool: %q, %v", got, err)
+	}
+}
+
+// TestLookCommandRemembersEACCES: as libuv's execvp, a candidate on PATH
+// that exists but may not be executed makes the search end with EACCES
+// when no later directory has the command (ENOENT only when none had it).
+func TestLookCommandRemembersEACCES(t *testing.T) {
+	dir, empty := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tool"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "adir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := empty + string(os.PathListSeparator) + dir
+	for _, name := range []string{"tool", "adir"} {
+		_, err := lookCommand(name, path)
+		if got := spawnError(name, err); got.Error() != "spawn "+name+" EACCES" {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+	_, err := lookCommand("nosuch", path)
+	if got := spawnError("nosuch", err); got.Error() != "spawn nosuch ENOENT" {
+		t.Errorf("nosuch: %v", got)
+	}
+}
+
+// TestSpawnExecFormatError: an executable file the system cannot execute
+// (no #! line) fails to start as Node's spawn does: spawn tool ENOEXEC,
+// not Go's fork/exec message.
+func TestSpawnExecFormatError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tool"), []byte{0x7f, 'n', 'o', 't', 0, 1, 2, 3}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &Run{Stdin: strings.NewReader(""), Stdout: io.Discard, Stderr: io.Discard}
+	_, err := r.runChild("tool", nil, []string{"PATH=" + dir}, nil)
+	if err == nil || err.Error() != "spawn tool ENOEXEC" {
+		t.Fatalf("%v", err)
+	}
+}
+
+// TestParentLookupIsExact: off Windows, process.env's names are exact.
+func TestParentLookupIsExact(t *testing.T) {
+	p := parentVars{names: []string{"Path", "PATH"}, values: map[string]string{"Path": "first", "PATH": "second"}}
+	if v, ok := p.lookup("PATH"); !ok || v != "second" {
+		t.Fatalf("%q, %v", v, ok)
+	}
+	if _, ok := p.lookup("path"); ok {
+		t.Fatal("found by another case")
 	}
 }

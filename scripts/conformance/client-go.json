@@ -10,10 +10,6 @@
       "reason": "varlatch doctor: not ported to the Go CLI yet",
       "slice": "step 6"
     },
-    "run-strict": {
-      "reason": "varlatch run --strict: not ported to the Go CLI yet",
-      "slice": "5.4f"
-    },
     "run-strict-agent-safe": {
       "reason": "varlatch run --strict --agent-safe: not ported to the Go CLI yet",
       "slice": "5.5b"
