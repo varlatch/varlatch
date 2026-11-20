@@ -136,13 +136,17 @@ func insertSQL(table string, names []string) string {
 	return "INSERT INTO " + ident(table) + " (" + strings.Join(quoted, ", ") + ") VALUES (" + strings.Join(q, ", ") + ")"
 }
 
-// staleImport is what an import that was killed leaves: its database under
-// the temporary name, and that name's WAL and shared memory.
-var staleImport = regexp.MustCompile(`^\.migrate-import-[0-9a-f]{12}\.db(-wal|-shm)?$`)
+// staleTemp is what an import or a reverse export that was killed leaves
+// in the data directory: the database under its temporary name
+// (.migrate-import-<12 hex>.db, .migrate-export-<12 hex>.db), and that
+// name's WAL and shared memory.
+var staleTemp = regexp.MustCompile(`^\.migrate-(import|export)-[0-9a-f]{12}\.db(-wal|-shm)?$`)
 
 // fresh checks dir holds nothing but the ignored names, after removing what
-// an import that was killed left (only that exact pattern: the caller holds
-// the data directory, so no other import runs).
+// an import or a reverse export that was killed left (that exact pattern
+// only, regular files only: the caller holds the data directory, with no
+// varlatchd running, so neither runs now). Anything else, a look-alike
+// included, is refused and named.
 func fresh(dir string, ignore []string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -152,9 +156,9 @@ func fresh(dir string, ignore []string) error {
 		if slices.Contains(ignore, e.Name()) {
 			continue
 		}
-		if staleImport.MatchString(e.Name()) && e.Type().IsRegular() {
+		if staleTemp.MatchString(e.Name()) && e.Type().IsRegular() {
 			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
-				return fmt.Errorf("an interrupted import left %s, which cannot be removed: %w", e.Name(), err)
+				return fmt.Errorf("an interrupted import or export left %s, which cannot be removed: %w", e.Name(), err)
 			}
 			continue
 		}

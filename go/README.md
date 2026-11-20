@@ -2866,8 +2866,9 @@ migrations.
     data directory held and empty, `server/migration/migrate`): the bundle
     is read whole first (counts and SHA-256), then into a fresh database
     under a temporary name in the data directory (`.migrate-import-*`,
-    renamed to `varlatch.db` once committed, synced; one an import that
-    was killed left is removed by the next) in one write job, foreign keys
+    renamed to `varlatch.db` once committed, synced; what an import or a
+    reverse export that was killed left under its temporary name is
+    removed by the next import, a look-alike refused) in one write job, foreign keys
     deferred to the commit (`PRAGMA defer_foreign_keys`, ON only, the one
     assignment a job may make, and only on a database opened with
     `storage.Options.DeferForeignKeys`, as the import's is: the schema's

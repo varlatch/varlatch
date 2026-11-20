@@ -608,3 +608,36 @@ func reseal(t *testing.T, b []byte) []byte {
 	out = append(out, hex.EncodeToString(sum[:])...)
 	return append(out, end[i+64:]...)
 }
+
+// A reverse export that was killed leaves its snapshot copy under its
+// temporary name: the next import removes it (that exact pattern, regular
+// files only) and goes on; a look-alike, or a directory under the name, is
+// refused and named.
+func TestAnInterruptedExportsLeftovers(t *testing.T) {
+	s := loadSource(t)
+	dir := t.TempDir()
+	for _, name := range []string{".migrate-export-0123456789ab.db", ".migrate-export-0123456789ab.db-wal", ".migrate-export-0123456789ab.db-shm"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("an export cut short"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.rootKEK); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 || entries[0].Name() != config.DatabaseFile {
+		t.Fatalf("the data directory after the import: %v", entries)
+	}
+	for _, name := range []string{".migrate-export-0123456789ab.db.bak", ".migrate-export-0123456789AB.db"} {
+		if _, err := importInto(t, leftover(t, name), sourceBundle(t, s, nil, false), s.rootKEK); err == nil || !strings.Contains(err.Error(), "not empty ("+name+")") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	asDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(asDir, ".migrate-export-0123456789ab.db"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importInto(t, asDir, sourceBundle(t, s, nil, false), s.rootKEK); err == nil || !strings.Contains(err.Error(), "not empty") {
+		t.Errorf("a directory under the temporary name: %v", err)
+	}
+}
