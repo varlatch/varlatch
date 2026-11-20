@@ -619,6 +619,9 @@
         "help",
         "admin"
       ],
+      "differences": [
+        "admin-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch admin backup create|verify|restore|status [--dir <compose-directory>]\n  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]\n                                                       # one-time links: a new passkey on an existing identity\n  varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]\n               (the host operator's way back: sets the named security controls to off and closes their open\n                approvals; never touches deletion, passkeys or grants)\n  varlatch admin unfreeze --org <slug> --confirm <slug> [--json] [--dir <compose-directory>]\n               (the host operator's lift of an incident freeze, when nobody can approve it)\n  varlatch admin outbound check [--allow <value>] [--org <organization>] [--json] [--dir <compose-directory>]\n               (every configured webhook, Coolify and Convex Connection and OIDC issuer against the outbound policy,\n                with the VARLATCH_OUTBOUND_ALLOW value that would allow the refused ones; DNS lookups only;\n                exit 0 all allowed, 1 something refused, 2 something not resolved)\n",
@@ -639,6 +642,9 @@
         "admin",
         "--help"
       ],
+      "differences": [
+        "admin-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch admin backup create|verify|restore|status [--dir <compose-directory>]\n  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]\n                                                       # one-time links: a new passkey on an existing identity\n  varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]\n               (the host operator's way back: sets the named security controls to off and closes their open\n                approvals; never touches deletion, passkeys or grants)\n  varlatch admin unfreeze --org <slug> --confirm <slug> [--json] [--dir <compose-directory>]\n               (the host operator's lift of an incident freeze, when nobody can approve it)\n  varlatch admin outbound check [--allow <value>] [--org <organization>] [--json] [--dir <compose-directory>]\n               (every configured webhook, Coolify and Convex Connection and OIDC issuer against the outbound policy,\n                with the VARLATCH_OUTBOUND_ALLOW value that would allow the refused ones; DNS lookups only;\n                exit 0 all allowed, 1 something refused, 2 something not resolved)\n",
@@ -658,6 +664,9 @@
       "args": [
         "admin",
         "-h"
+      ],
+      "differences": [
+        "admin-usage"
       ],
       "expect": {
         "status": 0,
