@@ -1,19 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import type { Value } from "../src/migration/canonical.js";
 import { encodeValue } from "../src/migration/canonical.js";
-import { bundleTables, loadManifest, refusalKind, writeBundle, type ManifestTable } from "../src/migration/bundle.js";
+import { bundleTables, loadManifest, refusalKind, writeBundle, type Decision, type DecisionSource, type Digest, type ManifestTable } from "../src/migration/bundle.js";
 import { orderClause, selectRows } from "../src/migration/source.js";
+import { readBundle, type BundleParts } from "./helpers/bundle-read.js";
 
 /**
  * bundle-v1 (go/server/migration/bundle/BUNDLE.md): the TypeScript writer
  * reproduces varlatchd's vector, test/migration/bundle-small.jsonl
- * (go/server/migration/bundle/testdata/small.jsonl), byte for byte.
+ * (go/server/migration/bundle/testdata/small.jsonl), byte for byte, and
+ * writes no bundle of its refused cases (testdata/refused.json, here
+ * test/migration/bundle-refused.json).
  */
 
 const small = readFileSync(new URL("./migration/bundle-small.jsonl", import.meta.url), "utf8");
+const refused = JSON.parse(readFileSync(new URL("./migration/bundle-refused.json", import.meta.url), "utf8")) as { name: string; bundle: string; why: string }[];
+
+const noDecisions = (): DecisionSource => ({ count: 0, at: 0n, decisions: (async function* () {})() });
 
 /** A canonical row back into the values the writer takes, numbers exactly. */
 function decodeRow(table: ManifestTable, line: string): Value[] {
@@ -38,20 +44,24 @@ function decodeRow(table: ManifestTable, line: string): Value[] {
   });
 }
 
-async function write(rows: Map<string, string[]>, frozen = { auditPosition: "1", snapshot: "00000003-0000001B-1" }): Promise<string> {
-  const out = new PassThrough();
+/** Writes a bundle from its parts, each table's rows decoded from their lines. */
+async function write(parts: BundleParts, opts: { out?: Writable; digests?: Digest[]; decisions?: Decision[] } = {}): Promise<string> {
+  const out = opts.out ?? new PassThrough();
   const chunks: Buffer[] = [];
   out.on("data", (c: Buffer) => chunks.push(c));
+  const decisions = opts.decisions ?? parts.decisions;
   await writeBundle(out, {
     manifest: loadManifest(),
-    frozenPoint: frozen,
+    frozenPoint: { auditPosition: String(parts.header.frozenPoint.auditPosition), snapshot: parts.header.frozenPoint.snapshot },
     rows: async (table) => {
-      const lines = rows.get(table.source) ?? [];
+      const lines = parts.tables.get(table.source) ?? [];
       async function* gen() {
         for (const l of lines) yield decodeRow(table, l);
       }
       return { count: lines.length, rows: gen() };
     },
+    digests: opts.digests ?? parts.digests,
+    decisions: { count: decisions.length, at: parts.at, decisions: (async function* () { yield* decisions; })() },
   });
   out.end();
   return Buffer.concat(chunks).toString("utf8");
@@ -59,17 +69,58 @@ async function write(rows: Map<string, string[]>, frozen = { auditPosition: "1",
 
 describe("bundle-v1", () => {
   it("writes varlatchd's vector byte for byte", async () => {
-    const lines = small.split("\n").slice(0, -1);
-    const rows = new Map<string, string[]>();
-    let current = "";
-    for (const line of lines.slice(1, -1)) {
-      const table = /^\{"table":"([^"]+)","rows":\d+\}$/.exec(line);
-      if (table) {
-        current = table[1]!;
-        rows.set(current, []);
-      } else rows.get(current)!.push(line);
+    expect(await write(readBundle(small))).toBe(small);
+  });
+
+  it("writes none of varlatchd's refused bundles: each is refused, or comes out as the format says", async () => {
+    expect(refused.length).toBeGreaterThanOrEqual(30);
+    for (const c of refused) {
+      let parts: BundleParts | null = null;
+      try {
+        parts = readBundle(c.bundle);
+      } catch {
+        // Not even a bundle's shape: nothing of it can reach the writer.
+      }
+      if (!parts) continue;
+      const written = await write(parts).catch(() => null);
+      expect(written, `${c.name} (${c.why})`).not.toBe(c.bundle);
     }
-    expect(await write(rows)).toBe(small);
+  });
+
+  it("sorts the digests by class, then by their ids as written in jsonb order, and refuses an item twice", async () => {
+    const parts = readBundle(small);
+    // Given last first, each with its ids in the reverse of jsonb's order.
+    const given = [...parts.digests].reverse().map((d) => ({ ...d, ids: Object.fromEntries(Object.entries(d.ids).reverse()) }));
+    expect(Object.keys(given[0]!.ids)).toEqual(["organizationId", "versionId", "secretId"]);
+    expect(await write(parts, { digests: given })).toBe(small);
+    await expect(write(parts, { digests: [...parts.digests, parts.digests[0]!] })).rejects.toThrow(/digested twice/);
+    await expect(write(parts, { digests: [{ ...parts.digests[0]!, hmac: parts.digests[0]!.hmac.toUpperCase() }] })).rejects.toThrow(/lowercase hex/);
+  });
+
+  it("refuses a decision the format does not allow", async () => {
+    const parts = readBundle(small);
+    const d = parts.decisions[0]!;
+    const cases: [Decision, RegExp][] = [
+      [{ ...d, code: "PERMISSION_DENIED" }, /allowed with an error code/],
+      [{ ...d, allowed: false, code: null }, /denied without one/],
+      [{ ...d, state: "suspended" as Decision["state"] }, /state other than/],
+      [{ ...d, project: "" }, /empty project/],
+      [{ ...d, project: null }, /outside a Project/],
+      [{ ...d, tailnet: { tailnet: "", nodeId: "n", tags: [], userLogin: null } }, /Tailnet Context without/],
+    ];
+    for (const [bad, why] of cases) {
+      await expect(write(parts, { decisions: [bad] }), JSON.stringify(bad)).rejects.toThrow(why);
+    }
+  });
+
+  it("stops at a write error (ENOSPC), never hangs", async () => {
+    const full = new Writable({
+      highWaterMark: 64,
+      write(_chunk, _encoding, callback) {
+        callback(Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" }));
+      },
+    });
+    await expect(write(readBundle(small), { out: full })).rejects.toThrow(/ENOSPC/);
   });
 
   it("names every table the manifest copies or transforms, each once, in its order", () => {
@@ -99,6 +150,8 @@ describe("bundle-v1", () => {
         }
         return { count: table.source === "session" ? 1 : 0, rows: gen() };
       },
+      digests: [],
+      decisions: noDecisions(),
     });
     expect(Buffer.concat(chunks).toString("utf8")).not.toContain(marker);
     // Nor is it ever read: its SELECT reads NULL in its place.
@@ -136,6 +189,8 @@ describe("bundle-v1", () => {
         }
         return { count: table.source === "audit_events" ? 1 : 0, rows: gen() };
       },
+      digests: [],
+      decisions: noDecisions(),
     });
     await expect(attempt).rejects.toThrow(/a row of audit_events cannot be encoded \(jsonb-number-not-exact\)/);
     await attempt.catch((err: Error) => {

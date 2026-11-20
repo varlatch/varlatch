@@ -360,26 +360,27 @@ async function readPassphrase(prompt: string, opts: { confirm?: boolean } = {}):
 const MIGRATION_USAGE =
   "Usage: varlatchd admin migration barrier [--drain-seconds <n>] | varlatchd admin migration status | " +
   "varlatchd admin migration release --id <gate> | varlatchd admin migration mark-migrated-out --id <gate> | " +
-  "varlatchd admin migration export --out <bundle> --report <report> [--digests] [--dry-run]";
+  "varlatchd admin migration export --out <bundle> [--digests] [--dry-run]";
 
 /**
  * `admin migration export` (go-step7 slice 7.2b, migration/export.ts): the
- * source bundle and its report, each written to a new file (mode 0600)
- * that appears only once complete. With --digests the run key comes on
- * standard input, which must be a pipe: never an argument, a variable or a
- * file. Nothing secret is printed: the summary names counts, the preflight's
- * failures name tables, ids and columns, never a value.
+ * source bundle, written to a new file (mode 0600) that appears only once
+ * complete; a .partial left by an export that was killed is removed first.
+ * With --digests the run key comes on standard input, which must be a pipe:
+ * never an argument, a variable or a file. Nothing secret is printed: the
+ * summary names counts and ids, the preflight's failures name tables, ids
+ * and columns, never a value.
  */
 async function migrationExport(args: string[]): Promise<void> {
-  const opts = { out: "", report: "", digests: false, dryRun: false };
+  const opts = { out: "", digests: false, dryRun: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if ((a === "--out" || a === "--report") && args[i + 1] && !opts[a === "--out" ? "out" : "report"]) opts[a === "--out" ? "out" : "report"] = args[++i]!;
+    if (a === "--out" && args[i + 1] && !opts.out) opts.out = args[++i]!;
     else if (a === "--digests" && !opts.digests) opts.digests = true;
     else if (a === "--dry-run" && !opts.dryRun) opts.dryRun = true;
     else fail(MIGRATION_USAGE);
   }
-  if (!opts.out || !opts.report || opts.out === opts.report) fail(MIGRATION_USAGE);
+  if (!opts.out) fail(MIGRATION_USAGE);
   let runKey: Buffer | null = null;
   if (opts.digests) {
     if (process.stdin.isTTY) fail("varlatchd admin migration export: --digests reads the run key from a pipe (varlatch migrate gives it), never a terminal");
@@ -394,27 +395,34 @@ async function migrationExport(args: string[]): Promise<void> {
   const config = loadConfig(process.env, { requireKek: opts.digests, listeners: false });
   const rootKek = opts.digests ? config.loadRootKek() : null;
   const db = createPgQuerier(config.databaseUrl);
-  const partial = [`${opts.out}.partial`, `${opts.report}.partial`] as const;
-  const out = createWriteStream(partial[0], { flags: "wx", mode: 0o600 });
-  const report = createWriteStream(partial[1], { flags: "wx", mode: 0o600 });
+  const partial = `${opts.out}.partial`;
+  const removePartial = () => {
+    try { unlinkSync(partial); } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
+  };
+  // An export killed before it finished leaves its .partial: never a bundle, so it goes.
+  removePartial();
+  const out = createWriteStream(partial, { flags: "wx", mode: 0o600 });
+  // A write error is the bundle writer's to report; this keeps it from being unhandled meanwhile.
+  out.on("error", () => {});
   const closed = (w: ReturnType<typeof createWriteStream>) => new Promise<void>((resolve, reject) => { w.once("error", reject); w.end(resolve); });
   let ok = false;
   try {
     const gate = activeGate(stateDir());
-    const result = await exportSource(db, { gate, dryRun: opts.dryRun, out, report, rootKek, runKey });
+    const result = await exportSource(db, { gate, dryRun: opts.dryRun, out, rootKek, runKey });
     await closed(out);
-    await closed(report);
-    renameSync(partial[0], opts.out);
-    renameSync(partial[1], opts.report);
+    renameSync(partial, opts.out);
     ok = true;
     console.log(JSON.stringify({
-      frozenPoint: result.frozenPoint, bundle: result.bundle, digests: result.digests, decisions: result.decisions,
+      frozenPoint: result.frozenPoint, bundle: result.bundle,
       preflight: { ok: true, verificationRows: result.preflight.verificationRows, crossOrganizationGrants: result.preflight.crossOrganizationGrants },
     }));
   } catch (err) {
     if (!(err instanceof ExportRefused)) throw err;
-    // Not fail(): it exits at once, and the partial files must go first.
+    // Not fail(): it exits at once, and the partial file must go first.
     for (const f of err.preflight?.failures ?? []) console.error(`varlatchd admin migration export: ${f.message}`);
+    for (const g of err.preflight?.crossOrganizationGrants ?? []) {
+      console.error(`varlatchd admin migration export: listed: cross-organization grant ${g.grantId} in ${g.organizationId} names ${g.names} ${g.namedId} of ${g.namedOrganizationId}`);
+    }
     console.error(`varlatchd admin migration export: ${err.preflight ? "preflight refused the export" : err.message}; nothing was exported`);
     process.exitCode = 1;
   } finally {
@@ -422,8 +430,7 @@ async function migrationExport(args: string[]): Promise<void> {
     rootKek?.fill(0);
     if (!ok) {
       out.destroy();
-      report.destroy();
-      for (const p of partial) { try { unlinkSync(p); } catch { /* not written */ } }
+      removePartial();
     }
     await db.end();
   }
@@ -457,7 +464,8 @@ async function migrationCommand(args: string[]): Promise<void> {
         const { migrationBarrier } = await import("./backup/control.js");
         const config = loadConfig(process.env, { requireKek: false, listeners: false });
         const db = createPgQuerier(config.databaseUrl);
-        try { print(await migrationBarrier({ db, rootKek: Buffer.alloc(0) }, new Maintenance(stateDir()), drainMs ?? 60_000)); }
+        // No daemon to hold a snapshot past this process: the export reads its own and checks the frozen position.
+        try { print(await migrationBarrier({ db, rootKek: Buffer.alloc(0) }, new Maintenance(stateDir()), drainMs ?? 60_000, { hold: false })); }
         catch (e) { fail(e instanceof Error ? e.message : "The migration barrier failed"); }
         finally { await db.end(); }
       }

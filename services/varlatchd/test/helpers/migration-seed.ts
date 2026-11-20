@@ -217,6 +217,38 @@ export async function seedInstallation(ctx: AppCtx): Promise<Seeded> {
   // An incident freeze, last: it stops beta's writes.
   await ok("POST", `${BETA}/incident-freeze`, { reason: "a drill" });
 
+  // Rows only the daemon's loops or rare paths write, straight to their
+  // tables, so every column type the bundle carries meets real rows: a Sync
+  // Target with its ledger, run and cursor (the sync loop), a security
+  // control counter (an hour bucket), a quarantined passkey.
+  const target = "syt_migrationseed";
+  await ctx.db.query(
+    `INSERT INTO sync_targets (id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping, created_by, next_attempt_at, last_notes)
+     SELECT $1, $2, e.project_id, e.id, (SELECT id FROM platform_connections WHERE organization_id = $2 LIMIT 1),
+            '{"repository":"acme/api","environment":"production"}'::jsonb, 'github-actions:acme/api:production', '{"DB_PASS":"DB_PASS"}'::jsonb, $3, now(), '["seeded"]'::jsonb
+       FROM environments e JOIN projects p ON p.id = e.project_id WHERE p.organization_id = $2 AND e.name = 'production' AND p.slug = 'api'`,
+    [target, acme, admin],
+  );
+  await ctx.db.query(
+    "INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation, last_error) VALUES ($1, 'DB_PASS', 'seeded-fingerprint', 'written', 1, NULL)",
+    [target],
+  );
+  await ctx.db.query("INSERT INTO sync_runs (target_id, generation, deadline) VALUES ($1, 1, now() + interval '1 hour')", [target]);
+  await ctx.db.query(
+    `INSERT INTO sync_cursor (singleton, occurred_at, event_id, cursor_order)
+     SELECT true, occurred_at, id, event_order FROM audit_events ORDER BY event_order DESC LIMIT 1`,
+  );
+  await ctx.db.query(
+    `INSERT INTO security_control_counters (organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour, count, first_seen, last_seen)
+     VALUES ($1, 'passkey-verification', 1, 'secret.reveal', $2, 'would-refuse', date_trunc('hour', now(), 'UTC'), 3, now() - interval '1 minute', now())`,
+    [acme, admin],
+  );
+  await ctx.db.query(
+    `INSERT INTO passkey_quarantine (id, name, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp", transports, "createdAt", aaguid, reason, kept_passkey_id)
+     SELECT 'pkq_migrationseed', name, "publicKey", "userId", "credentialID" || '-duplicate', counter, "deviceType", "backedUp", transports, "createdAt", aaguid, 'duplicate-credential-id', id
+       FROM passkey ORDER BY id LIMIT 1`,
+  );
+
   const version = (await ctx.db.query(
     `SELECT ev.id AS value_id, ev.current_version_id FROM env_values ev JOIN environments e ON e.id = ev.environment_id
       WHERE e.name = 'production' AND ev.item_name = 'DB_PASS'`,

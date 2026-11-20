@@ -59,4 +59,10 @@
 {"table":"user","rows":0}
 {"table":"value_versions","rows":0}
 {"table":"webhooks","rows":0}
-{"end":{"tables":58,"rows":2,"sha256":"00ef1cdf40f70745f972d72dff4fe2969dc645cf41d27a95db04306327d05a46"}}
+{"digests":2}
+{"class":"kek-canary","ids":{"installationId":"inst_vectors"},"hmac":"0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"}
+{"class":"value","ids":{"secretId":"val_vectors","versionId":"ver_vectors","organizationId":"org_vectors"},"hmac":"1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b"}
+{"decisions":2,"at":1795000000000002}
+{"credential":"crd_vectors","state":"active","organization":"org_vectors","project":"prj_vectors","environment":"env_vectors","action":"secret.reveal","tailnet":null,"allowed":true,"code":null}
+{"credential":"crd_vectors","state":"revoked","organization":"org_vectors","project":null,"environment":null,"action":"organization.read","tailnet":{"tailnet":"example.ts.net","nodeId":"nVectors","tags":["tag:ci"],"userLogin":"vectors@example.test"},"allowed":false,"code":"UNAUTHENTICATED"}
+{"end":{"tables":58,"rows":2,"digests":2,"decisions":2,"sha256":"a1e66d8fbecc6959281d4c719f9cf24666dfa14e423d800e7913b7428dcdfede"}}

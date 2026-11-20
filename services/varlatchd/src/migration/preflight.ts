@@ -10,6 +10,12 @@ import { pgRowSource } from "./source.js";
  * operator. It reads inside the export's own snapshot and writes nothing.
  * No value is ever reported: a row that cannot be encoded is named by its
  * table, its id and its column, with the kind of failure.
+ *
+ * The rows check is the manifest's rule from this side: a value
+ * canonical-v1 refuses (a jsonb number a double does not hold exactly, for
+ * one) fails its row, never changes, so the preflight reports such rows
+ * before any bundle is written. (The TypeScript note varlatchd's v1.json
+ * does not carry: manifest-v1.json is its copy, byte for byte.)
  */
 
 export interface PreflightFailure {

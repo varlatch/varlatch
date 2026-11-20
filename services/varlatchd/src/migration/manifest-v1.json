@@ -1,5 +1,5 @@
 {
-  "comment": "The migration manifest (ADR-0059 Decision 9; docs/design/go-step7.md decisions 3 to 5). Every table and column of the TypeScript server's PostgreSQL schema: where it goes in varlatchd's SQLite schema, or why it is left out; the transformations; what lives outside the database. Rows are written in the canonical encoding (go/server/migration/canonical/CANONICAL.md), columns in the order listed. manifest_test.go holds it to db/testdata/pg-v0.22.0.json, db/mapping.json and schema.sql. A value canonical-v1 refuses (a jsonb number a double does not hold exactly, for one) fails its row, never changes; the export's preflight reports such rows before any barrier.",
+  "comment": "The migration manifest (ADR-0059 Decision 9; docs/design/go-step7.md decisions 3 to 5). Every table and column of the TypeScript server's PostgreSQL schema: where it goes in varlatchd's SQLite schema, or why it is left out; the transformations; what lives outside the database. Rows are written in the canonical encoding (go/server/migration/canonical/CANONICAL.md), columns in the order listed. manifest_test.go holds it to db/testdata/pg-v0.22.0.json, db/mapping.json and schema.sql.",
   "version": 1,
   "encoding": "canonical-v1",
   "source": {

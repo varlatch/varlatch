@@ -168,7 +168,13 @@ export interface MigrationBarrier {
  * writes nothing to the database. A drain that does not finish within
  * drainMs leaves the barrier held and names what still runs.
  */
-export async function migrationBarrier(ctx: AppCtx, maintenance: Maintenance, drainMs: number): Promise<MigrationBarrier> {
+/**
+ * `hold: false` is the barrier run with no daemon (the CLI on the database
+ * directly, or a converter on an isolated restore): a snapshot it exported
+ * would end with its process, so it records none, and the export reads its
+ * own after checking the frozen position.
+ */
+export async function migrationBarrier(ctx: AppCtx, maintenance: Maintenance, drainMs: number, opts: { hold?: boolean } = {}): Promise<MigrationBarrier> {
   const open = maintenance.gate;
   const gate = open?.kind === 'migration' ? open : maintenance.beginMigration();
   const started = Date.now();
@@ -194,7 +200,7 @@ export async function migrationBarrier(ctx: AppCtx, maintenance: Maintenance, dr
   // The frozen point: a snapshot exported now and held while the barrier
   // stands, and the last audit position read in it. The export reads from
   // that snapshot, so two exports at the frozen point read the same state.
-  const pinned = await holdSnapshot(ctx.db as PoolQuerier, gate.id);
+  const pinned = opts.hold === false ? null : await holdSnapshot(ctx.db as PoolQuerier, gate.id);
   const last = pinned
     ? pinned.position
     : ((await ctx.db.query('SELECT coalesce(max(event_order), 0)::text AS p FROM audit_events')).rows[0] as { p: string } | undefined)?.p ?? '0';
@@ -208,11 +214,13 @@ let held: { gateId: string; client: Awaited<ReturnType<PoolQuerier['connect']>>;
 /**
  * Exports a snapshot and keeps its read-only transaction open (in this
  * daemon) until the barrier is released or marked migrated out. A rerun of
- * the barrier keeps the one it holds. Null when the database cannot hold
- * one: the export then reads its own and checks the frozen position.
+ * the barrier keeps the one it holds while its transaction lives, and
+ * holds a new one when it has ended (idle_in_transaction_session_timeout,
+ * a terminated backend). Null when the database cannot hold one: the
+ * export then reads its own and checks the frozen position.
  */
 async function holdSnapshot(db: PoolQuerier, gateId: string): Promise<{ snapshot: string; position: string } | null> {
-  if (held?.gateId === gateId) return held;
+  if (held?.gateId === gateId && (await stillHeld(held.client))) return held;
   await releaseHeldSnapshot();
   let client: Awaited<ReturnType<PoolQuerier['connect']>> | null = null;
   try {
@@ -232,12 +240,23 @@ async function holdSnapshot(db: PoolQuerier, gateId: string): Promise<{ snapshot
 }
 
 /** Ends the held snapshot's transaction, if any. */
+/** Whether a held snapshot's transaction is still open. */
+async function stillHeld(client: Awaited<ReturnType<PoolQuerier['connect']>>): Promise<boolean> {
+  try {
+    await client.query('SELECT 1');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function releaseHeldSnapshot(): Promise<void> {
   const h = held;
   held = null;
   if (!h) return;
-  await h.client.query('ROLLBACK').catch(() => {});
-  h.client.release();
+  // A transaction that already ended leaves a connection not worth reusing.
+  const ended = await h.client.query('ROLLBACK').then(() => false, () => true);
+  h.client.release(ended);
 }
 
 export async function control(input: unknown, dir = stateDir()): Promise<unknown> {

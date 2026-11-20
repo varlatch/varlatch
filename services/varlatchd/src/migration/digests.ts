@@ -2,6 +2,7 @@
 import { createHmac } from "node:crypto";
 import { decrypt, type Envelope } from "../crypto/aead.js";
 import type { Querier } from "../db/migrate.js";
+import type { Digest } from "./bundle.js";
 import { digestInput } from "./canonical.js";
 
 /**
@@ -27,16 +28,13 @@ import { digestInput } from "./canonical.js";
  *   audit-export-drain       organizationId, exportId    (Root KEK; draining)
  *   jwt-signing-key          keyId                       (Root KEK)
  *
- * Items are read in a fixed order (by their ids), within the export's
- * snapshot. An Organization whose KEK was destroyed (deleted) has no
- * item under it; an erased value version has none.
+ * Items are read within the export's snapshot; the bundle writer sorts
+ * them (by class, then by ids as written, BUNDLE.md section 3). An item
+ * under an Organization KEK that was destroyed (its Organization deleted)
+ * is opened on neither side (CHECKS.md): no key opens it, and its bytes are
+ * the rows check's. An erased value version is no item; an audit export
+ * that has ended holds no credential.
  */
-
-export interface Digest {
-  class: string;
-  ids: Record<string, string>;
-  hmac: string;
-}
 
 const envelopeOf = (v: unknown): Envelope => (typeof v === "string" ? (JSON.parse(v) as Envelope) : (v as Envelope));
 
@@ -66,11 +64,8 @@ export async function* digests(client: Querier, rootKek: Buffer, runKey: Buffer)
       orgKeks.set(String(o.id), Buffer.from(d.plaintext));
       yield emit(d);
     }
-    const keyOf = (orgId: unknown) => {
-      const k = orgKeks.get(String(orgId));
-      if (!k) throw new Error("export: an item under an Organization without a key");
-      return k;
-    };
+    // Null for an Organization whose KEK was destroyed: its items are skipped.
+    const keyOf = (orgId: unknown): Buffer | null => orgKeks.get(String(orgId)) ?? null;
     for (const v of await rows(
       `SELECT vv.id, vv.value_id, vv.payload, vv.wrapped_dek, p.organization_id
          FROM value_versions vv JOIN env_values ev ON ev.id = vv.value_id
@@ -78,16 +73,20 @@ export async function* digests(client: Querier, rootKek: Buffer, runKey: Buffer)
         WHERE vv.erased_at IS NULL AND vv.wrapped_dek IS NOT NULL AND vv.payload IS NOT NULL
         ORDER BY p.organization_id COLLATE "C", vv.value_id COLLATE "C", vv.id COLLATE "C"`,
     )) {
+      const orgKek = keyOf(v.organization_id);
+      if (!orgKek) continue;
       const ids = { organizationId: String(v.organization_id), secretId: String(v.value_id), versionId: String(v.id) };
-      const dek = item("dek", ids, keyOf(v.organization_id), v.wrapped_dek);
+      const dek = item("dek", ids, orgKek, v.wrapped_dek);
       const value = item("value", ids, dek.plaintext, v.payload);
       yield emit(dek);
       yield emit(value);
     }
-    const perOrg = async (cls: string, idName: string, sql: string, keyFor: (r: Record<string, unknown>) => Buffer = (r) => keyOf(r.organization_id)) => {
+    const perOrg = async (cls: string, idName: string, sql: string, keyFor: (r: Record<string, unknown>) => Buffer | null = (r) => keyOf(r.organization_id)) => {
       const out: Digest[] = [];
       for (const r of await rows(sql)) {
-        out.push(emit(item(cls, { organizationId: String(r.organization_id), [idName]: String(r.id) }, keyFor(r), r.envelope)));
+        const key = keyFor(r);
+        if (!key) continue;
+        out.push(emit(item(cls, { organizationId: String(r.organization_id), [idName]: String(r.id) }, key, r.envelope)));
       }
       return out;
     };
