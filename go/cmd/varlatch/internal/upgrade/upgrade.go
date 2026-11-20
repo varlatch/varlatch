@@ -449,6 +449,9 @@ func (u *Upgrader) snapshot(ctx context.Context, j *journal.Journal) error {
 	var res struct {
 		Path      string `json:"path"`
 		CreatedAt string `json:"createdAt"`
+		Capture   struct {
+			DumpBytes int64 `json:"dumpBytes"`
+		} `json:"capture"`
 	}
 	if err := json.Unmarshal(out, &res); err != nil || res.Path == "" {
 		return errors.New("varlatchd admin backup run named no archive")
@@ -464,7 +467,7 @@ func (u *Upgrader) snapshot(ctx context.Context, j *journal.Journal) error {
 	// says the snapshot is taken.
 	syncDir(j.Work)
 	syncDir(filepath.Dir(j.Work))
-	j.Snapshot, j.SnapshotAt = kept, res.CreatedAt
+	j.Snapshot, j.SnapshotAt, j.SnapshotBytes = kept, res.CreatedAt, res.Capture.DumpBytes
 	return nil
 }
 

@@ -92,7 +92,7 @@ func TestARollbackSafeRollbackKeepsEveryChange(t *testing.T) {
 func TestARollbackFromTheSnapshotListsWhatIsLost(t *testing.T) {
 	h := upgraded(t, false)
 	plan, err := h.upgrader(nil).PlanRollback(context.Background())
-	if err != nil || plan.Safe || plan.Lost == nil || plan.Lost.Total == 0 || len(plan.Lost.Latest) == 0 {
+	if err != nil || plan.Safe || plan.Lost == nil || plan.Lost.Total == 0 || len(plan.Lost.Latest) == 0 || plan.Lost.Revocations == nil {
 		t.Fatalf("plan: %+v, %v", plan, err)
 	}
 	// What is listed is what the restore loses: the bootstrap's events
@@ -185,15 +185,17 @@ func upgradedServes(t *testing.T, h *host, j *journal.Journal) {
 	if restoreGateOpen(h.data) {
 		t.Fatal("a restore gate is left open")
 	}
-	// The previous release's kept binaries survive the undo: a rollback
-	// can be run again.
+	// The previous release's kept binaries survive the undo.
 	for _, name := range []string{"varlatch", "varlatchd"} {
 		if _, err := os.Stat(filepath.Join(h.upgrader(nil).Releases(), fromVersion, name)); err != nil {
 			t.Fatalf("%s's %s is gone: %v", fromVersion, name, err)
 		}
 	}
-	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "the last change was a rollback") {
-		t.Logf("after an undone rollback: %v", err)
+	// A rollback is not run twice, done or undone: going back further is
+	// by hand, and the refusal says how.
+	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "the last change was a rollback") ||
+		!strings.Contains(err.Error(), "varlatchd admin backup restore --in "+j.Snapshot) {
+		t.Fatalf("after an undone rollback: %v", err)
 	}
 }
 
@@ -279,5 +281,37 @@ func TestTheRollbackRuleNeedsTheDeclarationAndTheOpenCheck(t *testing.T) {
 				t.Fatalf("the snapshot was not restored: schema %d", got)
 			}
 		})
+	}
+}
+
+// An upgrade not over, or a release installed that is not the upgrade's:
+// refused, nothing changed.
+func TestARollbackIsRefusedOnAHostItDoesNotFit(t *testing.T) {
+	h := upgraded(t, true)
+	dir := filepath.Dir(h.conf)
+	done, err := journal.Read(dir)
+	if err != nil || done.SnapshotBytes <= 0 {
+		t.Fatalf("the upgrade records the snapshot's database size: %+v, %v", done, err)
+	}
+	pending := *done
+	pending.State, pending.Step = journal.InProgress, journal.Stopped
+	if err := journal.Write(dir, &pending); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "is not over") || !strings.Contains(err.Error(), "run varlatch upgrade first") {
+		t.Fatalf("an upgrade not over: %v", err)
+	}
+	if err := journal.Write(dir, done); err != nil {
+		t.Fatal(err)
+	}
+	// Another varlatchd in place than the one the upgrade installed.
+	if err := os.WriteFile(filepath.Join(h.bin, "varlatchd.other"), build(t, "from"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(h.bin, "varlatchd.other"), filepath.Join(h.bin, "varlatchd")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "varlatchd is "+fromVersion+", not "+toVersion) {
+		t.Fatalf("another release installed: %v", err)
 	}
 }

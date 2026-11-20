@@ -140,6 +140,9 @@ type Journal struct {
 	// it loses everything after.
 	Snapshot   string `json:"snapshot"`
 	SnapshotAt string `json:"snapshotAt,omitempty"`
+	// SnapshotBytes is the database the snapshot captured (its restored
+	// size), 0 when unknown.
+	SnapshotBytes int64 `json:"snapshotBytes,omitempty"`
 	// Reason says why the upgrade was undone, or what an undo left.
 	Reason string `json:"reason,omitempty"`
 }

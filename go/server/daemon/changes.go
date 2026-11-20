@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/config"
@@ -23,8 +24,30 @@ import (
 
 const changesUsage = "Usage: varlatchd admin changes --since <time> [--json] [--config <file>]"
 
-// changesShown is how many of the newest events are listed one by one.
-const changesShown = 20
+// changesShown is how many of the newest events are listed one by one;
+// revocationsShown how many of those restoreUndoes names.
+const (
+	changesShown     = 20
+	revocationsShown = 200
+)
+
+// restoreUndoes are the audit event types whose effect a snapshot restore
+// takes back to the host's harm: a credential, grant, capability or binding
+// revoked since the snapshot works again; a member, identity or reader
+// removed is back; a rotated Secret's or replaced credential's old value is
+// the current one again; a deletion or freeze is undone. They are listed
+// first, before the rest of what the restore loses
+// (TestRestoreUndoesCoversEveryRevocation keeps this list whole).
+var restoreUndoes = []string{
+	"audit_export.credential_replaced", "audit_export.removed", "audit_tombstone.reader_removed",
+	"capability.revoked", "credential.revoked", "environment.deleted", "grant.revoked", "group.deleted",
+	"group.member_removed", "identity.retired", "invitation.revoked", "membership.removed",
+	"oidc_binding.revoked", "organization.deleted", "organization.deletion_scheduled", "organization.frozen",
+	"project.deleted", "requirement.revoked", "role.deleted", "sync.connection_credential_replaced",
+	"sync.connection_revoked", "sync.github_app_key_rotated", "sync.github_app_removed", "sync.target_disabled",
+	"sync.target_revoked", "team.deleted", "team.member_removed", "team.project_removed",
+	"value.deleted", "value.rotation_completed", "webhook.revoked",
+}
 
 func changesArgs(rest []string) (since time.Time, asJSON bool, msg string) {
 	given := false
@@ -54,6 +77,9 @@ type changeJSON struct {
 	EventType      string  `json:"eventType"`
 	Decision       string  `json:"decision"`
 	OrganizationID *string `json:"organizationId"`
+	// Resource is the event's resource (its kind and identifiers, never a
+	// value), for a revocation: what to revoke again.
+	Resource *string `json:"resource,omitempty"`
 }
 
 type changesJSON struct {
@@ -62,6 +88,10 @@ type changesJSON struct {
 	ByType map[string]int64 `json:"byType"`
 	// Latest are the newest events, at most changesShown, newest first.
 	Latest []changeJSON `json:"latest"`
+	// Revocations are the events of restoreUndoes since the time, newest
+	// first, at most revocationsShown of RevocationsTotal.
+	RevocationsTotal int64        `json:"revocationsTotal"`
+	Revocations      []changeJSON `json:"revocations"`
 }
 
 func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
@@ -80,7 +110,7 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 	}
 	defer conn.Close()
 	at := since.UnixMicro()
-	out := changesJSON{Since: since.UTC().Format(time.RFC3339), ByType: map[string]int64{}, Latest: []changeJSON{}}
+	out := changesJSON{Since: since.UTC().Format(time.RFC3339), ByType: map[string]int64{}, Latest: []changeJSON{}, Revocations: []changeJSON{}}
 	rows, err := conn.Query("SELECT event_type, count(*) FROM audit_events WHERE occurred_at >= ? GROUP BY event_type ORDER BY event_type", at)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
@@ -114,10 +144,37 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		out.Latest = append(out.Latest, c)
 	}
 	rows.Close()
+	marks := strings.TrimSuffix(strings.Repeat("?, ", len(restoreUndoes)), ", ")
+	args := []any{at}
+	for _, t := range restoreUndoes {
+		args = append(args, t)
+	}
+	where := "occurred_at >= ? AND decision = 'allow' AND event_type IN (" + marks + ")"
+	if err := conn.QueryRow("SELECT count(*) FROM audit_events WHERE "+where, args...).Scan(&out.RevocationsTotal); err != nil {
+		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
+		return ExitFailure
+	}
+	rows, err = conn.Query("SELECT occurred_at, event_type, decision, organization_id, resource FROM audit_events WHERE "+where+" ORDER BY event_order DESC LIMIT ?", append(args, revocationsShown)...)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
+		return ExitFailure
+	}
+	for rows.Next() {
+		var c changeJSON
+		var micros int64
+		if err := rows.Scan(&micros, &c.EventType, &c.Decision, &c.OrganizationID, &c.Resource); err != nil {
+			rows.Close()
+			fmt.Fprintf(stderr, "%s: %v\n", what, err)
+			return ExitFailure
+		}
+		c.OccurredAt = time.UnixMicro(micros).UTC().Format("2006-01-02T15:04:05.000Z")
+		out.Revocations = append(out.Revocations, c)
+	}
+	rows.Close()
 	if asJSON {
 		return printJSON(stdout, stderr, what, out)
 	}
-	fmt.Fprintf(stdout, "%d audit events since %s.\n", out.Total, out.Since)
+	fmt.Fprintf(stdout, "%d audit events since %s, %d of them revocations or removals.\n", out.Total, out.Since, out.RevocationsTotal)
 	for _, c := range out.Latest {
 		org := "the installation"
 		if c.OrganizationID != nil {

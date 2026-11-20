@@ -5,9 +5,14 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +146,24 @@ func TestAdminChanges(t *testing.T) {
 		t.Fatalf("changes: %d %q %q", code, out, errOut)
 	}
 	r.stop(t)
+	// A revocation since then: listed first, with its resource.
+	s, err := storage.Open(context.Background(), storage.Options{Path: filepath.Join(in.data, "varlatch.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(context.Background(), func(tx *storage.Tx) error {
+		_, err := audit.Record(context.Background(), tx, audit.Event{Type: "credential.revoked", Decision: audit.Allow, Resource: jsvalue.Object{{Key: "type", Value: "credential"}, {Key: "id", Value: "crd_revokedinatest"}}})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	code, out, _ = runAdmin(t, "changes", "--since", before, "--json", "--config", in.conf)
+	var withRevocation changesJSON
+	if code != ExitOK || json.Unmarshal([]byte(out), &withRevocation) != nil || withRevocation.RevocationsTotal != 1 || len(withRevocation.Revocations) != 1 ||
+		withRevocation.Revocations[0].EventType != "credential.revoked" || withRevocation.Revocations[0].Resource == nil || !strings.Contains(*withRevocation.Revocations[0].Resource, "crd_revokedinatest") {
+		t.Fatalf("a revocation: %d %q", code, out)
+	}
 	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	if code, out, _ = runAdmin(t, "changes", "--since", future, "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, "0 audit events since") {
 		t.Fatalf("none since: %d %q", code, out)
@@ -157,4 +180,47 @@ func sum(m map[string]int64) (n int64) {
 		n += v
 	}
 	return n
+}
+
+// Every audit event type whose name says it revokes, removes, deletes,
+// retires, disables, freezes, rotates or replaces something is either one
+// a snapshot restore undoes to the host's harm (restoreUndoes, listed
+// first by admin changes), or named here with why not.
+func TestRestoreUndoesCoversEveryRevocation(t *testing.T) {
+	notHarmful := map[string]string{
+		"organization.unfrozen":             "the restore re-freezes: no access comes back",
+		"organization.deletion_cancelled":   "the restore re-schedules a deletion: no access comes back",
+		"organization.deletion_approved":    "an approval step, the deletion itself is organization.deleted",
+		"value.rotation_started":            "the rotation's end is value.rotation_completed",
+		"security_control.reset":            "the restore turns controls back on: no access comes back",
+		"security_control.would_block":      "a report, nothing changed",
+		"authentication.device_code_locked": "the restore unlocks a device sign-in code that has expired by then",
+	}
+	in := map[string]bool{}
+	for _, e := range restoreUndoes {
+		in[e] = true
+	}
+	known := map[string]bool{}
+	for _, e := range audit.EventTypes {
+		known[e] = true
+	}
+	words := regexp.MustCompile(`revok|remov|delet|retir|disabl|froz|rotat|replac|lock`)
+	for _, e := range audit.EventTypes {
+		if !words.MatchString(e) {
+			continue
+		}
+		if !in[e] && notHarmful[e] == "" {
+			t.Errorf("%s: neither in restoreUndoes nor named as harmless to undo", e)
+		}
+	}
+	for _, e := range restoreUndoes {
+		if !known[e] {
+			t.Errorf("restoreUndoes names %s, which is no audit event type", e)
+		}
+	}
+	for e := range notHarmful {
+		if !known[e] {
+			t.Errorf("the exclusions name %s, which is no audit event type", e)
+		}
+	}
 }

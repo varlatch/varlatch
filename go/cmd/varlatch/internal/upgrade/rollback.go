@@ -47,12 +47,22 @@ type Changes struct {
 	Since  string           `json:"since"`
 	Total  int64            `json:"total"`
 	ByType map[string]int64 `json:"byType"`
-	Latest []struct {
-		OccurredAt     string  `json:"occurredAt"`
-		EventType      string  `json:"eventType"`
-		Decision       string  `json:"decision"`
-		OrganizationID *string `json:"organizationId"`
-	} `json:"latest"`
+	Latest []Change         `json:"latest"`
+	// Revocations are the revocations, removals, rotations, replacements,
+	// deletions and freezes the restore takes back (a revoked credential
+	// works again): of RevocationsTotal, the newest.
+	RevocationsTotal int64    `json:"revocationsTotal"`
+	Revocations      []Change `json:"revocations"`
+}
+
+// Change is one audit event: its type, time, decision, Organization and,
+// for a revocation, its resource (kinds and identifiers, never a value).
+type Change struct {
+	OccurredAt     string  `json:"occurredAt"`
+	EventType      string  `json:"eventType"`
+	Decision       string  `json:"decision"`
+	OrganizationID *string `json:"organizationId"`
+	Resource       *string `json:"resource,omitempty"`
 }
 
 // RollbackPlan is what a rollback would do; nothing has changed yet.
@@ -88,7 +98,9 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	case last.Pending():
 		return RollbackPlan{}, fmt.Errorf("an upgrade from %s to %s is not over (%s at step %q): run varlatch upgrade first to finish or undo it", last.From, last.To, last.State, last.Step)
 	case last.Kind == journal.Rollback:
-		return RollbackPlan{}, fmt.Errorf("the last change was a rollback from %s to %s: there is no upgrade to roll back", last.From, last.To)
+		// Any rollback, done or undone: the upgrade it rolled back is no
+		// longer the last change. Going back further is by hand.
+		return RollbackPlan{}, fmt.Errorf("the last change was a rollback from %s to %s (%s): there is no upgrade to roll back. To restore the pre-upgrade snapshot by hand, stop varlatchd and run %s's varlatchd admin backup restore --in %s", last.From, last.To, last.State, last.To, last.Snapshot)
 	case last.State == journal.Undone:
 		return RollbackPlan{}, fmt.Errorf("the last upgrade, to %s, was undone and %s serves: there is nothing to roll back", last.To, last.From)
 	}
@@ -187,7 +199,7 @@ func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan) (*journal.Jo
 		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
 	if !plan.Safe {
-		if err := u.rollbackSpace(last.DataDir); err != nil {
+		if err := u.rollbackSpace(last.DataDir, last.SnapshotBytes); err != nil {
 			return nil, &Error{Message: err.Error() + "; nothing was changed"}
 		}
 	}
@@ -200,7 +212,7 @@ func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan) (*journal.Jo
 		From: last.To, To: last.From, FromSchema: last.ToSchema, ToSchema: last.FromSchema,
 		RollbackSafe: plan.Safe, RollbackRule: plan.Rule, State: journal.InProgress, StartedAt: u.now().UTC().Format(time.RFC3339),
 		BinDir: u.BinDir, Releases: last.Releases, DataDir: last.DataDir,
-		Snapshot: last.Snapshot, SnapshotAt: last.SnapshotAt,
+		Snapshot: last.Snapshot, SnapshotAt: last.SnapshotAt, SnapshotBytes: last.SnapshotBytes,
 	}
 	j.Work = filepath.Join(j.DataDir, "upgrades", j.ID)
 	if err := u.write(j); err != nil {
@@ -304,19 +316,25 @@ func (u *Upgrader) restoreSnapshot(ctx context.Context, j *journal.Journal) erro
 }
 
 // rollbackSpace: the data directory's filesystem must hold a copy of the
-// database and the restored one, with spaceMargin to spare.
-func (u *Upgrader) rollbackSpace(dataDir string) error {
+// current database and the restored one (the database the snapshot
+// captured, snapshotBytes; the current one's size when the journal does not
+// say), with spaceMargin to spare.
+func (u *Upgrader) rollbackSpace(dataDir string, snapshotBytes int64) error {
 	var db int64
 	for _, name := range databaseFiles {
 		if info, err := os.Stat(filepath.Join(dataDir, name)); err == nil {
 			db += info.Size()
 		}
 	}
+	restored := snapshotBytes
+	if restored <= 0 {
+		restored = db
+	}
 	free, _, err := FreeSpace(dataDir)
 	if err != nil {
 		return nil
 	}
-	if want := 2*db + spaceMargin; int64(free) < want {
+	if want := db + restored + spaceMargin; int64(free) < want {
 		return fmt.Errorf("not enough space on the filesystem of %s: the rollback needs %d MiB free there (a copy of the database and the restored one, and %d MiB to spare), it has %d MiB",
 			dataDir, want>>20, spaceMargin>>20, int64(free)>>20)
 	}
