@@ -361,7 +361,46 @@ const MIGRATION_USAGE =
   "Usage: varlatchd admin migration barrier [--drain-seconds <n>] | varlatchd admin migration status | " +
   "varlatchd admin migration release --id <gate> | varlatchd admin migration mark-migrated-out --id <gate> | " +
   "varlatchd admin migration export --out <bundle> [--digests] [--dry-run] | " +
-  "varlatchd admin migration import --in <reverse bundle>";
+  "varlatchd admin migration import --in <reverse bundle> | varlatchd admin migration backfill";
+
+/**
+ * `admin migration backfill` (go-step7 decision 18, slice 7.7b): the
+ * exposure index's backfill (domain/exposure.ts), run to its end in this
+ * process, as the daemon's backfill loop would run it a batch at a time.
+ * The backup converter runs it on an archive restored in isolation, which
+ * may come from before 0.20.0 (migration 36), when the index did not
+ * exist: the export's preflight refuses an unfinished backfill, and the
+ * converter starts no daemon. With varlatchd stopped; it writes the
+ * exposure index and the backfill's cursor, nothing else, and does nothing
+ * once the backfill has finished.
+ */
+async function migrationBackfill(args: string[]): Promise<void> {
+  if (args.length > 0) fail(MIGRATION_USAGE);
+  try {
+    await control({ command: "migration-status" });
+    fail("varlatchd admin migration backfill: varlatchd is running; its own backfill loop does this");
+  } catch (err) {
+    if (!(err instanceof Error && err.message === "Backup supervisor is not running")) {
+      fail(`varlatchd admin migration backfill: ${err instanceof Error ? err.message : "the daemon's state could not be read"}`);
+    }
+  }
+  const { backfillExposureOnce } = await import("./domain/exposure.js");
+  const config = loadConfig(process.env, { requireKek: false, listeners: false });
+  const db = createPgQuerier(config.databaseUrl);
+  try {
+    let events = 0;
+    let batches = 0;
+    for (;;) {
+      const step = await backfillExposureOnce({ db, rootKek: Buffer.alloc(0) });
+      events += step.events;
+      if (step.done) break;
+      batches++;
+    }
+    console.log(JSON.stringify({ finished: true, batches, events }));
+  } finally {
+    await db.end();
+  }
+}
 
 /**
  * `admin migration import` (go-step7 slice 7.2c, decision 16,
@@ -525,6 +564,9 @@ async function migrationCommand(args: string[]): Promise<void> {
       return;
     case "import":
       await migrationImport(rest);
+      return;
+    case "backfill":
+      await migrationBackfill(rest);
       return;
     case "status": {
       if (rest.length > 0) fail(MIGRATION_USAGE);
