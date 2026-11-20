@@ -12,3 +12,7 @@ func owned(string, string) {}
 func lock(string) (func(), error) {
 	return nil, errors.New("varlatch upgrade runs on the Linux host of a Go installation")
 }
+
+func freeSpace(string) (uint64, uint64, error) { return 0, 0, errors.New("not on this system") }
+
+func upgradesDir(string) error { return nil }

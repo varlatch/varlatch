@@ -56,6 +56,9 @@ const (
 	// Snapshot: the pre-upgrade snapshot (an encrypted archive) is taken
 	// and kept with the upgrade, 30 days.
 	Snapshot Step = "snapshot"
+	// Stopping: varlatchd is about to be stopped, recorded before the stop:
+	// from here on the service may be down, whatever the journal says next.
+	Stopping Step = "stopping"
 	// Stopped: varlatchd is stopped.
 	Stopped Step = "stopped"
 	// Prepared: a copy of the database has the new release's schema.
@@ -70,7 +73,7 @@ const (
 )
 
 // Steps are the steps in order.
-var Steps = []Step{Verified, Snapshot, Stopped, Prepared, Swapped, Started, Checked}
+var Steps = []Step{Verified, Snapshot, Stopping, Stopped, Prepared, Swapped, Started, Checked}
 
 // State is where the upgrade stands.
 type State string

@@ -55,7 +55,7 @@ func upgradeCommand(r *Run) (bool, error) {
 		name, _, _ := strings.Cut(a, "=")
 		for _, o := range composeUpgradeOptions {
 			if name == o {
-				return true, composeRefusalOf(r, "upgrade")
+				return true, composeRefusalOf(r, "upgrade", o)
 			}
 		}
 	}

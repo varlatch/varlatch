@@ -15,6 +15,8 @@
 //	snapshot   `varlatchd admin backup run`: the pre-upgrade snapshot, an
 //	           archive encrypted with the Backup Encryption Key, kept with the
 //	           upgrade for 30 days (backup_keep's pruning never reaches it)
+//	stopping   recorded before the stop: from here on the service may be
+//	           down, whatever happens next
 //	stopped    varlatchd is stopped
 //	prepared   a copy of the database gets the new release's schema
 //	           (`varlatchd admin schema upgrade --database`, the new
@@ -26,10 +28,13 @@
 //	           serving, its schema, Root KEK and installation ready; nothing
 //	           else counts as healthy (unknown blocks like a failure)
 //
-// A failure before stopped changes nothing on the host. A failure from
-// stopped on stops varlatchd, puts the original database files and the
-// previous binaries back, and starts the previous release, which must then
-// pass the same checks. An interrupted upgrade (a kill, a power cut) is
+// Before anything is written, the disks must hold the upgrade (a copy of
+// the database, a snapshot, the binaries, a margin) and <data>/upgrades
+// must be a real directory of the data directory's owner. A failure before
+// stopping changes nothing on the host. A failure from stopping on stops
+// varlatchd, puts the original database files and the previous binaries
+// back. Either way the undo ends by starting the previous release and
+// checking it: it never takes the service to be running. An interrupted upgrade (a kill, a power cut) is
 // finished or undone by the next run (Recover) from the journal: after
 // checked it is finished, before it undone. An undo that cannot complete is
 // recorded as failed, with what is left and the snapshot to restore from.
@@ -232,6 +237,9 @@ func (u *Upgrader) Inspect(ctx context.Context) (Installed, error) {
 
 // write records j at its step.
 func (u *Upgrader) write(j *journal.Journal) error {
+	if err := u.fault(filepath.Join(u.configDir(), journal.File)); err != nil {
+		return err
+	}
 	j.UpdatedAt = u.now().UTC().Format(time.RFC3339)
 	return journal.Write(u.configDir(), j)
 }
@@ -270,6 +278,12 @@ func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journ
 		return nil, &Error{Message: fmt.Sprintf("the release's manifest is for %s, not %s; nothing was changed", m.Version, rel.Version)}
 	}
 	u.prune(inst.DataDir)
+	if err := upgradesDir(inst.DataDir); err != nil {
+		return nil, &Error{Message: err.Error() + "; nothing was changed"}
+	}
+	if err := u.enoughSpace(inst, rel); err != nil {
+		return nil, &Error{Message: err.Error() + "; nothing was changed"}
+	}
 	id := make([]byte, 8)
 	if _, err := rand.Read(id); err != nil {
 		return nil, &Error{Message: err.Error()}
@@ -319,8 +333,17 @@ func (u *Upgrader) steps(ctx context.Context, j *journal.Journal, rel Release) e
 	}
 	u.logf("Took the pre-upgrade snapshot: %s (kept 30 days).", j.Snapshot)
 
+	// Recorded before the stop: a run that ends between the stop and its
+	// record (a kill, a power cut, a journal it cannot write) leaves a
+	// journal that says the service may be down.
+	if err := u.reach(j, journal.Stopping); err != nil {
+		return err
+	}
 	if err := u.Service.Stop(ctx); err != nil {
 		return fmt.Errorf("stopping varlatchd: %w", err)
+	}
+	if err := u.point("stop:done"); err != nil {
+		return err
 	}
 	if err := u.reach(j, journal.Stopped); err != nil {
 		return err
@@ -408,6 +431,10 @@ func (u *Upgrader) snapshot(ctx context.Context, j *journal.Journal) error {
 		}
 	}
 	owned(kept, j.DataDir)
+	// The link and the upgrade's directory are on disk before the journal
+	// says the snapshot is taken.
+	syncDir(j.Work)
+	syncDir(filepath.Dir(j.Work))
 	j.Snapshot = kept
 	return nil
 }
@@ -564,56 +591,55 @@ func (u *Upgrader) promote(j *journal.Journal) error {
 
 // undo brings the host back to the previous release on its database as it
 // was, from wherever j stands; it records undone, or failed with what is
-// left.
+// left. It never takes the service to be running: whatever happened, it
+// ends by starting the previous release (nothing to do for one that runs)
+// and checking it.
 func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) error {
 	j.Reason = why
-	if !j.Reached(journal.Stopped) {
-		// varlatchd was never stopped: nothing on the host changed but the
-		// staged files and the snapshot, which stay with the upgrade.
-		os.RemoveAll(filepath.Join(j.Releases, j.To))
-		j.State = journal.Undone
-		if err := u.write(j); err != nil {
-			return err
-		}
-		u.logf("Undone: nothing was changed; %s serves.", j.From)
-		return nil
-	}
 	var left []string
-	if err := u.Service.Stop(ctx); err != nil {
-		left = append(left, err.Error())
-	}
-	if err := u.point("undo:stopped"); err != nil {
-		return err
-	}
-	original := filepath.Join(j.Work, "original")
-	for _, name := range databaseFiles {
-		from := filepath.Join(original, name)
-		if _, err := os.Stat(from); err != nil {
-			continue
-		}
-		to := filepath.Join(j.DataDir, name)
-		if err := os.Remove(to); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			left = append(left, err.Error())
-			continue
-		}
-		if err := os.Rename(from, to); err != nil {
+	if j.Reached(journal.Stopping) {
+		// The service may be down, and from Prepared on the database and
+		// the binaries may be the new release's.
+		if err := u.Service.Stop(ctx); err != nil {
 			left = append(left, err.Error())
 		}
-	}
-	if j.Reached(journal.Prepared) {
-		if err := u.install(j, j.From); errors.Is(err, errKilled) {
+		if err := u.point("undo:stopped"); err != nil {
 			return err
-		} else if err != nil {
-			left = append(left, "the previous binaries: "+err.Error())
 		}
-	}
-	os.RemoveAll(filepath.Join(j.Work, "db"))
-	if err := u.point("undo:restored"); err != nil {
-		return err
+		original := filepath.Join(j.Work, "original")
+		for _, name := range databaseFiles {
+			from := filepath.Join(original, name)
+			if _, err := os.Stat(from); err != nil {
+				continue
+			}
+			to := filepath.Join(j.DataDir, name)
+			if err := os.Remove(to); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				left = append(left, err.Error())
+				continue
+			}
+			if err := os.Rename(from, to); err != nil {
+				left = append(left, err.Error())
+			}
+		}
+		if j.Reached(journal.Prepared) {
+			if err := u.install(j, j.From); errors.Is(err, errKilled) {
+				return err
+			} else if err != nil {
+				left = append(left, "the previous binaries: "+err.Error())
+			}
+		}
+		os.RemoveAll(filepath.Join(j.Work, "db"))
+		if err := u.point("undo:restored"); err != nil {
+			return err
+		}
+	} else {
+		// The service was never stopped: the staged release goes, the
+		// snapshot stays with the upgrade.
+		os.RemoveAll(filepath.Join(j.Releases, j.To))
 	}
 	if len(left) == 0 {
 		if err := u.Service.Start(ctx); err != nil {
-			left = append(left, err.Error())
+			left = append(left, "starting varlatchd "+j.From+": "+err.Error())
 		} else if err := u.check(ctx, j.From, j.FromSchema); err != nil {
 			left = append(left, fmt.Sprintf("the health checks of %s: %v", j.From, err))
 		}
@@ -622,15 +648,19 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 		j.State = journal.Failed
 		j.Reason = fmt.Sprintf("%s; the undo did not complete: %s. The pre-upgrade snapshot is %s (varlatchd admin backup restore --in <it>, varlatchd stopped)", why, strings.Join(left, "; "), j.Snapshot)
 		if err := u.write(j); err != nil {
-			return err
+			return fmt.Errorf("the upgrade to %s failed, its undo did not complete (%s), and the journal could not record it: %v", j.To, j.Reason, err)
 		}
 		return fmt.Errorf("the upgrade to %s failed and its undo did not complete: %s", j.To, j.Reason)
 	}
 	j.State = journal.Undone
 	if err := u.write(j); err != nil {
-		return err
+		return fmt.Errorf("the upgrade to %s was undone (%s serves, after its checks), but the journal could not record it: %v", j.To, j.From, err)
 	}
-	u.logf("Undone: %s serves again, on its database as it was.", j.From)
+	if j.Reached(journal.Stopping) {
+		u.logf("Undone: %s serves again, on its database as it was, after its health checks.", j.From)
+	} else {
+		u.logf("Undone: nothing was changed; %s serves, after its health checks.", j.From)
+	}
 	return nil
 }
 
@@ -697,6 +727,9 @@ func (u *Upgrader) prune(dataDir string) {
 // workDir makes dir (and its parents in the data directory) the data
 // directory owner's, private.
 func (u *Upgrader) workDir(j *journal.Journal, dir string) error {
+	if err := upgradesDir(j.DataDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -765,6 +798,63 @@ func ownAll(dir, dataDir string) error {
 	}
 	for _, e := range entries {
 		owned(filepath.Join(dir, e.Name()), dataDir)
+	}
+	return nil
+}
+
+// spaceMargin is kept free beyond what an upgrade writes.
+const spaceMargin = 64 << 20
+
+// FreeSpace is the space free to root on path's filesystem and that
+// filesystem's identity; a variable so the tests can run a full disk.
+var FreeSpace = freeSpace
+
+// enoughSpace refuses an upgrade the disks cannot hold, before anything is
+// written: on the data directory's filesystem, a copy of the database (and
+// its log) and a snapshot of about its size; on the binaries' filesystem,
+// the new binaries staged and written beside their places, and the
+// installed ones kept; each with spaceMargin to spare.
+func (u *Upgrader) enoughSpace(inst Installed, rel Release) error {
+	var db int64
+	for _, name := range databaseFiles {
+		if info, err := os.Stat(filepath.Join(inst.DataDir, name)); err == nil {
+			db += info.Size()
+		}
+	}
+	var installed int64
+	for _, name := range []string{"varlatch", "varlatchd"} {
+		if info, err := os.Stat(filepath.Join(u.BinDir, name)); err == nil {
+			installed += info.Size()
+		}
+	}
+	binaries := 2*int64(len(rel.Varlatch)+len(rel.Varlatchd)) + installed
+	// What each filesystem must hold: one sum when both are on one.
+	type fsNeed struct {
+		path        string
+		bytes, free int64
+	}
+	var needs []*fsNeed
+	byFS := map[uint64]*fsNeed{}
+	for _, n := range []struct {
+		path  string
+		bytes int64
+	}{{inst.DataDir, 2 * db}, {u.BinDir, binaries}} {
+		free, fsid, err := FreeSpace(n.path)
+		if err != nil {
+			// Unknown: the writes themselves still fail cleanly.
+			continue
+		}
+		if byFS[fsid] == nil {
+			byFS[fsid] = &fsNeed{path: n.path, free: int64(free)}
+			needs = append(needs, byFS[fsid])
+		}
+		byFS[fsid].bytes += n.bytes
+	}
+	for _, n := range needs {
+		if want := n.bytes + spaceMargin; n.free < want {
+			return fmt.Errorf("not enough space on the filesystem of %s: the upgrade needs %d MiB free (a copy of the database, a snapshot, the binaries, and %d MiB to spare), it has %d MiB",
+				n.path, want>>20, spaceMargin>>20, n.free>>20)
+		}
 	}
 	return nil
 }

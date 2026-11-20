@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,10 +38,17 @@ func runUpgrade(t *testing.T, env MapEnv, args ...string) (int, string, string) 
 // A Compose installation's upgrade is the TypeScript CLI's: its options
 // are refused, naming it.
 func TestUpgradeRefusesComposeOptions(t *testing.T) {
-	for _, args := range [][]string{{"--dir", "/srv/varlatch"}, {"--backup-dir=/b"}, {"0.50.0", "--skip-db-backup"}} {
-		code, _, errs := runUpgrade(t, nil, args...)
-		if code != ExitUsage || !strings.Contains(errs, "varlatch upgrade: --dir names a Compose installation") || !strings.Contains(errs, "varlatch-ts") {
-			t.Errorf("%v: %d %q", args, code, errs)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--dir", "/srv/varlatch"}, "varlatch upgrade: --dir names a Compose installation"},
+		{[]string{"--backup-dir=/b"}, "varlatch upgrade: --backup-dir is an option of a Compose installation's upgrade"},
+		{[]string{"0.50.0", "--skip-db-backup"}, "varlatch upgrade: --skip-db-backup is an option of a Compose installation's upgrade"},
+	} {
+		code, _, errs := runUpgrade(t, nil, c.args...)
+		if code != ExitUsage || !strings.Contains(errs, c.want) || !strings.Contains(errs, "varlatch-ts") {
+			t.Errorf("%v: %d %q", c.args, code, errs)
 		}
 	}
 }
@@ -234,7 +240,7 @@ func (s *cliService) Start(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cmd != nil {
-		return errors.New("already running")
+		return nil // as systemctl start: nothing to do for a running unit
 	}
 	cmd := exec.Command(filepath.Join(s.bin, "varlatchd"), "serve", "--config", s.conf)
 	if err := cmd.Start(); err != nil {

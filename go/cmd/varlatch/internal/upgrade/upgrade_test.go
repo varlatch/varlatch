@@ -147,7 +147,7 @@ func (f *fakeService) Start(context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.cmd != nil {
-		return errors.New("already running")
+		return nil // as systemctl start: nothing to do for a running unit
 	}
 	cmd := exec.Command(filepath.Join(f.bin, "varlatchd"), "serve", "--config", f.conf)
 	var out bytes.Buffer
@@ -333,7 +333,7 @@ func previousServes(t *testing.T, h *host, j *journal.Journal) {
 // Killed at each point, the next run finishes the upgrade (after its
 // checks) or undoes it (before them), and the host ends in that state.
 func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
-	points := []string{"verified", "snapshot", "stopped", "prepared", "swap:original-aside", "swap:database-in",
+	points := []string{"verified", "snapshot", "stopping", "stop:done", "stopped", "prepared", "swap:original-aside", "swap:database-in",
 		"install:" + toVersion + ":varlatchd", "install:" + toVersion + ":varlatch", "swapped", "started", "checked"}
 	for _, point := range points {
 		t.Run(point, func(t *testing.T) {
@@ -498,4 +498,78 @@ func mustManifest(t *testing.T, version string) []byte {
 	}
 	b, _ := m.Bytes()
 	return b
+}
+
+// The journal cannot be written at the stopped step (a full disk under
+// /etc): varlatchd is down, the journal still says stopping; the undo
+// starts the previous release and checks it.
+func TestAJournalThatCannotRecordTheStopIsUndone(t *testing.T) {
+	h := newHost(t)
+	inst := h.inspect(t)
+	armed, fired := false, false
+	u := h.upgrader(func(p string) bool {
+		if p == "stop:done" {
+			armed = true
+		}
+		return false
+	})
+	u.Fault = func(path string) error {
+		if armed && !fired && filepath.Base(path) == journal.File {
+			fired = true
+			return &os.PathError{Op: "write", Path: path, Err: syscall.ENOSPC}
+		}
+		return nil
+	}
+	j, err := u.Run(context.Background(), inst, h.release(t, "to", safe))
+	if !fired || err == nil || !strings.Contains(err.Error(), "it was undone") {
+		t.Fatalf("fired %v: %v", fired, err)
+	}
+	previousServes(t, h, j)
+	if !strings.Contains(j.Reason, "no space left on device") {
+		t.Fatalf("reason: %q", j.Reason)
+	}
+}
+
+// A disk too full for the upgrade is refused before anything is written:
+// no journal, the staged release absent, varlatchd still serving.
+func TestNotEnoughSpaceChangesNothing(t *testing.T) {
+	h := newHost(t)
+	inst := h.inspect(t)
+	defer func(f func(string) (uint64, uint64, error)) { FreeSpace = f }(FreeSpace)
+	FreeSpace = func(path string) (uint64, uint64, error) { return 1 << 20, 7, nil }
+	_, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe))
+	if err == nil || !strings.Contains(err.Error(), "not enough space on the filesystem of") || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("%v", err)
+	}
+	if j, err := journal.Read(filepath.Dir(h.conf)); j != nil || err != nil {
+		t.Fatalf("a journal was written: %+v, %v", j, err)
+	}
+	if _, err := os.Stat(filepath.Join(h.upgrader(nil).Releases(), toVersion)); !os.IsNotExist(err) {
+		t.Fatalf("the release was staged: %v", err)
+	}
+	h.upgrader(nil).mustServe(t, fromVersion, 1)
+
+	// Two paths on one filesystem are counted once, against its free space.
+	FreeSpace = func(path string) (uint64, uint64, error) { return 1 << 40, 7, nil }
+	if err := h.upgrader(nil).enoughSpace(inst, h.release(t, "to", safe)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// <data>/upgrades as a link: root never writes through it.
+func TestALinkedUpgradesDirectoryIsRefused(t *testing.T) {
+	h := newHost(t)
+	inst := h.inspect(t)
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(h.data, "upgrades")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe))
+	if err == nil || !strings.Contains(err.Error(), "is not a directory (a link or another file)") || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("%v", err)
+	}
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+		t.Fatalf("written through the link: %v", entries)
+	}
+	h.upgrader(nil).mustServe(t, fromVersion, 1)
 }
