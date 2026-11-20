@@ -153,7 +153,7 @@ export function startExposureBackfillLoop(ctx: AppCtx, opts: { busyMs?: number; 
   };
   const tick = async () => {
     let next = busyMs;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("exposure-backfill");
     if (ctx.maintenance && !leave) return schedule(busyMs);
     try {
       // A cheap read first: once finished, nothing is locked.

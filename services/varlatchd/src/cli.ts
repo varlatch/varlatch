@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Maintenance, prepareRestore, activeGate } from "@varlatch/backup";
+import { Maintenance, prepareRestore, activeGate, isMigrationGate } from "@varlatch/backup";
 import { operatorLease } from "./backup/operator-lock.js";
 import { stateDir, startBackupControl, control } from "./backup/control.js";
 import { MirrorStatusReporter } from "./mirror/status.js";
@@ -124,8 +124,11 @@ async function serveCommand(): Promise<void> {
   }
   for (const warning of allowListWarnings(config.outboundAllow)) console.warn(`varlatchd: VARLATCH_OUTBOUND_ALLOW: ${warning}`);
 
-  const interruptedCapture = maintenance.gate;
-  if (interruptedCapture?.kind === "capture") maintenance.finishCapture(interruptedCapture.id);
+  // An interrupted capture is cleared; the migration's gates never are: a
+  // restart behind the barrier stays behind it (go-step7 decision 6).
+  maintenance.clearInterruptedCapture();
+  if (maintenance.gate?.kind === "migration") console.log("varlatchd: behind the migration barrier: every request and background loop stays paused (varlatchd admin migration status)");
+  if (maintenance.gate?.kind === "migrated-out") console.log("varlatchd: this installation was migrated to another server: it answers no request (varlatchd admin migration status)");
   // Restore may start on an empty or partially restored database. No bootstrapping or workers until released.
   if (maintenance.gate?.kind !== "restore") {
 
@@ -135,7 +138,9 @@ async function serveCommand(): Promise<void> {
           "(canonical Compose gates varlatchd on varlatch-migrate).",
       );
     }
-    await ensureInstallation(ctx);
+    // Behind the migration barrier, or migrated out (go-step7 decisions 6
+    // and 15), the daemon writes nothing: the installation exists already.
+    if (!isMigrationGate(maintenance.gate)) await ensureInstallation(ctx);
     if (!(await verifyLoadedKek(ctx))) {
       fail(
         "The configured root KEK does not verify against this installation's " +
@@ -352,8 +357,79 @@ async function readPassphrase(prompt: string, opts: { confirm?: boolean } = {}):
   return passphrase;
 }
 
+const MIGRATION_USAGE =
+  "Usage: varlatchd admin migration barrier [--drain-seconds <n>] | varlatchd admin migration status | " +
+  "varlatchd admin migration release --id <gate> | varlatchd admin migration mark-migrated-out --id <gate>";
+
+/**
+ * `varlatchd admin migration ...` (ADR-0059 step 7, go-step7 decisions 6
+ * and 15): the barrier and the migrated-out marker, nothing else. Through
+ * the running daemon's control socket; with no daemon running, on the
+ * state directory and the database directly (nothing is in flight then).
+ * An installation that never runs these is unchanged by them.
+ */
+async function migrationCommand(args: string[]): Promise<void> {
+  const [verb, ...rest] = args;
+  const id = rest[0] === "--id" ? rest[1] : undefined;
+  const offline = (err: unknown) => err instanceof Error && err.message === "Backup supervisor is not running";
+  const print = (v: unknown) => console.log(JSON.stringify(v));
+  switch (verb) {
+    case "barrier": {
+      let drainMs: number | undefined;
+      if (rest.length > 0) {
+        const seconds = rest[0] === "--drain-seconds" && rest.length === 2 ? Number(rest[1]) : NaN;
+        if (!Number.isInteger(seconds) || seconds < 1 || seconds > 24 * 3600) fail(MIGRATION_USAGE);
+        drainMs = seconds * 1000;
+      }
+      try {
+        print(await control({ command: "migration-barrier", ...(drainMs ? { drainMs } : {}) }));
+      } catch (err) {
+        if (!offline(err)) fail(err instanceof Error ? err.message : "The migration barrier failed");
+        // No daemon: nothing is in flight but other operator processes.
+        const { migrationBarrier } = await import("./backup/control.js");
+        const config = loadConfig(process.env, { requireKek: false, listeners: false });
+        const db = createPgQuerier(config.databaseUrl);
+        try { print(await migrationBarrier({ db, rootKek: Buffer.alloc(0) }, new Maintenance(stateDir()), drainMs ?? 60_000)); }
+        catch (e) { fail(e instanceof Error ? e.message : "The migration barrier failed"); }
+        finally { await db.end(); }
+      }
+      return;
+    }
+    case "status": {
+      if (rest.length > 0) fail(MIGRATION_USAGE);
+      try { print({ daemon: true, ...(await control({ command: "migration-status" }) as object) }); }
+      catch (err) {
+        if (!offline(err)) fail(err instanceof Error ? err.message : "Migration status failed");
+        print({ daemon: false, gate: activeGate(stateDir()) });
+      }
+      return;
+    }
+    case "release":
+    case "mark-migrated-out": {
+      if (!id || rest.length !== 2) fail(MIGRATION_USAGE);
+      const command = verb === "release" ? "migration-release" : "migration-migrated-out";
+      try { print(await control({ command, id })); }
+      catch (err) {
+        if (!offline(err)) fail(err instanceof Error ? err.message : "The migration command failed");
+        const maintenance = new Maintenance(stateDir());
+        try {
+          if (verb === "release") { maintenance.releaseMigration(id!); print({ released: true }); }
+          else print({ gate: maintenance.markMigratedOut(id!) });
+        } catch (e) { fail(e instanceof Error ? e.message : "The migration command failed"); }
+      }
+      return;
+    }
+    default:
+      fail(MIGRATION_USAGE);
+  }
+}
+
 async function adminCommand(rest: string[]): Promise<void> {
   const sub = rest[0];
+  if (sub === "migration") {
+    await migrationCommand(rest.slice(1));
+    return;
+  }
   if (sub === "backup-control") {
     const command = rest[1];
     const input = JSON.parse(readFileSync(0, "utf8") || "{}");

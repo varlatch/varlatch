@@ -646,7 +646,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // Admission precedes authentication: even GETs can write audit/session state.
   app.use("*", async (c, next) => {
     if (!ctx.maintenance || c.req.path === "/healthz") return next();
-    if (c.req.path === "/readyz" && ctx.maintenance.gate) return c.json({ ready: false, checks: { maintenance: false } }, 503);
+    if (c.req.path === "/readyz" && ctx.maintenance.gate) {
+      // The migration's gates name themselves (go-step7 decisions 6 and 15);
+      // every other gate answers as before.
+      const kind = ctx.maintenance.gate.kind;
+      return c.json({ ready: false, checks: { maintenance: false }, ...(kind === "migration" || kind === "migrated-out" ? { state: kind } : {}) }, 503);
+    }
     // Mirror publication must be able to authenticate with a cold Convex key
     // cache while draining capture work, as well as during restore reconciliation.
     // This endpoint only reads public keys; it never creates keys or audit rows.
@@ -656,7 +661,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const leave = ctx.maintenance.enter();
     if (!leave) {
       c.header("Retry-After", "5");
-      return c.json({ error: { code: "MAINTENANCE", message: "Installation maintenance; retry later", requestId: c.get("requestId") } }, 503);
+      // Migrated out (go-step7 decision 15): every request, reads included,
+      // gets 503, as during maintenance, saying where things stand: a read
+      // here would hand out values that are no longer current.
+      const message = ctx.maintenance.gate?.kind === "migrated-out"
+        ? "This installation was migrated to another server and answers no request; use the new server"
+        : "Installation maintenance; retry later";
+      return c.json({ error: { code: "MAINTENANCE", message, requestId: c.get("requestId") } }, 503);
     }
     try { await next(); } finally { leave(); }
   });

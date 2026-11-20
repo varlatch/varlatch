@@ -910,7 +910,7 @@ export function startRegistrationSweepLoop(ctx: AppCtx, intervalMs = 60_000): ()
   let busy = false;
   const tick = async () => {
     if (busy) return;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("github-app-sweep");
     if (ctx.maintenance && !leave) return;
     busy = true;
     try {

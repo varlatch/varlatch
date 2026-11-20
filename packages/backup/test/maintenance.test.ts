@@ -64,3 +64,66 @@ it('asks for remote verification only when the latest remote check failed or is 
   saveStatus(dir, { ...base, archiveId: older, createdAt: new Date(now - 10 * day).toISOString(), delivery: { destination: 'offsite', uploadedAt: new Date(now - 10 * day).toISOString(), remoteVerification: check(now, false) } });
   expect(remoteWarnings()).toEqual([`Remote copy of ${older} failed retrieval and verification`]);
 });
+
+// The migration to the Go line (ADR-0059 step 7, go-step7 decisions 6, 15).
+it('holds the migration barrier with no deadline, across a restart, and refuses it beside another gate', () => {
+  let now = 100; const dir = directory(); const m = new Maintenance(dir, () => now);
+  const leave = m.enter('webhooks')!;
+  expect(m.busyLabels).toEqual({ webhooks: 1 });
+  const gate = m.beginMigration();
+  expect(gate).toMatchObject({ kind: 'migration', phase: 'draining', expiresAt: null, frozenPosition: null });
+  expect(m.enter('request')).toBeNull(); expect(m.busy).toBe(1);
+  leave(); expect(m.busy).toBe(0); expect(m.busyLabels).toEqual({});
+  // No deadline: time passes, the expiry sweep runs, a restart clears captures only.
+  now = Number.MAX_SAFE_INTEGER; m.cleanExpired();
+  const restarted = new Maintenance(dir, () => now);
+  expect(restarted.clearInterruptedCapture()?.id).toBe(gate.id);
+  expect(restarted.enter()).toBeNull();
+  // Nothing else opens beside it, and it opens beside nothing else.
+  expect(() => restarted.beginCapture(1000)).toThrow();
+  expect(() => prepareRestore(dir, randomUUID())).toThrow('Another maintenance operation');
+  expect(() => restarted.beginMigration()).toThrow('Another maintenance operation');
+  expect(() => restarted.finishCapture(gate.id)).toThrow();
+  expect(() => restarted.completeRestore(gate.id)).toThrow();
+  const capture = directory(); const c = new Maintenance(capture); c.beginCapture(10_000);
+  expect(() => c.beginMigration()).toThrow('Another maintenance operation');
+});
+it('freezes the barrier, marks it migrated out for good, and releases only the barrier', () => {
+  const dir = directory(); const m = new Maintenance(dir);
+  const gate = m.beginMigration();
+  expect(() => m.markMigratedOut(gate.id)).toThrow('drained');
+  const frozen = m.freezeMigration(gate.id, '42');
+  expect(frozen).toMatchObject({ kind: 'migration', phase: 'paused', frozenPosition: '42' });
+  expect(new Maintenance(dir).gate).toMatchObject({ frozenPosition: '42' });
+  const out = m.markMigratedOut(gate.id);
+  expect(out).toMatchObject({ kind: 'migrated-out', phase: 'paused', expiresAt: null });
+  expect(() => m.releaseMigration(gate.id)).toThrow('Only the migration barrier');
+  expect(() => m.freezeMigration(gate.id, '43')).toThrow();
+  const restarted = new Maintenance(dir, () => Number.MAX_SAFE_INTEGER);
+  expect(restarted.clearInterruptedCapture()?.kind).toBe('migrated-out');
+  expect(restarted.enter()).toBeNull();
+  // A barrier that never switched is released, and the installation serves again.
+  const other = directory(); const o = new Maintenance(other);
+  o.releaseMigration(o.beginMigration().id);
+  expect(o.gate).toBeNull(); expect(o.enter()).not.toBeNull();
+});
+it('reads a malformed migration gate as unreadable, which keeps isolation', () => {
+  for (const bad of [
+    { id: 'g', kind: 'migration', phase: 'draining', expiresAt: 5, archiveId: null },
+    { id: 'g', kind: 'migration', phase: 'reconciling', expiresAt: null, archiveId: null },
+    { id: 'g', kind: 'migrated-out', phase: 'draining', expiresAt: null, archiveId: null },
+    { id: 'g', kind: 'moved', phase: 'paused', expiresAt: null, archiveId: null },
+  ]) {
+    const dir = directory();
+    writeFileSync(join(dir, 'maintenance.json'), JSON.stringify(bad));
+    expect(() => new Maintenance(dir).enter()).toThrow('unreadable');
+  }
+});
+it('changes nothing for an installation that never runs the migration', () => {
+  const dir = directory(); const m = new Maintenance(dir);
+  expect(m.clearInterruptedCapture()).toBeNull();
+  const leave = m.enter(); expect(m.busyLabels).toEqual({ request: 1 }); leave!();
+  const gate = m.beginCapture(1000);
+  expect(new Maintenance(dir).clearInterruptedCapture()).toBeNull();
+  expect(() => m.finishCapture(gate.id)).toThrow('ownership lost');
+});

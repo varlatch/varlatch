@@ -696,6 +696,10 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return { icon: "login", title: "Installation bootstrapped", segments: ["set up this installation"] };
     case "recovery.completed":
       return { icon: "login", title: "Recovery completed", segments: ["recovered access"] };
+    // The migration to the Go line (ADR-0059 step 7): present in a database
+    // rebuilt from its bundle.
+    case "installation.migrated":
+      return { icon: "dot", title: "Installation migrated", segments: ["moved this installation to another server"] };
   }
 
   // Unknown or rare types: the type itself, readable, plus the place.

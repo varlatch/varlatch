@@ -404,7 +404,7 @@ export function startMirrorLoop(
   let retiredPurged = false;
   const fullTick = async () => {
     if (stopped) return;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("mirror");
     if (ctx.maintenance && !leave) return;
     try {
       await syncAllMirrors(ctx, config);
@@ -421,7 +421,7 @@ export function startMirrorLoop(
   let incrementalBusy = false;
   const incrementalTick = async () => {
     if (stopped || incrementalBusy) return;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("mirror");
     if (ctx.maintenance && !leave) return;
     incrementalBusy = true;
     try {

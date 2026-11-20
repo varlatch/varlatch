@@ -26,7 +26,7 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
     try {
       let body = '';
       for await (const chunk of req) { body += String(chunk); if (body.length > 64 * 1024) throw new Error('Control request too large'); }
-      const input = JSON.parse(body || '{}') as { command: string; id?: string; ttlMs?: number; status?: unknown; installationId?: string; manifestIdentity?: string; releaseCheck?: unknown };
+      const input = JSON.parse(body || '{}') as { command: string; id?: string; ttlMs?: number; drainMs?: number; status?: unknown; installationId?: string; manifestIdentity?: string; releaseCheck?: unknown };
       if (operation) throw new Error('Another control operation is running');
       operation = true;
       try {
@@ -111,6 +111,15 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
             if (!(await verifyLoadedKek(ctx)) || !(await schemaIsCurrent(ctx.db))) throw new Error('Final restore checks failed');
             maintenance.completeRestore(gate.id); result = { completed: true }; break;
           }
+          // The migration barrier (ADR-0059 step 7, go-step7 decision 6),
+          // through `varlatchd admin migration`: never entered otherwise.
+          case 'migration-barrier': {
+            if (online.running) throw new Error('A backup capture is running; the migration barrier was not opened');
+            result = await migrationBarrier(ctx, maintenance, input.drainMs ?? MIGRATION_DRAIN_MS); break;
+          }
+          case 'migration-status': result = { gate: maintenance.gate, busy: maintenance.busy, inFlight: maintenance.busyLabels }; break;
+          case 'migration-release': maintenance.releaseMigration(input.id ?? ''); result = { released: true }; break;
+          case 'migration-migrated-out': result = { gate: maintenance.markMigratedOut(input.id ?? '') }; break;
           case 'status': result = backupStatus(maintenance.dir); break;
           case 'record': saveStatus(maintenance.dir, statusSchema.parse(input.status)); result = { recorded: true }; break;
           // The host's look for a newer release (ADR-0049): display state for
@@ -135,6 +144,48 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
   timer.unref();
   return online;
 }
+/** How long the barrier waits for what is in flight to finish, by default. */
+export const MIGRATION_DRAIN_MS = 15 * 60_000;
+
+/** What the barrier reports: the gate, what it waited for, and the frozen point. */
+export interface MigrationBarrier {
+  gate: Gate;
+  drained: { ms: number; waitedFor: Record<string, number> };
+  frozen: { auditPosition: string; at: string };
+}
+
+/**
+ * Opens (or, after an interruption, continues) the migration barrier and
+ * drains it: in-flight requests and every background loop's pass end
+ * (each counted by its label, so the report names what was waited for),
+ * then the operator processes and any backup capture of another process;
+ * nothing new starts. The frozen point is the last audit position. It
+ * writes nothing to the database. A drain that does not finish within
+ * drainMs leaves the barrier held and names what still runs.
+ */
+export async function migrationBarrier(ctx: AppCtx, maintenance: Maintenance, drainMs: number): Promise<MigrationBarrier> {
+  const open = maintenance.gate;
+  const gate = open?.kind === 'migration' ? open : maintenance.beginMigration();
+  const started = Date.now();
+  const waitedFor: Record<string, number> = {};
+  while (maintenance.busy > 0) {
+    maintenance.require(gate.id);
+    for (const [label, n] of Object.entries(maintenance.busyLabels)) waitedFor[label] = Math.max(waitedFor[label] ?? 0, n);
+    if (Date.now() - started > drainMs) {
+      throw new Error(`The migration barrier is held, but did not drain within ${Math.round(drainMs / 1000)} s; still running: ${Object.keys(maintenance.busyLabels).join(', ')}. Run the barrier again to keep waiting, or release it.`);
+    }
+    await delay(50);
+  }
+  await drainOperators(ctx.db as PoolQuerier, () => maintenance.require(gate.id));
+  const held = await ctx.db.query('SELECT pg_try_advisory_lock($1) AS acquired', [CAPTURE_EXCLUSION]);
+  if (!(held.rows[0] as { acquired: boolean }).acquired) throw new Error('A backup capture of another process is running; the barrier is held: run it again once the capture ends');
+  await ctx.db.query('SELECT pg_advisory_unlock($1)', [CAPTURE_EXCLUSION]);
+  const last = (await ctx.db.query('SELECT coalesce(max(event_order), 0)::text AS p FROM audit_events')).rows[0] as { p: string } | undefined;
+  const position = last?.p ?? '0';
+  const frozen = maintenance.freezeMigration(gate.id, position);
+  return { gate: frozen, drained: { ms: Date.now() - started, waitedFor }, frozen: { auditPosition: position, at: new Date().toISOString() } };
+}
+
 export async function control(input: unknown, dir = stateDir()): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const req = request({ socketPath: join(dir, 'backup.sock'), path: '/', method: 'POST' }, res => {
