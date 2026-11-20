@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 // stagedName is a temporary name in path's own directory: a key is never
@@ -22,6 +23,13 @@ func stagedName(path string) (string, error) {
 	}
 	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+"."+hex.EncodeToString(b)+".tmp"), nil
 }
+
+// stagedFile is stagedName's name for one of the files setup writes in
+// /etc/varlatch: what a run that ended mid-write can leave there.
+var stagedFile = regexp.MustCompile(`^\.(root-kek|backup-key|setup\.json)\.[0-9a-f]{12}\.tmp$`)
+
+// isStagedName says whether name is such a leftover.
+func isStagedName(name string) bool { return stagedFile.MatchString(name) }
 
 // writeStaged writes data to path (a new file, mode), synced.
 func writeStaged(path string, data []byte, mode fs.FileMode) error {

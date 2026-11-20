@@ -52,6 +52,54 @@ func TestSetupRefusals(t *testing.T) {
 	}
 }
 
+// TestSetupFlagValueForms: --name=value is --name value, split at the
+// first "=", for every option that takes a value; the accepting switches
+// take none; an empty attached value is refused as a missing one, and an
+// unknown option's attached value is never echoed.
+func TestSetupFlagValueForms(t *testing.T) {
+	dir := t.TempDir()
+	answers := filepath.Join(dir, "answers.json")
+	if err := os.WriteFile(answers, []byte(`{"ingress":"proxy","publicUrl":"https://vault.example.com","backups":"host"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spaced, err := parseSetupArgs([]string{"--answers", answers, "--trusted-proxies", "10.0.0.1,10.0.0.2", "--acme-ca", "https://ca.example/dir?a=b",
+		"--root-kek-out", "/root/k", "--backup-key-out", "/root/b", "--accept-slow-disk", "--accept-existing-user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, err := parseSetupArgs([]string{"--answers=" + answers, "--trusted-proxies=10.0.0.1,10.0.0.2", "--acme-ca=https://ca.example/dir?a=b",
+		"--root-kek-out=/root/k", "--backup-key-out=/root/b", "--accept-slow-disk", "--accept-existing-user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spaced != attached {
+		t.Errorf("--name value gives %+v, --name=value %+v", spaced, attached)
+	}
+	if attached.given.ACMECA != "https://ca.example/dir?a=b" || attached.given.Ingress != "proxy" || !attached.acceptSlow || !attached.acceptUser {
+		t.Errorf("parsed %+v", attached)
+	}
+	for _, c := range []struct {
+		args []string
+		has  string
+	}{
+		{[]string{"--public-url="}, "--public-url needs a value"},
+		{[]string{"--answers="}, "--answers needs a value"},
+		{[]string{"--accept-slow-disk=yes"}, "--accept-slow-disk takes no value"},
+		{[]string{"--accept-existing-user=true"}, "--accept-existing-user takes no value"},
+		{[]string{"--dir=/srv/varlatch"}, "varlatch-ts setup --dir"},
+		{[]string{"--answers=" + answers, "--ingress=public"}, "--ingress differs from the answers file"},
+		{[]string{"--root-kek-out=/root/k"}, "go together"},
+	} {
+		if _, err := parseSetupArgs(c.args); err == nil || !strings.Contains(err.Error(), c.has) {
+			t.Errorf("%v: %v", c.args, err)
+		}
+	}
+	code, out, errText := runSetupCLI(t, "--nope=blue")
+	if code != 64 || out != "" || !strings.Contains(errText, "unknown option --nope=[redacted]") || strings.Contains(errText, "blue") {
+		t.Errorf("an unknown option's value: %d %q %q", code, out, errText)
+	}
+}
+
 func runSetupCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr strings.Builder

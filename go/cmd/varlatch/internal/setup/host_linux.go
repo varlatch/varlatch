@@ -58,6 +58,44 @@ func (h SystemHost) CreateUser(name string) error {
 	return nil
 }
 
+// LoginShell is the user's passwd entry's shell, as getent sees it (the
+// name service's users too), or /etc/passwd's without getent.
+func (h SystemHost) LoginShell(name string) (string, error) {
+	cmd := exec.Command("getent", "passwd", name)
+	cmd.Env = h.Env
+	out, err := cmd.Output()
+	if errors.Is(err, exec.ErrNotFound) {
+		out, err = os.ReadFile("/etc/passwd")
+	}
+	if err != nil {
+		return "", fmt.Errorf("setup: reading the user %s's entry: %v", name, err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) == 7 && f[0] == name {
+			return strings.TrimSpace(f[6]), nil
+		}
+	}
+	return "", fmt.Errorf("setup: the user %s has no passwd entry", name)
+}
+
+// SysUIDMax is /etc/login.defs' SYS_UID_MAX, 999 when it gives none.
+func (SystemHost) SysUIDMax() int {
+	b, err := os.ReadFile("/etc/login.defs")
+	if err != nil {
+		return 999
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[0] == "SYS_UID_MAX" {
+			if n, err := strconv.Atoi(f[1]); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 999
+}
+
 func (SystemHost) Chown(path string, uid, gid int) error { return os.Lchown(path, uid, gid) }
 
 func (h SystemHost) Systemctl(args ...string) (string, error) {

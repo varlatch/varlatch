@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -59,6 +60,11 @@ type Host interface {
 	LookupUser(name string) (uid, gid int, found bool, err error)
 	// CreateUser makes the system user (no home, no login).
 	CreateUser(name string) error
+	// LoginShell is the user's login shell ("" when none is set).
+	LoginShell(name string) (string, error)
+	// SysUIDMax is the top of the system accounts' uids (login.defs'
+	// SYS_UID_MAX, 999 when it says none).
+	SysUIDMax() int
 	Chown(path string, uid, gid int) error
 	// Systemctl runs systemctl with args.
 	Systemctl(args ...string) (string, error)
@@ -94,6 +100,9 @@ type Options struct {
 	RootKEKOut, BackupKeyOut string
 	// AcceptSlowDisk continues on a disk the probe found slow.
 	AcceptSlowDisk bool
+	// AcceptExistingUser uses a varlatch user that exists already and is
+	// not a system account.
+	AcceptExistingUser bool
 	// StopAfter ends the run once that step is done (tests of resuming).
 	StopAfter string
 	Now       func() time.Time
@@ -320,17 +329,49 @@ func (r *run) ask(a *Answers, question string) error {
 	return nil
 }
 
-// user: the varlatch system user.
+// user: the varlatch system user. One that exists already must be a system
+// account (no login shell, a uid in the system range) unless the operator
+// says to use it anyway (--accept-existing-user): varlatchd runs as it and
+// owns the installation's data. Once the step is done, a rerun asks no more.
 func (r *run) user() error {
-	if _, _, found, err := r.h.LookupUser(User); err != nil {
+	uid, _, found, err := r.h.LookupUser(User)
+	if err != nil {
 		return err
-	} else if found {
+	}
+	if !found {
+		if err := r.o.Say("Creating the system user " + User + "."); err != nil {
+			return err
+		}
+		return r.h.CreateUser(User)
+	}
+	if r.j.Done["user"] != "" {
 		return nil
 	}
-	if err := r.o.Say("Creating the system user " + User + "."); err != nil {
+	shell, err := r.h.LoginShell(User)
+	if err != nil {
 		return err
 	}
-	return r.h.CreateUser(User)
+	if uid == 0 {
+		return fmt.Errorf("setup: the user %s exists with uid 0, root's: varlatchd never runs as root; remove or rename that user", User)
+	}
+	var notes []string
+	switch base := path.Base(shell); {
+	case shell == "":
+		notes = append(notes, "it has no login shell set, so it logs in with /bin/sh")
+	case base != "nologin" && base != "false":
+		notes = append(notes, "its login shell is "+shell)
+	}
+	if most := r.h.SysUIDMax(); uid > most {
+		notes = append(notes, fmt.Sprintf("its uid %d is above the system accounts' range (SYS_UID_MAX %d)", uid, most))
+	}
+	if len(notes) == 0 {
+		return nil
+	}
+	what := "the user " + User + " exists and is not a system account: " + strings.Join(notes, "; ")
+	if !r.o.AcceptExistingUser {
+		return fmt.Errorf("setup: %s. varlatchd runs as it and owns the installation's data: if that account is meant for it, run setup again with --accept-existing-user; otherwise remove or rename it", what)
+	}
+	return r.o.Say("Using the existing user " + User + " as --accept-existing-user says, although " + what + ".")
 }
 
 // dataDir: /var/lib/varlatch, the user's, 0700, made before the probe
@@ -400,16 +441,62 @@ func (r *run) probe(ctx context.Context) error {
 	return nil
 }
 
+// removeLeftovers removes from /etc/varlatch the temporary files a run
+// that ended mid-write left (stagedName's: "." + one of the files setup
+// writes there + "." + 12 hex digits + ".tmp", regular files only), and
+// says how many. Nothing else there is touched.
+func (r *run) removeLeftovers() error {
+	dir := r.path(EtcDir)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	removed := 0
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !isStagedName(e.Name()) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		removed++
+	}
+	if removed == 0 {
+		return nil
+	}
+	if err := syncDir(dir); err != nil {
+		return err
+	}
+	noun := "files"
+	if removed == 1 {
+		noun = "file"
+	}
+	return r.o.Say(fmt.Sprintf("Removed %d temporary %s an interrupted run left in %s.", removed, noun, EtcDir))
+}
+
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 
 // keys: the Root KEK and the backup key, made once: a key file setup made
 // is never replaced; one the journal says it made but that is gone stops
 // setup (the copies are the operator's to restore).
 func (r *run) keys() error {
+	if err := r.removeLeftovers(); err != nil {
+		return err
+	}
 	for _, k := range []struct{ name, path string }{{"the Root KEK", RootKEK}, {"the backup key", BackupKey}} {
 		p := r.path(k.path)
 		_, err := os.Stat(p)
 		switch {
+		case err == nil && r.j.Done["keys"] == "":
+			// Not made by a run this journal knows of: said, so that an
+			// operator who did not expect it can stop.
+			if err := r.o.Say("Kept the existing " + strings.TrimPrefix(k.name, "the ") + " at " + k.path + "."); err != nil {
+				return err
+			}
+			continue
 		case err == nil:
 			continue
 		case !errors.Is(err, fs.ErrNotExist):

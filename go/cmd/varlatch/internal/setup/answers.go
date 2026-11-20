@@ -183,6 +183,16 @@ func portOf(addr string) string {
 	return "8686"
 }
 
+// isLoopback: localhost or a loopback address (an empty host is every
+// address).
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 var (
 	dnsName  = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	hostName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -204,7 +214,7 @@ func (a *Answers) Check() error {
 			return bad("public-url", "must be an origin such as https://varlatch.example.com, without a user name, password, path or query")
 		}
 		host := strings.ToLower(u.Hostname())
-		loopback := host == "localhost" || host == "127.0.0.1" || host == "::1"
+		loopback := isLoopback(host)
 		switch {
 		case a.Ingress == Localhost && (u.Scheme != "http" || !loopback):
 			return bad("public-url", "with ingress localhost, must be http://localhost:<port>")
@@ -249,6 +259,16 @@ func (a *Answers) Check() error {
 		return bad("backups", "Varlatch's hosted backups are not available yet; choose host or bucket")
 	default:
 		return bad("backups", "must be host or bucket")
+	}
+	if a.Ingress == Localhost {
+		// This machine only: the listener on a loopback address, and no
+		// proxy in front of it to trust.
+		if host, _, err := net.SplitHostPort(a.Listen); a.Listen != "" && err == nil && !isLoopback(host) {
+			return bad("listen", "with ingress localhost, must be on a loopback address, such as 127.0.0.1:8686")
+		}
+		if a.TrustedProxies != "" {
+			return bad("trusted-proxies", "is for --ingress proxy, not localhost")
+		}
 	}
 	if a.Ingress != Public && (a.ListenHTTPS != "" || a.ACMEEmail != "" || a.ACMECA != "" || a.ACMECARoot != "" || a.ListenHTTPRedirect != "") {
 		return errors.New("--listen-https, --listen-http-redirect and --acme-* are for --ingress public")

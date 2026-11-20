@@ -27,6 +27,7 @@ import (
 type fakeHost struct {
 	root      string
 	users     map[string][2]int
+	shells    map[string]string
 	chowns    map[string][2]int
 	systemctl []string
 	active    bool
@@ -39,7 +40,7 @@ type fakeHost struct {
 
 func newFakeHost(t *testing.T) *fakeHost {
 	t.Helper()
-	h := &fakeHost{root: t.TempDir(), users: map[string][2]int{}, chowns: map[string][2]int{}}
+	h := &fakeHost{root: t.TempDir(), users: map[string][2]int{}, shells: map[string]string{}, chowns: map[string][2]int{}}
 	s := diskprobe.Stats{Samples: 250, P50: time.Millisecond, P99: 3 * time.Millisecond}
 	h.probe = diskprobe.Result{Append: s, Rewrite: s, Limit: diskprobe.DefaultLimit, Pass: true}
 	if err := os.MkdirAll(filepath.Dir(h.Path(UnitFile)), 0o755); err != nil {
@@ -56,7 +57,13 @@ func (h *fakeHost) LookupUser(name string) (int, int, bool, error) {
 	ids, ok := h.users[name]
 	return ids[0], ids[1], ok, nil
 }
-func (h *fakeHost) CreateUser(name string) error { h.users[name] = [2]int{990, 990}; return nil }
+func (h *fakeHost) CreateUser(name string) error {
+	h.users[name] = [2]int{990, 990}
+	h.shells[name] = "/usr/sbin/nologin"
+	return nil
+}
+func (h *fakeHost) LoginShell(name string) (string, error) { return h.shells[name], nil }
+func (h *fakeHost) SysUIDMax() int                         { return 999 }
 func (h *fakeHost) Chown(path string, uid, gid int) error {
 	rel, _ := filepath.Rel(h.root, path)
 	h.chowns["/"+rel] = [2]int{uid, gid}
@@ -333,6 +340,10 @@ func TestMissingAnswers(t *testing.T) {
 		{Answers{Ingress: Proxy, PublicURL: "https://u:p@vault.example.com", Backups: "host"}, "without a user name, password"},
 		{Answers{Ingress: Localhost, Backups: "hosted"}, "not available yet"},
 		{Answers{Ingress: Localhost, Backups: "host", ACMEEmail: "a@b.c"}, "for --ingress public"},
+		{Answers{Ingress: Localhost, Backups: "host", Listen: "0.0.0.0:8686"}, "--listen: with ingress localhost"},
+		{Answers{Ingress: Localhost, Backups: "host", Listen: ":8686"}, "--listen: with ingress localhost"},
+		{Answers{Ingress: Localhost, Backups: "host", Listen: "192.0.2.7:8686"}, "--listen: with ingress localhost"},
+		{Answers{Ingress: Localhost, Backups: "host", TrustedProxies: "127.0.0.1"}, "--trusted-proxies"},
 	} {
 		o := options(newFakeHost(t), &recorder{}, t.TempDir())
 		o.Given = c.a
@@ -407,6 +418,148 @@ func TestKeysNeverReplaced(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(out2, "root-kek.copy")); string(b) != "something else\n" {
 		t.Error("the operator's file was written over")
+	}
+}
+
+// TestAnExistingUserMustBeASystemAccount: a varlatch user that exists is
+// used when it is a system account; one with a login shell or a person's
+// uid is refused, saying what was found, unless --accept-existing-user;
+// root's uid always is. A rerun after an accepted run asks no more.
+func TestAnExistingUserMustBeASystemAccount(t *testing.T) {
+	skipOffUnix(t)
+	for _, c := range []struct {
+		name   string
+		uid    int
+		shell  string
+		refuse []string
+	}{
+		{"system account", 985, "/usr/sbin/nologin", nil},
+		{"false shell", 985, "/bin/false", nil},
+		{"login shell", 985, "/bin/bash", []string{"its login shell is /bin/bash"}},
+		{"no shell", 985, "", []string{"no login shell set"}},
+		{"a person's uid", 1001, "/usr/bin/nologin", []string{"its uid 1001 is above", "SYS_UID_MAX 999"}},
+		{"both", 1001, "/bin/sh", []string{"its login shell is /bin/sh", "its uid 1001"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, said := newFakeHost(t), &recorder{}
+			h.users[User], h.shells[User] = [2]int{c.uid, c.uid}, c.shell
+			err := Run(context.Background(), options(h, said, t.TempDir()))
+			if c.refuse == nil {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "--accept-existing-user") {
+				t.Fatalf("not refused: %v", err)
+			}
+			for _, want := range c.refuse {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%q does not say %q", err, want)
+				}
+			}
+			if _, err := os.Stat(h.Path(DataDir)); err == nil {
+				t.Error("the data directory was made for a refused user")
+			}
+			o := options(h, said, t.TempDir())
+			o.AcceptExistingUser = true
+			if err := Run(context.Background(), o); err != nil {
+				t.Fatalf("accepted: %v", err)
+			}
+			if !strings.Contains(strings.Join(said.lines, "\n"), "Using the existing user varlatch as --accept-existing-user says") {
+				t.Errorf("the acceptance was not said: %q", said.lines)
+			}
+			if err := Run(context.Background(), options(h, &recorder{}, t.TempDir())); err != nil {
+				t.Errorf("a rerun after an accepted run: %v", err)
+			}
+		})
+	}
+	h := newFakeHost(t)
+	h.users[User], h.shells[User] = [2]int{0, 0}, "/usr/sbin/nologin"
+	o := options(h, &recorder{}, t.TempDir())
+	o.AcceptExistingUser = true
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "uid 0") {
+		t.Errorf("root's uid: %v", err)
+	}
+}
+
+// TestLeftoversOfAnInterruptedRun: a key file no journal knows of is kept
+// and said; the temporary files a run that ended mid-write left in
+// /etc/varlatch are removed and counted, and nothing else there is
+// touched.
+func TestLeftoversOfAnInterruptedRun(t *testing.T) {
+	skipOffUnix(t)
+	h, said := newFakeHost(t), &recorder{}
+	etc := h.Path(EtcDir)
+	if err := os.MkdirAll(etc, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.Path(RootKEK), []byte(strings.Repeat("ab", 32)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var leftovers []string
+	for _, p := range []string{RootKEK, BackupKey, Journal} {
+		name, err := stagedName(h.Path(p))
+		if err != nil {
+			t.Fatal(err)
+		}
+		leftovers = append(leftovers, name)
+	}
+	kept := []string{".root-kek.tmp", ".root-kek.0123456789ab.tmp.bak", ".other.0123456789ab.tmp", "notes.txt", ".backup-key.0123456789AB.tmp"}
+	for _, p := range leftovers {
+		if err := os.WriteFile(p, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, n := range kept {
+		if err := os.WriteFile(filepath.Join(etc, n), []byte("not setup's"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A directory and a link with a leftover's name are not files setup left.
+	dirName := filepath.Join(etc, ".setup.json.aaaaaaaaaaaa.tmp")
+	if err := os.Mkdir(dirName, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkName := filepath.Join(etc, ".backup-key.bbbbbbbbbbbb.tmp")
+	if err := os.Symlink(filepath.Join(etc, "notes.txt"), linkName); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), options(h, said, t.TempDir())); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(said.lines, "\n")
+	if !strings.Contains(all, "Removed 3 temporary files an interrupted run left in /etc/varlatch.") {
+		t.Errorf("the count was not said: %q", said.lines)
+	}
+	if !strings.Contains(all, "Kept the existing Root KEK at /etc/varlatch/root-kek.") || strings.Contains(all, "Kept the existing backup key") {
+		t.Errorf("the kept key was not said, or the made one was: %q", said.lines)
+	}
+	if b, _ := os.ReadFile(h.Path(RootKEK)); string(b) != strings.Repeat("ab", 32)+"\n" {
+		t.Error("the existing Root KEK was replaced")
+	}
+	for _, p := range leftovers {
+		if _, err := os.Lstat(p); err == nil {
+			t.Errorf("%s is still there", filepath.Base(p))
+		}
+	}
+	for _, p := range append([]string{dirName, linkName}, func() (out []string) {
+		for _, n := range kept {
+			out = append(out, filepath.Join(etc, n))
+		}
+		return
+	}()...) {
+		if _, err := os.Lstat(p); err != nil {
+			t.Errorf("%s was touched: %v", filepath.Base(p), err)
+		}
+	}
+	// A rerun: nothing to remove, the keys the journal's.
+	said = &recorder{}
+	if err := Run(context.Background(), options(h, said, t.TempDir())); err != nil {
+		t.Fatal(err)
+	}
+	if all := strings.Join(said.lines, "\n"); strings.Contains(all, "Removed") || strings.Contains(all, "Kept the existing") {
+		t.Errorf("a rerun said %q", said.lines)
 	}
 }
 

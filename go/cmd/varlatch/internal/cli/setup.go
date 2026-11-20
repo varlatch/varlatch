@@ -36,79 +36,112 @@ const setupUsage = `Usage:
                       [--tailnet-hostname <name>] [--tailnet-tags <tags>] [--tailnet-port <port>]
                       [--tailnet-auth-key-file <file>]
                       [--backups host|bucket] [--backup-destinations-file <file>] [--backup-destination <name>]
-                      [--root-kek-out <file> --backup-key-out <file>] [--accept-slow-disk]
+                      [--root-kek-out <file> --backup-key-out <file>] [--accept-slow-disk] [--accept-existing-user]
                (a Go installation on this host: the varlatch user, /etc/varlatch/varlatchd.conf, the Root KEK and
                 the backup key (root, 0600; shown once on a terminal, or, without one, written to the files
                 --root-kek-out and --backup-key-out name), the data directory after an fsync probe of its disk, and
-                the varlatchd unit started. Every question has its flag; --answers names a JSON file of them (the
-                same names, as publicUrl). A rerun continues where setup stopped and changes nothing once done;
-                its journal is /etc/varlatch/setup.json. A Compose installation's setup is the TypeScript CLI's,
-                varlatch-ts)`
+                the varlatchd unit started. Every question has its flag (--name value or --name=value); --answers
+                names a JSON file of them (the same names, as publicUrl). A varlatch user that exists already must
+                be a system account, or --accept-existing-user uses it anyway. A rerun continues where setup stopped
+                and changes nothing once done; its journal is /etc/varlatch/setup.json. A Compose installation's
+                setup is the TypeScript CLI's, varlatch-ts)`
 
 // SetupHelp is setupUsage, for the transcripts' accepted difference.
 const SetupHelp = setupUsage
 
-// setupCommand is `setup`'s partial: every form of it.
-func setupCommand(r *Run) (bool, error) {
-	var given setup.Answers
-	var answersFile, kekOut, bekOut string
-	acceptSlow := false
+// setupArgs is setup's command line.
+type setupArgs struct {
+	given                  setup.Answers
+	kekOut, bekOut         string
+	acceptSlow, acceptUser bool
+}
+
+// parseSetupArgs reads setup's command line and the answers file it names.
+func parseSetupArgs(argv []string) (setupArgs, error) {
+	var p setupArgs
+	var answersFile string
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch setup: "+msg, "\n"+setupUsage) }
-	for i := 0; i < len(r.Args); i++ {
-		a := r.Args[i]
+	for i := 0; i < len(argv); i++ {
+		// --name=value is --name value, split at the first "=", as the
+		// other commands' options are.
+		a, attached, hasValue := argv[i], "", false
+		if strings.HasPrefix(a, "--") {
+			if name, v, ok := strings.Cut(a, "="); ok {
+				a, attached, hasValue = name, v, true
+			}
+		}
 		value := func() (string, error) {
-			if i+1 >= len(r.Args) || r.Args[i+1] == "" {
+			if hasValue {
+				if attached == "" {
+					return "", usage(a + " needs a value")
+				}
+				return attached, nil
+			}
+			if i+1 >= len(argv) || argv[i+1] == "" {
 				return "", usage(a + " needs a value")
 			}
 			i++
-			return r.Args[i], nil
+			return argv[i], nil
 		}
 		switch {
 		case a == "--dir":
-			return true, UsageError("varlatch setup: --dir names a Compose installation, which the Go CLI does not set up; run varlatch-ts setup --dir <directory> for one")
+			return p, UsageError("varlatch setup: --dir names a Compose installation, which the Go CLI does not set up; run varlatch-ts setup --dir <directory> for one")
 		case a == "--restore":
-			return true, UsageError("varlatch setup --restore is not in this build of the Go CLI yet (slice 6.4c)")
+			return p, UsageError("varlatch setup --restore is not in this build of the Go CLI yet (slice 6.4c)")
+		case (a == "--accept-slow-disk" || a == "--accept-existing-user") && hasValue:
+			return p, usage(a + " takes no value")
 		case a == "--accept-slow-disk":
-			acceptSlow = true
+			p.acceptSlow = true
+		case a == "--accept-existing-user":
+			p.acceptUser = true
 		case a == "--answers" || a == "--root-kek-out" || a == "--backup-key-out":
 			v, err := value()
 			if err != nil {
-				return true, err
+				return p, err
 			}
 			switch a {
 			case "--answers":
 				answersFile = v
 			case "--root-kek-out":
-				kekOut = v
+				p.kekOut = v
 			default:
-				bekOut = v
+				p.bekOut = v
 			}
 		case strings.HasPrefix(a, "--"):
 			f, ok := setup.FlagNamed(strings.TrimPrefix(a, "--"))
 			if !ok {
-				return true, usage("unknown option " + shownArgument(a))
+				return p, usage("unknown option " + shownArgument(argv[i]))
 			}
 			v, err := value()
 			if err != nil {
-				return true, err
+				return p, err
 			}
-			f.Set(&given, v)
+			f.Set(&p.given, v)
 		default:
-			return true, usage("unexpected argument " + shownArgument(a))
+			return p, usage("unexpected argument " + shownArgument(a))
 		}
 	}
 	if answersFile != "" {
 		fromFile, err := readAnswers(answersFile)
 		if err != nil {
-			return true, err
+			return p, err
 		}
 		// A flag wins over the file; the two never disagree silently.
-		if differ := given.Merge(fromFile); len(differ) > 0 {
-			return true, usage("--" + strings.Join(differ, ", --") + " differs from the answers file " + answersFile)
+		if differ := p.given.Merge(fromFile); len(differ) > 0 {
+			return p, usage("--" + strings.Join(differ, ", --") + " differs from the answers file " + answersFile)
 		}
 	}
-	if (kekOut == "") != (bekOut == "") {
-		return true, usage("--root-kek-out and --backup-key-out go together")
+	if (p.kekOut == "") != (p.bekOut == "") {
+		return p, usage("--root-kek-out and --backup-key-out go together")
+	}
+	return p, nil
+}
+
+// setupCommand is `setup`'s partial: every form of it.
+func setupCommand(r *Run) (bool, error) {
+	args, err := parseSetupArgs(r.Args)
+	if err != nil {
+		return true, err
 	}
 	if runtime.GOOS != "linux" {
 		return true, Fail("varlatch setup: a Go installation is set up on a Linux host with systemd", ExitFailure)
@@ -122,7 +155,7 @@ func setupCommand(r *Run) (bool, error) {
 	}
 	o := setup.Options{
 		Host:  setup.SystemHost{Varlatchd: varlatchd, Env: varlatchdEnviron(r)},
-		Given: given, RootKEKOut: kekOut, BackupKeyOut: bekOut, AcceptSlowDisk: acceptSlow,
+		Given: args.given, RootKEKOut: args.kekOut, BackupKeyOut: args.bekOut, AcceptSlowDisk: args.acceptSlow, AcceptExistingUser: args.acceptUser,
 		Say:       func(line string) error { return r.out(line + "\n") },
 		StopAfter: r.Getenv("VARLATCH_SETUP_STOP_AFTER"),
 	}
