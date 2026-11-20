@@ -110,6 +110,25 @@ func TestReplayReportsAnUnsentRequest(t *testing.T) {
 	}
 }
 
+// TestUnfillDir: the directory is {{dir}} as printed and inside a JSON
+// string, its separators kept (a path below it stays a Windows path).
+func TestUnfillDir(t *testing.T) {
+	dir := `C:\Users\RUNNER~1\AppData\Local\Temp\varlatch-transcript-x`
+	for in, want := range map[string]string{
+		`No varlatch.toml found from ` + dir + ` upward.`:                                              `No varlatch.toml found from {{dir}} upward.`,
+		`{"offline": "No varlatch.toml found from ` + strings.ReplaceAll(dir, `\`, `\\`) + ` upward"}`: `{"offline": "No varlatch.toml found from {{dir}} upward"}`,
+		`{"root": "` + strings.ReplaceAll(dir, `\`, `\\`) + `\\repo"}`:                                 `{"root": "{{dir}}\\repo"}`,
+		dir + `\repo`: `{{dir}}\repo`,
+	} {
+		if got := UnfillDir(in, dir); got != want {
+			t.Errorf("UnfillDir(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := UnfillDir("/tmp/x/repo and /tmp/x", "/tmp/x"); got != "{{dir}}/repo and {{dir}}" {
+		t.Errorf("POSIX: %q", got)
+	}
+}
+
 func TestLoadRefusesAnotherSchema(t *testing.T) {
 	p := t.TempDir() + "/x.json"
 	if err := os.WriteFile(p, []byte(`{"schema":3,"cases":[]}`), 0o644); err != nil {

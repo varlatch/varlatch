@@ -10,33 +10,9 @@
       "reason": "varlatch doctor: not ported to the Go CLI yet",
       "slice": "step 6"
     },
-    "mcp": {
-      "reason": "varlatch mcp: not ported to the Go CLI yet",
-      "slice": "5.6b"
-    },
-    "run": {
-      "reason": "varlatch run: a default run: not ported to the Go CLI yet",
-      "slice": "5.4b"
-    },
-    "run-export-context": {
-      "reason": "varlatch run --export-context: not ported to the Go CLI yet",
-      "slice": "5.4b"
-    },
-    "run-redact": {
-      "reason": "varlatch run --redact: not ported to the Go CLI yet",
-      "slice": "5.4c"
-    },
-    "run-strict": {
-      "reason": "varlatch run --strict: not ported to the Go CLI yet",
-      "slice": "5.4f"
-    },
     "run-strict-agent-safe": {
       "reason": "varlatch run --strict --agent-safe: not ported to the Go CLI yet",
       "slice": "5.5b"
-    },
-    "scan": {
-      "reason": "varlatch scan: not ported to the Go CLI yet",
-      "slice": "5.4d"
     }
   }
 }

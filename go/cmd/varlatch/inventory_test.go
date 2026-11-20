@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -22,7 +23,7 @@ import (
 // is covered by a recorded case or a vector. Missing coverage fails.
 
 type inventory struct {
-	Built    []string `json:"built"`
+	Built    []string `json:"-"` // from testdata/built (builtSlices)
 	Commands map[string]struct {
 		Slice string `json:"slice"`
 	} `json:"commands"`
@@ -30,6 +31,9 @@ type inventory struct {
 		Of       string   `json:"of"`
 		Commands []string `json:"commands"`
 		Slice    string   `json:"slice"`
+		// CoveredBy are the vectors or recorded cases that run an option of
+		// another program (an argument the CLI passes to git).
+		CoveredBy []string `json:"coveredBy"`
 		// CommandSlices: the commands for which the option belongs to a
 		// later slice than the command's (--confirm of org and project is
 		// their delete subcommands', 5.7c).
@@ -61,8 +65,34 @@ func loadInventory(t *testing.T) *inventory {
 	if err := json.Unmarshal(data, &inv); err != nil {
 		t.Fatal(err)
 	}
+	inv.Built = builtSlices(t)
 	return &inv
 }
+
+// builtSlices reads testdata/built/: one empty file per built slice, named
+// for it ("5.2"), so pull requests that build different slices never edit
+// the same line. A file that is not empty or not a slice's name fails.
+func builtSlices(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir("testdata/built")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var built []string
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() || info.Size() != 0 || !builtName.MatchString(e.Name()) {
+			t.Fatalf("testdata/built/%s: want an empty file named for a slice (as 5.2 or 5.4a)", e.Name())
+		}
+		built = append(built, e.Name())
+	}
+	return built
+}
+
+var builtName = regexp.MustCompile(`^5\.[0-9]+[a-z]?$`)
 
 // recorded is one transcript case, with the command it runs after the
 // global options.
@@ -159,10 +189,19 @@ func TestInventoryCoverage(t *testing.T) {
 			continue // an option a later slice builds, of a command built already (status --probe)
 		}
 		if o.Of != "varlatch" {
-			// An option of a program whose command line the guardrail hook
-			// reads: a hook vector's command uses it.
-			if o.Slice != "" && built(o.Slice) && !(o.Of == "another program" && hookCommandsUse(t, option)) {
-				t.Errorf("option %s (%s) of built slice %s: no vector uses it", option, o.Of, o.Slice)
+			// An option of another program (an argument the CLI passes to
+			// git, or one the guardrail hook reads) of a built slice: the
+			// vectors or recorded cases coveredBy names, each of which must
+			// exist, or a hook vector's command that uses it.
+			if o.Slice != "" && built(o.Slice) {
+				for _, ref := range o.CoveredBy {
+					if !refExists(t, cases, ref) {
+						t.Errorf("option %s (%s): %s names no vector section or recorded case", option, o.Of, ref)
+					}
+				}
+				if len(o.CoveredBy) == 0 && !(o.Of == "another program" && hookCommandsUse(t, option)) {
+					t.Errorf("option %s (%s) of built slice %s: no vector or recorded case covers it (coveredBy), and no hook vector uses it", option, o.Of, o.Slice)
+				}
 			}
 			continue
 		}

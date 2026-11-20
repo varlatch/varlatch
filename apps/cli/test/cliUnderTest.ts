@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 
 /**
  * The CLI a process test runs (internal docs/design/go-cli.md, decision 3):
@@ -14,10 +15,16 @@ export function cliCommand(bundle: string, args: string[]): [string, string[]] {
   return go ? [go, args] : [process.execPath, [bundle, ...args]];
 }
 
-/** The Go CLI's inventory: which slices are built, and the slice that builds each command. */
-const inventory = JSON.parse(readFileSync(new URL("../../../go/cmd/varlatch/testdata/cli-inventory.json", import.meta.url), "utf8")) as {
-  built: string[];
-  commands: Record<string, { slice: string }>;
+/**
+ * The Go CLI's inventory: the slice that builds each command, and which
+ * slices are built (go/cmd/varlatch/testdata/built/, one empty file per built
+ * slice, so pull requests that build different slices never edit one line).
+ */
+const inventory = {
+  ...(JSON.parse(readFileSync(new URL("../../../go/cmd/varlatch/testdata/cli-inventory.json", import.meta.url), "utf8")) as {
+    commands: Record<string, { slice: string }>;
+  }),
+  built: readdirSync(new URL("../../../go/cmd/varlatch/testdata/built/", import.meta.url)),
 };
 
 /**
@@ -25,7 +32,8 @@ const inventory = JSON.parse(readFileSync(new URL("../../../go/cmd/varlatch/test
  * (internal docs/design/go-cli.md's slices, as "5.2"): a test of what a
  * later slice builds is skipped against Go with `it.skipIf(goLacks("5.2"))`.
  * The TypeScript bundle lacks nothing. A skip ends by itself: the slice's
- * pull request marks it built in the inventory, and the test runs.
+ * pull request adds its file under go/cmd/varlatch/testdata/built/, and
+ * the test runs.
  */
 export function goLacks(...slices: string[]): boolean {
   return Boolean(process.env.VARLATCH_TEST_CLI) && slices.some((slice) => !inventory.built.includes(slice));
@@ -34,4 +42,15 @@ export function goLacks(...slices: string[]): boolean {
 /** goLacks for the slices that build `commands` (the first word of each command line). */
 export function goLacksCommand(...commands: string[]): boolean {
   return goLacks(...commands.map((command) => inventory.commands[command]?.slice ?? `an unknown command ${command}`));
+}
+
+/**
+ * The release the CLI under test names (its User-Agent, its generated
+ * files): the TypeScript bundle's `fallback`, or what the Go binary's
+ * `--version` prints.
+ */
+export function releaseUnderTest(fallback: string): string {
+  const go = process.env.VARLATCH_TEST_CLI;
+  if (!go) return fallback;
+  return execFileSync(go, ["--version"], { encoding: "utf8" }).trim().split(" ")[1] ?? fallback;
 }

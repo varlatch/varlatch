@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -216,6 +217,70 @@ func TestRetention(t *testing.T) {
 	}
 	if st, _ := s.Status(); len(st.Archives) != 4 || st.Archives[0].ArchiveID != ids[3] {
 		t.Errorf("%+v", st.Archives)
+	}
+}
+
+// Retention never removes a TypeScript-format archive (go-step7 decision
+// 18) nor an archive without a status record Go wrote, however old: it
+// counts and removes Go's own archives only. The status lists the
+// TypeScript ones apart.
+func TestRetentionLeavesTypeScriptArchives(t *testing.T) {
+	f := newFixture(t)
+	s := f.service(nil)
+	backups := filepath.Join(f.dir, Dir)
+	if err := os.MkdirAll(backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := f.clock().Add(-400 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
+	ts := backup.StatusRecord{ArchiveID: "00000000-0000-4000-8000-0000000000aa", InstallationID: f.inst, CreatedAt: old, Release: "0.22.4", RequiredKeyVersions: []int{1}}
+	if err := backup.SaveStatus(f.dir, ts); err != nil {
+		t.Fatal(err)
+	}
+	unrecorded := "00000000-0000-4000-8000-0000000000bb"
+	for _, id := range []string{ts.ArchiveID, unrecorded} {
+		path := filepath.Join(backups, id+".vltbak")
+		if err := os.WriteFile(path, []byte("an archive this installation did not make"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		past := f.clock().Add(-400 * 24 * time.Hour)
+		if err := os.Chtimes(path, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ids []string
+	for i := 0; i < 4; i++ {
+		res, err := s.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, res.ArchiveID)
+		for _, removed := range res.Removed {
+			if removed == ts.ArchiveID || removed == unrecorded {
+				t.Errorf("run %d removed %s", i, removed)
+			}
+		}
+		f.add(time.Hour)
+	}
+	for _, id := range []string{ts.ArchiveID, unrecorded, ids[2], ids[3]} {
+		if _, err := os.Stat(filepath.Join(backups, id+".vltbak")); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+	}
+	for _, id := range ids[:2] {
+		if _, err := os.Stat(filepath.Join(backups, id+".vltbak")); err == nil {
+			t.Errorf("%s was kept beyond backup_keep", id)
+		}
+	}
+	st, err := s.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Archives) != 4 || len(st.TypeScriptArchives) != 1 || st.TypeScriptArchives[0].ArchiveID != ts.ArchiveID {
+		t.Errorf("archives %d, typescriptArchives %+v", len(st.Archives), st.TypeScriptArchives)
+	}
+	js, err := s.StatusJSON()
+	if err != nil || !bytes.Contains(js, []byte(`"typescriptArchives":[{"archiveId":"`+ts.ArchiveID+`"`)) {
+		t.Errorf("status JSON %s %v", js, err)
 	}
 }
 
@@ -649,5 +714,84 @@ func TestConfigurationKeepsTheTailnetSettings(t *testing.T) {
 		conf.Settings["tailnet_tags"] != "tag:varlatch,tag:prod" || conf.Settings["tailnet_port"] != "8687" || bytes.Contains(raw, []byte("tailnet-auth-key")) ||
 		conf.Settings["tailnet_https_port"] != "8443" || conf.Settings["tailnet_browser_origins"] != "https://dash.example.com,http://localhost:5173" {
 		t.Errorf("configuration %s", raw)
+	}
+}
+
+// TestRunLeavesTheACMEStoreOut: with public HTTPS on, an archive holds
+// its settings (listen_https, the redirect listener, the CA, the contact)
+// and nothing of the ACME store in the data directory: two components,
+// the snapshot and the configuration, and neither holds a byte of the
+// account key or the certificate's key. A restored installation obtains
+// its certificate again.
+func TestRunLeavesTheACMEStoreOut(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.PublicHTTPS = &config.PublicHTTPS{Host: "vault.example.com", Listen: ":443", RedirectListen: ":80",
+		Email: "ops@example.com", CA: config.LetsEncryptDirectory, CARootFile: "/etc/varlatch/ca.pem"}
+	// A store as certmagic leaves it: the account's key and the
+	// certificate's, with markers no archive may hold. No key-shaped text
+	// is written in this source (a secret scanner reads it): the PEM
+	// header is put together here, and the markers are plain words.
+	pemHeader := "-----BEGIN EC " + "PRIVATE KEY-----"
+	pemFooter := "-----END EC " + "PRIVATE KEY-----"
+	accountMarker, certKeyMarker, certMarker := "marker-account-key", "marker-certificate-key", "marker-certificate"
+	pemOf := func(marker string) string { return pemHeader + "\n" + marker + "\n" + pemFooter + "\n" }
+	markers := map[string]string{
+		"acme/acme-v02.api.letsencrypt.org-directory/users/ops@example.com/ops.key":                        pemOf(accountMarker),
+		"acme/certificates/acme-v02.api.letsencrypt.org-directory/vault.example.com/vault.example.com.key": pemOf(certKeyMarker),
+		"acme/certificates/acme-v02.api.letsencrypt.org-directory/vault.example.com/vault.example.com.crt": certMarker,
+	}
+	for name, content := range markers {
+		p := filepath.Join(f.dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := f.service(nil).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bek, _ := backup.KeyBEK(f.bek)
+	o, err := backup.Open(res.Path, bek, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	var names []string
+	for _, c := range o.Manifest.Components {
+		names = append(names, c.Name)
+	}
+	if !slices.Equal(names, []string{backup.ComponentDatabase, backup.ComponentConfiguration}) {
+		t.Errorf("components %q", names)
+	}
+	for _, name := range names {
+		raw, err := os.ReadFile(o.Path(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, marker := range []string{accountMarker, certKeyMarker, certMarker, pemHeader, "PRIVATE " + "KEY"} {
+			if bytes.Contains(raw, []byte(marker)) {
+				t.Errorf("%s holds %s", name, marker)
+			}
+		}
+	}
+	if bytes.Contains(o.ManifestJSON, []byte("acme/")) {
+		t.Errorf("the manifest names the store: %s", o.ManifestJSON)
+	}
+	var conf Configuration
+	raw, _ := os.ReadFile(o.Path(backup.ComponentConfiguration))
+	if err := json.Unmarshal(raw, &conf); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"listen_https": ":443", "listen_http_redirect": ":80", "acme_ca": config.LetsEncryptDirectory, "acme_email": "ops@example.com"}
+	for k, v := range want {
+		if conf.Settings[k] != v {
+			t.Errorf("%s = %q, want %q", k, conf.Settings[k], v)
+		}
+	}
+	if _, ok := conf.Settings["acme_ca_root"]; ok {
+		t.Error("acme_ca_root, a path on this host, is in the archive")
 	}
 }

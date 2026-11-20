@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cliCommand, goLacks } from "./cliUnderTest.js";
 
 /**
  * The exit status of `varlatch run` when a signal ends its command, end to
@@ -22,6 +23,7 @@ const bundle = join(dir, "varlatch.cjs");
 const repo = join(dir, "repo");
 const child = join(dir, "child.cjs");
 const reloading = join(dir, "reloading.cjs");
+const ignoring = join(dir, "ignoring.cjs");
 let server: http.Server;
 
 const stored = "valueaaaaaaaaaaaaa";
@@ -121,6 +123,12 @@ beforeAll(async () => {
     `for (const s of ["SIGHUP", "SIGUSR1", "SIGUSR2"]) process.on(s, () => process.stderr.write("got " + s + "\\n"));
 process.stderr.write("ready " + process.pid + "\\n"); setInterval(() => {}, 1000);`,
   );
+  // A command that ignores a stop.
+  writeFileSync(
+    ignoring,
+    `process.on("SIGTERM", () => process.stderr.write("ignored SIGTERM\\n"));
+process.stderr.write("ready " + process.pid + "\\n"); setInterval(() => {}, 1000);`,
+  );
 });
 
 afterAll(async () => {
@@ -138,11 +146,12 @@ interface Run {
 // action dumps core, and where a core handler such as systemd-coredump stores
 // it, the command only ends once the core is written, seconds later. `exec`
 // keeps the CLI's PID, so signals sent to `cli` still reach `varlatch run`.
-function start(flags: string[], command = child): Run {
-  const argv = [bundle, "run", ...flags, "--", process.execPath, command];
-  const cli = spawn("/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', process.execPath, ...argv], {
+function start(flags: string[], command = child, extraEnv: Record<string, string> = {}): Run {
+  // The CLI under test (cliUnderTest.ts): the bundle with Node, or a Go binary as itself.
+  const [exe, argv] = cliCommand(bundle, ["run", ...flags, "--", process.execPath, command]);
+  const cli = spawn("/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', exe, ...argv], {
     cwd: repo,
-    env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test" },
+    env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let err = "";
@@ -174,13 +183,18 @@ async function saw(run: Run, text: string): Promise<void> {
   }
 }
 
-const MODES: [string, string[]][] = [
-  ["a default run", []],
-  ["a --strict run", ["--strict"]],
-  ["a --redact run", ["--redact"]],
-  ["a --strict --redact run", ["--strict", "--redact"]],
-  ["an agent-safe run", ["--agent-safe", "--agent", "coding-agent", "--environment", "agents"]],
+// Each mode, the variables it starts with, and the slices of internal
+// docs/design/go-cli.md a Go CLI under test needs for it (goLacks).
+const ALL_MODES: [string, string[], Record<string, string>, string[]][] = [
+  ["a default run", [], {}, []],
+  // Assisted mode masks by default: the command's output goes through the redactor.
+  ["an assisted (masked) run", [], { VARLATCH_ASSISTED: "1" }, []],
+  ["a --strict run", ["--strict"], {}, ["5.4f"]],
+  ["a --redact run", ["--redact"], {}, ["5.4c"]],
+  ["a --strict --redact run", ["--strict", "--redact"], {}, ["5.4c", "5.4f"]],
+  ["an agent-safe run", ["--agent-safe", "--agent", "coding-agent", "--environment", "agents"], {}, ["5.5b"]],
 ];
+const MODES = ALL_MODES.filter(([, , , slices]) => !goLacks(...slices)).map(([name, flags, env]) => [name, flags, env] as const);
 const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 describe("varlatch run exits with 128 plus the number of the signal that ended its command", () => {
@@ -188,9 +202,9 @@ describe("varlatch run exits with 128 plus the number of the signal that ended i
     expect(SIGNALS.map((s) => 128 + constants.signals[s])).toEqual([130, 143, 129]);
   });
 
-  describe.each(MODES)("%s", (_mode, flags) => {
+  describe.each(MODES)("%s", (_mode, flags, env) => {
     it.each(SIGNALS)("a command killed by %s", async (signal) => {
-      const run = start(flags);
+      const run = start([...flags], child, env);
       process.kill(await started(run), signal);
       const { code, signal: own } = await run.done;
       expect(own).toBeNull();
@@ -200,7 +214,7 @@ describe("varlatch run exits with 128 plus the number of the signal that ended i
 
     // Ctrl-C, a stop, a hangup, and Ctrl-\ sent to `varlatch run` alone are forwarded.
     it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const)("%s sent to varlatch run is forwarded, and the command's death by it is reported", async (signal) => {
-      const run = start(flags);
+      const run = start([...flags], child, env);
       await started(run);
       run.cli.kill(signal);
       const { code, signal: own } = await run.done;
@@ -211,7 +225,7 @@ describe("varlatch run exits with 128 plus the number of the signal that ended i
     // A service manager's reload or a log rotation signals only `varlatch run`:
     // the command must get it, and the run must go on until the command ends.
     it.each(["SIGHUP", "SIGUSR1", "SIGUSR2"] as const)("%s sent to varlatch run reaches a command that handles it, and the run goes on", async (signal) => {
-      const run = start(flags, reloading);
+      const run = start([...flags], reloading, env);
       await started(run);
       run.cli.kill(signal);
       await saw(run, `got ${signal}`);
@@ -222,6 +236,22 @@ describe("varlatch run exits with 128 plus the number of the signal that ended i
       const { code, signal: own } = await run.done;
       expect(own).toBeNull();
       expect(code).toBe(143);
+    });
+
+    // A command that ignores a stop keeps running, and the run waits for it:
+    // the stop was forwarded, not acted on by varlatch run itself.
+    it("a command that ignores SIGTERM keeps running; a later SIGINT ends it with 130", async () => {
+      const run = start([...flags], ignoring, env);
+      await started(run);
+      run.cli.kill("SIGTERM");
+      await saw(run, "ignored SIGTERM");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(run.cli.exitCode).toBeNull();
+      expect(run.cli.signalCode).toBeNull();
+      run.cli.kill("SIGINT");
+      const { code, signal: own } = await run.done;
+      expect(own).toBeNull();
+      expect(code).toBe(130);
     });
   });
 });

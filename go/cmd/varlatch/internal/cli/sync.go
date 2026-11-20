@@ -99,17 +99,6 @@ func syncCommand(r *Run) error {
 	return ExitWith(code)
 }
 
-// flagValues is main.ts's flags(): every value given after name.
-func flagValues(args []string, name string) []string {
-	var values []string
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == name {
-			values = append(values, args[i+1])
-		}
-	}
-	return values
-}
-
 // environmentName is ctx.environment as a string.
 func environmentName(v any) string { return jsTemplate(v, true) }
 

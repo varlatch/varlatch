@@ -76,6 +76,11 @@ type Case struct {
 	Callback *Callback `json:"callback,omitempty"`
 	// Signal sends Ctrl-C once stderr holds After.
 	Signal *Signal `json:"signal,omitempty"`
+	// Terminal runs the CLI on a pseudo-terminal, its controlling terminal
+	// and stdin, and its "stdout", "stderr" or "both" (onTerminal);
+	// Expect.Terminal is what the terminal displayed. Not replayed where
+	// there is no pseudo-terminal (Windows).
+	Terminal string `json:"terminal,omitempty"`
 	// Platform is the fake platforms' script (platform.go).
 	Platform []Exchange `json:"platform,omitempty"`
 	Expect   Outcome    `json:"expect"`
@@ -135,6 +140,8 @@ type Outcome struct {
 	// PlatformRequests is every request the fake platforms received, when
 	// the case gives them a script.
 	PlatformRequests []PlatformRequest `json:"platformRequests,omitempty"`
+	// Terminal is what a terminal case's terminal displayed (Case.Terminal).
+	Terminal string `json:"terminal,omitempty"`
 }
 
 // Request is one request the fake server received.
@@ -344,36 +351,28 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	if c.Signal != nil && runtime.GOOS == "windows" {
 		return Outcome{}, nil, ErrUnsupported
 	}
-	watch := &watcher{c: c}
-	cmd.Stdout, cmd.Stderr = watch.stream(&watch.stdout), watch.stream(&watch.stderr)
-	began := time.Now().UnixMilli()
-	if err := cmd.Start(); err != nil {
-		return Outcome{}, nil, err
+	if c.Terminal != "" && (c.Signal != nil || c.Callback != nil || c.Stdin != "") {
+		return Outcome{}, nil, fmt.Errorf("case %s: a terminal case has no signal, callback or stdin", c.ID)
 	}
-	watch.mu.Lock()
-	watch.process = cmd.Process
-	watch.react() // what the run wrote before the process was known
-	watch.mu.Unlock()
-	timer := time.AfterFunc(60*time.Second, func() { _ = cmd.Process.Kill() })
-	err = cmd.Wait()
-	timer.Stop()
-	status := 0
-	if err != nil {
-		var exit *exec.ExitError
-		if !asExit(err, &exit) {
+	var status int
+	var stdout, stderr, shown string
+	var callbacks []string
+	var began, end int64
+	if c.Terminal != "" {
+		began = time.Now().UnixMilli()
+		if status, stdout, stderr, shown, err = onTerminal(cmd, c.Terminal); err != nil {
 			return Outcome{}, nil, err
 		}
-		status = exitStatus(exit)
+		end = time.Now().UnixMilli()
+	} else if status, stdout, stderr, callbacks, began, end, err = run(cmd, c); err != nil {
+		return Outcome{}, nil, err
 	}
-	callbacks := watch.callbacksDone()
-	end := time.Now().UnixMilli()
 	unfill := func(s string) string {
-		s = strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir, "{{dir}}")
+		s = UnfillDir(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir)
 		s, _ = ApplyPatterns(c.Patterns, s, began, end)
 		return s
 	}
-	stdout, stderr := watch.text()
-	got := Outcome{Status: status, Stdout: unfill(stdout), Stderr: unfill(stderr), Files: map[string]FileState{}, Callbacks: callbacks}
+	got := Outcome{Status: status, Stdout: unfill(stdout), Stderr: unfill(stderr), Files: map[string]FileState{}, Callbacks: callbacks, Terminal: unfill(shown)}
 	for _, r := range srv.received() {
 		r.Path = unfill(r.Path)
 		for k, v := range r.Headers {
@@ -406,6 +405,47 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		d(&want, got)
 	}
 	return got, Compare(want, got), nil
+}
+
+// run runs cmd with pipes, acting on what it writes as the case says (the
+// callback, Ctrl-C).
+func run(cmd *exec.Cmd, c Case) (status int, stdout, stderr string, callbacks []string, began, end int64, err error) {
+	watch := &watcher{c: c}
+	cmd.Stdout, cmd.Stderr = watch.stream(&watch.stdout), watch.stream(&watch.stderr)
+	began = time.Now().UnixMilli()
+	if err := cmd.Start(); err != nil {
+		return 0, "", "", nil, 0, 0, err
+	}
+	watch.mu.Lock()
+	watch.process = cmd.Process
+	watch.react() // what the run wrote before the process was known
+	watch.mu.Unlock()
+	timer := time.AfterFunc(60*time.Second, func() { _ = cmd.Process.Kill() })
+	waited := cmd.Wait()
+	timer.Stop()
+	if waited != nil {
+		var exit *exec.ExitError
+		if !asExit(waited, &exit) {
+			return 0, "", "", nil, 0, 0, waited
+		}
+		status = exitStatus(exit)
+	}
+	callbacks = watch.callbacksDone()
+	end = time.Now().UnixMilli()
+	stdout, stderr = watch.text()
+	return status, stdout, stderr, callbacks, began, end, nil
+}
+
+// UnfillDir is goKit.ts's unfillDir: the case directory as {{dir}}, both as
+// it is printed and as a JSON string holds it (each backslash doubled, so
+// on Windows `C:\\Users\\...` in a --json document or a file the CLI wrote
+// as JSON is the directory too). On Linux and macOS a directory holds no
+// backslash, so the two forms are the same.
+func UnfillDir(s, dir string) string {
+	if escaped := strings.ReplaceAll(dir, `\`, `\\`); escaped != dir {
+		s = strings.ReplaceAll(s, escaped, "{{dir}}")
+	}
+	return strings.ReplaceAll(s, dir, "{{dir}}")
 }
 
 // GeneratedPattern is goKit.ts's generatedPattern, the "generated" pattern:
@@ -739,6 +779,9 @@ func Compare(want, got Outcome) []string {
 	}
 	if want.Stderr != got.Stderr {
 		problems = append(problems, "stderr differs:\n"+diff(want.Stderr, got.Stderr))
+	}
+	if want.Terminal != got.Terminal {
+		problems = append(problems, "the terminal differs:\n"+diff(want.Terminal, got.Terminal))
 	}
 	for i := 0; i < max(len(want.Requests), len(got.Requests)); i++ {
 		switch {

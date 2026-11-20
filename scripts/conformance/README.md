@@ -36,7 +36,7 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | `shard.mjs`, `shard-weights.json` | `--shard <k>/<n>`: which suites each shard runs, balanced by each suite's measured seconds. |
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
-| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`), the registry, and each target's optional capabilities as data (`capabilities.json`). |
+| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`, `go-container`; the first two share `compose-stack.mjs`, and `go-container` is `go-binary` with varlatchd in the single-container image, run with go-binary's capabilities and expectations), the registry, and each target's optional capabilities as data (`capabilities.json`). |
 | `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), the client suites (the CLI's compatibility core, `varlatch mcp`, and the sdk smoke), G11's checks on the Go server's server-sent events (`realtime-events`), and the suites where the e2e suites cover nothing (Security Controls over the API, audit webhook delivery, the audit export, Sync Target delivery). |
 | `lib/` | The runner's pure logic: result lines, inventory rules, operations and declared gaps, the request-log check, the client pins, release verification, expected failures, gate mode. |
 | `test/` | Unit tests: `pnpm test:conformance`. |
@@ -600,13 +600,16 @@ a feature, everything it needs:
 
 `client-runtime`'s two whole-suite checks, "the audit export holds no
 value" and "varlatchd logs hold no value", need no CLI feature of their
-own. On the Go CLI before slices 5.4b and 5.4d they cover only what the
-suite's setup and `types` did: no run or scan has disclosed anything yet,
-so they prove the server side only until those slices land.
+own. On the Go CLI before slice 5.4b they cover only what the suite's
+setup, `types` and `scan` did: no run has disclosed anything yet, so they
+prove the server side, the generated modules and the scans only until that
+slice lands. The suite gates each of its sections with `kit.supports()`,
+which is false for a feature the client lacks (`CONFORMANCE_CLIENT_LACKING`),
+so a section whose CLI feature is missing never runs.
 
 `go/cmd/varlatch`'s `TestClientLacksNotStale` also fails while an entry
-names a slice the Go CLI's inventory says is built. `cliNeeds` is recorded
-conservatively for the checks without a feature (every feature of their
+names a slice the Go CLI marks built (`go/cmd/varlatch/testdata/built/`).
+`cliNeeds` is recorded conservatively for the checks without a feature (every feature of their
 suite); a slice that finds a check needing less narrows it. The setup's
 `init --org --project --server` (slice 5.1d) and token sign-in (slice
 5.1e) are built, so every suite's setup runs on the Go CLI.
@@ -627,8 +630,12 @@ release's section says it) and is one of:
   CLI older than the feature, that call reports each of the group's checks
   `PREDATES-CLI` and the suite skips the group; the rest of the suite runs.
   The runner accepts the result only after comparing the CLI's verified
-  version with the inventory itself. `pnpm test:conformance` checks that
-  every version-gated feature is gated in each suite that has its checks.
+  version with the inventory itself. `kit.supports()` is false, too, when
+  every check of the feature lacks something (a feature the Go CLI lacks,
+  `CONFORMANCE_CLIENT_LACKING`, or an operation the target lacks), so a
+  suite may gate a core feature with it as well. `pnpm test:conformance`
+  checks that every version-gated feature is gated in each suite that has
+  its checks, and that a suite gates only features its checks have.
 
 An old CLI failing a check whose feature it already had is a finding, not a
 reason to gate the check.

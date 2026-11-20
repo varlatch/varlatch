@@ -2047,6 +2047,48 @@ func (e PlatformConnectionCredentialKind) Valid() bool {
 	}
 }
 
+// Defines values for PublicListenerReportConfiguredChallenges.
+const (
+	Http01    PublicListenerReportConfiguredChallenges = "http-01"
+	TlsAlpn01 PublicListenerReportConfiguredChallenges = "tls-alpn-01"
+)
+
+// Valid indicates whether the value is a known member of the PublicListenerReportConfiguredChallenges enum.
+func (e PublicListenerReportConfiguredChallenges) Valid() bool {
+	switch e {
+	case Http01:
+		return true
+	case TlsAlpn01:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PublicListenerReportStatus.
+const (
+	PublicListenerReportStatusExpired    PublicListenerReportStatus = "expired"
+	PublicListenerReportStatusPending    PublicListenerReportStatus = "pending"
+	PublicListenerReportStatusRenewalDue PublicListenerReportStatus = "renewal-due"
+	PublicListenerReportStatusValid      PublicListenerReportStatus = "valid"
+)
+
+// Valid indicates whether the value is a known member of the PublicListenerReportStatus enum.
+func (e PublicListenerReportStatus) Valid() bool {
+	switch e {
+	case PublicListenerReportStatusExpired:
+		return true
+	case PublicListenerReportStatusPending:
+		return true
+	case PublicListenerReportStatusRenewalDue:
+		return true
+	case PublicListenerReportStatusValid:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RefusedDestinationScheme.
 const (
 	RefusedDestinationSchemeHttp  RefusedDestinationScheme = "http"
@@ -3586,10 +3628,13 @@ type BackupArchiveStatus struct {
 		RemoteVerification *BackupVerification `json:"remoteVerification,omitempty"`
 		UploadedAt         time.Time           `json:"uploadedAt"`
 	} `json:"delivery,omitempty"`
-	InstallationId      string              `json:"installationId"`
-	Release             string              `json:"release"`
-	RequiredKeyVersions []int               `json:"requiredKeyVersions"`
-	Verification        *BackupVerification `json:"verification,omitempty"`
+	InstallationId      string `json:"installationId"`
+	Release             string `json:"release"`
+	RequiredKeyVersions []int  `json:"requiredKeyVersions"`
+
+	// RetainUntil When a TypeScript-format archive's retention ends, when it is known (an Object Lock retain-until date, or the operator's). Without it, the bucket's lifecycle rule decides.
+	RetainUntil  *time.Time          `json:"retainUntil,omitempty"`
+	Verification *BackupVerification `json:"verification,omitempty"`
 }
 
 // BackupVerification defines model for BackupVerification.
@@ -4360,11 +4405,16 @@ type IncidentFreezeLiftMethod string
 // InstallationBackups defines model for InstallationBackups.
 type InstallationBackups struct {
 	Archives []BackupArchiveStatus `json:"archives"`
-	Warnings []string              `json:"warnings"`
+
+	// TypescriptArchives A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive) and never removed by its retention. None of the warnings about Go's own archives counts them; the Root KEK's does, since converting one needs its key. Absent when there are none; the TypeScript server never sends it.
+	TypescriptArchives *[]BackupArchiveStatus `json:"typescriptArchives,omitempty"`
+	Warnings           []string               `json:"warnings"`
 }
 
 // InstallationListeners defines model for InstallationListeners.
 type InstallationListeners struct {
+	// Public A Go installation's own public HTTPS (listen_https), present only when it is on: the certificate for the public URL's host that varlatchd obtains and renews over ACME. Its dates and issuer, never its key. An installation behind its own proxy has no such member.
+	Public  *PublicListenerReport                    `json:"public,omitempty"`
 	Tailnet nullable.Nullable[TailnetListenerReport] `json:"tailnet"`
 }
 
@@ -4937,6 +4987,47 @@ type Project struct {
 	OrganizationId           string                    `json:"organizationId"`
 	Slug                     Slug                      `json:"slug"`
 }
+
+// PublicListenerReport A Go installation's own public HTTPS (listen_https), present only when it is on: the certificate for the public URL's host that varlatchd obtains and renews over ACME. Its dates and issuer, never its key. An installation behind its own proxy has no such member.
+type PublicListenerReport struct {
+	Attempting  bool `json:"attempting"`
+	Certificate nullable.Nullable[struct {
+		Issuer     string    `json:"issuer"`
+		NotAfter   time.Time `json:"notAfter"`
+		NotBefore  time.Time `json:"notBefore"`
+		RenewAfter time.Time `json:"renewAfter"`
+	}] `json:"certificate"`
+	Configured struct {
+		// Ca The ACME directory URL.
+		Ca         string                                     `json:"ca"`
+		Challenges []PublicListenerReportConfiguredChallenges `json:"challenges"`
+		Host       string                                     `json:"host"`
+
+		// HttpPort The plain HTTP listener's port (HTTP-01 and the redirect); null when it is off.
+		HttpPort  nullable.Nullable[int] `json:"httpPort"`
+		HttpsPort int                    `json:"httpsPort"`
+	} `json:"configured"`
+
+	// Failures Failed attempts in a row.
+	Failures    int                          `json:"failures"`
+	LastAttempt nullable.Nullable[time.Time] `json:"lastAttempt"`
+
+	// LastError The last attempt's error, one line; null after a success.
+	LastError   nullable.Nullable[string]    `json:"lastError"`
+	LastSuccess nullable.Nullable[time.Time] `json:"lastSuccess"`
+
+	// NextAttempt When a failed attempt is retried; null when none failed.
+	NextAttempt nullable.Nullable[time.Time] `json:"nextAttempt"`
+
+	// Status pending: no certificate yet (nothing is served over HTTPS until there is one); renewal-due: in the last third of its lifetime, renewal attempts are under way.
+	Status PublicListenerReportStatus `json:"status"`
+}
+
+// PublicListenerReportConfiguredChallenges defines model for PublicListenerReport.Configured.Challenges.
+type PublicListenerReportConfiguredChallenges string
+
+// PublicListenerReportStatus pending: no certificate yet (nothing is served over HTTPS until there is one); renewal-due: in the last third of its lifetime, renewal attempts are under way.
+type PublicListenerReportStatus string
 
 // ReachAction defines model for ReachAction.
 type ReachAction struct {

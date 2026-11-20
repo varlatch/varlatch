@@ -2320,9 +2320,16 @@ export interface components {
                 uploadedAt: string;
                 remoteVerification?: components["schemas"]["BackupVerification"];
             };
+            /**
+             * Format: date-time
+             * @description When a TypeScript-format archive's retention ends, when it is known (an Object Lock retain-until date, or the operator's). Without it, the bucket's lifecycle rule decides.
+             */
+            retainUntil?: string;
         };
         InstallationBackups: {
             archives: components["schemas"]["BackupArchiveStatus"][];
+            /** @description A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive) and never removed by its retention. None of the warnings about Go's own archives counts them; the Root KEK's does, since converting one needs its key. Absent when there are none; the TypeScript server never sends it. */
+            typescriptArchives?: components["schemas"]["BackupArchiveStatus"][];
             warnings: string[];
         };
         /**
@@ -2393,6 +2400,47 @@ export interface components {
         };
         InstallationListeners: {
             tailnet: null | components["schemas"]["TailnetListenerReport"];
+            public?: components["schemas"]["PublicListenerReport"];
+        };
+        /** @description A Go installation's own public HTTPS (listen_https), present only when it is on: the certificate for the public URL's host that varlatchd obtains and renews over ACME. Its dates and issuer, never its key. An installation behind its own proxy has no such member. */
+        PublicListenerReport: {
+            configured: {
+                host: string;
+                httpsPort: number;
+                /** @description The plain HTTP listener's port (HTTP-01 and the redirect); null when it is off. */
+                httpPort: number | null;
+                /** @description The ACME directory URL. */
+                ca: string;
+                challenges: ("http-01" | "tls-alpn-01")[];
+            };
+            /**
+             * @description pending: no certificate yet (nothing is served over HTTPS until there is one); renewal-due: in the last third of its lifetime, renewal attempts are under way.
+             * @enum {string}
+             */
+            status: "pending" | "valid" | "renewal-due" | "expired";
+            certificate: null | {
+                /** Format: date-time */
+                notBefore: string;
+                /** Format: date-time */
+                notAfter: string;
+                /** Format: date-time */
+                renewAfter: string;
+                issuer: string;
+            };
+            attempting: boolean;
+            /** Format: date-time */
+            lastAttempt: string | null;
+            /** Format: date-time */
+            lastSuccess: string | null;
+            /** @description The last attempt's error, one line; null after a success. */
+            lastError: string | null;
+            /** @description Failed attempts in a row. */
+            failures: number;
+            /**
+             * Format: date-time
+             * @description When a failed attempt is retried; null when none failed.
+             */
+            nextAttempt: string | null;
         };
         TailnetListenerReport: {
             /** @description From configuration only. */

@@ -5,7 +5,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
 import http from "node:http";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sealedBoxOpen } from "@varlatch/sync";
@@ -100,6 +100,15 @@ export interface TranscriptCase {
   /** Ctrl-C: SIGINT once standard error holds `after`. */
   signal?: { after: string };
   /**
+   * Runs the CLI on a pseudo-terminal (util-linux script(1)): its
+   * controlling terminal and stdin, and its stdout, its stderr or both; the
+   * other stream is captured as usual, and what the terminal displayed is
+   * `expect.terminal`, its "\r\n" as "\n". The Go replay opens the
+   * terminal itself (transcript.onTerminal), and skips the case where it
+   * has none.
+   */
+  terminal?: "stdout" | "stderr" | "both";
+  /**
    * The fake platforms' script (platformServer): the requests the Platform
    * Adapters send to api.github.com, coolify.conformance.test and
    * convex.conformance.test, in order, and their answers. A case that
@@ -131,6 +140,8 @@ export interface RecordedCase extends TranscriptCase {
     stderr: string;
     /** What each callback POST got: its status, or "refused" when nothing took the connection. */
     callbacks?: string[];
+    /** What a terminal case's terminal displayed (TranscriptCase.terminal). */
+    terminal?: string;
     requests: RecordedRequest[];
     /** Every request the fake platforms received, when the case gives them a script. */
     platformRequests?: PlatformRequest[];
@@ -169,7 +180,20 @@ export async function bundleCli(dir: string): Promise<string> {
 }
 
 const fill = (text: string, server: string, dir: string): string => text.split("{{server}}").join(server).split("{{dir}}").join(dir);
-const unfill = (text: string, server: string, dir: string): string => text.split(server).join("{{server}}").split(dir).join("{{dir}}");
+const unfill = (text: string, server: string, dir: string): string => unfillDir(text.split(server).join("{{server}}"), dir);
+
+/**
+ * The case directory as {{dir}}, both as it is printed and as a JSON string
+ * holds it (each backslash doubled: on Windows `C:\\Users\\...` in a --json
+ * document or a JSON file the CLI wrote is the directory too). On Linux and
+ * macOS a directory holds no backslash, so the two forms are the same. The Go
+ * replay's transcript.UnfillDir is the same.
+ */
+export function unfillDir(text: string, dir: string): string {
+  const escaped = dir.split("\\").join("\\\\");
+  const out = escaped === dir ? text : text.split(escaped).join("{{dir}}");
+  return out.split(dir).join("{{dir}}");
+}
 
 function fillDeep(value: unknown, server: string, dir: string): unknown {
   if (typeof value === "string") return fill(value, server, dir);
@@ -336,7 +360,10 @@ export function caseDir({ values, maskable }: { values: string[]; maskable: stri
       if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
       throw err;
     }
-    const real = realpathSync(dir);
+    // The native realpath: on Windows it gives the long name of each part
+    // (C:\Users\runneradmin, not RUNNER~1), as the CLI prints it and Go's
+    // filepath.EvalSymlinks gives it.
+    const real = realpathSync.native(dir);
     if (maskable.some((v) => real.includes(v))) {
       rmSync(dir, { recursive: true, force: true });
       throw new Error(`the temporary directory ${tmpdir()} holds one of the case's variables or its stdin`);
@@ -568,14 +595,18 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       // that records, and the Go CLI has none: never part of a recording.
       VARLATCH_NODE_CHECK: "off",
     };
+    // On Windows the home directory is USERPROFILE (os.homedir()), as the
+    // Go replay sets it.
+    if (process.platform === "win32") env.USERPROFILE = join(dir, "home");
     for (const name of c.unset ?? []) delete env[name];
     for (const [k, v] of Object.entries(c.env ?? {})) env[k] = fill(v, origin, dir);
     // Not part of the case's environment: how this recorder reaches its fake platforms.
     Object.assign(env, platforms?.env ?? {});
     const start = Date.now();
     const callbacks: string[] = [];
-    const result = await new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(process.execPath, [bundle, ...c.args.map((a) => fill(a, origin, dir))], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    const argv = [bundle, ...c.args.map((a) => fill(a, origin, dir))];
+    const result = c.terminal ? await onTerminal(c, argv, cwd, env) : await new Promise<{ status: number; stdout: string; stderr: string; terminal?: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, argv, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
       let called = false;
@@ -619,6 +650,7 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
         files,
         ...(c.callback ? { callbacks } : {}),
         ...(platforms ? { platformRequests: JSON.parse(now(JSON.stringify(unfillDeep(platforms.requests, origin, dir)))) as PlatformRequest[] } : {}),
+        ...(result.terminal === undefined ? {} : { terminal: now(unfill(result.terminal, origin, dir)) }),
       },
     };
   } finally {
@@ -626,6 +658,37 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
     await new Promise<void>((resolve) => server.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Runs a terminal case (TranscriptCase.terminal): `node <argv>` under
+ * util-linux script(1), which gives it a new pseudo-terminal, with the
+ * stream that is not the terminal redirected to a file outside the case
+ * directory. Asynchronous: the case's server answers in this process.
+ */
+function onTerminal(c: TranscriptCase, argv: string[], cwd: string, env: Record<string, string>): Promise<{ status: number; stdout: string; stderr: string; terminal: string }> {
+  if (c.signal || c.callback || c.stdin) throw new Error(`case ${c.id}: a terminal case has no signal, callback or stdin`);
+  const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  const streams = mkdtempSync(join(tmpdir(), "varlatch-terminal-"));
+  const outFile = join(streams, "stdout");
+  const errFile = join(streams, "stderr");
+  const redirect = { both: "", stdout: `2>${quote(errFile)}`, stderr: `>${quote(outFile)}` }[c.terminal ?? "both"];
+  const line = `exec ${[process.execPath, ...argv].map(quote).join(" ")} ${redirect}`;
+  return new Promise((resolve, reject) => {
+    const child = spawn("script", ["-qec", line, "/dev/null"], { cwd, env: { ...env, SHELL: "/bin/sh" }, stdio: ["pipe", "pipe", "pipe"] });
+    let shown = "";
+    child.stdout.on("data", (d: Buffer) => (shown += d.toString("utf8")));
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      const read = (f: string) => (existsSync(f) ? readFileSync(f, "utf8") : "");
+      // script(1) ended by a signal: 128 plus its number, as a shell reports it (the replay's exitStatus).
+      const status = code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1);
+      const out = { status, stdout: read(outFile), stderr: read(errFile), terminal: shown.replace(/\r\n/g, "\n") };
+      rmSync(streams, { recursive: true, force: true });
+      resolve(out);
+    });
+    child.stdin.end();
+  });
 }
 
 /**

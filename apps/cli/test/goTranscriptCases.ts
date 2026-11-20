@@ -23,6 +23,14 @@ const HELP_TOPICS = [
   "validate", "values", "whoami",
 ];
 
+/**
+ * `admin`'s help is a Go installation's in the Go CLI (go/README.md, the
+ * accepted difference `admin-usage`); this recording is the TypeScript
+ * CLI's Compose usage.
+ */
+const helpDifferences = (topic: string): { differences?: string[] } =>
+  topic === "admin" ? { differences: ["admin-usage"] } : {};
+
 const framework: TranscriptCase[] = [
   { id: "usage.no-command", title: "no command prints the usage on stdout, status 0", args: [] },
   { id: "usage.help", title: "--help prints the usage", args: ["--help"] },
@@ -55,14 +63,13 @@ const framework: TranscriptCase[] = [
   { id: "approval.then-help", title: "--approval with an id, then --help", args: ["--approval", "apr_1", "--help"] },
   { id: "approval.after-separator", title: "--approval after -- belongs to the command, not the CLI", args: ["nosuch", "--", "--approval"] },
   ...HELP_TOPICS.flatMap((topic): TranscriptCase[] => [
-    { id: `help.${topic}`, title: `help ${topic}`, args: ["help", topic] },
-    { id: `help.${topic}.option`, title: `${topic} --help`, args: [topic, "--help"] },
-    { id: `help.${topic}.short`, title: `${topic} -h`, args: [topic, "-h"] },
+    { id: `help.${topic}`, title: `help ${topic}`, args: ["help", topic], ...helpDifferences(topic) },
+    { id: `help.${topic}.option`, title: `${topic} --help`, args: [topic, "--help"], ...helpDifferences(topic) },
+    { id: `help.${topic}.short`, title: `${topic} -h`, args: [topic, "-h"], ...helpDifferences(topic) },
   ]),
   { id: "help.after-separator", title: "--help after -- belongs to the command run starts", args: ["nosuch", "--", "--help"] },
   { id: "help.after-arguments", title: "--help anywhere before -- asks for the command's help", args: ["values", "set", "API_KEY", "--help"] },
 ];
-
 
 // ---- 5.1b: context and the credential store ---------------------------------
 //
@@ -258,7 +265,6 @@ const context51b: TranscriptCase[] = [
   { id: "context.toml-directory", title: "a varlatch.toml that is a directory stops context (TypeScript lets the read error escape)", args: ["context"], files: { "repo/varlatch.toml/.keep": "" }, ...IN_REPO, differences: ["uncaught"] },
   ...TOML_CASES.map(([id, title, toml]): TranscriptCase => ({ id: `context.toml.${id}`, title: `varlatch.toml: ${title}`, args: ["context", "--json"], files: repoFiles(toml), ...IN_REPO })),
 ];
-
 
 // ---- 5.1c: the API client and status --probe ------------------------------
 
@@ -519,7 +525,6 @@ const agentFiles51d: TranscriptCase[] = [
     ["no-agent-files-twice", "--no-agent-files twice is still one", ["--org", "acme", "--project", "web", "--no-agent-files", "--no-agent-files", "--server", "https://s.example"]],
   ].map(([id, title, rest]): TranscriptCase => ({ id: `init.usage.${id}`, title: title as string, args: ["init", ...(rest as string[])] })),
 ];
-
 
 // ---- 5.1e: session commands ------------------------------------------------
 //
@@ -1098,7 +1103,6 @@ const values53a: TranscriptCase[] = [
   v({ id: "import.usage.replace-missing-value", title: "--replace needs a value", args: ["import", ".env", "--replace"] }),
 ];
 
-
 // ---- 5.3b: Contracts ---------------------------------------------------------
 //
 // contract push, activate and show against the fake server, in the 5.3a
@@ -1282,6 +1286,175 @@ const types53c: TranscriptCase[] = [
   t({ id: "no-repository", title: "outside a repository", args: ["types", "--out", "config.ts"], files: {} }),
 ];
 
+// varlatch run (5.4b): a default run, --export-context, --omit, and assisted
+// masking. The command is `node -e PRINT`, which prints its arguments and the
+// variables it was given (fake values only), so each case shows what the
+// command received; an assisted run's output is the masked one.
+const RUN_SECRET = "s3cr3t-run-api-key-value";
+const RUN_PIN = "1234";
+const RUN_PRINT =
+  "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))";
+const runChildArgs = (...args: string[]) => ["--", "node", "-e", RUN_PRINT, ...args];
+const DISCLOSURES = `${ENV}/disclosures`;
+const PROD_ENV = "/v1/organizations/acme/projects/web/environments/prod";
+const RUN_REV = sid("rev", "run");
+const RUN_HASH = `sha256:${"ab".repeat(32)}`;
+const runItems = (extra: unknown[] = []) => [
+  { name: "API_KEY", sensitive: true, source: "self", value: null },
+  { name: "PORT", sensitive: false, source: "self", value: "8080" },
+  ...extra,
+];
+const PIN_ITEM = { name: "PIN", sensitive: true, source: "self", value: null };
+const effectiveAt = (base: string, items: unknown[], extra: Record<string, unknown> = {}): Exchange =>
+  ok(`${base}/effective-configuration?include=values`, { environmentId: "env_1", items, ...extra });
+const disclosed = (items: { name: string; value: string }[], extra: Record<string, unknown> = {}, path = DISCLOSURES): Exchange => ({
+  method: "POST",
+  path,
+  status: 200,
+  answer: { items: items.map((i) => ({ ...i, versionId: sid("ver", i.name) })), withheld: [], ...extra },
+});
+const API_KEY_DISCLOSED = disclosed([{ name: "API_KEY", value: RUN_SECRET }]);
+const MANIFEST = {
+  manifestVersion: 1,
+  projectId: "prj_1",
+  environment: { id: "env_1", rootId: "env_root", parentId: null, tier: "development", expiresAt: null },
+  contract: { revisionId: RUN_REV, contentHash: RUN_HASH, semanticsVersion: 2 },
+  items: [],
+};
+const DIGEST_A = `sha256:${"a".repeat(64)}`;
+const DIGEST_B = `sha256:${"b".repeat(64)}`;
+const RUN_CONTRACT = {
+  schemaVersion: 1,
+  semanticsVersion: 2,
+  items: [item("API_KEY"), item("PORT", { sensitive: false }), item("REGION", { sensitive: false }), item("VARLATCH_RUN_CONTEXT", { sensitive: false })],
+};
+const revisionAnswer = (extra: Record<string, unknown> = {}): Exchange =>
+  ok(`${CONTRACT_PATH}/revisions/${RUN_REV}`, { id: RUN_REV, contentHash: RUN_HASH, semanticsVersion: 2, active: true, contract: RUN_CONTRACT, ...extra });
+const exportedEffective = (digest = DIGEST_A) => effectiveAt(ENV, runItems(), { stateDigest: digest, manifest: MANIFEST });
+const ASSISTED = { VARLATCH_ASSISTED: "1" };
+const CONTRACT_NONE = denied(CONTRACT_PATH, "GET", 404, "NOT_FOUND");
+// A stored value with an unpaired surrogate (JSON allows it, UTF-8 cannot):
+// the command gets it as Node.js's spawn encodes it, one U+FFFD, and
+// assisted masking matches that form.
+const SURROGATE_VALUE = "surrogate-\uD83D-value";
+const SURROGATE_ITEMS = [{ name: "SURR", sensitive: true, source: "self", value: null }];
+const SURROGATE_DISCLOSED = disclosed([{ name: "SURR", value: SURROGATE_VALUE }]);
+const PRINT_SURROGATE = ["--", "node", "-e", "console.log('s='+process.env.SURR+' bytes='+Buffer.from(process.env.SURR).toString('hex'))"];
+
+const run54b: TranscriptCase[] = [
+  // The command line
+  v({ id: "usage.no-separator", title: "run without --", args: ["run", "node"] }),
+  v({ id: "usage.separator-last", title: "run with nothing after --", args: ["run", "--"] }),
+  v({ id: "usage.unknown-option", title: "an unknown option before --: refused, nothing fetched", args: ["run", "--bogus", ...runChildArgs()] }),
+  v({ id: "usage.allow-unmasked-equals", title: "--allow-unmasked=NAME is not parsed", args: ["run", "--allow-unmasked=PIN", ...runChildArgs()] }),
+  v({ id: "usage.no-redact-equals", title: "--no-redact=... is not parsed", args: ["run", "--no-redact=1", ...runChildArgs()] }),
+  v({ id: "usage.allow-unmasked-no-name", title: "--allow-unmasked followed by an option", args: ["run", "--allow-unmasked", "--omit", "PIN", ...runChildArgs()] }),
+  v({ id: "usage.allow-unmasked-bad-name", title: "--allow-unmasked with a name no item can have", args: ["run", "--allow-unmasked", "pin", ...runChildArgs()] }),
+  v({ id: "usage.omit-bad-name", title: "--omit with a name no item can have", args: ["run", "--omit", "pin", ...runChildArgs()] }),
+  v({ id: "usage.omit-and-allow", title: "--omit and --allow-unmasked naming the same item", args: ["run", "--omit", "PIN", "--allow-unmasked", "PIN", ...runChildArgs()] }),
+  v({ id: "usage.omit-and-inherit", title: "--omit and --allow-inherited naming the same item", args: ["run", "--omit", "PIN", "--allow-inherited", "PIN", ...runChildArgs()] }),
+  v({ id: "usage.redact-and-no-redact", title: "--redact with --no-redact", args: ["run", "--redact", "--no-redact", ...runChildArgs()] }),
+  v({ id: "usage.target", title: "--target outside an agent-safe run", args: ["run", "--target", "API_KEY=header:authorization", ...runChildArgs()] }),
+  v({ id: "usage.allow-inherited", title: "--allow-inherited outside a strict run", args: ["run", "--allow-inherited", "PIN", ...runChildArgs()] }),
+  v({ id: "usage.export-and-strict", title: "--export-context with --strict", args: ["run", "--export-context", "--strict", ...runChildArgs()] }),
+  v({ id: "usage.twice", title: "--export-context given twice", args: ["run", "--export-context", "--export-context", ...runChildArgs()] }),
+  v({ id: "usage.allow-and-no-redact", title: "outside assisted mode, --allow-unmasked does not combine with --no-redact", args: ["run", "--allow-unmasked", "PIN", "--no-redact", ...runChildArgs()] }),
+  // A default run
+  v({ id: "run.plain", title: "a default run: the stored values over the inherited ones, the arguments as given", args: ["run", ...runChildArgs("a", "b c", "--", "-e")], env: { PORT: "1", REGION: "inherited" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.environment", title: "-e names the environment", args: ["run", "-e", "prod", ...runChildArgs()], server: [effectiveAt(PROD_ENV, runItems()), disclosed([{ name: "API_KEY", value: RUN_SECRET }], {}, `${PROD_ENV}/disclosures`)] }),
+  v({ id: "run.environment-long", title: "--environment names the environment", args: ["run", "--environment", "prod", ...runChildArgs()], server: [effectiveAt(PROD_ENV, runItems()), disclosed([{ name: "API_KEY", value: RUN_SECRET }], {}, `${PROD_ENV}/disclosures`)] }),
+  v({ id: "run.server", title: "--server names the server", args: ["run", "--server", "{{server}}", ...runChildArgs()], files: { ...repoFiles('organization = "acme"\nproject = "web"\ndefault_environment = "dev"\n'), ...storeAt({ "{{server}}": { token: VTOKEN, ...OK } }) }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.exit-status", title: "the command's own status", args: ["run", "--", "node", "-e", "process.exit(3)"], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.no-redact", title: "--no-redact outside assisted mode: a default run", args: ["run", "--no-redact", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.agent-options-ignored", title: "agent-safe options without --agent-safe change nothing", args: ["run", "--agent", "coder", "--allow-host", "api.example.com", "--broker-credential-file", "broker.json", "--agent-network", "strict", "--ttl", "60", "--agent-metadata", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "run.inherited-context", title: "an inherited VARLATCH_RUN_CONTEXT is removed, and none is injected", args: ["run", ...runChildArgs()], env: { VARLATCH_RUN_CONTEXT: '{"v":1,"mode":"exported"}' }, server: [effectiveAt(ENV, runItems([{ name: "VARLATCH_RUN_CONTEXT", sensitive: false, source: "self", value: "stored" }])), API_KEY_DISCLOSED] }),
+  v({ id: "run.disclosure-denied", title: "the disclosure refused: the plain values only, said", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), { ...denied(DISCLOSURES, "POST") }] }),
+  v({ id: "run.disclosure-tailnet", title: "the disclosure refused for the tailnet: the plain values only", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), denied(DISCLOSURES, "POST", 403, "TAILNET_CONTEXT_REQUIRED")] }),
+  v({ id: "run.disclosure-error", title: "any other refusal stops the run", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), denied(DISCLOSURES, "POST", 500, "INTERNAL")] }),
+  v({ id: "run.withheld", title: "a value the server withholds is named", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, runItems([{ name: "REGION", sensitive: false, source: "self", value: null }])), API_KEY_DISCLOSED] }),
+  v({ id: "run.empty", title: "nothing stored: the command still starts", args: ["run", ...runChildArgs()], server: [effectiveAt(ENV, []), disclosed([])] }),
+  v({ id: "run.not-signed-in", title: "no credential: 77, nothing started", args: ["run", ...runChildArgs()], files: NOT_SIGNED_IN }),
+  v({ id: "run.surrogate", title: "a value with an unpaired surrogate reaches the command as one U+FFFD", args: ["run", ...PRINT_SURROGATE], server: [effectiveAt(ENV, SURROGATE_ITEMS), SURROGATE_DISCLOSED] }),
+  v({ id: "run.no-command", title: "a command that does not exist: spawn ... ENOENT (TypeScript lets the error escape)", args: ["run", "--", "varlatch-no-such-command-5-4b"], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED], differences: ["spawn-error"] }),
+  // --omit
+  v({ id: "omit.secret", title: "--omit a Secret: never asked for, and the inherited copy removed", args: ["run", "--omit", "API_KEY", ...runChildArgs()], env: { API_KEY: "inherited" }, server: [effectiveAt(ENV, runItems())] }),
+  v({ id: "omit.secret-one-of-two", title: "--omit one Secret: the disclosure names the others", args: ["run", "--omit", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }])] }),
+  v({ id: "omit.plain", title: "--omit a plain item, twice", args: ["run", "--omit", "PORT", "--omit", "PORT", ...runChildArgs()], env: { PORT: "1" }, server: [effectiveAt(ENV, runItems()), disclosed([{ name: "API_KEY", value: RUN_SECRET }])] }),
+  v({ id: "omit.contract-item", title: "--omit a Contract item that is not stored: the Contract is read", args: ["run", "--omit", "REGION", ...runChildArgs()], env: { REGION: "inherited" }, server: [effectiveAt(ENV, runItems()), contractAnswer({ ...ACTIVE, contract: RUN_CONTRACT }), disclosed([{ name: "API_KEY", value: RUN_SECRET }])] }),
+  v({ id: "omit.unknown", title: "--omit a name neither stored nor in the Contract: 64, nothing disclosed", args: ["run", "--omit", "NOPE", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), CONTRACT_NONE] }),
+  v({ id: "omit.unknown-no-contract", title: "--omit, and the manifest says no Contract is active: not read", args: ["run", "--omit", "NOPE", ...runChildArgs()], server: [effectiveAt(ENV, runItems(), { manifest: { ...MANIFEST, contract: null } })] }),
+  // --export-context
+  v({ id: "export.context", title: "--export-context: the command gets the run context", args: ["run", "--export-context", ...runChildArgs()], env: { REGION: "inherited" }, server: [exportedEffective(), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_A })] }),
+  v({ id: "export.omit", title: "--export-context with --omit: an omitted item is absent", args: ["run", "--export-context", "--omit", "API_KEY", "--omit", "REGION", ...runChildArgs()], env: { REGION: "inherited" }, server: [exportedEffective(), contractAnswer({ ...ACTIVE, contract: RUN_CONTRACT }), revisionAnswer()] }),
+  v({ id: "export.retry", title: "the state changed once: both read again, then the run starts", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_B }), exportedEffective(DIGEST_B), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_B })] }),
+  v({
+    id: "export.inconsistent",
+    title: "the state changed on every attempt: refused before the command starts",
+    args: ["run", "--export-context", ...runChildArgs()],
+    server: [1, 2, 3].flatMap(() => [exportedEffective(), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_B })]),
+  }),
+  v({ id: "export.no-digest", title: "a disclosure without a digest is not agreement", args: ["run", "--export-context", ...runChildArgs()], server: [1, 2, 3].flatMap(() => [exportedEffective(), revisionAnswer(), API_KEY_DISCLOSED]) }),
+  v({ id: "export.disclosure-denied", title: "nothing disclosed: the context describes the values delivered", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer(), denied(DISCLOSURES, "POST")] }),
+  v({ id: "export.no-manifest", title: "a server without a manifest: refused, nothing disclosed", args: ["run", "--export-context", ...runChildArgs()], server: [effectiveAt(ENV, runItems())] }),
+  v({ id: "export.no-contract", title: "no active Contract: refused", args: ["run", "--export-context", ...runChildArgs()], server: [effectiveAt(ENV, runItems(), { stateDigest: DIGEST_A, manifest: { ...MANIFEST, contract: null } })] }),
+  v({ id: "export.contract-denied", title: "no contract.read: refused, nothing disclosed", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), denied(`${CONTRACT_PATH}/revisions/${RUN_REV}`)] }),
+  v({ id: "export.oversize", title: "a run context over 64 KB: refused before any Secret is disclosed", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer({ contract: { ...RUN_CONTRACT, items: Array.from({ length: 260 }, (_, i) => item(`N${String(i).padStart(3, "0")}_${"A".repeat(250)}`)) } })] }),
+  v({ id: "export.contract-mismatch", title: "a revision of another hash: refused", args: ["run", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer({ contentHash: HASH })] }),
+  // Assisted mode
+  v({ id: "assisted.masked", title: "assisted mode masks the delivered Secret in the command's output", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, contractAnswer({ ...ACTIVE, contract: RUN_CONTRACT })] }),
+  v({ id: "assisted.sensitive-number", title: "an item marked sensitive by any truthy value is masked", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, [{ name: "API_KEY", sensitive: 1, source: "self", value: null }, { name: "PORT", sensitive: false, source: "self", value: "8080" }]), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "assisted.surrogate", title: "assisted mode masks a Secret with an unpaired surrogate as the command echoes it", args: ["run", "--", "node", "-e", "console.log('s='+process.env.SURR)"], env: ASSISTED, server: [effectiveAt(ENV, SURROGATE_ITEMS), SURROGATE_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "assisted.option", title: "--assisted masks too", args: ["--assisted", "run", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "assisted.inherited", title: "an inherited value under a Contract Secret's name is masked too", args: ["run", ...runChildArgs()], env: { ...ASSISTED, LEGACY_KEY: "inherited-legacy-value" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, contractAnswer({ ...ACTIVE, contract: { ...RUN_CONTRACT, items: [...RUN_CONTRACT.items, item("LEGACY_KEY")] } })] }),
+  v({ id: "assisted.contract-denied", title: "no contract.read: masked under stored names only, said", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, denied(CONTRACT_PATH)] }),
+  v({ id: "assisted.short", title: "a Secret too short to mask: 78, the remedies, nothing started", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }]), CONTRACT_NONE] }),
+  v({ id: "assisted.short-two", title: "two Secrets too short: both named", args: ["run", "-e", "dev", "--omit", "PORT", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems([PIN_ITEM, { name: "PIN2", sensitive: true, source: "self", value: null }])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }, { name: "PIN2", value: "5678" }]), CONTRACT_NONE] }),
+  v({ id: "assisted.short-server", title: "the remedies name an overridden server", args: ["run", "--server", "{{server}}", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }]), CONTRACT_NONE] }),
+  v({ id: "assisted.allow-refused", title: "--allow-unmasked in assisted mode: refused, the human's command printed", args: ["run", "--allow-unmasked", "PIN", "--omit", "PORT", ...runChildArgs()], env: ASSISTED }),
+  v({ id: "assisted.no-redact-refused", title: "--no-redact in assisted mode: refused", args: ["run", "--no-redact", "--export-context", ...runChildArgs()], env: ASSISTED }),
+  v({ id: "assisted.no-values", title: "nothing stored: said as a fact", args: ["run", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, []), disclosed([]), CONTRACT_NONE] }),
+  v({ id: "assisted.dotenv", title: "a .env file is named, never read", args: ["run", ...runChildArgs()], env: ASSISTED, files: { ...SIGNED_IN, "repo/.env": "API_KEY=never-read-value\n" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "assisted.omit", title: "--omit in assisted mode: the agent is told to name it", args: ["run", "--omit", "PORT", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), disclosed([{ name: "API_KEY", value: RUN_SECRET }]), CONTRACT_NONE] }),
+  // The human's override outside assisted mode
+  v({ id: "override.allow-unmasked", title: "--allow-unmasked PIN: PIN shown, every other Secret masked", args: ["run", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }]), CONTRACT_NONE] }),
+  v({ id: "override.unused", title: "an allowance that names no short Secret: said, ignored", args: ["run", "--allow-unmasked", "PORT", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "override.short-other", title: "another short Secret still stops the run", args: ["run", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM, { name: "PIN2", sensitive: true, source: "self", value: null }])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }, { name: "PIN2", value: "5678" }]), CONTRACT_NONE] }),
+];
+
+// varlatch run --redact (5.4c): output redaction outside assisted mode
+// (ADR-0038 Decision 10), with every option it meets, and its refusals.
+// The command is RUN_PRINT, or a writer of the delivered Secret.
+const REDACT_SPLIT =
+  "const v=process.env.API_KEY;process.stdout.write('k='+v.slice(0,6));setTimeout(()=>process.stdout.write(v.slice(6)+'\\n'),100)";
+const REDACT_STDERR = "console.error('err='+process.env.API_KEY);console.log('out='+process.env.API_KEY)";
+const redact54c: TranscriptCase[] = [
+  v({ id: "surrogate.redact", title: "--redact masks a Secret with an unpaired surrogate as the command prints it (run.surrogate: one U+FFFD)", args: ["run", "--redact", "--", "node", "-e", "console.log('s='+process.env.SURR)"], server: [effectiveAt(ENV, SURROGATE_ITEMS), SURROGATE_DISCLOSED] }),
+  v({ id: "redact.masked", title: "--redact masks the delivered Secret in the command's output; plain values are shown", args: ["run", "--redact", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.stderr", title: "--redact masks stderr too", args: ["run", "--redact", "--", "node", "-e", REDACT_STDERR], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.split", title: "a Secret split across two writes is masked once", args: ["run", "--redact", "--", "node", "-e", REDACT_SPLIT], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.short", title: "a Secret too short to mask passes unchanged, and is named", args: ["run", "--redact", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }])] }),
+  v({ id: "redact.nothing-sensitive", title: "nothing sensitive delivered: the output as written", args: ["run", "--redact", ...runChildArgs()], server: [effectiveAt(ENV, [{ name: "PORT", sensitive: false, source: "self", value: "8080" }]), disclosed([])] }),
+  v({ id: "redact.inherited", title: "an inherited value is not masked: only what Varlatch delivered", args: ["run", "--redact", ...runChildArgs()], env: { LEGACY_KEY: "inherited-legacy-value" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.disclosure-denied", title: "the disclosure refused: nothing to mask, said", args: ["run", "--redact", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), denied(DISCLOSURES, "POST")] }),
+  v({ id: "redact.exit-status", title: "the command's own status passes through", args: ["run", "--redact", "--", "node", "-e", "process.exit(3)"], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.omit", title: "--redact with --omit: the omitted Secret is never asked for", args: ["run", "--redact", "--omit", "API_KEY", ...runChildArgs()], server: [effectiveAt(ENV, runItems())] }),
+  v({ id: "redact.export-context", title: "--redact with --export-context: the context given, the Secret masked", args: ["run", "--redact", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_A })] }),
+  v({ id: "redact.allow-unmasked", title: "--redact with the human's --allow-unmasked: the override's masking", args: ["run", "--redact", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }]), CONTRACT_NONE] }),
+  v({ id: "redact.assisted", title: "--redact in assisted mode: assisted masking", args: ["run", "--redact", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "redact.agent-safe", title: "--redact with --agent-safe: refused, nothing fetched", args: ["run", "--redact", "--agent-safe", "--agent", "coder", ...runChildArgs()] }),
+  v({ id: "redact.agent-safe-assisted", title: "--redact with --agent-safe in assisted mode: refused too", args: ["run", "--redact", "--agent-safe", ...runChildArgs()], env: ASSISTED }),
+  v({ id: "redact.twice", title: "--redact given twice", args: ["run", "--redact", "--redact", ...runChildArgs()] }),
+  v({ id: "redact.equals", title: "--redact=... is not parsed (the value shown as [redacted] by Go)", args: ["run", "--redact=1", ...runChildArgs()], differences: ["option-value"] }),
+  // On a terminal: refused before anything is fetched, unless assisted mode gives the command pipes
+  v({ id: "terminal.both", title: "--redact when stdout and stderr are a terminal: refused, nothing fetched", args: ["run", "--redact", ...runChildArgs()], terminal: "both" }),
+  v({ id: "terminal.stdout", title: "--redact when stdout is a terminal: refused", args: ["run", "--redact", ...runChildArgs()], terminal: "stdout" }),
+  v({ id: "terminal.stderr", title: "--redact when stderr is a terminal: refused", args: ["run", "--redact", ...runChildArgs()], terminal: "stderr" }),
+  v({ id: "terminal.agent-safe", title: "--redact with --agent-safe on a terminal: the agent-safe refusal", args: ["run", "--redact", "--agent-safe", ...runChildArgs()], terminal: "both" }),
+  v({ id: "terminal.assisted", title: "--redact in assisted mode on a terminal: runs, masked", args: ["run", "--redact", ...runChildArgs()], env: ASSISTED, terminal: "both", server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "terminal.no-redact", title: "--no-redact on a terminal: a default run", args: ["run", "--no-redact", ...runChildArgs()], terminal: "both", server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "terminal.plain", title: "a default run on a terminal: unmasked", args: ["run", ...runChildArgs()], terminal: "stderr", server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+];
+
 // ---- 5.4e: scan --find-files --------------------------------------------------
 //
 // Files that look like copies of secrets, by name, each with whether Git
@@ -1328,6 +1501,89 @@ const findFiles54e: TranscriptCase[] = [
   { id: "after-dashes", title: "after --, a directory named --find-files... is a path", args: ["scan", "--find-files", "--", "-odd"], files: { "-odd/.env": "A=1\n" } },
 ];
 
+// ---- 5.4d: scan --------------------------------------------------------------
+//
+// Files checked for the selected Environment's Secrets after one disclosure
+// with purpose "scan": 1 for a finding, 2 when nothing is found but a file
+// was not scanned, 0 otherwise; every failure is 1 (usage, a refused
+// credential, a server that cannot be reached, no project). Findings name
+// the path, line, column, item and version, never the value. A staged scan
+// needs a real Git index, which a transcript does not make (it runs no git
+// add), so --staged with content is in the scan vectors and the scan-cli
+// process test; here a repository written file by file has nothing staged.
+
+const SCAN_KEY = "scan-key-aaaabbbbccccdddd";
+const SCAN_OLD = "scan-key-oldoldoldoldold1";
+const SCAN_DB = "hunter2-hunter2-hunter2";
+const SCAN_TOML = 'server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n';
+const SCAN_ENV = { VARLATCH_TOKEN: "vlt_svc_scanAAAAAA" };
+const SCAN_META = { serverVersion: "0.22.0", apiMajor: 1, capabilities: ["secrets.disclosure-purpose"] };
+const SCAN_DISCLOSURES = "/v1/organizations/acme/projects/web/environments/dev/disclosures";
+const scanDisclosed = (items: unknown[], status = 200): Exchange[] => [
+  ok("/v1/meta", SCAN_META),
+  { method: "POST", path: SCAN_DISCLOSURES, status, answer: status === 200 ? { items, withheld: [] } : items[0] },
+];
+const SCAN_ITEMS = [
+  { name: "API_KEY", versionId: "ver_api2", value: SCAN_KEY, retiring: { versionId: "ver_api1", value: SCAN_OLD } },
+  { name: "DB_PASS", versionId: "ver_db", value: SCAN_DB },
+  { name: "PIN", versionId: "ver_pin", value: "1234567" },
+];
+const SCANNED = scanDisclosed(SCAN_ITEMS);
+const scanRepo = (files: Record<string, string> = {}): Record<string, string> => ({ "repo/varlatch.toml": SCAN_TOML, ...files });
+const scanCase = (c: Omit<TranscriptCase, "env"> & { env?: Record<string, string> }): TranscriptCase => ({
+  cwd: "repo",
+  ...c,
+  env: { ...SCAN_ENV, ...(c.env ?? {}) },
+  differences: [...(c.differences ?? []), ...ONLINE],
+});
+const LEAKY = scanRepo({
+  "repo/dist/app.js": `var k="${SCAN_KEY}";\nvar old =\n  "${Buffer.from(`user:${SCAN_OLD}`).toString("base64")}";\n`,
+  "repo/dist/assets/blob.bin": `\u0000\u0000${SCAN_DB}\u0000`,
+  "repo/dist/clean.txt": "nothing here\n",
+});
+const HOOK_MARK = "# varlatch-scan-hook v1";
+
+const scan54d: TranscriptCase[] = [
+  scanCase({ id: "paths.findings", title: "findings by path, line, column, item and version, never the value: 1", args: ["scan", "dist"], files: LEAKY, server: SCANNED }),
+  scanCase({ id: "paths.findings.json", title: "the same report with --json", args: ["scan", "dist", "--json"], files: LEAKY, server: SCANNED }),
+  scanCase({ id: "paths.clean", title: "a clean file: 0", args: ["scan", "dist/clean.txt"], files: LEAKY, server: SCANNED }),
+  scanCase({ id: "paths.not-scanned", title: "a clean file and a path that does not exist: 2", args: ["scan", "dist/clean.txt", "missing"], files: LEAKY, server: SCANNED }),
+  scanCase({ id: "paths.not-scanned.json", title: "the same with --json", args: ["scan", "--json", "dist/clean.txt", "missing"], files: LEAKY, server: SCANNED }),
+  scanCase({ id: "paths.nothing-to-read", title: "only a path that does not exist: nothing is disclosed; 2", args: ["scan", "missing"], files: scanRepo() }),
+  scanCase({ id: "paths.empty-file", title: "a directory with one empty file: checked, no findings; 0", args: ["scan", "empty"], files: scanRepo({ "repo/empty/.keep": "" }), server: SCANNED }),
+  scanCase({ id: "paths.outside", title: "a file outside the project directory, named from it", args: ["scan", "../history.txt"], files: { ...scanRepo(), "history.txt": `ls\nexport DB_PASS=${SCAN_DB}\n` }, server: SCANNED }),
+  scanCase({ id: "paths.environment", title: "-e names the Environment the values come from", args: ["scan", "-e", "staging", "dist/clean.txt"], files: LEAKY, server: [ok("/v1/meta", SCAN_META), { method: "POST", path: "/v1/organizations/acme/projects/web/environments/staging/disclosures", status: 200, answer: { items: [], withheld: [] } }] }),
+  scanCase({ id: "paths.markers", title: "an allow marker for the item on its line", args: ["scan", "t.txt"], files: scanRepo({ "repo/t.txt": `a = "${SCAN_KEY}" # varlatch:allow API_KEY\nb = "${SCAN_DB}" # varlatch:allow API_KEY\n` }), server: SCANNED }),
+  scanCase({ id: "paths.over-bound", title: "a file over --max-file-size is not read, and nothing is disclosed when nothing fits: 2", args: ["scan", "dist", "--max-file-size", "10"], files: LEAKY }),
+  scanCase({ id: "paths.over-bound.some", title: "a file over the bound beside one that fits: 2", args: ["scan", "dist", "--max-file-size", "20"], files: LEAKY, server: SCANNED }),
+  scanCase({ id: "paths.total-bound", title: "--max-total-size: the files past it are not read", args: ["scan", "dist", "--max-total-size", "60"], files: LEAKY, server: SCANNED }),
+  scanCase({ id: "values.short-only", title: "only values shorter than 8 bytes: nothing to look for", args: ["scan", "dist"], files: LEAKY, server: scanDisclosed([{ name: "PIN", versionId: "ver_pin", value: "1234567" }]) }),
+  scanCase({ id: "values.none", title: "no value at all: nothing to look for", args: ["scan", "dist"], files: LEAKY, server: scanDisclosed([]) }),
+  scanCase({ id: "values.no-purpose", title: "a server that records no purpose is named, and the scan runs", args: ["scan", "dist/clean.txt"], files: LEAKY, server: [ok("/v1/meta", { serverVersion: "0.10.1", apiMajor: 1, capabilities: [] }), { method: "POST", path: SCAN_DISCLOSURES, status: 200, answer: { items: SCAN_ITEMS, withheld: [] } }] }),
+  scanCase({ id: "baseline.write", title: "--write-baseline records path, item and version, and the scan passes: 0", args: ["scan", "dist", "--write-baseline"], files: LEAKY, server: SCANNED }),
+  scanCase({ id: "baseline.allows", title: "a baseline allows exactly its findings", args: ["scan", "dist"], files: scanRepo({ ...LEAKY, "repo/varlatch-scan-baseline.json": `${JSON.stringify({ version: 1, entries: [{ path: "dist/app.js", item: "API_KEY", versionId: "ver_api2" }] }, null, 2)}\n` }), server: SCANNED }),
+  scanCase({ id: "baseline.explicit-missing", title: "--baseline naming no file: 1, before anything is disclosed", args: ["scan", "dist", "--baseline", "nope.json"], files: LEAKY }),
+  scanCase({ id: "baseline.invalid", title: "a baseline with another field: 1", args: ["scan", "dist"], files: scanRepo({ ...LEAKY, "repo/varlatch-scan-baseline.json": '{"version":1,"entries":[{"path":"a","item":"B","versionId":"v","hash":"x"}]}' }) }),
+  scanCase({ id: "fail.usage", title: "no path and no --staged: 1, with the usage", args: ["scan"], files: scanRepo() }),
+  scanCase({ id: "fail.usage.both", title: "--staged and paths: 1", args: ["scan", "--staged", "a"], files: scanRepo() }),
+  scanCase({ id: "fail.usage.size", title: "a size that is no size: 1", args: ["scan", "a", "--max-total-size", "lots"], files: scanRepo() }),
+  scanCase({ id: "fail.refused", title: "a credential refused secret.reveal: nothing was scanned; 1", args: ["scan", "dist"], files: LEAKY, server: scanDisclosed([apiError(403, "PERMISSION_DENIED", "secret.reveal required")], 403) }),
+  scanCase({ id: "fail.invalid-credential", title: "a credential the server does not know: 1", args: ["scan", "dist"], files: LEAKY, server: [{ method: "GET", path: "/v1/meta", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
+  scanCase({ id: "fail.no-credential", title: "no credential at all: 1", args: ["scan", "dist"], files: LEAKY, env: { VARLATCH_TOKEN: "" } }),
+  scanCase({ id: "fail.unreachable", title: "a server that cannot be reached: 1", args: ["scan", "dist"], files: { ...LEAKY, "repo/varlatch.toml": SCAN_TOML.replace("{{server}}", "http://127.0.0.1:2") } }),
+  scanCase({ id: "fail.server-error", title: "a server error: 1", args: ["scan", "dist"], files: LEAKY, server: scanDisclosed([apiError(500, "INTERNAL", "boom")], 500) }),
+  scanCase({ id: "fail.no-project", title: "no varlatch.toml: 1", args: ["scan", "a.txt"], files: { "repo/a.txt": "x" } }),
+  scanCase({ id: "staged.nothing", title: "a repository with nothing staged: nothing is read or disclosed; 0", args: ["scan", "--staged"], files: { ...scanRepo(), ...gitRepo("repo") } }),
+  scanCase({ id: "staged.nothing.json", title: "the same with --json", args: ["scan", "--staged", "--json"], files: { ...scanRepo(), ...gitRepo("repo") } }),
+  scanCase({ id: "staged.no-repository", title: "--staged outside a Git working tree: 1", args: ["scan", "--staged"], files: scanRepo(), env: { GIT_CEILING_DIRECTORIES: "{{dir}}" } }),
+  scanCase({ id: "hook.install", title: "--install-hook writes the pre-commit hook; nothing is disclosed", args: ["scan", "--install-hook"], files: { ...scanRepo(), ...gitRepo("repo") } }),
+  scanCase({ id: "hook.install.below", title: "a project below the top level, and -e", args: ["scan", "--install-hook", "-e", "it's"], cwd: "repo/services/api", files: { ...gitRepo("repo"), "repo/services/api/varlatch.toml": SCAN_TOML } }),
+  scanCase({ id: "hook.update", title: "a hook varlatch wrote is updated", args: ["scan", "--install-hook", "-e", "staging"], files: { ...scanRepo(), ...gitRepo("repo"), "repo/.git/hooks/pre-commit": `#!/bin/sh\n${HOOK_MARK}\nexec varlatch scan --staged\n` } }),
+  scanCase({ id: "hook.foreign", title: "a hook varlatch did not write is left unchanged: 1", args: ["scan", "--install-hook"], files: { ...scanRepo(), ...gitRepo("repo"), "repo/.git/hooks/pre-commit": "#!/bin/sh\nexit 0\n" } }),
+  scanCase({ id: "hook.foreign.below", title: "the line to add names the project directory", args: ["scan", "--install-hook"], cwd: "repo/app", files: { ...gitRepo("repo"), "repo/app/varlatch.toml": SCAN_TOML, "repo/.git/hooks/pre-commit": "#!/bin/sh\nexit 0\n" } }),
+  scanCase({ id: "hook.usage", title: "--install-hook with a path: 1", args: ["scan", "--install-hook", "a"], files: scanRepo() }),
+];
+
 // ---- 5.6a: the guardrail hook ---------------------------------------------------
 //
 // `agents hook --format <agent>` as a coding agent runs it: one pre-tool-use
@@ -1355,6 +1611,214 @@ const hook56a: TranscriptCase[] = [
   { id: "hook.extra", title: "no argument after the options", args: [...HOOK("claude"), "extra"], stdin: hookEvent("Bash", { command: "cat .env" }) },
   { id: "hook.unknown-option", title: "an unknown option", args: [...HOOK("claude"), "--json"], stdin: hookEvent("Bash", { command: "cat .env" }) },
   { id: "hook.assisted", title: "the same under --assisted", args: ["--assisted", ...HOOK("claude")], stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
+];
+
+// varlatch run --strict (5.4f): one strict retrieval, the environment the
+// command would receive resolved and validated against its Contract
+// Revision, and 78 with every violation (names, classes and reasons, never a
+// value) before anything starts. The command prints what it received.
+const STRICT_PRINT =
+  "const o={};for(const k of ['API_KEY','PORT','LEVEL','REGION','NUM','EXTRA','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))";
+const strictChild = ["--", "node", "-e", STRICT_PRINT];
+const STRICT_SECRET = "s3cr3t-strict-api-key-value";
+const RETRIEVALS = `${ENV}/retrievals`;
+const STRICT_META = ok("/v1/meta", { serverVersion: "0.22.0", apiVersion: 1, capabilities: ["retrieval.strict"] });
+const ALWAYS = { required: { kind: "always" } };
+const STRICT_ITEMS = [
+  item("API_KEY", ALWAYS),
+  item("PORT", { ...ALWAYS, sensitive: false, type: "number" }),
+  item("LEVEL", { sensitive: false, type: "enum", enumValues: ["debug", "info", "warn"], defaultValue: "info" }),
+  item("REGION", { sensitive: false }),
+  item("NUM", { sensitive: false, type: "number" }),
+];
+const strictContract = (items: unknown[] = STRICT_ITEMS, semanticsVersion = 2) => ({ schemaVersion: 1, semanticsVersion, items });
+type Stored = { name: string; sensitive: boolean; value: string | null };
+const STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: STRICT_SECRET },
+  { name: "PORT", sensitive: false, value: "8080" },
+];
+const strictRetrieval = (o: { stored?: Stored[]; contract?: unknown; revision?: unknown; semanticsVersion?: number; withheld?: unknown[]; unexpanded?: unknown[] } = {}): Exchange => {
+  const stored = o.stored ?? STORED;
+  const semanticsVersion = o.semanticsVersion ?? 2;
+  return {
+    method: "POST",
+    path: RETRIEVALS,
+    status: 200,
+    answer: {
+      environmentId: "env_1",
+      manifest: {
+        manifestVersion: 1,
+        projectId: "prj_1",
+        environment: { id: "env_1", rootId: "env_root", parentId: null, tier: "development", expiresAt: null },
+        contract: o.revision === undefined ? { revisionId: RUN_REV, contentHash: RUN_HASH, semanticsVersion } : o.revision,
+        items: stored.map((i) => ({ name: i.name, source: "self", valueRowId: sid("val", i.name), versionId: sid("ver", i.name) })),
+      },
+      stateDigest: DIGEST_A,
+      contract: o.contract === undefined ? strictContract(STRICT_ITEMS, semanticsVersion) : o.contract,
+      items: stored.map((i) => ({ ...i, source: "self", versionId: sid("ver", i.name) })),
+      callerView: { withheld: o.withheld ?? [], unexpanded: o.unexpanded ?? [], contractWithheld: false },
+      validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [] },
+    },
+  };
+};
+const strictRun = (o: Parameters<typeof strictRetrieval>[0] = {}): Exchange[] => [STRICT_META, strictRetrieval(o)];
+const withheldKey = (reason = "permission", requires = "secret.reveal") => ({ stored: [{ name: "API_KEY", sensitive: true, value: null }, STORED[1] as Stored], withheld: [{ name: "API_KEY", reason, requires }] });
+const s = (c: Omit<TranscriptCase, "args"> & { args?: string[]; options?: string[] }): TranscriptCase =>
+  v({ ...c, args: c.args ?? ["run", "--strict", ...(c.options ?? []), ...strictChild] });
+const strict54f: TranscriptCase[] = [
+  // Starting
+  s({ id: "start.valid", title: "a valid configuration starts the command: delivered values, the Contract default, the run context", env: { VARLATCH_RUN_CONTEXT: "inherited-context" }, server: strictRun() }),
+  s({ id: "start.outside-contract", title: "a stored item outside the Contract is delivered as usual, and counted", server: strictRun({ stored: [...STORED, { name: "EXTRA", sensitive: false, value: "extra" }] }) }),
+  s({ id: "start.allow-inherited", title: "--allow-inherited accepts the parent's value, validated", options: ["--allow-inherited", "REGION"], env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "start.withheld-allowed", title: "an allowed inherited value stands in for a withheld one", options: ["--allow-inherited", "API_KEY"], env: { API_KEY: "parent-api-key-value" }, server: strictRun(withheldKey()) }),
+  s({ id: "start.omit-optional", title: "--omit of an item that is not required: absent, and the parent's copy removed", options: ["--omit", "REGION"], env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "start.capability-string", title: "capabilities given as a string: includes() finds a substring", server: [ok("/v1/meta", { serverVersion: "0.22.0", capabilities: "x retrieval.strict y" }), strictRetrieval()] }),
+  s({ id: "start.retry", title: "a server failure: the retrieval is made once more", server: [STRICT_META, { method: "POST", path: RETRIEVALS, status: 500, answer: apiError(500, "INTERNAL") }, strictRetrieval()] }),
+  s({ id: "start.assisted", title: "assisted mode masks the delivered Secret in the command's output", env: ASSISTED, server: strictRun() }),
+  // Each kind of violation: 78, nothing started
+  s({ id: "violation.no-contract", title: "contract: no active Contract", server: strictRun({ revision: null }) }),
+  s({ id: "violation.contract-unreadable", title: "contract: the Contract is not readable by this identity", server: strictRun({ contract: null }) }),
+  s({ id: "violation.semantics", title: "semantics: a version this CLI does not know", server: strictRun({ semanticsVersion: 9 }) }),
+  s({ id: "violation.reserved", title: "reserved: a stored item and a Contract item named VARLATCH_RUN_CONTEXT", server: strictRun({ stored: [...STORED, { name: "VARLATCH_RUN_CONTEXT", sensitive: false, value: "x" }], contract: strictContract([...STRICT_ITEMS, item("VARLATCH_RUN_CONTEXT", { sensitive: false })]) }) }),
+  s({ id: "violation.unresolved-reference", title: "unresolved-reference: a reference left literal for this identity", server: strictRun({ unexpanded: [{ name: "API_KEY", references: ["OTHER_KEY", "THIRD"] }] }) }),
+  s({ id: "violation.withheld", title: "withheld: a required Secret this identity cannot read; no default stands in", server: strictRun(withheldKey()) }),
+  s({ id: "violation.withheld-requirement", title: "withheld: a Requirement such as a Tailnet Constraint is not met", server: strictRun(withheldKey("requirement", "secret.reveal")) }),
+  s({ id: "violation.withheld-parent", title: "withheld: the parent sets it, which --allow-inherited would accept", env: { API_KEY: "parent-api-key-value" }, server: strictRun(withheldKey()) }),
+  s({ id: "violation.inherited", title: "inherited: an item set only in the parent environment", env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "violation.missing", title: "missing: a required item not stored", server: strictRun({ stored: [STORED[0] as Stored] }) }),
+  s({ id: "violation.invalid-delivered", title: "invalid: the delivered value, named, never shown", server: strictRun({ stored: [STORED[0] as Stored, { name: "PORT", sensitive: false, value: "eighty-eighty" }] }) }),
+  s({ id: "violation.invalid-inherited", title: "invalid: the allowed inherited value", options: ["--allow-inherited", "NUM"], env: { NUM: "not-a-number" }, server: strictRun() }),
+  s({ id: "violation.invalid-default", title: "invalid: the Contract default", server: strictRun({ contract: strictContract([...STRICT_ITEMS.filter((i) => i.name !== "LEVEL"), item("LEVEL", { sensitive: false, type: "enum", enumValues: ["debug", "info"], defaultValue: "loud" })]) }) }),
+  s({ id: "violation.omitted", title: "omitted: --omit of a required item", options: ["--omit", "API_KEY"], server: strictRun() }),
+  s({ id: "violation.context", title: "context: a run context over 64 KB is never truncated", server: strictRun({ contract: strictContract([...STRICT_ITEMS, ...Array.from({ length: 260 }, (_, i) => item(`N${String(i).padStart(3, "0")}_${"A".repeat(250)}`))]) }) }),
+  s({ id: "violation.many", title: "every violation at once, in Contract order", env: { REGION: "eu-west" }, server: strictRun({ stored: [{ name: "PORT", sensitive: false, value: "eighty" }], unexpanded: [] }) }),
+  s({ id: "violation.assisted", title: "assisted mode: the same violations, before any masking", env: ASSISTED, server: strictRun({ stored: [STORED[0] as Stored] }) }),
+  // Refusals before the command
+  s({ id: "refused.old-server", title: "a server without strict retrieval: 78, never a default run", server: [ok("/v1/meta", { serverVersion: "0.10.0", apiVersion: 1, capabilities: [] })] }),
+  s({ id: "refused.old-server-no-version", title: "no version given: an older release", server: [ok("/v1/meta", { capabilities: ["identity.whoami"] })] }),
+  s({ id: "refused.allow-inherited-unknown", title: "--allow-inherited names that are not Contract items: 64", options: ["--allow-inherited", "NOPE", "--allow-inherited", "ALSO_NOT", "--allow-inherited", "NOPE"], server: strictRun() }),
+  s({ id: "refused.omit-unknown", title: "--omit of a name neither stored nor in the Contract: 64", options: ["--omit", "NOPE"], server: strictRun() }),
+  s({ id: "refused.retrieval-denied", title: "the retrieval refused: the error's status", server: [STRICT_META, denied(RETRIEVALS, "POST")] }),
+  s({ id: "refused.short-assisted", title: "assisted mode: a Secret too short to mask still stops the run", env: ASSISTED, server: strictRun({ stored: [{ name: "API_KEY", sensitive: true, value: "1234" }, STORED[1] as Stored] }) }),
+];
+
+// ---- 5.6b: varlatch mcp ----------------------------------------------------------
+//
+// The server as an MCP host runs it: JSON-RPC lines on stdin, all sent at
+// once and stdin then closed, so each case also shows that the server
+// answers what it holds before it exits. One call that reaches the server
+// per case, since concurrent calls reach the fake server in any order. The
+// protocol itself (every message, every tool's checks) is in the MCP
+// vectors (go/cmd/varlatch/testdata/vectors/mcp.json).
+
+const MCP_TOKEN = "vlt_cli_mcpAAAA";
+const MCP = (...rest: string[]) => ["mcp", "--server", "{{server}}", ...rest];
+const MCP_ENV = { VARLATCH_TOKEN: MCP_TOKEN };
+const MCP_DIFFERENCES = ["user-agent", "mcp-version"];
+const rpc = (id: unknown, method: string, params?: unknown) => JSON.stringify({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) });
+const INITIALIZE = rpc(0, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "host", version: "1" } });
+const INITIALIZED = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
+const lines = (...l: string[]) => `${l.join("\n")}\n`;
+const callTool = (id: number, name: string, args: Record<string, unknown> = {}) => rpc(id, "tools/call", { name, arguments: args });
+const mcpSession = (...calls: string[]) => lines(INITIALIZE, INITIALIZED, ...calls);
+const mcp = (c: TranscriptCase): TranscriptCase => ({ env: MCP_ENV, ...c, differences: [...(c.differences ?? []), ...MCP_DIFFERENCES] });
+const ORG_PATH = "/v1/organizations/acme";
+const MCP_META = { serverVersion: "0.22.0", apiMajor: 1, capabilities: [] as string[] };
+const MCP_META_WHOAMI = { ...MCP_META, capabilities: ["identity.whoami"] };
+const VALUE_PATH = `${ENV}/values`;
+const CONTRACT_ITEMS = (items: unknown[]) => contractAnswer({ ...ACTIVE, contract: { ...ACTIVE.contract, items } });
+const PLAIN = item("PORT", { sensitive: false });
+const mcpPut = (name: string, body: Record<string, unknown> = { versionId: sid("ver", name) }): Exchange => ({ method: "PUT", path: `${VALUE_PATH}/${name}`, status: 200, answer: body });
+const IN_MCP_REPO = repoFiles('server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n');
+
+const mcp56b: TranscriptCase[] = [
+  // Startup: the options, the variables, and each refusal.
+  { id: "help", title: "--help prints the usage", args: ["mcp", "--help"] },
+  { id: "help.short", title: "-h too", args: ["mcp", "-h"] },
+  { id: "help.then-unknown", title: "every argument is read before --help is acted on", args: ["mcp", "--help", "--nope"] },
+  { id: "unknown-option", title: "an unknown option: 64 and the usage", args: ["mcp", "--json"] },
+  { id: "equals-form", title: "--server=<url> is not a form mcp reads", args: ["mcp", "--server={{server}}"] },
+  { id: "needs-value", title: "--server needs a value", args: ["mcp", "--server"] },
+  { id: "needs-value.org", title: "--org needs a value", args: ["mcp", "--org"] },
+  { id: "allow-disclose", title: "--allow-disclose is refused, not ignored", args: MCP("--allow-disclose"), env: MCP_ENV },
+  { id: "allow-disclose.env", title: "VARLATCH_MCP_ALLOW_DISCLOSE=1 is refused", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "1" } },
+  { id: "allow-disclose.env-any", title: "any value but empty or 0 is refused", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "false" } },
+  mcp({ id: "allow-disclose.env-zero", title: "VARLATCH_MCP_ALLOW_DISCLOSE=0 starts the server", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "0" }, stdin: lines(rpc(1, "ping")) }),
+  mcp({ id: "allow-disclose.env-empty", title: "an empty VARLATCH_MCP_ALLOW_DISCLOSE starts the server", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "" }, stdin: lines(rpc(1, "ping")) }),
+  { id: "no-server", title: "outside a repository with no server: 64", args: ["mcp"], env: MCP_ENV },
+  { id: "no-server.empty-variable", title: "an empty VARLATCH_SERVER is no server", args: ["mcp"], env: { ...MCP_ENV, VARLATCH_SERVER: "" } },
+  { id: "not-signed-in", title: "no credential for the server: 77", args: MCP() },
+  { id: "not-signed-in.userinfo", title: "the server's user name and password are never shown", args: ["mcp", "--server", "http://user:pw-canary@127.0.0.1:9"], differences: ["server-display"] },
+  { id: "agent-run.writes", title: "inside an agent-safe run --allow-writes is refused", args: MCP("--allow-writes"), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1" } },
+  { id: "agent-run.writes-env", title: "and so is VARLATCH_MCP_ALLOW_WRITES=1", args: MCP(), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1", VARLATCH_MCP_ALLOW_WRITES: "1" } },
+  { id: "agent-run.no-credential", title: "inside an agent-safe run without the run's credential: 77 with the --agent-metadata hint", args: MCP(), env: { VARLATCH_AGENT_RUN: "run_1" } },
+  mcp({ id: "agent-run.read-only", title: "inside an agent-safe run with its credential: the read tools", args: MCP(), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1" }, stdin: lines(rpc(1, "tools/list")) }),
+
+  // The protocol: what the host sees without the server.
+  mcp({ id: "session.basics", title: "initialize, initialized, tools/list and ping", args: MCP(), stdin: mcpSession(rpc(1, "tools/list"), rpc(2, "ping")) }),
+  mcp({ id: "session.versions", title: "each supported version is echoed, any other gets the latest", args: MCP(), stdin: lines(
+    rpc(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "h", version: "1" } }),
+    rpc(2, "initialize", { protocolVersion: "1999-01-01", capabilities: {}, clientInfo: { name: "h", version: "1" } })) }),
+  mcp({ id: "session.malformed", title: "lines that are not JSON-RPC are dropped without a word; a method it lacks is -32601", args: MCP(), stdin: lines("garbage", "{}", '{"jsonrpc":"2.0","id":1,"result":{}}', rpc(1.5, "ping"), rpc(1, "resources/list"), JSON.stringify({ jsonrpc: "2.0", method: "notifications/unknown" }), rpc(2, "ping")) }),
+  mcp({ id: "session.invalid-params", title: "a request its method's schema refuses: -32603 with zod's issues", args: MCP(), stdin: lines(rpc(1, "initialize", {}), rpc(2, "tools/call", { arguments: [] })) }),
+  mcp({ id: "session.task", title: "task creation is refused", args: MCP(), stdin: lines(rpc(1, "tools/call", { name: "varlatch_whoami", task: {} })) }),
+  mcp({ id: "session.no-trailing-newline", title: "a last line without a line break is never read", args: MCP(), stdin: `${rpc(1, "ping")}\n${rpc(2, "ping")}` }),
+  mcp({ id: "session.empty", title: "nothing on stdin: exits 0", args: MCP() }),
+  mcp({ id: "tools.writes-flag", title: "--allow-writes adds the two write tools", args: MCP("--allow-writes"), stdin: lines(rpc(1, "tools/list")) }),
+  mcp({ id: "tools.writes-env", title: "so does VARLATCH_MCP_ALLOW_WRITES=1", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_WRITES: "1" }, stdin: lines(rpc(1, "tools/list")) }),
+  mcp({ id: "tools.writes-env-other", title: "VARLATCH_MCP_ALLOW_WRITES=true does not", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_WRITES: "true" }, stdin: lines(rpc(1, "tools/list"), callTool(2, "varlatch_set_value", { item: "A", value: "1" })) }),
+  mcp({ id: "tools.unknown", title: "an unknown tool, and a name every JavaScript object has", args: MCP(), stdin: lines(callTool(1, "varlatch_reveal_value"), callTool(2, "toString")) }),
+
+  // whoami and the defaults.
+  mcp({ id: "whoami.no-capability", title: "whoami on a server that cannot say who a credential belongs to", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.caller", title: "whoami with the caller", args: MCP("--organization", "acme", "--project", "web", "--environment", "dev"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META_WHOAMI), ok("/v1/me", ME_FULL)] }),
+  mcp({ id: "whoami.caller-refused", title: "whoami when /v1/me refuses the credential", args: MCP("-e", "prod"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META_WHOAMI), { method: "GET", path: "/v1/me", status: 401, answer: apiError(401, "UNAUTHENTICATED", "credential expired") }] }),
+  mcp({ id: "whoami.repo", title: "in a repository: the defaults from its context, and --env over them", args: ["mcp", "--env", "staging"], files: IN_MCP_REPO, cwd: "repo", stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.empty-flag", title: "--org \"\" is a default, an empty one", args: MCP("--org", ""), stdin: lines(callTool(1, "varlatch_whoami"), callTool(2, "varlatch_list_projects")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.meta-malformed", title: "a meta answer without a capability list: the TypeError's message", args: MCP(), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", { serverVersion: "0.22.0", capabilities: 5 })] }),
+  mcp({ id: "whoami.unreachable", title: "a server that cannot be reached", args: ["mcp", "--server", "http://127.0.0.1:9"], stdin: lines(callTool(1, "varlatch_whoami")) }),
+
+  // The read tools.
+  mcp({ id: "read.organizations", title: "list organizations", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [ok("/v1/organizations", { items: [{ id: "org_1", slug: "acme", name: "Acme" }], nextCursor: null })] }),
+  mcp({ id: "read.projects", title: "list projects, the organization from the arguments", args: MCP(), stdin: lines(callTool(1, "varlatch_list_projects", { organization: "a c/me" })), server: [ok("/v1/organizations/a%20c%2Fme/projects", { items: [], nextCursor: null })] }),
+  mcp({ id: "read.projects.none", title: "no organization anywhere: the tool says so, no request", args: MCP(), stdin: lines(callTool(1, "varlatch_list_projects")) }),
+  mcp({ id: "read.environments", title: "list environments", args: MCP("--org", "acme", "--project", "web"), stdin: lines(callTool(1, "varlatch_list_environments")), server: [ok(ENVS_PATH, { items: ALL_ENVS.slice(0, 2), nextCursor: null })] }),
+  mcp({ id: "read.effective", title: "effective configuration with includeValues", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_effective_configuration", { includeValues: true })), server: [effective([{ name: "PORT", sensitive: false, source: "self", value: "8080" }], "?include=values")] }),
+  mcp({ id: "read.effective.metadata", title: "and without", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_effective_configuration")), server: [effective([{ name: "API_KEY", sensitive: true, source: "self" }])] }),
+  mcp({ id: "read.validate", title: "validate an environment (POST with an empty body)", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_validate_environment")), server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: true, issues: [], notEvaluated: [] } }] }),
+  mcp({ id: "read.contract", title: "the active contract", args: MCP("--org", "acme", "--project", "web"), stdin: lines(callTool(1, "varlatch_get_active_contract")), server: [contractAnswer()] }),
+  mcp({ id: "read.audit", title: "audit events with a limit and a cursor (form-encoded)", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_list_audit_events", { limit: 5, cursor: "a b/c+é" })), server: [ok(`${ORG_PATH}/audit-events?limit=5&cursor=a+b%2Fc%2B%C3%A9`, { items: [], nextCursor: null })] }),
+  mcp({ id: "read.audit.invalid", title: "a limit out of range: the input's error, no request", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_list_audit_events", { limit: 500 })) }),
+  mcp({ id: "read.refused", title: "an API error as the tool's error", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [denied("/v1/organizations")] }),
+  mcp({ id: "read.empty-answer", title: "an answer with no body: the SDK refuses the result", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [{ method: "GET", path: "/v1/organizations", status: 200, headers: {} }] }),
+  mcp({ id: "read.cancelled", title: "a call cancelled while its request is out gets no answer", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations"), JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1, reason: "host" } }), rpc(2, "ping")), server: [ok("/v1/organizations", { items: [], nextCursor: null })] }),
+  mcp({ id: "read.cancelled-before", title: "a cancellation before the call changes nothing", args: MCP(), stdin: lines(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } }), callTool(1, "varlatch_list_organizations")), server: [ok("/v1/organizations", { items: [], nextCursor: null })] }),
+
+  // The writes.
+  ...((): TranscriptCase[] => {
+    const w = (id: string, title: string, args: Record<string, unknown>, server: Exchange[]): TranscriptCase =>
+      mcp({ id: `write.${id}`, title, args: MCP("--org", "acme", "--project", "web", "-e", "dev", "--allow-writes"), stdin: lines(callTool(1, `varlatch_${id.startsWith("delete") ? "delete" : "set"}_value`, args)), server });
+    return [
+      w("set.secret", "a Secret's value is refused, after reading only the contract", { item: "API_KEY", value: "s3cr3t-canary" }, [CONTRACT_ITEMS([item("API_KEY")])]),
+      w("set.uncontracted", "an item outside the contract counts as a Secret", { item: "OTHER", value: "x" }, [CONTRACT_ITEMS([PLAIN])]),
+      w("set.no-contract", "no active contract (404): a Secret", { item: "PORT", value: "1" }, [denied(CONTRACT_PATH, "GET", 404, "RESOURCE_NOT_FOUND")]),
+      w("set.contract-error", "a contract read that fails otherwise: the API error", { item: "PORT", value: "1" }, [denied(CONTRACT_PATH, "GET", 500, "INTERNAL")]),
+      w("set.present", "replacing a value the environment has needs replace", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), effective([{ name: "PORT", sensitive: false, source: "self" }])]),
+      w("set.inherited", "and so does overriding an inherited one", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), effective([{ name: "PORT", sensitive: false, source: "parent" }])]),
+      w("set.unknown", "presence that cannot be checked counts as existing", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), denied(`${ENV}/effective-configuration`)]),
+      w("set.absent", "a new value is stored, with expectedVersionId", { item: "PORT", value: "1", expectedVersionId: "ver_x" }, [CONTRACT_ITEMS([PLAIN]), effective([]), mcpPut("PORT")]),
+      w("set.replace", "replace naming the item skips the presence check", { item: "PORT", value: "2", replace: "PORT" }, [CONTRACT_ITEMS([PLAIN]), mcpPut("PORT")]),
+      w("set.replace-other", "replace naming another item: refused before any request", { item: "PORT", value: "2", replace: "HOST" }, []),
+      w("set.malformed-contract", "a contract whose items are not a list: the TypeError's message", { item: "PORT", value: "1" }, [contractAnswer({ ...ACTIVE, contract: { items: "x" } })]),
+      w("set.malformed-effective", "an effective configuration whose items are not a list", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), ok(`${ENV}/effective-configuration`, { items: 5 })]),
+      w("set.conflict", "a version conflict from the server", { item: "PORT", value: "1", replace: "PORT", expectedVersionId: "ver_old" }, [CONTRACT_ITEMS([PLAIN]), { method: "PUT", path: `${VALUE_PATH}/PORT`, status: 409, answer: apiError(409, "VERSION_CONFLICT", "the value changed") }]),
+      w("delete", "a deletion with confirm", { item: "PORT", confirm: "PORT" }, [{ method: "DELETE", path: `${VALUE_PATH}/PORT`, status: 204, headers: {} }]),
+      w("delete.no-confirm", "a deletion without confirm: refused, no request", { item: "PORT" }, []),
+      w("delete.refused", "a deletion the server refuses", { item: "PORT", confirm: "PORT" }, [denied(`${VALUE_PATH}/PORT`, "DELETE")]),
+    ];
+  })(),
+  mcp({ id: "write.without-flag", title: "without --allow-writes the write tools do not exist", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_delete_value", { item: "PORT", confirm: "PORT" })) }),
+  mcp({ id: "write.expired", title: "a credential the server no longer takes", args: MCP("--org", "acme", "--project", "web", "-e", "dev", "--allow-writes"), stdin: lines(callTool(1, "varlatch_set_value", { item: "PORT", value: "1" })), server: [{ method: "GET", path: CONTRACT_PATH, status: 401, answer: apiError(401, "UNAUTHENTICATED", "credential expired") }] }),
 ];
 
 // ---------------------------------------------------------------------------
@@ -1733,81 +2197,81 @@ const SERVICE_ROWS = [
 const SERVICE_COMPOSE = "services:\n  backend:\n    environment:\n      LOG_LEVEL: warn\n      API_TOKEN: ${API_TOKEN}\n  dashboard:\n    image: x\n";
 const CYCLIC_COMPOSE = "services:\n  backend: &loop\n    environment:\n      API_TOKEN: ${API_TOKEN}\n    extends: *loop\n";
 const serviceRecord = (compose: string) => ({ uuid: "svc-uuid-0001", name: "convex", compose_parsing_version: 5, docker_compose_raw: compose, docker_compose: "services:\n  backend:\n    env_file: [.env]\n" });
-const s = (c: Omit<TranscriptCase, "differences" | "files" | "cwd"> & { files?: Record<string, string>; cwd?: string; differences?: string[] }): TranscriptCase => v(c);
+const sy = (c: Omit<TranscriptCase, "differences" | "files" | "cwd"> & { files?: Record<string, string>; cwd?: string; differences?: string[] }): TranscriptCase => v(c);
 
 const sync58b: TranscriptCase[] = [
   // the command line
-  s({ id: "sync.none", title: "sync alone (64)", args: ["sync"] }),
-  s({ id: "sync.unknown", title: "an unknown subcommand (64)", args: ["sync", "pull"] }),
-  s({ id: "check.no-platform", title: "check without --platform (64), nothing sent", args: SYNC("check", "--base", "acme") }),
-  s({ id: "check.no-base", title: "check without --base (64)", args: SYNC("check", "--platform", "github-actions") }),
-  s({ id: "check.unknown-option", title: "check is strict: a push-only option (64)", args: SYNC("check", ...GH, "--build-time", "true") }),
-  s({ id: "check.unknown-platform", title: "an unknown platform (64), nothing sent", args: SYNC("check", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
-  s({ id: "check.bad-base", title: "a Coolify base that is not https (64), nothing sent", args: SYNC("check", "--platform", "coolify", "--base", "http://coolify.conformance.test", "--app", "app-uuid-0001"), env: TOKEN_ENV, platform: [] }),
-  s({ id: "check.no-repo", title: "GitHub without --repo (64), nothing sent", args: SYNC("check", "--platform", "github-actions", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
-  s({ id: "push.no-platform", title: "push without --platform (64, after the context)", args: SYNC("push", "--base", "acme") }),
-  s({ id: "push.no-base", title: "push without --base (64)", args: SYNC("push", "--platform", "convex") }),
-  s({ id: "push.unknown-platform", title: "push to an unknown platform (1), nothing sent", args: SYNC("push", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
-  s({ id: "push.bad-destination", title: "push to Coolify with both --app and --service (1), nothing sent", args: SYNC("push", ...COOLIFY, "--service", "svc-uuid-0001"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "sync.none", title: "sync alone (64)", args: ["sync"] }),
+  sy({ id: "sync.unknown", title: "an unknown subcommand (64)", args: ["sync", "pull"] }),
+  sy({ id: "check.no-platform", title: "check without --platform (64), nothing sent", args: SYNC("check", "--base", "acme") }),
+  sy({ id: "check.no-base", title: "check without --base (64)", args: SYNC("check", "--platform", "github-actions") }),
+  sy({ id: "check.unknown-option", title: "check is strict: a push-only option (64)", args: SYNC("check", ...GH, "--build-time", "true") }),
+  sy({ id: "check.unknown-platform", title: "an unknown platform (64), nothing sent", args: SYNC("check", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "check.bad-base", title: "a Coolify base that is not https (64), nothing sent", args: SYNC("check", "--platform", "coolify", "--base", "http://coolify.conformance.test", "--app", "app-uuid-0001"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "check.no-repo", title: "GitHub without --repo (64), nothing sent", args: SYNC("check", "--platform", "github-actions", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "push.no-platform", title: "push without --platform (64, after the context)", args: SYNC("push", "--base", "acme") }),
+  sy({ id: "push.no-base", title: "push without --base (64)", args: SYNC("push", "--platform", "convex") }),
+  sy({ id: "push.unknown-platform", title: "push to an unknown platform (1), nothing sent", args: SYNC("push", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "push.bad-destination", title: "push to Coolify with both --app and --service (1), nothing sent", args: SYNC("push", ...COOLIFY, "--service", "svc-uuid-0001"), env: TOKEN_ENV, platform: [] }),
 
   // sync check, GitHub Actions: write-only, nothing read or disclosed
-  s({ id: "check.github", title: "GitHub Actions: values are write-only, so no key is compared (2); nothing is disclosed", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
-  s({ id: "check.github.json", title: "the same, --json", args: SYNC("check", ...GH, "--gh-environment", "prod", "--json"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
-  s({ id: "check.github.contract", title: "with an active Contract: its items are the keys", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [{ ...syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }) }, ok("/v1/organizations/acme/projects/web/contract", { id: "crv_1", contract: { items: [{ name: "API_TOKEN" }, { name: "NEW_ONE" }, { name: "VARLATCH_RUN_CONTEXT" }] } })], platform: [] }),
-  s({ id: "check.github.contract-403", title: "a Contract this identity may not read: the stored items, said", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }), { ...ok("/v1/organizations/acme/projects/web/contract", apiError(403, "PERMISSION_DENIED")), status: 403 }], platform: [] }),
+  sy({ id: "check.github", title: "GitHub Actions: values are write-only, so no key is compared (2); nothing is disclosed", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.github.json", title: "the same, --json", args: SYNC("check", ...GH, "--gh-environment", "prod", "--json"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.github.contract", title: "with an active Contract: its items are the keys", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [{ ...syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }) }, ok("/v1/organizations/acme/projects/web/contract", { id: "crv_1", contract: { items: [{ name: "API_TOKEN" }, { name: "NEW_ONE" }, { name: "VARLATCH_RUN_CONTEXT" }] } })], platform: [] }),
+  sy({ id: "check.github.contract-403", title: "a Contract this identity may not read: the stored items, said", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }), { ...ok("/v1/organizations/acme/projects/web/contract", apiError(403, "PERMISSION_DENIED")), status: 403 }], platform: [] }),
 
   // sync check, Coolify: the platform first, then only the Secrets it holds are disclosed
-  s({ id: "check.coolify", title: "Coolify: read first, then the one Secret it holds disclosed; drift (1), never a value", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
-  s({ id: "check.coolify.json", title: "the same, --json", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
-  s({ id: "check.coolify.map", title: "--map renames; only the mapped key is compared", args: SYNC("check", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN=OLD_FLAG"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
-  s({ id: "check.coolify.exclude", title: "--exclude a prefix", args: SYNC("check", ...COOLIFY, "--exclude", "API_*", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs()] }),
-  s({ id: "check.map-unknown", title: "--map naming no stored item (64, after reading the Environment)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
-  s({ id: "check.map-and-exclude", title: "--map with --exclude (64)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
-  s({ id: "check.coolify.unauthorized", title: "Coolify refuses the token: not checked (2), nothing disclosed", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs({ message: "Unauthenticated." }, 401)] }),
-  s({ id: "check.coolify.garbage", title: "an answer that is not JSON: not checked (2), the body never repeated", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [{ ...coolifyEnvs(`<html>${SECRET_VALUES.API_TOKEN}</html>`), headers: { "content-type": "text/html" } }] }),
-  s({ id: "check.disclosure-denied", title: "the disclosure refused: said, the Secret not compared", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), { ...exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED")) }], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify", title: "Coolify: read first, then the one Secret it holds disclosed; drift (1), never a value", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.json", title: "the same, --json", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.map", title: "--map renames; only the mapped key is compared", args: SYNC("check", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN=OLD_FLAG"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.exclude", title: "--exclude a prefix", args: SYNC("check", ...COOLIFY, "--exclude", "API_*", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs()] }),
+  sy({ id: "check.map-unknown", title: "--map naming no stored item (64, after reading the Environment)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.map-and-exclude", title: "--map with --exclude (64)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.coolify.unauthorized", title: "Coolify refuses the token: not checked (2), nothing disclosed", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs({ message: "Unauthenticated." }, 401)] }),
+  sy({ id: "check.coolify.garbage", title: "an answer that is not JSON: not checked (2), the body never repeated", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [{ ...coolifyEnvs(`<html>${SECRET_VALUES.API_TOKEN}</html>`), headers: { "content-type": "text/html" } }] }),
+  sy({ id: "check.disclosure-denied", title: "the disclosure refused: said, the Secret not compared", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), { ...exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED")) }], platform: [coolifyEnvs()] }),
 
   // the credential's variable: --token-env, VARLATCH_SYNC_TOKEN, never GITHUB_TOKEN or GH_TOKEN
-  s({ id: "check.token-env.given", title: "--token-env names the variable read", args: SYNC("check", ...COOLIFY, "--token-env", "MY_COOLIFY"), env: { MY_COOLIFY: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
-  s({ id: "check.token-env.absent", title: "without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
-  s({ id: "check.token-env.empty", title: "--token-env naming an empty variable: not checked (2), GITHUB_TOKEN and GH_TOKEN not read, nothing sent to the platform", args: SYNC("check", ...COOLIFY, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, server: [syncEffective()], platform: [] }),
-  s({ id: "check.token-env.unset", title: "no VARLATCH_SYNC_TOKEN and no --token-env: not checked (2)", args: SYNC("check", ...COOLIFY, "--json"), env: GH_ENV, server: [syncEffective()], platform: [] }),
-  s({ id: "push.token-env.given", title: "push: --token-env names the variable GitHub gets", args: SYNC("push", ...GH, "--token-env", "MY_GITHUB", "--map", "LOG_LEVEL"), env: { MY_GITHUB: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
-  s({ id: "push.token-env.absent", title: "push without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
-  s({ id: "push.token-env.empty", title: "push with --token-env naming an empty variable (1): nothing read, disclosed or sent", args: SYNC("push", ...GH, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, platform: [] }),
+  sy({ id: "check.token-env.given", title: "--token-env names the variable read", args: SYNC("check", ...COOLIFY, "--token-env", "MY_COOLIFY"), env: { MY_COOLIFY: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.token-env.absent", title: "without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.token-env.empty", title: "--token-env naming an empty variable: not checked (2), GITHUB_TOKEN and GH_TOKEN not read, nothing sent to the platform", args: SYNC("check", ...COOLIFY, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.token-env.unset", title: "no VARLATCH_SYNC_TOKEN and no --token-env: not checked (2)", args: SYNC("check", ...COOLIFY, "--json"), env: GH_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "push.token-env.given", title: "push: --token-env names the variable GitHub gets", args: SYNC("push", ...GH, "--token-env", "MY_GITHUB", "--map", "LOG_LEVEL"), env: { MY_GITHUB: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.token-env.absent", title: "push without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.token-env.empty", title: "push with --token-env naming an empty variable (1): nothing read, disclosed or sent", args: SYNC("push", ...GH, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, platform: [] }),
 
   // sync check, Convex
-  s({ id: "check.convex", title: "Convex: read, the Secrets it holds disclosed, compared", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
-  s({ id: "check.convex.json", title: "the same, --json", args: SYNC("check", ...CONVEX, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
-  s({ id: "check.convex.unauthorized", title: "Convex refuses the key: not checked (2)", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective()], platform: [convexQuery(null, 401)] }),
+  sy({ id: "check.convex", title: "Convex: read, the Secrets it holds disclosed, compared", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
+  sy({ id: "check.convex.json", title: "the same, --json", args: SYNC("check", ...CONVEX, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
+  sy({ id: "check.convex.unauthorized", title: "Convex refuses the key: not checked (2)", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective()], platform: [convexQuery(null, 401)] }),
 
   // sync push, GitHub Actions: the public key, then one sealed value per secret
-  s({ id: "push.github", title: "GitHub Actions: every readable value, sealed to the repository's key", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("DATABASE_URL"), ghPut("LOG_LEVEL"), ghPut("PIN")] }),
-  s({ id: "push.github.environment", title: "--gh-environment: the environment's secrets", args: SYNC("push", ...GH, "--gh-environment", "prod", "--map", "API_TOKEN=deploy_token"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey("/repos/acme/web/environments/prod/secrets"), ghPut("DEPLOY_TOKEN", 201, "/repos/acme/web/environments/prod/secrets")] }),
-  s({ id: "push.github.skipped", title: "a name GitHub reserves and one not readable are skipped (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN=GITHUB_TOKEN", "--map", "MISSING", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
-  s({ id: "push.github.nothing", title: "nothing readable to push (1): the platform never reached", args: SYNC("push", ...GH, "--map", "MISSING"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
-  s({ id: "push.github.exclude", title: "--exclude without --map", args: SYNC("push", ...GH, "--exclude", "PIN", "--exclude", "DATABASE_*"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("LOG_LEVEL")] }),
-  s({ id: "push.map-and-exclude", title: "--map with --exclude (1), after the disclosure, nothing sent to the platform", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
-  s({ id: "push.github.put-fails", title: "one secret refused: failed, the rest pushed (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN", 422), ghPut("LOG_LEVEL")] }),
-  s({ id: "push.disclosure-denied", title: "the disclosure refused: non-sensitive values only", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED"))], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
-  s({ id: "push.github.key-refused", title: "the public key refused: the adapter's error stops the push (TypeScript lets it escape)", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("GET", "/repos/acme/web/actions/secrets/public-key", 401, { message: "Bad credentials" })], differences: ["uncaught"] }),
+  sy({ id: "push.github", title: "GitHub Actions: every readable value, sealed to the repository's key", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("DATABASE_URL"), ghPut("LOG_LEVEL"), ghPut("PIN")] }),
+  sy({ id: "push.github.environment", title: "--gh-environment: the environment's secrets", args: SYNC("push", ...GH, "--gh-environment", "prod", "--map", "API_TOKEN=deploy_token"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey("/repos/acme/web/environments/prod/secrets"), ghPut("DEPLOY_TOKEN", 201, "/repos/acme/web/environments/prod/secrets")] }),
+  sy({ id: "push.github.skipped", title: "a name GitHub reserves and one not readable are skipped (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN=GITHUB_TOKEN", "--map", "MISSING", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.github.nothing", title: "nothing readable to push (1): the platform never reached", args: SYNC("push", ...GH, "--map", "MISSING"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
+  sy({ id: "push.github.exclude", title: "--exclude without --map", args: SYNC("push", ...GH, "--exclude", "PIN", "--exclude", "DATABASE_*"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.map-and-exclude", title: "--map with --exclude (1), after the disclosure, nothing sent to the platform", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
+  sy({ id: "push.github.put-fails", title: "one secret refused: failed, the rest pushed (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN", 422), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.disclosure-denied", title: "the disclosure refused: non-sensitive values only", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED"))], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.github.key-refused", title: "the public key refused: the adapter's error stops the push (TypeScript lets it escape)", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("GET", "/repos/acme/web/actions/secrets/public-key", 401, { message: "Bad credentials" })], differences: ["uncaught"] }),
 
   // sync push, Coolify and Convex
-  s({ id: "push.coolify", title: "Coolify application: read, then each value written", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" }), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r1" })] }),
-  s({ id: "push.coolify.refused", title: "Coolify refuses a write: failed (1), the platform's words masked", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 422, { message: `token ${SYNC_TOKEN} may not write` })] }),
-  s({ id: "check.coolify.service", title: "a Coolify service: its compose file's use of each name, said", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
-  s({ id: "check.coolify.service.json", title: "the same, --json", args: SYNC("check", ...COOLIFY_SVC, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
-  s({ id: "check.coolify.service.cycle", title: "a compose file with an alias inside its own anchor (step 4 defect 6): Go reports usage unchecked", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(CYCLIC_COMPOSE))], differences: ["compose-usage-unchecked"] }),
-  s({ id: "check.github.environment-flag", title: "-e names the Environment compared", args: SYNC("check", ...GH, "-e", "dev"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
-  s({ id: "push.coolify.build-time", title: "Coolify application: --build-time and --platform-expands go with each write", args: SYNC("push", ...COOLIFY, "--build-time", "true", "--platform-expands", "SERVICE_URL_API,SERVICE_FQDN_API", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
+  sy({ id: "push.coolify", title: "Coolify application: read, then each value written", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" }), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r1" })] }),
+  sy({ id: "push.coolify.refused", title: "Coolify refuses a write: failed (1), the platform's words masked", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 422, { message: `token ${SYNC_TOKEN} may not write` })] }),
+  sy({ id: "check.coolify.service", title: "a Coolify service: its compose file's use of each name, said", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
+  sy({ id: "check.coolify.service.json", title: "the same, --json", args: SYNC("check", ...COOLIFY_SVC, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
+  sy({ id: "check.coolify.service.cycle", title: "a compose file with an alias inside its own anchor (step 4 defect 6): Go reports usage unchecked", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(CYCLIC_COMPOSE))], differences: ["compose-usage-unchecked"] }),
+  sy({ id: "check.github.environment-flag", title: "-e names the Environment compared", args: SYNC("check", ...GH, "-e", "dev"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "push.coolify.build-time", title: "Coolify application: --build-time and --platform-expands go with each write", args: SYNC("push", ...COOLIFY, "--build-time", "true", "--platform-expands", "SERVICE_URL_API,SERVICE_FQDN_API", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
   // A disclosed item without a string value: none is withheld in check and not readable in push; a number never matches the platform's text
   // (TypeScript throws pushing a number, so that push is pinned by internal/cli's TestPushReadsOnlyStringValues, not a transcript)
-  s({ id: "check.coolify.value-absent", title: "a disclosed Secret without a value: withheld (2), never compared as text", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "undefined", is_preview: false }])] }),
-  s({ id: "check.coolify.value-null", title: "a disclosed Secret whose value is null: withheld (2)", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: null }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "null", is_preview: false }])] }),
-  s({ id: "check.coolify.value-number", title: "a disclosed Secret that is a number: differs (1) from the same digits on the platform", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: 12345 }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "12345", is_preview: false }])] }),
-  s({ id: "push.coolify.value-absent", title: "a disclosed Secret without a value is not readable: not pushed (1)", args: SYNC("push", ...COOLIFY, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
+  sy({ id: "check.coolify.value-absent", title: "a disclosed Secret without a value: withheld (2), never compared as text", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "undefined", is_preview: false }])] }),
+  sy({ id: "check.coolify.value-null", title: "a disclosed Secret whose value is null: withheld (2)", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: null }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "null", is_preview: false }])] }),
+  sy({ id: "check.coolify.value-number", title: "a disclosed Secret that is a number: differs (1) from the same digits on the platform", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: 12345 }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "12345", is_preview: false }])] }),
+  sy({ id: "push.coolify.value-absent", title: "a disclosed Secret without a value is not readable: not pushed (1)", args: SYNC("push", ...COOLIFY, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
   // A push to a Coolify service: its compose file read first; a name Coolify sets is skipped, a value with $ the compose file copies is refused
-  s({
+  sy({
     id: "push.coolify.service",
     title: "Coolify service: usage read before any write; MY_URL skipped (Coolify sets it), API_TOKEN refused ($ copied into the compose file), LOG_LEVEL written (1)",
     args: SYNC("push", ...COOLIFY_SVC, "--map", "LOG_LEVEL", "--map", "API_TOKEN", "--map", "MY_URL"),
@@ -1819,7 +2283,240 @@ const sync58b: TranscriptCase[] = [
       plat("PATCH", "/api/v1/services/svc-uuid-0001/envs", 201, { uuid: "s2" }),
     ],
   }),
-  s({ id: "push.convex", title: "Convex: one batch", args: SYNC("push", ...CONVEX, "--map", "LOG_LEVEL", "--map", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("POST", "/api/update_environment_variables", 200, {})] }),
+  sy({ id: "push.convex", title: "Convex: one batch", args: SYNC("push", ...CONVEX, "--map", "LOG_LEVEL", "--map", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("POST", "/api/update_environment_variables", 200, {})] }),
+];
+
+// ---------------------------------------------------------------------------
+// 5.7b: Security (security status, report, controls and set). Times that
+// `ago` and `until` word are in 2100 ("just now") or in 2020 ("within a
+// day"), so the recording reads the same on any day; the process tests
+// hold the other wordings.
+
+const SEC = `${ORG}/security`;
+const SEC_CAPS = ["security.controls", "security.report", "security.approval-keys", "security.credential-review", "security.refused-destinations", "organizations.permissions", "organizations.incident-freeze", "audit.storage-export"];
+const META_SEC = { ...META, capabilities: SEC_CAPS };
+const META_CONTROLS = { ...META, capabilities: ["security.controls"] };
+const META_REVIEW = { ...META, capabilities: ["security.credential-review"] };
+const META_BARE = { serverVersion: "0.19.0", apiVersion: 1, capabilities: [] as string[] };
+const ctl = (control: string, extra: Record<string, unknown> = {}) => ({ control, mode: "off", config: null, version: 0, changedAt: null, changedBy: null, ...extra });
+const LIFETIME = ctl("credential-lifetime", { mode: "report", config: { defaultTtlSeconds: 43200, maxTtlSeconds: 2592000 }, version: 3, changedAt: "2026-11-10T09:00:00Z", changedBy: { id: ADA, name: "Ada" } });
+const STEP_UP = ctl("admin-step-up", { availableModes: ["off", "report", "enforce"], mode: "report", version: 1, changedAt: "2026-11-11T09:00:00.000Z" });
+const PASSKEY = ctl("passkey-verification", { availableModes: ["off", "report", "enforce"] });
+const PROTECTION = ctl("requirement-protection", { changedBy: { id: BOB, name: null } });
+const CONTROLS = { availableModes: ["off", "report"], items: [LIFETIME, STEP_UP, PASSKEY, PROTECTION] };
+const PLAIN_CONTROLS = { availableModes: ["off", "report"], items: [ctl("requirement-protection"), ctl("admin-step-up"), ctl("passkey-verification"), ctl("credential-lifetime")] };
+const metaAt = (meta: unknown) => ok("/v1/meta", meta);
+const controlsAt = (list: unknown = CONTROLS) => ok(`${SEC}/controls`, list);
+const patch = (control: string, status: number, answer: unknown) => exch("PATCH", `${SEC}/controls/${control}`, status, answer);
+const changed = (control: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ control, changed: true, loosened: false, ...extra });
+const SET = (...rest: string[]) => ["security", "set", ...rest];
+const SEC_APPROVAL = { ...APPROVAL, summary: { title: "Change credential-lifetime in Acme", changes: [{ field: "mode", from: "report", to: "off", loosens: true }] } };
+const loosening = (control: string) => patch(control, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }));
+const secPoll = (state: string) => ({ ...ok("/v1/me/approvals/apr_1", { ...SEC_APPROVAL, state }) });
+
+const FUTURE = "2100-01-01T00:00:00.000Z";
+const PAST = "2020-01-01T00:00:00.000Z";
+const reviewed = (id: string, extra: Record<string, unknown> = {}) => ({
+  id, name: null, createdAt: FUTURE, lastUsedAt: null, expiresAt: null, issuedBy: null, reasons: [] as string[],
+  identity: { id: SVC, name: "deployer", kind: "service", state: "live", disabledReason: null }, ...extra,
+});
+const CRED_REVIEW = {
+  idleDays: 30,
+  summary: { reviewed: 5, listed: 3 },
+  items: [
+    reviewed("crd_deploy", { name: "deployer credential", reasons: ["never-used", "no-expiry"], issuedBy: { id: ADA, name: "Ada" } }),
+    reviewed("crd_old", { name: "nightly", lastUsedAt: FUTURE, expiresAt: "2027-06-01T00:00:00Z", reasons: ["idle"], identity: { id: "idn_runner", name: "runner", kind: "workload", state: "disabled", disabledReason: null } }),
+    reviewed("crd_doomed", { createdAt: "not a time", lastUsedAt: FUTURE, reasons: ["no-expiry"], identity: { id: "idn_doomed", name: "doomed", kind: "broker", state: "disabled", disabledReason: "organization-deletion" } }),
+  ],
+  expiry: {
+    warningDays: 7,
+    summary: { soon: 1, expired: 1 },
+    items: [
+      { ...reviewed("crd_soon", { name: "ci" }), expiresAt: PAST, state: "soon" },
+      { ...reviewed("crd_gone"), expiresAt: FUTURE, state: "expired" },
+    ],
+  },
+};
+const QUIET_REVIEW = { idleDays: 30, summary: { reviewed: 1, listed: 0 }, items: [], expiry: { warningDays: 7, summary: { soon: 0, expired: 0 }, items: [] } };
+const OLD_REVIEW = { idleDays: 30, summary: { reviewed: 0, listed: 0 }, items: [] };
+const ONE_REVIEW = { idleDays: 14, summary: { reviewed: 1, listed: 1 }, items: [reviewed("crd_one", { reasons: ["never-used"] })], expiry: { warningDays: 7, summary: { soon: 2, expired: 0 }, items: [] } };
+const REFUSED = {
+  sinceDays: 30,
+  checked: 4,
+  unresolved: 1,
+  items: [
+    { kind: "webhook", name: "Deploy hook", id: "whk_1", scheme: "http", host: "10.0.0.5", port: 80, reason: "private_address", since: FUTURE },
+    { kind: "oidc-issuer", name: null, id: "oidc_1", scheme: "https", host: "issuer.internal", port: 443, reason: "mixed_answers", since: null },
+    { kind: "coolify", name: "", id: "conn_1", scheme: "https", host: "coolify.lan", port: 8443, reason: "port", since: null },
+  ],
+};
+const reviewAt = (review: unknown = CRED_REVIEW) => ok(`${SEC}/credential-review`, review);
+const refusedAt = (answer: unknown = REFUSED, status = 200) => ({ ...ok(`${SEC}/refused-destinations`, answer), status });
+const REPORT = ["security", "report"];
+
+const PERMS_ADMIN = { role: "admin", actions: ["organization.read", "organization.manage", "identity.manage", "policy.read"] };
+const PERMS_MEMBER = { role: "member", actions: ["organization.read"] };
+const entry = (operation: string, n: number, actor: Record<string, unknown> = { id: ADA, name: "Ada", kind: "human" }) => ({ operation, reason: "no-approval", actor, count: n });
+const CONTROL_REPORT = {
+  days: 30, since: "2026-10-20T00:00:00.000Z", generatedAt: "2026-11-19T00:00:00.000Z",
+  controls: [
+    { control: "admin-step-up", total: 7, currentHour: 2, pending: 0, entries: [entry("grant.create", 3), entry("identity.create", 2, { id: SVC, name: null, kind: "service" }), entry("role.update", 1), entry("team.delete", 1)] },
+    { control: "passkey-verification", total: 0, currentHour: 0, pending: 0, entries: [] },
+    { control: "credential-lifetime", total: 4, currentHour: 0, pending: 1, entries: [entry("credential.issue", 4, { id: BOB, name: "Bob" })] },
+  ],
+};
+const KEYS = { summary: { admins: 2, withoutTrustedKey: 1 }, items: [{ identity: { id: ADA, name: "Ada" }, trusted: 2, unconfirmed: 0 }, { identity: { id: BOB, name: "Bob" }, trusted: 0, unconfirmed: 1 }] };
+const REQUIREMENTS = { items: [{ id: "req_1", kind: "tailnet", target: { tier: "production" }, selector: { tailnet: "example.ts.net" } }] };
+const FROZEN = { freeze: { frozenAt: "2026-11-18T08:00:00Z", frozenBy: { id: ADA, name: "Ada" }, reason: "Laptop stolen\u0007 call Bob" } };
+const AUDIT_ACTIVE = {
+  enabled: true,
+  export: {
+    state: "active", destination: { endpoint: "https://s3.eu-central-1.example.com:9000/x", region: "eu-central-1", bucket: "audit", prefix: "", pathStyle: true },
+    retention: { mode: "compliance", days: 400 }, objectLock: "verified", streamId: "st_1", cursor: 42, lag: { pending: 1, oldestPendingAt: "2026-11-19T00:00:00.000Z" },
+    lastSuccessAt: "2026-11-19T01:00:00.000Z", lastAttemptAt: "2026-11-19T01:05:00.000Z", lastHeartbeatAt: "2026-11-19T01:00:00.000Z", lastError: "SlowDown: reduce your request rate",
+    failingSince: "2026-11-19T01:05:00.000Z", stoppedReason: null, unsupportedPlanFormat: null, keyCanRead: false, retentionReadable: null, version: 3, drainDeadline: null,
+  },
+};
+const AUDIT_DRAINING = {
+  enabled: false,
+  export: {
+    ...AUDIT_ACTIVE.export, state: "draining", drainDeadline: "2026-11-20T00:00:00.000Z", destination: { endpoint: "not a url", region: "x", bucket: "b", prefix: "logs/", pathStyle: false },
+    retention: null, objectLock: "not-set", lag: null, lastSuccessAt: null, lastAttemptAt: null, lastHeartbeatAt: null, lastError: null, stoppedReason: "object_conflict", unsupportedPlanFormat: 2, keyCanRead: null,
+  },
+};
+const AUDIT_OFF = { enabled: false, export: { ...AUDIT_ACTIVE.export, state: "removed" } };
+const AUDIT_NONE = { enabled: true, export: null };
+const statusAt = (o: { meta?: unknown; perms?: unknown; freeze?: unknown; list?: unknown; report?: Exchange | null; keys?: Exchange | null; review?: Exchange | null; reqs?: Exchange | null; audit?: Exchange | null } = {}): Exchange[] => [
+  metaAt(o.meta ?? META_SEC),
+  ...(o.perms === null ? [] : [ok(`${ORG}/me/permissions`, o.perms ?? PERMS_ADMIN)]),
+  ...(o.freeze === null ? [] : [ok(`${ORG}/incident-freeze`, o.freeze ?? { freeze: null })]),
+  controlsAt(o.list ?? CONTROLS),
+  ...(o.report === null ? [] : [o.report ?? ok(`${SEC}/control-report?days=30`, CONTROL_REPORT)]),
+  ...(o.keys === null ? [] : [o.keys ?? ok(`${SEC}/approval-keys`, KEYS)]),
+  ...(o.review === null ? [] : [o.review ?? reviewAt()]),
+  ...(o.reqs === null ? [] : [o.reqs ?? ok(`${ORG}/requirements`, REQUIREMENTS)]),
+  ...(o.audit === null ? [] : [o.audit ?? ok(`${ORG}/audit-export`, AUDIT_ACTIVE)]),
+];
+const STATUS = ["security", "status"];
+const UNCAUGHT = ["uncaught"];
+
+const security57b: TranscriptCase[] = [
+  // security controls
+  a({ id: "controls.human", title: "security controls: each control's mode, settings, version and last change", args: ["security", "controls"], server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.json", title: "security controls --json: the organization, then the server's list", args: ["security", "controls", "--json"], server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.no-enforce", title: "a server that enforces nothing yet", args: ["security", "controls"], server: [metaAt(META_CONTROLS), controlsAt(PLAIN_CONTROLS)] }),
+  a({ id: "controls.empty", title: "a server listing no control", args: ["security", "controls"], server: [metaAt(META_CONTROLS), controlsAt({ availableModes: ["off"], items: [] })] }),
+  a({ id: "controls.no-capability", title: "a server without security controls: its version and the capability named (1)", args: ["security", "controls"], server: [metaAt(META_BARE)] }),
+  a({ id: "controls.odd-version", title: "a server version that is not a version: an older release", args: ["security", "controls"], server: [metaAt({ ...META_BARE, serverVersion: "dev build" })] }),
+  a({ id: "controls.refused", title: "the list refused: the server's error", args: ["security", "controls"], server: [metaAt(META_SEC), { ...controlsAt(apiError(403, "PERMISSION_DENIED")), status: 403 }] }),
+  a({ id: "controls.outside", title: "outside a repository: --org and --server", args: ["security", "controls", "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.outside-default", title: "outside a repository, the only credential's server and --org", args: ["security", "controls", "--org", "acme"], ...OUTSIDE, server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.outside-no-org", title: "outside a repository without --org (64)", args: ["security", "controls"], ...OUTSIDE }),
+  a({ id: "controls.org-flag", title: "--org names another organization inside a repository", args: ["security", "controls", "--org", "other"], server: [metaAt(META_SEC), ok("/v1/organizations/other/security/controls", CONTROLS)] }),
+  a({ id: "controls.bad-option", title: "an unknown option (64)", args: ["security", "controls", "--jsno"] }),
+  a({ id: "controls.extra", title: "an extra argument (64)", args: ["security", "controls", "now"] }),
+  a({ id: "controls.not-signed-in", title: "no credential (77)", args: ["security", "controls"], files: NOT_SIGNED_IN }),
+  a({ id: "controls.items-not-a-list", title: "items of another shape stops controls (TypeScript throws a TypeError)", args: ["security", "controls"], server: [metaAt(META_SEC), controlsAt({ availableModes: ["off"], items: { a: 1 } })], differences: UNCAUGHT }),
+
+  // security set: the command line, before any request
+  a({ id: "set.usage.none", title: "set without a control and a mode (64)", args: SET() }),
+  a({ id: "set.usage.mode-missing", title: "set without a mode (64)", args: SET("admin-step-up") }),
+  a({ id: "set.usage.control", title: "an unknown control: the controls listed (64)", args: SET("mfa", "report") }),
+  a({ id: "set.usage.mode", title: "an unknown mode: the modes listed (64)", args: SET("admin-step-up", "strict") }),
+  a({ id: "set.usage.ttl-zero", title: "--default-ttl 0 (64)", args: SET("credential-lifetime", "report", "--default-ttl", "0") }),
+  a({ id: "set.usage.ttl-word", title: "--max-ttl that is not a number (64)", args: SET("credential-lifetime", "report", "--max-ttl", "1d") }),
+  a({ id: "set.usage.ttl-long", title: "--max-ttl of eleven digits (64)", args: SET("credential-lifetime", "report", "--max-ttl", "12345678901") }),
+  a({ id: "set.usage.ttl-other-control", title: "lifetimes with another control (64)", args: SET("admin-step-up", "report", "--max-ttl", "60") }),
+  a({ id: "set.usage.clear-other-control", title: "--clear-config with another control (64)", args: SET("passkey-verification", "off", "--clear-config") }),
+  a({ id: "set.usage.clear-and-ttl", title: "--clear-config with a lifetime (64)", args: SET("credential-lifetime", "off", "--clear-config", "--default-ttl", "60") }),
+  a({ id: "set.usage.default-over-max", title: "--default-ttl above --max-ttl (64)", args: SET("credential-lifetime", "report", "--default-ttl", "7200", "--max-ttl", "3600") }),
+  a({ id: "set.usage.extra", title: "a third argument (64)", args: SET("admin-step-up", "report", "now") }),
+  a({ id: "set.usage.outside", title: "outside a repository without --org (64, after the arguments are checked)", args: SET("admin-step-up", "report"), ...OUTSIDE }),
+
+  // security set: changes
+  a({ id: "set.tighten", title: "turning a control up: applied at once", args: SET("passkey-verification", "report"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "report", version: 1, changedAt: "2026-11-19T10:00:00.000Z", changedBy: { id: ADA, name: "Ada" } }))] }),
+  a({ id: "set.tighten.json", title: "the same, --json: the organization, then the server's change", args: SET("passkey-verification", "report", "--json"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "report", version: 1 }))] }),
+  a({ id: "set.already", title: "the mode it already has: nothing changed", args: SET("credential-lifetime", "report"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, { control: LIFETIME, changed: false, loosened: false })] }),
+  a({ id: "set.already.plain", title: "the same without settings", args: SET("admin-step-up", "report"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 200, { control: STEP_UP, changed: false, loosened: false })] }),
+  a({ id: "set.default-ttl", title: "--default-ttl keeps the maximum the control has", args: SET("credential-lifetime", "report", "--default-ttl", "3600"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, changed({ ...LIFETIME, config: { defaultTtlSeconds: 3600, maxTtlSeconds: 2592000 }, version: 4 }))] }),
+  a({ id: "set.max-ttl.odd", title: "--max-ttl of 90 seconds; a lifetime in minutes", args: SET("credential-lifetime", "report", "--default-ttl", "60", "--max-ttl", "90"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, changed({ ...LIFETIME, config: { defaultTtlSeconds: 60, maxTtlSeconds: 90 }, version: 4 }))] }),
+  a({ id: "set.ttl-without-lifetimes", title: "one lifetime for a control with none yet (64, after reading it)", args: SET("credential-lifetime", "report", "--max-ttl", "3600"), server: [metaAt(META_SEC), controlsAt(PLAIN_CONTROLS)] }),
+  a({ id: "set.default-over-current-max", title: "--default-ttl above the control's maximum (64, after reading it)", args: SET("credential-lifetime", "report", "--default-ttl", "9999999"), server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "set.enforce-step-up", title: "admin-step-up to enforce: what it means from now on", args: SET("admin-step-up", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "enforce", version: 2 }))] }),
+  a({ id: "set.enforce-passkey", title: "passkey-verification to enforce: what it means from now on", args: SET("passkey-verification", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "enforce", version: 1 }))] }),
+  a({ id: "set.not-offered", title: "a mode this server does not offer for the control (1, nothing sent)", args: SET("credential-lifetime", "enforce"), server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "set.no-such-control", title: "a control this server does not list (1, nothing sent)", args: SET("passkey-verification", "report"), server: [metaAt(META_SEC), controlsAt({ ...CONTROLS, items: [LIFETIME] })] }),
+  a({ id: "set.no-capability", title: "a server without security controls (1)", args: SET("admin-step-up", "report"), server: [metaAt(META_BARE)] }),
+  a({ id: "set.mode-unavailable", title: "the server refuses the mode: its words, nothing changed (1)", args: SET("admin-step-up", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 409, apiError(409, "CONTROL_MODE_UNAVAILABLE", "enforce is not available for admin-step-up"))] }),
+  a({ id: "set.version-conflict", title: "the control changed meanwhile: run it again (1)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 409, apiError(409, "VERSION_CONFLICT", "version 1 is not current"))] }),
+  a({ id: "set.refused", title: "another error: the server's error", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "set.clear-config.assisted", title: "loosening in assisted mode: the approval to give, the command to run again (75)", args: ["--assisted", ...SET("credential-lifetime", "off", "--clear-config")], server: [metaAt(META_SEC), controlsAt(), loosening("credential-lifetime")] }),
+  a({ id: "set.loosen.approved", title: "loosening: waits for the approval, then sends the change again with it", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), loosening("admin-step-up"), secPoll("approved"), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "off", version: 2 }, { loosened: true }))] }),
+  a({ id: "set.loosen.cancelled", title: "loosening: the approval cancelled (77)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), loosening("admin-step-up"), secPoll("closed")] }),
+  a({ id: "set.resume", title: "--approval <id>: waits for it before the change, then sends it with the approval", args: ["--approval", "apr_1", ...SET("admin-step-up", "off", "--json")], server: [metaAt(META_SEC), controlsAt(), secPoll("approved"), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "off", version: 2 }, { loosened: true }))] }),
+  a({ id: "set.list-not-a-list", title: "items of another shape stops set before any change (TypeScript throws a TypeError)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt({ availableModes: ["off"], items: null })], differences: UNCAUGHT }),
+
+  // security report
+  a({ id: "report.human", title: "security report: the review by reason, the expiry warnings and the refused destinations", args: REPORT, server: [metaAt(META_SEC), reviewAt(), refusedAt()] }),
+  a({ id: "report.json", title: "security report --json", args: [...REPORT, "--json"], server: [metaAt(META_SEC), reviewAt(), refusedAt()] }),
+  a({ id: "report.review-only", title: "a server without refused destinations: the review alone", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(ONE_REVIEW)] }),
+  a({ id: "report.review-only.json", title: "the same, --json: no refusedDestinations", args: [...REPORT, "--json"], server: [metaAt(META_REVIEW), reviewAt(ONE_REVIEW)] }),
+  a({ id: "report.quiet", title: "nothing to look at", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(QUIET_REVIEW)] }),
+  a({ id: "report.before-expiry", title: "a server before expiry warnings: no expiry line", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(OLD_REVIEW)] }),
+  a({ id: "report.refused-403", title: "refused destinations not permitted: said, and null in --json", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(403, "PERMISSION_DENIED"), 403)] }),
+  a({ id: "report.refused-404.json", title: "hidden (404): refusedDestinations null", args: [...REPORT, "--json"], server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(404, "RESOURCE_NOT_FOUND"), 404)] }),
+  a({ id: "report.refused-500", title: "refused destinations failing otherwise: the server's error", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(500, "INTERNAL"), 500)] }),
+  a({ id: "report.refused-none", title: "every destination checked, none refused", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 3, unresolved: 0, items: [] })] }),
+  a({ id: "report.refused-no-destinations", title: "no destinations configured", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 0, unresolved: 0, items: [] })] }),
+  a({ id: "report.refused-unresolved", title: "none refused of those checked; one name did not resolve", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 2, unresolved: 1, items: [] })] }),
+  a({ id: "report.refused-unresolved-old", title: "the same from a server that does not count what it checked", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, unresolved: 2, items: [] })] }),
+  a({ id: "report.refused-old-server", title: "a server that sends neither count: all clear", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, items: [] })] }),
+  a({ id: "report.no-capability", title: "a server without the credential review (1)", args: REPORT, server: [metaAt(META_CONTROLS)] }),
+  a({ id: "report.outside", title: "outside a repository: --org and --server", args: [...REPORT, "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: [metaAt(META_REVIEW), reviewAt(QUIET_REVIEW)] }),
+  a({ id: "report.outside-no-org", title: "outside a repository without --org (64)", args: REPORT, ...OUTSIDE }),
+  a({ id: "report.usage.bare", title: "security alone (64)", args: ["security"] }),
+  a({ id: "report.usage.unknown", title: "an unknown subcommand (64)", args: ["security", "audit"] }),
+  a({ id: "report.usage.extra", title: "report with an extra argument (64)", args: [...REPORT, "extra"] }),
+  a({ id: "report.usage.option", title: "report with an unknown option (64)", args: [...REPORT, "--jsno"] }),
+  a({ id: "report.not-signed-in", title: "no credential (77)", args: REPORT, files: NOT_SIGNED_IN }),
+  a({ id: "report.review-null", title: "a review of another shape stops report (TypeScript throws a TypeError)", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(null)], differences: UNCAUGHT }),
+
+  // security status
+  a({ id: "status.full", title: "security status: the freeze, controls with counts, keys, credentials, requirements, the audit export, the checklist", args: STATUS, server: statusAt({ freeze: FROZEN }) }),
+  a({ id: "status.full.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ freeze: FROZEN }) }),
+  a({ id: "status.member", title: "a member: only the controls; what needs more is named, never asked for", args: STATUS, server: statusAt({ perms: PERMS_MEMBER, report: null, keys: null, review: null, reqs: null, audit: null }) }),
+  a({ id: "status.member.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ perms: PERMS_MEMBER, report: null, keys: null, review: null, reqs: null, audit: null }) }),
+  a({ id: "status.old-server", title: "a server with only the controls: the rest not offered; Requirements still asked", args: STATUS, server: statusAt({ meta: META_CONTROLS, perms: null, freeze: null, report: null, keys: null, review: null, audit: null, list: PLAIN_CONTROLS }) }),
+  a({ id: "status.refused", title: "a server that cannot say what the caller holds: refusals turn into not shown", args: STATUS, server: statusAt({ meta: { ...META, capabilities: SEC_CAPS.filter((c) => c !== "organizations.permissions") }, perms: null, report: { ...ok(`${SEC}/control-report?days=30`, apiError(403, "PERMISSION_DENIED")), status: 403 }, keys: null, review: { ...reviewAt(apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }, audit: { ...ok(`${ORG}/audit-export`, apiError(403, "PERMISSION_DENIED")), status: 403 } }) }),
+  a({ id: "status.refused.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ meta: { ...META, capabilities: SEC_CAPS.filter((c) => c !== "organizations.permissions") }, perms: null, report: { ...ok(`${SEC}/control-report?days=30`, apiError(403, "PERMISSION_DENIED")), status: 403 }, keys: null, review: { ...reviewAt(apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }, audit: { ...ok(`${ORG}/audit-export`, apiError(403, "PERMISSION_DENIED")), status: 403 } }) }),
+  a({ id: "status.audit-off", title: "the audit export stopped by the host operator, and removed", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_OFF), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.audit-none", title: "no audit export yet", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_NONE), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.audit-draining", title: "a draining export: its deadline, the conflict and the plan format it cannot upload", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_DRAINING), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.all-off", title: "every control off, no counts", args: STATUS, server: statusAt({ list: PLAIN_CONTROLS, report: ok(`${SEC}/control-report?days=30`, { days: 7, since: PAST, generatedAt: PAST, controls: [] }), keys: ok(`${SEC}/approval-keys`, { summary: { admins: 1, withoutTrustedKey: 0 }, items: [{ identity: { id: ADA, name: "Ada" }, trusted: 1, unconfirmed: 0 }] }), review: reviewAt(QUIET_REVIEW), reqs: ok(`${ORG}/requirements`, { items: [] }), audit: ok(`${ORG}/audit-export`, AUDIT_NONE) }) }),
+  a({ id: "status.audit-error", title: "the audit export failing otherwise: the server's error", args: STATUS, server: statusAt({ audit: { ...ok(`${ORG}/audit-export`, apiError(500, "INTERNAL")), status: 500 } }) }),
+  a({ id: "status.no-capability", title: "a server without security controls (1)", args: STATUS, server: [metaAt(META_BARE)] }),
+  a({ id: "status.outside", title: "outside a repository: --org and --server", args: [...STATUS, "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: statusAt({ meta: META_CONTROLS, perms: null, freeze: null, report: null, keys: null, review: null, audit: null, list: PLAIN_CONTROLS }) }),
+  a({ id: "status.outside-no-org", title: "outside a repository without --org (64)", args: STATUS, ...OUTSIDE }),
+  a({ id: "status.bad-option", title: "an unknown option (64)", args: [...STATUS, "--all"] }),
+  a({ id: "status.not-signed-in", title: "no credential (77)", args: STATUS, files: NOT_SIGNED_IN }),
+  a({ id: "status.items-not-a-list", title: "a list of another shape stops status (TypeScript throws a TypeError)", args: STATUS, server: statusAt({ list: { availableModes: ["off"], items: "x" }, report: null, keys: null, review: null, reqs: null, audit: null, perms: { actions: [] } }), differences: UNCAUGHT }),
+];
+
+// ---- 5.8a: guided init, and what it never does off a terminal ---------------
+//
+// Guided `init` runs only with a terminal on both ends, outside assisted
+// mode; a transcript has none, so these cases show the flags path taking
+// over: a usage error (64), nothing written, nothing asked. The guided run
+// itself is in the guided-init vectors (go/cmd/varlatch/testdata/vectors/
+// guided-init.json) and the Go pseudo-terminal tests.
+
+const guided58a: TranscriptCase[] = [
+  { id: "init.no-flags", title: "off a terminal, init without --org and --project is a usage error; nothing is asked or written", args: ["init"] },
+  { id: "init.no-project", title: "--org alone: --project is needed", args: ["init", "--org", "acme"] },
+  { id: "init.no-org", title: "--project alone: the usage", args: ["init", "--project", "web"] },
+  { id: "init.server-only", title: "--server alone: the usage", args: ["init", "--server", "https://varlatch.example.com"] },
+  { id: "init.assisted", title: "assisted mode: the same, a terminal or not", args: ["--assisted", "init"] },
+  { id: "init.marker", title: "a coding agent's marker: the same", args: ["init", "--org", "acme"], env: { CLAUDECODE: "1" } },
 ];
 
 export const AREAS: Record<string, TranscriptCase[]> = {
@@ -1832,8 +2529,15 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.3a-values": values53a,
   "5.3b-contracts": contracts53b,
   "5.3c-types": types53c,
+  "5.4b-run": run54b,
+  "5.4c-redact": redact54c,
+  "5.4d-scan": scan54d,
   "5.4e-find-files": findFiles54e,
+  "5.4f-strict": strict54f,
   "5.6a-hook": hook56a,
+  "5.6b-mcp": mcp56b,
   "5.7a-admin": admin57a,
+  "5.7b-security": security57b,
+  "5.8a-guided-init": guided58a,
   "5.8b-sync": sync58b,
 };

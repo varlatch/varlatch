@@ -90,6 +90,7 @@ export const PLAN = [
   // per command, in an Organization of its own (internal
   // docs/design/go-cli.md, slice 5.7a).
   { suite: "admin-cli", args: (ctx) => [ctx.origin, ctx.token] },
+  { suite: "security-cli", args: (ctx) => [ctx.origin, ctx.token] },
   // Deletion over the API: a Project's deletion, its approval at enforce.
   { suite: "deletion", args: (ctx) => [ctx.origin, ctx.token] },
   // Audit webhook delivery against the target's local receiver.
