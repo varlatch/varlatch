@@ -21,7 +21,8 @@ import { buildApp } from "../src/http/app.js";
 import { loadManifest } from "../src/migration/bundle.js";
 import { encodeRow, type ColumnType, type Value } from "../src/migration/canonical.js";
 import { exportSource } from "../src/migration/export.js";
-import { ImportRefused, importReverse } from "../src/migration/import.js";
+import { ImportRefused, importReverse, MAX_LINE, readReverseBundle } from "../src/migration/import.js";
+import { MIGRATIONS } from "../src/db/migrations/index.js";
 import { changedDomain, syncAllMirrors } from "../src/mirror/publisher.js";
 import { PUBLIC_URL } from "./helpers/device-sign-in.js";
 import { seedInstallation, type Seeded } from "./helpers/migration-seed.js";
@@ -255,6 +256,37 @@ describe.skipIf(!url)("the migration's import", () => {
     expect((await importReverse(target, { path, rootKek: ctx.rootKek })).alreadyImported).toBe(false);
     // Run again once it committed: it finds its own rows and finishes.
     expect((await importReverse(target, { path, rootKek: ctx.rootKek })).alreadyImported).toBe(true);
+    // Another bundle of the same installation and audit is not taken for it:
+    // a table's count differs (here, its Role left out).
+    const other = good.split("\n").slice(0, -2);
+    const roles = other.indexOf('{"table":"roles","rows":1}');
+    expect(roles).toBeGreaterThan(0);
+    other.splice(roles, 2, '{"table":"roles","rows":0}');
+    const different = await importReverse(target, { path: write("other.jsonl", finish(other)), rootKek: ctx.rootKek }).catch((e: unknown) => e);
+    expect((different as Error).message).toMatch(/the database is not empty/);
+  }, 180_000);
+
+  it("refuses an older schema that holds rows as it is: no migration runs on it first", async () => {
+    // The first 30 migrations, as an earlier release left them, and a row.
+    const c = await target.connect();
+    try {
+      await c.query("CREATE TABLE varlatch_migrations (id integer PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())");
+      for (const m of MIGRATIONS.slice(0, 30)) {
+        await c.query(m.sql);
+        await c.query("INSERT INTO varlatch_migrations (id, name) VALUES ($1, $2)", [m.id, m.name]);
+      }
+    } finally {
+      c.release();
+    }
+    await target.query(`INSERT INTO installation (id, kek_canary) VALUES ('inst_earlier', '{}'::jsonb)`);
+    const level = "SELECT max(id) AS id, count(*)::int AS n FROM varlatch_migrations";
+    const before = { level: (await target.query(level)).rows, tables: await relations(target) };
+    const path = write("reverse.jsonl", reverseOf(await exportOf(source)));
+    const err = await importReverse(target, { path, rootKek: ctx.rootKek }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ImportRefused);
+    expect((err as Error).message).toMatch(/the database is not empty \(installation hold rows\)/);
+    expect({ level: (await target.query(level)).rows, tables: await relations(target) }).toEqual(before);
+    expect(before.level).toEqual([{ id: 30, n: 30 }]);
   }, 180_000);
 
   it("as a command: under the migrated-out gate it imports and lifts the gate; under another gate it refuses", async () => {
@@ -282,4 +314,17 @@ describe.skipIf(!url)("the migration's import", () => {
     expect(readGate(state)).toBeNull();
     for (const secret of [...seeded.secrets, token, ctx.rootKek.toString("hex")]) expect((done.stdout + done.stderr).includes(secret)).toBe(false);
   }, 180_000);
+});
+
+describe("the import's reader", () => {
+  it("refuses a line longer than varlatchd's reader takes, before holding it whole", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "varlatch-import-line-"));
+    try {
+      const path = join(dir, "long.jsonl");
+      writeFileSync(path, Buffer.alloc(MAX_LINE + 1, 0x61));
+      await expect(readReverseBundle(path, loadManifest())).rejects.toThrow(/a line longer than 64 MiB/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

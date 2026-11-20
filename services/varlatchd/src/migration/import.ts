@@ -24,11 +24,14 @@ import { decodeRow, type ColumnType, type Value } from "./canonical.js";
  *      the reverse checks, slice 7.6), the end line's counts and SHA-256,
  *      nothing after it. The last audit position is the header's frozen
  *      point. A bundle that fails is refused whole.
- *   2. The database must be fresh: nothing in it, or this release's schema
- *      (the migrate job may have built it) holding no row but what its
- *      migrations seed. The schema is built at this release's level, whose
- *      migrations are the manifest's, and holds no sequence (every id is the
- *      application's; one that appears would need restoring).
+ *   2. The database must be fresh: nothing in it, or a schema of this line
+ *      (the migrate job may have built it, at any level) holding no row but
+ *      what its migrations seed. That is decided before any migration runs,
+ *      so an older database holding rows is refused as it is, never moved
+ *      forward first. The schema is then built at this release's level,
+ *      whose migrations are the manifest's, and holds no sequence (every id
+ *      is the application's; one that appears would need restoring). A line
+ *      longer than varlatchd's reader takes (64 MiB) is refused unread.
  *   3. One transaction loads every row as the bundle holds it, read a second
  *      time, which must be byte for byte the first (its SHA-256):
  *      - as decision 16's replica load does, nothing is renumbered or
@@ -85,20 +88,36 @@ const SEEDED: Readonly<Record<string, number>> = { exposure_backfill: 1 };
 /** Tables of the manifest that are this schema's own bookkeeping, never data the import checks for emptiness. */
 const BOOKKEEPING = new Set(["audit_position", "varlatch_migrations"]);
 
-/** The bundle's lines, each without its "\n"; a last line without one is the bundle cut short. */
+/** The longest line a bundle may hold: varlatchd's reader's limit (bundle.go maxLine). */
+export const MAX_LINE = 64 << 20;
+
+/**
+ * The bundle's lines, each without its "\n"; a last line without one is the
+ * bundle cut short, and a line past {@link MAX_LINE} is refused before it is
+ * held whole. A line's pieces are joined once, when it ends.
+ */
 async function* readLines(path: string): AsyncGenerator<Buffer> {
-  let rest: Buffer = Buffer.alloc(0);
+  let pending: Buffer[] = [];
+  let pendingLength = 0;
+  const tooLong = () => new ImportRefused(`the bundle holds a line longer than ${MAX_LINE >> 20} MiB, which no bundle-v1 writer writes`);
   for await (const chunk of createReadStream(path) as AsyncIterable<Buffer>) {
-    const buf = rest.length > 0 ? Buffer.concat([rest, chunk]) : chunk;
     let start = 0;
     let nl: number;
-    while ((nl = buf.indexOf(0x0a, start)) !== -1) {
-      yield buf.subarray(start, nl);
+    while ((nl = chunk.indexOf(0x0a, start)) !== -1) {
+      const length = pendingLength + (nl - start);
+      if (length > MAX_LINE) throw tooLong();
+      yield pending.length > 0 ? Buffer.concat([...pending, chunk.subarray(start, nl)], length) : chunk.subarray(start, nl);
+      pending = [];
+      pendingLength = 0;
       start = nl + 1;
     }
-    rest = Buffer.from(buf.subarray(start));
+    if (start < chunk.length) {
+      pending.push(chunk.subarray(start));
+      pendingLength += chunk.length - start;
+      if (pendingLength > MAX_LINE) throw tooLong();
+    }
   }
-  if (rest.length > 0) throw new ImportRefused("the bundle is cut short: its last line does not end");
+  if (pendingLength > 0) throw new ImportRefused("the bundle is cut short: its last line does not end");
 }
 
 const COUNT = "(0|[1-9][0-9]*)";
@@ -353,7 +372,10 @@ export async function importReverse(db: PoolQuerier, opts: { path: string; rootK
 
   const client = await db.connect();
   try {
-    // 2. A fresh database, at this release's schema.
+    // 2. A fresh database, at this release's schema. Whether it is fresh is
+    // decided before any migration runs: an older schema holding rows is
+    // refused as it is, never moved forward first (its own release could
+    // not start on it after).
     const status = await migrationStatus(client);
     if (status.unknownApplied.length > 0) throw new ImportRefused("the database holds a newer schema than this release: the import builds a fresh database");
     if (status.appliedIds.length === 0) {
@@ -361,22 +383,23 @@ export async function importReverse(db: PoolQuerier, opts: { path: string; rootK
         `SELECT count(*)::int AS n FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p', 'v', 'm', 'S', 'f')`,
       )).rows[0] as { n: number };
       if (present.n > 0) throw new ImportRefused("the database is not empty: it holds relations of another schema; the import builds a fresh database");
+    } else {
+      const holding = await tablesHoldingRows(client, (await client.query(
+        `SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p') ORDER BY relname`,
+      )).rows.map((r) => (r as { relname: string }).relname));
+      if (holding.length > 0) {
+        if (status.pending.length === 0 && (await holdsThisBundle(client, bundle))) return { bundle, alreadyImported: true };
+        throw notEmpty(holding);
+      }
     }
     await runMigrations(client);
     const sequences = (await client.query(
       `SELECT count(*)::int AS n FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'S'`,
     )).rows[0] as { n: number };
     if (sequences.n > 0) throw new ImportRefused("the schema holds a sequence: every id is the application's, and a sequence would need restoring, which this import does not do");
-    const holding: string[] = [];
-    for (const t of manifest.tables) {
-      if (BOOKKEEPING.has(t.source)) continue;
-      const n = ((await client.query(`SELECT count(*)::int AS n FROM ${quoteIdent(t.source)}`)).rows[0] as { n: number }).n;
-      if (n > (SEEDED[t.source] ?? 0)) holding.push(t.source);
-    }
-    if (holding.length > 0) {
-      if (await holdsThisBundle(client, bundle)) return { bundle, alreadyImported: true };
-      throw new ImportRefused(`the database is not empty (${holding.slice(0, 5).join(", ")}${holding.length > 5 ? ", ..." : ""} hold rows): the import builds a fresh database`);
-    }
+    // And as built: every table of the manifest holds no row but its seed.
+    const holding = await tablesHoldingRows(client, manifest.tables.map((t) => t.source));
+    if (holding.length > 0) throw notEmpty(holding);
 
     // 3. One transaction.
     await client.query("BEGIN");
@@ -429,17 +452,37 @@ export async function importReverse(db: PoolQuerier, opts: { path: string; rootK
   }
 }
 
+type Client = Awaited<ReturnType<PoolQuerier["connect"]>>;
+
+/** Of the given tables, those holding a row beyond the migrations' seed (bookkeeping aside). */
+async function tablesHoldingRows(client: Client, tables: string[]): Promise<string[]> {
+  const holding: string[] = [];
+  for (const t of tables) {
+    if (BOOKKEEPING.has(t)) continue;
+    const n = ((await client.query(`SELECT count(*)::int AS n FROM ${quoteIdent(t)}`)).rows[0] as { n: number }).n;
+    if (n > (SEEDED[t] ?? 0)) holding.push(t);
+  }
+  return holding;
+}
+
+const notEmpty = (holding: string[]) =>
+  new ImportRefused(`the database is not empty (${holding.slice(0, 5).join(", ")}${holding.length > 5 ? ", ..." : ""} hold rows): the import builds a fresh database`);
+
 /**
  * Whether the database is this bundle already imported: an import that
  * committed and then stopped before the gate was lifted runs again to
- * finish. The installation, the last audit position and the number of
- * audit events are the bundle's.
+ * finish. The installation, the last audit position, and every table's
+ * row count are the bundle's.
  */
-async function holdsThisBundle(client: Awaited<ReturnType<PoolQuerier["connect"]>>, bundle: ReverseBundle): Promise<boolean> {
+async function holdsThisBundle(client: Client, bundle: ReverseBundle): Promise<boolean> {
   const r = (await client.query(
     `SELECT (SELECT array_agg(id) FROM installation) AS ids,
-            (SELECT coalesce(max(event_order), 0)::text FROM audit_events) AS last,
-            (SELECT count(*)::int FROM audit_events) AS events`,
-  )).rows[0] as { ids: string[] | null; last: string; events: number };
-  return r.ids?.length === 1 && r.ids[0] === bundle.installationId && r.last === bundle.auditPosition && r.events === bundle.auditEvents;
+            (SELECT coalesce(max(event_order), 0)::text FROM audit_events) AS last`,
+  )).rows[0] as { ids: string[] | null; last: string };
+  if (r.ids?.length !== 1 || r.ids[0] !== bundle.installationId || r.last !== bundle.auditPosition) return false;
+  for (const [table, rows] of Object.entries(bundle.perTable)) {
+    const n = ((await client.query(`SELECT count(*)::int AS n FROM ${quoteIdent(table)}`)).rows[0] as { n: number }).n;
+    if (n !== rows) return false;
+  }
+  return true;
 }
