@@ -78,6 +78,11 @@ func upgradesDir(dataDir string) error {
 			return err
 		}
 		_ = os.Lchown(dir, int(ost.Uid), int(ost.Gid))
+		// The new directory's name is on disk before anything is put in it.
+		if d, err := os.Open(dataDir); err == nil {
+			_ = d.Sync()
+			_ = d.Close()
+		}
 		info, err = os.Lstat(dir)
 	}
 	if err != nil {

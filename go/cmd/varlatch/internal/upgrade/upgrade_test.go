@@ -538,7 +538,8 @@ func TestNotEnoughSpaceChangesNothing(t *testing.T) {
 	defer func(f func(string) (uint64, uint64, error)) { FreeSpace = f }(FreeSpace)
 	FreeSpace = func(path string) (uint64, uint64, error) { return 1 << 20, 7, nil }
 	_, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe))
-	if err == nil || !strings.Contains(err.Error(), "not enough space on the filesystem of") || !strings.Contains(err.Error(), "nothing was changed") {
+	if err == nil || !strings.Contains(err.Error(), "not enough space on the filesystem of") || !strings.Contains(err.Error(), "nothing was changed") ||
+		!strings.Contains(err.Error(), "a copy of the database and a snapshot, the new binaries and the kept ones, and 64 MiB to spare") {
 		t.Fatalf("%v", err)
 	}
 	if j, err := journal.Read(filepath.Dir(h.conf)); j != nil || err != nil {
@@ -561,6 +562,16 @@ func TestALinkedUpgradesDirectoryIsRefused(t *testing.T) {
 	h := newHost(t)
 	inst := h.inspect(t)
 	elsewhere := t.TempDir()
+	// A directory older than an upgrade's 30 days, which prune would remove
+	// if it followed the link.
+	stale := filepath.Join(elsewhere, "stale")
+	if err := os.Mkdir(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-60 * 24 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(elsewhere, filepath.Join(h.data, "upgrades")); err != nil {
 		t.Fatal(err)
 	}
@@ -568,8 +579,8 @@ func TestALinkedUpgradesDirectoryIsRefused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "is not a directory (a link or another file)") || !strings.Contains(err.Error(), "nothing was changed") {
 		t.Fatalf("%v", err)
 	}
-	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
-		t.Fatalf("written through the link: %v", entries)
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 1 || entries[0].Name() != "stale" {
+		t.Fatalf("written or removed through the link: %v", entries)
 	}
 	h.upgrader(nil).mustServe(t, fromVersion, 1)
 }

@@ -277,10 +277,12 @@ func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journ
 	if m.Version != rel.Version {
 		return nil, &Error{Message: fmt.Sprintf("the release's manifest is for %s, not %s; nothing was changed", m.Version, rel.Version)}
 	}
-	u.prune(inst.DataDir)
+	// <data>/upgrades is checked before anything reads or removes there:
+	// prune must never follow a link out of the data directory.
 	if err := upgradesDir(inst.DataDir); err != nil {
 		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
+	u.prune(inst.DataDir)
 	if err := u.enoughSpace(inst, rel); err != nil {
 		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
@@ -488,6 +490,8 @@ func (u *Upgrader) swap(j *journal.Journal) error {
 			return err
 		}
 	}
+	syncDir(j.DataDir)
+	syncDir(original)
 	if err := u.point("swap:original-aside"); err != nil {
 		return err
 	}
@@ -496,6 +500,8 @@ func (u *Upgrader) swap(j *journal.Journal) error {
 			return err
 		}
 	}
+	syncDir(j.DataDir)
+	syncDir(filepath.Join(j.Work, "db"))
 	if err := u.point("swap:database-in"); err != nil {
 		return err
 	}
@@ -628,6 +634,9 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 				left = append(left, "the previous binaries: "+err.Error())
 			}
 		}
+		// The restored names are on disk before the journal records the undo.
+		syncDir(j.DataDir)
+		syncDir(original)
 		os.RemoveAll(filepath.Join(j.Work, "db"))
 		if err := u.point("undo:restored"); err != nil {
 			return err
@@ -832,13 +841,15 @@ func (u *Upgrader) enoughSpace(inst Installed, rel Release) error {
 	type fsNeed struct {
 		path        string
 		bytes, free int64
+		what        []string
 	}
 	var needs []*fsNeed
 	byFS := map[uint64]*fsNeed{}
 	for _, n := range []struct {
 		path  string
 		bytes int64
-	}{{inst.DataDir, 2 * db}, {u.BinDir, binaries}} {
+		what  string
+	}{{inst.DataDir, 2 * db, "a copy of the database and a snapshot"}, {u.BinDir, binaries, "the new binaries and the kept ones"}} {
 		free, fsid, err := FreeSpace(n.path)
 		if err != nil {
 			// Unknown: the writes themselves still fail cleanly.
@@ -849,11 +860,12 @@ func (u *Upgrader) enoughSpace(inst Installed, rel Release) error {
 			needs = append(needs, byFS[fsid])
 		}
 		byFS[fsid].bytes += n.bytes
+		byFS[fsid].what = append(byFS[fsid].what, n.what)
 	}
 	for _, n := range needs {
 		if want := n.bytes + spaceMargin; n.free < want {
-			return fmt.Errorf("not enough space on the filesystem of %s: the upgrade needs %d MiB free (a copy of the database, a snapshot, the binaries, and %d MiB to spare), it has %d MiB",
-				n.path, want>>20, spaceMargin>>20, n.free>>20)
+			return fmt.Errorf("not enough space on the filesystem of %s: the upgrade needs %d MiB free there (%s, and %d MiB to spare), it has %d MiB",
+				n.path, want>>20, strings.Join(n.what, ", "), spaceMargin>>20, n.free>>20)
 		}
 	}
 	return nil
