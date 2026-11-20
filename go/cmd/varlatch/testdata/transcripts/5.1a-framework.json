@@ -2239,6 +2239,9 @@
         "help",
         "self-update"
       ],
+      "differences": [
+        "self-update-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]\n                                                       # replace this CLI with a release build (checksum, signature)\n",
@@ -2259,6 +2262,9 @@
         "self-update",
         "--help"
       ],
+      "differences": [
+        "self-update-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]\n                                                       # replace this CLI with a release build (checksum, signature)\n",
@@ -2278,6 +2284,9 @@
       "args": [
         "self-update",
         "-h"
+      ],
+      "differences": [
+        "self-update-usage"
       ],
       "expect": {
         "status": 0,

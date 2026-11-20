@@ -23,6 +23,14 @@ const HELP_TOPICS = [
   "validate", "values", "whoami",
 ];
 
+/**
+ * `self-update`'s help is the Go CLI's own forms (go/README.md, the
+ * accepted difference `self-update-usage`); this recording is the
+ * TypeScript CLI's.
+ */
+const helpDifferences = (topic: string): { differences?: string[] } =>
+  topic === "self-update" ? { differences: ["self-update-usage"] } : {};
+
 const framework: TranscriptCase[] = [
   { id: "usage.no-command", title: "no command prints the usage on stdout, status 0", args: [] },
   { id: "usage.help", title: "--help prints the usage", args: ["--help"] },
@@ -55,9 +63,9 @@ const framework: TranscriptCase[] = [
   { id: "approval.then-help", title: "--approval with an id, then --help", args: ["--approval", "apr_1", "--help"] },
   { id: "approval.after-separator", title: "--approval after -- belongs to the command, not the CLI", args: ["nosuch", "--", "--approval"] },
   ...HELP_TOPICS.flatMap((topic): TranscriptCase[] => [
-    { id: `help.${topic}`, title: `help ${topic}`, args: ["help", topic] },
-    { id: `help.${topic}.option`, title: `${topic} --help`, args: [topic, "--help"] },
-    { id: `help.${topic}.short`, title: `${topic} -h`, args: [topic, "-h"] },
+    { id: `help.${topic}`, title: `help ${topic}`, args: ["help", topic], ...helpDifferences(topic) },
+    { id: `help.${topic}.option`, title: `${topic} --help`, args: [topic, "--help"], ...helpDifferences(topic) },
+    { id: `help.${topic}.short`, title: `${topic} -h`, args: [topic, "-h"], ...helpDifferences(topic) },
   ]),
   { id: "help.after-separator", title: "--help after -- belongs to the command run starts", args: ["nosuch", "--", "--help"] },
   { id: "help.after-arguments", title: "--help anywhere before -- asks for the command's help", args: ["values", "set", "API_KEY", "--help"] },

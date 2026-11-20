@@ -150,6 +150,15 @@ var differences = map[string]transcript.Difference{
 	"option-value": func(o *transcript.Outcome, _ transcript.Outcome) {
 		o.Stderr = cli.OptionValueDifference(o.Stderr)
 	},
+	// `varlatch help self-update` (and `self-update --help`, `-h`) prints
+	// the Go CLI's forms: it replaces a native binary, always checks the
+	// signature, and takes --prerelease and --allow-downgrade (slice 6.7a).
+	// The recording's usage becomes the Go one.
+	"self-update-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch self-update ") {
+			o.Stdout = cli.SelfUpdateHelp + "\n"
+		}
+	},
 	// A --json document's fields the API defines as scalars: an object or
 	// array a server sent there is left out by the Go CLI (go/README.md,
 	// "--json documents hold only scalars where the API defines them"), so

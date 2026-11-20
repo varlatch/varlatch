@@ -245,12 +245,44 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   user, or `--server` as root), and its tests: every prefix under sh, dash
   and bash runs nothing or the whole script (G8), and end-to-end runs
   against a local HTTPS server. The downloaded CLI checks the signature
-  (`varlatch verify-release`) before anything is put in place.
+  (`varlatch verify-release`) before anything is put in place. Over the
+  TypeScript CLI (slice 6.7a, decision 11): a `varlatch` that is its
+  single-file build is kept until the new one runs from its place, then
+  removed (both CLIs use one store of sign-ins and settings), or, on a host
+  with a Compose installation (`/srv/varlatch` holds `varlatch-install.json`
+  or `docker-compose.yml`), kept beside it as `varlatch-ts` for that
+  installation's host commands; if the new one does not run there, the
+  TypeScript CLI is put back.
 - `install/install.ps1`: the Windows installer (CLI for the current user,
   in `%LOCALAPPDATA%\Programs\Varlatch`, added to the user `PATH`), with
   the same checks as `install.sh` and its G8 tests under PowerShell 5.1 and
   7 (the prefix runner is `install/testdata/ps1prefix.ps1`; the Windows CI
-  job runs the end-to-end install).
+  job runs the end-to-end install). Over the TypeScript CLI in the same
+  folder (`varlatch.cmd` starting `varlatch.cjs`, as the documentation and
+  the tray app install it): both are removed once the new `varlatch.exe`
+  runs from its place; if it does not, it goes and they stay.
+- `cmd/varlatch/internal/selfupdate/`: `varlatch self-update` (slice 6.7a,
+  decision 11). SHA256SUMS and its signature are downloaded over HTTPS from
+  GitHub's hosts only (`api.github.com`, `github.com`, and the release
+  files' storage hosts `objects.githubusercontent.com` and
+  `release-assets.githubusercontent.com`; a redirect anywhere else, or to
+  plain HTTP, is refused) and kept in memory; the signature is verified by
+  `lib/release` for the release workflow's identity of that version's tag
+  before the binary is even requested; the binary is checked against
+  SHA256SUMS in memory, then written to a new file beside the running one,
+  made executable, run once (it must report the version), and renamed over
+  it. On Windows the running file is renamed aside first, and the next run
+  removes it. It never goes to an older release without
+  `--allow-downgrade`, to a prerelease unless this binary is one or
+  `--prerelease` is given, or to a release before the Go line (0.50.0); a
+  copy Homebrew or winget installed (its path is in a Cellar or in WinGet's
+  `Packages` or `Links`) is refused with that package manager's command.
+  Its tests sign fake releases with a test Sigstore generated in the test
+  process (`lib/release/releasetest`; no key is in the repository), and
+  `cmd/varlatch`'s `TestSelfUpdateReplacesItself` runs the real CLI,
+  built with `-tags selfupdatetest` (the only build that can be pointed at
+  another source; `TestSeamIsTestOnly`), on Linux, macOS and Windows. The
+  run against a real published prerelease is slice 6.1b's.
 - `install/varlatchd.service`: the systemd unit (data in
   `/var/lib/varlatch`, configuration in `/etc/varlatch/varlatchd.conf`, the
   Root KEK and BEK as systemd credentials, user `varlatch`, a strict
@@ -793,6 +825,8 @@ it to the recording.
 | Proxies | fetch reads no proxy from the environment, unless Node.js is started with `NODE_USE_ENV_PROXY=1` | never (`Proxy: nil`) | Decision 4; the Go CLI has no Node.js option to honour |
 | Runtime error wording: the code in `Cannot reach the Varlatch server (<code>)` | the first code in the `fetch failed` error's causes that `exitCodes.ts` names, else "network error" | the same codes from Go's errors: refused, reset, timed out, unreachable host or network by their errno; NXDOMAIN `ENOTFOUND`; a temporary DNS failure `EAI_AGAIN`; a connect or TLS handshake timeout `UND_ERR_CONNECT_TIMEOUT`; a connection closed before the answer `UND_ERR_SOCKET`; anything else "network error" | Decision 2: the exit status (69) is the same; the code is Node.js's own wording, mapped where Go can tell |
 | Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
+| `self-update` (slice 6.7a of internal docs/design/go-step6.md) | replaces its `.cjs` with `varlatch-cli-<version>.cjs`; the newest release is GitHub's latest; the signature is checked only when cosign is installed and the release carries one, and `--allow-unverified` (with `--yes`) installs without it; `--repo` and `VARLATCH_RELEASE_REPO` choose another repository | replaces its own binary with the release's `varlatch-<version>-<os>-<arch>[.exe]`, always verifying SHA256SUMS's signature with the embedded verifier first (`--allow-unverified` changes nothing); the newest release is the newest of the Go line (0.50.0 or later), a prerelease only from a prerelease or with `--prerelease`; an older release only with `--allow-downgrade` (64 otherwise); `--repo` and `VARLATCH_RELEASE_REPO` other than `varlatch/varlatch` are refused (64); a Homebrew or winget copy is refused (1) with that package manager's command; `--check --json` reports `install` as `release`, `homebrew` or `winget`; 69 when GitHub cannot be reached, 1 for a release that does not verify | Decision 11: the Go CLI is a native binary from the Go line's releases, and fails closed (Decision 8). Pinned by `internal/selfupdate`'s tests and `TestSelfUpdateReplacesItself`, `TestSelfUpdateRefuses` |
+| `self-update-usage` | `varlatch help self-update`, `self-update --help` and `self-update -h` print the TypeScript CLI's form | the Go CLI's: `[<version>] [--check [--json]] [--yes] [--prerelease] [--allow-downgrade]`, with what it checks; `varlatch --help` keeps the full TypeScript usage | `self-update`. Transcript cases `help.self-update`, `help.self-update.option` and `help.self-update.short` name it; pinned by `TestHelpIsTheUsageText` |
 | `skill-version` (how transcripts compare, not a behaviour) | the skill files `agents install` writes name `varlatch 0.22.0` (`SKILL.md`'s `metadata.generator`, each reference's first line) | this build's version | Each CLI names itself, so `--check` after an upgrade reports the skill as changed; the replay puts this build's version in a case's inputs and expected files alike |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |

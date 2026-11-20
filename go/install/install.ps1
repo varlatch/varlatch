@@ -111,6 +111,18 @@
     return $Found[0]
   }
 
+  # Whether a file is the TypeScript CLI's single-file build
+  # (varlatch-cli-<version>.cjs): its banner is in its first bytes.
+  function Test-TypeScriptCli([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $Stream = [IO.File]::OpenRead($Path)
+    try {
+      $Head = New-Object byte[] 512
+      $Read = $Stream.Read($Head, 0, $Head.Length)
+      return [Text.Encoding]::ASCII.GetString($Head, 0, $Read).Contains('Varlatch CLI. Copyright')
+    } finally { $Stream.Dispose() }
+  }
+
   # Replaces a file atomically when it exists ([IO.File]::Replace, with a
   # real null for "no backup": PowerShell would pass $null as ""), moves it
   # in when it does not; the staged file sits in the same directory.
@@ -199,6 +211,26 @@
     } finally {
       Remove-Item -Recurse -Force -LiteralPath $Temp -ErrorAction SilentlyContinue
       Remove-Item -Force -LiteralPath $Next -ErrorAction SilentlyContinue
+    }
+
+    # The TypeScript CLI this replaces (decision 11): the varlatch.cmd that
+    # starts varlatch.cjs with Node.js, in this folder, as the documentation
+    # and the tray app install it. Both go once the new varlatch runs from
+    # its place; until then both CLIs share one store of sign-ins and
+    # settings. If it does not run, it goes, and the TypeScript CLI stays.
+    $Shim = Join-Path $Dir 'varlatch.cmd'
+    $Script = Join-Path $Dir 'varlatch.cjs'
+    $OldShim = (Test-Path -LiteralPath $Shim -PathType Leaf) -and ([IO.File]::ReadAllText($Shim).Trim() -ceq '@node "%~dp0varlatch.cjs" %*')
+    $OldScript = Test-TypeScriptCli $Script
+    if ($OldShim -or $OldScript) {
+      try { $Run = Invoke-Program $Target @('--version') } catch { $Run = $null }
+      if ($null -eq $Run -or $Run.Code -ne 0) {
+        Remove-Item -Force -LiteralPath $Target -ErrorAction SilentlyContinue
+        Stop-Install "the new varlatch does not run at $Target; the TypeScript CLI (varlatch.cmd, varlatch.cjs) was left in place"
+      }
+      if ($OldShim) { Remove-Item -Force -LiteralPath $Shim }
+      if ($OldScript) { Remove-Item -Force -LiteralPath $Script }
+      Write-Host "Removed the TypeScript CLI (varlatch.cmd, varlatch.cjs) from ${Dir}: varlatch.exe replaces it. Your sign-ins and settings carry over: both CLIs use the same store."
     }
 
     # The user PATH as stored in the registry: its %VARIABLES% unexpanded

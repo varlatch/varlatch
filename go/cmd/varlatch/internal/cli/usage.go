@@ -52,3 +52,14 @@ func CommandHelp(command string) (string, bool) {
 	}
 	return strings.Join(lines, "\n"), true
 }
+
+// commandHelp is what `varlatch help <command>` and `<command> --help`
+// print: CommandHelp, except for `self-update`, whose forms are the Go
+// CLI's (selfUpdateUsage; go/README.md, the accepted difference
+// self-update-usage).
+func commandHelp(command string) (string, bool) {
+	if command == "self-update" {
+		return selfUpdateUsage, true
+	}
+	return CommandHelp(command)
+}
