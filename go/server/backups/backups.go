@@ -658,6 +658,71 @@ func (s *Service) upload(ctx context.Context, id, archive string) (*backup.Deliv
 	return &backup.Delivery{Destination: cfg.BackupDestination, UploadedAt: iso(s.o.Now())}, nil
 }
 
+// ErrNoDestination refuses a remote verification with no destination.
+var ErrNoDestination = errors.New("No backup destination is configured (backup_destinations_file, backup_destination): there is no remote copy to verify")
+
+// VerifyRemote downloads the archive id's uploaded copy from the
+// configured destination, opens it and checks it as the run checked the
+// local one (integrity, this release restores it, the Root KEK opens its
+// canaries), and records the result as its delivery's remote
+// verification. The download is removed after. An archive with no
+// recorded upload is refused.
+// HasDestination is whether a backup destination is configured.
+func (s *Service) HasDestination() bool {
+	return s.o.Config.BackupDestinationsFile != "" && s.o.Config.BackupDestination != ""
+}
+
+func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verification, error) {
+	if !s.HasDestination() {
+		return backup.Verification{}, ErrNoDestination
+	}
+	st, err := backup.ReadStatus(s.dir, s.o.Now())
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	var record *backup.StatusRecord
+	for i := range st.Archives {
+		if st.Archives[i].ArchiveID == id {
+			record = &st.Archives[i]
+		}
+	}
+	if record == nil || record.Delivery == nil {
+		return backup.Verification{}, fmt.Errorf("the archive %s has no recorded upload: there is no remote copy to verify", id)
+	}
+	bek, err := s.bek()
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	defer bek.Clear()
+	client, d, err := s.client()
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	key, err := backup.ObjectKey(d, id)
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	work := filepath.Join(s.dir, Dir, ".remote-"+id)
+	_ = os.RemoveAll(work) // a killed verification's
+	if err := os.Mkdir(work, 0o700); err != nil {
+		return backup.Verification{}, err
+	}
+	defer os.RemoveAll(work)
+	downloaded := filepath.Join(work, id+".vltbak")
+	if _, err := client.Download(ctx, key, downloaded); err != nil {
+		return backup.Verification{}, err
+	}
+	v, err := s.verify(ctx, downloaded, bek, work, &backup.KeyCache{})
+	if err != nil {
+		return v, err
+	}
+	record.Delivery.RemoteVerification = &v
+	if err := backup.SaveStatus(s.dir, *record); err != nil {
+		return v, fmt.Errorf("the archive %s's remote copy was verified, but the result could not be recorded: %w", id, err)
+	}
+	return v, nil
+}
+
 // retain keeps the newest backup_keep archives (by their status record's
 // creation time, else the file's), and removes the others' files.
 func (s *Service) retain(backups string) []string {

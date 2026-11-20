@@ -228,6 +228,11 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		if ok && old.ID == h.ID && slices.Contains(append(slices.Clone(reversing), "rolled-back"), old.Phase) && !slices.Contains(append(slices.Clone(reversing), "open", "rolled-back"), h.Phase) {
 			return fail(ExitFailure, "the migration %s is in phase %s; its journal goes on to the reverse's phases, or back to open, not to %s; nothing was written", h.ID, old.Phase, h.Phase)
 		}
+		// Finished is the migration's last phase: never undone (released),
+		// running or not.
+		if ok && old.ID == h.ID && old.Phase == "finished" && h.Phase != "finished" {
+			return fail(ExitFailure, "the migration %s is finished: its rollback window ended, and its journal stays finished, not %s; nothing was written", h.ID, h.Phase)
+		}
 		if ok && old.ID == h.ID && back && h.Phase != "released" && !redone && !reverseUndone {
 			return fail(ExitFailure, "the migration %s is in phase %s; its journal does not go back to %s; nothing was written", h.ID, old.Phase, h.Phase)
 		}

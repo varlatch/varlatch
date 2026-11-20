@@ -87,20 +87,31 @@ type ReverseSource interface {
 // from .env, and only its name is read. Every volume name the reverse and
 // --finish derive starts with it.
 func (c *Compose) projectName(ctx context.Context) (string, error) {
+	cfg, err := c.config(ctx)
+	return cfg.Name, err
+}
+
+// composeConfig is what migrate reads of `docker compose config`.
+type composeConfig struct {
+	Name     string `json:"name"`
+	Services map[string]struct {
+		NetworkMode string `json:"network_mode"`
+	} `json:"services"`
+}
+
+func (c *Compose) config(ctx context.Context) (composeConfig, error) {
 	r, err := c.docker(ctx, []string{"compose", "config", "--no-interpolate", "--format", "json"}, nil)
 	if err != nil {
-		return "", err
+		return composeConfig{}, err
 	}
 	if r.Code != 0 {
-		return "", errors.New("docker compose config failed: the installation's Compose project could not be read")
+		return composeConfig{}, errors.New("docker compose config failed: the installation's Compose project could not be read")
 	}
-	var m struct {
-		Name string `json:"name"`
-	}
+	var m composeConfig
 	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &m); err != nil || m.Name == "" || strings.ContainsAny(m.Name, "/ \t\n") {
-		return "", errors.New("docker compose config did not name the installation's Compose project")
+		return composeConfig{}, errors.New("docker compose config did not name the installation's Compose project")
 	}
-	return m.Name, nil
+	return m, nil
 }
 
 // RebuildPlan: the fresh volumes, named by the project and the migration

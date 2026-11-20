@@ -39,6 +39,12 @@ func TestTheFinishedJournal(t *testing.T) {
 		}
 	}
 	r.stop(t)
+	// Offline too: no phase but finished, released (an undo) included.
+	for _, phase := range []string{"released", "open", "rolled-back"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitFailure || !strings.Contains(errOut, "stays finished") {
+			t.Errorf("%s after finished, offline: %d %q", phase, code, errOut)
+		}
+	}
 	r = start(t, in)
 	if c := httpStatus(t, r, "GET", "/v1/whoami"); c == http.StatusServiceUnavailable {
 		t.Fatal("isolated at start once finished")

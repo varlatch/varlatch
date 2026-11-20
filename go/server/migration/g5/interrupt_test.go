@@ -301,9 +301,21 @@ func okOr(err error) int {
 // fakeTSCLI is the TypeScript host CLI's backup create and verify.
 func fakeTSCLI(args []string) int {
 	j := strings.Join(args, " ")
+	if f, err := os.OpenFile(state("ts-calls"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+		fmt.Fprintln(f, j)
+		f.Close()
+	}
 	const archive = "0f0e0d0c-0b0a-4908-8706-050403020100"
 	switch {
 	case strings.HasPrefix(j, "admin backup create "):
+		// The real CLI's backup reads the running varlatchd, Postgres and
+		// Convex (docker compose exec).
+		for _, svc := range []string{"varlatchd", "postgres", "convex-backend"} {
+			if stopped(svc) {
+				fmt.Fprintf(os.Stderr, "service %q is not running\n", svc)
+				return 1
+			}
+		}
 		fmt.Printf("Archive created: backups/%s.vltbak (%s)\nUpload completed to offsite; remote retrieval has not been verified.\n", archive, archive)
 	case strings.HasPrefix(j, "admin backup verify ") && strings.Contains(j, "--archive "+archive):
 		fmt.Printf(`{"archiveId":"%s","integrity":true,"compatibility":true,"keyMatch":true,"message":"checks passed"}`+"\n", archive)

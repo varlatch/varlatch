@@ -158,6 +158,33 @@ func logCall(j string) {
 	}
 }
 
+// composeProject is the stand-in's project as Compose resolves it: the
+// file's name:, else the directory's.
+func composeProject() string {
+	if b, err := os.ReadFile("docker-compose.yml"); err == nil {
+		for _, l := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(l, "name: "); ok {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	cwd, _ := os.Getwd()
+	return filepath.Base(cwd)
+}
+
+// volumeThere is the stand-in's Docker volumes: the project's own (its
+// data, varlatch-state, Tailscale's and Caddy's), until removed, and the
+// reverse's fresh ones, once made. Another project's are not there.
+func volumeThere(name string) bool {
+	if vols, _ := os.ReadFile(state("volumes")); slices.Contains(strings.Fields(string(vols)), name) {
+		return true
+	}
+	removed, _ := os.ReadFile(state("removed-volumes"))
+	base, ok := strings.CutPrefix(name, composeProject()+"_")
+	return ok && !slices.Contains(strings.Fields(string(removed)), name) &&
+		slices.Contains([]string{"postgres-data", "convex-data", "varlatch-state", "tailscale-state", "tailscale-socket", "caddy-data", "caddy-config"}, base)
+}
+
 // fakeDockerReverse answers the commands a reverse migration gives; ok is
 // false for the others (fakeDocker's).
 func fakeDockerReverse(args []string) (int, bool) {
@@ -174,6 +201,9 @@ func fakeDockerReverse(args []string) (int, bool) {
 		return 0, true
 	case len(args) >= 4 && args[0] == "compose" && args[1] == "up" && args[2] == "-d":
 		for _, svc := range args[3:] {
+			if strings.HasPrefix(svc, "--") {
+				continue
+			}
 			if svc == "postgres" {
 				// A fresh volume is made empty: no database file yet.
 				vols, _ := os.ReadFile(state("volumes"))
@@ -182,7 +212,9 @@ func fakeDockerReverse(args []string) (int, bool) {
 					if err != nil {
 						return fail("%v", err)
 					}
+					// Convex's fresh volume beside it.
 					fmt.Fprintln(f, v)
+					fmt.Fprintln(f, strings.Replace(v, "_postgres-data-", "_convex-data-", 1))
 					f.Close()
 				}
 			}
@@ -198,37 +230,48 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 		}
 		return okOr(os.WriteFile(state("down"), nil, 0o600)), true
-	case len(args) == 4 && args[0] == "volume" && args[1] == "rm" && args[2] == "-f":
-		inUse := postgresVolume() == args[3] || postgresVolume() == "postgres-data" && strings.HasSuffix(args[3], "_postgres-data")
+	case len(args) == 5 && args[0] == "volume" && args[1] == "inspect" && args[2] == "--format" && args[3] == "{{.Name}}":
+		if !volumeThere(args[4]) {
+			return fail("Error response from daemon: get %s: no such volume", args[4])
+		}
+		fmt.Println(args[4])
+		return 0, true
+	case len(args) == 3 && args[0] == "volume" && args[1] == "rm", len(args) == 4 && args[0] == "volume" && args[1] == "rm" && args[2] == "-f":
+		// rm -f is quiet of a volume not there; rm is not.
+		name := args[len(args)-1]
+		if !volumeThere(name) {
+			if len(args) == 4 {
+				return 0, true
+			}
+			return fail("Error response from daemon: get %s: no such volume", name)
+		}
+		inUse := postgresVolume() == name || postgresVolume() == "postgres-data" && name == composeProject()+"_postgres-data"
 		if inUse && !stopped("postgres") {
-			return fail("Error response from daemon: remove %s: volume is in use", args[3])
+			return fail("Error response from daemon: remove %s: volume is in use", name)
 		}
 		if f, err := os.OpenFile(state("removed-volumes"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
-			fmt.Fprintln(f, args[3])
+			fmt.Fprintln(f, name)
 			f.Close()
 		}
-		if err := os.Remove(state("db-" + args[3] + ".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(state("db-" + name + ".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fail("%v", err)
 		}
 		vols, _ := os.ReadFile(state("volumes"))
-		_ = os.WriteFile(state("volumes"), bytes.ReplaceAll(vols, []byte(args[3]+"\n"), nil), 0o600)
+		_ = os.WriteFile(state("volumes"), bytes.ReplaceAll(vols, []byte(name+"\n"), nil), 0o600)
 		return 0, true
-	case j == "compose config --no-interpolate --format json":
-		// The project as Compose resolves it: the file's name:, else the
-		// directory's.
-		name := ""
-		if b, err := os.ReadFile("docker-compose.yml"); err == nil {
-			for _, l := range strings.Split(string(b), "\n") {
-				if v, ok := strings.CutPrefix(l, "name: "); ok {
-					name = strings.TrimSpace(v)
-				}
+	case j == "compose ps --status running --services":
+		for _, svc := range []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"} {
+			if !stopped(svc) {
+				fmt.Println(svc)
 			}
 		}
-		if name == "" {
-			cwd, _ := os.Getwd()
-			name = filepath.Base(cwd)
+		return 0, true
+	case j == "compose config --no-interpolate --format json":
+		services := map[string]any{"varlatchd": map[string]any{}}
+		if os.Getenv("G5_SHARED_NAMESPACE") != "" {
+			services["varlatchd"] = map[string]any{"network_mode": "service:tailscale"}
 		}
-		out, _ := json.Marshal(map[string]any{"name": name, "services": map[string]any{}})
+		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": services})
 		fmt.Println(string(out))
 		return 0, true
 	case j == "compose --profile deploy run --rm -T convex-deploy":
