@@ -53,7 +53,7 @@ var commands = []command{
 	{name: "credential", slice: "5.7a", run: credentialCommand},
 	{name: "audit-export", slice: "5.7c"},
 	{name: "security", slice: "5.7b"},
-	{name: "admin", slice: "step 6"},
+	{name: "admin", slice: "step 6", partial: adminCommand},
 	{name: "setup", slice: "step 6"},
 	{name: "move", slice: "step 6"},
 	{name: "adopt", slice: "never"},
