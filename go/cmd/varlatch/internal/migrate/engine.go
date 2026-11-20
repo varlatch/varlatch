@@ -854,6 +854,13 @@ func (e *Engine) finishOpen(ctx context.Context, j *Journal) error {
 			}
 		}
 	}
+	if st.Barrier == "" && j.Rollback != nil && j.Rollback.Undone != nil && !j.Rollback.Undone.Released {
+		// Lifted (now, or by a run killed before it journalled it).
+		j.Rollback.Undone.Released = true
+		if err := e.save(ctx, j); err != nil {
+			return err
+		}
+	}
 	if st.Journal != nil && st.Journal.ID == j.ID && st.Journal.Phase == Open && !st.Gate && st.Running {
 		return nil
 	}

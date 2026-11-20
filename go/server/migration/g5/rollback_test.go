@@ -259,6 +259,13 @@ func fakeDockerReverse(args []string) (int, bool) {
 		vols, _ := os.ReadFile(state("volumes"))
 		_ = os.WriteFile(state("volumes"), bytes.ReplaceAll(vols, []byte(name+"\n"), nil), 0o600)
 		return 0, true
+	case len(args) == 6 && args[0] == "ps" && args[1] == "-a" && args[2] == "--filter" && strings.HasPrefix(args[3], "volume=") && args[4] == "--format":
+		// The containers using a volume: Postgres's, on the volume its
+		// Compose files name now (a stopped container keeps its volume).
+		if v := strings.TrimPrefix(args[3], "volume="); v == postgresVolume() {
+			fmt.Println("g5-postgres-1")
+		}
+		return 0, true
 	case j == "compose ps --status running --services":
 		for _, svc := range []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"} {
 			if !stopped(svc) {
@@ -553,6 +560,27 @@ func TestG5Rollback(t *testing.T) {
 	}
 }
 
+// undoneReleased is the source journal's record of an undone reverse:
+// whether there is one, and whether it says the barrier was lifted.
+func (w *world) undoneReleased() (released, ok bool) {
+	w.t.Helper()
+	var j struct {
+		Rollback *struct {
+			Undone *struct {
+				Released bool `json:"barrierReleased"`
+			} `json:"undone"`
+		} `json:"rollback"`
+	}
+	b, err := os.ReadFile(filepath.Join(w.compose, "migration.json"))
+	if err != nil || json.Unmarshal(b, &j) != nil {
+		w.t.Fatalf("the source's journal: %v", err)
+	}
+	if j.Rollback == nil || j.Rollback.Undone == nil {
+		return false, false
+	}
+	return j.Rollback.Undone.Released, true
+}
+
 // The whole reverse, uninterrupted: the TypeScript release serves the
 // installation on its fresh volume, migrate's Compose file names the fresh
 // volumes and the release's pinned image, Go never starts on its copy
@@ -622,8 +650,21 @@ func TestG5RollbackWhole(t *testing.T) {
 		if code := w.rollback("rollback barrier held", "--rollback"); code != -1 {
 			t.Fatalf("not killed: %d", code)
 		}
+		// A reverse bundle's copy, as a run killed mid-import leaves it: the
+		// undo removes it.
+		bundle := filepath.Join(w.compose, "backups", "migration-reverse-0123456789ab.jsonl")
+		if err := os.WriteFile(bundle, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		if code := w.rollback("rollback undone open", "--abort"); code != -1 {
 			t.Fatalf("the undo not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if _, err := os.Stat(bundle); !os.IsNotExist(err) {
+			t.Errorf("the bundle's copy after the undo: %v", err)
+		}
+		// Killed before the release: the journal does not say released.
+		if released, ok := w.undoneReleased(); !ok || released {
+			t.Errorf("at the kill: undone %v, barrier released %v", ok, released)
 		}
 		// Go's journal says open, its barrier stands; then Go stops.
 		w.useState()
@@ -637,6 +678,9 @@ func TestG5RollbackWhole(t *testing.T) {
 			t.Errorf("the barrier was not lifted:\n%s", w.outputs[len(w.outputs)-1])
 		}
 		w.expectReverse("finished", undoneState)
+		if released, ok := w.undoneReleased(); !ok || !released {
+			t.Errorf("after the resume: undone %v, barrier released %v", ok, released)
+		}
 		if t.Failed() {
 			log, _ := os.ReadFile(filepath.Join(w.stateDir, "service.log"))
 			t.Logf("--resume:\n%s\nservice.log (end):\n%s", w.outputs[len(w.outputs)-1], log[max(0, len(log)-3000):])

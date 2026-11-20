@@ -147,6 +147,17 @@ func (w *world) finishRecord() (f struct {
 	return f
 }
 
+// goBarrierFiles is whether Go's data directory holds a reverse's frozen
+// copy and a maintenance gate.
+func (w *world) goBarrierFiles() (frozen, gate bool) {
+	entries, _ := os.ReadDir(w.data)
+	for _, e := range entries {
+		frozen = frozen || strings.HasPrefix(e.Name(), ".migration-frozen-")
+	}
+	_, err := os.Stat(filepath.Join(w.data, "maintenance.json"))
+	return frozen, err == nil
+}
+
 func (w *world) journalPhase() string {
 	s, _ := w.phases()
 	return s
@@ -390,6 +401,20 @@ func TestG5FinishAfterARollback(t *testing.T) {
 	if vols, _ := w.removed(); len(vols) != 0 {
 		t.Errorf("removed without --delete-old-data: %v", vols)
 	}
+	// Go's copy stays behind the reverse's barrier: its paused gate and its
+	// frozen copy, until --delete-old-data (as the rollback said).
+	if !strings.Contains(strings.Join(func() []string {
+		var o []string
+		for _, b := range w.outputs {
+			o = append(o, string(b))
+		}
+		return o
+	}(), "\n"), "Go's copy stays in "+w.data) {
+		t.Error("the rollback did not say where Go's copy stays")
+	}
+	if frozen, gate := w.goBarrierFiles(); !frozen || !gate {
+		t.Errorf("after a plain --finish: frozen copy %v, gate %v; both kept", frozen, gate)
+	}
 	if code := w.run(""); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "Go's copy is kept") {
 		t.Errorf("a new migration over Go's kept copy: %d", code)
 	}
@@ -435,6 +460,9 @@ func TestG5FinishAfterARollback(t *testing.T) {
 	}
 	if !w.goRefuses() {
 		t.Error("varlatchd starts on the discarded copy")
+	}
+	if frozen, gate := w.goBarrierFiles(); frozen || gate {
+		t.Errorf("after --delete-old-data: frozen copy %v, gate %v; both removed", frozen, gate)
 	}
 	w.expectReverse("finished", rbState{"finished", "rolled-back", "source", "", false, true, true})
 	// Go's copy gone, a new migration may begin, and goes through once the
