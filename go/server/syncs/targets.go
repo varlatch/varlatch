@@ -76,32 +76,70 @@ func (m Mapping) JS() jsvalue.Object {
 // stored is the mapping as the jsonb column holds it.
 func (m Mapping) stored() string { return string(jsvalue.Stringify(jsvalue.Jsonb(m.JS()))) }
 
-// ParseMapping reads a stored mapping.
+// ErrStoredMapping is a stored mapping this server cannot read: not the
+// shape normalizeMapping writes. Imported or migrated data can hold one
+// (a TypeScript database's row as it was); it fails its Target's runs and
+// requests, never the daemon.
+var ErrStoredMapping = errors.New("the Sync Target's stored mapping is not one this server reads")
+
+func badMapping(what string) error { return fmt.Errorf("%w: %s", ErrStoredMapping, what) }
+
+// ParseMapping reads a stored mapping: a wildcard, with its exclusions, or
+// an explicit list of at least one item, each named. Anything else is an
+// ErrStoredMapping, never a panic.
 func ParseMapping(text string) (Mapping, error) {
 	v, err := jsvalue.Parse([]byte(text))
 	if err != nil {
-		return Mapping{}, err
+		return Mapping{}, badMapping("not JSON")
 	}
-	o, _ := v.(jsvalue.Object)
+	o, ok := v.(jsvalue.Object)
+	if !ok {
+		return Mapping{}, badMapping("not an object")
+	}
 	kind, _ := o.Get("kind")
 	if kind == "wildcard" {
 		m := Mapping{Wildcard: true}
-		if list, ok := o.Get("exclude"); ok {
+		if raw, ok := o.Get("exclude"); ok {
+			list, ok := raw.([]any)
+			if !ok {
+				return Mapping{}, badMapping("its exclusions are not a list")
+			}
 			m.Exclude = []string{}
-			for _, e := range list.([]any) {
-				m.Exclude = append(m.Exclude, e.(string))
+			for _, e := range list {
+				s, ok := e.(string)
+				if !ok {
+					return Mapping{}, badMapping("an exclusion is not a string")
+				}
+				m.Exclude = append(m.Exclude, s)
 			}
 		}
 		return m, nil
 	}
+	if kind != nil && kind != "explicit" {
+		return Mapping{}, badMapping("its kind is neither wildcard nor explicit")
+	}
+	raw, _ := o.Get("items")
+	items, ok := raw.([]any)
+	if !ok || len(items) == 0 {
+		return Mapping{}, badMapping("it lists no item")
+	}
 	var m Mapping
-	items, _ := o.Get("items")
-	for _, raw := range items.([]any) {
-		it := raw.(jsvalue.Object)
-		name, _ := it.Get("name")
-		item := MappingItem{Name: name.(string)}
-		if r, ok := it.Get("rename"); ok {
-			s := r.(string)
+	for _, r := range items {
+		it, ok := r.(jsvalue.Object)
+		if !ok {
+			return Mapping{}, badMapping("an item is not an object")
+		}
+		n, _ := it.Get("name")
+		name, ok := n.(string)
+		if !ok || name == "" {
+			return Mapping{}, badMapping("an item has no name")
+		}
+		item := MappingItem{Name: name}
+		if rr, ok := it.Get("rename"); ok && rr != nil {
+			s, ok := rr.(string)
+			if !ok {
+				return Mapping{}, badMapping("an item's rename is not a string")
+			}
 			item.Rename = &s
 		}
 		affirmed, _ := it.Get("secretAffirmed")
@@ -517,7 +555,11 @@ func (s *Service) UpdateTarget(ctx context.Context, req Request, org authz.Organ
 			if err != nil {
 				return err
 			}
-			raw = jsvalue.JSOrder(v).(jsvalue.Object)
+			o, ok := jsvalue.JSOrder(v).(jsvalue.Object)
+			if !ok {
+				return errors.New("the Sync Target's stored destination is not an object")
+			}
+			raw = o
 		}
 		dest, err := adapter.CanonicalizeDestination(SyncObject(raw))
 		if err != nil {
