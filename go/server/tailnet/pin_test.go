@@ -94,8 +94,33 @@ func TestPinLifecycle(t *testing.T) {
 	if v := m.RepinView(ctx); !v.Offered || v.Reason != PinSuffix || v.Closed != PinSuffix {
 		t.Fatalf("the re-pin view: %+v", v)
 	}
+	// #319 review P2: a confirmation is bound to its offer. The view's
+	// token names nothing; while the node moves to yet another suffix
+	// after it was shown, a re-pin given it changes nothing and records
+	// nothing, and the refusal carries the fresh view and its own token.
+	shown := m.RepinView(ctx)
+	if len(shown.Offer) != 32 || strings.Contains(shown.Offer, "corp") || shown.Offer != shown.OfferToken() || m.RepinView(ctx).Offer != shown.Offer {
+		t.Fatalf("the offer %q", shown.Offer)
+	}
+	node.set(running("Tabc123", "corp-moved.ts.net"), nil)
+	recorded := false
+	_, next, err := m.Repin(ctx, false, shown.Offer, func(_, _ *Pin, _ string) error { recorded = true; return nil })
+	var changed *ErrOfferChanged
+	if !errors.As(err, &changed) || next != nil || recorded || changed.View.Observed.Suffix != "corp-moved.ts.net" || changed.View.Offer == shown.Offer || changed.View.Offer == "" {
+		t.Fatalf("a stale offer: %v %+v recorded=%v", err, next, recorded)
+	}
+	if saved, _ := LoadPin(filepath.Join(dir, PinFile)); saved == nil || saved.Suffix != "corp.ts.net" {
+		t.Fatalf("a stale offer changed the saved pin: %+v", saved)
+	}
+	// Back as shown: the same offer, accepted; record gets the reason of
+	// the re-pin's own check.
+	node.set(running("Tabc123", "corp-new.ts.net"), nil)
+	var why string
 	clock = clock.Add(time.Hour)
-	old, next, err := m.Repin(ctx, false)
+	old, next, err := m.Repin(ctx, false, shown.Offer, func(_, _ *Pin, reason string) error { why = reason; return nil })
+	if why != PinSuffix {
+		t.Errorf("record's reason %q", why)
+	}
 	if err != nil || old.Suffix != "corp.ts.net" || next.Suffix != "corp-new.ts.net" || next.Closed != nil ||
 		len(next.History) != 1 || next.History[0] != (Repinned{Suffix: "corp.ts.net", Until: "2026-11-17T10:00:00Z", Reason: PinSuffix}) {
 		t.Fatalf("the re-pin: %+v %+v %v", old, next, err)
@@ -113,7 +138,7 @@ func TestPinLifecycle(t *testing.T) {
 	if m.Closed() != PinTailnet {
 		t.Fatalf("another tailnet: %q", m.Closed())
 	}
-	if _, _, err := m.Repin(ctx, false); !errors.Is(err, ErrNotRepinnable) {
+	if _, _, err := m.Repin(ctx, false, "", nil); !errors.Is(err, ErrNotRepinnable) {
 		t.Fatalf("re-pinning another tailnet: %v", err)
 	}
 	r := NewPinnedResolver(nil, m, nil)
@@ -133,7 +158,7 @@ func TestPinLifecycle(t *testing.T) {
 	if m2.Closed() != PinControlURL {
 		t.Fatalf("another control server: %q", m2.Closed())
 	}
-	if _, _, err := m2.Repin(ctx, true); !errors.Is(err, ErrNotRepinnable) {
+	if _, _, err := m2.Repin(ctx, true, "", nil); !errors.Is(err, ErrNotRepinnable) {
 		t.Fatalf("re-pinning another control server: %v", err)
 	}
 }
@@ -150,7 +175,7 @@ func TestHeadscalePin(t *testing.T) {
 	if m.Closed() != PinSuffix {
 		t.Fatalf("a changed base_domain: %q", m.Closed())
 	}
-	if _, next, err := m.Repin(ctx, false); err != nil || next.Suffix != "vl2.example" || next.TailnetID != "" {
+	if _, next, err := m.Repin(ctx, false, "", nil); err != nil || next.Suffix != "vl2.example" || next.TailnetID != "" {
 		t.Fatalf("its re-pin: %+v %v", next, err)
 	}
 }
@@ -201,7 +226,7 @@ func TestAFailedCheckClosesAccess(t *testing.T) {
 	node.set(running("Tabc123", "corp-new.ts.net"), nil)
 	m.Check(ctx)
 	node.set(Status{}, errors.New("down"))
-	if _, next, err := m.Repin(ctx, false); !errors.Is(err, ErrNothingToRepin) || next != nil {
+	if _, next, err := m.Repin(ctx, false, "", nil); !errors.Is(err, ErrNothingToRepin) || next != nil {
 		t.Fatalf("a re-pin without a current observation: %+v %v", next, err)
 	}
 	if saved, _ := LoadPin(filepath.Join(dir, PinFile)); saved.Suffix != "corp.ts.net" || saved.Closed == nil {
@@ -272,7 +297,7 @@ func TestAMismatchIsLatched(t *testing.T) {
 	if v := m.RepinView(ctx); !v.Offered || v.Reason != "" || v.Closed != PinSuffix {
 		t.Fatalf("the re-pin view: %+v", v)
 	}
-	old, next, err := m.Repin(ctx, false)
+	old, next, err := m.Repin(ctx, false, "", nil)
 	if err != nil || next == nil || old.Suffix != "corp.ts.net" || next.Suffix != "corp.ts.net" || next.Closed != nil || next.History[0].Reason != PinSuffix || !open(m) {
 		t.Fatalf("the reopening: %+v %+v %v", old, next, err)
 	}
@@ -280,7 +305,7 @@ func TestAMismatchIsLatched(t *testing.T) {
 	// back either, and the re-pin still refuses it while it is different.
 	node.set(running("Tother9", "corp.ts.net"), nil)
 	m.Check(ctx)
-	if _, _, err := m.Repin(ctx, false); !errors.Is(err, ErrNotRepinnable) {
+	if _, _, err := m.Repin(ctx, false, "", nil); !errors.Is(err, ErrNotRepinnable) {
 		t.Fatalf("re-pinning another tailnet: %v", err)
 	}
 }
@@ -306,10 +331,10 @@ func TestAMissingPinIsNeverTakenSilently(t *testing.T) {
 	if v := m.RepinView(ctx); !v.Missing || !v.Offered {
 		t.Fatalf("the view: %+v", v)
 	}
-	if _, _, err := m.Repin(ctx, false); !errors.Is(err, ErrPinMissing) || open(m) {
+	if _, _, err := m.Repin(ctx, false, "", nil); !errors.Is(err, ErrPinMissing) || open(m) {
 		t.Fatalf("a re-pin without adopting: %v", err)
 	}
-	old, next, err := m.Repin(ctx, true)
+	old, next, err := m.Repin(ctx, true, "", nil)
 	if err != nil || old != nil || next.Suffix != "corp.ts.net" || next.TailnetID != "Tabc123" || !open(m) {
 		t.Fatalf("adopting: %+v %+v %v", old, next, err)
 	}
@@ -374,7 +399,7 @@ func TestResolutionsDoNotOutliveAccess(t *testing.T) {
 		t.Fatal("a Tailnet Context counts after access closed")
 	}
 	// Reopened by a re-pin: a new period, the old resolution stays void.
-	if _, _, err := m.Repin(ctx, false); err != nil || !open(m) {
+	if _, _, err := m.Repin(ctx, false, "", nil); err != nil || !open(m) {
 		t.Fatal(err)
 	}
 	if res.Valid() || authz.TailnetFrom(actx) != nil {
@@ -407,7 +432,7 @@ func TestAdmission(t *testing.T) {
 	if _, _, ok := m.Admit(ctx); ok {
 		t.Fatal("admitted after access closed")
 	}
-	if _, _, err := m.Repin(ctx, false); err != nil {
+	if _, _, err := m.Repin(ctx, false, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if again, rel, ok := m.Admit(ctx); !ok || again.Err() != nil {
@@ -500,7 +525,7 @@ func TestAWriteDoesNotCommitAfterAccessCloses(t *testing.T) {
 	// Reopened by a re-pin (the tailnet changed back): the old admission
 	// stays refused, a new one commits.
 	status.set(running("Tabc123", "corp.ts.net"), nil)
-	if _, _, err := m.Repin(ctx, false); err != nil || !open(m) {
+	if _, _, err := m.Repin(ctx, false, "", nil); err != nil || !open(m) {
 		t.Fatalf("the re-pin: %v", err)
 	}
 	// Its context was cancelled when access closed, so the write is
@@ -545,7 +570,7 @@ func TestTheWrittenReportFollowsAccess(t *testing.T) {
 	if f := file(); !strings.Contains(f, `"node":{"status":"fail","reason":"OTHER_TAILNET"}`) {
 		t.Fatalf("after a mismatch: %s", f)
 	}
-	if _, _, err := m.Repin(ctx, false); err != nil {
+	if _, _, err := m.Repin(ctx, false, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if f := file(); !strings.Contains(f, `"node":{"status":"pass"}`) {
@@ -592,7 +617,7 @@ func TestTheBrowserEndpointFollowsThePin(t *testing.T) {
 	if got := m.BrowserEndpoint(); m.Closed() != PinSuffix || got != "" {
 		t.Fatalf("closed, after a restart (%q): the endpoint %q", m.Closed(), got)
 	}
-	if _, _, err := m.Repin(ctx, false); err != nil {
+	if _, _, err := m.Repin(ctx, false, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := m.BrowserEndpoint(); got != "https://varlatch.corp-new.ts.net:8443" {

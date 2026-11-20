@@ -3,11 +3,13 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
-	"github.com/varlatch/varlatch/go/server/outbound"
 )
 
 // TestSecurityWordsReadOwnNames: a server's kind, reason or objectLock
@@ -40,18 +42,34 @@ func TestSecurityWordsReadOwnNames(t *testing.T) {
 }
 
 // TestOutboundWordsAreTheProtocols: the labels and the host note security
-// report prints are @varlatch/protocol's, as go/server/outbound holds them.
+// report prints are @varlatch/protocol's. It reads them from the vectors
+// the TypeScript server generated, which go/server/outbound is held to as
+// well, as data: the CLI (Apache-2.0) imports no server package (G12).
 func TestOutboundWordsAreTheProtocols(t *testing.T) {
-	if len(outboundRefusalLabels) != len(outbound.Labels) {
-		t.Fatalf("%d labels, outbound has %d", len(outboundRefusalLabels), len(outbound.Labels))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "server", "outbound", "testdata", "ts-vectors.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for reason, label := range outbound.Labels {
-		if got := outboundRefusalLabels[string(reason)]; got != label {
-			t.Errorf("%s: %q, outbound %q", reason, got, label)
+	var v struct {
+		Messages []struct {
+			Reason string `json:"reason"`
+			Label  string `json:"label"`
+		} `json:"messages"`
+		HostNote string `json:"hostNote"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Messages) == 0 || len(outboundRefusalLabels) != len(v.Messages) {
+		t.Fatalf("%d labels, the protocol has %d", len(outboundRefusalLabels), len(v.Messages))
+	}
+	for _, m := range v.Messages {
+		if got, ok := outboundRefusalLabels[m.Reason]; !ok || got != m.Label {
+			t.Errorf("%s: %q, the protocol %q", m.Reason, got, m.Label)
 		}
 	}
-	if outboundHostNote != outbound.HostNote {
-		t.Errorf("host note %q, outbound %q", outboundHostNote, outbound.HostNote)
+	if outboundHostNote != v.HostNote {
+		t.Errorf("host note %q, the protocol %q", outboundHostNote, v.HostNote)
 	}
 }
 

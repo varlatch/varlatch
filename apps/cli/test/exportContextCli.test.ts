@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { cliCommand, goLacks } from "./cliUnderTest.js";
 import { contractItem, revision } from "./fixtures.js";
 
 /**
@@ -76,7 +77,7 @@ let disclosureStates: State[] | "denied";
 const next = (states: State[]) => (states.length > 1 ? states.shift()! : states[0]!);
 
 beforeAll(async () => {
-  if (!existsSync(CLI)) throw new Error("the CLI bundle is not built: run pnpm --filter @varlatch/cli build");
+  if (!process.env.VARLATCH_TEST_CLI && !existsSync(CLI)) throw new Error("the CLI bundle is not built: run pnpm --filter @varlatch/cli build");
   server = createServer((req, res) => {
     requests.push(`${req.method} ${req.url}`);
     const json = (status: number, body: unknown) => res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(body));
@@ -129,9 +130,10 @@ const PRINT = `process.stdout.write(JSON.stringify({ context: process.env.VARLAT
 
 function cli(args: string[], extraEnv: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
+    const [command, argv] = cliCommand(CLI, args);
     execFile(
-      process.execPath,
-      [CLI, ...args],
+      command,
+      argv,
       {
         cwd: repo,
         env: { PATH: process.env.PATH, HOME: repo, VARLATCH_CONFIG_DIR: join(repo, ".config"), VARLATCH_TOKEN: "vlt_test_token", ...extraEnv },
@@ -173,7 +175,7 @@ describe("varlatch run --export-context, end to end", () => {
     expect(seen.context).not.toContain("sk-disclosed-1");
   });
 
-  it("with --redact too, the command gets a valid context and its delivered Secret is masked in its output", async () => {
+  it.skipIf(goLacks("5.4c"))("with --redact too, the command gets a valid context and its delivered Secret is masked in its output", async () => {
     // The command sees the real value and echoes it on both streams; only
     // the relayed output is masked, and the context stays intact.
     const echo = `const key = process.env.API_KEY ?? "";

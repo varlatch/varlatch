@@ -1,0 +1,373 @@
+{
+  "schema": 2,
+  "comment": "Recorded from the TypeScript CLI by apps/cli/test/go-transcripts.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "area": "5.6a-hook",
+  "cases": [
+    {
+      "id": "hook.claude.denied",
+      "title": "Claude Code: reading .env is denied, on stdout with status 0",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "claude"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat .env\"}}",
+      "files": {
+        ".env": "API_KEY=fake\n"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Varlatch guardrail: .env files are off limits to coding agents, because their values would enter your context. To see the names a .env file sets, run `varlatch --assisted import --dry-run <file>`; to store its values, `varlatch --assisted import <file>`. .env.example and .env.schema stay readable.\"}}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          ".env": {
+            "mode": "0644",
+            "content": "API_KEY=fake\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.codex.denied",
+      "title": "Codex: the same decision",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "codex"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat .env\"}}",
+      "files": {
+        ".env": "API_KEY=fake\n"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Varlatch guardrail: .env files are off limits to coding agents, because their values would enter your context. To see the names a .env file sets, run `varlatch --assisted import --dry-run <file>`; to store its values, `varlatch --assisted import <file>`. .env.example and .env.schema stay readable.\"}}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          ".env": {
+            "mode": "0644",
+            "content": "API_KEY=fake\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.allowed",
+      "title": "an allowed call: no decision, nothing printed",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "claude"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm test\"}}",
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.store",
+      "title": "the credential store is denied",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "claude"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"{{dir}}/home/.config/varlatch/credentials.json\"}}",
+      "expect": {
+        "status": 0,
+        "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Varlatch guardrail: the Varlatch credential store is off limits: it holds the human's credential. Use `varlatch --assisted status --json` to see who is signed in.\"}}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.run-env",
+      "title": "printing the environment of a varlatch run is denied",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "codex"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"varlatch run -- env\"}}",
+      "expect": {
+        "status": 0,
+        "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Varlatch guardrail: printing the environment of a `varlatch run` would print Secrets. Run the command you need instead, and list names with `varlatch --assisted values list --json`.\"}}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.search",
+      "title": "a recursive search that would print .env lines is denied",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "claude"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"grep -r KEY .\"}}",
+      "files": {
+        ".env": "API_KEY=fake\n",
+        "src/app.ts": "x\n"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Varlatch guardrail: this search would print lines of .env files, so their values would enter your context. Leave them out (`grep -r --exclude='.env*'`, `rg --glob '!.env*'`, the Grep tool's glob `!.env*`) or search only the files you need. To see the names a .env file sets, run `varlatch --assisted import --dry-run <file>`.\"}}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          ".env": {
+            "mode": "0644",
+            "content": "API_KEY=fake\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "src/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "src/app.ts": {
+            "mode": "0644",
+            "content": "x\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.other-event",
+      "title": "another event: no decision",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "claude"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat .env\"}}",
+      "files": {
+        ".env": "API_KEY=fake\n"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          ".env": {
+            "mode": "0644",
+            "content": "API_KEY=fake\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.garbage",
+      "title": "input it cannot read: no decision, status 0",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "claude"
+      ],
+      "stdin": "garbage",
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.empty",
+      "title": "nothing on stdin: no decision",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "codex"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.no-format",
+      "title": "--format is needed",
+      "args": [
+        "agents",
+        "hook"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat .env\"}}",
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch agents hook: --format must be one of claude, codex\nUsage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]|hook --format <claude|codex>>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.unknown-format",
+      "title": "--format names one of the two",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "cursor"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat .env\"}}",
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch agents hook: --format must be one of claude, codex\nUsage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]|hook --format <claude|codex>>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.extra",
+      "title": "no argument after the options",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "claude",
+        "extra"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat .env\"}}",
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch agents hook: unexpected argument extra\nUsage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]|hook --format <claude|codex>>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.unknown-option",
+      "title": "an unknown option",
+      "args": [
+        "agents",
+        "hook",
+        "--format",
+        "claude",
+        "--json"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat .env\"}}",
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch agents hook: unknown option --json\nUsage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]|hook --format <claude|codex>>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.assisted",
+      "title": "the same under --assisted",
+      "args": [
+        "--assisted",
+        "agents",
+        "hook",
+        "--format",
+        "claude"
+      ],
+      "stdin": "{\"session_id\":\"s\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat .env\"}}",
+      "files": {
+        ".env": "API_KEY=fake\n"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Varlatch guardrail: .env files are off limits to coding agents, because their values would enter your context. To see the names a .env file sets, run `varlatch --assisted import --dry-run <file>`; to store its values, `varlatch --assisted import <file>`. .env.example and .env.schema stay readable.\"}}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          ".env": {
+            "mode": "0644",
+            "content": "API_KEY=fake\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    }
+  ]
+}

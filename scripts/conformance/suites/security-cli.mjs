@@ -88,8 +88,9 @@ try {
   await smoke("security-cli.controls", "security controls lists the organization's controls", ["security", "controls", ...scope], (r) => r.stdout.startsWith(`Security controls for ${org}:`));
   await smoke("security-cli.controls-json", "security controls --json lists them", ["security", "controls", ...scope, "--json"], (d) => d.organization === org && Array.isArray(d.items) && d.items.length >= 4);
 
-  // set: tightening applies at once
-  await smoke("security-cli.set", "security set turns a control up at once (security controls agrees)", ["security", "set", "passkey-verification", "report", ...scope], () => modeOf("passkey-verification") === "report");
+  // set: tightening applies at once (from off, as a new Organization has it, so the check cannot pass unchanged)
+  const before = modeOf("passkey-verification");
+  await smoke("security-cli.set", "security set turns a control up at once (security controls agrees)", ["security", "set", "passkey-verification", "report", ...scope], () => before === "off" && modeOf("passkey-verification") === "report");
   await smoke("security-cli.set-json", "security set --json prints the change", ["security", "set", "requirement-protection", "report", ...scope, "--json"], (d) => d.organization === org && d.control?.control === "requirement-protection" && d.changed === true);
 
   // set: loosening in assisted mode stops for the approval, changes nothing, prints no credential
@@ -98,7 +99,7 @@ try {
   check(
     "security-cli.set-loosen-waits",
     "a loosening in assisted mode stops for the approval (75), unchanged and with no credential printed",
-    loosen.code === 75 && approvalId !== undefined && !/vlt_[a-z]+_/.test(loosen.out) && modeOf("requirement-protection") === "report",
+    loosen.code === 75 && approvalId !== undefined && !/vlt_[a-z]+_/.test(loosen.out) && !loosen.out.includes(token) && modeOf("requirement-protection") === "report",
     `exit ${loosen.code}: ${loosen.out.trim().slice(-400)}`,
   );
   if (approvalId) await api("POST", `/me/approvals/${approvalId}/cancel`);

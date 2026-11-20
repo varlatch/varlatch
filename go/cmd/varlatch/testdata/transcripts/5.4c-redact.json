@@ -1,0 +1,2321 @@
+{
+  "schema": 2,
+  "comment": "Recorded from the TypeScript CLI by apps/cli/test/go-transcripts.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "area": "5.4c-redact",
+  "cases": [
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "surrogate.redact",
+      "title": "--redact masks a Secret with an unpaired surrogate as the command prints it (run.surrogate: one U+FFFD)",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "console.log('s='+process.env.SURR)"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "SURR",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "SURR",
+                "value": "surrogate-\ud83d-value",
+                "versionId": "ver_surraaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "s=[REDACTED:SURR]\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.masked",
+      "title": "--redact masks the delivered Secret in the command's output; plain values are shown",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"[REDACTED:API_KEY]\",\"PORT\":\"8080\"}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.stderr",
+      "title": "--redact masks stderr too",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "console.error('err='+process.env.API_KEY);console.log('out='+process.env.API_KEY)"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "out=[REDACTED:API_KEY]\n",
+        "stderr": "err=[REDACTED:API_KEY]\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.split",
+      "title": "a Secret split across two writes is masked once",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const v=process.env.API_KEY;process.stdout.write('k='+v.slice(0,6));setTimeout(()=>process.stdout.write(v.slice(6)+'\\n'),100)"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "k=[REDACTED:API_KEY]\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.short",
+      "title": "a Secret too short to mask passes unchanged, and is named",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              },
+              {
+                "name": "PIN",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PIN",
+                "value": "1234",
+                "versionId": "ver_pinaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"[REDACTED:API_KEY]\",\"PORT\":\"8080\",\"PIN\":\"1234\"}\n",
+        "stderr": "varlatch: --redact does not mask values shorter than 8 bytes; these pass through unchanged: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.nothing-sensitive",
+      "title": "nothing sensitive delivered: the output as written",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"PORT\":\"8080\"}\n",
+        "stderr": "varlatch: --redact: no Secret was delivered to this run, so there is nothing to mask\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.inherited",
+      "title": "an inherited value is not masked: only what Varlatch delivered",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "LEGACY_KEY": "inherited-legacy-value"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"[REDACTED:API_KEY]\",\"PORT\":\"8080\",\"LEGACY_KEY\":\"inherited-legacy-value\"}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.disclosure-denied",
+      "title": "the disclosure refused: nothing to mask, said",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 403,
+          "answer": {
+            "error": {
+              "code": "PERMISSION_DENIED",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"PORT\":\"8080\"}\n",
+        "stderr": "varlatch: secrets not disclosed (PERMISSION_DENIED); continuing with non-sensitive values\nvarlatch: 1 value(s) withheld by policy: API_KEY\nvarlatch: --redact: no Secret was delivered to this run, so there is nothing to mask\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.exit-status",
+      "title": "the command's own status passes through",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "process.exit(3)"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 3,
+        "stdout": "",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.omit",
+      "title": "--redact with --omit: the omitted Secret is never asked for",
+      "args": [
+        "run",
+        "--redact",
+        "--omit",
+        "API_KEY",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"PORT\":\"8080\"}\n",
+        "stderr": "varlatch: left out of this run (--omit), so the command does not get it, and not masked if the command obtains it another way: API_KEY\nvarlatch: --redact: no Secret was delivered to this run, so there is nothing to mask\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.export-context",
+      "title": "--redact with --export-context: the context given, the Secret masked",
+      "args": [
+        "run",
+        "--redact",
+        "--export-context",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ],
+            "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifest": {
+              "manifestVersion": 1,
+              "projectId": "prj_1",
+              "environment": {
+                "id": "env_1",
+                "rootId": "env_root",
+                "parentId": null,
+                "tier": "development",
+                "expiresAt": null
+              },
+              "contract": {
+                "revisionId": "rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+                "contentHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "semanticsVersion": 2
+              },
+              "items": []
+            }
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract/revisions/rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": 200,
+          "answer": {
+            "id": "rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+            "contentHash": "sha256:abababababababababababababababababababababababababababababababab",
+            "semanticsVersion": 2,
+            "active": true,
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 2,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                },
+                {
+                  "name": "REGION",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                },
+                {
+                  "name": "VARLATCH_RUN_CONTEXT",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": [],
+            "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"[REDACTED:API_KEY]\",\"PORT\":\"8080\",\"VARLATCH_RUN_CONTEXT\":\"{\\\"v\\\":1,\\\"mode\\\":\\\"exported\\\",\\\"contractRevisionId\\\":\\\"rev_runaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"contractHash\\\":\\\"sha256:abababababababababababababababababababababababababababababababab\\\",\\\"semanticsVersion\\\":2,\\\"environment\\\":{\\\"rootId\\\":\\\"env_root\\\",\\\"tier\\\":\\\"development\\\"},\\\"items\\\":{\\\"API_KEY\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"varlatch\\\"},\\\"PORT\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"varlatch\\\"},\\\"REGION\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"absent\\\"}}}\"}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract/revisions/rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.allow-unmasked",
+      "title": "--redact with the human's --allow-unmasked: the override's masking",
+      "args": [
+        "run",
+        "--redact",
+        "--allow-unmasked",
+        "PIN",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              },
+              {
+                "name": "PIN",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PIN",
+                "value": "1234",
+                "versionId": "ver_pinaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 404,
+          "answer": {
+            "error": {
+              "code": "NOT_FOUND",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"[REDACTED:API_KEY]\",\"PORT\":\"8080\",\"PIN\":\"1234\"}\n",
+        "stderr": "varlatch: showing PIN unmasked in this run only, if too short to mask; every other known Secret stays masked.\nvarlatch: allowed with --allow-unmasked, so not masked (shorter than 8 bytes): PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.assisted",
+      "title": "--redact in assisted mode: assisted masking",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_ASSISTED": "1"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 404,
+          "answer": {
+            "error": {
+              "code": "NOT_FOUND",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"[REDACTED:API_KEY]\",\"PORT\":\"8080\"}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.agent-safe",
+      "title": "--redact with --agent-safe: refused, nothing fetched",
+      "args": [
+        "run",
+        "--redact",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch: --redact does not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets, so no Secret is delivered to it to mask, and an agent-safe run never fetches Secrets to build a filter. Nothing was started.\n",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.agent-safe-assisted",
+      "title": "--redact with --agent-safe in assisted mode: refused too",
+      "args": [
+        "run",
+        "--redact",
+        "--agent-safe",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_ASSISTED": "1"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch: --redact does not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets, so no Secret is delivered to it to mask, and an agent-safe run never fetches Secrets to build a filter. Nothing was started.\n",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.twice",
+      "title": "--redact given twice",
+      "args": [
+        "run",
+        "--redact",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch run: --redact given twice\nUsage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]... [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]\n",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "redact.equals",
+      "title": "--redact=... is not parsed (the value shown as [redacted] by Go)",
+      "args": [
+        "run",
+        "--redact=1",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "differences": [
+        "user-agent",
+        "option-value"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch run: unknown option --redact=1\nUsage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]... [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]\n",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "terminal.both",
+      "title": "--redact when stdout and stderr are a terminal: refused, nothing fetched",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "terminal": "both",
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        },
+        "terminal": "varlatch: --redact works only when stdout and stderr are pipes or files, and stdout and stderr are terminals. Redirect both, for example: varlatch run --redact -- <command> 2>&1 | tee run.log. Nothing was started.\n"
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "terminal.stdout",
+      "title": "--redact when stdout is a terminal: refused",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "terminal": "stdout",
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch: --redact works only when stdout and stderr are pipes or files, and stdout is a terminal. Redirect both, for example: varlatch run --redact -- <command> 2>&1 | tee run.log. Nothing was started.\n",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        },
+        "terminal": ""
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "terminal.stderr",
+      "title": "--redact when stderr is a terminal: refused",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "terminal": "stderr",
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        },
+        "terminal": "varlatch: --redact works only when stdout and stderr are pipes or files, and stderr is a terminal. Redirect both, for example: varlatch run --redact -- <command> 2>&1 | tee run.log. Nothing was started.\n"
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "terminal.agent-safe",
+      "title": "--redact with --agent-safe on a terminal: the agent-safe refusal",
+      "args": [
+        "run",
+        "--redact",
+        "--agent-safe",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "terminal": "both",
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        },
+        "terminal": "varlatch: --redact does not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets, so no Secret is delivered to it to mask, and an agent-safe run never fetches Secrets to build a filter. Nothing was started.\n"
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "terminal.assisted",
+      "title": "--redact in assisted mode on a terminal: runs, masked",
+      "args": [
+        "run",
+        "--redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_ASSISTED": "1"
+      },
+      "terminal": "both",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/contract",
+          "status": 404,
+          "answer": {
+            "error": {
+              "code": "NOT_FOUND",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/contract",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64; assisted)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        },
+        "terminal": "{\"args\":[],\"API_KEY\":\"[REDACTED:API_KEY]\",\"PORT\":\"8080\"}\n"
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "terminal.no-redact",
+      "title": "--no-redact on a terminal: a default run",
+      "args": [
+        "run",
+        "--no-redact",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "terminal": "both",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        },
+        "terminal": "{\"args\":[],\"API_KEY\":\"s3cr3t-run-api-key-value\",\"PORT\":\"8080\"}\n"
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "terminal.plain",
+      "title": "a default run on a terminal: unmasked",
+      "args": [
+        "run",
+        "--",
+        "node",
+        "-e",
+        "const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PORT','PIN','REGION','LEGACY_KEY','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))"
+      ],
+      "terminal": "stderr",
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "source": "self",
+                "value": null
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "source": "self",
+                "value": "8080"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "value": "s3cr3t-run-api-key-value",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"s3cr3t-run-api-key-value\",\"PORT\":\"8080\"}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        },
+        "terminal": ""
+      }
+    }
+  ]
+}

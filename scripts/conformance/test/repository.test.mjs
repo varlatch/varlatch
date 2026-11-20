@@ -84,17 +84,17 @@ test("each feature cites words that its release's CHANGELOG section contains", (
   }
 });
 
-test("each version-gated feature is gated in every suite that has its checks, and nothing else is", () => {
+test("each version-gated feature is gated in every suite that has its checks, and only features of its checks are", () => {
   for (const [suite, entry] of Object.entries(inventory.suites)) {
     if (entry.runner) continue;
     const source = readFileSync(join(repoRoot, entry.script), "utf8");
     const gated = new Set([...source.matchAll(/\bsupports\(\s*["']([a-z0-9-]+)["']\s*\)/g)].map((m) => m[1]));
-    const needed = new Set(
-      Object.values(inventory.checks)
-        .filter((c) => c.suite === suite && c.feature && inventory.features[c.feature].core !== true)
-        .map((c) => c.feature),
-    );
-    assert.deepEqual([...gated].sort(), [...needed].sort(), suite);
+    const features = Object.values(inventory.checks).filter((c) => c.suite === suite && c.feature).map((c) => c.feature);
+    const needed = new Set(features.filter((f) => inventory.features[f].core !== true));
+    for (const f of needed) assert.ok(gated.has(f), `${suite}: ${f} is version-gated but not behind supports()`);
+    // A core feature may be gated too: supports() is also false for a
+    // client that lacks it (CONFORMANCE_CLIENT_LACKING).
+    for (const f of gated) assert.ok(features.includes(f), `${suite}: supports(${f}) gates a feature none of its checks has`);
   }
 });
 

@@ -12,7 +12,11 @@
  *             Root KEK are copies of <dir>/data and <dir>/root-kek instead:
  *             an installation prepared elsewhere (go.yml's restore drill
  *             restores a Go archive there in a fresh container), which the
- *             run then exercises in full
+ *             run then exercises in full. With VARLATCH_GO_BINARY_KEEP=<dir>
+ *             (a new directory), `down` copies the data directory and the
+ *             Root KEK to <dir>/data and <dir>/root-kek after varlatchd has
+ *             stopped, before the installation is removed: G6 (go/release/
+ *             g6.sh) runs the next release on what this one wrote
  *   origin    varlatchd itself: it serves the dashboard and the API
  *   restart   SIGTERM, then serve again on the same data
  *   logs      what varlatchd wrote to standard output and error
@@ -201,12 +205,35 @@ export async function up({ argument, onState = () => {} }) {
 /** Stops the server and removes the installation. */
 export async function down(state) {
   await stop(state).catch(() => {});
+  keep(state);
   stopReceiver(state);
   stopIssuer(state);
   stopPlatformFakes(state);
   // The object store, by the name only this installation's has.
   if (state?.dir) spawnSync("docker", ["rm", "-fv", objectStoreName(state)], { stdio: "ignore" });
   if (state?.dir && state.dir.startsWith(join(tmpdir(), "conformance-go-"))) rmSync(state.dir, { recursive: true, force: true });
+}
+
+/**
+ * VARLATCH_GO_BINARY_KEEP: the stopped installation's data directory and
+ * Root KEK, copied out. Only when varlatchd has stopped (its PID gone), so
+ * the copy is of a closed database; a directory that exists is never
+ * written into.
+ */
+function keep(state) {
+  const to = process.env.VARLATCH_GO_BINARY_KEEP;
+  if (!to || !state?.dataDir || !existsSync(state.dataDir)) return;
+  if (ownPid(state) !== null) {
+    console.error(`VARLATCH_GO_BINARY_KEEP: varlatchd still runs; ${to} was not written`);
+    return;
+  }
+  if (existsSync(to)) {
+    console.error(`VARLATCH_GO_BINARY_KEEP: ${to} exists; it was not written`);
+    return;
+  }
+  mkdirSync(to, { recursive: true, mode: 0o700 });
+  cpSync(state.dataDir, join(to, "data"), { recursive: true });
+  writeFileSync(join(to, "root-kek"), readFileSync(state.kekFile), { mode: 0o600 });
 }
 
 export const origin = (state) => state.origin;

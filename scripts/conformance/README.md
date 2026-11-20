@@ -581,8 +581,11 @@ while it lacks CLI features the suites exercise. `client-go.json` lists
 them, each with the slice that builds it, the client's counterpart of a
 target's `lacks` (one file, since the gaps are the client's, the same on
 every target). A check lacks when its feature, a feature its suite's setup
-uses (`suites.<name>.cliNeeds`), or, for a check without a feature of its
-own, one its `cliNeeds` lists, is in the file:
+uses (`suites.<name>.cliNeeds`), or one its `cliNeeds` lists, is in the
+file. A check's `cliNeeds` names what it needs besides its own feature (a
+`types` check that starts the generated module's application under
+`run --export-context` needs `run-export-context`), or, for a check without
+a feature, everything it needs:
 
 - the runner reports it `client-lacks` itself; a suite cannot;
 - a suite all of whose checks lack something is not started; otherwise it
@@ -595,9 +598,18 @@ own, one its `cliNeeds` lists, is in the file:
 - gate mode refuses any client-lacks: G1 at 0.50.0 runs the Go CLI with
   nothing left out.
 
+`client-runtime`'s two whole-suite checks, "the audit export holds no
+value" and "varlatchd logs hold no value", need no CLI feature of their
+own. On the Go CLI before slice 5.4b they cover only what the suite's
+setup, `types` and `scan` did: no run has disclosed anything yet, so they
+prove the server side, the generated modules and the scans only until that
+slice lands. The suite gates each of its sections with `kit.supports()`,
+which is false for a feature the client lacks (`CONFORMANCE_CLIENT_LACKING`),
+so a section whose CLI feature is missing never runs.
+
 `go/cmd/varlatch`'s `TestClientLacksNotStale` also fails while an entry
-names a slice the Go CLI's inventory says is built. `cliNeeds` is recorded
-conservatively for the checks without a feature (every feature of their
+names a slice the Go CLI marks built (`go/cmd/varlatch/testdata/built/`).
+`cliNeeds` is recorded conservatively for the checks without a feature (every feature of their
 suite); a slice that finds a check needing less narrows it. The setup's
 `init --org --project --server` (slice 5.1d) and token sign-in (slice
 5.1e) are built, so every suite's setup runs on the Go CLI.
@@ -618,8 +630,12 @@ release's section says it) and is one of:
   CLI older than the feature, that call reports each of the group's checks
   `PREDATES-CLI` and the suite skips the group; the rest of the suite runs.
   The runner accepts the result only after comparing the CLI's verified
-  version with the inventory itself. `pnpm test:conformance` checks that
-  every version-gated feature is gated in each suite that has its checks.
+  version with the inventory itself. `kit.supports()` is false, too, when
+  every check of the feature lacks something (a feature the Go CLI lacks,
+  `CONFORMANCE_CLIENT_LACKING`, or an operation the target lacks), so a
+  suite may gate a core feature with it as well. `pnpm test:conformance`
+  checks that every version-gated feature is gated in each suite that has
+  its checks, and that a suite gates only features its checks have.
 
 An old CLI failing a check whose feature it already had is a finding, not a
 reason to gate the check.

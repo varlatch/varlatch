@@ -1,19 +1,6 @@
 {
   "schema": 1,
-  "comment": "The Go CLI's inventory (internal docs/design/go-cli.md, decision 16): every command, option and environment variable of the TypeScript CLI, kept equal to its source both ways by apps/cli/test/cli-inventory.test.ts, and what must be covered once its slice is built, checked by go/cmd/varlatch's TestInventoryCoverage. Edited by hand; the test says what is missing.",
-  "built": [
-    "5.1a",
-    "5.1b",
-    "5.1c",
-    "5.1d",
-    "5.1e",
-    "5.2",
-    "5.3a",
-    "5.3b",
-    "5.7a",
-    "5.7b",
-    "5.7c"
-  ],
+  "comment": "The Go CLI's inventory (internal docs/design/go-cli.md, decision 16): every command, option and environment variable of the TypeScript CLI, kept equal to its source both ways by apps/cli/test/cli-inventory.test.ts, and what must be covered once its slice is built, checked by go/cmd/varlatch's TestInventoryCoverage. Edited by hand; the test says what is missing. Which slices are built is not here: testdata/built/ holds one empty file per built slice, so pull requests that build different slices never edit the same line.",
   "commands": {
     "login": {
       "slice": "5.1e"
@@ -218,7 +205,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.5b"
     },
     "--all": {
       "sources": [
@@ -423,7 +411,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--batch-check": {
       "sources": [
@@ -431,7 +422,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--before": {
       "sources": [
@@ -513,7 +507,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--cancel": {
       "sources": [
@@ -1092,7 +1089,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "transcripts/5.4d-scan.json#hook.install"
+      ]
     },
     "--glob": {
       "sources": [
@@ -1356,7 +1356,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/findfiles.json#cases"
+      ]
     },
     "--managed": {
       "sources": [
@@ -1493,7 +1496,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--no-agent-files": {
       "sources": [
@@ -1510,7 +1516,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--no-deps": {
       "sources": [
@@ -1529,7 +1538,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--no-ignore": {
       "sources": [
@@ -1553,7 +1565,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/findfiles.json#cases"
+      ]
     },
     "--no-index": {
       "sources": [
@@ -1562,7 +1577,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/findfiles.json#cases"
+      ]
     },
     "--no-owner": {
       "sources": [
@@ -1606,7 +1624,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--no-retention": {
       "sources": [
@@ -1914,7 +1935,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--rawfile": {
       "sources": [
@@ -1969,7 +1993,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.4c"
     },
     "--reenroll-hours": {
       "sources": [
@@ -2259,7 +2284,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--silent": {
       "sources": [
@@ -2363,7 +2391,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.4f"
     },
     "--tags": {
       "sources": [
@@ -3079,7 +3108,11 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/findfiles.json#cases",
+        "vectors/scan.json#sources"
+      ]
     }
   },
   "environment": {
@@ -3589,7 +3622,13 @@
         "refused inside an agent-safe run"
       ],
       "source": "packages/mcp-server/src/run.ts",
-      "cases": []
+      "cases": [
+        "transcripts/5.6b-mcp.json#tools.writes-flag",
+        "transcripts/5.6b-mcp.json#tools.writes-env",
+        "transcripts/5.6b-mcp.json#tools.writes-env-other",
+        "transcripts/5.6b-mcp.json#agent-run.writes",
+        "transcripts/5.6b-mcp.json#agent-run.writes-env"
+      ]
     }
   ],
   "exits": [

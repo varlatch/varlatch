@@ -114,8 +114,17 @@ jobs:
       - name: Coolify Compose file is generated and current
         run: pnpm compose:check
 
+      # The notices list the Go modules linked into varlatch and varlatchd
+      # too (ADR-0059), read with the Go toolchain go.yml uses.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache-dependency-path: go/go.sum
+
       # THIRD-PARTY-NOTICES.md ships in every image and release (ADR-0037
-      # D1); a dependency or image change without regeneration fails here.
+      # D1); a dependency, image or Go module change without regeneration
+      # fails here, and so does a Go module whose license is not recorded
+      # in scripts/go-module-licenses.json after reading its texts.
       - name: Third-party notices are generated and current
         run: pnpm notices:check
 
@@ -442,7 +451,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       - name: Contributor setup end to end
         run: ./scripts/test-dev-setup.sh
 
@@ -477,7 +486,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       - name: Run clean-room E2E suites
         env:
           SHARD: ${{ matrix.shard }}
@@ -517,7 +526,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - name: Install Chromium
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       - name: Run the conformance suites with CLI 0.22.0
         run: node scripts/conformance/run.mjs --target ts-source --cli 0.22.0
 
@@ -720,7 +729,7 @@ jobs:
         run: node scripts/test-ingress-public.mjs
       - name: Install Chromium for the setup enrollment
         if: needs.changes.outputs.lifecycle == 'true'
-        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+        run: scripts/ci-install-chromium.sh
       # ADR-0035 D7: one command from an empty directory, resumable.
       - name: varlatch setup end to end
         if: needs.changes.outputs.lifecycle == 'true'

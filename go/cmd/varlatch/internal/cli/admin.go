@@ -280,8 +280,7 @@ func (r *Run) serverClient(server string) (*apiclient.Client, error) {
 	if err := r.warnIfExpiring(server); err != nil {
 		return nil, err
 	}
-	r.Secrets.Remember(token)
-	return apiclient.New(apiclient.Options{
+	return r.newClient(apiclient.Options{
 		Server:              server,
 		Token:               token,
 		UserAgent:           r.UserAgent(),
@@ -385,6 +384,11 @@ func inviteCommand(r *Run) error {
 
 // tailnetCommand is `varlatch tailnet require|requirements|remove`.
 func tailnetCommand(r *Run) error {
+	// `tailnet repin` is a Go installation's host command (slice 6.2b),
+	// before the repository's context, which it does not use.
+	if handled, err := tailnetRepin(r); handled {
+		return err
+	}
 	sub, _ := arg(r.Args, 0)
 	ctx, lazy, err := r.repoContext()
 	if err != nil {
@@ -474,8 +478,16 @@ func tailnetCommand(r *Run) error {
 			target, targetOK, _ := get(req, "target")
 			selector, selectorOK, _ := get(req, "selector")
 			// JSON.stringify of each, every string in it through the fail-safe first.
-			shownTarget := Printable(stringifyOr(RedactValue(target, r.inFlight...), targetOK))
-			shownSelector := Printable(stringifyOr(RedactValue(selector, r.inFlight...), selectorOK))
+			redactedTarget, err := RedactValue(target, r.inFlight...)
+			if err != nil {
+				return err
+			}
+			redactedSelector, err := RedactValue(selector, r.inFlight...)
+			if err != nil {
+				return err
+			}
+			shownTarget := Printable(stringifyOr(redactedTarget, targetOK))
+			shownSelector := Printable(stringifyOr(redactedSelector, selectorOK))
 			if err := r.println(text(id, idOK) + "  " + shownTarget + "  " + shownSelector); err != nil {
 				return err
 			}
@@ -547,7 +559,7 @@ func auditCommand(r *Run) error {
 	if err != nil {
 		return err
 	}
-	page, err := api.ListAuditEvents(bg, ctx.Organization, 50)
+	page, err := api.ListAuditEvents(bg, ctx.Organization, 50, "")
 	if err != nil {
 		return err
 	}
