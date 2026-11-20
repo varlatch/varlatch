@@ -228,9 +228,20 @@
         Remove-Item -Force -LiteralPath $Target -ErrorAction SilentlyContinue
         Stop-Install "the new varlatch does not run at $Target; the TypeScript CLI (varlatch.cmd, varlatch.cjs) was left in place"
       }
-      if ($OldShim) { Remove-Item -Force -LiteralPath $Shim }
-      if ($OldScript) { Remove-Item -Force -LiteralPath $Script }
-      Write-Host "Removed the TypeScript CLI (varlatch.cmd, varlatch.cjs) from ${Dir}: varlatch.exe replaces it. Your sign-ins and settings carry over: both CLIs use the same store."
+      # varlatch.exe is in place and runs: a file that cannot be removed
+      # now (in use) is named, never reported as nothing installed.
+      $Left = @()
+      if ($OldShim) {
+        try { Remove-Item -Force -LiteralPath $Shim -ErrorAction Stop } catch { $Left += 'varlatch.cmd' }
+      }
+      if ($OldScript) {
+        try { Remove-Item -Force -LiteralPath $Script -ErrorAction Stop } catch { $Left += 'varlatch.cjs' }
+      }
+      if ($Left.Count -eq 0) {
+        Write-Host "Removed the TypeScript CLI (varlatch.cmd, varlatch.cjs) from ${Dir}: varlatch.exe replaces it. Your sign-ins and settings carry over: both CLIs use the same store."
+      } else {
+        Write-Host "varlatch.exe is installed and comes first in ${Dir}, but the TypeScript CLI's $($Left -join ' and ') could not be removed (in use?); remove it once nothing runs it. Your sign-ins and settings carry over: both CLIs use the same store."
+      }
     }
 
     # The user PATH as stored in the registry: its %VARIABLES% unexpanded

@@ -76,16 +76,22 @@ func (e *unreachableError) Unwrap() error { return e.err }
 // get fetches rawURL, at most limit bytes of its body. A cut-off answer,
 // one longer than limit, or any status but 200 is an error.
 func (s Source) get(ctx context.Context, rawURL string, limit int64, accept string) ([]byte, error) {
+	body, _, err := s.getWithHeader(ctx, rawURL, limit, accept)
+	return body, err
+}
+
+// getWithHeader is get, with the answer's header (a listing's Link).
+func (s Source) getWithHeader(ctx context.Context, rawURL string, limit int64, accept string) ([]byte, http.Header, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := s.allowed(u); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("User-Agent", s.UserAgent)
 	if accept != "" {
@@ -95,37 +101,56 @@ func (s Source) get(ctx context.Context, rawURL string, limit int64, accept stri
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) && strings.HasPrefix(ue.Err.Error(), "refusing ") {
-			return nil, ue.Err // a redirect the policy refused
+			return nil, nil, ue.Err // a redirect the policy refused
 		}
 		var ne net.Error
 		if errors.As(err, &ne) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, new(*net.OpError)) {
-			return nil, &unreachableError{fmt.Errorf("could not reach %s: %w", redact(u), err)}
+			return nil, nil, &unreachableError{fmt.Errorf("could not reach %s: %w", redact(u), err)}
 		}
-		return nil, &unreachableError{fmt.Errorf("could not download %s: %w", redact(u), err)}
+		return nil, nil, &unreachableError{fmt.Errorf("could not download %s: %w", redact(u), err)}
 	}
 	defer res.Body.Close()
 	switch {
 	case res.StatusCode == http.StatusNotFound:
-		return nil, fmt.Errorf("%s: %w", redact(u), errNotFound)
+		return nil, nil, fmt.Errorf("%s: %w", redact(u), errNotFound)
 	case res.StatusCode == http.StatusTooManyRequests || res.StatusCode == http.StatusForbidden && res.Header.Get("X-Ratelimit-Remaining") == "0":
-		return nil, errors.New("GitHub's API rate limit is reached for this address; try again later")
+		return nil, nil, errors.New("GitHub's API rate limit is reached for this address; try again later")
 	case res.StatusCode >= 500:
-		return nil, &unreachableError{fmt.Errorf("%s answered %d", redact(u), res.StatusCode)}
+		return nil, nil, &unreachableError{fmt.Errorf("%s answered %d", redact(u), res.StatusCode)}
 	case res.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("%s answered %d", redact(u), res.StatusCode)
+		return nil, nil, fmt.Errorf("%s answered %d", redact(u), res.StatusCode)
 	}
 	if res.ContentLength > limit {
-		return nil, fmt.Errorf("%s is larger than %d bytes", redact(u), limit)
+		return nil, nil, fmt.Errorf("%s is larger than %d bytes", redact(u), limit)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
-		return nil, &unreachableError{fmt.Errorf("downloading %s: %w", redact(u), err)}
+		return nil, nil, &unreachableError{fmt.Errorf("downloading %s: %w", redact(u), err)}
 	}
 	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("%s is larger than %d bytes", redact(u), limit)
+		return nil, nil, fmt.Errorf("%s is larger than %d bytes", redact(u), limit)
 	}
 	if res.ContentLength >= 0 && int64(len(body)) != res.ContentLength {
-		return nil, &unreachableError{fmt.Errorf("downloading %s: cut off", redact(u))}
+		return nil, nil, &unreachableError{fmt.Errorf("downloading %s: cut off", redact(u))}
 	}
-	return body, nil
+	return body, res.Header, nil
+}
+
+// nextPage is the rel="next" URL of a Link header (RFC 8288, as GitHub's
+// REST API paginates), "" when there is none.
+func nextPage(h http.Header) string {
+	for _, link := range h.Values("Link") {
+		for _, part := range strings.Split(link, ",") {
+			target, params, ok := strings.Cut(strings.TrimSpace(part), ";")
+			if !ok || !strings.HasPrefix(target, "<") || !strings.HasSuffix(target, ">") {
+				continue
+			}
+			for _, p := range strings.Split(params, ";") {
+				if k, v, ok := strings.Cut(strings.TrimSpace(p), "="); ok && strings.EqualFold(k, "rel") && slices.Contains(strings.Fields(strings.Trim(v, `"`)), "next") {
+					return target[1 : len(target)-1]
+				}
+			}
+		}
+	}
+	return ""
 }

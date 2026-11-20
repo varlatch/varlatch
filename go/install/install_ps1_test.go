@@ -695,6 +695,21 @@ func TestPS1EndToEnd(t *testing.T) {
 					t.Fatal("varlatch.cjs is still there")
 				}
 			})
+			t.Run("names a TypeScript file it cannot remove", func(t *testing.T) {
+				local, dir := seedTS(t, tsShim)
+				lockFile(t, filepath.Join(dir, "varlatch.cmd"))
+				res := install(t, host, newRelease(), true, false, nil, "LOCALAPPDATA="+local)
+				if res.code != 0 || !strings.Contains(res.out, "varlatch.exe is installed") || !strings.Contains(res.out, `varlatch.cmd could not be removed`) || strings.Contains(res.out, "nothing was installed") {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				if got, _ := os.ReadFile(filepath.Join(dir, "varlatch.exe")); !bytes.Equal(got, stubBytes) {
+					t.Fatal("varlatch.exe is not the new one")
+				}
+				if _, err := os.Stat(filepath.Join(dir, "varlatch.cjs")); err == nil {
+					t.Fatal("varlatch.cjs is still there")
+				}
+				emptyDir(t, res.tmp)
+			})
 			t.Run("keeps the TypeScript CLI when the new one does not run", func(t *testing.T) {
 				local, dir := seedTS(t, tsShim)
 				res := install(t, host, newRelease(), true, false, nil, "LOCALAPPDATA="+local, "STUB_FAIL_UNDER="+dir)

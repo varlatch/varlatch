@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -58,6 +59,18 @@ type Release struct {
 type Server struct {
 	*httptest.Server
 	Sigstore *releasetest.Sigstore
+
+	// PageSize, when set, splits the listing into pages of that many
+	// releases, linked as GitHub links them (Link rel="next"); Order lists
+	// the versions in the listing's order (newest created first), the
+	// published ones by version, highest first, otherwise; Endless links a
+	// next page from every page, the last one repeated.
+	PageSize int
+	Order    []string
+	Endless  bool
+	// LinkBase, when set, is the base of the Link header's URLs instead of
+	// this server's (a next page on another host).
+	LinkBase string
 
 	mu       sync.Mutex
 	releases map[string]*Release
@@ -140,17 +153,47 @@ func Sums(files map[string][]byte) []byte {
 
 func (s *Server) serve(w http.ResponseWriter, req *http.Request) {
 	s.mu.Lock()
-	s.requests = append(s.requests, req.URL.Path)
+	s.requests = append(s.requests, req.URL.RequestURI())
 	s.mu.Unlock()
 	switch path := req.URL.Path; {
 	case path == "/api/releases":
 		s.mu.Lock()
+		order := append([]string(nil), s.Order...)
+		if len(order) == 0 {
+			for v := range s.releases {
+				order = append(order, v)
+			}
+			sort.Slice(order, func(i, j int) bool { c, _ := release.CompareVersions(order[i], order[j]); return c > 0 })
+		}
 		var listed []map[string]any
-		for v, r := range s.releases {
-			listed = append(listed, map[string]any{"tag_name": "v" + v, "draft": r.Draft, "prerelease": release.Prerelease(v)})
+		for _, v := range order {
+			r := s.releases[v]
+			draft := r != nil && r.Draft
+			listed = append(listed, map[string]any{"tag_name": "v" + v, "draft": draft, "prerelease": release.Prerelease(v)})
 		}
 		s.mu.Unlock()
-		sort.Slice(listed, func(i, j int) bool { return listed[i]["tag_name"].(string) > listed[j]["tag_name"].(string) })
+		page := 1
+		if p, err := strconv.Atoi(req.URL.Query().Get("page")); err == nil && p > 0 {
+			page = p
+		}
+		if s.PageSize > 0 {
+			from := min((page-1)*s.PageSize, len(listed))
+			if s.Endless && from >= len(listed) {
+				from = max(len(listed)-s.PageSize, 0)
+			}
+			to := min(from+s.PageSize, len(listed))
+			if to < len(listed) || s.Endless {
+				base := s.URL
+				if s.LinkBase != "" {
+					base = s.LinkBase
+				}
+				w.Header().Set("Link", fmt.Sprintf(`<%s/api/releases?per_page=100&page=%d>; rel="next", <%s/api/releases?per_page=100&page=1>; rel="first"`, base, page+1, base))
+			}
+			listed = listed[from:to]
+		}
+		if listed == nil {
+			listed = []map[string]any{}
+		}
 		body, err := json.Marshal(listed)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

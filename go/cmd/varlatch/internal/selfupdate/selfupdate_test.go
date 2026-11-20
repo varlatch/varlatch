@@ -276,3 +276,72 @@ func TestLocate(t *testing.T) {
 		t.Fatalf("%+v, %v", got, err)
 	}
 }
+
+// listingPages are the pages of the release list requested, in order.
+func listingPages(s *fakerelease.Server) []string {
+	var pages []string
+	for _, p := range s.Requests() {
+		if strings.HasPrefix(p, "/api/releases") {
+			pages = append(pages, p)
+		}
+	}
+	return pages
+}
+
+// The release list is read page by page (GitHub's Link rel="next") while a
+// page improves on the newest version found: GitHub orders by creation, so
+// a release created earlier can be the newest by version.
+func TestChooseReadsLaterPages(t *testing.T) {
+	s := server(t, "0.22.4", "0.22.5", "0.50.0", "0.50.1", "0.51.0", "0.51.1", "0.52.0")
+	s.PageSize = 2
+	// Created in this order, newest first: a patch of 0.50 after 0.52.0,
+	// so 0.52.0 is on page 2; pages 3 and 4 hold nothing newer.
+	s.Order = []string{"0.50.1", "0.22.5", "0.52.0", "0.51.1", "0.51.0", "0.50.0", "0.22.4"}
+	plan, err := selfupdate.Choose(context.Background(), s.Source(), options("0.50.0", ""))
+	if err != nil || plan.Latest != "0.52.0" {
+		t.Fatalf("plan %+v, err %v", plan, err)
+	}
+	// Page 1 found 0.50.1, page 2 improved it to 0.52.0, page 3 did not:
+	// page 4 is never read.
+	if got := listingPages(s); len(got) != 3 {
+		t.Fatalf("read %q", got)
+	}
+}
+
+func TestChooseStopsAtAPageThatDoesNotImprove(t *testing.T) {
+	s := server(t, "0.50.0", "0.50.1", "0.51.0", "0.51.1")
+	s.PageSize = 2
+	plan, err := selfupdate.Choose(context.Background(), s.Source(), options("0.50.0", ""))
+	if err != nil || plan.Latest != "0.51.1" {
+		t.Fatalf("plan %+v, err %v", plan, err)
+	}
+	if got := listingPages(s); len(got) != 2 {
+		t.Fatalf("read %q", got)
+	}
+}
+
+// A list whose pages never end is read at most ten pages deep.
+func TestChooseReadsAtMostTenPages(t *testing.T) {
+	s := server(t, "0.22.4")
+	s.PageSize, s.Endless = 1, true
+	_, err := selfupdate.Choose(context.Background(), s.Source(), options("0.50.0", ""))
+	if err == nil || !strings.Contains(err.Error(), "no release of the Go line") {
+		t.Fatalf("err %v", err)
+	}
+	if got := listingPages(s); len(got) != 10 {
+		t.Fatalf("read %d pages: %q", len(got), got)
+	}
+}
+
+// A next page on another host is refused like any other request.
+func TestChooseRefusesANextPageElsewhere(t *testing.T) {
+	s := server(t, "0.50.0-rc.1", "0.50.0-rc.2")
+	s.PageSize, s.LinkBase = 1, "https://api.example.invalid"
+	_, err := selfupdate.Choose(context.Background(), s.Source(), options("0.50.0-rc.1", ""))
+	if err == nil || !strings.Contains(err.Error(), "not a host releases come from") {
+		t.Fatalf("err %v", err)
+	}
+	if got := listingPages(s); len(got) != 1 {
+		t.Fatalf("read %q", got)
+	}
+}

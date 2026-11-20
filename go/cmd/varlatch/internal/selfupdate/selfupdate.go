@@ -209,30 +209,45 @@ func older(a, b string) bool {
 	return order < 0
 }
 
+// maxPages bounds how many pages of the release list are read.
+const maxPages = 10
+
 // newestRelease is the newest published release of the Go line, a
 // prerelease only when allowed. The tag gives the version; the signature
-// check binds what is installed to that tag.
+// check binds what is installed to that tag. GitHub lists releases newest
+// first by creation, not by version, in pages: the next page is read while
+// the last one improved on the newest version found (or found none yet),
+// at most maxPages, so a patch release created after a later minor's is
+// still compared with it.
 func newestRelease(ctx context.Context, src Source, prereleases bool) (string, error) {
-	body, err := src.get(ctx, src.API+"/releases?per_page=100", maxListing, "application/vnd.github+json")
-	if err != nil {
-		return "", failed("looking up the newest release: ", err)
-	}
-	var listed []struct {
-		Tag   string `json:"tag_name"`
-		Draft bool   `json:"draft"`
-	}
-	if err := json.Unmarshal(body, &listed); err != nil {
-		return "", fail("looking up the newest release: GitHub's answer is not a list of releases")
-	}
 	newest := ""
-	for _, r := range listed {
-		v, ok := strings.CutPrefix(r.Tag, "v")
-		if r.Draft || !ok || !release.ValidVersion(v) || older(v, goLineFloor) || release.Prerelease(v) && !prereleases {
-			continue
+	page := src.API + "/releases?per_page=100"
+	for n := 0; n < maxPages && page != ""; n++ {
+		body, header, err := src.getWithHeader(ctx, page, maxListing, "application/vnd.github+json")
+		if err != nil {
+			return "", failed("looking up the newest release: ", err)
 		}
-		if newest == "" || older(newest, v) {
-			newest = v
+		var listed []struct {
+			Tag   string `json:"tag_name"`
+			Draft bool   `json:"draft"`
 		}
+		if err := json.Unmarshal(body, &listed); err != nil {
+			return "", fail("looking up the newest release: GitHub's answer is not a list of releases")
+		}
+		improved := false
+		for _, r := range listed {
+			v, ok := strings.CutPrefix(r.Tag, "v")
+			if r.Draft || !ok || !release.ValidVersion(v) || older(v, goLineFloor) || release.Prerelease(v) && !prereleases {
+				continue
+			}
+			if newest == "" || older(newest, v) {
+				newest, improved = v, true
+			}
+		}
+		if !improved && newest != "" {
+			break
+		}
+		page = nextPage(header)
 	}
 	if newest == "" {
 		if prereleases {

@@ -70,6 +70,11 @@ func (r *Run) selfUpdate() error {
 	if repo != "" && repo != release.Repository {
 		return UsageErrorWithUsage("varlatch self-update: releases come from "+release.Repository+" only (the signature check pins its release workflow), not "+shownArgument(repo), "\n"+selfUpdateUsage)
 	}
+	if parsed.Has("--allow-unverified") {
+		if err := r.warn("varlatch self-update: --allow-unverified changes nothing: every release is verified"); err != nil {
+			return err
+		}
+	}
 	version := ""
 	if len(parsed.Positionals) > 0 {
 		version = parsed.Positionals[0]
