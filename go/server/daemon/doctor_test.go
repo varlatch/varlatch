@@ -211,3 +211,21 @@ func TestDoctorUsage(t *testing.T) {
 		}
 	}
 }
+
+// TestDoctorSaysWhyItCouldNotAsk (#328 review): when the data directory or
+// its control socket refuses this user (here: something that is not a
+// socket where the socket goes), doctor says so on stderr, as route does,
+// and reports varlatchd unasked, never stopped.
+func TestDoctorSaysWhyItCouldNotAsk(t *testing.T) {
+	in := newInstall(t, "public_url = https://vault.example.com\n")
+	if err := os.WriteFile(filepath.Join(in.data, ControlSocket), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, rep, out, errOut := runDoctorJSON(t, in)
+	if rep.Via != "unasked" || !strings.Contains(errOut, "is not a socket owned by the data directory's owner") || !strings.Contains(errOut, "the running varlatchd was not asked") {
+		t.Fatalf("%d %s %q", code, out, errOut)
+	}
+	if c := reportCheck(t, rep, "secret-plane.ready"); c.Status != doctor.Unknown || !strings.Contains(c.Remedy, "sudo varlatch doctor") {
+		t.Errorf("readiness: %+v", c)
+	}
+}

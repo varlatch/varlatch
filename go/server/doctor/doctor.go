@@ -31,6 +31,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
@@ -84,7 +85,8 @@ type Listeners struct {
 }
 
 // Report is doctor's answer. Via is "daemon" when the running varlatchd
-// answered on its control socket, "offline" when none did.
+// answered on its control socket, "offline" when none did, "unasked" when
+// this user could not ask it (the data directory or its socket refused).
 type Report struct {
 	Via    string  `json:"via"`
 	Facts  Facts   `json:"facts"`
@@ -150,9 +152,11 @@ const (
 type Inputs struct {
 	Config     *config.Config
 	ConfigPath string
-	// Live is nil when no varlatchd answered.
-	Live *Live
-	Now  func() time.Time
+	// Live is nil when no varlatchd answered; Unasked then says why this
+	// user could not ask one ("" when none listens).
+	Live    *Live
+	Unasked string
+	Now     func() time.Time
 	// Probe measures the data directory's disk (diskprobe.Run, with an
 	// unnamed file).
 	Probe func(ctx context.Context, dir string) (diskprobe.Result, error)
@@ -190,10 +194,19 @@ func Run(ctx context.Context, in Inputs) Report {
 	in.defaults()
 	cfg := in.Config
 	r := Report{Via: "offline", Facts: facts(cfg, in.Live)}
-	if in.Live != nil {
+	switch {
+	case in.Live != nil:
 		r.Via = "daemon"
+	case in.Unasked != "":
+		r.Via = "unasked"
 	}
-	add := func(c Check) { r.Checks = append(r.Checks, c) }
+	add := func(c Check) {
+		// Without the running varlatchd's answer: why, and what to do.
+		if in.Live == nil && c.Detail == notRunning && in.Unasked != "" {
+			c.Detail, c.Remedy = "varlatchd could not be asked ("+oneLine(in.Unasked)+"), so this is unknown", runAs
+		}
+		r.Checks = append(r.Checks, c)
+	}
 	add(readiness(in.Live))
 	add(publicURL(cfg))
 	add(dataDir(in))
@@ -261,6 +274,7 @@ func origin(u *url.URL) string { return u.Scheme + "://" + u.Host }
 
 const notRunning = "varlatchd did not answer on its control socket, so this is unknown"
 const startIt = "Start varlatchd (sudo systemctl start varlatchd; journalctl -u varlatchd says why it stopped), then run doctor again"
+const runAs = "Run doctor as root (sudo varlatch doctor) or as the user varlatchd runs as"
 
 func readiness(live *Live) Check {
 	c := Check{ID: "secret-plane.ready", Title: "Server readiness (schema, Root KEK, installation)", Class: Mandatory}
@@ -345,9 +359,17 @@ func keyFiles(in Inputs) Check {
 	var remedies []string
 	for _, f := range files {
 		if credential(f.path) {
-			// A systemd credential exists only inside the unit's own view.
-			if _, err := in.Stat(f.path); err != nil {
-				unknown = append(unknown, f.what+" is a systemd credential, visible to the unit only")
+			// A systemd credential: its directory is the unit's, open to
+			// root, and there only while the unit runs and loads it.
+			_, err := in.Stat(f.path)
+			switch {
+			case errors.Is(err, fs.ErrPermission):
+				unknown = append(unknown, f.what+" is a systemd credential, visible to the unit (and root) only")
+				remedies = append(remedies, "Run doctor as root: sudo varlatch doctor")
+				continue
+			case errors.Is(err, fs.ErrNotExist):
+				failed = append(failed, f.what+" "+f.path+" is missing: the unit is not running, or does not load that credential")
+				remedies = append(remedies, "Check the unit's LoadCredential= (systemctl cat varlatchd) and start it")
 				continue
 			}
 		}
@@ -728,7 +750,11 @@ func firstN(s string, n int) string {
 func oneLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if len(s) > 300 {
-		s = s[:300] + "…"
+		cut := 300
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut-- // never inside a character
+		}
+		s = s[:cut] + "…"
 	}
 	return s
 }

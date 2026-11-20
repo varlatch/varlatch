@@ -197,9 +197,15 @@ func (r *Run) doctorLines(said []byte) error {
 // where they mean the same (the conformance suite reads them).
 func doctorCLIChecks(report doctorReport) []doctorCheck {
 	running := doctorCheck{ID: "services.running", Title: "varlatchd is running", Class: "mandatory"}
-	if report.Via == "daemon" {
+	switch report.Via {
+	case "daemon":
 		running.Status, running.Detail = "pass", "varlatchd answered on its control socket"
-	} else {
+	case "unasked":
+		// It may well run: this user could not ask it (varlatchd said why
+		// on stderr).
+		running.Status, running.Detail = "unknown", "this user could not ask varlatchd on its control socket"
+		running.Remedy = "Run doctor as root (sudo varlatch doctor) or as the user varlatchd runs as"
+	default:
 		running.Status, running.Detail = "fail", "varlatchd did not answer on its control socket"
 		running.Remedy = "Start varlatchd: sudo systemctl start varlatchd (journalctl -u varlatchd says why it stopped)"
 	}
@@ -225,7 +231,7 @@ func (r *Run) showDoctor(report doctorReport) error {
 		DataDir       string `json:"dataDir"`
 	}
 	_ = json.Unmarshal(report.Facts, &facts)
-	via := map[string]string{"daemon": "the running varlatchd answered", "offline": "no running varlatchd answered"}[report.Via]
+	via := map[string]string{"daemon": "the running varlatchd answered", "offline": "no running varlatchd answered", "unasked": "the running varlatchd could not be asked"}[report.Via]
 	if err := r.out(clientctx.MaskUserinfoInText("varlatchd " + facts.ServerVersion + ", data directory " + facts.DataDir + " (" + via + ")\n")); err != nil {
 		return err
 	}

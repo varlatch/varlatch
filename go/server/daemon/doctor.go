@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -46,7 +48,8 @@ func runDoctor(cfg *config.Config, path string, asJSON bool, stdout, stderr io.W
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
 	}
-	r := doctor.Run(ctx, doctor.Inputs{Config: cfg, ConfigPath: path, Live: doctorLive(cfg, stderr)})
+	live, unasked := doctorLive(cfg, stderr)
+	r := doctor.Run(ctx, doctor.Inputs{Config: cfg, ConfigPath: path, Live: live, Unasked: unasked})
 	if asJSON {
 		b, err := json.Marshal(r)
 		if err != nil {
@@ -67,7 +70,7 @@ func runDoctor(cfg *config.Config, path string, asJSON bool, stdout, stderr io.W
 // was seen and what to do.
 func writeDoctorText(w io.Writer, r doctor.Report) {
 	fmt.Fprintf(w, "varlatchd %s, schema %d, data directory %s (%s)\n", r.Facts.ServerVersion, r.Facts.SchemaVersion, r.Facts.DataDir,
-		map[string]string{"daemon": "the running varlatchd answered", "offline": "no running varlatchd answered"}[r.Via])
+		map[string]string{"daemon": "the running varlatchd answered", "offline": "no running varlatchd answered", "unasked": "the running varlatchd could not be asked"}[r.Via])
 	for _, c := range r.Checks {
 		mark := map[string]string{doctor.Pass: "PASS   ", doctor.Fail: "FAIL   ", doctor.Unknown: "UNKNOWN"}[c.Status]
 		fmt.Fprintf(w, "%s %s: %s", mark, c.ID, c.Title)
@@ -86,31 +89,40 @@ func writeDoctorText(w io.Writer, r doctor.Report) {
 
 // doctorLive asks the running varlatchd for what only it knows, through
 // its control socket; nil when none answers (nothing else is tried: no
-// lock, no database).
-func doctorLive(cfg *config.Config, stderr io.Writer) *doctor.Live {
+// lock, no database). unasked is why this user could not ask (the data
+// directory or its socket refused it): said on stderr, as route says it,
+// and in the report, so a running varlatchd is never reported as stopped.
+func doctorLive(cfg *config.Config, stderr io.Writer) (live *doctor.Live, unasked string) {
+	const what = "varlatchd admin doctor"
 	owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
-		return nil
+		fmt.Fprintf(stderr, "%s: %v; the running varlatchd was not asked\n", what, err)
+		return nil, err.Error()
 	}
 	conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second)
 	if err != nil {
-		return nil
+		if errors.Is(err, fs.ErrPermission) {
+			fmt.Fprintf(stderr, "%s: the control socket: %v; the running varlatchd was not asked\n", what, err)
+			return nil, "the control socket refused this user: " + err.Error()
+		}
+		return nil, "" // nothing listens: varlatchd is not running
 	}
 	uc := conn.(*net.UnixConn)
 	if peer, ok := peerUID(uc); !ok || !serverPeerAllowed(peer, owner) {
 		_ = uc.Close()
-		fmt.Fprintf(stderr, "varlatchd admin doctor: the process on the control socket is not the data directory's owner (uid %d) or root; it was not asked\n", owner)
-		return nil
+		msg := fmt.Sprintf("the process on the control socket is not the data directory's owner (uid %d) or root", owner)
+		fmt.Fprintf(stderr, "%s: %s; it was not asked\n", what, msg)
+		return nil, msg
 	}
 	var out, said bytes.Buffer
-	if viaSocket(uc, "varlatchd admin doctor", []string{"doctor", "--live"}, &out, &said) != ExitOK {
-		return nil
+	if viaSocket(uc, what, []string{"doctor", "--live"}, &out, &said) != ExitOK {
+		return nil, ""
 	}
-	var live doctor.Live
-	if json.Unmarshal(out.Bytes(), &live) != nil {
-		return nil
+	var l doctor.Live
+	if json.Unmarshal(out.Bytes(), &l) != nil {
+		return nil, ""
 	}
-	return &live
+	return &l, ""
 }
 
 // runDoctorLive is the daemon's answer to `doctor --live`: readiness, the

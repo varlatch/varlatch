@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/diskprobe"
@@ -258,6 +260,13 @@ func TestWithoutARunningVarlatchd(t *testing.T) {
 func TestUnknownWhenItCannotLook(t *testing.T) {
 	f := newFixture(t, "")
 	f.in.Config.RootKEKFile = "/run/credentials/varlatchd.service/root-kek"
+	stat := os.Stat
+	f.in.Stat = func(p string) (fs.FileInfo, error) {
+		if p == f.in.Config.RootKEKFile {
+			return nil, fs.ErrPermission // the unit's credential directory, root's
+		}
+		return stat(p)
+	}
 	f.in.Probe = func(context.Context, string) (diskprobe.Result, error) { return diskprobe.Result{}, os.ErrPermission }
 	f.in.Clock = func() (bool, bool) { return false, false }
 	r := f.run(t)
@@ -283,5 +292,61 @@ func TestNoURLCredentialInTheReport(t *testing.T) {
 	c := checkOf(t, f.run(t), "public.certificate")
 	if strings.Contains(c.Detail, "hunter2") || strings.Contains(c.Detail, "ops:") || !strings.Contains(c.Detail, "https://[redacted]@ca.example/directory") {
 		t.Errorf("detail %q", c.Detail)
+	}
+}
+
+// TestUnaskedIsNotStopped (#328 review): a varlatchd this user could not
+// ask (its data directory or socket refused) is never reported stopped:
+// the server's checks are unknown, saying why, with a run-as remedy.
+func TestUnaskedIsNotStopped(t *testing.T) {
+	f := newFixture(t, "")
+	f.in.Live, f.in.Unasked = nil, "the data directory /var/lib/varlatch is owned by uid 990, not by you (uid 1000)"
+	r := f.run(t)
+	if r.Via != "unasked" || r.Failed() {
+		t.Fatalf("report %+v", r)
+	}
+	for _, id := range []string{"secret-plane.ready", "storage.wal", "storage.checkpoints"} {
+		c := checkOf(t, r, id)
+		if c.Status != Unknown || !strings.Contains(c.Detail, "could not be asked (the data directory /var/lib/varlatch is owned by uid 990") || !strings.Contains(c.Remedy, "sudo varlatch doctor") {
+			t.Errorf("%s: %+v", id, c)
+		}
+	}
+}
+
+// TestOneLineCutsOnACharacter: a long line is cut before a character,
+// never inside one.
+func TestOneLineCutsOnACharacter(t *testing.T) {
+	s := oneLine("a" + strings.Repeat("€", 120))
+	if !utf8.ValidString(s) || !strings.HasSuffix(s, "€…") || len(s) > 304 {
+		t.Errorf("%q (%d bytes)", s, len(s))
+	}
+}
+
+// TestCredentialMissingOrHidden (#328 review): a systemd credential that
+// does not exist is missing (the unit is not running, or does not load
+// it); one this user may not look at is unknown, with a run-as remedy.
+func TestCredentialMissingOrHidden(t *testing.T) {
+	const cred = "/run/credentials/varlatchd.service/root-kek"
+	f := newFixture(t, "")
+	f.in.Config.RootKEKFile = cred
+	stat := os.Stat
+	for _, c := range []struct {
+		err            error
+		status, detail string
+		remedy         string
+	}{
+		{fs.ErrNotExist, Fail, cred + " is missing: the unit is not running, or does not load that credential", "LoadCredential="},
+		{fs.ErrPermission, Unknown, "is a systemd credential, visible to the unit (and root) only", "sudo varlatch doctor"},
+	} {
+		f.in.Stat = func(p string) (fs.FileInfo, error) {
+			if p == cred {
+				return nil, c.err
+			}
+			return stat(p)
+		}
+		got := checkOf(t, f.run(t), "files.keys")
+		if got.Status != c.status || !strings.Contains(got.Detail, c.detail) || !strings.Contains(got.Remedy, c.remedy) {
+			t.Errorf("%v: %+v", c.err, got)
+		}
 	}
 }

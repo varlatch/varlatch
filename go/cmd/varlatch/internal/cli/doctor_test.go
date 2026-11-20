@@ -78,6 +78,14 @@ func TestDoctorFrontsVarlatchd(t *testing.T) {
 	if code != 1 || !strings.Contains(out, "FAIL    services.running: varlatchd is running\n        varlatchd did not answer on its control socket\n        to do: Start varlatchd") {
 		t.Errorf("offline: %d %q", code, out)
 	}
+	// Not asked (this user could not reach the socket): services.running
+	// is unknown, with how to run doctor, and doctor does not fail on it.
+	answer(t, dir, doctorAnswer("unasked", buildinfo.Version, passingCheck), "varlatchd admin doctor: the data directory is owned by uid 990, not by you; the running varlatchd was not asked\n", 0)
+	code, out, errText = runDoctor(t, dir, nil)
+	if code != 0 || !strings.Contains(out, "UNKNOWN services.running: varlatchd is running\n        this user could not ask varlatchd on its control socket\n        to do: Run doctor as root") ||
+		!strings.Contains(errText, "the running varlatchd was not asked") {
+		t.Errorf("unasked: %d %q %q", code, out, errText)
+	}
 	// Another release's varlatchd: release.pending-upgrade fails.
 	answer(t, dir, doctorAnswer("daemon", "0.49.0", passingCheck), "", 0)
 	if code, out, _ := runDoctor(t, dir, nil); code != 1 || !strings.Contains(out, "FAIL    release.pending-upgrade") || !strings.Contains(out, "varlatchd is 0.49.0") {
