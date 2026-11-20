@@ -235,6 +235,14 @@ func (e *Engine) finishAgrees(ctx context.Context, j *Journal) error {
 	if after == Open && st.Barrier != "" {
 		return fmt.Errorf("a reverse's barrier stands on the Go installation (%s): varlatch migrate --resume first", st.Barrier)
 	}
+	if after == Open && st.Barrier == "" && j.Rollback != nil && j.Rollback.Undone != nil && !j.Rollback.Undone.Released {
+		// An undone reverse killed between its barrier's release and the
+		// record of it (as --resume's finishOpen back-fills it).
+		j.Rollback.Undone.Released = true
+		if err := writeJournal(e.Source.Dir(), j); err != nil {
+			return err
+		}
+	}
 	if j.Phase == Finished && st.Journal.Phase == Open {
 		e.say("The migration %s is finished, but Go's journal says open: it is written finished.", j.ID)
 		if err := e.Target.WriteJournal(ctx, j); err != nil {
@@ -284,12 +292,6 @@ func (e *Engine) finalArchive(ctx context.Context, j *Journal) error {
 		// serves nothing), then down again with the rest.
 		var started []string
 		fs, _ := e.Source.(FinishSource)
-		if fs != nil && j.Ingress != Coolify {
-			var err error
-			if started, err = fs.ServeForArchive(ctx); err != nil {
-				return fmt.Errorf("starting the TypeScript installation for its final archive: %w; nothing was removed", err)
-			}
-		}
 		// On a failure, what this run started for the archive goes down
 		// again (only that: what ran before it is left running).
 		failed := func(err error) error {
@@ -300,6 +302,13 @@ func (e *Engine) finalArchive(ctx context.Context, j *Journal) error {
 				return fmt.Errorf("%w; nothing was removed, but %s, started for the archive, could not be stopped again (%v): docker compose stop %s", err, strings.Join(started, ", "), serr, strings.Join(started, " "))
 			}
 			return fmt.Errorf("%w; nothing was removed, and %s, started for the archive, are stopped again", err, strings.Join(started, ", "))
+		}
+		if fs != nil && j.Ingress != Coolify {
+			var err error
+			// A start that failed part way says what it did start.
+			if started, err = fs.ServeForArchive(ctx); err != nil {
+				return failed(fmt.Errorf("starting the TypeScript installation for its final archive: %w", err))
+			}
 		}
 		e.say("Final archive: the TypeScript installation, made, uploaded, then downloaded and verified (format 2).")
 		id, err := e.Source.Backup(ctx)
@@ -629,14 +638,10 @@ func (c *Compose) CheckData(ctx context.Context, kind Ingress, plan *RebuildReco
 // kept.
 func (c *Compose) ServeForArchive(ctx context.Context) ([]string, error) {
 	need := []string{"postgres", service, "convex-backend"}
-	r, err := c.docker(ctx, []string{"compose", "ps", "--status", "running", "--services"}, nil)
+	running, err := c.running(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if r.Code != 0 {
-		return nil, failure("docker compose ps", r)
-	}
-	running := strings.Fields(string(r.Answer))
 	start := slices.DeleteFunc(slices.Clone(need), func(s string) bool { return slices.Contains(running, s) })
 	if len(start) == 0 {
 		return nil, nil
@@ -651,9 +656,27 @@ func (c *Compose) ServeForArchive(ctx context.Context) ([]string, error) {
 			"2. remove them: docker volume rm %s_postgres-data %s_convex-data", owner, owner, cfg.Name, cfg.Name)
 	}
 	if err := c.compose(ctx, "docker compose up -d --no-deps "+strings.Join(start, " "), append([]string{"up", "-d", "--no-deps", "--no-recreate"}, start...)...); err != nil {
-		return nil, err
+		// An up that failed part way may have started some: those it did,
+		// running now and not before, are this run's to stop again.
+		now, perr := c.running(ctx)
+		if perr != nil {
+			return start, fmt.Errorf("%w; which of %s it started is not known (docker compose ps: %v)", err, strings.Join(start, ", "), perr)
+		}
+		return slices.DeleteFunc(slices.Clone(start), func(s string) bool { return !slices.Contains(now, s) }), err
 	}
 	return start, nil
+}
+
+// running are the Compose services running now.
+func (c *Compose) running(ctx context.Context) ([]string, error) {
+	r, err := c.docker(ctx, []string{"compose", "ps", "--status", "running", "--services"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if r.Code != 0 {
+		return nil, failure("docker compose ps", r)
+	}
+	return strings.Fields(string(r.Answer)), nil
 }
 
 // StopStarted: `docker compose stop` of the services named.

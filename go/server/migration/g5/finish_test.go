@@ -474,6 +474,27 @@ func TestG5Finish(t *testing.T) {
 			t.Error("an archive made with another installation's configuration")
 		}
 	})
+	// An undone reverse killed after Go's barrier was lifted, before the
+	// source's journal recorded it: --finish records it (as --resume does).
+	t.Run("undo released, then finish", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		if code := w.rollback("rollback barrier held", "--rollback"); code != -1 {
+			t.Fatalf("not killed: %d", code)
+		}
+		if code := w.rollback("rollback undone released", "--abort"); code != -1 {
+			t.Fatalf("the undo not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if released, ok := w.undoneReleased(); !ok || released {
+			t.Fatalf("at the kill: undone %v, barrier released %v", ok, released)
+		}
+		if code := w.finish(""); code != 0 {
+			t.Fatalf("--finish: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if released, ok := w.undoneReleased(); !ok || !released {
+			t.Errorf("after --finish: undone %v, barrier released %v", ok, released)
+		}
+		w.expect("finished", "finished", "finished", "target-open", "migrated-out")
+	})
 	t.Run("Coolify's resources are the operator's", func(t *testing.T) {
 		w := migratedWorld(t, false, true)
 		if code := w.finish("", "--delete-old-data"); code != 0 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "In Coolify, open the TypeScript application (not Go's): 1. Stop it. 2. Delete it") {

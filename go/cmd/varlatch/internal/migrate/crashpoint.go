@@ -17,11 +17,26 @@ import (
 // tag, run with VARLATCH_MIGRATE_LOG set, appends "reached <point>" to that
 // file at every point it reaches; with VARLATCH_MIGRATE_PAUSE=<point>, the
 // first time it reaches that point it writes "paused <point>" and blocks
-// for good, so the gate kills it exactly there. The points: "entered
-// <phase>" once each phase is journalled in both places, "barrier held"
-// once the source's barrier is up and recorded, "transfer started" once
-// the target serves under the transfer's gate, and "open source" when the
-// source's journal says open but the live open has not run yet.
+// for good, so the gate kills it exactly there. The points:
+//
+//   - the forward migration: "entered <phase>" once each phase is
+//     journalled in both places; "barrier held" once the source's barrier
+//     is up and recorded; "transfer started" once the target serves under
+//     the transfer's gate; "open source" when the source's journal says
+//     open but the live open has not run yet;
+//   - the reverse (--rollback): "rollback barrier held" once Go's barrier
+//     is up; "rollback rebuilt" once the TypeScript side runs on its fresh
+//     volumes; "rollback go stopped" and "rollback transfer started" in
+//     the address's move back; "rollback undone open" once an undo wrote
+//     the journals open, before Go's barrier is lifted; "rollback undone
+//     released" once it is lifted, before the source's journal records it;
+//   - --finish: "finish archived" once the final archive is verified and
+//     journalled; "finished source written" between the source's journal
+//     saying finished and Go's; "entered finished" once both (or, after a
+//     reverse, the source's alone) say it; "finish containers removed"
+//     after docker compose down; "finish volume removed" between a
+//     volume's removal and its journal entry; "finish go discarded" once
+//     Go's copy is discarded after a reverse.
 //
 // The gate's stand-in source and target need two more of this build only:
 // VARLATCH_MIGRATE_PIN=<repository>@<digest> pins the stand-in's image (a
