@@ -270,7 +270,10 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   `SHA256SUMS`, verifies the signature with the release's own `varlatch`,
   and publishes (a prerelease for `-rc.N`); `go.yml`'s conformance job
   runs both on every pull request it selects, signing and publishing
-  nothing.
+  nothing. `.github/workflows/published-release.yml` (step 6.1b) checks a
+  published release of the Go line as people install it, on Linux, macOS
+  and Windows (`install/published_test.go`, G8's published-asset half):
+  after the Release workflow publishes a prerelease, or by hand for any.
 - `bench/g9a/`: the G9a storage benchmark harness (`run.sh`, the k6
   script, the `g9a` command): G9a's load profile, every checkpoint and the
   WAL size logged, paced backups, converge runs, the disk record, and a
