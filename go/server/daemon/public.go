@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/config"
@@ -49,14 +50,17 @@ func servePublic(cfg *config.Config, public *publictls.Manager, handler http.Han
 	protocols.SetHTTP1(true)
 	protocols.SetHTTP2(true)
 	httpsSrv := &http.Server{
-		Handler:           handler,
+		Handler:           publicHostOnly(p.Host, handler),
 		TLSConfig:         public.TLSConfig(),
 		Protocols:         protocols,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		IdleTimeout:       idleTimeout,
 		ErrorLog:          quiet,
-		ConnContext:       httpserver.ConnContext,
+		// Clients reach this listener directly: no X-Forwarded-For is
+		// believed, whatever trusted_proxies says (it is the plain
+		// listener's, for a proxy in front of that one).
+		ConnContext: httpserver.DirectConnContext,
 		// A TLS-ALPN-01 handshake serves no request.
 		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){publictls.ACMETLS1: publictls.ChallengeOnly},
 	}
@@ -89,6 +93,27 @@ func servePublic(cfg *config.Config, public *publictls.Manager, handler http.Han
 		h.publicReady(tlsLn.Addr(), plainAddr)
 	}
 	return servers, nil
+}
+
+// publicHostOnly answers 421 Misdirected Request to a request on the
+// public HTTPS listener whose Host is not the public URL's host (its port
+// aside): the handshake was for that name, and a request for another one
+// is never served under its certificate.
+func publicHostOnly(host string, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.Host
+		if h, _, err := net.SplitHostPort(name); err == nil {
+			name = h
+		}
+		if !strings.EqualFold(name, host) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusMisdirectedRequest)
+			_, _ = w.Write([]byte("Misdirected request: this listener serves " + host + " only.\n"))
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func addrString(a net.Addr) string {

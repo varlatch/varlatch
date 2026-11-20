@@ -480,6 +480,11 @@ func serve(opts Options, h *hooks) int {
 		apps.RunSweepLoop(ctx, githubapps.SweepInterval, admission.Enter)
 	}()
 	defer func() { cancel(); <-sweepDone }()
+	// A passkey's relying party is the public URL's host, and browsers
+	// refuse an IP address as one: the dashboard cannot sign in there.
+	if u := cfg.PublicURL; u != nil && net.ParseIP(u.Hostname()) != nil {
+		log.Warn("public_url names an IP address, which browsers refuse as a passkey's relying party: the dashboard cannot sign in at it. Use a host name, such as http://localhost:8686 on this machine", "publicUrl", u.String())
+	}
 	// Public HTTPS (step 6's decision 4), when listen_https is set: the
 	// certificate manager first, so the listeners report can show it.
 	var public *publictls.Manager

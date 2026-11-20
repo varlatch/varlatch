@@ -491,7 +491,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Every X-Forwarded-For line, joined as Node joins them: a proxy that
 	// adds a line of its own instead of appending to the caller's is read
 	// from the right like any other (the caller's forged line stays left).
-	client := clientaddr.Of(r.RemoteAddr, headerValue(r, "X-Forwarded-For"), s.opts.TrustedProxies)
+	trusts := s.opts.TrustedProxies
+	if direct(r) {
+		trusts = nil // the public HTTPS listener: no proxy is in front of it
+	}
+	client := clientaddr.Of(r.RemoteAddr, headerValue(r, "X-Forwarded-For"), trusts)
 	r = r.WithContext(context.WithValue(r.Context(), clientKey{}, client))
 	windowKey := client
 	defer func() {

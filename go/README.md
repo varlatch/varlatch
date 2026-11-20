@@ -780,7 +780,7 @@ it to the recording.
 | Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
 | `skill-version` (how transcripts compare, not a behaviour) | the skill files `agents install` writes name `varlatch 0.22.0` (`SKILL.md`'s `metadata.generator`, each reference's first line) | this build's version | Each CLI names itself, so `--check` after an upgrade reports the skill as changed; the replay puts this build's version in a case's inputs and expected files alike |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
-| `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
+| `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, a request for another `Host` is 421, no `X-Forwarded-For` is believed on it, and `listen` must then be a loopback address, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
 | `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link or a Windows junction, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
 | The guardrail hook reads every command alike | not compared | `agents hook` reads each word of a command line the same way: a command named like a property every JavaScript object has (`toString`, `constructor`, `valueOf`) and a glob whose class is no regular expression (`[z-a]`) are words like any other, and the rest of the line is checked: `toString x; cat .env` is denied | The hook reads a whole command line, and no word ends the reading early. Pinned by `internal/agents`' `TestHookReadsEveryCommandAlike` |
@@ -1638,9 +1638,37 @@ reports is what it does:
   127.0.0.1, 45-second certificates); go.yml's `go` job runs the Pebble
   tests with `VARLATCH_REQUIRE_PEBBLE=1`. Let's Encrypt's staging is run
   only by hand, with the owner; Let's Encrypt itself never from CI.
-- **Still to come (6.3b).** The ingress modes side by side, each with its
-  origin and RP ID rules (Decision 6): today the HTTPS listener serves the
-  plain listener's handler, `trusted_proxies` included.
+### The ingress modes side by side (step 6, slice 6.3b)
+
+An installation has one relying party, its public URL's (ADR-0059
+Decision 6): the RP ID is `public_url`'s host, and a passkey ceremony
+(registration and sign-in), like every state-changing browser request,
+is accepted only from `public_url`'s exact origin, scheme and port
+included. The Origin header is checked before the body is read, and the
+origin the authenticator signed (`clientDataJSON`) and the RP ID hash
+are checked again by go-webauthn. The listeners serve that one origin in
+their own ways:
+
+| Ingress | Listener | `public_url` | Ceremonies | Client address |
+| --- | --- | --- | --- | --- |
+| This machine | `listen` (loopback) | `http://localhost:<port>` | from `http://localhost:<port>` | the connection |
+| Own reverse proxy | `listen`, behind the proxy | `https://<name>` | from `https://<name>`, through the proxy | `X-Forwarded-For` from `trusted_proxies` |
+| Public HTTPS | `listen_https` (and `listen_http_redirect`) | `https://<name>[:port]` | from `https://<name>[:port]` | the connection: no `X-Forwarded-For` is believed, whatever `trusted_proxies` says |
+| Tailnet | `tailnet_port`, and the browser endpoint on `tailnet_https_port` | (any) | none: no `/auth`, no dashboard, no enrollment page; the browser endpoint reads cross-origin for the listed dashboard origins, with a bearer | the node's WhoIs |
+
+Side by side: with public HTTPS on, the plain listener stays on a
+loopback address (`listen` elsewhere is refused at start), so nothing is
+served in plain text beyond the machine; it still serves the API to the
+host (and to a proxy there, with `trusted_proxies`), but a ceremony from
+its own origin is refused, as is one from any origin but `public_url`'s.
+The HTTPS listener answers 421 to a `Host` other than `public_url`'s host.
+A `public_url` naming an IP address starts with a warning: browsers refuse
+an IP address as an RP ID, so the dashboard cannot sign in there (use
+`http://localhost` on one machine). Pinned by `httpserver`'s
+`TestIngressOriginsAndRPID` (each mode against every other ingress's
+origin, by Origin header, by signed origin and by RP ID) and
+`TestTailnetListenerRunsNoCeremony`, and `daemon`'s
+`TestIngressModesSideBySide` (against Pebble).
 
 ### The tailnet listeners (step 4.13a)
 
