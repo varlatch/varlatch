@@ -7,17 +7,20 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.10
 	github.com/aws/smithy-go v1.28.9
+	github.com/caddyserver/certmagic v0.25.6
 	github.com/creack/pty v1.1.24
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/google/certificate-transparency-go v1.4.0
+	github.com/mholt/acmez/v3 v3.1.7
 	github.com/oapi-codegen/nullable v1.1.0
 	github.com/oapi-codegen/runtime v1.8.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sigstore/protobuf-specs v0.5.2
 	github.com/sigstore/sigstore-go v1.4.0
 	github.com/theupdateframework/go-tuf/v2 v2.4.2
+	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
@@ -58,6 +61,7 @@ require (
 	github.com/axiomhq/hyperloglog v0.2.6 // indirect
 	github.com/benbjohnson/immutable v0.4.3 // indirect
 	github.com/bradfitz/reco v0.0.0-20260929154613-b883fbd17e3f // indirect
+	github.com/caddyserver/zerossl v0.1.6 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
@@ -133,13 +137,16 @@ require (
 	github.com/jsimonetti/rtnetlink v1.4.2 // indirect
 	github.com/kamstrup/intmap v0.5.2 // indirect
 	github.com/klauspost/compress v1.20.1 // indirect
+	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kortschak/wol v0.0.0-20200729010619-da482cc4850a // indirect
 	github.com/kr/fs v0.1.0 // indirect
+	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mdlayher/genetlink v1.4.0 // indirect
 	github.com/mdlayher/netlink v1.11.2 // indirect
 	github.com/mdlayher/sdnotify v1.0.0 // indirect
 	github.com/mdlayher/socket v0.7.0 // indirect
+	github.com/miekg/dns v1.1.73 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/ncruces/go-sqlite3 v0.32.0 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
@@ -196,6 +203,7 @@ require (
 	github.com/wasilibs/wazero-helpers v0.0.0-20240620070341-3dff1577cd52 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
+	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.47.0 // indirect
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
@@ -203,7 +211,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.28.0 // indirect
+	go.uber.org/zap/exp v0.3.0 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	go4.org/netipx v0.0.0-20260823151212-3075585bcbeb // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect

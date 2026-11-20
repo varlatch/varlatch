@@ -136,6 +136,11 @@ type Options struct {
 	// tailnet.browser-reads. A function: the URL names the pinned tailnet,
 	// known once the node is enrolled.
 	BrowserEndpoint func() string
+	// PublicListener is public HTTPS's state (listen_https: its
+	// configuration, the certificate served and the last ACME attempt);
+	// nil when public HTTPS is off, and the listeners report then has no
+	// public member, as before.
+	PublicListener func() any
 	// TailnetListeners is what varlatchd last observed of its tailnet
 	// listeners (GET /v1/installation/listeners); nil without one.
 	TailnetListeners func() any
