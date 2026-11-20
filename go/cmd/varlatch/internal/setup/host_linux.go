@@ -59,6 +59,19 @@ func (h SystemHost) CreateUser(name string) error {
 	return nil
 }
 
+// DeleteUser is `userdel <name>` (its own group goes with it).
+func (h SystemHost) DeleteUser(name string) error {
+	if _, _, found, err := h.LookupUser(name); err != nil || !found {
+		return err
+	}
+	cmd := exec.Command("userdel", name)
+	cmd.Env = h.Env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("setup: userdel %s: %v %s", name, err, oneLine(string(out)))
+	}
+	return nil
+}
+
 // LoginShell is the user's passwd entry's shell, as getent sees it (the
 // name service's users too), or /etc/passwd's without getent.
 func (h SystemHost) LoginShell(name string) (string, error) {

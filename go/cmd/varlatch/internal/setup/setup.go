@@ -66,6 +66,9 @@ type Host interface {
 	// (primary) group, as the name service sees them: systemd gives
 	// varlatchd every one of them.
 	SupplementaryGroups(name string) ([]string, error)
+	// DeleteUser removes the user (and its own group): a migration's
+	// target undone removes the user it made.
+	DeleteUser(name string) error
 	// SysUIDMax is the top of the system accounts' uids (login.defs'
 	// SYS_UID_MAX, 999 when it says none).
 	SysUIDMax() int
@@ -147,6 +150,9 @@ type run struct {
 	o Options
 	h Host
 	j JournalDoc
+	// configExtra is appended to the configuration setup writes: a
+	// migration's target under a test root names its data directory there.
+	configExtra string
 }
 
 // Run runs setup, continuing where an earlier run stopped.
@@ -631,7 +637,7 @@ func (r *run) config() error {
 	if err := r.h.Chown(etc, 0, gid); err != nil {
 		return err
 	}
-	want := RenderConfig(r.j.Answers)
+	want := append(RenderConfig(r.j.Answers), r.configExtra...)
 	p := r.path(ConfigFile)
 	got, err := os.ReadFile(p)
 	switch {

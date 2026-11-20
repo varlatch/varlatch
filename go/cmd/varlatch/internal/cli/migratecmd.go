@@ -7,13 +7,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/setup"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -28,6 +31,10 @@ const migrateUsage = `Usage:
                    --backup-destination <name> --read-credentials-file <file> [--from <compose directory>]
                    [--dry-run] [--max-downtime <duration>] [--drain <duration>] [--transfer-timeout <duration>]
                    [--unit <systemd unit>] [--kek-file <file>] [--destinations-file <file>] [--ts-cli <program>] [--json]
+  varlatch migrate ... --config /etc/varlatch/varlatchd.conf, not there yet: migrate makes the target with setup's steps
+                   (as root; the varlatch user, the data directory, the configuration from the source's answers, the
+                   unit enabled; never keys: they are the source's), removed again if the migration is undone:
+                   [--acme-email <address>] [--listen <host:port>] [--accept-existing-user]
   varlatch migrate ... --to-data <dir> --to-keys <dir> --to-config <file> --to-image <ref:tag@sha256:...> --to-service <name>
                    (instead of --config and --unit: the Go image's service, created in setup mode with nothing listening,
                     its bind paths on this host; you start and stop it when migrate asks)
@@ -56,9 +63,9 @@ var goOnlyCommands = map[string]func(*Run) error{
 
 type migrateOptions struct {
 	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI, ingress, unit string
-	toData, toKeys, toConfig, toImage, toService                                                         string
+	toData, toKeys, toConfig, toImage, toService, acmeEmail, listen                                      string
 	maxDowntime, drain, transferTimeout                                                                  time.Duration
-	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData                               bool
+	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData, acceptExistingUser           bool
 }
 
 func parseMigrateOptions(args []string) (migrateOptions, error) {
@@ -66,10 +73,10 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 	values := map[string]*string{"--from": &o.from, "--config": &o.config, "--bek-file": &o.bekFile, "--backup-destination": &o.destination,
 		"--read-credentials-file": &o.readCredentials, "--destinations-file": &o.destinationsFile, "--kek-file": &o.kekFile, "--ts-cli": &o.tsCLI,
 		"--ingress": &o.ingress, "--unit": &o.unit, "--to-data": &o.toData, "--to-keys": &o.toKeys, "--to-config": &o.toConfig,
-		"--to-image": &o.toImage, "--to-service": &o.toService}
+		"--to-image": &o.toImage, "--to-service": &o.toService, "--acme-email": &o.acmeEmail, "--listen": &o.listen}
 	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
 	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback,
-		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData}
+		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData, "--accept-existing-user": &o.acceptExistingUser}
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch migrate: "+msg, "\n"+migrateUsage) }
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -116,6 +123,8 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--resume does what the interrupted run was asked, --abort undoes it; neither takes --dry-run")
 	case o.resume && o.abort:
 		return o, usage("--resume or --abort, not both")
+	case (o.acmeEmail != "" || o.listen != "" || o.acceptExistingUser) && (o.config == "" || o.rollback || o.finish || o.status):
+		return o, usage("--acme-email, --listen and --accept-existing-user are the answers of a host target migrate makes (--config): not with --rollback, --finish, --status or --to-*")
 	case o.deleteOldData && !o.finish:
 		return o, usage("--delete-old-data goes with --finish only: it removes the old side's data, after a verified final archive")
 	case o.finish && (o.resume || o.abort || o.rollback || o.dryRun || o.status || o.ingress != "" || o.maxDowntime != 0 || o.drain != 0 || o.transferTimeout != 0):
@@ -199,11 +208,16 @@ func migrateCommand(r *Run) error {
 	e := &migrate.Engine{
 		Source: &migrate.Compose{Directory: o.from, Run: run, TSCLI: o.tsCLI, KEKFile: o.kekFile, BEKFile: o.bekFile,
 			Destination: o.destination, DestinationsFile: o.destinationsFile, ReadCredentialsFile: o.readCredentials},
-		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: varlatchdEnviron(r)}, Unit: o.unit},
+		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: targetCredentials(varlatchdEnviron(r), o.config)}, Unit: o.unit},
 		Options: migrate.Options{MaxDowntime: o.maxDowntime, Drain: o.drain, TransferTimeout: o.transferTimeout, Ingress: migrate.Ingress(o.ingress),
 			Say: func(s string) { _ = r.warn(s) }},
 		BEK:    bek,
 		Prober: migrate.HTTPProber{},
+	}
+	if o.config != "" {
+		if err := r.targetMaker(e, o, varlatchd); err != nil {
+			return err
+		}
 	}
 	if o.toData != "" {
 		img := &migrate.Image{Host: &migrate.Host{Varlatchd: varlatchd, Run: migrate.ExecRunner{Env: varlatchdEnviron(r), As: &migrate.ImageUser}},
@@ -338,6 +352,13 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 			fmt.Fprintf(&b, "Go archive made since the switch, not deleted: %s (release %s, %s).\n", a.ArchiveID, a.Release, a.CreatedAt)
 		}
 	}
+	if c := j.Created; c != nil {
+		state := "kept"
+		if c.Undone != "" {
+			state = "removed again " + c.Undone
+		}
+		fmt.Fprintf(&b, "Target made by migrate: %s (%s).\n", strings.Join(c.Made, ", "), state)
+	}
 	if f := j.Finish; f != nil {
 		fmt.Fprintf(&b, "Finished (after %s), begun %s; old data deleted: %v.", f.After, f.StartedAt, f.DeleteOldData)
 		if f.ArchiveID != "" {
@@ -354,3 +375,25 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 }
 
 func ms(n int64) string { return (time.Duration(n) * time.Millisecond).Round(time.Second).String() }
+
+// targetMaker sets the engine's maker of the host target (slice 7.4e) when
+// --config is setup's place: migrate makes the target there when it is
+// missing (as root, on a systemd host), and undoes what it made. Another
+// place must be a prepared target.
+func (r *Run) targetMaker(e *migrate.Engine, o migrateOptions, varlatchd string) error {
+	host, seam := targetHost(varlatchd, varlatchdEnviron(r))
+	_, statErr := os.Stat(o.config)
+	missing := errors.Is(statErr, fs.ErrNotExist)
+	if filepath.Clean(o.config) != host.Path(setup.ConfigFile) {
+		if missing {
+			return Fail("varlatch migrate: --config "+Printable(o.config)+" does not exist: migrate makes the target at setup's place only ("+setup.ConfigFile+"), or give a prepared target's configuration", ExitFailure)
+		}
+		return nil
+	}
+	if missing && !seam && (runtime.GOOS != "linux" || os.Geteuid() != 0) {
+		return Fail("varlatch migrate: "+setup.ConfigFile+" does not exist: migrate makes the target there, which needs root on a systemd host (sudo varlatch migrate ...)", ExitFailure)
+	}
+	e.Maker = &setupMaker{host: host, given: setup.Answers{ACMEEmail: o.acmeEmail, Listen: o.listen}, accept: o.acceptExistingUser,
+		say: func(s string) error { return r.warn(s) }}
+	return nil
+}

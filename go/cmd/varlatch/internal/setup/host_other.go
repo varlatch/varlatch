@@ -23,6 +23,7 @@ type SystemHost struct {
 func (SystemHost) Path(p string) string                         { return p }
 func (SystemHost) LookupUser(string) (int, int, bool, error)    { return 0, 0, false, errNotLinux }
 func (SystemHost) CreateUser(string) error                      { return errNotLinux }
+func (SystemHost) DeleteUser(string) error                      { return errNotLinux }
 func (SystemHost) LoginShell(string) (string, error)            { return "", errNotLinux }
 func (SystemHost) SupplementaryGroups(string) ([]string, error) { return nil, errNotLinux }
 func (SystemHost) SysUIDMax() int                               { return 999 }
