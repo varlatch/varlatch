@@ -4,6 +4,7 @@ package matcher
 
 import (
 	"errors"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"io"
 	"slices"
 	"strconv"
@@ -14,7 +15,7 @@ import (
 
 // Marker is redactionMarker: what replaces a match, the item's name and
 // no character of its value.
-func Marker(item string) []byte { return []byte("[REDACTED:" + item + "]") }
+func Marker(item string) []byte { return []byte(jsval.NodeText("[REDACTED:" + item + "]")) }
 
 // RedactionMode is which feature turned redaction on: `--redact` (ADR-0038
 // Decision 10), or assisted mode (ADR-0043 Decision 4), where it is the
