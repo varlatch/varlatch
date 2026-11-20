@@ -13,6 +13,12 @@ import (
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
+// ownedByMe is whether a file is this process's user's.
+func ownedByMe(st fs.FileInfo) bool {
+	s, ok := st.Sys().(*syscall.Stat_t)
+	return ok && int(s.Uid) == os.Getuid()
+}
+
 // giveToOwner gives the node's files a node command created as root (its
 // state directory, the pin, the hold, the listeners report, the lock) to
 // the data directory's owner, so the varlatchd that later serves as that

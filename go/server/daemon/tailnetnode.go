@@ -10,9 +10,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/config"
@@ -63,7 +65,8 @@ type nodeCmd struct {
 }
 
 const nodeUsage = "Usage: varlatchd admin tailnet enroll --hostname <temporary name> [--certificate] [--timeout <d>] [--json] | " +
-	"varlatchd admin tailnet certificate obtain|expiry --name <name> [--timeout <d>] [--json] | varlatchd admin tailnet open [--json] | " +
+	"varlatchd admin tailnet certificate obtain --name <name> [--timeout <d>] [--json] | varlatchd admin tailnet certificate expiry --name <name> [--json] | " +
+	"varlatchd admin tailnet open [--json] | " +
 	"varlatchd admin tailnet reaches --name <name> --stable-id <id> [--wait <d>] [--json]"
 
 // stableIDShape is a node's StableID as a control plane gives it
@@ -197,12 +200,20 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	if strings.EqualFold(c.hostname, t.Hostname) {
 		return fail("%s is the node's configured name: a handoff enrols it under a temporary name, and moves the name to it", c.hostname)
 	}
+	// A temporary name that reads back as the control plane's collision
+	// suffix of the configured one (vault-1 for vault) would latch the
+	// node's tailnet closed (name-suffixed).
+	if tailnet.SuffixedName(c.hostname, t.Hostname) {
+		return fail("%s reads as the control plane's suffix of the configured name %s: a handoff's temporary name is <name>-vl-<operation>-n", c.hostname, t.Hostname)
+	}
 	owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
 		return fail("%v; nothing was written", err)
 	}
-	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
-		return fail("%v", err)
+	// The data directory is setup's (owned by varlatchd's user); one made
+	// here as root would be root's.
+	if st, err := os.Stat(cfg.DataDir); err != nil || !st.IsDir() {
+		return fail("the data directory %s does not exist: setup (or the migration's host install) makes it; nothing was written", cfg.DataDir)
 	}
 	unlock, err := lockDataDir(cfg.DataDir)
 	if errors.Is(err, errLocked) {
@@ -226,10 +237,12 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	// undone after it opened gave that name back to it.
 	rehold := false
 	switch {
+	case hold != nil && hold.Hostname != c.hostname:
+		// Enrolled or not: a hold written for another name (a run that
+		// stopped after it) is that handoff's.
+		return fail("the node is held under %s, not %s: one handoff at a time", hold.Hostname, c.hostname)
 	case enrolled && hold == nil:
 		rehold = true
-	case enrolled && hold.Hostname != c.hostname:
-		return fail("the node is enrolled and held under %s, not %s: one handoff at a time", hold.Hostname, c.hostname)
 	case !enrolled:
 		if t.AuthKeyFile == "" {
 			return fail("no auth key (tailnet_auth_key_file): the node joins with it")
@@ -273,7 +286,9 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	if err != nil {
 		return fail("%v", err)
 	}
-	m.SetHostname(t.Hostname)
+	// While held, the read-back is of the hold's name, never the
+	// configured one, which another node holds (no name-suffixed latch).
+	m.SetHostname(c.hostname)
 	m.Check(ctx)
 	st, err := node.Status(ctx)
 	if err != nil {
@@ -426,8 +441,9 @@ func runTailnetNode(ctx context.Context, env *hostEnv, rest []string, stdout, st
 		var notAfter time.Time
 		if notAfter, _, err = tailnet.LeafNotAfter(certPEM); err == nil {
 			res.NotAfter = &notAfter
-			if env.node != nil && env.node.cert != nil {
-				// The browser endpoint takes it at once.
+			if env.node != nil && env.node.cert != nil && strings.EqualFold(env.node.manager.BrowserHost(), domain) {
+				// The browser endpoint takes it at once (its own name's
+				// only: a held node's temporary name is not its host).
 				env.node.cert.Wake()
 			}
 			nodeOut(stdout, c.asJSON, res, "The node's certificate for "+domain+" ends "+notAfter.UTC().Format(time.RFC3339)+".")
@@ -471,6 +487,31 @@ func nodeFor(ctx context.Context, env *hostEnv) (*tailnet.TSNode, func(), error)
 	return node, func() { _ = node.Close() }, nil
 }
 
+// reachDirPrefix names a reach probe's state directory in the system's
+// temporary directory.
+const reachDirPrefix = "varlatchd-reach-"
+
+// sweepReachDirs removes the reach probes' state directories a killed
+// probe left before cutoff: this user's own, directories only, never a
+// link.
+func sweepReachDirs(tmp string, cutoff time.Time) {
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), reachDirPrefix) {
+			continue
+		}
+		p := filepath.Join(tmp, e.Name())
+		st, err := os.Lstat(p)
+		if err != nil || !st.IsDir() || !ownedByMe(st) || st.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.RemoveAll(p)
+	}
+}
+
 // reachOut is `admin tailnet reaches --json`: the probe's findings and
 // what they mean.
 type reachOut struct {
@@ -499,12 +540,17 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	}
 	key := strings.TrimSpace(string(raw))
 	clear(raw)
-	dir, err := os.MkdirTemp("", "varlatchd-reach-")
+	// A probe stopped by a signal logs out and removes its state, as one
+	// that ends; what a killed one left (its node key) is swept here.
+	sweepReachDirs(os.TempDir(), time.Now().Add(-10*time.Minute))
+	dir, err := os.MkdirTemp("", reachDirPrefix)
 	if err != nil {
 		return fail("%v", err)
 	}
 	defer os.RemoveAll(dir)
-	ctx, cancel := context.WithTimeout(context.Background(), c.wait+2*time.Minute)
+	sctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(sctx, c.wait+2*time.Minute)
 	defer cancel()
 	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(cfg), AuthKey: key, Tags: t.Tags}, c.name, c.stableID, c.wait)
 	if err != nil {
