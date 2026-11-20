@@ -2810,6 +2810,48 @@ slice 7.5b.
   The real APIs are checked by hand against the owner's throwaway tailnet
   and a Headscale server (O6) in 7.5b.
 
+### The tailnet handoff (step 7, slice 7.5b, part 1)
+
+`lib/tailhandoff` moves a tailnet name from the node serving it to
+another, and back if anything fails. It covers three handoffs (internal
+docs/design/go-step7.md decision 11): the forward handoff of a migration,
+its reverse, and the restore handoff of a restore onto a new host. It is
+not wired into `varlatch migrate` or varlatchd's restore yet: that is part
+2.
+
+- **Prepare** runs before any barrier and changes nothing:
+  - It checks the names case-insensitively against every device: the
+    name held by exactly the serving node, the incoming node under exactly
+    its temporary name (an enrolment under a taken name comes back
+    suffixed and is refused), and the serving node's temporary name free.
+  - It checks the issuance count.
+  - On the Tailscale certificate path:
+    - the incoming node proves it can obtain a certificate now;
+    - the serving node's certificate must last through the rollback
+      window plus seven days, or be renewed now, or the operator accepts
+      a new certificate on a rollback.
+- **Switch** runs under the barrier, and everything from its first change
+  sits under one deadline (180 s):
+  1. The serving installation closes its tailnet listener.
+  2. The two renames, back to back, each read back.
+  3. The name's certificate: at most three attempts for fast server
+     errors, each counted before it is made. A rate-limit refusal ends the
+     wait at once, and a timed-out attempt stays counted.
+  4. A client must reach the incoming node by the name.
+  5. Then the incoming installation opens.
+- **The undo** runs on any failure after the first change, reading the
+  control plane's own listing. The incoming node gives the name back, the
+  serving node takes it again (read back), and only then does the serving
+  installation reopen.
+  - When the control plane can't be reached, the undo stays pending with
+    both installations closed, and `Resume` finishes it later.
+  - `Resume` also finishes a switch that crashed while opening the
+    incoming installation.
+- **What the callers supply:** the journal, the certificates, the issuance
+  count (the installation's `certificate_issuances`, #344), the
+  installations' listeners, the check from a client node, and a control
+  plane built with their own `*http.Client`.
+
 ## The OpenAPI document
 
 The `/v1` contract is `packages/protocol/openapi.yaml` (OpenAPI 3.1),
