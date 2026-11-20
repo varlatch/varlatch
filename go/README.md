@@ -2955,6 +2955,44 @@ migrations.
   (`-journal` included) and passes the checks. Every output of the binary
   is scanned for each seeded secret. G5's interrupted phases are 7.4c's,
   its reverse half 7.6a's.
+- `varlatch migrate`, the phases (step 7, slice 7.4a; ADR-0059 Decision 9;
+  internal docs/design/go-step7.md decisions 2, 9, 14, 19 and 20;
+  `cmd/varlatch/internal/migrate`): a Go-only host command (outside the
+  parity table), from the last TypeScript release's Compose installation
+  (`--from`, the current directory by default) to a host install of
+  varlatchd (`--config`). The CLI drives both sides as processes and
+  opens no database: the source through `docker compose exec` into its
+  varlatchd container (`admin migration status|barrier|export|release|
+  mark-migrated-out`) and the TypeScript host CLI (`--ts-cli`, default
+  `varlatch-ts`) for the preflight's backup; the target through
+  `varlatchd admin migrate`.
+  - The phases: preflight (the source is 0.23.0 by its image's version,
+    pinned by a digest, and behind no gate; a fresh backup made, uploaded,
+    downloaded and verified; the target's key files given the source's
+    Root KEK and BEK, `admin migrate keys`, absent or the same); the dry
+    run (a full copy from a snapshot of the running source, imported into
+    a scratch directory, `--scratch`, and checked, timed; the projected
+    downtime, drain bound plus copy and checks, held against
+    `--max-downtime`, 10 minutes by default, O7; `--dry-run` stops there);
+    the barrier; the final copy, imported and checked; the switch (the
+    source marked migrated out); open.
+  - The journal, `migration.json` (0600, never a key, the run key, a value
+    or a bundle), is written before each phase in the source's directory
+    and, through `admin migrate state --write`, in the target's data
+    directory. varlatchd does not start on a data directory whose journal
+    is not open. `--status` prints it; `--resume` redoes a migration
+    interrupted before the barrier from its preflight, undoes one between
+    the barrier and the switch (the barrier lifted, the old installation
+    reopened unchanged, the target's database discarded, `admin migrate
+    discard`, before the switch only), and opens a switched one. Any
+    failure after the barrier undoes the same way.
+  - The run key is made per copy and handed to the export and the checks
+    on their stdin; the keys go to `admin migrate keys` on its stdin, as
+    base64 JSON. None is in an argument, the environment, the journal or
+    the output.
+  - Not yet: the address transfer (7.4b), the image target shape
+    (`--to-data`, decision 20's second shape), the interruptions' CI cases
+    (7.4c) and the run against a Compose installation of 0.23.0.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

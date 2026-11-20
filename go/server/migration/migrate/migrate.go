@@ -143,6 +143,10 @@ func insertSQL(table string, names []string) string {
 // database was being created, before it was in WAL mode).
 var staleTemp = regexp.MustCompile(`^\.migrate-(import|export)-[0-9a-f]{12}\.db(-wal|-shm|-journal)?$`)
 
+// IsLeftover is whether name is what an import or a reverse export that
+// was killed leaves in the data directory (staleTemp).
+func IsLeftover(name string) bool { return staleTemp.MatchString(name) }
+
 // fresh checks dir holds nothing but the ignored names, after removing what
 // an import or a reverse export that was killed left (that exact pattern
 // only, regular files only: the caller holds the data directory, with no

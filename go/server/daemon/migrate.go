@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"golang.org/x/term"
@@ -27,9 +28,18 @@ import (
 // 2, slices 7.3a and 7.3b), offline only, under the data directory's lock,
 // with no varlatchd running:
 //
-//	varlatchd admin migrate import --in <bundle> [--json]
-//	varlatchd admin migrate check --in <bundle> [--json]  (the run key on stdin)
+//	varlatchd admin migrate import --in <bundle> [--scratch <dir>] [--json]
+//	varlatchd admin migrate check --in <bundle> [--scratch <dir>] [--json]  (the run key on stdin)
 //	varlatchd admin migrate export --reverse --out <bundle> [--json]
+//	varlatchd admin migrate keys  (the keys on stdin; slice 7.4a)
+//	varlatchd admin migrate state [--write]  (the journal on stdin with --write)
+//	varlatchd admin migrate discard --id <migration>
+//
+// keys, state and discard are `varlatch migrate`'s (migratestate.go):
+// the target's key files, the migration journal in the data directory, and
+// the database an undone migration leaves. --scratch builds (import) or
+// reads (check) a database in that directory instead of the data
+// directory: the dry run's, which never touches the target's.
 //
 // import builds a fresh database in the configured data directory, which
 // must be empty, from the TypeScript server's export (a forward bundle,
@@ -47,16 +57,19 @@ import (
 // file. Neither is printed, nor any value of the database. Exit 0 when
 // every check passes, 1 when one fails.
 
-const migrateUsage = "Usage: varlatchd admin migrate import --in <bundle> [--json] | varlatchd admin migrate check --in <bundle> [--json] (the run key on stdin) | varlatchd admin migrate export --reverse --out <bundle> [--json]"
+const migrateUsage = "Usage: varlatchd admin migrate import --in <bundle> [--scratch <dir>] [--json] | " +
+	"varlatchd admin migrate check --in <bundle> [--scratch <dir>] [--json] (the run key on stdin) | " +
+	"varlatchd admin migrate export --reverse --out <bundle> [--json] | varlatchd admin migrate keys (the keys on stdin) | " +
+	"varlatchd admin migrate state [--write] (the journal on stdin) | varlatchd admin migrate discard --id <migration>"
 
 type migrateArgs struct {
-	sub, in, out string
-	asJSON       bool
+	sub, in, out, scratch, id string
+	asJSON, write             bool
 }
 
 func parseMigrate(rest []string) (migrateArgs, string) {
 	var a migrateArgs
-	if len(rest) == 0 || (rest[0] != "import" && rest[0] != "export" && rest[0] != "check") {
+	if len(rest) == 0 || !slices.Contains([]string{"import", "export", "check", "keys", "state", "discard"}, rest[0]) {
 		return a, migrateUsage
 	}
 	a.sub = rest[0]
@@ -67,24 +80,40 @@ func parseMigrate(rest []string) (migrateArgs, string) {
 			a.asJSON = true
 		case "--reverse":
 			reverse = true
-		case "--in", "--out":
+		case "--write":
+			a.write = true
+		case "--in", "--out", "--scratch", "--id":
 			if i+1 >= len(rest) || rest[i+1] == "" {
 				return a, migrateUsage
 			}
-			if f == "--in" {
+			switch f {
+			case "--in":
 				a.in = rest[i+1]
-			} else {
+			case "--out":
 				a.out = rest[i+1]
+			case "--scratch":
+				a.scratch = rest[i+1]
+			default:
+				a.id = rest[i+1]
 			}
 			i++
 		default:
 			return a, migrateUsage
 		}
 	}
+	other := a.in != "" || a.out != "" || a.scratch != "" || a.id != "" || reverse || a.write
 	switch {
-	case (a.sub == "import" || a.sub == "check") && (a.in == "" || a.out != "" || reverse):
+	case (a.sub == "import" || a.sub == "check") && (a.in == "" || a.out != "" || a.id != "" || reverse || a.write):
 		return a, migrateUsage
-	case a.sub == "export" && (a.out == "" || a.in != "" || !reverse):
+	case a.sub == "export" && (a.out == "" || a.in != "" || a.scratch != "" || a.id != "" || a.write || !reverse):
+		return a, migrateUsage
+	case a.sub == "keys" && other:
+		return a, migrateUsage
+	case a.sub == "state" && (a.in != "" || a.out != "" || a.scratch != "" || a.id != "" || reverse):
+		return a, migrateUsage
+	case a.sub == "discard" && (a.id == "" || a.in != "" || a.out != "" || a.scratch != "" || reverse || a.write):
+		return a, migrateUsage
+	case a.scratch != "" && !filepath.IsAbs(a.scratch):
 		return a, migrateUsage
 	}
 	return a, ""
@@ -98,7 +127,7 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 		fmt.Fprintf(stderr, what+": "+format+"\n", args...)
 		return status
 	}
-	if a.sub == "import" {
+	if a.sub == "import" || a.sub == "keys" || a.sub == "state" {
 		if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 			return fail(ExitFailure, "%v", err)
 		}
@@ -124,7 +153,25 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 			return fail(ExitFailure, "%v; nothing was written", err)
 		}
 	}
-	o := migrate.Options{DataDir: cfg.DataDir, Ignore: []string{LockFile}, Release: buildinfo.Version}
+	switch a.sub {
+	case "keys":
+		return runMigrateKeys(cfg, stdin, stdout, fail)
+	case "state":
+		return runMigrateState(cfg, a, stdin, stdout, fail)
+	case "discard":
+		return runMigrateDiscard(cfg, a, stdout, fail)
+	}
+	// The journal (`varlatch migrate`'s) is the one other name an import
+	// leaves in the data directory.
+	o := migrate.Options{DataDir: cfg.DataDir, Ignore: []string{LockFile, JournalFile}, Release: buildinfo.Version}
+	if a.scratch != "" {
+		if a.sub == "import" {
+			if err := os.MkdirAll(a.scratch, 0o700); err != nil {
+				return fail(ExitFailure, "%v", err)
+			}
+		}
+		o.DataDir, o.Ignore = a.scratch, nil
+	}
 	var res migrate.Result
 	if a.sub == "import" || a.sub == "check" {
 		raw, err := os.ReadFile(cfg.RootKEKFile)
@@ -139,7 +186,7 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 		defer clear(o.RootKEK)
 	}
 	if a.sub == "check" {
-		return runCheck(cfg, a, o.RootKEK, stdin, stdout, fail)
+		return runCheck(cfg, a, o.DataDir, o.RootKEK, stdin, stdout, fail)
 	}
 	if a.sub == "import" {
 		in, err := os.Open(a.in)
@@ -201,18 +248,20 @@ func syncFile(path string) error {
 
 // runCheck is `admin migrate check`: the run key read from stdin, the
 // database opened read-only, the checks run, the report printed.
-func runCheck(cfg *config.Config, a migrateArgs, rootKEK []byte, stdin io.Reader, stdout io.Writer, fail func(int, string, ...any) int) int {
+func runCheck(cfg *config.Config, a migrateArgs, dataDir string, rootKEK []byte, stdin io.Reader, stdout io.Writer, fail func(int, string, ...any) int) int {
 	runKey, err := readRunKey(stdin)
 	if err != nil {
 		return fail(64, "%v", err)
 	}
 	defer clear(runKey)
-	db, err := openReadOnly(cfg)
+	at := *cfg
+	at.DataDir = dataDir
+	db, err := openReadOnly(&at)
 	if err != nil {
 		return fail(ExitFailure, "%v", err)
 	}
 	if db == nil {
-		return fail(ExitFailure, "the data directory %s holds no database: import first", cfg.DataDir)
+		return fail(ExitFailure, "the data directory %s holds no database: import first", dataDir)
 	}
 	defer db.Close()
 	in, err := os.Open(a.in)

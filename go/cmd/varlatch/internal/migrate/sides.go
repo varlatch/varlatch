@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package migrate
+
+import (
+	"context"
+	"time"
+)
+
+// LastTypeScriptRelease is the one release a migration starts from (O1):
+// the last TypeScript release, whose export writes the bundle this
+// varlatchd imports.
+const LastTypeScriptRelease = "0.23.0"
+
+// Source is the old installation, driven as processes (go-step7 decision
+// 2): its CLI's commands inside its containers, and its host CLI. A
+// Source never opens a database itself.
+type Source interface {
+	// Discover finds the installation and says what it runs.
+	Discover(ctx context.Context) (SourceInfo, error)
+	// Gate is the installation's maintenance gate now (nil for none).
+	Gate(ctx context.Context) (*Gate, error)
+	// RootKEK is the text of its Root KEK file. The caller clears it.
+	RootKEK() ([]byte, error)
+	// Backup makes a fresh backup and uploads it; VerifyBackup downloads
+	// it and verifies it.
+	Backup(ctx context.Context) (archiveID string, err error)
+	VerifyBackup(ctx context.Context, archiveID string) error
+	// Barrier opens (or continues) the migration barrier and waits for
+	// the drain, at most drain.
+	Barrier(ctx context.Context, drain time.Duration) (BarrierRecord, error)
+	// Export writes the source bundle (a dry run's from a snapshot of
+	// the running installation), its digests keyed by runKey, given on
+	// a pipe; the bundle's path on this host.
+	Export(ctx context.Context, runKey []byte, dryRun bool) (string, error)
+	// Release lifts the barrier; MarkMigratedOut turns it into the
+	// permanent migrated-out gate.
+	Release(ctx context.Context, gateID string) error
+	MarkMigratedOut(ctx context.Context, gateID string) error
+	// Dir is the directory the source's journal is written in.
+	Dir() string
+}
+
+// SourceInfo is what a migration starts from.
+type SourceInfo struct {
+	Kind    string `json:"kind"` // "compose"
+	Dir     string `json:"dir"`
+	Release string `json:"release"`
+	Image   string `json:"image"`
+	Digest  string `json:"digest"`
+}
+
+// Gate is a source's maintenance gate.
+type Gate struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+// Target is the new installation, through `varlatchd admin migrate`.
+type Target interface {
+	// Describe is the target's state: its data directory, whether it
+	// holds a database, and its journal's id and phase.
+	Describe(ctx context.Context) (TargetInfo, TargetState, error)
+	// Keys writes the source's keys into the target's key files (or
+	// finds them the same); each is given on a pipe.
+	Keys(ctx context.Context, rootKEK, bek []byte) (rootKEKState, bekState string, err error)
+	// WriteJournal writes the journal in the data directory.
+	WriteJournal(ctx context.Context, j *Journal) error
+	// Import builds the target's database from a bundle; in scratch
+	// (a directory of its own) for the dry run, else in the data
+	// directory.
+	Import(ctx context.Context, bundle, scratch string) (CopyRecord, error)
+	// Check runs the checks against the bundle, runKey on a pipe.
+	Check(ctx context.Context, bundle, scratch string, runKey []byte) (CheckSummary, error)
+	// Discard removes the database migration id built in the data
+	// directory (before the switch only).
+	Discard(ctx context.Context, id string) error
+}
+
+// TargetInfo is the target, as the journal records it.
+type TargetInfo struct {
+	Config  string `json:"config"`
+	DataDir string `json:"dataDir"`
+}
+
+// TargetState is what the target holds: its journal's head (nil for
+// none) and whether its data directory holds a database.
+type TargetState struct {
+	Journal  *JournalHead
+	Database bool
+}
+
+// JournalHead is what the target's journal says.
+type JournalHead struct {
+	ID    string `json:"id"`
+	Phase Phase  `json:"phase"`
+}
+
+// CheckSummary is a check run's outcome: passed, and per check whether it
+// passed and how many it checked (the full report is varlatchd's).
+type CheckSummary struct {
+	Passed bool          `json:"passed"`
+	Checks []CheckResult `json:"checks"`
+	// Faults are the failing checks' first faults, as varlatchd names
+	// them (tables, classes, ids; never a value).
+	Faults []string `json:"faults,omitempty"`
+}
+
+// CheckResult is one check's.
+type CheckResult struct {
+	Name    string `json:"name"`
+	Passed  bool   `json:"passed"`
+	Checked int64  `json:"checked"`
+}
