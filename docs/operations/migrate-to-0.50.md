@@ -75,10 +75,16 @@ On the installation's host, as root:
   (`--read-credentials-file`): the preflight uploads a fresh backup, then
   downloads it and verifies it, as
   [Create and verify](backup.md#create-and-verify) describes.
-- **The target**, prepared and not started, in one of two shapes:
+- **The target**, in one of two shapes:
   - **A host install** (`--config /etc/varlatch/varlatchd.conf`, and
-    `--unit` when its systemd unit is not `varlatchd`), with an empty data
-    directory.
+    `--unit` when its systemd unit is not `varlatchd`). There is no need to
+    run `varlatch setup` first: when the host install does not exist,
+    `varlatch migrate` creates it with setup's own files (the `varlatch`
+    system user, the data directory, `/etc/varlatch`, the configuration
+    and the unit). It generates no keys: the target's Root KEK and Backup
+    Encryption Key are the source's, copied into its key files. A host
+    install you prepared yourself is accepted too, as long as its data
+    directory is empty and it has not been started.
   - **The 0.50 image** (`--to-data`, `--to-keys`, `--to-config`,
     `--to-image` and `--to-service`), its service created in setup mode
     with nothing listening, and its data directory, keys directory and
@@ -90,10 +96,12 @@ On the installation's host, as root:
   migration onto another address is refused; move afterwards with
   [`varlatch move`](move-installation.md).
 
-<!-- pending #357: the host target is prepared by hand (varlatchd.conf and
-     the unit, the data directory empty) or by migrate itself with setup's
-     files (go-step7 decision 20); confirm which, and how, before this
-     merges. -->
+<!-- pending 7.4e: migrate creating the host install with setup's files
+     code (user, data directory, /etc/varlatch, configuration, unit; keys
+     from the source through admin migrate keys, never generated), and
+     accepting a prepared one (empty data directory, not started). Check
+     the options it takes for the configuration it writes (listen,
+     listen_https, public_url from the source) when it lands. -->
 
 `varlatch migrate --help` lists every option.
 
