@@ -153,8 +153,9 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 		res.Rows += int64(n)
 		res.PerTable[t.Source] = n
 	}
-	// The check sections stay empty until the reverse checks fill them
-	// (slice 7.6).
+	// The check sections are empty, in bundle-v1 for good (BUNDLE.md): the
+	// reverse checks take the TypeScript side's digests and decisions from
+	// its export of the rebuilt database, and Go's from the kept copy.
 	if err := w.Digests(0); err != nil {
 		return res, err
 	}

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,7 +25,6 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
-	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/migration/bundle"
 	"github.com/varlatch/varlatch/go/server/migration/check"
@@ -279,13 +279,15 @@ func TestTheReverseBarrier(t *testing.T) {
 	}
 	// A rebuild that lost a row, or holds another plaintext, fails.
 	lost := rebuilt
-	lost.Rows = map[string][]jsvalue.Object{}
-	for k, v := range rebuilt.Rows {
-		lost.Rows[k] = v
-	}
-	lost.Rows["webhooks"] = rebuilt.Rows["webhooks"][1:]
-	if code, out, _ := migrateWith(t, in.conf, keyText, "check", "--reverse", "--in", reexport(lost), "--scratch", keep); code != ExitFailure || !strings.Contains(out, "rows: FAILED") {
-		t.Errorf("a rebuild missing a webhook: %d\n%s", code, out)
+	for _, table := range []string{"webhooks", "grants"} {
+		if len(rebuilt.Rows[table]) == 0 {
+			t.Fatalf("the seed holds no %s", table)
+		}
+		lost.Rows = maps.Clone(rebuilt.Rows)
+		lost.Rows[table] = rebuilt.Rows[table][1:]
+		if code, out, _ := migrateWith(t, in.conf, keyText, "check", "--reverse", "--in", reexport(lost), "--scratch", keep); code != ExitFailure || !strings.Contains(out, "rows: FAILED") {
+			t.Errorf("a rebuild missing one of its %s: %d\n%s", table, code, out)
+		}
 	}
 	other := filepath.Join(t.TempDir(), "other.jsonl")
 	b := migrationtest.Bundle(t, rebuilt, migrationtest.Options{Sections: &migrationtest.Sections{
@@ -407,5 +409,68 @@ func TestABarrierThatDoesNotDrain(t *testing.T) {
 	errOut.Reset()
 	if code := runMigrateBarrier(context.Background(), env, []string{"barrier", "--id", migA, "--drain-seconds", "1"}, &out, &errOut); code != ExitOK || !strings.Contains(out.String(), `"phase":"paused"`) {
 		t.Fatalf("the barrier again: %d %q %q", code, out.String(), errOut.String())
+	}
+}
+
+// Two barrier commands at once, through the running varlatchd: one at a
+// time makes the frozen copy (they never share its temporary name); both
+// answer paused at the same frozen point, nothing left beside the copy; a
+// release beside a barrier waits for it.
+func TestConcurrentBarriers(t *testing.T) {
+	in, _ := migrated(t)
+	r := start(t, in)
+	defer r.stop(t)
+	type answer struct {
+		code     int
+		out, err string
+	}
+	answers := make(chan answer, 2)
+	for range 2 {
+		go func() {
+			code, out, errOut := runAdmin(t, "migrate", "barrier", "--id", migA, "--drain-seconds", "5", "--config", in.conf)
+			answers <- answer{code, out, errOut}
+		}()
+	}
+	var positions []string
+	for range 2 {
+		a := <-answers
+		var rec barrierRecord
+		if a.code != ExitOK || json.Unmarshal([]byte(a.out), &rec) != nil || rec.Gate.Phase != "paused" {
+			t.Fatalf("a concurrent barrier: %d %q %q", a.code, a.out, a.err)
+		}
+		positions = append(positions, rec.Frozen.AuditPosition)
+	}
+	if positions[0] != positions[1] {
+		t.Errorf("two frozen points: %v", positions)
+	}
+	frozen := filepath.Join(in.data, FrozenCopyName(migA))
+	for _, sfx := range []string{".partial", ".partial-wal", ".partial-shm", ".partial-journal", "-wal", "-shm"} {
+		if _, err := os.Stat(frozen + sfx); !os.IsNotExist(err) {
+			t.Errorf("%s beside the frozen copy: %v", sfx, err)
+		}
+	}
+	if pos, _, err := frozenOf(frozen); err != nil || strconv.FormatInt(pos, 10) != positions[0] {
+		t.Errorf("the frozen copy: %d %v, want %s", pos, err, positions[0])
+	}
+	done := make(chan answer, 2)
+	go func() {
+		code, out, errOut := runAdmin(t, "migrate", "barrier", "--id", migA, "--config", in.conf)
+		done <- answer{code, out, errOut}
+	}()
+	go func() {
+		code, out, errOut := runAdmin(t, "migrate", "release", "--id", migA, "--config", in.conf)
+		done <- answer{code, out, errOut}
+	}()
+	for range 2 {
+		if a := <-done; a.code != ExitOK {
+			t.Fatalf("a barrier beside a release: %d %q %q", a.code, a.out, a.err)
+		}
+	}
+	// Whichever came last decided: a barrier paused with its copy, or none
+	// and no copy; never a gate without its copy.
+	g, err := backup.ReadGate(in.data)
+	_, cerr := os.Stat(frozen)
+	if err != nil || (g == nil) != os.IsNotExist(cerr) {
+		t.Fatalf("after a barrier beside a release: gate %+v %v, copy %v", g, err, cerr)
 	}
 }

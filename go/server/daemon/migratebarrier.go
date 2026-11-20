@@ -109,6 +109,11 @@ func runMigrateBarrier(ctx context.Context, env *hostEnv, rest []string, stdout,
 		fmt.Fprintln(stderr, migrateUsage)
 		return 64
 	}
+	// One barrier or release at a time: a second waits, then finds the
+	// barrier as the first left it (paused with its copy: answered as it
+	// stands).
+	env.barrier.Lock()
+	defer env.barrier.Unlock()
 	dir := env.cfg.DataDir
 	if err := migrationOpen(dir, a.id, "the barrier"); err != nil {
 		return fail(ExitFailure, "%v; no barrier was opened", err)
@@ -289,6 +294,8 @@ func runMigrateRelease(env *hostEnv, rest []string, stdout, stderr io.Writer) in
 		fmt.Fprintln(stderr, migrateUsage)
 		return 64
 	}
+	env.barrier.Lock()
+	defer env.barrier.Unlock()
 	dir := env.cfg.DataDir
 	h, ok, err := readJournal(dir)
 	switch {

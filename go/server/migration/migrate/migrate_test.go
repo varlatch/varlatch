@@ -383,3 +383,65 @@ func TestAnInterruptedExportsLeftovers(t *testing.T) {
 		t.Errorf("a directory under the temporary name: %v", err)
 	}
 }
+
+// The reverse export from a barrier's frozen copy (From): read as a file,
+// never opened in place; a copy whose last audit position is not the
+// frozen point it is given (another copy, or one written since) is
+// refused, naming it, with nothing written and nothing kept; at the frozen
+// point it exports, and keeps the transformed copy.
+func TestTheFrozenCopy(t *testing.T) {
+	s := loadSource(t)
+	dir := t.TempDir()
+	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.RootKEK); err != nil {
+		t.Fatal(err)
+	}
+	frozen := filepath.Join(t.TempDir(), "frozen.db")
+	b, err := os.ReadFile(filepath.Join(dir, config.DatabaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(frozen, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+frozen+"?mode=ro&immutable=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last int64
+	if err := db.QueryRow("SELECT max(event_order) FROM audit_events").Scan(&last); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	for _, at := range []int64{last - 1, last + 1} {
+		keep := filepath.Join(t.TempDir(), "keep")
+		var out bytes.Buffer
+		_, err := ExportReverse(context.Background(), &out, Options{DataDir: dir, From: frozen, FrozenAt: at, Keep: keep, Release: "0.50.0-test"})
+		if err == nil || !strings.Contains(err.Error(), "it is not the copy that barrier made") {
+			t.Fatalf("a frozen point of %d for a copy at %d: %v", at, last, err)
+		}
+		if out.Len() != 0 {
+			t.Errorf("a refused export wrote %d bytes", out.Len())
+		}
+		if _, err := os.Stat(filepath.Join(keep, config.DatabaseFile)); !os.IsNotExist(err) {
+			t.Errorf("a refused export kept its copy: %v", err)
+		}
+	}
+	after, _ := os.ReadFile(frozen)
+	if !bytes.Equal(after, b) {
+		t.Fatal("the frozen copy changed")
+	}
+	keep := filepath.Join(t.TempDir(), "keep")
+	var out bytes.Buffer
+	res, err := ExportReverse(context.Background(), &out, Options{DataDir: dir, From: frozen, FrozenAt: last, Keep: keep, Release: "0.50.0-test"})
+	if err != nil || res.MigratedPosition <= last {
+		t.Fatalf("at its frozen point: %+v %v", res, err)
+	}
+	if _, err := os.Stat(filepath.Join(keep, config.DatabaseFile)); err != nil {
+		t.Errorf("the kept copy: %v", err)
+	}
+	for _, sfx := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Stat(frozen + sfx); !os.IsNotExist(err) {
+			t.Errorf("%s beside the frozen copy: the export opened it in place", sfx)
+		}
+	}
+}

@@ -11,9 +11,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -212,30 +215,40 @@ func tableRows(t *testing.T, b []byte) map[string][]string {
 // second reverse export's.
 func (rt roundTrip) reproduces(t *testing.T) {
 	t.Helper()
-	first, second := tableRows(t, rt.reverse), tableRows(t, rt.reverse2)
+	for _, d := range differences(tableRows(t, rt.reverse), tableRows(t, rt.reverse2)) {
+		t.Error(d)
+	}
+}
+
+// differences are the second bundle's rows held against the first's, as
+// reproduces holds them: one line per table that differs.
+func differences(first, second map[string][]string) []string {
+	var out []string
 	for table, rows := range first {
 		got := second[table]
 		if table == "audit_events" {
 			if len(got) != len(rows)+2 {
-				t.Errorf("audit_events: %d events, want the first's %d and two", len(got), len(rows))
+				out = append(out, fmt.Sprintf("audit_events: %d events, want the first's %d and two", len(got), len(rows)))
 				continue
 			}
 			for i, r := range rows {
 				if got[i] != r {
-					t.Errorf("audit_events: event %d differs", i+1)
+					out = append(out, fmt.Sprintf("audit_events: event %d differs", i+1))
 				}
 			}
 			for _, extra := range got[len(rows):] {
 				if !strings.Contains(extra, `"installation.migrated"`) {
-					t.Errorf("audit_events: an event after the first's that is not installation.migrated")
+					out = append(out, "audit_events: an event after the first's that is not installation.migrated")
 				}
 			}
 			continue
 		}
 		if strings.Join(got, "\n") != strings.Join(rows, "\n") {
-			t.Errorf("%s: the second migration's rows differ from the first's (%d rows, %d)", table, len(got), len(rows))
+			out = append(out, fmt.Sprintf("%s: the second migration's rows differ from the first's (%d rows, %d)", table, len(got), len(rows)))
 		}
 	}
+	slices.Sort(out)
+	return out
 }
 
 // stayRevoked holds that every credential revoked in the first reverse
@@ -304,6 +317,22 @@ func TestG5Reverse(t *testing.T) {
 	rt := g.reverseAndBack(t, in, g.source.RootKEK)
 	rt.reproduces(t)
 	rt.stayRevoked(t, "crd_migration_browser")
+	// The comparison fails on a loss: one grant dropped from the second
+	// migration's rows, or one of its events.
+	first, second := tableRows(t, rt.reverse), tableRows(t, rt.reverse2)
+	if len(second["grants"]) == 0 {
+		t.Fatal("the seed holds no grant")
+	}
+	lost := maps.Clone(second)
+	lost["grants"] = second["grants"][1:]
+	if d := differences(first, lost); len(d) != 1 || !strings.HasPrefix(d[0], "grants: ") {
+		t.Errorf("a grant lost: %q", d)
+	}
+	lost = maps.Clone(second)
+	lost["audit_events"] = slices.Delete(slices.Clone(second["audit_events"]), 3, 4)
+	if d := differences(first, lost); len(d) == 0 || !strings.HasPrefix(d[0], "audit_events: ") {
+		t.Errorf("an event lost: %q", d)
+	}
 	// The barrier's frozen copy stays with the Go installation, which the
 	// reverse leaves isolated behind its barrier; the release reopens it.
 	if code, _, errOut := g.run(t, nil, "admin", "migrate", "release", "--id", migR, "--config", in.conf); code != 0 {

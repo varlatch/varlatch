@@ -73,6 +73,9 @@ type hostEnv struct {
 	// tailnet is the tailnet node's pin and report, in a running varlatchd
 	// with tailnet = on; nil otherwise.
 	tailnet *tailnet.Manager
+	// barrier serializes the reverse's barrier and release commands: one
+	// at a time makes, or removes, the frozen copy and its temporary name.
+	barrier sync.Mutex
 }
 
 type controlRequest struct {
