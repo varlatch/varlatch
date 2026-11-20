@@ -426,7 +426,7 @@ func Decode(t manifest.Table, row []byte) ([]any, error) {
 		return nil, err
 	}
 	for i, c := range t.Columns {
-		if c.LeftOut != "" && values[i] != nil {
+		if c.LeftOut != nil && values[i] != nil {
 			return nil, fmt.Errorf("bundle: %s.%s holds a value; the manifest leaves it out, so an export writes null there", t.Source, c.Source)
 		}
 	}
