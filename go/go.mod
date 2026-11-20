@@ -10,8 +10,10 @@ require (
 	github.com/aws/smithy-go v1.28.9
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/creack/pty v1.1.24
+	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-webauthn/webauthn v0.18.2
+	github.com/google/certificate-transparency-go v1.4.0
 	github.com/mholt/acmez/v3 v3.1.7
 	github.com/oapi-codegen/nullable v1.1.0
 	github.com/oapi-codegen/runtime v1.8.0
@@ -26,6 +28,7 @@ require (
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
+	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.62.0
 	tailscale.com v1.104.4
 )
@@ -67,7 +70,6 @@ require (
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/creachadair/msync v0.10.1 // indirect
 	github.com/cubicdaiya/gonp v1.0.4 // indirect
-	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dblohm7/wingoes v0.0.0-20260526185140-fb298caac7ca // indirect
 	github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33 // indirect
@@ -114,7 +116,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.29.0 // indirect
-	github.com/google/certificate-transparency-go v1.4.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry v0.22.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
@@ -226,7 +227,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20261012220534-4341edf3f941 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gvisor.dev/gvisor v0.0.0-20260915211658-a6f909f08a72 // indirect
