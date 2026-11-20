@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -107,8 +106,7 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	if err != nil {
 		return fail(ExitConfig, "%v; nothing was written", err)
 	}
-	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second); err == nil {
-		_ = conn.Close()
+	if controlAnswers(cfg.DataDir, 5*time.Second) {
 		return fail(ExitFailure, "varlatchd is running on %s: stop it first; nothing was written", cfg.DataDir)
 	}
 	unlock, err := lockDataDir(cfg.DataDir)
