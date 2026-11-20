@@ -61,7 +61,7 @@ func (c *checker) table(ctx context.Context, r *bundle.Reader, t manifest.Table,
 	}
 	sel := make([]string, len(t.Columns))
 	for i, col := range t.Columns {
-		if col.LeftOut != "" {
+		if col.LeftOut != nil {
 			sel[i] = "NULL"
 		} else {
 			sel[i] = ident(targetColumn(col))
