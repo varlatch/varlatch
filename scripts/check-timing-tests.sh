@@ -12,10 +12,17 @@ set -euo pipefail
 
 : "${TIMING_TESTS:?set TIMING_TESTS to the regular expression in go.yml}"
 
+# The list is read back by its shape below, so it must stay a flat list of
+# test names.
+if ! printf '%s\n' "$TIMING_TESTS" | grep -qE '^\^\((Test[A-Za-z0-9_]+\|)*Test[A-Za-z0-9_]+\)\$$'; then
+  echo "TIMING_TESTS (go.yml) must be a flat list of test names, ^(TestA|TestB|...)\$; it is: $TIMING_TESTS" >&2
+  exit 1
+fi
+
 # file:test for every top-level Test function that calls growsLinearly (the
 # helper's own definition is not a call).
 # shellcheck disable=SC2016 # the single quotes hold an awk program
-found=$(git ls-files -z -- 'go/*_test.go' | xargs -0 awk '
+found=$(git ls-files -z -- 'go/*_test.go' | xargs -0 -r awk '
   FNR == 1 { fn = "" }
   /^func / {
     fn = ""

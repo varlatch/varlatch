@@ -52,6 +52,7 @@ on:
       - "packages/contract/src/**"
       - "packages/contract/test/vectors/**"
       - "scripts/check-licenses.mjs"
+      - "scripts/check-timing-tests.sh"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"
       - "scripts/conformance/inventory.json"
@@ -131,6 +132,8 @@ env:
   # nonlinear work. The test steps skip them (-skip), and a step of their
   # own runs them alone right after (-p 1). scripts/check-timing-tests.sh
   # (go job) fails when a test calls growsLinearly and this list misses it.
+  # Keep it a flat list of test names, ^(TestA|TestB|...)$: the check reads
+  # the names back from that shape and refuses any other.
   TIMING_TESTS: "^(TestTheLinearityCriterion|TestHookLinearTime|TestHookLongReaderIsLinear|TestMaskingIsLinear|TestMaskingIsLinearOnLargeMessages|TestFindIsLinear|TestMatcherIsLinear|TestScanIsLinear|TestManyKeys)$"
 
 jobs:
