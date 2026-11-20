@@ -148,7 +148,10 @@ func (f adminForm) check(args []string) (config string, out []string, err error)
 
 // composeRefusal is decision 11's: a Compose installation keeps its
 // TypeScript CLI, installed beside the Go one as varlatch-ts.
-func composeRefusal(r *Run) error {
+func composeRefusal(r *Run) error { return composeRefusalOf(r, "admin") }
+
+// composeRefusalOf is composeRefusal for the host command named command.
+func composeRefusalOf(r *Run, command string) error {
 	ts := "varlatch-ts"
 	for _, dir := range filepath.SplitList(r.Getenv("PATH")) {
 		candidate := filepath.Join(dir, "varlatch-ts")
@@ -159,7 +162,7 @@ func composeRefusal(r *Run) error {
 			}
 		}
 	}
-	return UsageError("varlatch admin: --dir names a Compose installation, which the Go CLI does not manage; run this with the TypeScript CLI, " + ts + ", until `varlatch migrate` moves the installation (ADR-0059 step 7)")
+	return UsageError("varlatch " + command + ": --dir names a Compose installation, which the Go CLI does not manage; run this with the TypeScript CLI, " + ts + ", until `varlatch migrate` moves the installation (ADR-0059 step 7)")
 }
 
 // findVarlatchd is the varlatchd the host commands run: the one installed
