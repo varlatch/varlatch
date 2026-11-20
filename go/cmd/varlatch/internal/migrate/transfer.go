@@ -104,7 +104,9 @@ func (e *Engine) sameAddress(ing IngressInfo, tgt TargetInfo) (string, error) {
 			return "", errors.New("--ingress public: the target's configuration has no listen_https: it takes over HTTPS with its own certificate")
 		}
 	case Proxy:
-		if ing.WebAddress == "" || !sameListen(ing.WebAddress, tgt.Listen) {
+		// An image's service publishes its port as Docker or Coolify maps
+		// it: the operator's, said in the start step.
+		if tgt.Kind != "image" && (ing.WebAddress == "" || !sameListen(ing.WebAddress, tgt.Listen)) {
 			return "", fmt.Errorf("--ingress proxy: the target listens on %s, the source's dashboard on %s, which the proxy targets: set the target's listen to it", orNone(tgt.Listen), orNone(ing.WebAddress))
 		}
 	}
@@ -138,17 +140,30 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 			return e.undo(ctx, j, fmt.Errorf("stopping the source's %s: %w", ingressPart(kind), err))
 		}
 	}
-	if err := e.Target.Start(ctx); err != nil {
-		return e.undo(ctx, j, fmt.Errorf("starting the target: %w", err))
+	startErr := e.Target.Start(ctx)
+	var human *HumanStep
+	if startErr != nil && !errors.As(startErr, &human) {
+		return e.undo(ctx, j, fmt.Errorf("starting the target: %w", startErr))
 	}
-	if kind == Coolify && !j.Transfer.Asked {
+	if human != nil || (kind == Coolify && !j.Transfer.Asked) {
+		// One stop for every step the operator takes: the target's start
+		// (an image's service) and the domain move (Coolify), then
+		// --resume checks both through the public URL.
 		j.Transfer.Asked = true
 		if err := e.save(ctx, j); err != nil {
 			return err
 		}
-		e.say("Address transfer, by hand: in Coolify, move the domain of %s from the TypeScript application to the Go one (its domain setting), "+
-			"and redeploy the proxy if Coolify asks. Then run varlatch migrate --resume, which checks %s/v1/meta answers from the target; "+
-			"or varlatch migrate --abort, which undoes the migration (move the domain back first).", j.Transfer.Origin, j.Transfer.Origin)
+		n := 1
+		if human != nil {
+			e.say("Address transfer, by hand, step %d: %s", n, human.Instruction)
+			n++
+		}
+		if kind == Coolify {
+			e.say("Address transfer, by hand, step %d: in Coolify, move the domain of %s from the TypeScript application to the Go one (its domain setting), "+
+				"and redeploy the proxy if Coolify asks.", n, j.Transfer.Origin)
+		}
+		e.say("Then run varlatch migrate --resume, which checks %s/v1/meta answers from the target; or varlatch migrate --abort, which undoes the migration "+
+			"(the address back first).", j.Transfer.Origin)
 		return ErrAwaitingOperator
 	}
 	if err := e.waitForTarget(ctx, j); err != nil {
@@ -215,6 +230,10 @@ func (e *Engine) waitForTarget(ctx context.Context, j *Journal) error {
 func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
 	var problems []error
 	if err := e.Target.Stop(ctx); err != nil {
+		var human *HumanStep
+		if errors.As(err, &human) {
+			e.say("To undo, by hand: %s Then run varlatch migrate --abort (or --resume) again.", human.Instruction)
+		}
 		problems = append(problems, fmt.Errorf("stopping the target: %w", err))
 	}
 	switch j.Ingress {

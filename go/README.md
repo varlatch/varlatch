@@ -3042,6 +3042,39 @@ migrations.
     `migration` with phase `transfer`; a gate the TypeScript server wrote
     with another phase is unreadable to Go, which fails closed.
   - Not yet: an end-to-end transfer with Pebble (7.4c, 7.8).
+- The image target (step 7, slice 7.4d; decision 20's second shape, O2):
+  `varlatch migrate ... --to-data <dir> --to-keys <dir> --to-config <file>
+  --to-image <repository:tag@sha256:...> --to-service <name>`, instead of
+  `--config` and `--unit`. The Go image's service (6.10a) is created
+  beforehand in setup mode with nothing listening; its data directory,
+  keys directory and configuration are bind paths on this host.
+  - `migrate` runs no Docker command against it. It fills the bind paths
+    with this host's varlatchd, the image's release (the tag must be
+    `varlatchd`'s release), run as the image's user (uid and gid 65532)
+    so every file is the image's, against a configuration derived from
+    the service's (`/var/lib/varlatch`, `/keys` and `/etc/varlatch`
+    mapped to the bind paths; a file setting elsewhere refused). Each
+    bundle, and the dry run's scratch database, are staged in a directory
+    the image's user owns.
+  - The preflight refuses a reference not pinned by its digest, a tag
+    that is not this varlatchd's release, bind paths not owned by
+    65532:65532 or writable by others (the `chown` and `chmod` to run are
+    said), and a service already serving on the bind path.
+  - Starting and stopping the service are the operator's: `migrate` says
+    each exactly (Coolify's Deploy or Stop, or `docker compose up -d` or
+    `stop`) and checks it after (varlatchd's control socket in the bind
+    path answers while the service serves). The transfer stops once
+    (exit 75) for every step the operator takes, the service's start and,
+    with Coolify, the domain move; `--resume` checks both through the
+    public URL. An undo waits for the service to be stopped, and resumes
+    as an undo.
+- The live open: `varlatchd admin migrate open --id <migration>` ends the
+  transfer's gate in the running varlatchd, through its control socket
+  (offline, on the data directory), then writes its journal open (the gate
+  first); `migrate` opens a running target this way, with no restart, a
+  stopped one by writing its journal and starting it. A switch is the
+  journal's word alone, written beside the varlatchd serving under the
+  transfer's gate.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

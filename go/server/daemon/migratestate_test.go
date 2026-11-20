@@ -417,3 +417,69 @@ func TestStateReadsWithoutADataDirectory(t *testing.T) {
 		t.Fatal("reading the state created the data directory")
 	}
 }
+
+// The switch is written beside the varlatchd serving under the transfer's
+// gate, and the live open ends that gate through its control socket: it
+// serves at once, its journal open; offline, the same on the data
+// directory. Before the switch, or for another migration, refused.
+func TestTheLiveOpen(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	for _, phase := range []string{"started", "transfer"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	r := start(t, in)
+	get := func(path string) int {
+		res, err := http.Get("http://" + r.addr + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	if code, _, errOut := runAdmin(t, "migrate", "open", "--id", migA, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "opens once switched") {
+		t.Fatalf("an open before the switch: %d %q", code, errOut)
+	}
+	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "switched"), "state", "--write"); code != ExitOK {
+		t.Fatalf("the switch beside a running varlatchd: %q", errOut)
+	}
+	if code, _, errOut := runAdmin(t, "migrate", "open", "--id", migB, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "not "+migB) {
+		t.Fatalf("another migration's open: %d %q", code, errOut)
+	}
+	if get("/v1/whoami") != http.StatusServiceUnavailable {
+		t.Fatal("not isolated before the open")
+	}
+	code, out, errOut := runAdmin(t, "migrate", "open", "--id", migA, "--config", in.conf)
+	if code != ExitOK || !strings.Contains(out, `"opened":true`) {
+		t.Fatalf("the live open: %d %q %q", code, out, errOut)
+	}
+	if get("/v1/whoami") == http.StatusServiceUnavailable {
+		t.Fatal("isolated after the live open")
+	}
+	if g, err := backup.ReadGate(in.data); g != nil || err != nil {
+		t.Fatalf("the gate after the live open: %+v %v", g, err)
+	}
+	b, _ := os.ReadFile(filepath.Join(in.data, JournalFile))
+	if h, err := parseJournal(b); err != nil || h.Phase != "open" || !strings.Contains(string(b), `{"at":`) {
+		t.Fatalf("the journal after the live open: %s %v", b, err)
+	}
+	// Again: nothing to do.
+	if code, _, errOut := runAdmin(t, "migrate", "open", "--id", migA, "--config", in.conf); code != ExitOK {
+		t.Fatalf("a second open: %q", errOut)
+	}
+	r.stop(t)
+	// Offline: the same, on the data directory.
+	in2 := newInstall(t, "backup_interval = off\n")
+	for _, phase := range []string{"started", "transfer", "switched"} {
+		if code, _, errOut := migrateWith(t, in2.conf, journalText(migB, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	if code, _, errOut := runAdmin(t, "migrate", "open", "--id", migB, "--config", in2.conf); code != ExitOK {
+		t.Fatalf("an offline open: %q", errOut)
+	}
+	if g, _ := backup.ReadGate(in2.data); g != nil {
+		t.Fatal("the gate after an offline open")
+	}
+}

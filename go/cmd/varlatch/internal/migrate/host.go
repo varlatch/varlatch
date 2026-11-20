@@ -223,6 +223,19 @@ func (h *Host) Check(ctx context.Context, bundle, scratch string, runKey []byte)
 	return s, nil
 }
 
+// OpenLive is `admin migrate open --id`, which varlatchd routes through
+// its control socket while it runs.
+func (h *Host) OpenLive(ctx context.Context, id string) error {
+	r, err := h.admin(ctx, []string{"open", "--id", id}, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return failure("varlatchd admin migrate open", r)
+	}
+	return nil
+}
+
 // Discard is `admin migrate discard --id`.
 func (h *Host) Discard(ctx context.Context, id string) error {
 	r, err := h.admin(ctx, []string{"discard", "--id", id}, nil)

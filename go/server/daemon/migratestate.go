@@ -172,12 +172,8 @@ func readLimited(stdin io.Reader, n int64, what string) ([]byte, error) {
 // there}); with --write, the journal on stdin written in its place. A
 // journal of another migration is replaced only once that one was undone
 // (released).
-func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout io.Writer, fail func(int, string, ...any) int) int {
+func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writer, fail func(int, string, ...any) int) int {
 	if a.write {
-		b, err := readLimited(stdin, 1<<20, "the journal")
-		if err != nil {
-			return fail(64, "%v", err)
-		}
 		h, err := parseJournal(b)
 		if err != nil {
 			return fail(ExitFailure, "%v; nothing was written", err)
@@ -473,4 +469,66 @@ func writeKeyFile(path string, key []byte) error {
 		return err
 	}
 	return syncFile(filepath.Dir(path))
+}
+
+// runMigrateOpen is `admin migrate open --id <migration>`, the live open
+// (decision 12): in the running varlatchd, through its control socket (or
+// offline on the data directory), the migration's gate ended, then its
+// journal written open (its phase, and the step in its history). The
+// journal must name the migration and be switched (or open already: then
+// nothing changes but a gate left over). The gate first, as `state
+// --write`: the journal never says open while the gate stands.
+func runMigrateOpen(env *hostEnv, rest []string, stdout, stderr io.Writer) int {
+	fail := func(status int, format string, args ...any) int {
+		fmt.Fprintf(stderr, "varlatchd admin migrate open: "+format+"\n", args...)
+		return status
+	}
+	a, msg := parseMigrate(rest)
+	if msg != "" || a.sub != "open" {
+		fmt.Fprintln(stderr, migrateUsage)
+		return 64
+	}
+	dir := env.cfg.DataDir
+	raw, err := os.ReadFile(filepath.Join(dir, JournalFile))
+	if err != nil {
+		return fail(ExitFailure, "the data directory's journal: %v", err)
+	}
+	h, err := parseJournal(raw)
+	switch {
+	case err != nil:
+		return fail(ExitFailure, "%v", err)
+	case h.ID != a.id:
+		return fail(ExitFailure, "the data directory's journal is the migration %s, not %s", h.ID, a.id)
+	case h.Phase != "switched" && h.Phase != "open":
+		return fail(ExitFailure, "the migration %s is in phase %s; it opens once switched", h.ID, h.Phase)
+	}
+	if err := env.admission.EndMigration(h.ID); err != nil {
+		return fail(ExitFailure, "the transfer's gate %s could not be ended (%v), so the journal still says %s; remove that file by hand, then run varlatch migrate --resume",
+			filepath.Join(dir, backup.GateFile), err, h.Phase)
+	}
+	if h.Phase == "switched" {
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return fail(ExitFailure, "%v", err)
+		}
+		var history []json.RawMessage
+		_ = json.Unmarshal(doc["history"], &history)
+		step, _ := json.Marshal(map[string]string{"phase": "open", "at": time.Now().UTC().Format(time.RFC3339Nano)})
+		history = append(history, step)
+		doc["phase"], _ = json.Marshal("open")
+		doc["history"], _ = json.Marshal(history)
+		b, err := json.Marshal(doc)
+		if err != nil {
+			return fail(ExitFailure, "%v", err)
+		}
+		owner := -1
+		if st, err := os.Stat(dir); err == nil {
+			owner = statOwner(st)
+		}
+		if err := writeDurably(filepath.Join(dir, JournalFile), append(b, '\n'), owner); err != nil {
+			return fail(ExitFailure, "the gate is ended, but the journal could not say open: %v; varlatch migrate --resume finishes it", err)
+		}
+	}
+	fmt.Fprintln(stdout, `{"opened":true}`)
+	return ExitOK
 }

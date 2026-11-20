@@ -246,7 +246,7 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 // directory's files, never the database: the maintenance commands and
 // backup status.
 func fileOnly(args []string) bool {
-	return args[0] == "maintenance" || args[0] == "backup" && len(args) > 1 && args[1] == "status"
+	return args[0] == "maintenance" || args[0] == "migrate" || args[0] == "backup" && len(args) > 1 && args[1] == "status"
 }
 
 func viaSocket(conn *net.UnixConn, what string, args []string, stdout, stderr io.Writer) int {

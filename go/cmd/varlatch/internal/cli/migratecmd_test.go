@@ -25,7 +25,10 @@ func TestMigrateCommand(t *testing.T) {
 		why  string
 	}{
 		{[]string{"migrate"}, "--ingress is public, proxy or coolify"},
-		{[]string{"migrate", "--ingress", "public"}, "give --config, --bek-file, --backup-destination and --read-credentials-file"},
+		{[]string{"migrate", "--ingress", "public"}, "give the target (--config, or --to-data"},
+		{[]string{"migrate", "--ingress", "public", "--config", "/c", "--to-data", "/d"}, "give one of them"},
+		{[]string{"migrate", "--ingress", "public", "--to-data", "/d"}, "all of them"},
+		{[]string{"migrate", "--ingress", "public", "--to-data", "/d", "--to-keys", "/k", "--to-config", "/c", "--to-image", "i", "--to-service", "s", "--unit", "u"}, "--unit is a host install's"},
 		{[]string{"migrate", "--resume", "--abort", "--config", "/c", "--bek-file", "/b", "--backup-destination", "d", "--read-credentials-file", "/r"}, "not both"},
 		{[]string{"migrate", "--status", "--config", "/x"}, "--status takes --from and --json only"},
 		{[]string{"migrate", "--resume", "--dry-run", "--config", "/c", "--bek-file", "/b", "--backup-destination", "d", "--read-credentials-file", "/r"}, "neither takes --dry-run"},

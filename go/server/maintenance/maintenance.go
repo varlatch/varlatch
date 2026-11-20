@@ -98,6 +98,29 @@ func (a *Admission) AdmitsMeta() bool {
 	return !a.unreadable && g != nil && g.Kind == "migration"
 }
 
+// EndMigration ends the migration's gate id (go-step7 decision 12, the
+// live open): the gate is removed, and the API admitted again. No gate is
+// nothing to do; another gate is refused.
+func (a *Admission) EndMigration(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unreadable {
+		return backup.ErrGateUnreadable
+	}
+	g := a.active()
+	if g == nil {
+		return nil
+	}
+	if g.Kind != "migration" || g.ID != id {
+		return fmt.Errorf("the open gate is a %s gate (%s), not the migration %s's", g.Kind, g.ID, id)
+	}
+	if err := os.Remove(filepath.Join(a.dir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	a.gate = nil
+	return nil
+}
+
 // Busy is how many admitted requests are still running.
 func (a *Admission) Busy() int {
 	a.mu.Lock()

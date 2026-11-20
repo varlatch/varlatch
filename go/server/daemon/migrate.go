@@ -60,7 +60,8 @@ import (
 const migrateUsage = "Usage: varlatchd admin migrate import --in <bundle> [--scratch <dir>] [--json] | " +
 	"varlatchd admin migrate check --in <bundle> [--scratch <dir>] [--json] (the run key on stdin) | " +
 	"varlatchd admin migrate export --reverse --out <bundle> [--json] | varlatchd admin migrate keys (the keys on stdin) | " +
-	"varlatchd admin migrate state [--write] (the journal on stdin) | varlatchd admin migrate discard --id <migration>"
+	"varlatchd admin migrate state [--write] (the journal on stdin) | varlatchd admin migrate discard --id <migration> | " +
+	"varlatchd admin migrate open --id <migration>"
 
 type migrateArgs struct {
 	sub, in, out, scratch, id string
@@ -69,7 +70,7 @@ type migrateArgs struct {
 
 func parseMigrate(rest []string) (migrateArgs, string) {
 	var a migrateArgs
-	if len(rest) == 0 || !slices.Contains([]string{"import", "export", "check", "keys", "state", "discard"}, rest[0]) {
+	if len(rest) == 0 || !slices.Contains([]string{"import", "export", "check", "keys", "state", "discard", "open"}, rest[0]) {
 		return a, migrateUsage
 	}
 	a.sub = rest[0]
@@ -111,7 +112,7 @@ func parseMigrate(rest []string) (migrateArgs, string) {
 		return a, migrateUsage
 	case a.sub == "state" && (a.in != "" || a.out != "" || a.scratch != "" || a.id != "" || reverse):
 		return a, migrateUsage
-	case a.sub == "discard" && (a.id == "" || a.in != "" || a.out != "" || a.scratch != "" || reverse || a.write):
+	case (a.sub == "discard" || a.sub == "open") && (a.id == "" || a.in != "" || a.out != "" || a.scratch != "" || reverse || a.write || a.asJSON):
 		return a, migrateUsage
 	case a.scratch != "" && !filepath.IsAbs(a.scratch):
 		return a, migrateUsage
@@ -130,13 +131,30 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	// Reading the state writes nothing, not even the data directory (a
 	// target not set up yet has none): it answers beside a running
 	// varlatchd too, and says whether one runs.
-	if a.sub == "state" && !a.write {
+	var journalIn []byte
+	if a.sub == "state" && a.write {
+		b, err := readLimited(stdin, 1<<20, "the journal")
+		if err != nil {
+			return fail(64, "%v", err)
+		}
+		journalIn = b
+	}
+	// A switch is the journal's word alone (the gate and the database
+	// stay as they are): it is written beside the varlatchd that serves
+	// under the transfer's gate, which reads its journal only at start.
+	switched := false
+	if journalIn != nil {
+		if h, err := parseJournal(journalIn); err == nil && h.Phase == "switched" {
+			switched = true
+		}
+	}
+	if a.sub == "state" && (!a.write || switched) {
 		if _, err := os.Stat(cfg.DataDir); err == nil {
 			if _, _, err := checkClientDir(cfg.DataDir, os.Getuid()); err != nil {
 				return fail(ExitConfig, "%v", err)
 			}
 		}
-		return runMigrateState(cfg, a, stdin, stdout, fail)
+		return runMigrateState(cfg, a, journalIn, stdout, fail)
 	}
 	if a.sub == "import" || a.sub == "keys" || a.sub == "state" {
 		if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
@@ -168,7 +186,7 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	case "keys":
 		return runMigrateKeys(cfg, stdin, stdout, fail)
 	case "state":
-		return runMigrateState(cfg, a, stdin, stdout, fail)
+		return runMigrateState(cfg, a, journalIn, stdout, fail)
 	case "discard":
 		return runMigrateDiscard(cfg, a, stdout, fail)
 	}

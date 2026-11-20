@@ -145,6 +145,10 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
+	case sub == "migrate" && rest[0] == "open":
+		// The live open: through the running daemon, which ends the
+		// transfer's gate it holds; offline, on the data directory.
+		return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 	case sub == "migrate":
 		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
 	}
@@ -304,7 +308,7 @@ const MaintenanceRefusal = "Installation is in maintenance; ordinary admin opera
 // but the backup and maintenance commands, which take the admission their
 // own way (backup run enters it; maintenance manages it; backup status
 // only reads).
-func writes(sub string) bool { return sub != "backup" && sub != "maintenance" }
+func writes(sub string) bool { return sub != "backup" && sub != "maintenance" && sub != "migrate" }
 
 // runHost runs one host command, in the daemon or offline, with env. A
 // command that writes enters the maintenance admission first, before any
@@ -335,6 +339,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runAuditExport(ctx, env, rest, stdout, stderr)
 	case sub == "tailnet":
 		return runTailnetRepin(ctx, env, rest, stdout, stderr)
+	case sub == "migrate":
+		return runMigrateOpen(env, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":
 		return adminUsage(stderr, "unknown command "+sub)
 	}

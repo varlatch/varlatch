@@ -28,6 +28,9 @@ const migrateUsage = `Usage:
                    --backup-destination <name> --read-credentials-file <file> [--from <compose directory>]
                    [--dry-run] [--max-downtime <duration>] [--drain <duration>] [--transfer-timeout <duration>]
                    [--unit <systemd unit>] [--kek-file <file>] [--destinations-file <file>] [--ts-cli <program>] [--json]
+  varlatch migrate ... --to-data <dir> --to-keys <dir> --to-config <file> --to-image <ref:tag@sha256:...> --to-service <name>
+                   (instead of --config and --unit: the Go image's service, created in setup mode with nothing listening,
+                    its bind paths on this host; you start and stop it when migrate asks)
   varlatch migrate --resume (the same options)
   varlatch migrate --abort (the same options): undo a migration not yet switched
   varlatch migrate --status [--from <compose directory>] [--json]
@@ -44,6 +47,7 @@ var goOnlyCommands = map[string]func(*Run) error{
 
 type migrateOptions struct {
 	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI, ingress, unit string
+	toData, toKeys, toConfig, toImage, toService                                                         string
 	maxDowntime, drain, transferTimeout                                                                  time.Duration
 	dryRun, resume, abort, status, asJSON                                                                bool
 }
@@ -52,7 +56,8 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 	o := migrateOptions{}
 	values := map[string]*string{"--from": &o.from, "--config": &o.config, "--bek-file": &o.bekFile, "--backup-destination": &o.destination,
 		"--read-credentials-file": &o.readCredentials, "--destinations-file": &o.destinationsFile, "--kek-file": &o.kekFile, "--ts-cli": &o.tsCLI,
-		"--ingress": &o.ingress, "--unit": &o.unit}
+		"--ingress": &o.ingress, "--unit": &o.unit, "--to-data": &o.toData, "--to-keys": &o.toKeys, "--to-config": &o.toConfig,
+		"--to-image": &o.toImage, "--to-service": &o.toService}
 	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
 	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON}
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch migrate: "+msg, "\n"+migrateUsage) }
@@ -105,8 +110,15 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--unit takes a systemd unit's name (such as varlatchd), not an option or a path")
 	case !o.status && !o.resume && !o.abort && !slices.Contains([]string{"public", "proxy", "coolify"}, o.ingress):
 		return o, usage("--ingress is public, proxy or coolify: the source's ingress (its own Caddy, your reverse proxy, or Coolify's)")
-	case !o.status && (o.config == "" || o.bekFile == "" || o.destination == "" || o.readCredentials == ""):
-		return o, usage("give --config, --bek-file, --backup-destination and --read-credentials-file")
+	case o.config != "" && (o.toData != "" || o.toKeys != "" || o.toConfig != "" || o.toImage != "" || o.toService != ""):
+		return o, usage("--config is a host install's target, --to-* the image's: give one of them")
+	case (o.toData != "" || o.toKeys != "" || o.toConfig != "" || o.toImage != "" || o.toService != "") &&
+		(o.toData == "" || o.toKeys == "" || o.toConfig == "" || o.toImage == "" || o.toService == ""):
+		return o, usage("the image target takes --to-data, --to-keys, --to-config, --to-image and --to-service, all of them")
+	case o.toData != "" && o.unit != "":
+		return o, usage("--unit is a host install's: the image's service is started and stopped by you")
+	case !o.status && ((o.config == "" && o.toData == "") || o.bekFile == "" || o.destination == "" || o.readCredentials == ""):
+		return o, usage("give the target (--config, or --to-data, --to-keys, --to-config, --to-image and --to-service), --bek-file, --backup-destination and --read-credentials-file")
 	}
 	return o, nil
 }
@@ -164,6 +176,17 @@ func migrateCommand(r *Run) error {
 			Say: func(s string) { _ = r.warn(s) }},
 		BEK:    bek,
 		Prober: migrate.HTTPProber{},
+	}
+	if o.toData != "" {
+		img := &migrate.Image{Host: &migrate.Host{Varlatchd: varlatchd, Run: migrate.ExecRunner{Env: varlatchdEnviron(r), As: &migrate.ImageUser}},
+			Service: o.toService, Ref: o.toImage, DataDir: o.toData, KeysDir: o.toKeys, ServiceConfig: o.toConfig, User: migrate.ImageUser}
+		cleanup, err := migrate.PrepareImage(context.Background(), img, "", !o.resume && !o.abort)
+		defer cleanup()
+		if err != nil {
+			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
+		}
+		e.Target = img
+		e.Options.Stage = &migrate.ImageUser
 	}
 	var j *migrate.Journal
 	switch {

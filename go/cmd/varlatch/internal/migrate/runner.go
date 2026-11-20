@@ -31,6 +31,14 @@ type Ran struct {
 type ExecRunner struct {
 	// Env is the programs' environment (nil: this process's).
 	Env []string
+	// As, when set, runs them as that uid and gid (an image's user, whose
+	// files they write): this process must be root.
+	As *Owner
+}
+
+// Owner is a uid and a gid.
+type Owner struct {
+	UID, GID uint32
 }
 
 // Run runs name with args in dir. A program that could not be started is
@@ -39,6 +47,11 @@ func (x ExecRunner) Run(ctx context.Context, dir, name string, args []string, st
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = x.Env
+	if x.As != nil {
+		if err := runAs(cmd, *x.As); err != nil {
+			return Ran{}, err
+		}
+	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

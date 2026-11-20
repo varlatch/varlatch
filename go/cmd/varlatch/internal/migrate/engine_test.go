@@ -131,6 +131,9 @@ type fakeTarget struct {
 	info     TargetInfo
 	running  bool
 	gate     bool
+	human    bool // an image's service: the operator starts and stops it
+	failOpen error
+	bundles  []string
 }
 
 func (t *fakeTarget) call(name string) error {
@@ -146,6 +149,12 @@ func (t *fakeTarget) Start(context.Context) error {
 	if err := t.call("start"); err != nil {
 		return err
 	}
+	if t.human {
+		if !t.running {
+			return &HumanStep{Instruction: "Start the Go service varlatch-go (in Coolify, Deploy it)."}
+		}
+		return nil
+	}
 	t.running = true
 	return nil
 }
@@ -153,7 +162,27 @@ func (t *fakeTarget) Stop(context.Context) error {
 	if err := t.call("stop"); err != nil {
 		return err
 	}
+	if t.human {
+		if t.running {
+			return &HumanStep{Instruction: "Stop the Go service varlatch-go (in Coolify, Stop it)."}
+		}
+		return nil
+	}
 	t.running = false
+	return nil
+}
+func (t *fakeTarget) OpenLive(_ context.Context, id string) error {
+	if err := t.call("openlive " + id); err != nil {
+		return err
+	}
+	if t.failOpen != nil {
+		return t.failOpen
+	}
+	if !t.running || t.journal == nil || t.journal.ID != id || (t.journal.Phase != Switched && t.journal.Phase != Open) {
+		return errors.New("not a running target of this switched migration")
+	}
+	t.gate = false
+	t.journal = &JournalHead{ID: id, Phase: Open}
 	return nil
 }
 
@@ -215,6 +244,10 @@ func (t *fakeTarget) Import(_ context.Context, bundle, scratch string) (CopyReco
 	if scratch == "" {
 		t.database = true
 	}
+	if b, err := os.ReadFile(bundle); err != nil || len(b) == 0 {
+		return CopyRecord{}, errors.New("the bundle is not readable here")
+	}
+	t.bundles = append(t.bundles, bundle)
 	return CopyRecord{InstallationID: "inst_fake", Tables: 58, Rows: 902}, nil
 }
 func (t *fakeTarget) Check(_ context.Context, bundle, scratch string, runKey []byte) (CheckSummary, error) {
@@ -799,27 +832,28 @@ func TestTheOldReleaseAnswering(t *testing.T) {
 	}
 }
 
-// Open interrupted: the gate not removed (the target's journal not
-// written), or a kill before the target started. --resume finishes it;
-// done, it changes nothing.
+// Open interrupted: the live open failed (the gate not ended), or the
+// target went down before it served. --resume finishes it; done, it
+// changes nothing.
 func TestAnOpenFinishedOnResume(t *testing.T) {
 	w := newWorld(t)
-	w.tgt.fail["journal open"] = errors.New("the transfer's gate could not be removed")
+	w.tgt.failOpen = errors.New("the transfer's gate could not be ended")
 	j, err := w.eng.Run(context.Background(), false)
 	if err == nil || !strings.Contains(err.Error(), "varlatch migrate --resume finishes it") || j.Phase != Open {
 		t.Fatalf("%+v %v", j, err)
 	}
-	if w.tgt.journal.Phase != Switched || !w.tgt.gate || w.tgt.running {
+	if w.tgt.journal.Phase != Switched || !w.tgt.gate || !w.tgt.running {
 		t.Fatalf("the target: %+v gate %v running %v", w.tgt.journal, w.tgt.gate, w.tgt.running)
 	}
-	delete(w.tgt.fail, "journal open")
+	w.tgt.failOpen = nil
 	if j, err = w.eng.Resume(context.Background()); err != nil || w.tgt.journal.Phase != Open || w.tgt.gate || !w.tgt.running {
 		t.Fatalf("resume: %+v %v; target %+v gate %v running %v", j, err, w.tgt.journal, w.tgt.gate, w.tgt.running)
 	}
-	// Killed after the journal said open, before the start.
-	w.tgt.running = false
-	if _, err := w.eng.Resume(context.Background()); err != nil || !w.tgt.running {
-		t.Fatalf("a kill before the start: %v, running %v", err, w.tgt.running)
+	// The target went down before the open reached it: written open
+	// offline, then started.
+	w.tgt.running, w.tgt.gate, w.tgt.journal = false, true, &JournalHead{ID: j.ID, Phase: Switched}
+	if _, err := w.eng.Resume(context.Background()); err != nil || !w.tgt.running || w.tgt.gate || w.tgt.journal.Phase != Open {
+		t.Fatalf("a target down: %v, running %v gate %v", err, w.tgt.running, w.tgt.gate)
 	}
 	n := len(w.tgt.calls)
 	if _, err := w.eng.Resume(context.Background()); err != nil {
@@ -888,5 +922,28 @@ func TestAnAbortWithoutATransferRecord(t *testing.T) {
 	j, err := w.eng.Abort(context.Background())
 	if err != nil || j.Phase != Released || !strings.Contains(strings.Join(w.said, "\n"), "move the domain of the installation's address back") {
 		t.Fatalf("%+v %v %v", j, err, w.said)
+	}
+}
+
+// With Stage (an image target), each bundle the target reads is a copy in
+// a directory of its own under the temporary directory, given to that
+// user, and gone after; so is the dry run's scratch database.
+func TestStagedForTheImagesUser(t *testing.T) {
+	w := newWorld(t)
+	me := Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	w.eng.Options.Stage = &me
+	if j, err := w.eng.Run(context.Background(), false); err != nil || j.Phase != Open {
+		t.Fatalf("%+v %v", j, err)
+	}
+	if len(w.tgt.bundles) != 2 {
+		t.Fatalf("bundles %v", w.tgt.bundles)
+	}
+	for _, b := range w.tgt.bundles {
+		if filepath.Base(b) != "bundle.jsonl" || !strings.HasPrefix(filepath.Base(filepath.Dir(b)), ".varlatch-migrate-stage-") || filepath.Dir(filepath.Dir(b)) != filepath.Clean(os.TempDir()) {
+			t.Errorf("a bundle not staged: %s", b)
+		}
+		if _, err := os.Stat(filepath.Dir(b)); !os.IsNotExist(err) {
+			t.Errorf("a staged bundle left: %s", b)
+		}
 	}
 }

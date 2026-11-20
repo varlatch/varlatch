@@ -74,6 +74,8 @@ type Journal struct {
 	Barrier     *BarrierRecord   `json:"barrier,omitempty"`
 	Copy        *CopyRecord      `json:"copy,omitempty"`
 	Undone      *UndoneRecord    `json:"undone,omitempty"`
+	// Undoing is an undo begun and not finished: --resume goes on with it.
+	Undoing bool `json:"undoing,omitempty"`
 	// Ingress is the source's ingress, which the transfer moves: public,
 	// proxy or coolify (decision 12).
 	Ingress Ingress `json:"ingress"`

@@ -127,10 +127,23 @@ type Target interface {
 	// Discard removes the database migration id built in the data
 	// directory (before the switch only).
 	Discard(ctx context.Context, id string) error
-	// Start and Stop start and stop the target's service.
+	// Start and Stop start and stop the target's service: done, or, where
+	// that is the operator's (an image's service), a *HumanStep unless it
+	// is so already.
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
+	// OpenLive opens the running target: through its control socket, it
+	// ends the transfer's gate and writes its journal open.
+	OpenLive(ctx context.Context, id string) error
 }
+
+// HumanStep is a step only the operator takes (go-step7 decision 20: what
+// needs Docker or Coolify is a human's): its exact instruction.
+type HumanStep struct {
+	Instruction string
+}
+
+func (h *HumanStep) Error() string { return h.Instruction }
 
 // Prober asks a public URL which installation serves it: GET /v1/meta's
 // installationId and serverVersion.
@@ -140,6 +153,9 @@ type Prober interface {
 
 // TargetInfo is the target, as the journal records it.
 type TargetInfo struct {
+	// Kind is "host" (a host install) or "image" (the image's service,
+	// through its bind paths).
+	Kind    string `json:"kind,omitempty"`
 	Config  string `json:"config"`
 	DataDir string `json:"dataDir"`
 	// Release is the target's varlatchd's; PublicURL, Listen and
