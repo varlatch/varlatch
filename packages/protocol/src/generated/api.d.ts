@@ -2328,7 +2328,7 @@ export interface components {
         };
         InstallationBackups: {
             archives: components["schemas"]["BackupArchiveStatus"][];
-            /** @description A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive), never removed by its retention, and no warning counts them. The TypeScript server does not send this member. */
+            /** @description A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive) and never removed by its retention. None of the warnings about Go's own archives counts them; the Root KEK's does, since converting one needs its key. The TypeScript server does not send this member. */
             typescriptArchives?: components["schemas"]["BackupArchiveStatus"][];
             warnings: string[];
         };

@@ -663,8 +663,9 @@ func (s *Service) upload(ctx context.Context, id, archive string) (*backup.Deliv
 // removes only an archive whose status record names a Go release: never a
 // TypeScript-format archive (go-step7 decision 18: restorable through the
 // converter, its retention the bucket's lifecycle rule or the operator's),
-// and never an archive without a readable record, which Go did not make
-// (every archive Go makes has its record before it is under its name).
+// and never an archive without a readable record: one Go did not make, or
+// did not finish publishing (a run renames its archive into place before it
+// writes the record, and a failed write leaves none), is kept.
 func (s *Service) retain(backups string) []string {
 	type local struct {
 		id string

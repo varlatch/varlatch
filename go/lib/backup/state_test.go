@@ -31,6 +31,9 @@ func TestReleaseLine(t *testing.T) {
 		{"", false, false},
 		{"dev", false, false},
 		{"v0.22.4", false, false},
+		// Too large to read: neither, so retention keeps it.
+		{"0.99999999999999999999.0", false, false},
+		{"99999999999999999999.0.0", false, false},
 	} {
 		r := StatusRecord{Release: c.release}
 		if r.TypeScript() != c.ts || r.Go() != c.go_ {

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -89,9 +90,16 @@ func (s StatusRecord) line() string {
 	if m == nil {
 		return ""
 	}
-	var major, minor int
-	fmt.Sscan(m[1], &major)
-	fmt.Sscan(m[2], &minor)
+	// A number too large to read is no release at all: neither line, so
+	// retention keeps the archive.
+	major, err := strconv.Atoi(m[1])
+	if err != nil {
+		return ""
+	}
+	minor, err := strconv.Atoi(m[2])
+	if err != nil {
+		return ""
+	}
 	if major == 0 && minor < goLine {
 		return "typescript"
 	}
