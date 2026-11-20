@@ -81,11 +81,16 @@ grep -q '@VARLATCH_VERSION@' install.sh install.ps1 && bad "an installer is not 
 grep -qx "VARLATCH_RELEASE='$version'" install.sh || bad "install.sh is not stamped with $version"
 grep -q "^ *\$VarlatchRelease = '$version'\$" install.ps1 || bad "install.ps1 is not stamped with $version"
 
-# The manifest names this version (go/lib/release's format 1; its rules are
-# releasecheck's, which wrote it).
+# The manifest names this version (go/lib/release's format 2; its rules are
+# releasecheck's, which wrote it), and says what the release does to a
+# migration's rollback window (internal docs/design/go-step7.md decision
+# 17): reversible to the last TypeScript release, or ending the window.
+# A release that says neither fails here, so none ends the window unsaid.
 if [ -f release.json ]; then
-  jq -e --arg v "$version" '.manifestVersion == 1 and .version == $v and (.schemaVersion | type) == "number" and (.rollbackSafe | type) == "boolean"' release.json > /dev/null \
-    || bad "release.json is not a manifest of format 1 for $version"
+  jq -e --arg v "$version" '.manifestVersion == 2 and .version == $v and (.schemaVersion | type) == "number" and (.rollbackSafe | type) == "boolean"' release.json > /dev/null \
+    || bad "release.json is not a manifest of format 2 for $version"
+  jq -e '(.reversibleTo == "0.23.0" and .endsRollbackWindow == false) or (.reversibleTo == null and .endsRollbackWindow == true)' release.json > /dev/null \
+    || bad "release.json declares neither reversibleTo 0.23.0 nor endsRollbackWindow: a release keeps the migration's rollback window or says it ends it"
 fi
 
 [ "$fail" = 0 ] && printf 'check-assets: %s files of %s checked\n' "${#expected[@]}" "$version"
