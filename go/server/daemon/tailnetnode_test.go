@@ -248,11 +248,24 @@ func TestTheHandoffNode(t *testing.T) {
 	}
 	r.stop(t)
 
-	// Offline, enroll refuses a node no handoff holds; open removes nothing.
-	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "not held") {
-		t.Fatalf("enroll an opened node: %d %q", code, errOut)
-	}
+	// Offline, open with no hold removes nothing.
 	if code, out, errOut := runAdmin(t, "tailnet", "open", "--json", "--config", in.conf); code != ExitOK || out != `{"opened":true,"wasHeld":false,"running":false}`+"\n" {
 		t.Fatalf("open offline: %d %q %q", code, out, errOut)
+	}
+	// An opened node no handoff holds: enroll holds it again only under
+	// the name the control plane gives it now (a handoff undone after it
+	// opened gave it its temporary name back).
+	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", "vault-vl-ffffffffffff-n", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "not held for a handoff") {
+		t.Fatalf("enroll an opened node under another name: %d %q", code, errOut)
+	}
+	if hold, err := tailnet.LoadHold(in.data); err != nil || hold != nil {
+		t.Fatalf("a refused enrolment held the node: %+v %v", hold, err)
+	}
+	code, out, errOut = runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--json", "--config", in.conf)
+	if code != ExitOK || json.Unmarshal([]byte(out), &again) != nil || again.StableID != en.StableID {
+		t.Fatalf("hold an opened node again: %d %q %q", code, out, errOut)
+	}
+	if hold, err := tailnet.LoadHold(in.data); err != nil || hold == nil || hold.Hostname != temp {
+		t.Fatalf("the hold again: %+v %v", hold, err)
 	}
 }

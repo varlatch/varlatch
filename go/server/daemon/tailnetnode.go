@@ -29,7 +29,10 @@ import (
 //     tailnet until the handoff opens it), its tailnet pinned from what it
 //     observes, and, with --certificate, a certificate for that name,
 //     which proves issuance works now. It reports the node's StableID and
-//     MagicDNS name. Run again for the same name, it reports again.
+//     MagicDNS name. Run again for the same name, it reports again; on an
+//     enrolled node no handoff holds, it holds it again only while the
+//     control plane names it exactly that (a handoff undone after it
+//     opened).
 //   - `admin tailnet certificate obtain|expiry --name <name>`: one attempt
 //     at the node's certificate for <name>.<pinned suffix>, through the
 //     running varlatchd's node (offline: the node started for it); or when
@@ -218,9 +221,13 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	_, err = os.Stat(filepath.Join(dir, "tailscaled.state"))
 	enrolled := err == nil
 	authKey := ""
+	// An enrolled node no handoff holds is held again only when the
+	// control plane still names it exactly the temporary name: a handoff
+	// undone after it opened gave that name back to it.
+	rehold := false
 	switch {
 	case enrolled && hold == nil:
-		return fail("the node is enrolled and not held for a handoff: enroll is a handoff's first step, on a node that has not joined yet")
+		rehold = true
 	case enrolled && hold.Hostname != c.hostname:
 		return fail("the node is enrolled and held under %s, not %s: one handoff at a time", hold.Hostname, c.hostname)
 	case !enrolled:
@@ -273,6 +280,14 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 		return fail("the node's status: %v", err)
 	}
 	label, _, _ := strings.Cut(st.DNSName, ".")
+	if rehold && label != c.hostname {
+		return fail("the node is enrolled as %s and not held for a handoff: enroll holds again only a node named %s; nothing was changed", st.DNSName, c.hostname)
+	}
+	if rehold {
+		if err := tailnet.SaveHold(cfg.DataDir, &tailnet.Hold{Hostname: c.hostname, Since: time.Now().UTC()}); err != nil {
+			return fail("writing the hold: %v", err)
+		}
+	}
 	if label != c.hostname {
 		return fail("the node joined as %s, not %s: the control plane gave it another name (one held by another node?). "+
 			"Delete the node in the tailnet's admin console, then enrol again", st.DNSName, c.hostname)
