@@ -42,7 +42,7 @@ func TestASuffixedNameKeepsAccessClosed(t *testing.T) {
 	if v := m.RepinView(ctx); v.Offered || v.Reason != NameSuffixed {
 		t.Fatalf("the re-pin view: %+v", v)
 	}
-	if _, next, err := m.Repin(ctx, false); !errors.Is(err, ErrNameSuffixed) || next != nil || open(m) {
+	if _, next, err := m.Repin(ctx, false, "", nil); !errors.Is(err, ErrNameSuffixed) || next != nil || open(m) {
 		t.Fatalf("a re-pin while suffixed: %+v %v", next, err)
 	}
 	// Renamed: the re-pin reopens, with the closure in its history.
@@ -51,7 +51,7 @@ func TestASuffixedNameKeepsAccessClosed(t *testing.T) {
 	if open(m) {
 		t.Fatal("the closure was not latched")
 	}
-	if _, next, err := m.Repin(ctx, false); err != nil || next == nil || next.Closed != nil || next.History[0].Reason != NameSuffixed || !open(m) {
+	if _, next, err := m.Repin(ctx, false, "", nil); err != nil || next == nil || next.Closed != nil || next.History[0].Reason != NameSuffixed || !open(m) {
 		t.Fatalf("the re-pin after the rename: %+v %v", next, err)
 	}
 	// A name an administrator chose keeps access open.
