@@ -1480,17 +1480,17 @@ const SCAN_DB = "hunter2-hunter2-hunter2";
 const SCAN_TOML = 'server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n';
 const SCAN_ENV = { VARLATCH_TOKEN: "vlt_svc_scanAAAAAA" };
 const SCAN_META = { serverVersion: "0.22.0", apiMajor: 1, capabilities: ["secrets.disclosure-purpose"] };
-const DISCLOSURES = "/v1/organizations/acme/projects/web/environments/dev/disclosures";
-const disclosed = (items: unknown[], status = 200): Exchange[] => [
+const SCAN_DISCLOSURES = "/v1/organizations/acme/projects/web/environments/dev/disclosures";
+const scanDisclosed = (items: unknown[], status = 200): Exchange[] => [
   ok("/v1/meta", SCAN_META),
-  { method: "POST", path: DISCLOSURES, status, answer: status === 200 ? { items, withheld: [] } : items[0] },
+  { method: "POST", path: SCAN_DISCLOSURES, status, answer: status === 200 ? { items, withheld: [] } : items[0] },
 ];
 const SCAN_ITEMS = [
   { name: "API_KEY", versionId: "ver_api2", value: SCAN_KEY, retiring: { versionId: "ver_api1", value: SCAN_OLD } },
   { name: "DB_PASS", versionId: "ver_db", value: SCAN_DB },
   { name: "PIN", versionId: "ver_pin", value: "1234567" },
 ];
-const SCANNED = disclosed(SCAN_ITEMS);
+const SCANNED = scanDisclosed(SCAN_ITEMS);
 const scanRepo = (files: Record<string, string> = {}): Record<string, string> => ({ "repo/varlatch.toml": SCAN_TOML, ...files });
 const scanCase = (c: Omit<TranscriptCase, "env"> & { env?: Record<string, string> }): TranscriptCase => ({
   cwd: "repo",
@@ -1519,9 +1519,9 @@ const scan54d: TranscriptCase[] = [
   scanCase({ id: "paths.over-bound", title: "a file over --max-file-size is not read, and nothing is disclosed when nothing fits: 2", args: ["scan", "dist", "--max-file-size", "10"], files: LEAKY }),
   scanCase({ id: "paths.over-bound.some", title: "a file over the bound beside one that fits: 2", args: ["scan", "dist", "--max-file-size", "20"], files: LEAKY, server: SCANNED }),
   scanCase({ id: "paths.total-bound", title: "--max-total-size: the files past it are not read", args: ["scan", "dist", "--max-total-size", "60"], files: LEAKY, server: SCANNED }),
-  scanCase({ id: "values.short-only", title: "only values shorter than 8 bytes: nothing to look for", args: ["scan", "dist"], files: LEAKY, server: disclosed([{ name: "PIN", versionId: "ver_pin", value: "1234567" }]) }),
-  scanCase({ id: "values.none", title: "no value at all: nothing to look for", args: ["scan", "dist"], files: LEAKY, server: disclosed([]) }),
-  scanCase({ id: "values.no-purpose", title: "a server that records no purpose is named, and the scan runs", args: ["scan", "dist/clean.txt"], files: LEAKY, server: [ok("/v1/meta", { serverVersion: "0.10.1", apiMajor: 1, capabilities: [] }), { method: "POST", path: DISCLOSURES, status: 200, answer: { items: SCAN_ITEMS, withheld: [] } }] }),
+  scanCase({ id: "values.short-only", title: "only values shorter than 8 bytes: nothing to look for", args: ["scan", "dist"], files: LEAKY, server: scanDisclosed([{ name: "PIN", versionId: "ver_pin", value: "1234567" }]) }),
+  scanCase({ id: "values.none", title: "no value at all: nothing to look for", args: ["scan", "dist"], files: LEAKY, server: scanDisclosed([]) }),
+  scanCase({ id: "values.no-purpose", title: "a server that records no purpose is named, and the scan runs", args: ["scan", "dist/clean.txt"], files: LEAKY, server: [ok("/v1/meta", { serverVersion: "0.10.1", apiMajor: 1, capabilities: [] }), { method: "POST", path: SCAN_DISCLOSURES, status: 200, answer: { items: SCAN_ITEMS, withheld: [] } }] }),
   scanCase({ id: "baseline.write", title: "--write-baseline records path, item and version, and the scan passes: 0", args: ["scan", "dist", "--write-baseline"], files: LEAKY, server: SCANNED }),
   scanCase({ id: "baseline.allows", title: "a baseline allows exactly its findings", args: ["scan", "dist"], files: scanRepo({ ...LEAKY, "repo/varlatch-scan-baseline.json": `${JSON.stringify({ version: 1, entries: [{ path: "dist/app.js", item: "API_KEY", versionId: "ver_api2" }] }, null, 2)}\n` }), server: SCANNED }),
   scanCase({ id: "baseline.explicit-missing", title: "--baseline naming no file: 1, before anything is disclosed", args: ["scan", "dist", "--baseline", "nope.json"], files: LEAKY }),
@@ -1529,11 +1529,11 @@ const scan54d: TranscriptCase[] = [
   scanCase({ id: "fail.usage", title: "no path and no --staged: 1, with the usage", args: ["scan"], files: scanRepo() }),
   scanCase({ id: "fail.usage.both", title: "--staged and paths: 1", args: ["scan", "--staged", "a"], files: scanRepo() }),
   scanCase({ id: "fail.usage.size", title: "a size that is no size: 1", args: ["scan", "a", "--max-total-size", "lots"], files: scanRepo() }),
-  scanCase({ id: "fail.refused", title: "a credential refused secret.reveal: nothing was scanned; 1", args: ["scan", "dist"], files: LEAKY, server: disclosed([apiError(403, "PERMISSION_DENIED", "secret.reveal required")], 403) }),
+  scanCase({ id: "fail.refused", title: "a credential refused secret.reveal: nothing was scanned; 1", args: ["scan", "dist"], files: LEAKY, server: scanDisclosed([apiError(403, "PERMISSION_DENIED", "secret.reveal required")], 403) }),
   scanCase({ id: "fail.invalid-credential", title: "a credential the server does not know: 1", args: ["scan", "dist"], files: LEAKY, server: [{ method: "GET", path: "/v1/meta", status: 401, answer: apiError(401, "INVALID_CREDENTIAL") }] }),
   scanCase({ id: "fail.no-credential", title: "no credential at all: 1", args: ["scan", "dist"], files: LEAKY, env: { VARLATCH_TOKEN: "" } }),
   scanCase({ id: "fail.unreachable", title: "a server that cannot be reached: 1", args: ["scan", "dist"], files: { ...LEAKY, "repo/varlatch.toml": SCAN_TOML.replace("{{server}}", "http://127.0.0.1:2") } }),
-  scanCase({ id: "fail.server-error", title: "a server error: 1", args: ["scan", "dist"], files: LEAKY, server: disclosed([apiError(500, "INTERNAL", "boom")], 500) }),
+  scanCase({ id: "fail.server-error", title: "a server error: 1", args: ["scan", "dist"], files: LEAKY, server: scanDisclosed([apiError(500, "INTERNAL", "boom")], 500) }),
   scanCase({ id: "fail.no-project", title: "no varlatch.toml: 1", args: ["scan", "a.txt"], files: { "repo/a.txt": "x" } }),
   scanCase({ id: "staged.nothing", title: "a repository with nothing staged: nothing is read or disclosed; 0", args: ["scan", "--staged"], files: { ...scanRepo(), ...gitRepo("repo") } }),
   scanCase({ id: "staged.nothing.json", title: "the same with --json", args: ["scan", "--staged", "--json"], files: { ...scanRepo(), ...gitRepo("repo") } }),
