@@ -52,6 +52,7 @@ on:
       - "packages/contract/src/**"
       - "packages/contract/test/vectors/**"
       - "scripts/check-licenses.mjs"
+      - "scripts/check-timing-tests.sh"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"
       - "scripts/conformance/inventory.json"
@@ -125,6 +126,16 @@ concurrency:
   group: go-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # The timing tests: each judges how a run's time grows with its input
+  # (growsLinearly), so a CPU shared with other test binaries reads as
+  # nonlinear work. The test steps skip them (-skip), and a step of their
+  # own runs them alone right after (-p 1). scripts/check-timing-tests.sh
+  # (go job) fails when a test calls growsLinearly and this list misses it.
+  # Keep it a flat list of test names, ^(TestA|TestB|...)$: the check reads
+  # the names back from that shape and refuses any other.
+  TIMING_TESTS: "^(TestTheLinearityCriterion|TestHookLinearTime|TestHookLongReaderIsLinear|TestMaskingIsLinear|TestMaskingIsLinearOnLargeMessages|TestFindIsLinear|TestMatcherIsLinear|TestScanIsLinear|TestManyKeys)$"
+
 jobs:
   # Whether this run's change touches anything the Go jobs check. A push
   # is filtered by the trigger's paths instead, and runs every job.
@@ -157,6 +168,7 @@ jobs:
             packages/contract/src/*
             packages/contract/test/vectors/*
             scripts/check-licenses.mjs
+            scripts/check-timing-tests.sh
             packages/protocol/openapi.yaml
             scripts/conformance/run.mjs
             scripts/conformance/inventory.json
@@ -387,7 +399,18 @@ jobs:
         env:
           CGO_ENABLED: "0"
           VARLATCH_REQUIRE_DASHBOARD: "1"
-        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test -count=1 ./...
+        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test -count=1 -skip "$TIMING_TESTS" ./...
+
+      # The timing tests the step above skipped, alone: one test binary at a
+      # time (TIMING_TESTS says why).
+      - name: Timing tests, alone
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -p 1 -run "$TIMING_TESTS" ./...
+
+      - name: Every timing test runs alone
+        run: scripts/check-timing-tests.sh
 
       # G5's damage gate (ADR-0059 G5; internal docs/design/go-step7.md
       # slice 7.3c; go/server/migration/g5): the migration's Go path through
@@ -756,7 +779,17 @@ jobs:
         # inside the job's 40.
         run: |
           # shellcheck disable=SC2046 # one argument per package
-          go test -count=1 -race -timeout 20m $(go list ./... | grep -v '/go/install$')
+          go test -count=1 -race -timeout 20m -skip "$TIMING_TESTS" $(go list ./... | grep -v '/go/install$')
+
+      # The timing tests the step above skipped, alone, with the race
+      # detector (TIMING_TESTS says why).
+      - name: Timing tests, alone, with the race detector
+        working-directory: go
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          # shellcheck disable=SC2046 # one argument per package
+          go test -count=1 -race -p 1 -timeout 20m -run "$TIMING_TESTS" $(go list ./... | grep -v '/go/install$')
 
       - name: Save Go's caches
         if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -1245,7 +1278,18 @@ jobs:
           # not allow); the log leaves out the lines of tests that ran and
           # passed.
           # shellcheck disable=SC2086 # one argument per package
-          go test -count=1 -v ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
+          go test -count=1 -v -skip "$TIMING_TESTS" ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
+
+      # The timing tests the step above skipped, alone (TIMING_TESTS says
+      # why); their skips join the same log for the summary below.
+      - name: Timing tests, alone
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          libs=$(go list -deps ./cmd/varlatch/... | grep '^github.com/varlatch/varlatch/go/lib/')
+          # shellcheck disable=SC2086 # one argument per package
+          go test -count=1 -v -p 1 -run "$TIMING_TESTS" ./cmd/varlatch/... $libs 2>&1 | tee -a "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
 
       - name: Skipped tests
         if: always()

@@ -12,6 +12,7 @@ import type { CredentialReview, RefusedDestinations } from "@varlatch/protocol";
 import { EXIT } from "../src/exitCodes.js";
 import { ago, credentialReviewLines, refusedDestinationLines } from "../src/securityReport.js";
 import { commandHelp } from "../src/usage.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch security report` end to end against a local server (ADR-0054
@@ -148,7 +149,7 @@ interface Result {
 
 function cli(args: string[], cwd = repo): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd,
       // An explicit mode for this suite (assisted mode is on under a coding agent's session).
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0" },

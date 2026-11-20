@@ -23,6 +23,27 @@ import (
 	"testing"
 )
 
+// ps1Trusting is a copy of install.ps1 that downloads from base (in
+// place of github.com's releases) and trusts the certificate with the
+// thumbprint thumb only, pinned on each request (a compiled callback: a
+// script block would run on a thread without a runspace).
+func ps1Trusting(t *testing.T, src []byte, base string, thumb [20]byte) []byte {
+	t.Helper()
+	src = edit(t, src, ps1BaseLine, "  $Base = '"+base+"'")
+	trust := "  $ErrorActionPreference = 'Stop'\n" +
+		"Add-Type -TypeDefinition @'\n" +
+		"public static class VarlatchTestTrust {\n" +
+		"  public static string Thumbprint;\n" +
+		"  public static System.Net.Security.RemoteCertificateValidationCallback Callback =\n" +
+		"    (s, c, chain, e) => c != null && c.GetCertHashString() == Thumbprint;\n" +
+		"}\n" +
+		"'@\n" +
+		"  [VarlatchTestTrust]::Thumbprint = '" + strings.ToUpper(hex.EncodeToString(thumb[:])) + "'\n"
+	src = edit(t, src, "  $ErrorActionPreference = 'Stop'\n", trust)
+	return edit(t, src, "      $Request.AllowAutoRedirect = $false\n",
+		"      $Request.AllowAutoRedirect = $false\n      $Request.ServerCertificateValidationCallback = [VarlatchTestTrust]::Callback\n")
+}
+
 func ps1Script(t *testing.T) []byte {
 	t.Helper()
 	b, err := os.ReadFile("install.ps1")
@@ -490,22 +511,7 @@ func TestPS1EndToEnd(t *testing.T) {
 		if stamped {
 			src = edit(t, src, "'@VARLATCH_VERSION@'", "'"+version+"'")
 		}
-		src = edit(t, src, ps1BaseLine, "  $Base = '"+srv.URL+"/v'")
-		// The test server's certificate, pinned by thumbprint, on each
-		// request (a compiled callback: a script block would run on a
-		// thread without a runspace).
-		trust := "  $ErrorActionPreference = 'Stop'\n" +
-			"Add-Type -TypeDefinition @'\n" +
-			"public static class VarlatchTestTrust {\n" +
-			"  public static string Thumbprint;\n" +
-			"  public static System.Net.Security.RemoteCertificateValidationCallback Callback =\n" +
-			"    (s, c, chain, e) => c != null && c.GetCertHashString() == Thumbprint;\n" +
-			"}\n" +
-			"'@\n" +
-			"  [VarlatchTestTrust]::Thumbprint = '" + strings.ToUpper(hex.EncodeToString(thumb[:])) + "'\n"
-		src = edit(t, src, "  $ErrorActionPreference = 'Stop'\n", trust)
-		src = edit(t, src, "      $Request.AllowAutoRedirect = $false\n",
-			"      $Request.AllowAutoRedirect = $false\n      $Request.ServerCertificateValidationCallback = [VarlatchTestTrust]::Callback\n")
+		src = ps1Trusting(t, src, srv.URL+"/v", thumb)
 		file := filepath.Join(spaced(t), "install.ps1")
 		if err := os.WriteFile(file, src, 0o644); err != nil {
 			t.Fatal(err)

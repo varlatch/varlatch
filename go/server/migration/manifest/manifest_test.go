@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -361,6 +362,8 @@ func TestManifestRefusesItsOwnMistakes(t *testing.T) {
 		{"a copied column without a target", `{"source": "id", "type": "text", "target": "id"}`, `{"source": "id", "type": "text"}`},
 		{"an unknown type", `"type": "bytea"`, `"type": "money"`},
 		{"an unknown member", `"version": 1,`, `"version": 1, "extra": true,`},
+		{"no foreignKeys", `"foreignKeys": "The schema's`, `"foreignKeys": "", "x": "The schema's`},
+		{"an empty leftOut", `{"source": "token", "type": "text", "target": "token_hash", "leftOut": "Better`, `{"source": "token", "type": "text", "target": "token_hash", "leftOut": "", "x": "Better`},
 		{"physical order without its note", `"source": "approval_intent_challenges",`, `"source": "approval_intent_challenges", "physicalOrder": true,`},
 	} {
 		text := bytes.Replace(V1, []byte(c.from), []byte(c.to), 1)
@@ -374,28 +377,35 @@ func TestManifestRefusesItsOwnMistakes(t *testing.T) {
 }
 
 // TestTheTypeScriptCopiesAreTheSame: the TypeScript server's copies of the
-// manifest and of the canonical vectors (0.22 line, forwarded to main) are
-// these bytes.
+// manifest and of the canonical vectors are these bytes. On main they are
+// read from the working tree once the 0.22 line's 7.1 is forwarded here;
+// until then, from origin/release/0.22 with git show, where that ref was
+// fetched. With neither, the test says so and skips.
 func TestTheTypeScriptCopiesAreTheSame(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "..")
 	for _, c := range []struct{ ours, theirs string }{
-		{"v1.json", filepath.Join(root, "services", "varlatchd", "src", "migration", "manifest-v1.json")},
-		{filepath.Join("..", "canonical", "testdata", "vectors.json"), filepath.Join(root, "services", "varlatchd", "test", "migration", "canonical-vectors.json")},
+		{"v1.json", "services/varlatchd/src/migration/manifest-v1.json"},
+		{filepath.Join("..", "canonical", "testdata", "vectors.json"), "services/varlatchd/test/migration/canonical-vectors.json"},
 	} {
-		theirs, err := os.ReadFile(c.theirs)
-		if os.IsNotExist(err) {
-			// Until the 0.22 line's 7.1 is forwarded to main.
-			t.Logf("%s: not on this branch yet", c.theirs)
-			continue
-		} else if err != nil {
-			t.Fatal(err)
-		}
 		ours, err := os.ReadFile(c.ours)
 		if err != nil {
 			t.Fatal(err)
 		}
+		theirs, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(c.theirs)))
+		where := c.theirs
+		if os.IsNotExist(err) {
+			where = "origin/release/0.22:" + c.theirs
+			cmd := exec.Command("git", "show", where)
+			cmd.Dir = root
+			theirs, err = cmd.Output()
+			if err != nil {
+				t.Skipf("%s is not in the working tree and git show %s failed (%v): the 0.22 line's copies are compared once forwarded, or where that ref is fetched", c.theirs, where, err)
+			}
+		} else if err != nil {
+			t.Fatal(err)
+		}
 		if !bytes.Equal(ours, theirs) {
-			t.Errorf("%s differs from %s", c.theirs, c.ours)
+			t.Errorf("%s differs from %s", where, c.ours)
 		}
 	}
 }
