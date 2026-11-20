@@ -80,7 +80,7 @@ func adminCommand(r *Run) (bool, error) {
 		return true, reenrollCommand(r)
 	}
 	if i := slices.Index(r.Args, "--dir"); i >= 0 {
-		return true, composeRefusal(r)
+		return true, composeRefusal(r, "admin")
 	}
 	if len(r.Args) >= 2 && r.Args[0] == "backup" && (r.Args[1] == "create" || r.Args[1] == "verify") {
 		return true, UsageError("varlatch admin backup " + r.Args[1] + ": a Go installation's backups are `varlatch admin backup run` (it makes the archive and verifies it) and `varlatch admin backup status`; `backup create` and `backup verify` are a Compose installation's, through the TypeScript CLI")
@@ -149,7 +149,7 @@ func (f adminForm) check(args []string) (config string, out []string, err error)
 
 // composeRefusal is decision 11's: a Compose installation keeps its
 // TypeScript CLI, installed beside the Go one as varlatch-ts.
-func composeRefusal(r *Run) error {
+func composeRefusal(r *Run, command string) error {
 	ts := "varlatch-ts"
 	for _, dir := range filepath.SplitList(r.Getenv("PATH")) {
 		candidate := filepath.Join(dir, "varlatch-ts")
@@ -160,7 +160,7 @@ func composeRefusal(r *Run) error {
 			}
 		}
 	}
-	return UsageError("varlatch admin: --dir names a Compose installation, which the Go CLI does not manage; run this with the TypeScript CLI, " + ts + ", until `varlatch migrate` moves the installation (ADR-0059 step 7)")
+	return UsageError("varlatch " + command + ": --dir names a Compose installation, which the Go CLI does not manage; run this with the TypeScript CLI, " + ts + ", until `varlatch migrate` moves the installation (ADR-0059 step 7)")
 }
 
 // findVarlatchd is the varlatchd the host commands run: the one installed
@@ -303,61 +303,15 @@ func isCredentialVariable(name string) bool {
 // fail-safe (RedactValue), any other output and every line on stderr
 // through the fail-safe. Its exit status is the command's.
 func (r *Run) runVarlatchd(form adminForm, args []string, config string) error {
-	answer, said, code, err := r.execVarlatchd("varlatch admin", args, config)
+	answer, said, code, err := r.varlatchd("varlatch admin", args, config)
 	if err != nil {
 		return err
 	}
 	if err := r.showVarlatchd(form, args, answer); err != nil {
 		return err
 	}
-	return r.varlatchdEnded("varlatch admin", said, code)
-}
-
-// execVarlatchd runs `varlatchd args... [--config file]` and returns what
-// it wrote on its standard output and standard error, each read whole and
-// shown by nobody yet, and its exit status. prefix names the command.
-func (r *Run) execVarlatchd(prefix string, args []string, config string) (answer, said []byte, code int, err error) {
-	path, err := r.locateVarlatchd(prefix)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	if config != "" {
-		args = append(slices.Clone(args), "--config", config)
-	}
-	cmd := exec.Command(path, args...)
-	cmd.Env = varlatchdEnviron(r)
-	// What varlatchd prints is read whole, then shown through the
-	// fail-safe: nothing of it reaches this process's streams as it is.
-	answer, said, err = runChild(cmd)
-	if err != nil {
-		var exit *exec.ExitError
-		if !errors.As(err, &exit) {
-			return nil, nil, 0, Fail(prefix+": could not run "+path+": "+err.Error(), ExitUnavailable)
-		}
-		code = exit.ExitCode()
-		if code < 0 {
-			code = ExitFailure // ended by a signal
-		}
-	}
-	return answer, said, code, nil
-}
-
-// varlatchdEnded shows what varlatchd wrote on its standard error, each
-// line through the fail-safe, then the root hint after a 78, and ends the
-// command with varlatchd's status when it is not 0.
-func (r *Run) varlatchdEnded(prefix string, said []byte, code int) error {
-	for _, line := range strings.Split(strings.TrimRight(string(said), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		if err := r.warn(line); err != nil {
-			return err
-		}
-	}
-	if code == ExitConfig && runtime.GOOS != "windows" && os.Geteuid() != 0 {
-		if err := r.warn(prefix + ": the installation's configuration, data directory and control socket are its service's; run this as root (sudo " + prefix + " ...)"); err != nil {
-			return err
-		}
+	if err := r.warnLines(said); err != nil {
+		return err
 	}
 	if code != 0 {
 		return ExitWith(code)

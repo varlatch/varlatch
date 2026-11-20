@@ -16,6 +16,10 @@
     "test/member-cli.test.ts",
     "test/redact-run.test.ts",
     "test/run-signals.test.ts",
+    "test/scan-cli.test.ts",
+    "test/security-controls-cli.test.ts",
+    "test/security-report-cli.test.ts",
+    "test/security-status-cli.test.ts",
     "test/server-text-cli.test.ts",
     "test/token-expiry-warning.test.ts",
     "test/typesCli.test.ts"

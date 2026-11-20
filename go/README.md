@@ -270,7 +270,10 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   `SHA256SUMS`, verifies the signature with the release's own `varlatch`,
   and publishes (a prerelease for `-rc.N`); `go.yml`'s conformance job
   runs both on every pull request it selects, signing and publishing
-  nothing.
+  nothing. `.github/workflows/published-release.yml` (step 6.1b) checks a
+  published release of the Go line as people install it, on Linux, macOS
+  and Windows (`install/published_test.go`, G8's published-asset half):
+  after the Release workflow publishes a prerelease, or by hand for any.
 - `bench/g9a/`: the G9a storage benchmark harness (`run.sh`, the k6
   script, the `g9a` command): G9a's load profile, every checkpoint and the
   WAL size logged, paced backups, converge runs, the disk record, and a
@@ -789,12 +792,51 @@ comes. `verify-release`, which the installers run, is Go's own.
   prompt's keys) and 2,022 texts split into grapheme clusters, `validate`'s
   outcome and `--json` document for 17 reports, and import's type
   inference (every semantics version), name checks and strict decoding.
+- Scan (slice 5.4d; ADR-0038 Decision 14): `scan (--staged | <path>...)
+  [-e <env>] [--json] [--baseline <file>] [--write-baseline]
+  [--max-file-size <size>] [--max-total-size <size>]` and `scan
+  --install-hook [-e <env>]` are `internal/scan` (`engine.go`,
+  `baseline.go`, `sources.go`: scan.ts and scanSources.ts) and
+  `internal/cli`'s `scancmd.go` (scanCommand.ts and main.ts's case, with
+  `--find-files`). Listing comes first and reads no content: `--staged`
+  takes the blobs the index records for every path the next commit adds or
+  changes (`git diff --cached --raw -z`, sizes from `git cat-file
+  --batch-check`, content from one `git cat-file --batch`, never the
+  working tree; inside a hook, Git's own environment as it is), and paths
+  are walked without following a symbolic link, in byte order of their
+  names. A file over `--max-file-size` (64 MiB) or past `--max-total-size`
+  (1 GiB) is refused by its listed size before it is opened, and every file
+  is read in chunks of 64 KiB, so memory stays bounded. Only when a file
+  will be read is there one disclosure, `scope: "all-authorized-secrets"`
+  with `purpose: "scan"` (a server without `secrets.disclosure-purpose` is
+  named), and the values (current and retiring) go to `internal/matcher`'s
+  `StreamScanner`, binary files as bytes; each value long enough to mask
+  is a value in flight, so no output or diagnostic shows one. A finding
+  names the path, line, byte column, item, version and form, never the
+  value or the line; a file ending with a value's start is counted, never
+  a finding; `varlatch:allow NAME` on a line the occurrence touches and a
+  baseline entry (path, item, version: nothing else is accepted) allow
+  one; past 1,000 findings a file's occurrences are counted by item and
+  version. `--install-hook` writes `.git/hooks/pre-commit` (Git's
+  `--git-path`) to run `varlatch scan --staged` from the project directory,
+  and never replaces a hook it did not write (it names the line to add
+  instead). Statuses: 1 for findings, 2 when nothing is found but a file
+  was not scanned, 0 otherwise, and 1 for every failure (usage, a refused
+  credential, a server that cannot be reached).
+  `testdata/vectors/scan.json` (`apps/cli/test/go-vectors-scan.test.ts`)
+  holds 33 engine cases (locations, forms, markers, bounds, baselines,
+  listing limits, incomplete starts; `internal/scan`'s `TestEngineVectors`
+  also feeds each in every chunk size up to 97 bytes), 26 trees scanned as
+  `--staged` or paths with real Git (`TestSourceVectors`), and
+  `parseSize`, `formatBytes`, the baseline's reading and writing, the
+  option parser and the hook's text; the transcripts (`5.4d-scan`, 38
+  cases) hold the command end to end against the fake server, a transcript
+  per failure class included. `scan-cli.test.ts` runs against Go (the
+  hook blocks real commits), and `TestScanIsLinear` holds every
+  adversarial shape to the shared growth rule.
 - Find files (slice 5.4e): `scan --find-files [<dir>] [--json]` is
-  `internal/findfiles`, run from `internal/cli`'s `findfilescmd.go`; the
-  rest of `scan` is slice 5.4d, so `scan` answers only the command lines
-  that name `--find-files` before `--` (read by `scan`'s whole option
-  parser, so its usage errors are scan's) and says the others are not
-  built. It lists the files whose names look like copies of secrets
+  `internal/findfiles`, run from `internal/cli`'s `scancmd.go`. It lists
+  the files whose names look like copies of secrets
   (`.env`, `.env.*` but the two templates, `*.pem`, `*.key`) by names and
   `lstat` alone: it never reads a candidate, never follows a symbolic link
   (one is listed by its own name), skips `.git`, `.hg`, `.svn` and
@@ -864,6 +906,8 @@ it to the recording.
 | `admin-usage` | `varlatch help admin`, `admin --help` and `admin -h` print a Compose installation's `admin` forms (`backup create\|verify\|restore\|status`, `reenroll`, `security reset`, `unfreeze`, `outbound check`, each with `--dir`) | a Go installation's: `backup run\|status\|test-bucket\|restore`, `security reset`, `unfreeze`, `outbound check`, `maintenance begin\|end\|status`, `reenroll`, each also taking `--config` (the text a usage error adds); `varlatch --help` keeps the full TypeScript usage | The Go CLI runs a Go installation's host commands (`host-admin`); a Compose installation's stay the TypeScript CLI's (decision 11). Transcript cases `help.admin`, `help.admin.option` and `help.admin.short` name it; pinned by `TestHelpAdminIsTheGoUsage` |
 | `move-usage` | `varlatch help move`, `move --help` and `move -h` print a Compose installation's `move` (`--dir`, `--bek-file`, `--kek-file`) | a Go installation's: `--public-url`, `--ingress public\|external`, `--listen-https`, `--reenroll-hours`, `--yes`, `--no-wait`, `--abandon`, each with `--config`; `varlatch --help` keeps the full TypeScript usage | A Go installation's move rewrites `varlatchd.conf` and restarts `varlatchd.service` (slice 6.9); a Compose installation's stays the TypeScript CLI's (decision 11). Transcript cases `help.move`, `help.move.option` and `help.move.short` name it |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
+| `tailnet-repin`: `varlatch tailnet repin [--yes] [--adopt] [--json] [--config <file>]` (slice 6.2b) | no such command (`tailnet` has `require`, `requirements` and `remove`); the TypeScript server keeps no tailnet pin | runs `varlatchd admin tailnet repin --json [--yes [--adopt]] [--config <file>]` (as `host-admin`) and shows `varlatchd`'s text from its answer: the pinned and the observed tailnet, then what it did or offers, on stderr with `varlatchd`'s status when it refuses. On a terminal, without `--yes`, an offered re-pin (or, with `--adopt`, an adoption) is asked for (`[y/N]`), then done with `--yes --offer <the offer shown>`: `varlatchd` acts only while the pin and the observed tailnet are still what was shown, and otherwise changes nothing and answers `offer-changed` (status 1) with the new view, which is shown and asked about once more (a second change stops, nothing re-pinned). `varlatch tailnet repin --yes` (scripted use) passes no offer and acts on the observation at that moment. `--json` prints `varlatchd`'s answer. `varlatchd admin tailnet repin --json` gives stable names (the view's `pinned`, `observed`, `reason`, `closed`, `missing`, `offered`, `offer` (a value-free token: 128 bits of a SHA-256 over what is offered, the pin and the observation; empty when nothing is offered), and `pinnedText`, `observedText`, `outcome`, `message`, `pin`) with or without `--yes`; `varlatchd`'s 78 adds a line saying to run it as root (`sudo varlatch tailnet repin`; Unix), as `host-admin`'s; its text is unchanged | The tailnet pin is the Go server's (step 4.13); a re-pin changes what the tailnet listener trusts, so it is the host's and is confirmed. Pinned by `internal/cli`'s `TestTailnetRepinFront` and `daemon`'s `TestTailnetListener` |
+| `tailnet.repinned` (an audit event only Go records) | not recorded | each re-pin, reopening or adoption by `varlatchd admin tailnet repin --yes`: no Organization and no actor identity (the host operator: the control socket's peer is the data directory's owner or root), metadata `action` (`repinned`, `reopened`, `adopted`), `fromSuffix`, `toSuffix`, `tailnetId`, `reason` (what the re-pin's own check found), `operator: true`, never the control server's URL. Committed before the pin changes: a re-pin whose event cannot be recorded does not happen (`audit.GoOnlyEventTypes`) | The TypeScript server's event list is frozen; ADR-0059 step 6's G10 asks for the re-pin to be audited. Pinned by `daemon`'s `TestTailnetListener` (both events, read from the database) and `audit`'s `TestGoOnlyEventTypes` |
 | `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, a request for another `Host` is 421, no `X-Forwarded-For` is believed on it, and `listen` must then be a loopback address, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
 | `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link or a Windows junction, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
@@ -901,6 +945,11 @@ it to the recording.
 | `pending-sign-ins.json` and runs at the same time | not compared | not locked across processes, as in TypeScript: each run reads the file, changes its entry and replaces the file atomically, so of two runs that change it at once the later write wins (a `--start` replacing an entry another run's `--wait` is keeping, for example) | Parity: both CLIs share the file (decision 11), and a lock one of them does not take would not hold. A lost update costs at most a sign-in to start again |
 | Secrets in flight never show | not compared | a credential given or issued, a device code, a sign-in hand-off bearer, an OIDC ID token and the GitHub Actions request token are held for the run (`Run.holdValue`): every exact occurrence, and its escaped form, is `[redacted]` on stdout, in every `--json` document and on stderr, whatever their length or format, as well as in a server's free text | A server's answer or an error could echo one, and only Varlatch's own token formats are caught by shape. Pinned by `internal/cli`'s `TestInFlightSecretsNeverShow` and every 5.2 transcript, whose canaries appear in no output |
 | `now` (how transcripts compare, not a behaviour) | `login` and `env use` write the time of the run (`issuedAt`, `tierCachedAt`) | the same, at another time | A case that lists the `now` pattern has each ISO 8601 timestamp between its run's start and end written `{{now}}`, in the recording and the replay alike (`goKit.ts` `nowPattern`, `transcript.NowPattern`); a timestamp outside the run is compared as it is |
+| `scan-staged-total`: `--max-total-size` with `--staged` | not compared | each staged file is admitted with the sizes of the files admitted before it counted, as a path scan admits each file just before it reads it, so the staged content read in all stays within the bound; a file past it is named `over the total size bound of <size>` and not read | The bound limits how much one scan reads; the scan vectors' `staged.total-bound` case is compared through this difference (`internal/scan`'s `TestSourceVectors`, `TestStagedTotalBound`) |
+| `scan-values-in-flight`: a value `scan` holds | not compared | each disclosed value long enough to mask (8 characters or more) is a value in flight: a path, an item name or any other text that holds one is shown with it `[redacted]`, on stdout and stderr alike; the baseline file keeps paths as they are, since it must match them again (`TestScanNeverShowsAValue`) | A scan never puts a value on the terminal, whatever a file is named |
+| `scan-hook-link`: `scan --install-hook` where the pre-commit hook (its `git rev-parse --git-path hooks/pre-commit`, `core.hooksPath` honoured) is a symbolic link | not compared (TypeScript writes through the link, wherever it points) | refused, 1: `<hook> is a symbolic link; it was left unchanged, since varlatch does not write a hook through a link. Replace it with a file, or add "varlatch scan --staged \|\| exit 1" to the hook it points to yourself.`, the link and what it points to unchanged, a dangling link's target not created, and the target never named. The check is `Lstat` before anything is read, and the write itself never follows a link (`O_NOFOLLOW`; on Windows the reparse point is opened and seen) | A hook location that is a link can point anywhere outside `.git/hooks`, so writing through it could change a file the person never meant to give the hook. Pinned by `internal/cli`'s `TestInstallHookRefusesALink` and `TestWriteHookNeverFollowsALink` |
+| `scan-disclosure-shape`: a disclosure answer of another shape | not compared | an item whose `name`, `versionId` or `value` (or its retiring version's) is not a string, an item that is not an object, or `items` that cannot be iterated ends the scan with 1 before any file is read, the reason in Go's words and nothing of the answer shown (`TestScanRefusesADisclosureOfAnotherShape`) | A scan looks only for values it can name |
+| `baseline-json-syntax`: a baseline that is not JSON | `invalid baseline <path>: not valid JSON (<V8's message>)` | `invalid baseline <path>: not valid JSON (Unexpected end of JSON input)` for an empty file, `(Unexpected token in JSON)` otherwise | V8's wording quotes the text it stopped at; the scan vectors compare such a baseline by the start of the message |
 
 ## varlatchd
 
@@ -1956,13 +2005,16 @@ serves the tailnet listener on the node's own addresses
   ended. Closing access waits for any write between that check and its
   release, so each write of the period is either released before access
   closes or refused. Requests on the ordinary listener carry no guard.
-- **Re-pin.** `varlatchd admin tailnet repin [--yes [--adopt]] [--json]`
+- **Re-pin.** `varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json]`
   (host authority, through the running daemon only) runs a fresh check,
   which must succeed, and shows the pin, the observation and the latched
   closure. With `--yes` it pins the observed suffix when the suffix is the
   only change, or reopens access when the tailnet matches the pin again;
   with `--yes --adopt` it pins the tailnet an enrolled node without a pin
-  is on. A different StableID or control URL is refused: that means
+  is on. With `--offer`, the token of the view a confirmation was given
+  for, it acts only while the view's offer is still that one, decided
+  under the same locks as the re-pin; otherwise nothing changes
+  (`offer-changed`). A different StableID or control URL is refused: that means
   enrolling the node again (remove `<data_dir>/tailnet` and the pin, give
   an auth key). Each re-pin is kept in the pin's `history`, with the
   closure it ended, and logged. An audit event for it waits for step 6's
@@ -2877,6 +2929,25 @@ migrations.
   `testdata/pgschema.mjs` on PGlite (MAPPING.md says how to regenerate it),
   and against a database `Init` created. The migration manifest (step 7)
   is built from the mapping.
+- The migration manifest and its encoding (step 7, slice 7.1):
+  - `server/migration/manifest/v1.json` lists every PostgreSQL table
+    and column, in the source's column order with its type: copied (to
+    its SQLite table and column), transformed (`session`: browser
+    sessions end), or left out with the reason (`account`, `verification`,
+    `audit_position`, `varlatch_migrations`). It also lists the two
+    transformations and what lives outside the database (Convex, the
+    keys, the tailnet node).
+  - `manifest_test.go` holds the manifest to `testdata/pg-v0.22.0.json`,
+    `mapping.json` and the schema `Init` creates. A column or table added
+    on either side fails until the manifest accounts for it.
+  - `server/migration/canonical` is the canonical encoding
+    (`CANONICAL.md`) of values, rows and decision 7's digest input.
+    `testdata/vectors.json` holds the cases, and the TypeScript server's
+    encoder reproduces them on the 0.22 line.
+  - **Accepted difference:** after a migration, Requirements are read in
+    rowid order, the order the migration inserts them in (the source's
+    physical order). That order is now defined. The TypeScript server's
+    heap order depended on PostgreSQL's planner.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the
@@ -2967,6 +3038,7 @@ Not reproduced:
 | `apps/cli/src/options.ts` `parseOptions`, a positional argument named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, `hasOwnProperty`) for a command whose options have aliases (step 5 defect 11, not a security defect) | `spec.aliases[arg]` reads the prototype, so `arg` becomes a function and `arg.startsWith` throws a `TypeError`: Node.js prints the stack and exits 1 | an ordinary argument | `internal/cli` `TestPrototypeNamesAreOrdinaryArguments` | none |
 | `apps/cli/src/agents/install.ts` `AGENTS`, `skill.ts` `GUIDE_TOPICS` and `mcpConfig.ts` `MCP_FILES_BY_AGENT`, a coding agent or guide topic named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, ...) (step 5 defect 15, not a security defect) | the lookups read the prototype, so the name passes as known: `agents install --agent constructor` installs and prints `constructor reads undefined` (in `--json`, an agent without `reads`), with `--mcp` it throws a `TypeError` before writing; `agents guide constructor` throws a `TypeError`: Node.js prints the stack and exits 1 | an unknown coding agent or topic: the usage error every other unknown name gets (64), nothing written | `internal/agents` `TestPrototypeNamesAreUnknown` | none |
 | `apps/cli/src/validation.ts` `REQUIRES_HINT`, a requirement named like a property of `Object.prototype` (`constructor`, `toString`, ...) in `validate`'s report (step 5 defect 23, not a security defect) | the lookup reads the prototype, so `validate` prints a function's source as the requirement: `not evaluated: A (function Object() { [native code] })` | a requirement the protocol does not define: `not evaluated: A (an unrecognized requirement)` | `internal/cli` `TestValidationRequiresHintReadsOwnNames` | none |
+| `apps/cli/src/securityReport.ts` `KIND_WORDS` and `OUTBOUND_REFUSAL_LABELS`, `auditExport.ts` `LOCK_WORDS`, a refused destination's `kind` or `reason`, or an audit export's `objectLock`, named like a property of `Object.prototype` (`constructor`, `__proto__`, ...) (step 5 defect 32, not a security defect) | the lookup reads the prototype, so `security report` and `security status` print a function's source or `[object Object]` as the word: `function Object() { [native code] } (whk_1)` | a word the table does not hold reads as `undefined`, as TypeScript reads a word it lacks | `internal/cli` `TestSecurityWordsReadOwnNames` | none |
 | `packages/matcher` `matcher.ts` `StreamMatcher.push`, a chunk of output holding many matches (step 5 defect 29, not a security defect) | each match is merged by walking every pending segment, and a chunk's matches all stay pending until it is merged, so masking a chunk takes time quadratic in its matches: a 64 KB chunk of a repeated Secret in 170 ms, 1 MB in 45 s; `run --redact` slows down, and still masks correctly | the merge looks only at the segments that end after the match's start, with the same result; linear | `internal/matcher` `TestMatcherIsLinear` and the vectors | none |
 | `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 

@@ -1,0 +1,3429 @@
+{
+  "schema": 2,
+  "comment": "Recorded from the TypeScript CLI by apps/cli/test/go-transcripts.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "area": "5.4d-scan",
+  "cases": [
+    {
+      "cwd": "repo",
+      "id": "paths.findings",
+      "title": "findings by path, line, column, item and version, never the value: 1",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "dist/app.js:1:8: API_KEY (version ver_api2), as written\ndist/app.js:3:11: API_KEY (version ver_api1, retiring), base64\ndist/assets/blob.bin:1:3: DB_PASS (version ver_db), as written\n\nvarlatch scan: 3 file(s) checked against 3 Secret value(s) of dev: 3 finding(s) in 2 file(s).\nValues and line contents are never shown. Rotate a Secret that was committed or published.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.findings.json",
+      "title": "the same report with --json",
+      "args": [
+        "scan",
+        "dist",
+        "--json"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "{\n  \"version\": 1,\n  \"environment\": \"dev\",\n  \"mode\": \"paths\",\n  \"exitCode\": 1,\n  \"findings\": [\n    {\n      \"path\": \"dist/app.js\",\n      \"line\": 1,\n      \"column\": 8,\n      \"offset\": 7,\n      \"item\": \"API_KEY\",\n      \"versionId\": \"ver_api2\",\n      \"retiring\": false,\n      \"form\": \"raw\"\n    },\n    {\n      \"path\": \"dist/app.js\",\n      \"line\": 3,\n      \"column\": 11,\n      \"offset\": 55,\n      \"item\": \"API_KEY\",\n      \"versionId\": \"ver_api1\",\n      \"retiring\": true,\n      \"form\": \"base64\"\n    },\n    {\n      \"path\": \"dist/assets/blob.bin\",\n      \"line\": 1,\n      \"column\": 3,\n      \"offset\": 2,\n      \"item\": \"DB_PASS\",\n      \"versionId\": \"ver_db\",\n      \"retiring\": false,\n      \"form\": \"raw\"\n    }\n  ],\n  \"unlisted\": [],\n  \"allowed\": [],\n  \"notScanned\": [],\n  \"skippedItems\": [\n    \"PIN\"\n  ],\n  \"valuesChecked\": 3,\n  \"filesScanned\": 3,\n  \"bytesScanned\": 130,\n  \"incompletePrefixes\": 0\n}\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.clean",
+      "title": "a clean file: 0",
+      "args": [
+        "scan",
+        "dist/clean.txt"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: 1 file(s) checked against 3 Secret value(s) of dev: no findings.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.not-scanned",
+      "title": "a clean file and a path that does not exist: 2",
+      "args": [
+        "scan",
+        "dist/clean.txt",
+        "missing"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 2,
+        "stdout": "Not scanned (1), so not known to be clean:\n  missing: does not exist\n\nvarlatch scan: 1 file(s) checked against 3 Secret value(s) of dev: no findings. 1 not scanned.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.not-scanned.json",
+      "title": "the same with --json",
+      "args": [
+        "scan",
+        "--json",
+        "dist/clean.txt",
+        "missing"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 2,
+        "stdout": "{\n  \"version\": 1,\n  \"environment\": \"dev\",\n  \"mode\": \"paths\",\n  \"exitCode\": 2,\n  \"findings\": [],\n  \"unlisted\": [],\n  \"allowed\": [],\n  \"notScanned\": [\n    {\n      \"path\": \"missing\",\n      \"reason\": \"does not exist\"\n    }\n  ],\n  \"skippedItems\": [\n    \"PIN\"\n  ],\n  \"valuesChecked\": 3,\n  \"filesScanned\": 1,\n  \"bytesScanned\": 13,\n  \"incompletePrefixes\": 0\n}\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.nothing-to-read",
+      "title": "only a path that does not exist: nothing is disclosed; 2",
+      "args": [
+        "scan",
+        "missing"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 2,
+        "stdout": "Not scanned (1), so not known to be clean:\n  missing: does not exist\n\nvarlatch scan: 0 file(s) checked against 0 Secret value(s) of dev: no findings. 1 not scanned.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.empty-file",
+      "title": "a directory with one empty file: checked, no findings; 0",
+      "args": [
+        "scan",
+        "empty"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/empty/.keep": ""
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: 1 file(s) checked against 3 Secret value(s) of dev: no findings.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/empty/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/empty/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.outside",
+      "title": "a file outside the project directory, named from it",
+      "args": [
+        "scan",
+        "../history.txt"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "history.txt": "ls\nexport DB_PASS=hunter2-hunter2-hunter2\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "../history.txt:2:16: DB_PASS (version ver_db), as written\n\nvarlatch scan: 1 file(s) checked against 3 Secret value(s) of dev: 1 finding(s) in 1 file(s).\nValues and line contents are never shown. Rotate a Secret that was committed or published.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "history.txt": {
+            "mode": "0644",
+            "content": "ls\nexport DB_PASS=hunter2-hunter2-hunter2\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.environment",
+      "title": "-e names the Environment the values come from",
+      "args": [
+        "scan",
+        "-e",
+        "staging",
+        "dist/clean.txt"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/staging/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: 0 file(s) checked against 0 Secret value(s) of staging: no findings.\n",
+        "stderr": "varlatch scan: this identity may retrieve no Secret value of 8 bytes or more in staging; there is nothing to look for.\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/staging/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.markers",
+      "title": "an allow marker for the item on its line",
+      "args": [
+        "scan",
+        "t.txt"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/t.txt": "a = \"scan-key-aaaabbbbccccdddd\" # varlatch:allow API_KEY\nb = \"hunter2-hunter2-hunter2\" # varlatch:allow API_KEY\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "t.txt:2:6: DB_PASS (version ver_db), as written\n\nvarlatch scan: 1 file(s) checked against 3 Secret value(s) of dev: 1 finding(s) in 1 file(s). 1 allowed by a marker or the baseline.\nValues and line contents are never shown. Rotate a Secret that was committed or published.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/t.txt": {
+            "mode": "0644",
+            "content": "a = \"scan-key-aaaabbbbccccdddd\" # varlatch:allow API_KEY\nb = \"hunter2-hunter2-hunter2\" # varlatch:allow API_KEY\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.over-bound",
+      "title": "a file over --max-file-size is not read, and nothing is disclosed when nothing fits: 2",
+      "args": [
+        "scan",
+        "dist",
+        "--max-file-size",
+        "10"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 2,
+        "stdout": "Not scanned (3), so not known to be clean:\n  dist/app.js: larger than the per-file bound (91 bytes > 10 bytes)\n  dist/assets/blob.bin: larger than the per-file bound (26 bytes > 10 bytes)\n  dist/clean.txt: larger than the per-file bound (13 bytes > 10 bytes)\n\nvarlatch scan: 0 file(s) checked against 0 Secret value(s) of dev: no findings. 3 not scanned.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.over-bound.some",
+      "title": "a file over the bound beside one that fits: 2",
+      "args": [
+        "scan",
+        "dist",
+        "--max-file-size",
+        "20"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 2,
+        "stdout": "Not scanned (2), so not known to be clean:\n  dist/app.js: larger than the per-file bound (91 bytes > 20 bytes)\n  dist/assets/blob.bin: larger than the per-file bound (26 bytes > 20 bytes)\n\nvarlatch scan: 1 file(s) checked against 3 Secret value(s) of dev: no findings. 2 not scanned.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "paths.total-bound",
+      "title": "--max-total-size: the files past it are not read",
+      "args": [
+        "scan",
+        "dist",
+        "--max-total-size",
+        "60"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "dist/assets/blob.bin:1:3: DB_PASS (version ver_db), as written\n\nNot scanned (1), so not known to be clean:\n  dist/app.js: over the total size bound of 60 bytes\n\nvarlatch scan: 2 file(s) checked against 3 Secret value(s) of dev: 1 finding(s) in 1 file(s). 1 not scanned.\nValues and line contents are never shown. Rotate a Secret that was committed or published.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "values.short-only",
+      "title": "only values shorter than 8 bytes: nothing to look for",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: 0 file(s) checked against 0 Secret value(s) of dev: no findings.\n",
+        "stderr": "varlatch scan: this identity may retrieve no Secret value of 8 bytes or more in dev; there is nothing to look for.\nvarlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "values.none",
+      "title": "no value at all: nothing to look for",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: 0 file(s) checked against 0 Secret value(s) of dev: no findings.\n",
+        "stderr": "varlatch scan: this identity may retrieve no Secret value of 8 bytes or more in dev; there is nothing to look for.\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "values.no-purpose",
+      "title": "a server that records no purpose is named, and the scan runs",
+      "args": [
+        "scan",
+        "dist/clean.txt"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.10.1",
+            "apiMajor": 1,
+            "capabilities": []
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: 1 file(s) checked against 3 Secret value(s) of dev: no findings.\n",
+        "stderr": "varlatch scan: this server (0.10.1) does not record a disclosure purpose; the disclosure is audited as an ordinary one.\nvarlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "baseline.write",
+      "title": "--write-baseline records path, item and version, and the scan passes: 0",
+      "args": [
+        "scan",
+        "dist",
+        "--write-baseline"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: 3 file(s) checked against 3 Secret value(s) of dev: no findings. 3 allowed by a marker or the baseline.\n",
+        "stderr": "varlatch scan: added 3 entries to {{dir}}/repo/varlatch-scan-baseline.json (path, item, and version only). Review it before you commit it.\nvarlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch-scan-baseline.json": {
+            "mode": "0644",
+            "content": "{\n  \"version\": 1,\n  \"entries\": [\n    {\n      \"path\": \"dist/app.js\",\n      \"item\": \"API_KEY\",\n      \"versionId\": \"ver_api1\"\n    },\n    {\n      \"path\": \"dist/app.js\",\n      \"item\": \"API_KEY\",\n      \"versionId\": \"ver_api2\"\n    },\n    {\n      \"path\": \"dist/assets/blob.bin\",\n      \"item\": \"DB_PASS\",\n      \"versionId\": \"ver_db\"\n    }\n  ]\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "baseline.allows",
+      "title": "a baseline allows exactly its findings",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n",
+        "repo/varlatch-scan-baseline.json": "{\n  \"version\": 1,\n  \"entries\": [\n    {\n      \"path\": \"dist/app.js\",\n      \"item\": \"API_KEY\",\n      \"versionId\": \"ver_api2\"\n    }\n  ]\n}\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "name": "API_KEY",
+                "versionId": "ver_api2",
+                "value": "scan-key-aaaabbbbccccdddd",
+                "retiring": {
+                  "versionId": "ver_api1",
+                  "value": "scan-key-oldoldoldoldold1"
+                }
+              },
+              {
+                "name": "DB_PASS",
+                "versionId": "ver_db",
+                "value": "hunter2-hunter2-hunter2"
+              },
+              {
+                "name": "PIN",
+                "versionId": "ver_pin",
+                "value": "1234567"
+              }
+            ],
+            "withheld": []
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "dist/app.js:3:11: API_KEY (version ver_api1, retiring), base64\ndist/assets/blob.bin:1:3: DB_PASS (version ver_db), as written\n\nvarlatch scan: 3 file(s) checked against 3 Secret value(s) of dev: 2 finding(s) in 2 file(s). 1 allowed by a marker or the baseline.\nValues and line contents are never shown. Rotate a Secret that was committed or published.\n",
+        "stderr": "varlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch-scan-baseline.json": {
+            "mode": "0644",
+            "content": "{\n  \"version\": 1,\n  \"entries\": [\n    {\n      \"path\": \"dist/app.js\",\n      \"item\": \"API_KEY\",\n      \"versionId\": \"ver_api2\"\n    }\n  ]\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "baseline.explicit-missing",
+      "title": "--baseline naming no file: 1, before anything is disclosed",
+      "args": [
+        "scan",
+        "dist",
+        "--baseline",
+        "nope.json"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: no baseline file at {{dir}}/repo/nope.json\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "baseline.invalid",
+      "title": "a baseline with another field: 1",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n",
+        "repo/varlatch-scan-baseline.json": "{\"version\":1,\"entries\":[{\"path\":\"a\",\"item\":\"B\",\"versionId\":\"v\",\"hash\":\"x\"}]}"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: invalid baseline {{dir}}/repo/varlatch-scan-baseline.json: entry 1 must have exactly \"path\", \"item\", and \"versionId\"\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch-scan-baseline.json": {
+            "mode": "0644",
+            "content": "{\"version\":1,\"entries\":[{\"path\":\"a\",\"item\":\"B\",\"versionId\":\"v\",\"hash\":\"x\"}]}"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.usage",
+      "title": "no path and no --staged: 1, with the usage",
+      "args": [
+        "scan"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: give --staged or at least one path\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.usage.both",
+      "title": "--staged and paths: 1",
+      "args": [
+        "scan",
+        "--staged",
+        "a"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: give either --staged or paths, not both\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.usage.size",
+      "title": "a size that is no size: 1",
+      "args": [
+        "scan",
+        "a",
+        "--max-total-size",
+        "lots"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: --max-total-size expects a size such as 64M, 1G, or a number of bytes; got \"lots\"\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.refused",
+      "title": "a credential refused secret.reveal: nothing was scanned; 1",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 403,
+          "answer": {
+            "error": {
+              "code": "PERMISSION_DENIED",
+              "message": "secret.reveal required",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: nothing was scanned: this identity may not retrieve Secrets in dev (PERMISSION_DENIED; scanning needs secret.reveal there) (request req_00000000-0000-4000-8000-000000000000)\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.invalid-credential",
+      "title": "a credential the server does not know: 1",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 401,
+          "answer": {
+            "error": {
+              "code": "INVALID_CREDENTIAL",
+              "message": "refused",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "Error INVALID_CREDENTIAL: refused (request req_00000000-0000-4000-8000-000000000000)\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.no-credential",
+      "title": "no credential at all: 1",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": ""
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "Not authenticated to {{server}}.\nSign in: varlatch login --server {{server}} (in a browser on this machine), varlatch login --server {{server}} --start (approve in a browser on any device), or pipe a credential to varlatch login --server {{server}} --token-stdin\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.unreachable",
+      "title": "a server that cannot be reached: 1",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"http://127.0.0.1:2\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "Cannot reach the Varlatch server (ECONNREFUSED). Check --server, VARLATCH_SERVER, or varlatch.toml, and that the server is running.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"http://127.0.0.1:2\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.server-error",
+      "title": "a server error: 1",
+      "args": [
+        "scan",
+        "dist"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/dist/app.js": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n",
+        "repo/dist/assets/blob.bin": "\u0000\u0000hunter2-hunter2-hunter2\u0000",
+        "repo/dist/clean.txt": "nothing here\n"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiMajor": 1,
+            "capabilities": [
+              "secrets.disclosure-purpose"
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+          "status": 500,
+          "answer": {
+            "error": {
+              "code": "INTERNAL",
+              "message": "boom",
+              "requestId": "req_00000000-0000-4000-8000-000000000000"
+            }
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "Error INTERNAL: boom (request req_00000000-0000-4000-8000-000000000000)\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0644",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0644",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0644",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "fail.no-project",
+      "title": "no varlatch.toml: 1",
+      "args": [
+        "scan",
+        "a.txt"
+      ],
+      "files": {
+        "repo/a.txt": "x"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "No varlatch.toml found from {{dir}}/repo upward. Run inside a configured repository or create one with the CLI.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/a.txt": {
+            "mode": "0644",
+            "content": "x"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "staged.nothing",
+      "title": "a repository with nothing staged: nothing is read or disclosed; 0",
+      "args": [
+        "scan",
+        "--staged"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": ""
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: nothing is staged.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "staged.nothing.json",
+      "title": "the same with --json",
+      "args": [
+        "scan",
+        "--staged",
+        "--json"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": ""
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"environment\": \"dev\",\n  \"mode\": \"staged\",\n  \"exitCode\": 0,\n  \"findings\": [],\n  \"unlisted\": [],\n  \"allowed\": [],\n  \"notScanned\": [],\n  \"skippedItems\": [],\n  \"valuesChecked\": 0,\n  \"filesScanned\": 0,\n  \"bytesScanned\": 0,\n  \"incompletePrefixes\": 0\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "staged.no-repository",
+      "title": "--staged outside a Git working tree: 1",
+      "args": [
+        "scan",
+        "--staged"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA",
+        "GIT_CEILING_DIRECTORIES": "{{dir}}"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: --staged needs a Git working tree: fatal: not a git repository (or any of the parent directories): .git\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "hook.install",
+      "title": "--install-hook writes the pre-commit hook; nothing is disclosed",
+      "args": [
+        "scan",
+        "--install-hook"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": ""
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "Installed the pre-commit hook at {{dir}}/repo/.git/hooks/pre-commit: each commit runs \"varlatch scan --staged\" first.\nSkip it once with git commit --no-verify; delete that file to remove it.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0755",
+            "content": "#!/bin/sh\n# varlatch-scan-hook v1\n# Installed by `varlatch scan --install-hook`. Before each commit it checks\n# the staged content for Secrets and stops the commit when it finds one.\n# Skip it once with `git commit --no-verify`; delete this file to remove it.\n# Git runs hooks from the top of the working tree. Keep Git's paths valid\n# after changing directory.\ncase \"${GIT_INDEX_FILE:-/}\" in /*) ;; *) GIT_INDEX_FILE=\"$PWD/$GIT_INDEX_FILE\"; export GIT_INDEX_FILE ;; esac\ncase \"${GIT_DIR:-/}\" in /*) ;; *) GIT_DIR=\"$PWD/$GIT_DIR\"; export GIT_DIR ;; esac\nif [ -n \"${GIT_DIR:-}\" ] && [ -z \"${GIT_WORK_TREE:-}\" ]; then GIT_WORK_TREE=\"$PWD\"; export GIT_WORK_TREE; fi\nexec varlatch scan --staged\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo/services/api",
+      "id": "hook.install.below",
+      "title": "a project below the top level, and -e",
+      "args": [
+        "scan",
+        "--install-hook",
+        "-e",
+        "it's"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/services/api/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "Installed the pre-commit hook at {{dir}}/repo/.git/hooks/pre-commit: each commit runs \"varlatch scan --staged\" first.\nSkip it once with git commit --no-verify; delete that file to remove it.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0755",
+            "content": "#!/bin/sh\n# varlatch-scan-hook v1\n# Installed by `varlatch scan --install-hook`. Before each commit it checks\n# the staged content for Secrets and stops the commit when it finds one.\n# Skip it once with `git commit --no-verify`; delete this file to remove it.\n# Git runs hooks from the top of the working tree. Keep Git's paths valid\n# after changing directory.\ncase \"${GIT_INDEX_FILE:-/}\" in /*) ;; *) GIT_INDEX_FILE=\"$PWD/$GIT_INDEX_FILE\"; export GIT_INDEX_FILE ;; esac\ncase \"${GIT_DIR:-/}\" in /*) ;; *) GIT_DIR=\"$PWD/$GIT_DIR\"; export GIT_DIR ;; esac\nif [ -n \"${GIT_DIR:-}\" ] && [ -z \"${GIT_WORK_TREE:-}\" ]; then GIT_WORK_TREE=\"$PWD\"; export GIT_WORK_TREE; fi\ncd 'services/api' || exit 1\nexec varlatch scan --staged --environment 'it'\\''s'\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/services/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/services/api/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/services/api/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "hook.update",
+      "title": "a hook varlatch wrote is updated",
+      "args": [
+        "scan",
+        "--install-hook",
+        "-e",
+        "staging"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.git/hooks/pre-commit": "#!/bin/sh\n# varlatch-scan-hook v1\nexec varlatch scan --staged\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "Installed the pre-commit hook at {{dir}}/repo/.git/hooks/pre-commit: each commit runs \"varlatch scan --staged\" first.\nSkip it once with git commit --no-verify; delete that file to remove it.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0755",
+            "content": "#!/bin/sh\n# varlatch-scan-hook v1\n# Installed by `varlatch scan --install-hook`. Before each commit it checks\n# the staged content for Secrets and stops the commit when it finds one.\n# Skip it once with `git commit --no-verify`; delete this file to remove it.\n# Git runs hooks from the top of the working tree. Keep Git's paths valid\n# after changing directory.\ncase \"${GIT_INDEX_FILE:-/}\" in /*) ;; *) GIT_INDEX_FILE=\"$PWD/$GIT_INDEX_FILE\"; export GIT_INDEX_FILE ;; esac\ncase \"${GIT_DIR:-/}\" in /*) ;; *) GIT_DIR=\"$PWD/$GIT_DIR\"; export GIT_DIR ;; esac\nif [ -n \"${GIT_DIR:-}\" ] && [ -z \"${GIT_WORK_TREE:-}\" ]; then GIT_WORK_TREE=\"$PWD\"; export GIT_WORK_TREE; fi\nexec varlatch scan --staged --environment 'staging'\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "hook.foreign",
+      "title": "a hook varlatch did not write is left unchanged: 1",
+      "args": [
+        "scan",
+        "--install-hook"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.git/hooks/pre-commit": "#!/bin/sh\nexit 0\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: {{dir}}/repo/.git/hooks/pre-commit already exists and was not written by varlatch; it was left unchanged. To run the scan from it, add this line:\n  varlatch scan --staged || exit 1\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0644",
+            "content": "#!/bin/sh\nexit 0\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo/app",
+      "id": "hook.foreign.below",
+      "title": "the line to add names the project directory",
+      "args": [
+        "scan",
+        "--install-hook"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/app/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "repo/.git/hooks/pre-commit": "#!/bin/sh\nexit 0\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: {{dir}}/repo/.git/hooks/pre-commit already exists and was not written by varlatch; it was left unchanged. To run the scan from it, add this line:\n  (cd 'app' && varlatch scan --staged) || exit 1\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0644",
+            "content": "#!/bin/sh\nexit 0\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/app/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/app/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "cwd": "repo",
+      "id": "hook.usage",
+      "title": "--install-hook with a path: 1",
+      "args": [
+        "scan",
+        "--install-hook",
+        "a"
+      ],
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+      },
+      "env": {
+        "VARLATCH_TOKEN": "vlt_svc_scanAAAAAA"
+      },
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: --install-hook takes no paths and no other options than -e\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    }
+  ]
+}

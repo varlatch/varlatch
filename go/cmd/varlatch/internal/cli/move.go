@@ -119,7 +119,7 @@ func moveFail(message string, code int) error { return Fail("varlatch move: "+me
 // parses its JSON answer into v; a failure shows varlatchd's own lines and
 // ends the command with its status.
 func (r *Run) varlatchdJSON(prefix string, args []string, config string, v any) error {
-	answer, said, code, err := r.execVarlatchd(prefix, args, config)
+	answer, said, code, err := r.varlatchd(prefix, args, config)
 	if err != nil {
 		return err
 	}
@@ -180,7 +180,7 @@ const reenrollUsage = "Usage: varlatch admin reenroll (--all | --identity <id>..
 // authority, as recovery), each shown with its person.
 func reenrollCommand(r *Run) error {
 	if i := indexOf(r.Args, "--dir"); i >= 0 {
-		return composeRefusal(r)
+		return composeRefusal(r, "admin")
 	}
 	parsed, err := strictOptions("admin reenroll", r.Args[1:], OptionSpec{Values: []string{"--hours", "--config"}, Lists: []string{"--identity"}, Booleans: []string{"--all"}, OnceBooleans: true}, reenrollUsage)
 	if err != nil {
@@ -652,13 +652,13 @@ func (m *mover) restart() error {
 // with to as its address (through its socket: move-facts reports the
 // running daemon's configuration).
 func (m *mover) servesNewAddress(to string) bool {
-	answer, _, code, err := m.r.execVarlatchd("varlatch move", []string{"admin", "config", "check"}, m.config)
+	answer, _, code, err := m.r.varlatchd("varlatch move", []string{"admin", "config", "check"}, m.config)
 	var f confFacts
 	if err != nil || code != 0 || json.Unmarshal(bytes.TrimSpace(answer), &f) != nil || !readyz(f.Listen) {
 		return false
 	}
 	var facts moveFacts
-	answer, _, code, err = m.r.execVarlatchd("varlatch move", []string{"admin", "move-facts"}, m.config)
+	answer, _, code, err = m.r.varlatchd("varlatch move", []string{"admin", "move-facts"}, m.config)
 	return err == nil && code == 0 && json.Unmarshal(bytes.TrimSpace(answer), &facts) == nil && facts.PublicURL != nil && *facts.PublicURL == to
 }
 
@@ -700,7 +700,7 @@ func (m *mover) finish(s *moveState) error {
 			PasskeysRemoved int `json:"passkeysRemoved"`
 			SessionsEnded   int `json:"sessionsEnded"`
 		}
-		answer, said, code, err := m.r.execVarlatchd("varlatch move", []string{"admin", "public-url-changed", "--from", s.From}, m.config)
+		answer, said, code, err := m.r.varlatchd("varlatch move", []string{"admin", "public-url-changed", "--from", s.From}, m.config)
 		if err != nil {
 			return err
 		}
@@ -753,7 +753,7 @@ func (m *mover) finish(s *moveState) error {
 	}
 	admins := func() bool {
 		var f moveFacts
-		answer, _, code, err := m.r.execVarlatchd("varlatch move", []string{"admin", "move-facts"}, m.config)
+		answer, _, code, err := m.r.varlatchd("varlatch move", []string{"admin", "move-facts"}, m.config)
 		return err == nil && code == 0 && json.Unmarshal(bytes.TrimSpace(answer), &f) == nil && f.AdminsWithPasskey > 0
 	}
 	if !admins() {
@@ -889,4 +889,18 @@ func locateProgram(name, pathList string) (string, error) {
 		return real, nil
 	}
 	return "", errors.New("not found on PATH")
+}
+
+// varlatchdEnded shows what varlatchd wrote on its standard error (the
+// root hint after a 78 included: varlatchd adds it), each line through
+// the fail-safe, and ends the command with varlatchd's status when it is
+// not 0.
+func (r *Run) varlatchdEnded(_ string, said []byte, code int) error {
+	if err := r.warnLines(said); err != nil {
+		return err
+	}
+	if code != 0 {
+		return ExitWith(code)
+	}
+	return nil
 }
