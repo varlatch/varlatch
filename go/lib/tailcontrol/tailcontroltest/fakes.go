@@ -68,6 +68,10 @@ type Tailscale struct {
 	// EchoCredentials makes every error answer quote the request's
 	// credentials, to show that tailcontrol never repeats them.
 	EchoCredentials bool
+	// LagRenames makes a rename show only from the second listing after
+	// it: a control plane that lists the old name for a moment.
+	LagRenames bool
+	pending    map[string]string // device id -> name a lagged rename sets
 
 	mu        sync.Mutex
 	nodes     []*Node
@@ -83,7 +87,7 @@ func NewTailscale(nodes ...Node) *Tailscale {
 		n := n
 		f.nodes = append(f.nodes, &n)
 	}
-	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
+	f.Server = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	return f
 }
 
@@ -140,6 +144,20 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 	f.Used[tok]++
 	switch {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/tailnet/") && strings.HasSuffix(r.URL.Path, "/devices"):
+		// A lagged rename shows from the second listing: this one shows the
+		// old name and arms the next.
+		for id, name := range f.pending {
+			if strings.HasPrefix(name, "\x00") {
+				for _, n := range f.nodes {
+					if n.ID == id {
+						n.Name = strings.TrimPrefix(name, "\x00")
+					}
+				}
+				delete(f.pending, id)
+			} else {
+				f.pending[id] = "\x00" + name
+			}
+		}
 		devices := []map[string]any{}
 		for _, n := range f.nodes {
 			d := map[string]any{"id": n.ID, "nodeId": n.NodeID, "name": n.Name + "." + f.Suffix, "hostname": "host-of-" + n.ID,
@@ -179,7 +197,14 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		target.Name = stored
+		if f.LagRenames {
+			if f.pending == nil {
+				f.pending = map[string]string{}
+			}
+			f.pending[target.ID] = stored
+		} else {
+			target.Name = stored
+		}
 		writeJSON(w, http.StatusOK, map[string]any{})
 	default:
 		f.fail(w, r, http.StatusNotFound, "not found")
@@ -211,7 +236,7 @@ func NewHeadscale(keyLife time.Duration, nodes ...Node) *Headscale {
 		n := n
 		f.nodes = append(f.nodes, &n)
 	}
-	f.Server = httptest.NewServer(http.HandlerFunc(f.serve))
+	f.Server = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	return f
 }
 
@@ -317,7 +342,7 @@ func (f *Headscale) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // Run is the headscale CLI on the fake's state: `nodes list --output json`
-// and `nodes rename --identifier <id> <name>`, as tailcontrol.HeadscaleCLI
+// and `nodes rename --identifier <id> -- <name>`, as tailcontrol.HeadscaleCLI
 // runs them.
 func (f *Headscale) Run(_ context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()
@@ -329,8 +354,8 @@ func (f *Headscale) Run(_ context.Context, args ...string) ([]byte, error) {
 			nodes = append(nodes, f.node(n, false))
 		}
 		return json.Marshal(nodes)
-	case len(args) == 5 && args[0] == "nodes" && args[1] == "rename" && args[2] == "--identifier":
-		if status, msg := f.rename(args[3], args[4]); status != http.StatusOK {
+	case len(args) == 6 && args[0] == "nodes" && args[1] == "rename" && args[2] == "--identifier" && args[4] == "--":
+		if status, msg := f.rename(args[3], args[5]); status != http.StatusOK {
 			return nil, fmt.Errorf("headscale nodes rename: exit status 1: %s", msg)
 		}
 		return []byte("Node renamed\n"), nil

@@ -5,6 +5,7 @@ package tailcontrol_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -85,7 +86,7 @@ func TestCheckNames(t *testing.T) {
 	ok(tailcontrol.NamePlan{Name: "vault", Holder: "1", Temporary: []string{"vault-vl-xyz-n", "vault-vl-xyz-o"}})
 	ok(tailcontrol.NamePlan{Name: "free", Temporary: []string{"free-vl-xyz-n"}})
 	bad(tailcontrol.NamePlan{Name: "vault", Holder: "2"}, `held by vault (1, online)`, "expected holder 2 does not hold")
-	bad(tailcontrol.NamePlan{Name: "build"}, `held by build (2, online)`)
+	bad(tailcontrol.NamePlan{Name: "build"}, `held by build (2, online), and no device may hold it`)
 	bad(tailcontrol.NamePlan{Name: "vault", Holder: "1", Temporary: []string{"vault-vl-abc-o"}}, `held by vault-vl-abc-o (3, offline)`)
 	bad(tailcontrol.NamePlan{Name: "vault", Holder: "1", Temporary: []string{"vault-vl-def-n"}}, `held by VAULT-VL-DEF-N (4, expired)`)
 	bad(tailcontrol.NamePlan{Name: "Vault", Holder: "1"}, "not in canonical form")
@@ -101,8 +102,13 @@ func TestCheckNames(t *testing.T) {
 	}
 }
 
-func tailscaleOf(f *tailcontroltest.Tailscale) *tailcontrol.Tailscale {
-	return &tailcontrol.Tailscale{BaseURL: f.URL, ClientID: f.ClientID, ClientSecret: f.ClientSecret, HTTP: f.Client()}
+func tailscaleOf(t *testing.T, f *tailcontroltest.Tailscale, secret string) *tailcontrol.Tailscale {
+	t.Helper()
+	ts, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: f.URL, ClientID: f.ClientID, ClientSecret: secret, HTTP: f.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts
 }
 
 func TestTailscaleListsRenamesAndReadsBack(t *testing.T) {
@@ -112,7 +118,7 @@ func TestTailscaleListsRenamesAndReadsBack(t *testing.T) {
 		tailcontroltest.Node{ID: "103", NodeID: "nGone3CNTRL", Name: "gone", Expires: time.Now().Add(-time.Hour)},
 	)
 	defer f.Close()
-	ts := tailscaleOf(f)
+	ts := tailscaleOf(t, f, f.ClientSecret)
 	devices, err := ts.Devices(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +153,7 @@ func TestTailscaleRefusals(t *testing.T) {
 	)
 	defer f.Close()
 	f.EchoCredentials = true
-	ts := tailscaleOf(f)
+	ts := tailscaleOf(t, f, f.ClientSecret)
 	secretFree := func(err error) {
 		t.Helper()
 		if err == nil {
@@ -182,11 +188,10 @@ func TestTailscaleRefusals(t *testing.T) {
 		t.Errorf("a non-canonical name: %v, %+v", err, f.Nodes())
 	}
 	// A wrong secret: refused, the secret not quoted although the server echoes it.
-	wrong := *ts
-	wrong.ClientSecret = ts.ClientSecret + "x"
-	_, err = wrong.Devices(ctx)
+	wrongSecret := f.ClientSecret + "x"
+	_, err = tailscaleOf(t, f, wrongSecret).Devices(ctx)
 	secretFree(err)
-	if err == nil || strings.Contains(err.Error(), wrong.ClientSecret) || !strings.Contains(err.Error(), "list devices") {
+	if err == nil || strings.Contains(err.Error(), wrongSecret) || !strings.Contains(err.Error(), "list devices") {
 		t.Errorf("a wrong secret: %v", err)
 	}
 	// A client with more than devices:core, or without it: refused before any use.
@@ -202,8 +207,13 @@ func TestTailscaleRefusals(t *testing.T) {
 	}
 }
 
-func headscaleOf(f *tailcontroltest.Headscale) *tailcontrol.HeadscaleAPI {
-	return &tailcontrol.HeadscaleAPI{BaseURL: f.URL, APIKey: f.Key, HTTP: f.Client()}
+func headscaleOf(t *testing.T, f *tailcontroltest.Headscale, key string) *tailcontrol.HeadscaleAPI {
+	t.Helper()
+	hs, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{BaseURL: f.URL, APIKey: key, HTTP: f.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hs
 }
 
 func TestHeadscaleAPI(t *testing.T) {
@@ -213,7 +223,7 @@ func TestHeadscaleAPI(t *testing.T) {
 		tailcontroltest.Node{ID: "3", Name: "old", Expires: time.Now().Add(-time.Minute)},
 	)
 	defer f.Close()
-	hs := headscaleOf(f)
+	hs := headscaleOf(t, f, f.Key)
 	if _, err := hs.Devices(ctx); err == nil || !strings.Contains(err.Error(), "not checked") {
 		t.Errorf("before Open: %v", err)
 	}
@@ -234,12 +244,22 @@ func TestHeadscaleAPI(t *testing.T) {
 	if _, err := tailcontrol.RenameAndReadBack(ctx, hs, "3", "vault"); !errors.Is(err, tailcontrol.ErrNameTaken) || strings.Contains(err.Error(), f.Key) {
 		t.Errorf("taken: %v", err)
 	}
-	// Headscale keeps a case variant beside the name; CheckNames is what
-	// catches it, before any rename.
-	if err := hs.Rename(ctx, "3", "VAULT"); err != nil {
-		t.Fatalf("Headscale refused a case variant: %v", err)
+	// Headscale keeps a case variant beside the name (set here outside
+	// tailcontrol, which never asks for one); CheckNames is what catches it,
+	// before any rename.
+	if err := hs.Rename(ctx, "3", "VAULT"); err == nil || !strings.Contains(err.Error(), "not in canonical form") {
+		t.Errorf("tailcontrol asked for a case variant: %v", err)
 	}
-	now, _ := hs.Devices(ctx)
+	variant := tailcontroltest.NewHeadscale(50*time.Minute,
+		tailcontroltest.Node{ID: "2", Name: "vault", Online: true},
+		tailcontroltest.Node{ID: "3", Name: "VAULT", Expires: time.Now().Add(-time.Minute)},
+	)
+	defer variant.Close()
+	vh := headscaleOf(t, variant, variant.Key)
+	if err := vh.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	now, _ := vh.Devices(ctx)
 	if err := tailcontrol.CheckNames(now, tailcontrol.NamePlan{Name: "vault", Holder: "2"}); err == nil || !strings.Contains(err.Error(), "held by VAULT (3, expired)") {
 		t.Errorf("the case variant: %v", err)
 	}
@@ -250,7 +270,7 @@ func TestHeadscaleAPI(t *testing.T) {
 	if err := hs.Close(ctx); err != nil {
 		t.Errorf("closing twice: %v", err)
 	}
-	again := headscaleOf(f)
+	again := headscaleOf(t, f, f.Key)
 	if err := again.Open(ctx); err == nil || strings.Contains(err.Error(), f.Key) {
 		t.Errorf("an expired key: %v", err)
 	}
@@ -259,7 +279,7 @@ func TestHeadscaleAPI(t *testing.T) {
 func TestHeadscaleAPIKeyMustExpireWithinTheHour(t *testing.T) {
 	for _, life := range []time.Duration{2 * time.Hour, 90 * 24 * time.Hour} {
 		f := tailcontroltest.NewHeadscale(life, tailcontroltest.Node{ID: "1", Name: "vault"})
-		err := headscaleOf(f).Open(ctx)
+		err := headscaleOf(t, f, f.Key).Open(ctx)
 		f.Close()
 		if err == nil || !strings.Contains(err.Error(), "more than an hour from now") || strings.Contains(err.Error(), f.Key) {
 			t.Errorf("a key living %v: %v", life, err)
@@ -267,13 +287,12 @@ func TestHeadscaleAPIKeyMustExpireWithinTheHour(t *testing.T) {
 	}
 	f := tailcontroltest.NewHeadscale(time.Hour, tailcontroltest.Node{ID: "1", Name: "vault"})
 	defer f.Close()
-	if err := headscaleOf(f).Open(ctx); err != nil {
+	if err := headscaleOf(t, f, f.Key).Open(ctx); err != nil {
 		t.Errorf("a key of an hour: %v", err)
 	}
 	// A key the server does not list (another server's), and a wrong key: refused.
-	other := headscaleOf(f)
-	other.APIKey = "zzzz" + f.Key[4:]
-	if err := other.Open(ctx); err == nil || strings.Contains(err.Error(), other.APIKey) {
+	wrongKey := "zzzz" + f.Key[4:]
+	if err := headscaleOf(t, f, wrongKey).Open(ctx); err == nil || strings.Contains(err.Error(), wrongKey) {
 		t.Errorf("a wrong key: %v", err)
 	}
 }
@@ -300,5 +319,98 @@ func TestHeadscaleCLI(t *testing.T) {
 	}
 	if err := cli.Rename(ctx, "seven", "x"); err == nil || !strings.Contains(err.Error(), "is a number") {
 		t.Errorf("a non-numeric id: %v", err)
+	}
+	// A name that would read as an option is not canonical, and never sent.
+	for _, name := range []string{"--help", "-x", "Vault"} {
+		if err := cli.Rename(ctx, "7", name); err == nil || !strings.Contains(err.Error(), "not in canonical form") {
+			t.Errorf("%q: %v", name, err)
+		}
+	}
+	// The binary, when named, is an absolute path to an executable file.
+	for _, bin := range []string{"headscale", "./headscale", "/nonexistent/headscale", t.TempDir()} {
+		if err := (&tailcontrol.HeadscaleCLI{Binary: bin}).Validate(); err == nil {
+			t.Errorf("binary %q accepted", bin)
+		}
+	}
+	if err := (&tailcontrol.HeadscaleCLI{}).Validate(); err != nil {
+		t.Errorf("PATH's headscale: %v", err)
+	}
+}
+
+func TestOnlyHTTPS(t *testing.T) {
+	for _, base := range []string{"http://api.tailscale.example", "ftp://x", "api.tailscale.com", "https://"} {
+		if _, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: base, ClientID: "id", ClientSecret: "secret-value"}); err == nil {
+			t.Errorf("Tailscale at %q accepted", base)
+		}
+		if _, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{BaseURL: base, APIKey: "key-value"}); err == nil {
+			t.Errorf("Headscale at %q accepted", base)
+		}
+	}
+	if _, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{APIKey: "key-value"}); err == nil {
+		t.Error("Headscale without a URL accepted")
+	}
+	if _, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{ClientID: "id", ClientSecret: "secret-value"}); err != nil {
+		t.Errorf("Tailscale's own API: %v", err)
+	}
+}
+
+// TestPrintingHoldsNoCredential: a control plane, or its configuration,
+// printed in every way fmt prints, even as an unexported field of another
+// struct, shows no credential.
+func TestPrintingHoldsNoCredential(t *testing.T) {
+	const secret, key = "client-secret-for-printing", "api-key-for-printing"
+	tcfg := tailcontrol.TailscaleConfig{BaseURL: "https://ts.example", ClientID: "id", ClientSecret: secret}
+	hcfg := tailcontrol.HeadscaleAPIConfig{BaseURL: "https://hs.example", APIKey: key}
+	ts, err := tailcontrol.NewTailscale(tcfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs, err := tailcontrol.NewHeadscaleAPI(hcfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type holder struct {
+		ts  *tailcontrol.Tailscale
+		hs  *tailcontrol.HeadscaleAPI
+		tsv tailcontrol.Tailscale
+		hsv tailcontrol.HeadscaleAPI
+	}
+	h := holder{ts, hs, *ts, *hs}
+	for _, v := range []any{ts, hs, *ts, *hs, h, &h, tcfg, hcfg, &tcfg, &hcfg} {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+			out := fmt.Sprintf(verb, v)
+			if strings.Contains(out, secret) || strings.Contains(out, key) {
+				t.Errorf("%s of %T: %s", verb, v, out)
+			}
+		}
+	}
+}
+
+func TestReadBackIsRetriedOnce(t *testing.T) {
+	defer func(d time.Duration) { tailcontrol.ReadBackRetry = d }(tailcontrol.ReadBackRetry)
+	tailcontrol.ReadBackRetry = 10 * time.Millisecond
+	f := tailcontroltest.NewTailscale(tailcontroltest.Node{ID: "1", Name: "vault", Online: true})
+	defer f.Close()
+	f.LagRenames = true
+	ts := tailscaleOf(t, f, f.ClientSecret)
+	if d, err := tailcontrol.RenameAndReadBack(ctx, ts, "1", "vault-vl-abc-o"); err != nil || d.Name != "vault-vl-abc-o" {
+		t.Fatalf("a rename shown on the second reading: %+v, %v", d, err)
+	}
+	// A rename that never shows is still a failure, after the one retry.
+	f.LagRenames = false
+	f.RewriteRename = func(s string) string { return s + "-1" }
+	_, err := tailcontrol.RenameAndReadBack(ctx, ts, "1", "vault")
+	var rb *tailcontrol.ReadBackError
+	if !errors.As(err, &rb) || rb.Got != "vault-1" {
+		t.Errorf("a rename never shown: %v", err)
+	}
+	// A context ended while waiting to read again: the read-back fails with both causes.
+	f.RewriteRename = nil
+	f.LagRenames = true
+	tailcontrol.ReadBackRetry = time.Hour
+	short, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer cancel()
+	if _, err := tailcontrol.RenameAndReadBack(short, ts, "1", "vault-x"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("the deadline while waiting: %v", err)
 	}
 }

@@ -24,8 +24,11 @@ package tailcontrol
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -220,6 +223,8 @@ func CheckNames(devices []Device, p NamePlan) error {
 			held = true
 		case p.Holder != "" && d.ID == p.Holder:
 			problems = append(problems, fmt.Sprintf("the expected holder %s holds %q only as a case variant", d, p.Name))
+		case p.Holder == "":
+			problems = append(problems, fmt.Sprintf("%q is held by %s, and no device may hold it", p.Name, d))
 		default:
 			problems = append(problems, fmt.Sprintf("%q is held by %s, not the expected device", p.Name, d))
 		}
@@ -240,40 +245,109 @@ func CheckNames(devices []Device, p NamePlan) error {
 	return nil
 }
 
+// ReadBackRetry is how long RenameAndReadBack waits before reading a name
+// back once more, when the first reading does not show it yet: a control
+// plane may list the old name for a moment after accepting a rename.
+var ReadBackRetry = time.Second
+
 // RenameAndReadBack renames a device and then reads its name back from the
 // control plane: the rename counts only when the device is listed under
 // exactly that name (ADR-0059 Decision 9: anything else is a failure, and
-// starts the undo). The name must be canonical.
+// starts the undo). A first reading that differs is read again once, after
+// ReadBackRetry. The name must be canonical.
 func RenameAndReadBack(ctx context.Context, cp ControlPlane, deviceID, name string) (Device, error) {
-	if !Canonical(name) {
-		return Device{}, &OpError{Plane: cp.Kind(), Op: "rename", Device: deviceID, Err: fmt.Errorf("%q is not in canonical form", name)}
+	if err := checkName(cp.Kind(), deviceID, name); err != nil {
+		return Device{}, err
 	}
 	if err := cp.Rename(ctx, deviceID, name); err != nil {
 		return Device{}, err
 	}
-	devices, err := cp.Devices(ctx)
-	if err != nil {
-		return Device{}, err
-	}
-	for _, d := range devices {
-		if d.ID != deviceID {
-			continue
+	var last Device
+	var mismatch *ReadBackError
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return last, &OpError{Plane: cp.Kind(), Op: "read back", Device: deviceID, Err: errors.Join(mismatch, ctx.Err())}
+			case <-time.After(ReadBackRetry):
+			}
 		}
-		if d.Name != name {
-			return d, &OpError{Plane: cp.Kind(), Op: "read back", Device: deviceID, Err: &ReadBackError{Want: name, Got: d.Name}}
+		devices, err := cp.Devices(ctx)
+		if err != nil {
+			return Device{}, err
 		}
-		return d, nil
+		mismatch = &ReadBackError{Want: name, Missing: true}
+		for _, d := range devices {
+			if d.ID != deviceID {
+				continue
+			}
+			if d.Name == name {
+				return d, nil
+			}
+			last, mismatch = d, &ReadBackError{Want: name, Got: d.Name}
+		}
 	}
-	return Device{}, &OpError{Plane: cp.Kind(), Op: "read back", Device: deviceID, Err: &ReadBackError{Want: name, Missing: true}}
+	return last, &OpError{Plane: cp.Kind(), Op: "read back", Device: deviceID, Err: mismatch}
 }
 
-// scrub replaces every credential in text with [redacted]: an error built
-// from a control plane's answer can echo what it was sent.
+// checkName refuses a rename to a name not in canonical form, in every
+// backend: such a name is never sent.
+func checkName(plane, deviceID, name string) error {
+	if !Canonical(name) {
+		return &OpError{Plane: plane, Op: "rename", Device: deviceID, Err: fmt.Errorf("%q is not in canonical form", name)}
+	}
+	return nil
+}
+
+// scrub replaces every credential in text with [redacted], in every form an
+// answer could echo it in: as sent, query- or path-escaped, and in base64
+// (standard or URL alphabet, padded or not). An error built from a control
+// plane's answer can quote what it was sent. Longer forms go first, so a
+// form that contains another is replaced whole.
 func scrub(text string, secrets ...string) string {
+	var forms []string
 	for _, s := range secrets {
-		if len(s) >= 4 {
-			text = strings.ReplaceAll(text, s, "[redacted]")
+		if len(s) < 4 {
+			continue
 		}
+		b := []byte(s)
+		forms = append(forms, s, url.QueryEscape(s), url.PathEscape(s),
+			base64.StdEncoding.EncodeToString(b), base64.URLEncoding.EncodeToString(b),
+			base64.RawStdEncoding.EncodeToString(b), base64.RawURLEncoding.EncodeToString(b))
+	}
+	sort.SliceStable(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
+	for _, f := range forms {
+		text = strings.ReplaceAll(text, f, "[redacted]")
 	}
 	return text
+}
+
+// scrubbedError is an error whose text is scrubbed of the credentials. It
+// answers errors.Is as the error it came from does, so a handoff tells a
+// passed deadline (context.DeadlineExceeded) from a control plane that
+// cannot be reached (syscall.ECONNREFUSED). It does not unwrap, nor answer
+// errors.As: either would hand out the original error, whose text (a
+// *url.Error's, say) may still quote a credential.
+type scrubbedError struct {
+	text string
+	err  error
+}
+
+func (e *scrubbedError) Error() string        { return e.text }
+func (e *scrubbedError) Is(target error) bool { return errors.Is(e.err, target) }
+
+func scrubbed(err error, secrets ...string) error {
+	if err == nil {
+		return nil
+	}
+	return &scrubbedError{text: scrub(err.Error(), secrets...), err: err}
+}
+
+// truncate cuts an already scrubbed message to n bytes: scrubbing first
+// means no credential straddles the cut.
+func truncate(msg string, n int) string {
+	if len(msg) <= n {
+		return msg
+	}
+	return msg[:n] + "…"
 }

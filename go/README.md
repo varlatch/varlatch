@@ -2777,7 +2777,11 @@ slice 7.5b.
     token of its own, and nothing keeps one.
   - `HeadscaleAPI` uses a key that `Open` checks expires within the hour
     (every Headscale key is a full administrator); `Close` expires it.
-  - `HeadscaleCLI` runs `headscale` on the control server.
+  - `HeadscaleCLI` runs `headscale` on the control server (an absolute
+    path when named), with the new name after `--`.
+  - Both APIs are https only, and are built with a constructor that
+    keeps the credential in a closure, so printing a control plane shows
+    none.
 - **Names.**
   - `TempName` is a handoff's temporary name, `<name>-vl-<operation
     id>-n|o`, in canonical form within 63 bytes; when too long, the name
@@ -2786,10 +2790,15 @@ slice 7.5b.
     The name must be held by exactly the expected device, and every
     temporary name must be free, whoever holds it, online, offline or
     expired.
-  - `RenameAndReadBack` counts a rename only once the control plane lists
-    the device under exactly that name.
+  - Every backend refuses a name not in canonical form.
+    `RenameAndReadBack` counts a rename only once the control plane lists
+    the device under exactly that name, reading it again once, a second
+    later, before it calls a difference a failure.
 - **Errors** name the operation and the device. Every credential is
-  scrubbed from them, even when the control plane's answer echoes it.
+  scrubbed from them before any cut, in every form an answer could echo
+  (as sent, escaped, base64), even when the control plane echoes it. A
+  transport error still answers `errors.Is` (a passed deadline stays
+  `context.DeadlineExceeded`).
 - **Testing.** `tailcontroltest` fakes both control planes, with the
   behaviour ADR-0059 Decision 9 records:
   - Tailscale rewrites non-canonical names and refuses a taken one;

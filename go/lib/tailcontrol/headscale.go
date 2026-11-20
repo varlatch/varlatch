@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -55,7 +57,7 @@ func (n headscaleNode) device(now time.Time) (Device, error) {
 	}
 	d := Device{ID: id, Name: name, Online: n.Online}
 	// Headscale writes an unset expiry as the zero time.
-	if n.Expiry != nil && !n.Expiry.IsZero() && n.Expiry.Year() > 1 && n.Expiry.Before(now) {
+	if n.Expiry != nil && n.Expiry.Year() > 1 && n.Expiry.Before(now) {
 		d.Expired = true
 	}
 	switch {
@@ -79,10 +81,11 @@ func headscaleDevices(nodes []headscaleNode, now time.Time) ([]Device, error) {
 	return out, nil
 }
 
-// HeadscaleAPI is a tailnet on Headscale, reached through its API with a
-// key that must expire within the hour (Open checks it); Close expires it.
-type HeadscaleAPI struct {
-	// BaseURL is Headscale's server URL.
+// HeadscaleAPIConfig is what NewHeadscaleAPI takes. It holds the API key as
+// given: build the HeadscaleAPI from it and drop it; its String and
+// GoString redact the key should it be printed.
+type HeadscaleAPIConfig struct {
+	// BaseURL is Headscale's server URL, https only.
 	BaseURL string
 	// APIKey is the key, as `headscale apikeys create --expiration 1h`
 	// printed it.
@@ -91,19 +94,49 @@ type HeadscaleAPI struct {
 	HTTP *http.Client
 	// Now is the clock that judges expiries; time.Now when nil.
 	Now func() time.Time
+}
 
+func (c HeadscaleAPIConfig) String() string {
+	return fmt.Sprintf("tailcontrol.HeadscaleAPIConfig{BaseURL:%q APIKey:[redacted]}", c.BaseURL)
+}
+
+func (c HeadscaleAPIConfig) GoString() string { return c.String() }
+
+// HeadscaleAPI is a tailnet on Headscale, reached through its API with a
+// key that must expire within the hour (Open checks it); Close expires it.
+// The key is held in a closure, so printing a HeadscaleAPI, even inside
+// another struct, shows no credential.
+type HeadscaleAPI struct {
+	base   string
+	key    func() string
+	http   *http.Client
+	now    func() time.Time
 	prefix string // the key's prefix, as Headscale lists it; set by Open
+}
+
+// NewHeadscaleAPI checks a configuration and builds the control plane from
+// it. The server's URL must be https.
+func NewHeadscaleAPI(c HeadscaleAPIConfig) (*HeadscaleAPI, error) {
+	if c.BaseURL == "" {
+		return nil, &OpError{Plane: "headscale", Op: "configure", Err: errors.New("no server URL")}
+	}
+	base, err := httpsOrigin(c.BaseURL, "")
+	if err != nil {
+		return nil, &OpError{Plane: "headscale", Op: "configure", Err: err}
+	}
+	if c.APIKey == "" {
+		return nil, &OpError{Plane: "headscale", Op: "configure", Err: errors.New("no API key")}
+	}
+	key := c.APIKey
+	now := c.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &HeadscaleAPI{base: base, key: func() string { return key }, http: httpClient(c.HTTP), now: now}, nil
 }
 
 // Kind is "headscale".
 func (h *HeadscaleAPI) Kind() string { return "headscale" }
-
-func (h *HeadscaleAPI) now() time.Time {
-	if h.Now != nil {
-		return h.Now()
-	}
-	return time.Now()
-}
 
 func (h *HeadscaleAPI) err(op, device string, err error) error {
 	return &OpError{Plane: "headscale", Op: op, Device: device, Err: err}
@@ -120,24 +153,21 @@ func (h *HeadscaleAPI) request(ctx context.Context, method, path string, body an
 	} else {
 		r = bytes.NewReader(nil)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(h.BaseURL, "/")+path, r)
+	req, err := http.NewRequestWithContext(ctx, method, h.base+path, r)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+h.APIKey)
+	req.Header.Set("Authorization", "Bearer "+h.key())
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return do(httpClient(h.HTTP), req, out, h.APIKey)
+	return do(h.http, req, out, h.key())
 }
 
 // Open checks the key: Headscale lists it, it has not expired, and it
 // expires within the hour. Every other operation needs it to have passed.
 func (h *HeadscaleAPI) Open(ctx context.Context) error {
 	const op = "check key"
-	if h.APIKey == "" || h.BaseURL == "" {
-		return h.err(op, "", errors.New("no server URL or API key"))
-	}
 	var got struct {
 		APIKeys []struct {
 			Prefix     string     `json:"prefix"`
@@ -148,9 +178,10 @@ func (h *HeadscaleAPI) Open(ctx context.Context) error {
 		return h.err(op, "", err)
 	}
 	// The key's own entry: the longest listed prefix the key starts with.
+	key := h.key()
 	best := -1
 	for i, k := range got.APIKeys {
-		if len(k.Prefix) >= 4 && strings.HasPrefix(h.APIKey, k.Prefix) && (best < 0 || len(k.Prefix) > len(got.APIKeys[best].Prefix)) {
+		if len(k.Prefix) >= 4 && strings.HasPrefix(key, k.Prefix) && (best < 0 || len(k.Prefix) > len(got.APIKeys[best].Prefix)) {
 			best = i
 		}
 	}
@@ -160,7 +191,7 @@ func (h *HeadscaleAPI) Open(ctx context.Context) error {
 	k := got.APIKeys[best]
 	now := h.now()
 	switch {
-	case k.Expiration == nil || k.Expiration.IsZero():
+	case k.Expiration == nil || k.Expiration.Year() <= 1:
 		return h.err(op, "", errors.New("the API key never expires: create one with --expiration 1h"))
 	case !k.Expiration.After(now):
 		return h.err(op, "", errors.New("the API key has expired"))
@@ -197,22 +228,20 @@ func (h *HeadscaleAPI) Devices(ctx context.Context) ([]Device, error) {
 	return devices, nil
 }
 
-// Rename gives the node the name.
+// Rename gives the node the name, which must be canonical.
 func (h *HeadscaleAPI) Rename(ctx context.Context, deviceID, name string) error {
 	const op = "rename"
+	if err := checkName("headscale", deviceID, name); err != nil {
+		return err
+	}
 	if err := h.opened(op, deviceID); err != nil {
 		return err
 	}
 	if _, err := strconv.ParseUint(deviceID, 10, 64); err != nil {
 		return h.err(op, deviceID, errors.New("a Headscale node id is a number"))
 	}
-	err := h.request(ctx, http.MethodPost, "/api/v1/node/"+deviceID+"/rename/"+url.PathEscape(name), nil, nil)
-	if err != nil {
-		var status *StatusError
-		if errors.As(err, &status) && strings.Contains(strings.ToLower(status.Message), "already") {
-			err = fmt.Errorf("%w (%q): %v", ErrNameTaken, name, err)
-		}
-		return h.err(op, deviceID, err)
+	if err := h.request(ctx, http.MethodPost, "/api/v1/node/"+deviceID+"/rename/"+url.PathEscape(name), nil, nil); err != nil {
+		return h.err(op, deviceID, nameTaken(err, name))
 	}
 	return nil
 }
@@ -233,11 +262,29 @@ func (h *HeadscaleAPI) Close(ctx context.Context) error {
 // HeadscaleCLI is a tailnet on Headscale, reached through the headscale
 // command on the control server itself: no key leaves that host.
 type HeadscaleCLI struct {
-	// Run runs the headscale command with the arguments and answers its
-	// output; nil runs `headscale` from PATH.
+	// Binary is the headscale command's absolute path; empty runs
+	// `headscale` from PATH. Validate checks it.
+	Binary string
+	// Run runs the command with the arguments and answers its output; nil
+	// runs Binary. Tests set it.
 	Run func(ctx context.Context, args ...string) ([]byte, error)
 	// Now is the clock that judges expiries; time.Now when nil.
 	Now func() time.Time
+}
+
+// Validate checks Binary: an absolute path to an executable file.
+func (h *HeadscaleCLI) Validate() error {
+	if h.Binary == "" {
+		return nil
+	}
+	if !filepath.IsAbs(h.Binary) {
+		return h.err("configure", "", fmt.Errorf("the headscale command must be an absolute path (got %q)", h.Binary))
+	}
+	st, err := os.Stat(h.Binary)
+	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm()&0o111 == 0 {
+		return h.err("configure", "", fmt.Errorf("%s is not an executable file", h.Binary))
+	}
+	return nil
 }
 
 // Kind is "headscale".
@@ -250,16 +297,19 @@ func (h *HeadscaleCLI) run(ctx context.Context, args ...string) ([]byte, error) 
 	if h.Run != nil {
 		return h.Run(ctx, args...)
 	}
-	cmd := exec.CommandContext(ctx, "headscale", args...)
+	if err := h.Validate(); err != nil {
+		return nil, err
+	}
+	bin := h.Binary
+	if bin == "" {
+		bin = "headscale"
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if len(msg) > 200 {
-			msg = msg[:200] + "…"
-		}
-		return nil, fmt.Errorf("headscale %s: %v: %s", strings.Join(args[:min(2, len(args))], " "), err, msg)
+		return nil, fmt.Errorf("headscale %s: %w: %s", strings.Join(args[:min(2, len(args))], " "), err, truncate(strings.TrimSpace(stderr.String()), 200))
 	}
 	return out, nil
 }
@@ -297,14 +347,20 @@ func (h *HeadscaleCLI) Devices(ctx context.Context) ([]Device, error) {
 	return devices, nil
 }
 
-// Rename gives the node the name (`headscale nodes rename --identifier <id> <name>`).
+// Rename gives the node the name, which must be canonical
+// (`headscale nodes rename --identifier <id> -- <name>`: the name follows
+// "--", so it is never read as an option).
 func (h *HeadscaleCLI) Rename(ctx context.Context, deviceID, name string) error {
 	const op = "rename"
+	if err := checkName("headscale", deviceID, name); err != nil {
+		return err
+	}
 	if _, err := strconv.ParseUint(deviceID, 10, 64); err != nil {
 		return h.err(op, deviceID, errors.New("a Headscale node id is a number"))
 	}
-	if _, err := h.run(ctx, "nodes", "rename", "--identifier", deviceID, name); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "already") {
+	if _, err := h.run(ctx, "nodes", "rename", "--identifier", deviceID, "--", name); err != nil {
+		// The CLI has no status: its message is all there is to place it.
+		if m := strings.ToLower(err.Error()); strings.Contains(m, "already") || strings.Contains(m, "in use") {
 			err = fmt.Errorf("%w (%q): %v", ErrNameTaken, name, err)
 		}
 		return h.err(op, deviceID, err)
