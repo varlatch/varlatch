@@ -28,6 +28,7 @@ type fakeHost struct {
 	root      string
 	users     map[string][2]int
 	shells    map[string]string
+	groups    map[string][]string
 	chowns    map[string][2]int
 	systemctl []string
 	active    bool
@@ -40,7 +41,7 @@ type fakeHost struct {
 
 func newFakeHost(t *testing.T) *fakeHost {
 	t.Helper()
-	h := &fakeHost{root: t.TempDir(), users: map[string][2]int{}, shells: map[string]string{}, chowns: map[string][2]int{}}
+	h := &fakeHost{root: t.TempDir(), users: map[string][2]int{}, shells: map[string]string{}, groups: map[string][]string{}, chowns: map[string][2]int{}}
 	s := diskprobe.Stats{Samples: 250, P50: time.Millisecond, P99: 3 * time.Millisecond}
 	h.probe = diskprobe.Result{Append: s, Rewrite: s, Limit: diskprobe.DefaultLimit, Pass: true}
 	if err := os.MkdirAll(filepath.Dir(h.Path(UnitFile)), 0o755); err != nil {
@@ -63,7 +64,10 @@ func (h *fakeHost) CreateUser(name string) error {
 	return nil
 }
 func (h *fakeHost) LoginShell(name string) (string, error) { return h.shells[name], nil }
-func (h *fakeHost) SysUIDMax() int                         { return 999 }
+func (h *fakeHost) SupplementaryGroups(name string) ([]string, error) {
+	return h.groups[name], nil
+}
+func (h *fakeHost) SysUIDMax() int { return 999 }
 func (h *fakeHost) Chown(path string, uid, gid int) error {
 	rel, _ := filepath.Rel(h.root, path)
 	h.chowns["/"+rel] = [2]int{uid, gid}
@@ -431,18 +435,21 @@ func TestAnExistingUserMustBeASystemAccount(t *testing.T) {
 		name   string
 		uid    int
 		shell  string
+		groups []string
 		refuse []string
 	}{
-		{"system account", 985, "/usr/sbin/nologin", nil},
-		{"false shell", 985, "/bin/false", nil},
-		{"login shell", 985, "/bin/bash", []string{"its login shell is /bin/bash"}},
-		{"no shell", 985, "", []string{"no login shell set"}},
-		{"a person's uid", 1001, "/usr/bin/nologin", []string{"its uid 1001 is above", "SYS_UID_MAX 999"}},
-		{"both", 1001, "/bin/sh", []string{"its login shell is /bin/sh", "its uid 1001"}},
+		{"system account", 985, "/usr/sbin/nologin", nil, nil},
+		{"false shell", 985, "/bin/false", nil, nil},
+		{"login shell", 985, "/bin/bash", nil, []string{"its login shell is /bin/bash"}},
+		{"no shell", 985, "", nil, []string{"no login shell set"}},
+		{"a person's uid", 1001, "/usr/bin/nologin", nil, []string{"its uid 1001 is above", "SYS_UID_MAX 999"}},
+		{"both", 1001, "/bin/sh", nil, []string{"its login shell is /bin/sh", "its uid 1001"}},
+		{"in docker's group", 985, "/usr/sbin/nologin", []string{"docker"}, []string{"it is in the groups docker, which varlatchd would run with"}},
+		{"in groups", 985, "/usr/sbin/nologin", []string{"wheel", "adm"}, []string{"it is in the groups wheel, adm"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h, said := newFakeHost(t), &recorder{}
-			h.users[User], h.shells[User] = [2]int{c.uid, c.uid}, c.shell
+			h.users[User], h.shells[User], h.groups[User] = [2]int{c.uid, c.uid}, c.shell, c.groups
 			err := Run(context.Background(), options(h, said, t.TempDir()))
 			if c.refuse == nil {
 				if err != nil {
@@ -468,6 +475,11 @@ func TestAnExistingUserMustBeASystemAccount(t *testing.T) {
 			}
 			if !strings.Contains(strings.Join(said.lines, "\n"), "Using the existing user varlatch as --accept-existing-user says") {
 				t.Errorf("the acceptance was not said: %q", said.lines)
+			}
+			for _, want := range c.refuse {
+				if !strings.Contains(strings.Join(said.lines, "\n"), want) {
+					t.Errorf("the acceptance does not say %q: %q", want, said.lines)
+				}
 			}
 			if err := Run(context.Background(), options(h, &recorder{}, t.TempDir())); err != nil {
 				t.Errorf("a rerun after an accepted run: %v", err)
@@ -505,6 +517,8 @@ func TestLeftoversOfAnInterruptedRun(t *testing.T) {
 		}
 		leftovers = append(leftovers, name)
 	}
+	// The configuration's staged copy a run killed before its rename left.
+	leftovers = append(leftovers, h.Path(ConfigFile)+".setup")
 	kept := []string{".root-kek.tmp", ".root-kek.0123456789ab.tmp.bak", ".other.0123456789ab.tmp", "notes.txt", ".backup-key.0123456789AB.tmp"}
 	for _, p := range leftovers {
 		if err := os.WriteFile(p, []byte("partial"), 0o600); err != nil {
@@ -529,7 +543,7 @@ func TestLeftoversOfAnInterruptedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	all := strings.Join(said.lines, "\n")
-	if !strings.Contains(all, "Removed 3 temporary files an interrupted run left in /etc/varlatch.") {
+	if !strings.Contains(all, "Removed 4 temporary files an interrupted run left in /etc/varlatch.") {
 		t.Errorf("the count was not said: %q", said.lines)
 	}
 	if !strings.Contains(all, "Kept the existing Root KEK at /etc/varlatch/root-kek.") || strings.Contains(all, "Kept the existing backup key") {
