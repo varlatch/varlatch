@@ -121,19 +121,29 @@ setup_once() {
   done
 }
 
-# enroll <name>: a passkey from the link setup wrote, as a browser would.
+# enroll <name>: a passkey from the link setup wrote, as a browser would,
+# sent to $enroll_via: the plain listener (localhost, and own proxy as the
+# proxy would, with X-Forwarded-Proto), or the public HTTPS listener
+# reached by address with the link's name for SNI (public, against
+# Pebble's certificate). The link's file must be 600.
+enroll_via=http://127.0.0.1:8686
 enroll() {
-  set -- "$work/$1-link"
-  if grep -q '^https://' "$1"; then
-    # The first certificate may still be on its way.
-    for _ in $(seq 1 60); do
-      curl -fsk -o /dev/null https://127.0.0.1:5001/readyz && break
-      sleep 1
-    done
-    "$bin/enrollpasskey" -link-file "$1" -connect https://127.0.0.1:5001 -insecure >/dev/null
-  else
-    "$bin/enrollpasskey" -link-file "$1" -connect http://127.0.0.1:8686 >/dev/null
-  fi
+  set -- "$work/$1-link" "$1"
+  if [ "$(stat -c %a "$1")" = 600 ]; then pass "$2: the enrollment link's file is 600"; else fail "$2: the link's file is $(stat -c %a "$1")"; fi
+  case "$enroll_via" in
+    https://*)
+      # The first certificate may still be on its way.
+      name_port=$(sed -n 's#^https://\([^/]*\)/.*#\1#p' "$1")
+      for _ in $(seq 1 60); do
+        curl -fsk -o /dev/null --resolve "$name_port:127.0.0.1" "https://$name_port/readyz" && break
+        sleep 1
+      done
+      "$bin/enrollpasskey" -link-file "$1" -connect "$enroll_via" -insecure >/dev/null
+      ;;
+    *)
+      "$bin/enrollpasskey" -link-file "$1" -connect "$enroll_via" >/dev/null
+      ;;
+  esac
 }
 
 # check_installation <name> <flags...>: the run's results, then a rerun.
@@ -147,7 +157,7 @@ check_installation() {
   for f in root-kek backup-key setup.json; do
     if [ "$(mode_of /etc/varlatch/$f)" = "600 root:root" ]; then pass "$name: /etc/varlatch/$f is 600 root"; else fail "$name: /etc/varlatch/$f is $(mode_of /etc/varlatch/$f)"; fi
   done
-  if [ "$(stat -c %a "$work/$name-link")" = 600 ]; then pass "$name: the enrollment link's file is 600"; else fail "$name: the link's file is $(stat -c %a "$work/$name-link")"; fi
+  if [ -e "$work/$name-link" ]; then fail "$name: the used link's file is still there"; else pass "$name: the used link's file is removed"; fi
   if grep -q '/enroll#' "$work/$name.out"; then fail "$name: the enrollment link in setup's output"; fi
   custody=$(/usr/local/bin/varlatchd admin custody status --config /etc/varlatch/varlatchd.conf 2>&1 || true)
   if printf '%s' "$custody" | grep -q '"root-kek":{"key":"root-kek","method":"copy"' && printf '%s' "$custody" | grep -q '"backup-key":{"key":"backup-key","method":"copy"'; then
@@ -249,8 +259,10 @@ if [ -n "${VARLATCH_TEST_PEBBLE:-}" ]; then
   install -m 644 "$VARLATCH_TEST_PEBBLE_ROOT" "$SHARE/pebble-api-root.pem"
   set -- --ingress public --public-url https://setup.varlatch.test:5001 --listen-https 127.0.0.1:5001 \
     --listen-http-redirect 127.0.0.1:5002 --acme-ca "$VARLATCH_TEST_PEBBLE" --acme-ca-root "$SHARE/pebble-api-root.pem"
+  enroll_via=https://127.0.0.1:5001
   setup_once public "$@"
   check_installation public "$@"
+  enroll_via=http://127.0.0.1:8686
   got=""
   for _ in $(seq 1 60); do
     got=$(curl -s -o /dev/null -w '%{http_code}' -k --resolve setup.varlatch.test:5001:127.0.0.1 https://setup.varlatch.test:5001/readyz || true)

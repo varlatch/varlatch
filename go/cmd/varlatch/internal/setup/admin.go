@@ -47,16 +47,19 @@ func (s bootstrapStatus) ready() string {
 // issue is the admin command that gives a passkey link: bootstrap, or,
 // when an administrator was made but never enrolled one (an interrupted
 // enrollment, a headless bootstrap), a recovery link for that one.
+//
+// Each revokes the links setup issued before and never used
+// (--revoke-unused), so only the newest one works.
 func (s bootstrapStatus) issue() []string {
 	if !s.Bootstrapped {
-		return []string{"bootstrap"}
+		return []string{"bootstrap", "--revoke-unused"}
 	}
 	for _, a := range s.Admins {
 		if a.Enabled {
-			return []string{"recover", "--identity", a.ID}
+			return []string{"recover", "--identity", a.ID, "--revoke-unused"}
 		}
 	}
-	return []string{"recover", "--new-admin"}
+	return []string{"recover", "--new-admin", "--revoke-unused"}
 }
 
 func (r *run) bootstrapStatus(ctx context.Context) (bootstrapStatus, error) {
@@ -88,7 +91,7 @@ func (r *run) admin(ctx context.Context) error {
 		return err
 	}
 	if id := st.ready(); id != "" {
-		return r.o.Say("The first administrator (" + id + ") has a passkey.")
+		return r.adminReady(id)
 	}
 	issue := st.issue()
 	out, err := r.h.Admin(ctx, issue...)
@@ -142,12 +145,34 @@ func (r *run) admin(ctx context.Context) error {
 			return err
 		}
 		if id := st.ready(); id != "" {
-			return r.o.Say("The first administrator (" + id + ") has a passkey.")
+			return r.adminReady(id)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("%w: no passkey was enrolled in %s; run setup again for a new link", ErrPending, r.o.AdminWait)
 		}
 	}
+}
+
+// adminReady says the first administrator has a passkey, and removes the
+// link's file, which an earlier run wrote and nothing needs any more (only
+// a regular file that holds a link).
+func (r *run) adminReady(id string) error {
+	if p := r.o.AdminLinkOut; p != "" && filepath.IsAbs(p) {
+		if info, err := os.Lstat(p); err == nil && info.Mode().IsRegular() {
+			got, err := os.ReadFile(p)
+			earlier := err == nil && linkFile.Match(got)
+			clear(got)
+			if earlier {
+				if err := os.Remove(p); err != nil {
+					return err
+				}
+				if err := r.o.Say("Removed the used enrollment link's file " + p + "."); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return r.o.Say("The first administrator (" + id + ") has a passkey.")
 }
 
 // writeLink puts the link in the operator's file, 0600: a new file, or one
@@ -181,35 +206,35 @@ func writeLink(path string, link []byte) error {
 // it: the copy is checked before setup records its custody. A wrong copy
 // is refused (three tries a key); what was typed is never shown.
 func (r *run) pasteBack(kek, bek []byte) error {
-	for _, k := range []struct {
-		name string
-		key  []byte
-	}{{"Root KEK", kek}, {"backup key", bek}} {
-		want := bytes.ToLower(bytes.TrimSpace(k.key))
-		ok := false
-		for try := 0; try < 3 && !ok; try++ {
-			got, err := r.o.Ask.Secret("Paste the " + k.name + " back from where you stored it (input hidden): ")
-			if err != nil {
-				return err
-			}
-			typed := bytes.ToLower(bytes.TrimSpace(got))
-			ok = len(typed) == len(want) && subtle.ConstantTimeCompare(typed, want) == 1
+	if err := r.pasteOne("Root KEK", kek); err != nil {
+		return err
+	}
+	return r.pasteOne("backup key", bek)
+}
+
+// pasteOne checks one key's paste-back. Every copy of the key or of what
+// was typed (ToLower allocates) is cleared on every way out.
+func (r *run) pasteOne(name string, key []byte) error {
+	want := bytes.ToLower(bytes.TrimSpace(key))
+	defer clear(want)
+	for try := 0; try < 3; try++ {
+		got, err := r.o.Ask.Secret("Paste the " + name + " back from where you stored it (input hidden): ")
+		if err != nil {
 			clear(got)
-			clear(typed)
-			if !ok {
-				if err := r.o.Say("That is not the " + k.name + ": check the copy you stored, and paste it again."); err != nil {
-					return err
-				}
-			}
+			return err
 		}
-		if !ok {
-			return fmt.Errorf("setup: the %s pasted back did not match three times: nothing was recorded; run setup again to see the keys again", k.name)
+		typed := bytes.ToLower(bytes.TrimSpace(got))
+		ok := len(typed) == len(want) && subtle.ConstantTimeCompare(typed, want) == 1
+		clear(got)
+		clear(typed)
+		if ok {
+			return r.o.Say("The " + name + " you stored matches.")
 		}
-		if err := r.o.Say("The " + k.name + " you stored matches."); err != nil {
+		if err := r.o.Say("That is not the " + name + ": check the copy you stored, and paste it again."); err != nil {
 			return err
 		}
 	}
-	return nil
+	return fmt.Errorf("setup: the %s pasted back did not match three times: nothing was recorded; run setup again to see the keys again", name)
 }
 
 // custodyStatus is `varlatchd admin custody status`.
@@ -244,7 +269,13 @@ func (r *run) custody(ctx context.Context) error {
 	}
 	if !stored {
 		if r.o.Ask == nil {
-			return fmt.Errorf("%w: store the two copies (%s, %s) off this host and delete them here, then run setup again with --attest", ErrPending, r.o.RootKEKOut, r.o.BackupKeyOut)
+			copies := r.o.RootKEKOut + ", " + r.o.BackupKeyOut
+			if r.o.RootKEKOut == "" || r.o.BackupKeyOut == "" {
+				// The copies were written by an earlier run: the keys
+				// themselves are named.
+				copies = "copies of " + RootKEK + " and " + BackupKey
+			}
+			return fmt.Errorf("%w: store the two keys (%s) off this host and delete any copy here, then run setup again with --attest", ErrPending, copies)
 		}
 		return fmt.Errorf("%w: store both keys off this host, then run setup again", ErrPending)
 	}

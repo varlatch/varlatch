@@ -222,7 +222,7 @@ func setupCommand(r *Run) (bool, error) {
 	var usageErr *setup.UsageError
 	switch {
 	case err == nil:
-		return true, r.out("Setup is done: the installation runs. The first administrator comes next.\n")
+		return true, r.out("Setup is done: the installation runs, its first administrator has a passkey, the keys' custody is attested and the first backup is verified.\n")
 	case errors.Is(err, setup.ErrPending):
 		return true, Fail("varlatch "+strings.TrimPrefix(err.Error(), "setup: "), ExitTempfail)
 	case errors.Is(err, setup.ErrDoctor):

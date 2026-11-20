@@ -75,10 +75,13 @@ type Host interface {
 	CheckConfig(path string) (string, error)
 	// Ready waits until the plain listener's /readyz answers 200.
 	Ready(ctx context.Context, listen string) error
-	// Admin is `varlatchd admin <args> --config /etc/varlatch/varlatchd.conf`
-	// (through the running unit's control socket): its standard output,
-	// which may hold a one-time link and is never logged; an error with
-	// what varlatchd said on standard error when it fails.
+	// Admin runs `varlatchd admin <args> --config /etc/varlatch/varlatchd.conf`
+	// as a child process, as root, with CREDENTIALS_DIRECTORY set to
+	// /etc/varlatch so the configuration finds the keys as the unit would;
+	// that varlatchd goes through the running unit's control socket, or
+	// runs offline when none answers (the restore). It returns what the
+	// child printed, which may hold a one-time link and is never logged;
+	// its error carries what the child said on failure.
 	Admin(ctx context.Context, args ...string) ([]byte, error)
 }
 

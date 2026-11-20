@@ -137,7 +137,7 @@ func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 			admins = fmt.Sprintf(`[{"id":%q,"enabled":true,"hasPasskey":%t}]`, h.admin, h.passkey)
 		}
 		return []byte(fmt.Sprintf(`{"initialized":true,"bootstrapped":%t,"admins":%s}`, h.bootstrapped, admins)), nil
-	case "bootstrap":
+	case "bootstrap": // with --revoke-unused, as setup asks
 		if h.bootstrapped {
 			return nil, errors.New("Installation is already bootstrapped; use recovery instead.")
 		}
@@ -282,13 +282,14 @@ func TestNonInteractiveSetup(t *testing.T) {
 	}
 	// The first administrator: the link in its file only (0600), the
 	// custody attested, the first backup verified and journaled.
-	if b, _ := os.ReadFile(filepath.Join(out, "enroll-link")); len(h.links) != 1 || string(b) != h.links[0]+"\n" || mode(t, filepath.Join(out, "enroll-link")) != 0o600 {
-		t.Errorf("the link's file %q, links %q", b, h.links)
+	// The link's file is removed once the passkey is in.
+	if _, err := os.Stat(filepath.Join(out, "enroll-link")); err == nil || len(h.links) != 1 || !slices.Contains(said.lines, "Removed the used enrollment link's file "+filepath.Join(out, "enroll-link")+".") {
+		t.Errorf("the link's file after the passkey: %v, links %q, said %q", err, h.links, said.lines)
 	}
 	if strings.Contains(strings.Join(said.lines, "\n"), "#link-") || strings.Contains(string(raw), "#link-") {
 		t.Error("the enrollment link in setup's output or its journal")
 	}
-	if want := []string{"bootstrap-status", "bootstrap", "bootstrap-status", "custody status", "custody attest --key root-kek --method copy", "custody attest --key backup-key --method copy", "backup run --json"}; !slices.Equal(h.adminCalls, want) {
+	if want := []string{"bootstrap-status", "bootstrap --revoke-unused", "bootstrap-status", "custody status", "custody attest --key root-kek --method copy", "custody attest --key backup-key --method copy", "backup run --json"}; !slices.Equal(h.adminCalls, want) {
 		t.Errorf("admin calls %q, want %q", h.adminCalls, want)
 	}
 	if j.FirstBackup != "bak_1" {
@@ -819,7 +820,7 @@ func TestFirstAdministrator(t *testing.T) {
 		t.Fatalf("no wait: %v", err)
 	}
 	linkFile := filepath.Join(out, "enroll-link")
-	if b, _ := os.ReadFile(linkFile); string(b) != h.links[0]+"\n" {
+	if b, _ := os.ReadFile(linkFile); string(b) != h.links[0]+"\n" || mode(t, linkFile) != 0o600 {
 		t.Errorf("the first link's file %q", b)
 	}
 	if _, err := os.Stat(filepath.Join(out, "root-kek.copy")); err == nil {
@@ -840,6 +841,14 @@ func TestFirstAdministrator(t *testing.T) {
 	if err := Run(context.Background(), o); err != nil {
 		t.Fatalf("after enrolling: %v", err)
 	}
+	if _, err := os.Stat(linkFile); err == nil {
+		t.Error("the used link's file is still there")
+	}
+	for _, c := range h.adminCalls {
+		if (strings.HasPrefix(c, "bootstrap ") || strings.HasPrefix(c, "recover ")) && !strings.HasSuffix(c, " --revoke-unused") {
+			t.Errorf("%q does not revoke the earlier links", c)
+		}
+	}
 
 	// Bootstrapped headless: a recovery link for that administrator.
 	h2, out2 := newFakeHost(t), t.TempDir()
@@ -847,7 +856,7 @@ func TestFirstAdministrator(t *testing.T) {
 	if err := Run(context.Background(), options(h2, &recorder{}, out2)); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(h2.adminCalls, "recover --identity idn_headless") || slices.Contains(h2.adminCalls, "bootstrap") {
+	if !slices.Contains(h2.adminCalls, "recover --identity idn_headless --revoke-unused") || slices.ContainsFunc(h2.adminCalls, func(c string) bool { return strings.HasPrefix(c, "bootstrap ") }) {
 		t.Errorf("admin calls %q", h2.adminCalls)
 	}
 
@@ -927,6 +936,12 @@ func TestCustodyAttestation(t *testing.T) {
 	if len(h.attested) != 0 || h.backups != 0 {
 		t.Errorf("attested %v, backups %d", h.attested, h.backups)
 	}
+	// A rerun without the copies' names (written by the run before):
+	// the keys' own files are named.
+	o.RootKEKOut, o.BackupKeyOut = "", ""
+	if err := Run(context.Background(), o); !errors.Is(err, ErrPending) || !strings.Contains(err.Error(), "copies of "+RootKEK+" and "+BackupKey) {
+		t.Fatalf("without --attest, copies written before: %v", err)
+	}
 	o.Attest = true
 	if err := Run(context.Background(), o); err != nil || !h.attested["root-kek"] || !h.attested["backup-key"] {
 		t.Fatalf("with --attest: %v %v", err, h.attested)
@@ -987,7 +1002,9 @@ func TestDoctorStep(t *testing.T) {
 	if err := Run(context.Background(), o); err != nil || runs != 2 || h.backups != 1 {
 		t.Errorf("a rerun: %v, doctor %d, backups %d", err, runs, h.backups)
 	}
-	if slices.ContainsFunc(h.adminCalls[calls:], func(c string) bool { return c == "bootstrap" || strings.HasPrefix(c, "custody attest") }) {
+	if slices.ContainsFunc(h.adminCalls[calls:], func(c string) bool {
+		return strings.HasPrefix(c, "bootstrap ") || strings.HasPrefix(c, "custody attest")
+	}) {
 		t.Errorf("a rerun repeated %q", h.adminCalls[calls:])
 	}
 }

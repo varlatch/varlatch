@@ -36,8 +36,12 @@ import (
 // enrollment URL on a line of its own, or, with --cli-credential, a
 // one-time CLI credential on the last line.
 //
-//	varlatchd admin bootstrap [--cli-credential [--name <name>]] [--config <file>]
-//	varlatchd admin recover (--identity <id> [--enable] | --new-admin) [--cli-credential [--name <name>]] [--config <file>]
+//	varlatchd admin bootstrap [--cli-credential [--name <name>]] [--revoke-unused] [--config <file>]
+//	varlatchd admin recover (--identity <id> [--enable] | --new-admin) [--cli-credential [--name <name>]] [--revoke-unused] [--config <file>]
+//
+// --revoke-unused (setup's reissue) first revokes the bootstrap and recovery
+// links issued before and never used, in the same write job; the issued
+// event's metadata counts them (revokedUnused).
 //
 // They refuse with the wrong Root KEK. Exit 0 on success, 1 on a refusal
 // or failure, 64 on a usage error, 78 on a configuration error.
@@ -163,8 +167,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 }
 
 func adminUsage(stderr io.Writer, msg string) int {
-	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] | "+
-		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] | "+
+	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] [--revoke-unused] | varlatchd admin bootstrap-status | "+
+		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] [--revoke-unused] | "+
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt]] [--json] | varlatchd admin doctor [--json] | varlatchd admin config-check  (each with [--config <file>])\n", msg)
@@ -241,7 +245,7 @@ type adminArgs struct {
 func parseAdmin(sub string, args []string) (adminArgs, string) {
 	a := adminArgs{values: map[string]string{}, flags: map[string]bool{}}
 	valued := map[string]bool{"--name": true, "--identity": true}
-	allowed := map[string]bool{"--name": true, "--cli-credential": true}
+	allowed := map[string]bool{"--name": true, "--cli-credential": true, "--revoke-unused": true}
 	if sub == "recover" {
 		allowed["--identity"], allowed["--enable"], allowed["--new-admin"] = true, true, true
 	}
@@ -370,7 +374,7 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 	}
 
 	if sub == "bootstrap" {
-		grant, err := svc.IssueBootstrapGrant(ctx)
+		grant, err := svc.IssueBootstrapGrantRevoking(ctx, a.flags["--revoke-unused"])
 		if err != nil {
 			return fail(err)
 		}
@@ -408,7 +412,7 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		}
 		defer release()
 	}
-	grant, err := svc.IssueRecoveryGrant(ctx, auth.Recovery{IdentityID: a.values["--identity"], Enable: a.flags["--enable"], NewAdmin: a.flags["--new-admin"]})
+	grant, err := svc.IssueRecoveryGrant(ctx, auth.Recovery{IdentityID: a.values["--identity"], Enable: a.flags["--enable"], NewAdmin: a.flags["--new-admin"], RevokeUnused: a.flags["--revoke-unused"]})
 	if err != nil {
 		return fail(err)
 	}
