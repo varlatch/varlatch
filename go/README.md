@@ -408,7 +408,17 @@ comes. `verify-release`, which the installers run, is Go's own.
   clean environment (`unset`, to reach the default configuration
   directory). Regenerate after changing the cases with
   `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/cli exec vitest run
-  test/go-transcripts.test.ts`.
+  test/go-transcripts.test.ts`. A case whose outcome names a path below its
+  directory (`{{dir}}/...`) also has a Windows expectation, recorded by the
+  TypeScript recorder on Windows (`apps/cli/test/goWindows.ts`) into
+  `testdata/transcripts/windows/`, which Windows replays it against; so do
+  the agents install and find-files vectors (`testdata/vectors/windows/`).
+  The directory inside a JSON string is mapped back to `{{dir}}` in its
+  escaped form too (`transcript.UnfillDir`), so such a case needs no
+  Windows expectation. `TestWindowsExpectationsComplete` fails on every
+  platform when a case needs one and has none: label the pull request
+  `record-windows` (the windows-expectations workflow) and put its
+  artifact in with `scripts/go-windows-expectations.sh <run id>`.
 - `testdata/vectors/framework.json`: what the TypeScript code answers for
   the option parser, help, safe text, assisted mode, the global options,
   the User-Agents and the exit status of an API error
@@ -692,6 +702,43 @@ comes. `verify-release`, which the installers run, is Go's own.
   occurrences likewise, and 12 relays. Matching is linear in the input,
   however many matches one chunk holds (`TestMatcherIsLinear`; the
   TypeScript merge is quadratic per chunk, step 5 defect 29).
+- `run` (slice 5.4b): `internal/cli`'s `run.go`, `runchild.go`,
+  `exportcontext.go` and `assistedrun.go` (main.ts's `run` case,
+  `inject.ts`, `exportContext.ts`, `assistedRun.ts`):
+  - **A default run.** The command gets this process's environment with
+    every delivered value over it. An inherited `VARLATCH_RUN_CONTEXT` is
+    removed. `--omit` leaves items out, delivered or inherited, and is
+    checked before any Secret is disclosed. A disclosure refused for
+    permission or the tailnet continues with the plain values, and says so.
+  - **`--export-context`.** The run context, after the two reads agree on
+    their state digest (three attempts).
+  - **Assisted mode.** The command's stdout and stderr go through
+    `internal/matcher`. A Secret too short to mask stops the run (78), with
+    its remedies. `--allow-unmasked` and `--no-redact` are refused there.
+  - **The human's override.** `--allow-unmasked NAME`, outside assisted
+    mode.
+  - **Signals.** `SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`, `SIGUSR1` and
+    `SIGUSR2` are forwarded to the command; Windows has only Ctrl-C and a
+    stop. An interrupting one makes the relay discard what it holds. The
+    status is the command's own, or 128 plus the number of the signal that
+    ended it.
+  - **Held output.** A clean end of the command's stream releases the bytes
+    held as a possible start of a value unchanged, as TypeScript does: they
+    can no longer complete a match.
+  - **A closed stdout or stderr.** It fails the relay's write (EPIPE)
+    instead of ending the CLI: SIGPIPE is handled while the relay runs, and
+    the command starts with SIGPIPE's default
+    (`TestRunSurvivesAClosedStdout`).
+  - **The command's environment** is encoded as Node.js's spawn encodes
+    it: a stored value's unpaired surrogate (kept as WTF-8 bytes by
+    `lib/jsjson`) reaches the command as one U+FFFD, the form the matcher
+    masks (`run.surrogate`, `assisted.surrogate`).
+  - **Finding the command.** As libuv does: in the command's own `PATH` on
+    POSIX; on Windows, `.com` or `.exe` only, a `.bat` or `.cmd` file
+    refused (decision 4, `TestLookCommandAsLibuv`).
+  - **Not built yet.** `--strict` (5.4f), `--redact` outside assisted mode
+    (5.4c), `--agent-safe` and a run inside an agent-safe run (5.5b) refuse
+    with the CLI's not-built message (64).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
@@ -769,6 +816,7 @@ it to the recording.
 | Runtime error wording: the code in `Cannot reach the Varlatch server (<code>)` | the first code in the `fetch failed` error's causes that `exitCodes.ts` names, else "network error" | the same codes from Go's errors: refused, reset, timed out, unreachable host or network by their errno; NXDOMAIN `ENOTFOUND`; a temporary DNS failure `EAI_AGAIN`; a connect or TLS handshake timeout `UND_ERR_CONNECT_TIMEOUT`; a connection closed before the answer `UND_ERR_SOCKET`; anything else "network error" | Decision 2: the exit status (69) is the same; the code is Node.js's own wording, mapped where Go can tell |
 | Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
 | `skill-version` (how transcripts compare, not a behaviour) | the skill files `agents install` writes name `varlatch 0.22.0` (`SKILL.md`'s `metadata.generator`, each reference's first line) | this build's version | Each CLI names itself, so `--check` after an upgrade reports the skill as changed; the replay puts this build's version in a case's inputs and expected files alike |
+| `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
 | `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link or a Windows junction, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
 | The guardrail hook reads every command alike | not compared | `agents hook` reads each word of a command line the same way: a command named like a property every JavaScript object has (`toString`, `constructor`, `valueOf`) and a glob whose class is no regular expression (`[z-a]`) are words like any other, and the rest of the line is checked: `toString x; cat .env` is denied | The hook reads a whole command line, and no word ends the reading early. Pinned by `internal/agents`' `TestHookReadsEveryCommandAlike` |
@@ -788,6 +836,8 @@ it to the recording.
 | `types` names a revision only by an id of the server's shape (`unrecognized-id`) | the id as the server or `--revision` gave it | a revision id that is not the server's shape (`rev_` and 26 characters of lower-case base32), from the answer or from `--revision`, is `an unrecognized id` in every message (`Wrote <file> from Contract Revision an unrecognized id (...)`, a 404 for `--revision`, every refusal of the revision), and `--check`'s hint gives `--revision <revision-id>` for such an argument; the module itself always holds the server's id, byte for byte | A mistyped argument or a server's free text never reaches the terminal (as `contract activate`); real revision ids keep their bytes |
 | `types` shows the server's text safely (`types-printable`) | not compared | a refusal of the revision has its control characters and bidirectional overrides escaped as `\uXXXX` (a Contract's unrecognized key, quoted in the validation issue, included), and the semantics version is shown only as a whole number from 1 to 999, else as `an unrecognized version` | A server's answer never drives the terminal (`TestTypesShowsTheServersVersionSafely`) |
 | `release` (a pattern of the transcripts, not a behaviour) | a module `types` writes names `varlatch 0.22.0` (its Generator lines, `generatedFrom` and the accessor schema) | this build's release | Each CLI names itself, and a module is current for another release when only those lines differ; a case that lists the `release` pattern has `varlatch <the CLI's release>` written `varlatch {{release}}` in the recording and the replay alike, and `{{release}}` in its files is the running CLI's release (`goKit.ts` `releasePattern`, `transcript.ReleaseFill`); another release a case names (`0.13.0`) is compared as it is |
+| `spawn-error`: a command `run` cannot start | Node's error escapes: its stack trace, exit 1 | `varlatch: spawn <command> ENOENT` (or `EINVAL` for a Windows `.bat` or `.cmd` file, `EACCES`), exit 1 | Node's own message without the stack (`run.no-command`) |
+| The order of the command's environment (`run`) | the parent's variables in the order the process got them, then the delivered ones | the parent's variables sorted by name, then the delivered ones (a variable set again keeps its place) | No program reads its environment's order; the values are the same (`5.4b-run` transcripts) |
 | `validate` and `import` show only documented fields | not compared | `validate` refuses a report whose lists are not the protocol's shape (each an array of names, or of objects whose documented members are strings; `valid` and `complete` booleans; a present `null` for any of them is not that shape, while an omitted `complete` or list, from a server before it, keeps its fallback) before judging or printing anything: `varlatch validate: the server's answer is not a validation report (<where> has an unexpected shape); nothing was judged.`, status 1; of a report of that shape it shows the documented members only, a requirement or reason outside the protocol's enumerations as `an unrecognized requirement` or `an unrecognized reason`; `import` shows a Contract item's type outside the Contract's types as `an unrecognized type` and its sensitivity as a boolean, in `--json`, human text and `--dry-run` alike | A server never puts an extra field, or a value, into what the CLI prints; a report or Contract of the protocol's shape gives the same bytes (`TestServerFieldsNeverPassThrough`, `TestValidateRefusesAReportOfAnotherShape`) |
 | `init-delete-link`: guided `init` and a `.env` that is a symbolic link | not compared | asked to delete it, guided `init` keeps a link and says so (`<file> is a symbolic link, so it was not deleted: deleting the link would leave the values in the file it points to.`), and deletes a regular file only if it still holds what was read and the path still names it (`TestGuidedDeleteNeverRemovesALink`) | Deleting the plaintext copy must not leave it in the file the link points to |
 | `import --delete-source` and its source | not compared | the source must be a regular file named directly: a symbolic link (deleting it would leave the values in the file it points to), a directory, a device or a pipe is refused before anything is read or sent (1); the file is opened without following a link and read from what was opened, and deleted only if it still holds those bytes and the path still names that same file, so a file put in its place while importing is never removed; `deleted` is true only when the path is gone | `--delete-source` removes exactly the copy of the values that was imported, or says it did not (`TestDeleteSourceRemovesOnlyTheFileRead`) |
@@ -2723,12 +2773,12 @@ blocked`, but that error reaches its generic handler, which prints
   `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with
   `@VARLATCH_VERSION@` replaced by the version; varlatch.com serving the
   latest one with a `Content-Length`.
-- List the Go module's dependencies (`go list -m all`, modernc.org/sqlite
-  and its own) in THIRD-PARTY-NOTICES.md and its generator: the generator
-  (`scripts/generate-third-party-notices.mjs`, `pnpm notices:check`)
-  covers npm packages only, so no Go binary ships before it lists the
-  modules each binary links, go-webauthn and its dependencies
-  (fxamacker/cbor, go-webauthn/x, golang-jwt/jwt, google/go-tpm,
-  tinylib/msgp, philhofer/fwd, x448/float16) and tailscale.com and its
-  dependencies (step 4.13b: BSD-3-Clause, BSD-2-Clause, Apache-2.0, MIT
-  and ISC; see its PR) included.
+- Done: THIRD-PARTY-NOTICES.md lists every Go module linked into
+  `varlatch` and `varlatchd` for the release platforms (125, go-webauthn,
+  modernc.org/sqlite and tailscale.com with their dependencies included),
+  with their license texts and the Go standard library's
+  (`scripts/go-module-notices.mjs`). Each module's license is recorded by
+  hand in `scripts/go-module-licenses.json` after reading its texts, with
+  their hash; `pnpm notices:check` (ci.yml) fails on a module that is not
+  recorded, changed texts, a license outside the permissive list, or a
+  stale file.

@@ -58,6 +58,10 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		// invite's enrollment link: the one token it prints on purpose
 		// (RedactOutputShowing keeps exactly that one, redacts the rest).
 		"internal/cli/cli.go:outShowing": true,
+		// The command `run` starts writes to the process's streams (directly,
+		// or through internal/matcher's redaction): its own bytes, never the
+		// CLI's text, so the fail-safe does not rewrite them (5.4b).
+		"internal/cli/runchild.go:runChild": false,
 	}
 	// newFileSites may call os.NewFile: each wraps a handle it opened
 	// itself for reading, never a stream.

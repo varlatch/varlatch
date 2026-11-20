@@ -55,6 +55,13 @@ type Server struct {
 	writeMu sync.Mutex
 	write   func(line string)
 
+	// chunkMu is held while one read's lines are handled, the handlers'
+	// starts included: an answer that waited on the server is sent only
+	// after it (RLock), as Node.js runs an I/O callback only after the
+	// chunk it is handling and its microtasks. Answers that need no request
+	// are sent within the chunk, in its order.
+	chunkMu sync.RWMutex
+
 	mu       sync.Mutex
 	inflight map[any]*handling // by request id, as a JavaScript Map keys it
 	wg       sync.WaitGroup
@@ -65,6 +72,21 @@ type Server struct {
 type handling struct {
 	mu      sync.Mutex
 	aborted bool
+	// called: the handler called the server, so its answer is an I/O
+	// callback's (chunkMu).
+	called bool
+}
+
+func (h *handling) markCalled() {
+	h.mu.Lock()
+	h.called = true
+	h.mu.Unlock()
+}
+
+func (h *handling) hasCalled() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.called
 }
 
 func (h *handling) abort() {
@@ -107,6 +129,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, write func(line string
 			// effect, as their handlers run in the microtasks after it, so a
 			// cancellation reaches a request later in the same chunk; only
 			// then do the handlers start.
+			s.chunkMu.Lock()
 			var batch chunkWork
 			for {
 				i := bytes.IndexByte(buffer, '\n')
@@ -125,7 +148,11 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, write func(line string
 			// Node.js's microtasks send them.
 			for _, start := range batch.starts {
 				<-start()
+				if betweenStarts != nil {
+					betweenStarts()
+				}
 			}
+			s.chunkMu.Unlock()
 			if len(buffer) == 0 {
 				buffer = nil // let a large line's memory go
 			}
@@ -350,13 +377,21 @@ func (s *Server) request(ctx context.Context, m message) (start func() <-chan st
 		settled := make(chan struct{})
 		var once sync.Once
 		settle := func() { once.Do(func() { close(settled) }) }
+		called := func() {
+			h.markCalled()
+			settle()
+		}
 		go func() {
 			defer settle()
-			s.answer(context.WithValue(ctx, callingKey{}, settle), m, handler, h, key)
+			s.answer(context.WithValue(ctx, callingKey{}, called), m, handler, h, key)
 		}()
 		return settled
 	}
 }
+
+// betweenStarts, when set (by a test), runs after each handler of a chunk
+// has started and before the next starts.
+var betweenStarts func()
 
 // callingKey holds, in a handler's context, what to do when it first calls
 // the server.
@@ -382,6 +417,11 @@ func (s *Server) answer(ctx context.Context, m message, handler func(context.Con
 		s.mu.Unlock()
 	}()
 	r, err := s.run(ctx, m, handler)
+	if h.hasCalled() {
+		// An answer from the server: after the chunk being handled.
+		s.chunkMu.RLock()
+		defer s.chunkMu.RUnlock()
+	}
 	if h.isAborted() {
 		return
 	}
