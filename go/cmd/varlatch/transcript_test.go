@@ -150,6 +150,15 @@ var differences = map[string]transcript.Difference{
 	"option-value": func(o *transcript.Outcome, _ transcript.Outcome) {
 		o.Stderr = cli.OptionValueDifference(o.Stderr)
 	},
+	// `varlatch help admin` (and `admin --help`, `admin -h`) prints the
+	// admin forms of a Go installation, which the Go CLI runs through
+	// varlatchd; the TypeScript usage is a Compose installation's (slice
+	// 6.2a). The recording's usage becomes the Go one.
+	"admin-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch admin ") {
+			o.Stdout = cli.AdminHelp + "\n"
+		}
+	},
 	// A --json document's fields the API defines as scalars: an object or
 	// array a server sent there is left out by the Go CLI (go/README.md,
 	// "--json documents hold only scalars where the API defines them"), so

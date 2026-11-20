@@ -381,21 +381,32 @@ var maskRegressions = []string{
 
 // TestMaskingIsLinear: inputs that made the earlier scanners rescan (a tab
 // after every letter, a URL every ten bytes, quotes, escapes, "@"s, and
-// "http:u:p@h\" repeated) take time linear in their length: 200 KB in well
-// under a second each (Sol, #265 rounds 2 and 3).
+// "http:u:p@h\" repeated) take time linear in their length: ten times the
+// input in about ten times the time (Sol, #265 rounds 2 and 3).
 func TestMaskingIsLinear(t *testing.T) {
-	const size = 200_000
+	// Each unit repeated to 20 KB and to 200 KB, the best of three runs of
+	// each: a shared runner (or the race detector) slows a run by a factor,
+	// not the growth. Ten times the input in linear time is about ten
+	// times the time; a quadratic masking would be a hundred.
+	best := func(in string) time.Duration {
+		fastest := time.Duration(1<<63 - 1)
+		for range 3 {
+			start := time.Now()
+			MaskUserinfoInText(in)
+			MaskUserinfo(in)
+			fastest = min(fastest, time.Since(start))
+		}
+		return max(fastest, time.Millisecond) // below the clock's useful resolution
+	}
 	for _, unit := range []string{
 		"a\t", "https://h/", "https://u:p@", "https:", "@", "ht\ttps:", "--", `"https://h" `, `"x" `, `"\u0040" `,
 		`https:"x"`, `'''a`, `a\"`, ", https:", "a:", "https://[", "http:/u:p@h, ", `"https://a:b" @`, "x\n", `"https://a:b`,
 		`http:u:p@h\`, "a:\n@b\n", "%40", `\U00000040`, "a:\n", "[redacted]@", "\n@", "x: [redacted]@h, ",
 	} {
-		in := strings.Repeat(unit, size/len(unit)+1)[:size]
-		start := time.Now()
-		MaskUserinfoInText(in)
-		MaskUserinfo(in)
-		if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
-			t.Errorf("%q repeated to %d bytes: %v", unit, size, elapsed)
+		repeat := func(size int) string { return strings.Repeat(unit, size/len(unit)+1)[:size] }
+		small, large := best(repeat(20_000)), best(repeat(200_000))
+		if ratio := float64(large) / float64(small); ratio > 30 {
+			t.Errorf("%q: 20 KB in %v, 200 KB in %v (%.0f times; linear is about 10)", unit, small, large, ratio)
 		}
 	}
 }
@@ -403,11 +414,29 @@ func TestMaskingIsLinear(t *testing.T) {
 // TestMaskingIsLinearOnLargeMessages: a 2 MB message of URLs, colons and
 // at-signs is masked in well under a second.
 func TestMaskingIsLinearOnLargeMessages(t *testing.T) {
-	in := strings.Repeat("open https://u:p@h/x: denied\n", 2_000_000/29)
-	start := time.Now()
-	out := MaskUserinfoInText(in)
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Errorf("2 MB: %v", elapsed)
+	line := "open https://u:p@h/x: denied\n"
+	// The best of three runs of each size: a shared runner (or the race
+	// detector) slows a run by a factor, not the growth. Ten times the
+	// input in linear time is about ten times the time; a quadratic
+	// masking would be a hundred.
+	best := func(n int) (time.Duration, string) {
+		in := strings.Repeat(line, n/len(line))
+		var out string
+		fastest := time.Duration(1<<63 - 1)
+		for range 3 {
+			start := time.Now()
+			out = MaskUserinfoInText(in)
+			fastest = min(fastest, time.Since(start))
+		}
+		return fastest, out
+	}
+	small, _ := best(200_000)
+	large, out := best(2_000_000)
+	if small < time.Millisecond {
+		small = time.Millisecond // below the clock's useful resolution
+	}
+	if ratio := float64(large) / float64(small); ratio > 30 {
+		t.Errorf("200 KB: %v, 2 MB: %v (%.0f times; linear is about 10)", small, large, ratio)
 	}
 	if strings.Contains(out, "u:p") {
 		t.Error("a password survived")
