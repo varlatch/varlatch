@@ -168,6 +168,9 @@ func TestGoOnlyInputs(t *testing.T) {
 			t.Errorf("%s: accepted", c.name)
 		}
 	}
+	if _, err := AppendValue(nil, Type("smallint"), nil); err == nil {
+		t.Error("SQL NULL of a type the encoding does not define was accepted")
+	}
 	if _, err := DigestInput("value", map[string]string{"id": "\xff"}, nil); err == nil {
 		t.Error("a digest id that is not UTF-8 was accepted")
 	}

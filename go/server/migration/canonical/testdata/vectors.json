@@ -267,6 +267,12 @@
       "type": "smallint",
       "input": "1",
       "why": "no smallint column at v0.22.0"
+    },
+    {
+      "name": "SQL NULL of a type the encoding does not define",
+      "type": "smallint",
+      "input": null,
+      "why": "the type is checked before the value"
     }
   ],
   "rows": [

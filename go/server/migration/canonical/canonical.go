@@ -63,6 +63,9 @@ func Known(t Type) bool {
 //   - text[]: the JSON array text SQLite holds, or []any of strings and nils;
 //   - bytea: []byte.
 func AppendValue(b []byte, t Type, v any) ([]byte, error) {
+	if !Known(t) {
+		return nil, fmt.Errorf("canonical: the encoding does not define type %q", t)
+	}
 	if v == nil {
 		return append(b, "null"...), nil
 	}
@@ -141,7 +144,7 @@ func AppendValue(b []byte, t Type, v any) ([]byte, error) {
 		}
 		return quote(b, base64.StdEncoding.EncodeToString(x)), nil
 	}
-	return nil, fmt.Errorf("canonical: the encoding does not define type %q", t)
+	panic("canonical: a known type without its case: " + string(t))
 }
 
 // AppendRow appends a row: its values in the manifest's column order, as a
