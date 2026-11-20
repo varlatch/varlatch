@@ -10,10 +10,6 @@
       "reason": "varlatch doctor: not ported to the Go CLI yet",
       "slice": "step 6"
     },
-    "run-redact": {
-      "reason": "varlatch run --redact: not ported to the Go CLI yet",
-      "slice": "5.4c"
-    },
     "run-strict": {
       "reason": "varlatch run --strict: not ported to the Go CLI yet",
       "slice": "5.4f"

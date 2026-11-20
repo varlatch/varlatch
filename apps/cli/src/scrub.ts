@@ -240,6 +240,12 @@ export async function relayScrubbed(opts: {
       const out = matcher.push(chunk as Buffer);
       if (out.length > 0 && !res.write(out)) await drained(res);
     }
+    // A body that ends with the connection also reads as ended (and
+    // complete) when the connection is reset: for such a body, only a
+    // connection that did not fail is a clean end. A chunked body ends with
+    // its last chunk, whatever the connection does after it. Only a clean
+    // end releases what the matcher holds.
+    if (!upstream.complete || (closeDelimited(upstream) && upstream.socket?.errored)) throw new Error("the destination's response did not end cleanly");
     const end = matcher.end();
     if (end.incompletePrefix) report({ kind: "incomplete-prefix", ...end.incompletePrefix });
     watchdog.stop();
@@ -256,6 +262,13 @@ export async function relayScrubbed(opts: {
     scrubber.finish();
     report({ kind: "aborted", reason: err instanceof Cutoff ? err.message : "the destination's response failed mid-stream" });
   }
+}
+
+/** A body framed by neither a length nor chunked coding ends with the connection. */
+function closeDelimited(message: http.IncomingMessage): boolean {
+  const coding = message.headers["transfer-encoding"];
+  if (coding !== undefined) return !/(?:^|,)\s*chunked\s*$/i.test(coding);
+  return message.headers["content-length"] === undefined;
 }
 
 function drained(res: http.ServerResponse): Promise<void> {
