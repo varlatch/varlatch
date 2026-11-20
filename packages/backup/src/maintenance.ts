@@ -14,7 +14,8 @@ import { BackupError } from './archive.js';
  *     ends it. `frozenPosition` is the last audit position once drained.
  *   - `migrated-out`: permanent, once the installation moved; every request
  *     is refused, reads included. Only a completed reverse migration
- *     removes it (not in this release's slice 7.2a).
+ *     removes it: `admin migration import` (slice 7.2c), once the rebuilt
+ *     database is committed.
  * An installation that never runs the migration never sees either.
  */
 export type GateKind = 'capture' | 'restore' | 'migration' | 'migrated-out';
@@ -151,7 +152,8 @@ export class Maintenance {
   }
   /**
    * The installation moved (go-step7 decision 15): the barrier becomes the
-   * permanent migrated-out gate. Nothing in this release removes it.
+   * permanent migrated-out gate, until a reverse migration completes
+   * ({@link completeReverseMigration}).
    */
   markMigratedOut(id: string): Gate {
     const gate = this.require(id);
@@ -159,6 +161,16 @@ export class Maintenance {
     const next: Gate = { ...gate, kind: 'migrated-out', phase: 'paused' };
     durableJson(join(this.dir, 'maintenance.json'), next);
     return next;
+  }
+  /**
+   * A reverse migration completed (go-step7 decision 16): the rebuilt
+   * database is committed, so the migrated-out gate goes and the
+   * installation serves again. No other gate is removed this way.
+   */
+  completeReverseMigration(id: string): void {
+    if (this.require(id).kind !== 'migrated-out') throw new BackupError('Not a migrated-out gate');
+    unlinkSync(join(this.dir, 'maintenance.json'));
+    const fd = openSync(this.dir, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
   }
   completeRestore(id: string): void {
     if (this.require(id).kind !== 'restore') throw new BackupError('Not a restore gate');

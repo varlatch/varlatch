@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { PassThrough, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import type { Value } from "../src/migration/canonical.js";
-import { encodeValue } from "../src/migration/canonical.js";
+import { decodeRow as decodeCanonicalRow, encodeValue, type ColumnType } from "../src/migration/canonical.js";
 import { bundleTables, loadManifest, refusalKind, writeBundle, type Decision, type DecisionSource, type Digest, type ManifestTable } from "../src/migration/bundle.js";
 import { orderClause, selectRows } from "../src/migration/source.js";
 import { readBundle, type BundleParts } from "./helpers/bundle-read.js";
@@ -207,6 +207,26 @@ describe("bundle-v1", () => {
       expect(err.message).not.toContain(secret);
       expect(err.message).not.toContain("1e400");
     });
+  });
+
+  it("reads every row of varlatchd's vector back exactly, and refuses any other spelling of a row", () => {
+    const parts = readBundle(small);
+    for (const table of bundleTables(loadManifest())) {
+      const types = table.columns.map((c) => c.type as ColumnType);
+      for (const line of parts.tables.get(table.source) ?? []) expect(decodeCanonicalRow(types, line)).toEqual(decodeCanonicalRow(types, line));
+    }
+    const types: ColumnType[] = ["text", "bigint", "boolean", "timestamp with time zone", "bytea"];
+    expect(decodeCanonicalRow(types, '["a",9007199254740993,1,1795000000000001,"AQI="]')).toEqual(["a", 9007199254740993n, true, 1795000000000001n, Buffer.from([1, 2])]);
+    for (const bad of [
+      '["a", 1,1,1,"AQI="]', // a space
+      '["a",1.0,1,1,"AQI="]', // not an integer
+      '["a",1,true,1,"AQI="]', // a boolean as JSON's
+      '["a",01,1,1,"AQI="]', // not JSON
+      '["a",1,1,1,"AQI"]', // base64 not as written
+      '["a",1,1,1]', // a value short
+    ]) {
+      expect(() => decodeCanonicalRow(types, bad), bad).toThrow(/canonical/);
+    }
   });
 
   it("classifies a refusal without its value: an integer past int4, an inexact jsonb number, anything else", () => {

@@ -223,9 +223,11 @@ export async function seedInstallation(ctx: AppCtx): Promise<Seeded> {
   // control counter (an hour bucket), a quarantined passkey.
   const target = "syt_migrationseed";
   await ctx.db.query(
-    `INSERT INTO sync_targets (id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping, created_by, next_attempt_at, last_notes)
+    // At generation 1, its run's and its ledger's, that run holding the
+    // lease: as the sync loop leaves a Target mid-run.
+    `INSERT INTO sync_targets (id, organization_id, project_id, environment_id, connection_id, destination, canonical_destination, mapping, created_by, next_attempt_at, last_notes, generation, lease_expires_at)
      SELECT $1, $2, e.project_id, e.id, (SELECT id FROM platform_connections WHERE organization_id = $2 LIMIT 1),
-            '{"repository":"acme/api","environment":"production"}'::jsonb, 'github-actions:acme/api:production', '{"DB_PASS":"DB_PASS"}'::jsonb, $3, now(), '["seeded"]'::jsonb
+            '{"repository":"acme/api","environment":"production"}'::jsonb, 'github-actions:acme/api:production', '{"DB_PASS":"DB_PASS"}'::jsonb, $3, now(), '["seeded"]'::jsonb, 1, now() + interval '1 hour'
        FROM environments e JOIN projects p ON p.id = e.project_id WHERE p.organization_id = $2 AND e.name = 'production' AND p.slug = 'api'`,
     [target, acme, admin],
   );
