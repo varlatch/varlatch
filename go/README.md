@@ -453,19 +453,24 @@ comes. `verify-release`, which the installers run, is Go's own.
   surrogates stay distinct. Both sides run under umask 022; on Windows only
   a mode's read-only bit is compared. A case may unset variables of the
   clean environment (`unset`, to reach the default configuration
-  directory). Regenerate after changing the cases with
-  `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/cli exec vitest run
-  test/go-transcripts.test.ts`. A case whose outcome names a path below its
-  directory (`{{dir}}/...`) also has a Windows expectation, recorded by the
-  TypeScript recorder on Windows (`apps/cli/test/goWindows.ts`) into
-  `testdata/transcripts/windows/`, which Windows replays it against; so do
-  the agents install and find-files vectors (`testdata/vectors/windows/`).
-  The directory inside a JSON string is mapped back to `{{dir}}` in its
-  escaped form too (`transcript.UnfillDir`), so such a case needs no
-  Windows expectation. `TestWindowsExpectationsComplete` fails on every
-  platform when a case needs one and has none: label the pull request
-  `record-windows` (the windows-expectations workflow) and put its
-  artifact in with `scripts/go-windows-expectations.sh <run id>`.
+  directory). A case may run the CLI on a pseudo-terminal (`terminal`:
+  its stdout, its stderr or both, and its stdin): the recorder uses
+  util-linux `script`, the replay opens one itself (`creack/pty`, Linux
+  and macOS; skipped on Windows), and what the terminal displayed is
+  compared as `expect.terminal`, its `\r\n` as `\n`. Regenerate after
+  changing the cases with `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter
+  @varlatch/cli exec vitest run test/go-transcripts.test.ts`. A case whose
+  outcome names a path below its directory (`{{dir}}/...`) also has a
+  Windows expectation, recorded by the TypeScript recorder on Windows
+  (`apps/cli/test/goWindows.ts`) into `testdata/transcripts/windows/`,
+  which Windows replays it against; so do the agents install and
+  find-files vectors (`testdata/vectors/windows/`). The directory inside a
+  JSON string is mapped back to `{{dir}}` in its escaped form too
+  (`transcript.UnfillDir`), so such a case needs no Windows expectation.
+  `TestWindowsExpectationsComplete` fails on every platform when a case
+  needs one and has none: label the pull request `record-windows` (the
+  windows-expectations workflow) and put its artifact in with
+  `scripts/go-windows-expectations.sh <run id>`.
 - `testdata/vectors/framework.json`: what the TypeScript code answers for
   the option parser, help, safe text, assisted mode, the global options,
   the User-Agents and the exit status of an API error
@@ -783,9 +788,17 @@ comes. `verify-release`, which the installers run, is Go's own.
   - **Finding the command.** As libuv does: in the command's own `PATH` on
     POSIX; on Windows, `.com` or `.exe` only, a `.bat` or `.cmd` file
     refused (decision 4, `TestLookCommandAsLibuv`).
-  - **Not built yet.** `--strict` (5.4f), `--redact` outside assisted mode
-    (5.4c), `--agent-safe` and a run inside an agent-safe run (5.5b) refuse
-    with the CLI's not-built message (64).
+  - **`--redact` (slice 5.4c).** Outside assisted mode, the command's
+    stdout and stderr go through `internal/matcher` too, masking the
+    Secrets this run delivered (`redact.ts`, ADR-0038 Decision 10); a
+    shorter one passes unchanged and is named. It is refused (64), before
+    anything is fetched, when stdout or stderr is a terminal (outside
+    assisted mode, which gives the command pipes) and in an agent-safe run.
+    `testdata/transcripts/5.4c-redact.json` records every combination, the
+    terminal refusals under a pseudo-terminal (`terminal` cases), and
+    `redact-run.test.ts` runs against Go.
+  - **Not built yet.** `--strict` (5.4f), `--agent-safe` and a run inside
+    an agent-safe run (5.5b) refuse with the CLI's not-built message (64).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
@@ -870,6 +883,7 @@ it to the recording.
 | `upgrade`: `varlatch upgrade [<version>]` and `upgrade --check` (slice 6.6b of internal docs/design/go-step6.md) | a Compose installation's: pulls the release set's images, backs up, restarts the stack, gates on `doctor --gate`; `--check` records the newest release through the backup control | a Go installation's, on its host, as root (`--check` as anyone who may write the data directory): the release's `varlatch`, `varlatchd` and `release.json` verified against its signed `SHA256SUMS` (fail closed); a release whose manifest's `compatibleFrom` is above the installed schema is refused unless `--accept-not-rollback-safe` (or yes at a prompt); then decision 6's steps, journaled in `/etc/varlatch/upgrade.json` (`go/lib/upgradejournal`): the encrypted snapshot (`admin backup run`, kept 30 days in `<data>/upgrades/<id>`), stop, the schema update on a copy (`admin schema upgrade --database`), the swap of the database and binaries (the previous ones kept in `lib/varlatch/releases/<version>` beside the binaries), start, and the health checks (`admin status`: the release, its schema, serving, schema, Root KEK and installation ready); any failure stops varlatchd and puts the original database and binaries back, and the next run finishes (after the checks) or undoes (before) an interrupted one. `--check` records the newest release in `release-check.json` (`admin release-check record`), which `GET /v1/installation/release` reads. `--dir` and the Compose options are refused (64), naming `varlatch-ts upgrade` | ADR-0059 Decision 8 for a Go installation; a Compose installation's upgrade stays the TypeScript CLI's. Pinned by `internal/upgrade`'s tests (two prereleases built from this checkout, a kill at each step and in the undo, a full disk, a failed health check, a bad signature, a wrong identity, the snapshot restored) and `internal/cli`'s `TestUpgrade*` |
 | `upgrade-usage` | `varlatch help upgrade`, `upgrade --help` and `upgrade -h` print a Compose installation's `upgrade` form | a Go installation's: `[<version>] [--prerelease] [--accept-not-rollback-safe] [--yes]` and `--check [--prerelease] [--json]`, each with `--config` | The Go CLI upgrades a Go installation; a Compose installation's upgrade is `varlatch-ts upgrade` |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
+| `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
 | `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link or a Windows junction, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
 | The guardrail hook reads every command alike | not compared | `agents hook` reads each word of a command line the same way: a command named like a property every JavaScript object has (`toString`, `constructor`, `valueOf`) and a glob whose class is no regular expression (`[z-a]`) are words like any other, and the rest of the line is checked: `toString x; cat .env` is denied | The hook reads a whole command line, and no word ends the reading early. Pinned by `internal/agents`' `TestHookReadsEveryCommandAlike` |
@@ -899,6 +913,8 @@ it to the recording.
 | The hidden prompt when the terminal goes away before Enter | not compared | the terminal restored, `varlatch: no value entered; nothing was stored`, exit 1 | Nothing is stored either way; the Go CLI says so |
 | A redirect's relative `Location` | resolved by the WHATWG URL parser | resolved by `apiclient`'s own resolver (absolute, `//host`, `/path`, `?query` and path-relative references), then parsed by `lib/whatwg` | varlatchd sends no redirect; a proxy's is absolute or root-relative |
 | `loopback-nonce`: the browser sign-in's loopback callback | `http://127.0.0.1:<port>/` | `http://127.0.0.1:<port>/<32 random characters>`: only a POST to exactly that path (compared in constant time), with the listener's own address as its Host (`127.0.0.1:<port>` or `localhost:<port>`), delivers the bearer, and only once (the listener closes before it answers); any other request gets 404 (a GET on the path 405, a preflight 204) and the sign-in goes on waiting. Bound to 127.0.0.1 only, given up after 5 minutes | Delivering a bearer takes the random path as well as the port. The path is in the printed address and, while the browser runs, in its command line, so it keeps out what can read neither (a web page in the browser, a name another host resolves to 127.0.0.1), not another process of the same machine that can read the browser's command line. The sign-in page posts to the callback as given, path included, so neither server's page changes. Accepted only where Go's stdout, the path taken out of the printed address, is the recording; pinned by `internal/cli`'s `TestBrowserCallbackTakesOnlyItsPath` and the `browser-login` process tests, which require the 32-character path from the Go CLI |
+| `invite` prints only an invitation token | not compared | the enrollment link's token is printed only when it is an invitation token in the servers' format (`vlt_invite_` and 43 base64url characters) that neither holds nor is part of a credential or value the run knows (its bearer, `VARLATCH_TOKEN`, a stored credential, a value in flight); otherwise the first line, then `varlatch invite: the server's answer holds no invitation token in Varlatch's format, or holds a credential or value this run knows, so no link is printed. The server may have created the invitation anyway: revoke it under Pending invitations in the dashboard.`, exit 1 | The fail-safe redacts every token on stdout, and the link is the one token a command prints on purpose: its writer (`outShowing`, reachable only from `inviteCommand`; `failsafe_test.go`) keeps exactly that token, and only one that is what the link is for (`TestInviteShowsOnlyAnInvitationToken`, `TestInviteNeverPrintsAnotherSecret`) |
+| `credential issue --out` on Windows | the file is created with mode 0600, of which Windows reads only the write bit; the line `The token is in <file>, readable by you only, ...` is printed on every platform | the same | On Windows the new file takes its directory's access control list, so who can read it is who that directory lets read it; both CLIs print the same line, and `--out` belongs in a directory only its owner can read |
 | `pending-sign-ins.json` and runs at the same time | not compared | not locked across processes, as in TypeScript: each run reads the file, changes its entry and replaces the file atomically, so of two runs that change it at once the later write wins (a `--start` replacing an entry another run's `--wait` is keeping, for example) | Parity: both CLIs share the file (decision 11), and a lock one of them does not take would not hold. A lost update costs at most a sign-in to start again |
 | Secrets in flight never show | not compared | a credential given or issued, a device code, a sign-in hand-off bearer, an OIDC ID token and the GitHub Actions request token are held for the run (`Run.holdValue`): every exact occurrence, and its escaped form, is `[redacted]` on stdout, in every `--json` document and on stderr, whatever their length or format, as well as in a server's free text | A server's answer or an error could echo one, and only Varlatch's own token formats are caught by shape. Pinned by `internal/cli`'s `TestInFlightSecretsNeverShow` and every 5.2 transcript, whose canaries appear in no output |
 | `now` (how transcripts compare, not a behaviour) | `login` and `env use` write the time of the run (`issuedAt`, `tierCachedAt`) | the same, at another time | A case that lists the `now` pattern has each ISO 8601 timestamp between its run's start and end written `{{now}}`, in the recording and the replay alike (`goKit.ts` `nowPattern`, `transcript.NowPattern`); a timestamp outside the run is compared as it is |
@@ -1688,6 +1704,50 @@ the drains and `admin audit-export discard-plan`.
   directions. The `audit-export` conformance suite checks the stream the
   worker writes and the host command's refusals on every target (the
   `host-admin` capability).
+
+### Public HTTPS (step 6, slice 6.3a)
+
+`server/publictls` is `varlatchd`'s own public HTTPS (ADR-0059 Decision 5;
+step 6's decision 4), on when `listen_https` is set. certmagic is the ACME
+client and the store; the schedule is `publictls`'s, so that what it
+reports is what it does:
+
+- **Obtaining and renewing.** At start, a certificate in the store for
+  `public_url`'s host is served at once; otherwise one is obtained. It is
+  renewed in the last third of its lifetime. A failed attempt is retried
+  after 1, 2, 5, 10, 20 and 30 minutes, then 1, 2 and 6 hours (the last
+  repeating), each failure logged and reported; certmagic's own retries,
+  cache maintenance, on-demand issuance, OCSP stapling and ARI are not
+  used. Nothing is ever asked: without `acme_email` the account is
+  registered without a contact (said once in the log), and certmagic's
+  prompt for an address never runs. Both listeners need a real port (not
+  0): the CA connects to them.
+- **What is served.** The HTTPS listener serves the same handler as the
+  plain listener, with the one certificate, for the host only; before a
+  certificate exists, and once it expired, every handshake is refused. A
+  TLS-ALPN-01 handshake (ALPN `acme-tls/1` alone, for the host) gets
+  certmagic's challenge certificate while a challenge is pending, and the
+  connection serves no request. The plain listener answers a pending
+  HTTP-01 challenge from memory (never from the store, never blindly) and
+  redirects everything else to `public_url`. No `Strict-Transport-Security`
+  header is sent, as the TypeScript stack's Caddy sends none (and a
+  long-lived one would hold browsers to a name a move may leave); an
+  operator who wants it adds it at their own proxy or CDN.
+- **What stays private.** `<data_dir>/acme` is made 0700 (a store others
+  can enter, or a symbolic link, stops the start); certmagic writes its
+  files 0600. Neither key is logged, put in the environment or archived:
+  a backup holds the database and the settings (`listen_https`,
+  `listen_http_redirect`, `acme_ca`, `acme_email`; not `acme_ca_root`, a
+  path on the host), and a restored installation obtains its certificate
+  again.
+- **Tests.** `go/server/publictls/testdata/pebble.sh` starts Pebble and its
+  mock DNS server (pinned by digest, on the host's network, every name at
+  127.0.0.1, 45-second certificates); go.yml's `go` job runs the Pebble
+  tests with `VARLATCH_REQUIRE_PEBBLE=1`. Let's Encrypt's staging is run
+  only by hand, with the owner; Let's Encrypt itself never from CI.
+- **Still to come (6.3b).** The ingress modes side by side, each with its
+  origin and RP ID rules (Decision 6): today the HTTPS listener serves the
+  plain listener's handler, `trusted_proxies` included.
 
 ### The tailnet listeners (step 4.13a)
 

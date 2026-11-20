@@ -118,3 +118,29 @@ tailnet = off
 # loopback http) public_url's, and these exact origins, comma-separated.
 #tailnet_https_port = 8443
 #tailnet_browser_origins =
+
+# Public HTTPS (step 6's decision 4): varlatchd serves HTTPS itself on
+# listen_https, with a certificate for public_url's host name (an https
+# public_url naming a DNS name is required) that it obtains and renews
+# over ACME (Let's Encrypt by default), and never serves anything over
+# HTTPS before it has one. The certificate and the ACME account key stay
+# in <data_dir>/acme (0700), never in a backup: a restored installation
+# obtains its certificate again. Off (unset) keeps the installation as it
+# is: the plain listener above, behind your own proxy or on this machine.
+# No Strict-Transport-Security header is sent; add one at your own proxy or
+# CDN if you want browsers to remember HTTPS for this name.
+#listen_https = :443
+# The plain HTTP listener: ACME HTTP-01 challenges and a redirect of
+# everything else to public_url, never a page. Default: port 80 on
+# listen_https's address; off leaves TLS-ALPN-01, on listen_https, as the
+# only challenge.
+#listen_http_redirect = :80
+# The ACME account's contact address, for the CA's expiry notices.
+#acme_email = ops@example.com
+# The ACME directory. Default: Let's Encrypt. Its staging directory,
+# https://acme-staging-v02.api.letsencrypt.org/directory, issues
+# certificates no browser trusts, for a trial run.
+#acme_ca =
+# A PEM file of roots trusted for the CA's own API (a private CA); default:
+# the system's.
+#acme_ca_root =

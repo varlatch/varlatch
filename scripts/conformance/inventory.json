@@ -764,6 +764,39 @@
         "securityApprovalKeys"
       ]
     },
+    "admin-cli": {
+      "title": "Organization administration with the CLI under test (slice 5.7a): one smoke check per command, exit 0 and --json parsing, in an Organization of its own",
+      "script": "scripts/conformance/suites/admin-cli.mjs",
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "listOrganizations",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "listProjects",
+        "renameProject",
+        "createEnvironment",
+        "listEnvironments",
+        "deleteEnvironment",
+        "createInvitation",
+        "listIdentities",
+        "changeMemberRole",
+        "memberExposure",
+        "createServiceIdentity",
+        "renameIdentity",
+        "machineReach",
+        "issueIdentityCredential",
+        "listIdentityCredentials",
+        "revokeIdentityCredential",
+        "retireIdentity",
+        "reactivateIdentity",
+        "createRequirement",
+        "listRequirements",
+        "deleteRequirement",
+        "listAuditEvents"
+      ]
+    },
     "deletion": {
       "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce; an Organization's deletion scheduled, approved by a second admin, cancelled and run when due, and the audit-access tombstone's readers; what the due run tears down (a Sync Target and its Connection, a webhook, the GitHub App) and the audit export's drain, completed or abandoned at its deadline",
       "script": "scripts/conformance/suites/deletion.mjs",
@@ -3695,6 +3728,121 @@
       "suite": "security",
       "kind": "conformance",
       "title": "the approval keys list the Organization's admins with their passkeys' trust, names and dates, never a credential id or key"
+    },
+    "admin-cli.org-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "org create makes an organization the caller administers"
+    },
+    "admin-cli.org-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "org list --json lists it"
+    },
+    "admin-cli.project-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project create --org makes a project"
+    },
+    "admin-cli.project-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project list --json lists it"
+    },
+    "admin-cli.project-rename": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project rename renames it (project list shows the new name)"
+    },
+    "admin-cli.env-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "env-create makes a root environment (the environment list has it)"
+    },
+    "admin-cli.env-delete": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "env-delete deletes it (the environment list has it no more)"
+    },
+    "admin-cli.invite": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "invite prints a one-time enrollment link with its invitation token"
+    },
+    "admin-cli.member-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member list --json lists the caller"
+    },
+    "admin-cli.member-role": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member role to the role the caller has changes nothing (member list agrees)"
+    },
+    "admin-cli.member-exposure-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member exposure --json is NDJSON, the member first"
+    },
+    "admin-cli.identity-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity list --json lists the machine"
+    },
+    "admin-cli.identity-rename": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity rename renames it"
+    },
+    "admin-cli.identity-reach-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity reach --json shows its reach"
+    },
+    "admin-cli.credential-issue-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential issue --json writes the token to a new 0600 file only, and refuses an --out that exists"
+    },
+    "admin-cli.credential-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential list --json lists it"
+    },
+    "admin-cli.credential-revoke": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential revoke revokes it"
+    },
+    "admin-cli.identity-retire": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity retire --confirm retires it (identity list shows it retired)"
+    },
+    "admin-cli.identity-reactivate": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity reactivate reactivates it (identity list shows it active)"
+    },
+    "admin-cli.tailnet-require": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet require makes a Tailnet Requirement"
+    },
+    "admin-cli.tailnet-requirements-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet requirements --json lists it"
+    },
+    "admin-cli.tailnet-remove": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet remove removes it"
+    },
+    "admin-cli.audit-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "audit list --json lists the organization's events"
     },
     "deletion.project-deleted": {
       "suite": "deletion",

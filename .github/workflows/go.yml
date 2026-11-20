@@ -522,6 +522,26 @@ jobs:
           VARLATCH_TEST_S3_ENDPOINT="$endpoint" VARLATCH_TEST_S3_ACCESS_KEY=vlts3test VARLATCH_TEST_S3_SECRET_KEY="$secret" VARLATCH_REQUIRE_S3=1 \
             go test -count=1 -v -run '^(TestS3UploadDownload|TestS3MultipartAbortAndRetry|TestBucketTest)$' ./lib/backup
 
+      # Public HTTPS (ADR-0059 step 6, slice 6.3a) against Pebble, Let's
+      # Encrypt's test CA, in containers on the runner's network, pinned by
+      # digest: issuance over HTTP-01 and over TLS-ALPN-01, renewal before
+      # expiry (45-second certificates), a failed challenge reported and
+      # retried with backoff, the store's modes, a restart serving the
+      # stored certificate, and varlatchd serving HTTPS with nothing before
+      # a certificate and only a redirect on its plain listener. No outside
+      # network: every name resolves to 127.0.0.1. Never Let's Encrypt from
+      # CI (its staging only by hand, with the owner).
+      - name: Public HTTPS against Pebble
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          eval "$(server/publictls/testdata/pebble.sh start "$RUNNER_TEMP/pebble")"
+          trap 'server/publictls/testdata/pebble.sh stop' EXIT
+          # One package at a time: both listen on Pebble's ports, 5001 and 5002.
+          VARLATCH_REQUIRE_PEBBLE=1 go test -count=1 -v -run '^TestPebble' ./server/publictls
+          VARLATCH_REQUIRE_PEBBLE=1 go test -count=1 -v -run '^TestPublicHTTPS' ./server/daemon
+
       # G9a at smoke scale (ADR-0059 step 3.6): 5 % of the profile's
       # length against varlatchd built with the g9a tag (the production
       # serve path with the W1 seed, the converge simulation and paced
@@ -889,57 +909,6 @@ jobs:
           version="0.0.0-check.${GITHUB_RUN_NUMBER}"
           go/release/build-assets.sh --version "$version" --out "$RUNNER_TEMP/release-assets"
           go/release/check-assets.sh "$RUNNER_TEMP/release-assets" "$version"
-      # G6's run (ADR-0059 Decision 8; go/release/g6.sh), in shard 1: the
-      # previous release's varlatchd on a database the new release
-      # upgraded, with the conformance suites below, then the new release on
-      # what the previous one wrote. The previous release is the one
-      # go/release/release.json names, built from its tag; before the first
-      # Go release, this commit's varlatchd is the previous release and its
-      # g6fixture build (one rollback-safe schema step) the new one. Pull
-      # requests and merge groups take the suites that write each kind
-      # quickly (about 100 seconds a phase, shard-weights.json); the nightly
-      # run and a dispatched one add sync, deletion and webhooks (about 990
-      # seconds a phase).
-      - name: G6, the upgrade gate
-        if: matrix.shard == 1
-        env:
-          CGO_ENABLED: "0"
-          EVENT: ${{ github.event_name }}
-        run: |
-          previous=$(jq -r '.previous.version // empty' go/release/release.json)
-          if [ -n "$previous" ]; then
-            git fetch --no-tags --depth=1 origin "refs/tags/v$previous:refs/tags/v$previous"
-            git worktree add --detach "$RUNNER_TEMP/previous-release" "v$previous"
-            (cd "$RUNNER_TEMP/previous-release/go" && go build -tags conformance -o "$RUNNER_TEMP/varlatchd-previous" ./cmd/varlatchd)
-            old="$RUNNER_TEMP/varlatchd-previous" new="$RUNNER_TEMP/varlatchd"
-            safe=$(jq -r '.rollbackSafe' go/release/release.json)
-          else
-            (cd go && go build -tags conformance,g6fixture -o "$RUNNER_TEMP/varlatchd-g6fixture" ./cmd/varlatchd)
-            old="$RUNNER_TEMP/varlatchd" new="$RUNNER_TEMP/varlatchd-g6fixture"
-            safe=$(jq -r '.rollbackSafe' go/release/testdata/g6/fixture.json)
-          fi
-          suites="cli-core security oidc broker client-runtime audit-export realtime-events"
-          case "$EVENT" in schedule | workflow_dispatch) suites="$suites sync deletion webhooks" ;; esac
-          # shellcheck disable=SC2086 # one argument per suite
-          G6_ROLLBACK_SAFE=$safe sh go/release/g6.sh "$old" "$new" "$RUNNER_TEMP/g6" $suites
-          if [ -z "$previous" ]; then
-            # The not-rollback-safe path, cheaply (no conformance runs): the
-            # same fixture step declared not rollback-safe (g6unsafe:
-            # compatibleFrom 2) passes declared so, since the previous
-            # release refuses its database, and fails declared rollback-safe.
-            (cd go && go build -tags conformance,g6fixture,g6unsafe -o "$RUNNER_TEMP/varlatchd-g6unsafe" ./cmd/varlatchd)
-            G6_ROLLBACK_SAFE=false G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe"
-            status=0
-            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe-declared-safe" \
-              2> "$RUNNER_TEMP/g6-unsafe-declared-safe.err" || status=$?
-            cat "$RUNNER_TEMP/g6-unsafe-declared-safe.err" >&2
-            # Exit 1 for this reason alone: a step that fails earlier also exits 1.
-            if [ "$status" -ne 1 ] || ! grep -q "declared rollback-safe, but the previous release cannot open" "$RUNNER_TEMP/g6-unsafe-declared-safe.err"; then
-              echo "::error::G6 did not fail a release declared rollback-safe whose database the previous release refuses, for that reason (exit $status)"
-              exit 1
-            fi
-            echo "G6 failed the release declared rollback-safe whose database the previous release refuses, as it must."
-          fi
       # G3 (ADR-0059 step 3.6), the direction the Go tests cannot take: the
       # TypeScript server's own read path (its effective-configuration and
       # disclosure routes, in PGlite) opens a database fixture whose
@@ -1042,6 +1011,59 @@ jobs:
         run: VARLATCH_GO_BINARY="$RUNNER_TEMP/varlatchd" node --test scripts/conformance/test/go-binary.test.mjs
       - name: Install Chromium
         run: scripts/ci-install-chromium.sh
+      # G6's run (ADR-0059 Decision 8; go/release/g6.sh), in shard 1: the
+      # previous release's varlatchd on a database the new release
+      # upgraded, with the conformance suites below, then the new release on
+      # what the previous one wrote. The previous release is the one
+      # go/release/release.json names, built from its tag; before the first
+      # Go release, this commit's varlatchd is the previous release and its
+      # g6fixture build (one rollback-safe schema step) the new one. It runs
+      # after Chromium is installed: every conformance run starts with the
+      # passkey bootstrap, which drives a browser. Pull
+      # requests and merge groups take the suites that write each kind
+      # quickly (about 100 seconds a phase, shard-weights.json); the nightly
+      # run and a dispatched one add sync, deletion and webhooks (about 990
+      # seconds a phase).
+      - name: G6, the upgrade gate
+        if: matrix.shard == 1
+        env:
+          CGO_ENABLED: "0"
+          EVENT: ${{ github.event_name }}
+        run: |
+          previous=$(jq -r '.previous.version // empty' go/release/release.json)
+          if [ -n "$previous" ]; then
+            git fetch --no-tags --depth=1 origin "refs/tags/v$previous:refs/tags/v$previous"
+            git worktree add --detach "$RUNNER_TEMP/previous-release" "v$previous"
+            (cd "$RUNNER_TEMP/previous-release/go" && go build -tags conformance -o "$RUNNER_TEMP/varlatchd-previous" ./cmd/varlatchd)
+            old="$RUNNER_TEMP/varlatchd-previous" new="$RUNNER_TEMP/varlatchd"
+            safe=$(jq -r '.rollbackSafe' go/release/release.json)
+          else
+            (cd go && go build -tags conformance,g6fixture -o "$RUNNER_TEMP/varlatchd-g6fixture" ./cmd/varlatchd)
+            old="$RUNNER_TEMP/varlatchd" new="$RUNNER_TEMP/varlatchd-g6fixture"
+            safe=$(jq -r '.rollbackSafe' go/release/testdata/g6/fixture.json)
+          fi
+          suites="cli-core security oidc broker client-runtime audit-export realtime-events"
+          case "$EVENT" in schedule | workflow_dispatch) suites="$suites sync deletion webhooks" ;; esac
+          # shellcheck disable=SC2086 # one argument per suite
+          G6_ROLLBACK_SAFE=$safe sh go/release/g6.sh "$old" "$new" "$RUNNER_TEMP/g6" $suites
+          if [ -z "$previous" ]; then
+            # The not-rollback-safe path, cheaply (no conformance runs): the
+            # same fixture step declared not rollback-safe (g6unsafe:
+            # compatibleFrom 2) passes declared so, since the previous
+            # release refuses its database, and fails declared rollback-safe.
+            (cd go && go build -tags conformance,g6fixture,g6unsafe -o "$RUNNER_TEMP/varlatchd-g6unsafe" ./cmd/varlatchd)
+            G6_ROLLBACK_SAFE=false G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe"
+            status=0
+            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe-declared-safe" \
+              2> "$RUNNER_TEMP/g6-unsafe-declared-safe.err" || status=$?
+            cat "$RUNNER_TEMP/g6-unsafe-declared-safe.err" >&2
+            # Exit 1 for this reason alone: a step that fails earlier also exits 1.
+            if [ "$status" -ne 1 ] || ! grep -q "declared rollback-safe, but the previous release cannot open" "$RUNNER_TEMP/g6-unsafe-declared-safe.err"; then
+              echo "::error::G6 did not fail a release declared rollback-safe whose database the previous release refuses, for that reason (exit $status)"
+              exit 1
+            fi
+            echo "G6 failed the release declared rollback-safe whose database the previous release refuses, as it must."
+          fi
       # G13's restore drill (ADR-0059 step 4.14): a Go archive restored into
       # a fresh container that holds only the archive and the two keys (a
       # scratch image with varlatchd alone, no network), and the source's
