@@ -440,6 +440,7 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
 		return fmt.Errorf("%w; the reverse was undone, but Go's barrier could not be lifted: %v; varlatch migrate --resume lifts it", cause, err)
 	}
+	crashPoint("rollback undone released")
 	// The source's journal only: it is where the record is read, and Go's
 	// says open already (rewriting it open beside its running varlatchd
 	// is refused, rightly: open changes the gate).
