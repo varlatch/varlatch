@@ -2764,6 +2764,99 @@ Grants in whatever order its plan gives; the Go query orders by rowid
 the lists derived from them (`grantIds`, `groupIds`, `roleIds`,
 `applied`), as sets; the pure evaluator vectors check their order.
 
+### The tailnet's control plane (step 7, slice 7.5a)
+
+`lib/tailcontrol` is what a tailnet handoff asks of the control plane.
+The handoffs themselves (internal docs/design/go-step7.md decision 11) are
+slice 7.5b.
+
+- **One interface, two backends.** Each lists the devices, offline and
+  expired ones included, and renames one.
+  - `Tailscale` uses the API with an OAuth client that has the
+    `devices:core` scope and no other (O4); any other scope is refused
+    before a token is used. Each operation exchanges the client for a
+    token of its own, and nothing keeps one.
+  - `HeadscaleAPI` uses a key that `Open` checks expires within the hour
+    (every Headscale key is a full administrator); `Close` expires it.
+  - `HeadscaleCLI` runs `headscale` on the control server (an absolute
+    path when named), with the new name after `--`.
+  - Both APIs are https only, and are built with a constructor that
+    keeps the credential in a closure, so printing a control plane shows
+    none. The constructor requires the caller's `*http.Client` and never
+    makes one: `varlatch migrate` passes its own; varlatchd's restore
+    handoff (7.5b) passes the outbound policy's (`go/server/outbound`),
+    so the guard there needs no exception for `lib/tailcontrol`.
+- **Names.**
+  - `TempName` is a handoff's temporary name, `<name>-vl-<operation
+    id>-n|o`, in canonical form within 63 bytes; when too long, the name
+    is cut, never the operation id.
+  - `CheckNames` compares a plan with every device case-insensitively.
+    The name must be held by exactly the expected device, and every
+    temporary name must be free, whoever holds it, online, offline or
+    expired.
+  - Every backend refuses a name not in canonical form.
+    `RenameAndReadBack` counts a rename only once the control plane lists
+    the device under exactly that name, reading it again once, a second
+    later, before it calls a difference a failure.
+- **Errors** name the operation and the device. Every credential is
+  scrubbed from them before any cut, in every form an answer could echo
+  (as sent, escaped, base64), even when the control plane echoes it. A
+  transport error still answers `errors.Is` (a passed deadline stays
+  `context.DeadlineExceeded`).
+- **Testing.** `tailcontroltest` fakes both control planes, with the
+  behaviour ADR-0059 Decision 9 records:
+  - Tailscale rewrites non-canonical names and refuses a taken one;
+  - Headscale keeps a case variant and refuses only the exact name.
+
+  The real APIs are checked by hand against the owner's throwaway tailnet
+  and a Headscale server (O6) in 7.5b.
+
+### The tailnet handoff (step 7, slice 7.5b, part 1)
+
+`lib/tailhandoff` moves a tailnet name from the node serving it to
+another, and back if anything fails. It covers three handoffs (internal
+docs/design/go-step7.md decision 11): the forward handoff of a migration,
+its reverse, and the restore handoff of a restore onto a new host. It is
+not wired into `varlatch migrate` or varlatchd's restore yet: that is part
+2.
+
+- **Prepare** runs before any barrier and changes nothing:
+  - It checks the names case-insensitively against every device: the
+    name held by exactly the serving node, the incoming node under exactly
+    its temporary name (an enrolment under a taken name comes back
+    suffixed and is refused), and the serving node's temporary name free.
+  - It checks the issuance count.
+  - On the Tailscale certificate path:
+    - the incoming node proves it can obtain a certificate now;
+    - the serving node's certificate must last through the rollback
+      window plus seven days, or be renewed now, or the operator accepts
+      a new certificate on a rollback.
+- **Switch** runs under the barrier, and everything from its first change
+  sits under one deadline (180 s):
+  1. The serving installation closes its tailnet listener.
+  2. The two renames, back to back, each read back.
+  3. The name's certificate: at most three attempts for fast server
+     errors, each counted before it is made. A rate-limit refusal ends the
+     wait at once, and a timed-out attempt stays counted.
+  4. A client must reach the incoming node by the name.
+  5. Then the incoming installation opens.
+- **The undo** runs on any failure after the first change, reading the
+  control plane's own listing. The incoming node gives the name back, the
+  serving node takes it again (read back), and only then does the serving
+  installation reopen.
+  - When the control plane can't be reached, the undo stays pending, and
+    neither installation is opened on the tailnet. `Resume` finishes it
+    later.
+  - A restore's serving node is dead, so its listener is never closed or
+    reopened.
+  - `Resume` also finishes a switch that crashed while opening the
+    incoming installation, once the name, the certificate and a client's
+    reach hold again; otherwise it undoes it.
+- **What the callers supply:** the journal, the certificates, the issuance
+  count (the installation's `certificate_issuances`, #344), the
+  installations' listeners, the check from a client node, and a control
+  plane built with their own `*http.Client`.
+
 ## The OpenAPI document
 
 The `/v1` contract is `packages/protocol/openapi.yaml` (OpenAPI 3.1),
