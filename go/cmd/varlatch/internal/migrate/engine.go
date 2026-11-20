@@ -522,16 +522,18 @@ func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 	return e.open(ctx, j)
 }
 
-// open restarts the target out of the transfer's isolation.
+// open restarts the target out of the transfer's isolation: stopped, its
+// journal open (varlatchd removes the gate first), started. Interrupted
+// anywhere, --resume finishes it (finishOpen).
 func (e *Engine) open(ctx context.Context, j *Journal) error {
 	if err := e.Target.Stop(ctx); err != nil {
 		return fmt.Errorf("stopping the target to open it: %w (varlatch migrate --resume tries again)", err)
 	}
 	if err := e.enter(ctx, j, Open); err != nil {
-		return err
+		return fmt.Errorf("opening the target: %w; varlatch migrate --resume finishes it", err)
 	}
 	if err := e.Target.Start(ctx); err != nil {
-		return fmt.Errorf("the migration is open, but the target's service did not start: %w; start it", err)
+		return fmt.Errorf("the migration is open, but the target's service did not start: %w; varlatch migrate --resume starts it", err)
 	}
 	at := "its address"
 	if j.Transfer != nil {
@@ -598,7 +600,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	}
 	j.Undone = &UndoneRecord{From: from, Why: cause.Error(), Released: released, At: e.now().UTC().Format(time.RFC3339Nano)}
 	if err := e.enter(ctx, j, Released); err != nil {
-		return fmt.Errorf("%w; the barrier was lifted, but the journal could not say so: %v", cause, err)
+		return fmt.Errorf("%w; it was undone (the barrier lifted, the address returned, the target's database discarded), but a journal could not say released: %v; varlatch migrate --resume finishes it", cause, err)
 	}
 	return fmt.Errorf("%w; the barrier was lifted and the old installation reopened unchanged", cause)
 }
@@ -662,8 +664,53 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 			return j, err
 		}
 		return j, e.open(ctx, j)
+	case j.Phase == Open:
+		return j, e.finishOpen(ctx, j)
+	case j.Phase == Released:
+		return j, e.finishReleased(ctx, j)
 	}
 	return j, nil
+}
+
+// finishOpen finishes an open the source's journal records: the target's
+// journal open (which removes its gate) and its service running. Done
+// already, it changes nothing.
+func (e *Engine) finishOpen(ctx context.Context, j *Journal) error {
+	_, st, err := e.Target.Describe(ctx)
+	if err != nil {
+		return err
+	}
+	if st.Journal != nil && st.Journal.ID == j.ID && st.Journal.Phase == Open && !st.Gate && st.Running {
+		return nil
+	}
+	e.say("The migration %s is open, but the target is not yet serving it: its journal is written open, and it is started.", j.ID)
+	if st.Running {
+		if err := e.Target.Stop(ctx); err != nil {
+			return err
+		}
+	}
+	if err := e.Target.WriteJournal(ctx, j); err != nil {
+		return err
+	}
+	return e.Target.Start(ctx)
+}
+
+// finishReleased finishes an undo the source's journal records: the
+// target's journal released (which removes the transfer's gate).
+func (e *Engine) finishReleased(ctx context.Context, j *Journal) error {
+	_, st, err := e.Target.Describe(ctx)
+	if err != nil {
+		return err
+	}
+	if st.Journal == nil || st.Journal.ID != j.ID || (st.Journal.Phase == Released && !st.Gate) {
+		return nil
+	}
+	if st.Running {
+		if err := e.Target.Stop(ctx); err != nil {
+			return err
+		}
+	}
+	return e.Target.WriteJournal(ctx, j)
 }
 
 // Abort is `varlatch migrate --abort`: a migration not yet switched

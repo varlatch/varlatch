@@ -101,6 +101,8 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--resume does what the interrupted run was asked, --abort undoes it; neither takes --dry-run")
 	case o.resume && o.abort:
 		return o, usage("--resume or --abort, not both")
+	case o.unit != "" && !migrate.ValidUnit(o.unit):
+		return o, usage("--unit takes a systemd unit's name (such as varlatchd), not an option or a path")
 	case !o.status && !o.resume && !o.abort && !slices.Contains([]string{"public", "proxy", "coolify"}, o.ingress):
 		return o, usage("--ingress is public, proxy or coolify: the source's ingress (its own Caddy, your reverse proxy, or Coolify's)")
 	case !o.status && (o.config == "" || o.bekFile == "" || o.destination == "" || o.readCredentials == ""):

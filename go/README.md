@@ -3025,7 +3025,15 @@ migrations.
     it). If the public URL does not answer, the address goes back (the
     target stopped, the source's Caddy or dashboard started; Coolify: the
     instruction to move the domain back) and the migration is undone.
-    `--abort` undoes any migration before its switch.
+    `--abort` undoes any migration before its switch. The gate is
+    removed before the target's journal says open or released, so a gate
+    that cannot be removed leaves the journal where it was (the message
+    names the file to remove by hand); `--resume` finishes an open (the
+    target's journal open, its service started) or an undo (its journal
+    released) that the source's journal records but the target does not.
+    `admin migrate state` (reading, not `--write`) answers beside a
+    running varlatchd and says whether one runs and whether the gate
+    stands.
   - The dry run's projection includes the transfer, estimated by shape
     (a minute for an ACME issuance or a domain move, seconds for a port,
     and the target's restart): nothing is transferred before the barrier,

@@ -363,3 +363,41 @@ func TestTheTransfersGateIsItsOwn(t *testing.T) {
 		t.Fatal("the lease was replaced")
 	}
 }
+
+// A gate that cannot be removed: the journal is not written open (it
+// stays where it was), and the message names the file to remove by hand.
+// The state reads beside a running varlatchd, and says it runs.
+func TestAStuckTransferGate(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	for _, phase := range []string{"started", "transfer", "switched"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	gate := filepath.Join(in.data, backup.GateFile)
+	if err := os.Remove(gate); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(gate, 0o700); err != nil { // unreadable as a gate, and not removable as a file
+		t.Fatal(err)
+	}
+	code, _, errOut := migrateWith(t, in.conf, journalText(migA, "open"), "state", "--write")
+	if code != ExitFailure || !strings.Contains(errOut, gate) || !strings.Contains(errOut, "remove that file by hand") || !strings.Contains(errOut, "still says switched") {
+		t.Fatalf("a stuck gate: %d %q", code, errOut)
+	}
+	if code, out, _ := migrateWith(t, in.conf, nil, "state"); code != ExitOK || !strings.Contains(out, `"phase":"switched"`) || !strings.Contains(out, `"migrationGate":true`) {
+		t.Fatalf("the journal moved past a stuck gate: %q", out)
+	}
+	if err := os.Remove(gate); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "open"), "state", "--write"); code != ExitOK {
+		t.Fatal(errOut)
+	}
+	r := start(t, in)
+	code, out, errOut := migrateWith(t, in.conf, nil, "state")
+	r.stop(t)
+	if code != ExitOK || !strings.Contains(out, `"running":true`) || !strings.Contains(out, `"migrationGate":false`) || !strings.Contains(out, `"phase":"open"`) {
+		t.Fatalf("state beside a running varlatchd: %d %q %q", code, out, errOut)
+	}
+}

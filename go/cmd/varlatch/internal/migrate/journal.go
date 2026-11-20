@@ -175,6 +175,17 @@ func readJournal(dir string) (*Journal, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A journal of 7.4a's development builds held transfer as a string
+	// (none was made): read as no transfer record.
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(b, &raw) == nil {
+		if t, ok := raw["transfer"]; ok && len(t) > 0 && t[0] == '"' {
+			delete(raw, "transfer")
+			if nb, err := json.Marshal(raw); err == nil {
+				b = nb
+			}
+		}
+	}
 	var j Journal
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()

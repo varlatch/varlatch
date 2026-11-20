@@ -130,6 +130,7 @@ type fakeTarget struct {
 	pass     bool
 	info     TargetInfo
 	running  bool
+	gate     bool
 }
 
 func (t *fakeTarget) call(name string) error {
@@ -139,7 +140,7 @@ func (t *fakeTarget) call(name string) error {
 func (t *fakeTarget) Describe(context.Context) (TargetInfo, TargetState, error) {
 	info := t.info
 	info.Config, info.DataDir = "/etc/varlatch/varlatchd.conf", t.dataDir
-	return info, TargetState{Journal: t.journal, Database: t.database}, t.call("describe")
+	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Running: t.running}, t.call("describe")
 }
 func (t *fakeTarget) Start(context.Context) error {
 	if err := t.call("start"); err != nil {
@@ -160,10 +161,11 @@ func (t *fakeTarget) Stop(context.Context) error {
 // installation once the source's ingress is down and the target runs (or,
 // in the Coolify shape, once the domain was moved).
 type fakeProber struct {
-	w      *world
-	probes int
-	moved  bool // Coolify: the operator moved the domain
-	wrong  string
+	w       *world
+	probes  int
+	moved   bool // Coolify: the operator moved the domain
+	wrong   string
+	release string // another release answering (the old installation's)
 }
 
 func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, error) {
@@ -178,6 +180,9 @@ func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, er
 	if p.wrong != "" {
 		return p.wrong, "0.50.0", nil
 	}
+	if p.release != "" {
+		return "inst_fake", p.release, nil
+	}
 	return "inst_fake", "0.50.0", nil
 }
 func (t *fakeTarget) Keys(_ context.Context, kek, bek []byte) (string, string, error) {
@@ -191,6 +196,12 @@ func (t *fakeTarget) WriteJournal(_ context.Context, j *Journal) error {
 	b, _ := j.Encode()
 	t.journals = append(t.journals, b)
 	t.journal = &JournalHead{ID: j.ID, Phase: j.Phase}
+	switch j.Phase {
+	case Transfer:
+		t.gate = true
+	case Open, Released:
+		t.gate = false
+	}
 	return nil
 }
 func (t *fakeTarget) Import(_ context.Context, bundle, scratch string) (CopyRecord, error) {
@@ -763,5 +774,104 @@ func TestAbort(t *testing.T) {
 	w3 := interrupted(t, Switched)
 	if _, err := w3.eng.Abort(context.Background()); err == nil || !strings.Contains(err.Error(), "goes forward only") {
 		t.Fatalf("an abort after the switch: %v", err)
+	}
+}
+
+// The same installation's id with the old release is the old installation
+// answering: the check fails, the address goes back.
+func TestTheOldReleaseAnswering(t *testing.T) {
+	w := newWorld(t)
+	w.prober.release = "0.23.0"
+	w.eng.Options.TransferTimeout = 4 * time.Second
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "release 0.23.0, not the target's 0.50.0") || j.Phase != Released || containsCall(w.src.calls, "migrated-out gate-1") {
+		t.Fatalf("%+v %v", j, err)
+	}
+	// Coolify: still waiting, nothing undone.
+	w = newWorld(t)
+	w.eng.Options.Ingress, w.eng.Options.TransferTimeout = Coolify, 4*time.Second
+	w.prober.release, w.prober.moved = "0.23.0", true
+	if _, err := w.eng.Run(context.Background(), false); !errors.Is(err, ErrAwaitingOperator) {
+		t.Fatal(err)
+	}
+	if j, err = w.eng.Resume(context.Background()); err == nil || !strings.Contains(err.Error(), "release 0.23.0") || j.Phase != Transfer {
+		t.Fatalf("coolify: %+v %v", j, err)
+	}
+}
+
+// Open interrupted: the gate not removed (the target's journal not
+// written), or a kill before the target started. --resume finishes it;
+// done, it changes nothing.
+func TestAnOpenFinishedOnResume(t *testing.T) {
+	w := newWorld(t)
+	w.tgt.fail["journal open"] = errors.New("the transfer's gate could not be removed")
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "varlatch migrate --resume finishes it") || j.Phase != Open {
+		t.Fatalf("%+v %v", j, err)
+	}
+	if w.tgt.journal.Phase != Switched || !w.tgt.gate || w.tgt.running {
+		t.Fatalf("the target: %+v gate %v running %v", w.tgt.journal, w.tgt.gate, w.tgt.running)
+	}
+	delete(w.tgt.fail, "journal open")
+	if j, err = w.eng.Resume(context.Background()); err != nil || w.tgt.journal.Phase != Open || w.tgt.gate || !w.tgt.running {
+		t.Fatalf("resume: %+v %v; target %+v gate %v running %v", j, err, w.tgt.journal, w.tgt.gate, w.tgt.running)
+	}
+	// Killed after the journal said open, before the start.
+	w.tgt.running = false
+	if _, err := w.eng.Resume(context.Background()); err != nil || !w.tgt.running {
+		t.Fatalf("a kill before the start: %v, running %v", err, w.tgt.running)
+	}
+	n := len(w.tgt.calls)
+	if _, err := w.eng.Resume(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range w.tgt.calls[n:] {
+		if c != "describe" {
+			t.Fatalf("a resume of a finished open did %s", c)
+		}
+	}
+}
+
+// An undo whose target journal could not say released (its gate stuck):
+// --resume finishes it, and a new migration can start.
+func TestAReleaseFinishedOnResume(t *testing.T) {
+	w := newWorld(t)
+	w.prober.wrong = "inst_other"
+	w.eng.Options.TransferTimeout = 4 * time.Second
+	w.tgt.fail["journal released"] = errors.New("the transfer's gate could not be removed")
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "varlatch migrate --resume finishes it") || j.Phase != Released || !w.tgt.gate {
+		t.Fatalf("%+v %v gate %v", j, err, w.tgt.gate)
+	}
+	delete(w.tgt.fail, "journal released")
+	if _, err := w.eng.Resume(context.Background()); err != nil || w.tgt.gate || w.tgt.journal.Phase != Released {
+		t.Fatalf("resume: %v gate %v %+v", err, w.tgt.gate, w.tgt.journal)
+	}
+	w.prober.wrong = ""
+	if j, err := w.eng.Run(context.Background(), false); err != nil || j.Phase != Open {
+		t.Fatalf("the next migration: %+v %v", j, err)
+	}
+}
+
+// A journal of 7.4a's development builds (transfer a string) still reads.
+func TestAnOlderJournal(t *testing.T) {
+	dir := t.TempDir()
+	text := `{"format":1,"id":"mig_cccccccccccccccccccccccccc","phase":"dry-run","stopped":true,"dryRunOnly":true,"source":{"kind":"compose","dir":"/x","release":"0.23.0","image":"i","digest":"sha256:x","digestRepository":"r"},` +
+		`"target":{"config":"/c","dataDir":"/d"},"maxDowntimeSeconds":600,"drainSeconds":60,"transfer":"none: the address transfer is slice 7.4b's","history":[]}`
+	if err := os.WriteFile(filepath.Join(dir, JournalFile), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	j, err := Status(dir)
+	if err != nil || j == nil || j.Phase != DryRun || j.Transfer != nil {
+		t.Fatalf("%+v %v", j, err)
+	}
+}
+
+func TestValidUnit(t *testing.T) {
+	for name, ok := range map[string]bool{"varlatchd": true, "varlatchd.service": true, "varlatch-go@x.service": true,
+		"-H": false, "--host=x": false, "/etc/x": false, "a/b": false, "": false, "a b": false} {
+		if ValidUnit(name) != ok {
+			t.Errorf("%q: %v", name, !ok)
+		}
 	}
 }

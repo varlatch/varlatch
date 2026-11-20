@@ -31,6 +31,7 @@ func TestMigrateCommand(t *testing.T) {
 		{[]string{"migrate", "--resume", "--dry-run", "--config", "/c", "--bek-file", "/b", "--backup-destination", "d", "--read-credentials-file", "/r"}, "neither takes --dry-run"},
 		{[]string{"migrate", "--max-downtime", "soon"}, "--max-downtime takes a duration"},
 		{[]string{"migrate", "--frm", "/x"}, "unknown option --frm"},
+		{[]string{"migrate", "--ingress", "public", "--unit", "--host=x"}, "--unit takes a systemd unit's name"},
 	} {
 		if code, _, errOut := run(c.args...); code != ExitUsage || !strings.Contains(errOut, c.why) {
 			t.Errorf("%q: %d %q, want %q", c.args, code, errOut, c.why)

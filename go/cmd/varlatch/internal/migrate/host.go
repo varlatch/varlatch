@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -32,6 +33,13 @@ func (h *Host) unit() string {
 	return h.Unit
 }
 
+// unitName is a systemd unit's name as systemctl takes it as an argument:
+// no option (a leading -), no path.
+var unitName = regexp.MustCompile(`^[A-Za-z0-9:_.\\@][A-Za-z0-9:_.\\@-]*$`)
+
+// ValidUnit says whether name may be given to systemctl as a unit.
+func ValidUnit(name string) bool { return len(name) <= 256 && unitName.MatchString(name) }
+
 // Start is `systemctl start <unit>`.
 func (h *Host) Start(ctx context.Context) error { return h.systemctl(ctx, "start") }
 
@@ -39,6 +47,9 @@ func (h *Host) Start(ctx context.Context) error { return h.systemctl(ctx, "start
 func (h *Host) Stop(ctx context.Context) error { return h.systemctl(ctx, "stop") }
 
 func (h *Host) systemctl(ctx context.Context, verb string) error {
+	if !ValidUnit(h.unit()) {
+		return fmt.Errorf("%q is not a systemd unit's name", h.unit())
+	}
 	r, err := h.Run.Run(ctx, "", "systemctl", []string{verb, h.unit()}, nil)
 	if err != nil {
 		return err
@@ -75,12 +86,17 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		PublicURL   string       `json:"publicUrl"`
 		Listen      string       `json:"listen"`
 		ListenHTTPS string       `json:"listenHttps"`
+		Gate        *bool        `json:"migrationGate"`
+		Running     bool         `json:"running"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &s); err != nil || s.DataDir == "" {
 		return info, TargetState{}, errors.New("varlatchd admin migrate state did not answer in JSON")
 	}
+	if s.Release == "" || s.Gate == nil {
+		return info, TargetState{}, errors.New("the target's varlatchd is older than this varlatch (its admin migrate state names no release, address or gate): install the varlatchd of this release")
+	}
 	info.DataDir, info.Release, info.PublicURL, info.Listen, info.ListenHTTPS = s.DataDir, s.Release, s.PublicURL, s.Listen, s.ListenHTTPS
-	return info, TargetState{Journal: s.Journal, Database: s.Database}, nil
+	return info, TargetState{Journal: s.Journal, Database: s.Database, Gate: *s.Gate, Running: s.Running}, nil
 }
 
 // Keys is `admin migrate keys`, the keys on its stdin as JSON, each

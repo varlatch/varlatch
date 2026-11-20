@@ -226,12 +226,13 @@ func TestHostCommands(t *testing.T) {
 	pre := "/usr/bin/varlatchd admin migrate "
 	report := `{"passed":false,"bundle":{},"checks":[{"name":"rows","passed":false,"checked":902,"failures":[{"table":"grants","what":"row 2 differs from the source's in revoked_at"}],"more":0},{"name":"audit","passed":true,"checked":77,"failures":[],"more":0}]}`
 	run := &scripted{t: t, answers: map[string]Ran{
-		pre + "state --config": {Answer: []byte(`{"journal":{"format":1,"id":"mig_cccccccccccccccccccccccccc","phase":"preflight"},"database":false,"dataDir":"/var/lib/varlatch"}`)},
-		pre + "state --write":  {Answer: []byte(`{}`)},
-		pre + "keys":           {Answer: []byte(`{"rootKek":"written","bek":"unchanged"}`)},
-		pre + "import":         {Answer: []byte(`{"installationId":"inst_x","direction":"forward","tables":58,"rows":902,"perTable":{},"sessionsEnded":1,"credentialsRevoked":1,"migratedPosition":48}`)},
-		pre + "check":          {Code: 1, Answer: []byte(report)},
-		pre + "discard --id":   {Answer: []byte(`{"removed":["varlatch.db"]}`)},
+		pre + "state --config": {Answer: []byte(`{"journal":{"format":1,"id":"mig_cccccccccccccccccccccccccc","phase":"preflight"},"database":false,"dataDir":"/var/lib/varlatch",` +
+			`"release":"0.50.0","publicUrl":"https://v.example.test","listen":"127.0.0.1:8686","listenHttps":"","migrationGate":false,"running":false}`)},
+		pre + "state --write": {Answer: []byte(`{}`)},
+		pre + "keys":          {Answer: []byte(`{"rootKek":"written","bek":"unchanged"}`)},
+		pre + "import":        {Answer: []byte(`{"installationId":"inst_x","direction":"forward","tables":58,"rows":902,"perTable":{},"sessionsEnded":1,"credentialsRevoked":1,"migratedPosition":48}`)},
+		pre + "check":         {Code: 1, Answer: []byte(report)},
+		pre + "discard --id":  {Answer: []byte(`{"removed":["varlatch.db"]}`)},
 	}}
 	h := &Host{Varlatchd: "/usr/bin/varlatchd", Config: conf, Run: run}
 	ctx := context.Background()
@@ -325,7 +326,7 @@ func TestHostServiceAndAddress(t *testing.T) {
 	run := &scripted{t: t, answers: map[string]Ran{
 		"systemctl": {},
 		"/usr/bin/varlatchd admin migrate state": {Answer: []byte(`{"journal":null,"database":false,"dataDir":"/var/lib/varlatch","release":"0.50.0",` +
-			`"publicUrl":"https://vault.example.test/","listen":"127.0.0.1:8686","listenHttps":":443"}`)},
+			`"publicUrl":"https://vault.example.test/","listen":"127.0.0.1:8686","listenHttps":":443","migrationGate":false,"running":false}`)},
 	}}
 	h := &Host{Varlatchd: "/usr/bin/varlatchd", Config: "/etc/varlatch/varlatchd.conf", Run: run, Unit: "varlatchd-go"}
 	if err := h.Start(context.Background()); err != nil {
@@ -337,6 +338,15 @@ func TestHostServiceAndAddress(t *testing.T) {
 	info, _, err := h.Describe(context.Background())
 	if err != nil || info.Release != "0.50.0" || info.PublicURL != "https://vault.example.test/" || info.ListenHTTPS != ":443" || info.Listen != "127.0.0.1:8686" {
 		t.Fatalf("%+v %v", info, err)
+	}
+	// An older varlatchd: its state names no release or gate.
+	old := &Host{Varlatchd: "/usr/bin/varlatchd-old", Run: &scripted{t: t, answers: map[string]Ran{
+		"/usr/bin/varlatchd-old admin migrate state": {Answer: []byte(`{"journal":null,"database":false,"dataDir":"/var/lib/varlatch"}`)}}}}
+	if _, _, err := old.Describe(context.Background()); err == nil || !strings.Contains(err.Error(), "older than this varlatch") {
+		t.Fatalf("an older varlatchd: %v", err)
+	}
+	if err := (&Host{Run: run, Unit: "--host=x"}).Start(context.Background()); err == nil {
+		t.Fatal("an option as the unit")
 	}
 	if run.ran[0] != "systemctl start varlatchd-go" || run.ran[1] != "systemctl stop varlatchd-go" {
 		t.Fatalf("%q", run.ran)

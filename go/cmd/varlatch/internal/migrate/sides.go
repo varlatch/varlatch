@@ -155,6 +155,10 @@ type TargetInfo struct {
 type TargetState struct {
 	Journal  *JournalHead
 	Database bool
+	// Gate is whether the transfer's gate stands; Running whether the
+	// target's varlatchd runs.
+	Gate    bool
+	Running bool
 }
 
 // JournalHead is what the target's journal says.

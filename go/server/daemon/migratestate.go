@@ -12,10 +12,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"time"
 
 	"golang.org/x/term"
 
@@ -206,19 +208,25 @@ func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout 
 			owner = statOwner(st)
 		}
 		// The transfer's gate: written before the journal says transfer,
-		// removed once it says open or released (writeTransferGate).
+		// removed before it says open or released, so a journal never
+		// says either while the gate stands (writeTransferGate).
 		if h.Phase == "transfer" {
 			if err := writeTransferGate(cfg.DataDir, h.ID, owner); err != nil {
 				return fail(ExitFailure, "%v; nothing was written", err)
 			}
 		}
+		if h.Phase == "open" || h.Phase == "released" {
+			prior := old.Phase
+			if !ok {
+				prior = "nothing"
+			}
+			if err := removeTransferGate(cfg.DataDir, h.ID); err != nil {
+				return fail(ExitFailure, "the transfer's gate %s could not be removed (%v), so the journal still says %s; remove that file by hand (it is the migration's gate, nothing else), then run varlatch migrate --resume",
+					filepath.Join(cfg.DataDir, backup.GateFile), err, prior)
+			}
+		}
 		if err := writeDurably(filepath.Join(cfg.DataDir, JournalFile), append(compact.Bytes(), '\n'), owner); err != nil {
 			return fail(ExitFailure, "%v", err)
-		}
-		if h.Phase == "open" || h.Phase == "released" {
-			if err := removeTransferGate(cfg.DataDir, h.ID); err != nil {
-				return fail(ExitFailure, "the journal says %s, but the transfer's gate stays: %v", h.Phase, err)
-			}
 		}
 	}
 	b, err := os.ReadFile(filepath.Join(cfg.DataDir, JournalFile))
@@ -241,6 +249,12 @@ func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout 
 	if cfg.PublicHTTPS != nil {
 		https = cfg.PublicHTTPS.Listen
 	}
+	gate, gerr := backup.ReadGate(cfg.DataDir)
+	running := false
+	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 2*time.Second); err == nil {
+		_ = conn.Close()
+		running = true
+	}
 	out, _ := json.Marshal(struct {
 		Journal     json.RawMessage `json:"journal"`
 		Database    bool            `json:"database"`
@@ -249,7 +263,13 @@ func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout 
 		PublicURL   string          `json:"publicUrl"`
 		Listen      string          `json:"listen"`
 		ListenHTTPS string          `json:"listenHttps"`
-	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https})
+		// MigrationGate is whether the transfer's gate stands (an
+		// unreadable gate counts: it isolates as well); Running whether
+		// a varlatchd answers on the data directory's control socket.
+		MigrationGate bool `json:"migrationGate"`
+		Running       bool `json:"running"`
+	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https,
+		gerr != nil || (gate != nil && gate.Kind == "migration"), running})
 	fmt.Fprintln(stdout, string(out))
 	return ExitOK
 }

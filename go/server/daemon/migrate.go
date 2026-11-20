@@ -136,6 +136,11 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	if err != nil {
 		return fail(ExitConfig, "%v; nothing was written", err)
 	}
+	// Reading the state writes nothing: it answers beside a running
+	// varlatchd too, and says whether one runs.
+	if a.sub == "state" && !a.write {
+		return runMigrateState(cfg, a, stdin, stdout, fail)
+	}
 	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second); err == nil {
 		_ = conn.Close()
 		return fail(ExitFailure, "varlatchd is running on %s: stop it first; nothing was written", cfg.DataDir)
