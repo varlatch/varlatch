@@ -5,12 +5,15 @@
 package daemon
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
@@ -128,4 +131,59 @@ func TestTheImportBesideAHeldNode(t *testing.T) {
 		}
 		refused(t, in, "not what a tailnet enrolment leaves")
 	})
+}
+
+// `admin migrate keys` writes the new tailnet node's auth key into the
+// target's tailnet_auth_key_file (0600) beside the Root KEK, finds it the
+// same on a second run, refuses another before anything is written, and
+// prints none; `admin migrate state` reports the tailnet's settings and
+// the node's hold, never the key.
+func TestTheTailnetAuthKeyAndState(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	keyFile := filepath.Join(filepath.Dir(in.conf), "tailnet-auth-key")
+	in.write(t, "backup_interval = off\ntailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_auth_key_file = "+keyFile+"\n")
+	_ = os.Remove(in.kekFile)
+	kek := []byte(hex.EncodeToString(envelope.GenerateKey()) + "\n")
+	authKey := []byte("node-key-" + hex.EncodeToString(envelope.GenerateKey()[:8]))
+	doc := func(key []byte) []byte {
+		b, err := json.Marshal(struct {
+			RootKEK        []byte `json:"rootKek"`
+			TailnetAuthKey []byte `json:"tailnetAuthKey"`
+		}{kek, key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	code, out, errOut := runAdmin(t, "migrate", "state", "--config", in.conf)
+	if code != ExitOK || !strings.Contains(out, `"tailnet":{"hostname":"vault","tags":["tag:varlatch"],"httpsPort":0,"authKey":false,"enrolled":false,"heldAs":"","pinnedTo":""}`) {
+		t.Fatalf("state before: %d %q %q", code, out, errOut)
+	}
+	code, out, errOut = migrateWith(t, in.conf, doc(authKey), "keys")
+	if code != ExitOK || strings.TrimSpace(out) != `{"rootKek":"written","bek":"absent","tailnetAuthKey":"written"}` || strings.Contains(out+errOut, string(authKey)) {
+		t.Fatalf("keys: %d %q %q", code, out, errOut)
+	}
+	if b, err := os.ReadFile(keyFile); err != nil || strings.TrimSpace(string(b)) != string(authKey) {
+		t.Fatalf("the auth key file: %q %v", b, err)
+	}
+	if st, err := os.Stat(keyFile); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("the auth key file's mode: %v %v", st, err)
+	}
+	code, out, _ = migrateWith(t, in.conf, doc(authKey), "keys")
+	if code != ExitOK || strings.TrimSpace(out) != `{"rootKek":"unchanged","bek":"absent","tailnetAuthKey":"unchanged"}` {
+		t.Fatalf("keys again: %d %q", code, out)
+	}
+	if code, _, errOut := migrateWith(t, in.conf, doc([]byte("another-key")), "keys"); code != ExitFailure || !strings.Contains(errOut, "another key") {
+		t.Fatalf("another auth key: %d %q", code, errOut)
+	}
+	enrolLike(t, in.data, true)
+	code, out, _ = runAdmin(t, "migrate", "state", "--config", in.conf)
+	if code != ExitOK || !strings.Contains(out, `"authKey":true,"enrolled":true,"heldAs":"vault-vl-0a1b2c3d4e5f-n","pinnedTo":"corp.ts.net"`) || strings.Contains(out, string(authKey)) {
+		t.Fatalf("state after: %d %q", code, out)
+	}
+	// Without tailnet = on, an auth key is refused.
+	in.write(t, "backup_interval = off\n")
+	if code, _, errOut := migrateWith(t, in.conf, doc(authKey), "keys"); code != ExitConfig || !strings.Contains(errOut, "tailnet_auth_key_file") {
+		t.Fatalf("an auth key without the tailnet: %d %q", code, errOut)
+	}
 }

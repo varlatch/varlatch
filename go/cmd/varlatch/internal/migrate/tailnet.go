@@ -289,7 +289,8 @@ func (e *Engine) handoffEngine(j *Journal, reverse bool) (*tailhandoff.Engine, e
 		Deadline:   o.Deadline,
 		UndoWait:   o.UndoWait,
 		RetryEvery: o.RetryEvery,
-		Now:        e.Options.Now,
+		// Real time, never the migration's clock: the handoff's deadlines
+		// are contexts', and its issuance count's week is the CA's.
 	}, nil
 }
 

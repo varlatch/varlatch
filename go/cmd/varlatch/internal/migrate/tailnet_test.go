@@ -1,0 +1,376 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package migrate
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
+	"github.com/varlatch/varlatch/go/lib/tailcontrol/tailcontroltest"
+	"github.com/varlatch/varlatch/go/lib/tailhandoff"
+)
+
+// tnSource is a source with a Tailscale sidecar.
+type tnSource struct {
+	*fakeSource
+	info    TailnetInfo
+	mu      sync.Mutex
+	running bool // the sidecar
+	stops   int
+	starts  int
+}
+
+func (s *tnSource) Tailnet(context.Context) (TailnetInfo, error) { return s.info, nil }
+func (s *tnSource) StopTailnet(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.running, s.stops = false, s.stops+1
+	return s.call("stop tailnet")
+}
+func (s *tnSource) StartTailnet(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.running, s.starts = true, s.starts+1
+	return s.call("start tailnet")
+}
+func (s *tnSource) isRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running
+}
+func (s *tnSource) TailnetCertExpiry(context.Context, string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+func (s *tnSource) RenewTailnetCert(context.Context, string, time.Duration) error { return nil }
+
+// tnTarget is a target whose node enrolls in the fake control plane.
+type tnTarget struct {
+	*fakeTarget
+	cp       *tailcontroltest.Tailscale
+	plane    tailcontrol.ControlPlane
+	newID    string // the target's device
+	opened   bool
+	openErr  error
+	never    bool // no client node ever sees the name reach the target
+	enrolled string
+}
+
+func (t *tnTarget) TailnetEnroll(ctx context.Context, hostname string, _ bool) (EnrolledNode, error) {
+	if err := t.call("enroll " + hostname); err != nil {
+		return EnrolledNode{}, err
+	}
+	// The node joins under its temporary name.
+	if t.enrolled != hostname {
+		if _, err := tailcontrol.RenameAndReadBack(ctx, t.plane, t.newID, hostname); err != nil {
+			return EnrolledNode{}, err
+		}
+		t.enrolled = hostname
+	}
+	t.info.Tailnet.Enrolled, t.info.Tailnet.HeldAs = true, hostname
+	return EnrolledNode{DNSName: hostname + "." + t.cp.Suffix, StableID: "n" + t.newID, Suffix: t.cp.Suffix, Pinned: t.cp.Suffix, Open: true}, nil
+}
+func (t *tnTarget) TailnetCertificate(context.Context, string) error { return nil }
+func (t *tnTarget) TailnetCertExpiry(context.Context, string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+func (t *tnTarget) TailnetOpen(context.Context) error {
+	if err := t.call("tailnet open"); err != nil {
+		return err
+	}
+	if t.openErr != nil {
+		return t.openErr
+	}
+	t.opened = true
+	t.info.Tailnet.HeldAs = ""
+	return nil
+}
+func (t *tnTarget) TailnetReaches(_ context.Context, name, stableID string, _ time.Duration) (bool, error) {
+	if t.never {
+		return false, nil
+	}
+	n := 0
+	ok := false
+	for _, d := range t.cp.Nodes() {
+		if strings.EqualFold(d.Name, name) {
+			n++
+			ok = d.NodeID == stableID
+		}
+	}
+	return n == 1 && ok, nil
+}
+
+// failingProber answers as the world's prober, but fails once the
+// target's tailnet listener opened (the combined final check).
+type failingProber struct {
+	*fakeProber
+	t *tnTarget
+}
+
+func (p failingProber) Probe(ctx context.Context, origin string) (string, string, error) {
+	if p.t.opened {
+		return "", "", errors.New("connection reset")
+	}
+	return p.fakeProber.Probe(ctx, origin)
+}
+
+type tnWorld struct {
+	*world
+	src *tnSource
+	tgt *tnTarget
+	cp  *tailcontroltest.Tailscale
+}
+
+func newTailnetWorld(t *testing.T) *tnWorld {
+	t.Helper()
+	w := newWorld(t)
+	cp := tailcontroltest.NewTailscale(
+		tailcontroltest.Node{ID: "old", NodeID: "nold", Name: "vault", Online: true},
+		tailcontroltest.Node{ID: "new", NodeID: "nnew", Name: "localhost-1", Online: true},
+	)
+	t.Cleanup(cp.Close)
+	plane, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: cp.URL, ClientID: cp.ClientID, ClientSecret: cp.ClientSecret, HTTP: cp.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := &tnSource{fakeSource: w.src, info: TailnetInfo{Enabled: true, Machine: "vault", Suffix: cp.Suffix}, running: true}
+	w.tgt.info.Tailnet = &TargetTailnet{Hostname: "vault", Tags: []string{"tag:varlatch"}, AuthKey: true}
+	tgt := &tnTarget{fakeTarget: w.tgt, cp: cp, plane: plane, newID: "new"}
+	w.eng.Source, w.eng.Target = src, tgt
+	w.eng.Tailnet = &TailnetOptions{Control: plane, Deadline: 3 * time.Second, UndoWait: 3 * time.Second, RetryEvery: 20 * time.Millisecond}
+	return &tnWorld{world: w, src: src, tgt: tgt, cp: cp}
+}
+
+func (w *tnWorld) names() map[string]string {
+	out := map[string]string{}
+	for _, n := range w.cp.Nodes() {
+		out[n.ID] = n.Name
+	}
+	return out
+}
+
+// The tailnet name moves with the migration (decisions 11 and 12): the
+// target's node enrolled, held, before the barrier; the public address
+// first, then the name, then the combined check; open. The handoff's
+// state is in the journal, both places.
+func TestTheTailnetNameMoves(t *testing.T) {
+	w := newTailnetWorld(t)
+	j, err := w.eng.Run(context.Background(), false)
+	if err != nil || j.Phase != Open {
+		t.Fatalf("%v %+v", err, j)
+	}
+	rec := j.Tailnet
+	if rec == nil || rec.Handoff == nil || rec.Handoff.Phase != tailhandoff.Done || rec.Checked == "" || rec.ServingID != "old" || rec.IncomingID != "new" {
+		t.Fatalf("the handoff's record: %+v", rec)
+	}
+	old, _ := tailcontrol.TempName("vault", rec.Operation, tailcontrol.RoleOld)
+	if n := w.names(); n["new"] != "vault" || n["old"] != old {
+		t.Fatalf("names %v", n)
+	}
+	if w.src.running || !w.tgt.opened {
+		t.Fatalf("sidecar running %v, target's tailnet open %v", w.src.running, w.tgt.opened)
+	}
+	// Decision 12's order: the public address before the tailnet name.
+	calls := w.src.calls
+	if i, k := index(calls, "stop public"), index(calls, "stop tailnet"); i < 0 || k < 0 || i > k {
+		t.Fatalf("the order: %q", calls)
+	}
+	// The journal holds the handoff, in both places, and no secret.
+	saved, err := readJournal(w.src.dir)
+	if err != nil || saved.Tailnet == nil || saved.Tailnet.Handoff.Phase != tailhandoff.Done {
+		t.Fatalf("the journal: %+v %v", saved, err)
+	}
+	if last := w.tgt.journals[len(w.tgt.journals)-1]; !strings.Contains(string(last), `"handoff"`) {
+		t.Fatalf("the target's journal has no handoff: %s", last)
+	}
+	w.noSecrets(t)
+	for _, f := range w.tgt.journals {
+		if strings.Contains(string(f), w.cp.ClientSecret) {
+			t.Fatal("the OAuth client's secret in a journal")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(w.src.dir, LedgerFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+}
+
+func index(calls []string, c string) int {
+	for i, x := range calls {
+		if x == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// A handoff that fails (no client reaches the name) is undone by
+// tailhandoff, then the migration is: the old node holds the name and its
+// sidecar serves again, the address goes back, the barrier is lifted.
+func TestATailnetFailureUndoesTheMigration(t *testing.T) {
+	w := newTailnetWorld(t)
+	w.tgt.never = true
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || j.Phase != Released || !strings.Contains(err.Error(), "the tailnet handoff") {
+		t.Fatalf("%v %+v", err, j)
+	}
+	temp, _ := tailcontrol.TempName("vault", j.Tailnet.Operation, tailcontrol.RoleNew)
+	if n := w.names(); n["old"] != "vault" || n["new"] != temp {
+		t.Fatalf("names %v", n)
+	}
+	if !w.src.running || w.tgt.opened || w.src.ingressDown {
+		t.Fatalf("sidecar running %v, target's tailnet open %v, the source's ingress down %v", w.src.running, w.tgt.opened, w.src.ingressDown)
+	}
+	if j.Tailnet.Handoff.Phase != tailhandoff.Undone {
+		t.Fatalf("the handoff: %+v", j.Tailnet.Handoff)
+	}
+	// A new run goes on with the same node, held under the same name.
+	w.tgt.never = false
+	j2, err := w.eng.Run(context.Background(), false)
+	if err != nil || j2.Phase != Open || j2.Tailnet.Operation != j.Tailnet.Operation {
+		t.Fatalf("the next run: %v %+v", err, j2)
+	}
+}
+
+// The combined final check fails after the name moved: the undo gives the
+// name back first (the reverse handoff: the old node takes it from the
+// target's), then the address.
+func TestTheCombinedCheckFailureGivesTheNameBack(t *testing.T) {
+	w := newTailnetWorld(t)
+	w.eng.Prober = failingProber{fakeProber: w.prober, t: w.tgt}
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || j.Phase != Released || !strings.Contains(err.Error(), "the combined final check") {
+		t.Fatalf("%v %+v", err, j)
+	}
+	if j.Tailnet.Reverse == nil || j.Tailnet.Reverse.Phase != tailhandoff.Done {
+		t.Fatalf("the reverse: %+v", j.Tailnet.Reverse)
+	}
+	if n := w.names(); n["old"] != "vault" {
+		t.Fatalf("names %v", n)
+	}
+	if !w.src.running || w.tgt.running || w.src.ingressDown {
+		t.Fatalf("sidecar running %v, target running %v, the source's ingress down %v", w.src.running, w.tgt.running, w.src.ingressDown)
+	}
+}
+
+// The control plane lost while the handoff undoes: both stay closed, the
+// migration waits in its transfer; --resume finishes the handoff's undo,
+// then the migration's.
+func TestATailnetUndoCutShortIsResumed(t *testing.T) {
+	w := newTailnetWorld(t)
+	// No client reaches the name until the deadline; by then the control
+	// plane is gone, so the handoff's undo cannot give the name back.
+	w.tgt.never = true
+	w.eng.Tailnet.Deadline, w.eng.Tailnet.UndoWait = 600*time.Millisecond, 300*time.Millisecond
+	stopping := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stopping:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+			if !w.src.isRunning() {
+				// The sidecar stopped: the switch began. Cut the control
+				// plane once its renames are made.
+				time.Sleep(250 * time.Millisecond)
+				w.cp.SetUnavailable(true)
+				return
+			}
+		}
+	}()
+	defer close(stopping)
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || j.Phase != Transfer || !strings.Contains(err.Error(), "--resume") {
+		t.Fatalf("%v %+v", err, j)
+	}
+	if j.Tailnet.Handoff.Phase != tailhandoff.UndoPending || w.src.running {
+		t.Fatalf("the handoff %+v, sidecar running %v", j.Tailnet.Handoff, w.src.running)
+	}
+	w.cp.SetUnavailable(false)
+	j, err = w.eng.Resume(context.Background())
+	if err == nil || j.Phase != Released {
+		t.Fatalf("resume: %v %+v", err, j)
+	}
+	if n := w.names(); n["old"] != "vault" || !w.src.running {
+		t.Fatalf("names %v, sidecar running %v", n, w.src.running)
+	}
+}
+
+// The authority is required for a source with a tailnet address, and
+// refused for one without; the target must take the same name.
+func TestTheTailnetPreflight(t *testing.T) {
+	w := newTailnetWorld(t)
+	w.eng.Tailnet = nil
+	if _, err := w.eng.Run(context.Background(), true); err == nil || !errors.Is(err, ErrNoTailnetAuthority) {
+		t.Fatalf("no authority: %v", err)
+	}
+	w = newTailnetWorld(t)
+	w.src.info.Enabled = false
+	if _, err := w.eng.Run(context.Background(), true); err == nil || !strings.Contains(err.Error(), "serves no tailnet address") {
+		t.Fatalf("an authority without a tailnet: %v", err)
+	}
+	w = newTailnetWorld(t)
+	w.tgt.info.Tailnet.Hostname = "other"
+	if _, err := w.eng.Run(context.Background(), true); err == nil || !strings.Contains(err.Error(), "set tailnet_hostname = vault") {
+		t.Fatalf("another hostname: %v", err)
+	}
+	w = newTailnetWorld(t)
+	w.tgt.info.Tailnet = nil
+	if _, err := w.eng.Run(context.Background(), true); err == nil || !strings.Contains(err.Error(), "tailnet = off") {
+		t.Fatalf("tailnet off: %v", err)
+	}
+	// A dry run enrolls and prepares, and renames nothing.
+	w = newTailnetWorld(t)
+	j, err := w.eng.Run(context.Background(), true)
+	if err != nil || j.Tailnet == nil || j.Tailnet.Handoff.Phase != tailhandoff.Prepared {
+		t.Fatalf("dry run: %v %+v", err, j)
+	}
+	if n := w.names(); n["old"] != "vault" || !w.src.running {
+		t.Fatalf("a dry run renamed: %v", n)
+	}
+	if j.DryRun.TransferMs != (transferEstimate(Public) + 10*time.Second).Milliseconds() {
+		t.Fatalf("the projection's transfer: %d", j.DryRun.TransferMs)
+	}
+}
+
+func TestOperationOf(t *testing.T) {
+	temp, _ := tailcontrol.TempName("vault", "abcdefghij", tailcontrol.RoleNew)
+	if op := operationOf("vault", temp); op != "abcdefghij" {
+		t.Fatalf("%q", op)
+	}
+	for _, held := range []string{"vault", "vault-vl-abcdefghij-o", "other-vl-abcdefghij-n", "vault-vl--n"} {
+		if op := operationOf("vault", held); op != "" {
+			t.Errorf("%s: %q", held, op)
+		}
+	}
+}
+
+// The issuance count is kept across runs, in the source's directory.
+func TestTheLedgerFile(t *testing.T) {
+	l := &fileLedger{path: filepath.Join(t.TempDir(), LedgerFile)}
+	ctx := context.Background()
+	now := time.Now()
+	a, err := l.Start(ctx, "Vault", now.Add(-8*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = l.End(ctx, a, tailhandoff.Issued, now)
+	b, _ := l.Start(ctx, "vault", now.Add(-time.Hour))
+	_ = l.End(ctx, b, tailhandoff.Refused, now)
+	_, _ = l.Start(ctx, "vault", now) // never ended: counts
+	if n, err := l.Count(ctx, "vault", now.Add(-7*24*time.Hour)); err != nil || n != 1 {
+		t.Fatalf("count %d %v", n, err)
+	}
+	if st, err := os.Stat(l.path); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("the ledger's mode: %v %v", st, err)
+	}
+	if err := l.End(ctx, "nope", tailhandoff.Issued, now); err == nil {
+		t.Fatal("an unknown attempt ended")
+	}
+}
