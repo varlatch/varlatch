@@ -477,6 +477,17 @@ func (e *Engine) switchTailnet(ctx context.Context, j *Journal) error {
 	default:
 		e.say("Tailnet: the handoff was interrupted (%s): it is resumed.", rec.Handoff.Phase)
 		st, err = he.Resume(ctx, rec.Operation)
+		if rec.Handoff != nil && rec.Handoff.Phase == tailhandoff.Undone {
+			// tailhandoff undoes a switch a crash cut short; --resume goes
+			// on with the migration, so the name moves again (--abort is
+			// what undoes it).
+			e.say("Tailnet: the interrupted handoff was undone; the name moves again.")
+			plan := rec.Handoff.Plan
+			rec.Handoff = nil
+			if _, err = he.Prepare(ctx, plan); err == nil {
+				st, err = he.Switch(ctx, rec.Operation)
+			}
+		}
 	}
 	var herr *tailhandoff.HandoffError
 	if errors.As(err, &herr) {
@@ -626,7 +637,15 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 		}
 	default:
 		e.say("Tailnet: the name's return was interrupted (%s): it is resumed.", rec.Rollback.Phase)
-		if st, err = he.Resume(ctx, rec.RollbackOperation); err != nil {
+		st, err = he.Resume(ctx, rec.RollbackOperation)
+		if rec.Rollback != nil && rec.Rollback.Phase == tailhandoff.Undone {
+			// Undone by tailhandoff (a switch cut short): --resume goes on
+			// with the reverse, the name handed back again under a new
+			// operation; --abort is what undoes it.
+			e.say("Tailnet: the interrupted return was undone; the name goes back again.")
+			return e.rollbackTailnet(ctx, j)
+		}
+		if err != nil {
 			return e.rollbackTailnetFailed(ctx, j, err)
 		}
 	}
