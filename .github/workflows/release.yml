@@ -531,7 +531,9 @@ jobs:
   # The Go line's single-container image (go/image/Dockerfile; ADR-0059
   # Decision 8, internal docs/design/go-step6.md decision 9, slice 6.10a),
   # built from go-assets' own Linux binaries (the same commit and build
-  # flags as every published binary, checked against SHA256SUMS first),
+  # flags as every published binary, checked against SHA256SUMS first; the
+  # label com.varlatch.release.sha256sums carries SHA256SUMS' own SHA-256,
+  # which binds the signed image to the signed release),
   # for linux/amd64 and linux/arm64, with provenance (mode=max) and SBOM
   # attestations; pushed as ghcr.io/OWNER/varlatchd:<version> and never as
   # latest. Then both platforms' varlatchd and varlatch in the pushed image
@@ -597,7 +599,9 @@ jobs:
           context: .
           file: go/image/Dockerfile
           build-contexts: assets=${{ runner.temp }}/go-assets
-          build-args: VERSION=${{ needs.line.outputs.version }}
+          build-args: |
+            VERSION=${{ needs.line.outputs.version }}
+            RELEASE_SUMS=${{ needs.go-assets.outputs.sums }}
           platforms: linux/amd64,linux/arm64
           provenance: mode=max
           sbom: true
@@ -612,15 +616,19 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
           VERSION: ${{ needs.line.outputs.version }}
           ASSETS: ${{ runner.temp }}/go-assets
+          SUMS: ${{ needs.go-assets.outputs.sums }}
         run: |
           set -euo pipefail
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "the push reported no digest" >&2; exit 1; }
+          [ "$(sha256sum "$ASSETS/SHA256SUMS" | cut -d' ' -f1)" = "$SUMS" ] || { echo "SHA256SUMS is not the one go-assets built" >&2; exit 1; }
           for arch in amd64 arm64; do
             platform=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw \
               | jq -r --arg a "$arch" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest')
             [[ "$platform" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "the image has no linux/$arch manifest" >&2; exit 1; }
             name="vl-release-image-$GITHUB_RUN_ID-$arch"
             docker pull --quiet "$IMAGE@$platform" > /dev/null
+            label=$(docker image inspect "$IMAGE@$platform" --format '{{ index .Config.Labels "com.varlatch.release.sha256sums" }}')
+            [ "$label" = "$SUMS" ] || { echo "the image's linux/$arch label does not name this release's SHA256SUMS" >&2; exit 1; }
             docker create --name "$name" "$IMAGE@$platform" > /dev/null
             for cmd in varlatchd varlatch; do
               docker cp "$name:/opt/varlatch/$cmd" "$RUNNER_TEMP/$cmd-$arch"
@@ -628,7 +636,7 @@ jobs:
                 || { echo "the image's linux/$arch $cmd is not the release's" >&2; docker rm -fv "$name" > /dev/null; exit 1; }
             done
             docker rm -fv "$name" > /dev/null
-            echo "linux/$arch: varlatchd and varlatch are the release's"
+            echo "linux/$arch: varlatchd and varlatch are the release's, and its label names SHA256SUMS ($SUMS)"
           done
       - name: The pushed image as an operator runs it
         env:

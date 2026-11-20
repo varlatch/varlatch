@@ -158,6 +158,20 @@ for platform in linux/amd64 linux/arm64; do
 done
 ```
 
+The image names the release it was built from: its label
+`com.varlatch.release.sha256sums` is the SHA-256 of that release's
+`SHA256SUMS`. The label is part of the signed image, so this ties the
+signed image to the signed assets:
+
+```sh
+sums=$(sha256sum SHA256SUMS | cut -d' ' -f1)
+for platform in linux/amd64 linux/arm64; do
+  label=$(docker buildx imagetools inspect "$IMAGE" --format "{{ json (index .Image \"$platform\") }}" \
+    | jq -r '.config.Labels["com.varlatch.release.sha256sums"]')
+  [ "$label" = "$sums" ] && echo "$platform: built for this release's SHA256SUMS"
+done
+```
+
 Its binaries are the release's, byte for byte, which you can check against
 the `SHA256SUMS` you verified above (repeat with `arm64`):
 

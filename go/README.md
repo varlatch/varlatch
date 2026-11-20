@@ -1706,9 +1706,11 @@ release assets (the named build context `assets`), for both platforms,
 and never pushes: `release.yml` publishes it, from the same assets. On a
 Go-line tag, `go-image` builds it from the release's own Linux binaries
 and pushes `ghcr.io/varlatch/varlatchd:<version>` (never `latest`) with
-provenance and SBOM attestations, checks that both platforms hold those
-binaries byte for byte and runs `check-image.mjs` on the pushed amd64
-image; `go-image-conformance` runs the conformance suites against it (with
+provenance and SBOM attestations and the label
+`com.varlatch.release.sha256sums` (the SHA-256 of the release's
+`SHA256SUMS`, which binds the image to the signed assets), checks that
+both platforms hold those binaries byte for byte and carry that label, and
+runs `check-image.mjs` on the pushed amd64 image; `go-image-conformance` runs the conformance suites against it (with
 varlatchd's conformance build of the same commit in place of the release
 build, which has no probes); only then `go-image-sign` signs it keyless,
 and the release notes give its digest. `docs/operations/verify-release.md`
