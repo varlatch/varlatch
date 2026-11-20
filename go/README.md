@@ -2999,6 +2999,34 @@ migrations.
   - Not yet: the address transfer (7.4b), the image target shape
     (`--to-data`, decision 20's second shape), the interruptions' CI cases
     (7.4c) and the run against a Compose installation of 0.23.0.
+- `varlatch migrate --from-archive`, the backup converter (step 7, slice
+  7.7b; go-step7 decision 18; `cmd/varlatch/internal/migrate` archive.go):
+  a TypeScript archive (format 1 or 2) to a format 3 archive of the same
+  installation (`--out`), by the migration's own path, on a host with
+  Docker. It opens the archive with the BEK (`--bek-file`, a key or a
+  passphrase; a passphrase needs `--out-bek-file`, the key file the output
+  is sealed with) and checks the Root KEK (`--kek-file`) against its
+  canaries, refusing a wrong key, a varlatchd archive, an output that
+  exists or an image not pinned by digest before any container starts.
+  Then an isolated restore: a throwaway PostgreSQL 17.6 (by digest) with
+  `--network none` takes the Secret Plane's dump as the TypeScript
+  restore does, and the last TypeScript release's image (`--ts-image`,
+  by registry digest or local image ID, required until 0.23.0's digest is
+  in `LastTypeScriptDigest`) runs in its namespace, read-only, as this
+  user, with no capability: `migrate` (an older schema brought forward),
+  `admin migration backfill` (the exposure index an archive from before
+  0.20.0 lacks) and `admin migration export --dry-run --digests`, the run
+  key on its stdin. Never a daemon. Then varlatchd, as a process, on a
+  scratch data directory: `admin migrate import`, `admin migrate check`
+  (every check passes) and `admin backup run`, whose archive is placed at
+  `--out` once its installation and key versions are the source's. Both
+  containers and the scratch directory are removed. Its tests: the
+  refusals before any program runs and the conversion's sequence, with
+  fakes; the isolation per pull request in go.yml
+  (`TestArchiveIsolationHasNoNetwork`, Docker); the conversions of
+  release/0.22's generated archives (format 1 and 2 of the seeded
+  installation, format 1 of a 0.7.0 installation), each restored after,
+  in the nightly converter job (`TestConvertArchives`).
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

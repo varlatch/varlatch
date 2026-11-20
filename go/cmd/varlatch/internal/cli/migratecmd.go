@@ -28,6 +28,7 @@ const migrateUsage = `Usage:
                    [--destinations-file <file>] [--ts-cli <program>] [--json]
   varlatch migrate --resume (the same options)
   varlatch migrate --status [--from <compose directory>] [--json]
+  varlatch migrate --from-archive <archive> ... (the backup converter: varlatch migrate --from-archive --help)
                (on the installation's host, as root: --from is the Compose installation of the last
                 TypeScript release, the current directory by default; --config the target's varlatchd.conf)`
 
@@ -101,6 +102,9 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 }
 
 func migrateCommand(r *Run) error {
+	if fromArchive(r.Args) {
+		return migrateArchiveCommand(r)
+	}
 	for _, a := range r.Args {
 		if a == "--help" || a == "-h" {
 			return r.println(migrateUsage)
