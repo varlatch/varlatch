@@ -2843,10 +2843,14 @@ not wired into `varlatch migrate` or varlatchd's restore yet: that is part
   control plane's own listing. The incoming node gives the name back, the
   serving node takes it again (read back), and only then does the serving
   installation reopen.
-  - When the control plane can't be reached, the undo stays pending with
-    both installations closed, and `Resume` finishes it later.
+  - When the control plane can't be reached, the undo stays pending, and
+    neither installation is opened on the tailnet. `Resume` finishes it
+    later.
+  - A restore's serving node is dead, so its listener is never closed or
+    reopened.
   - `Resume` also finishes a switch that crashed while opening the
-    incoming installation.
+    incoming installation, once the name, the certificate and a client's
+    reach hold again; otherwise it undoes it.
 - **What the callers supply:** the journal, the certificates, the issuance
   count (the installation's `certificate_issuances`, #344), the
   installations' listeners, the check from a client node, and a control

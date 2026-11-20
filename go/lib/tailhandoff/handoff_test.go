@@ -161,12 +161,19 @@ type fakeEndpoints struct {
 	closeErr, openErr          error
 	onClose                    func()
 	reopens, closes, openCalls int
+	// strict makes ReopenServing fail when there is nothing to reopen, and
+	// CloseServing when there is nothing to close: a dead node's.
+	strict bool
 }
 
 func (e *fakeEndpoints) CloseServing(context.Context) error {
 	e.mu.Lock()
 	err, hook := e.closeErr, e.onClose
 	e.closes++
+	if e.strict && !e.servingOpen {
+		e.mu.Unlock()
+		return errors.New("there is no serving listener to close")
+	}
 	if err == nil {
 		e.servingOpen = false
 	}
@@ -181,6 +188,9 @@ func (e *fakeEndpoints) ReopenServing(context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.reopens++
+	if e.strict && e.servingOpen {
+		return errors.New("there is nothing to reopen")
+	}
 	e.servingOpen = true
 	return nil
 }
@@ -768,4 +778,134 @@ func TestSwitchNeedsAPreparedOperation(t *testing.T) {
 	if _, err := r.engine.Prepare(ctx, r.forward(t)); err == nil {
 		t.Error("a done operation prepared again")
 	}
+}
+
+// TestAFailedRestoreIsUndone: a restore whose switch fails is undone to
+// Undone, never pending, and never closes or reopens the dead node's
+// listener (the strict fake fails if it is asked to).
+func TestAFailedRestoreIsUndone(t *testing.T) {
+	const rop = "ssssssss24"
+	in, _ := tailcontrol.TempName("vault", rop, tailcontrol.RoleNew)
+	f := tailcontroltest.NewHeadscale(time.Hour,
+		tailcontroltest.Node{ID: "7", Name: "vault", Expires: time.Now().Add(-24 * time.Hour)},
+		tailcontroltest.Node{ID: "8", Name: in, Online: true},
+	)
+	defer f.Close()
+	cp := &tailcontrol.HeadscaleCLI{Run: f.Run}
+	ep := &fakeEndpoints{strict: true}
+	res := &fakeResolver{cp: cp}
+	res.never.Store(true)
+	e := &tailhandoff.Engine{Control: cp, Endpoints: ep, Resolver: res, Journal: &memJournal{}, RetryEvery: 20 * time.Millisecond, Deadline: 300 * time.Millisecond, UndoWait: time.Second}
+	p, _ := tailhandoff.NewRestore(rop, "vault", "7", "8", false)
+	if _, err := e.Prepare(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Switch(ctx, rop)
+	var he *tailhandoff.HandoffError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.Undone || s.Phase != tailhandoff.Undone || s.ServingClosed {
+		t.Fatalf("%+v, %v", s, err)
+	}
+	if ep.closes != 0 || ep.reopens != 0 {
+		t.Errorf("the dead node's listener was closed %d and reopened %d times", ep.closes, ep.reopens)
+	}
+	got := map[string]string{}
+	for _, n := range f.Nodes() {
+		got[n.ID] = n.Name
+	}
+	if got["7"] != "vault" || got["8"] != in {
+		t.Errorf("names %v", got)
+	}
+}
+
+// TestACrashAfterTheReopen: the undo reopened the serving listener and the
+// process died before the journal said Undone; Resume runs the undo again,
+// and ReopenServing, called again, does nothing (the contract).
+func TestACrashAfterTheReopen(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := r.j.Load(ctx, op)
+	s.Phase, s.ServingClosed, s.ServingRenamed, s.IncomingRenamed, s.Failure = tailhandoff.Undoing, true, true, true, "the final check failed"
+	_ = r.j.Save(ctx, s)
+	// The names are back and the listener is open: only the journal is behind.
+	r.ep.servingOpen = true
+	s, err := r.engine.Resume(ctx, op)
+	assertUndone(t, r, s, err)
+	if r.ep.reopens != 1 {
+		t.Errorf("reopened %d times", r.ep.reopens)
+	}
+}
+
+// TestABystanderTakesTheIncomingNameDuringTheUndo: another node takes the
+// incoming node's temporary name while the switch runs; the undo cannot
+// give it back (ErrNameTaken is final, never guessed around) and stays
+// pending with nothing reopened.
+func TestABystanderTakesTheIncomingNameDuringTheUndo(t *testing.T) {
+	r := newRig(t)
+	p := r.forward(t)
+	if _, err := r.engine.Prepare(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	r.engine.Deadline = 400 * time.Millisecond
+	r.engine.UndoWait = 400 * time.Millisecond
+	r.r.never.Store(true)
+	var taken atomic.Bool
+	r.r.onCheck = func() {
+		// The incoming node holds the name now; a bystander takes its old one.
+		if taken.CompareAndSwap(false, true) {
+			if _, err := tailcontrol.RenameAndReadBack(ctx, r.cp, "4", p.IncomingName); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	s, err := r.engine.Switch(ctx, op)
+	var he *tailhandoff.HandoffError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || !errors.Is(err, tailcontrol.ErrNameTaken) {
+		t.Fatalf("%+v, %v", s, err)
+	}
+	if serving, incoming := r.ep.state(); serving || incoming || r.ep.reopens != 0 {
+		t.Errorf("serving open %v, incoming open %v, reopens %d", serving, incoming, r.ep.reopens)
+	}
+}
+
+// TestARenewalNeedsRoomForTwo: renewing the serving certificate before the
+// barrier is one issuance for the name, and the switch another: with four
+// in the week, the renewal is refused before it is spent.
+func TestARenewalNeedsRoomForTwo(t *testing.T) {
+	r := newRig(t)
+	r.c.set(tailhandoff.Serving, "vault", time.Now().Add(10*24*time.Hour)) // needs renewing
+	for i := 0; i < 4; i++ {
+		id, _ := r.l.Start(ctx, "vault", time.Now().Add(-time.Hour))
+		_ = r.l.End(ctx, id, tailhandoff.Issued, time.Now())
+	}
+	if _, err := r.engine.Prepare(ctx, r.forward(t)); err == nil || !strings.Contains(err.Error(), "2 more would pass") {
+		t.Fatalf("%v", err)
+	}
+	if got := r.l.outcomes("vault"); len(got) != 4 {
+		t.Errorf("the renewal was spent: %v", got)
+	}
+}
+
+// TestFinishOpenVerifiesAgain: a switch that died while opening the
+// incoming installation is finished only if the name, the certificate and
+// a client's reach hold again; otherwise it is undone.
+func TestFinishOpenVerifiesAgain(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := r.j.Load(ctx, op)
+	s.Phase, s.ServingClosed, s.ServingRenamed, s.IncomingRenamed, s.IncomingOpened = tailhandoff.Switching, true, true, true, true
+	_ = r.j.Save(ctx, s)
+	r.ep.servingOpen = false
+	for _, step := range [][2]string{{"1", s.ServingTemp}, {"2", "vault"}} {
+		if _, err := tailcontrol.RenameAndReadBack(ctx, r.cp, step[0], step[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.engine.Deadline = 300 * time.Millisecond
+	r.r.never.Store(true) // a client no longer reaches it
+	s, err := r.engine.Resume(ctx, op)
+	assertUndone(t, r, s, err)
 }

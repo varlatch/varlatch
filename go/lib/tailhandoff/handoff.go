@@ -39,6 +39,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/tailcontrol"
@@ -61,7 +62,7 @@ const (
 
 // Defaults of decision 11.
 const (
-	DefaultDeadline     = 180 * time.Second // from the first rename to the final check
+	DefaultDeadline     = 180 * time.Second // from the first change (the close) to the final check
 	DefaultCertWait     = 120 * time.Second // the name's certificate, inside the deadline
 	DefaultCertAttempts = 3                 // for fast server errors
 	DefaultUndoWait     = 60 * time.Second  // an undo keeps trying the control plane this long
@@ -234,7 +235,10 @@ type Endpoints interface {
 	// every established tailnet connection: a rename does not end them.
 	// A dead node's (Restore) does nothing.
 	CloseServing(ctx context.Context) error
-	// ReopenServing opens it again, after an undo confirmed its name.
+	// ReopenServing opens it again, after an undo confirmed its name. It
+	// does nothing when the listener is already open: after a crash, Resume
+	// calls it again whether or not it ran. A Restore's serving node is
+	// dead, so the engine never closes or reopens it.
 	ReopenServing(ctx context.Context) error
 	// OpenIncoming opens the incoming installation's tailnet listener, once
 	// its name and certificate are confirmed and a client reaches it. It
@@ -298,7 +302,7 @@ func (e *HandoffError) Error() string {
 	case Undone:
 		return fmt.Sprintf("the handoff failed and was undone, the serving installation is open again at its name: %v", e.Err)
 	case UndoPending:
-		return fmt.Sprintf("the handoff failed and its undo could not finish (both installations stay closed; resume it once the control plane answers): %v", e.Err)
+		return fmt.Sprintf("the handoff failed and its undo could not finish: neither installation is opened on the tailnet (the serving one closed, or closing when the failure came first); resume it once the control plane answers: %v", e.Err)
 	default:
 		return fmt.Sprintf("the handoff did not start: %v", e.Err)
 	}
@@ -351,7 +355,7 @@ func (e *Engine) Prepare(ctx context.Context, p Plan) (*State, error) {
 			}
 		}
 		if !cached {
-			if err := e.allowIssuance(ctx, p.Name); err != nil {
+			if err := e.allowIssuance(ctx, p.Name, 1); err != nil {
 				return fail(err)
 			}
 		}
@@ -385,7 +389,7 @@ func checkPlanNames(devices []tailcontrol.Device, p Plan, servingTemp string) er
 	for i, d := range devices {
 		if d.ID == p.IncomingID {
 			in = &devices[i]
-		} else if equalFold(d.Name, p.IncomingName) {
+		} else if strings.EqualFold(d.Name, p.IncomingName) {
 			return fmt.Errorf("the incoming node's name %q is also held by %s", p.IncomingName, d)
 		}
 	}
@@ -396,25 +400,6 @@ func checkPlanNames(devices []tailcontrol.Device, p Plan, servingTemp string) er
 		return fmt.Errorf("the incoming node %s is listed as %q, not %q (an enrolment under a taken name is suffixed)", p.IncomingID, in.Name, p.IncomingName)
 	}
 	return nil
-}
-
-func equalFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		x, y := a[i], b[i]
-		if 'A' <= x && x <= 'Z' {
-			x += 'a' - 'A'
-		}
-		if 'A' <= y && y <= 'Z' {
-			y += 'a' - 'A'
-		}
-		if x != y {
-			return false
-		}
-	}
-	return true
 }
 
 // checkServingCertificate reads the serving node's certificate for the name
@@ -431,6 +416,11 @@ func (e *Engine) checkServingCertificate(ctx context.Context, s *State) error {
 	if ok && !expiry.Before(p.RetainUntil.Add(RenewMargin)) {
 		s.ServingCertExpiry = expiry
 		return nil
+	}
+	// The renewal is one issuance for the name, and the switch needs
+	// another: both must fit the CA's weekly limit, or neither is spent.
+	if err := e.allowIssuance(ctx, p.Name, 2); err != nil {
+		return fmt.Errorf("the serving node's certificate for %s must be renewed before the barrier: %w", p.Name, err)
 	}
 	renewErr := e.obtain(ctx, Serving, p.Name, e.now().Add(orDefault(e.CertWait, DefaultCertWait)))
 	if renewErr == nil {
@@ -491,13 +481,16 @@ func (e *Engine) save(ctx context.Context, s *State) error {
 func (e *Engine) switchSteps(ctx context.Context, s *State) error {
 	p := s.Plan
 	// The serving installation lets go first: a rename does not end an
-	// established connection.
-	s.ServingClosed = true
-	if err := e.save(ctx, s); err != nil {
-		return err
-	}
-	if err := e.Endpoints.CloseServing(ctx); err != nil {
-		return fmt.Errorf("closing the serving installation's tailnet listener: %w", err)
+	// established connection. A Restore's serving node is dead: there is
+	// nothing to close, and so nothing to reopen.
+	if p.Kind != Restore {
+		s.ServingClosed = true
+		if err := e.save(ctx, s); err != nil {
+			return err
+		}
+		if err := e.Endpoints.CloseServing(ctx); err != nil {
+			return fmt.Errorf("closing the serving installation's tailnet listener: %w", err)
+		}
 	}
 	// The two renames, back to back; each recorded before it is made, so an
 	// undo after a crash checks it whichever way it went.
@@ -549,7 +542,7 @@ func (e *Engine) nameCertificate(ctx context.Context, s *State) error {
 	if expiry, ok, err := e.Certs.Expiry(ctx, Incoming, p.Name); err == nil && ok && expiry.After(e.now()) {
 		return nil
 	}
-	if err := e.allowIssuance(ctx, p.Name); err != nil {
+	if err := e.allowIssuance(ctx, p.Name, 1); err != nil {
 		return err
 	}
 	wait := e.now().Add(orDefault(e.CertWait, DefaultCertWait))
@@ -562,15 +555,19 @@ func (e *Engine) nameCertificate(ctx context.Context, s *State) error {
 	return nil
 }
 
-// allowIssuance refuses when one more certificate for name would pass the
-// CA's weekly limit by the installation's count.
-func (e *Engine) allowIssuance(ctx context.Context, name string) error {
+// allowIssuance refuses when need more certificates for name would pass
+// the CA's weekly limit by the installation's count.
+func (e *Engine) allowIssuance(ctx context.Context, name string, need int) error {
 	n, err := e.Ledger.Count(ctx, name, e.now().Add(-7*24*time.Hour))
 	if err != nil {
 		return fmt.Errorf("reading the certificate issuance count: %w", err)
 	}
-	if n+1 > WeeklyLimit {
-		return fmt.Errorf("%d certificates for %s were requested in the last seven days: one more would pass the CA's limit of %d per name per week", n, name, WeeklyLimit)
+	if n+need > WeeklyLimit {
+		more := "one more"
+		if need > 1 {
+			more = fmt.Sprintf("%d more", need)
+		}
+		return fmt.Errorf("%d certificates for %s were requested in the last seven days: %s would pass the CA's limit of %d per name per week", n, name, more, WeeklyLimit)
 	}
 	return nil
 }
@@ -678,10 +675,12 @@ func (e *Engine) reaches(ctx context.Context, name, nodeID string) error {
 		}
 		select {
 		case <-ctx.Done():
-			if err == nil {
-				err = fmt.Errorf("%s does not reach the incoming node from a client", name)
+			// Whatever the last check answered, what failed is the reach.
+			cause := ctx.Err()
+			if err != nil {
+				cause = errors.Join(err, cause)
 			}
-			return errors.Join(err, ctx.Err())
+			return fmt.Errorf("%s does not reach the incoming node from a client: %w", name, cause)
 		case <-time.After(every):
 		}
 	}
@@ -737,8 +736,8 @@ func (e *Engine) undoSteps(parent context.Context, s *State) error {
 	if err := e.retry(ctx, func() error { return e.confirm(ctx, p.ServingID, p.Name) }); err != nil {
 		return err
 	}
-	if s.ServingClosed {
-		if err := e.Endpoints.ReopenServing(ctx); err != nil {
+	if s.ServingClosed && p.Kind != Restore {
+		if err := e.retry(ctx, func() error { return e.Endpoints.ReopenServing(ctx) }); err != nil {
 			return fmt.Errorf("reopening the serving installation: %w", err)
 		}
 	}
@@ -779,11 +778,33 @@ func (e *Engine) confirm(ctx context.Context, id, name string) error {
 // finishOpen completes a switch interrupted after it decided to open the
 // incoming installation: the name is read back again first.
 func (e *Engine) finishOpen(ctx context.Context, s *State) (*State, error) {
-	if err := e.confirm(ctx, s.Plan.IncomingID, s.Plan.Name); err != nil {
-		return s, fmt.Errorf("the incoming node's name before opening it: %w", err)
+	// Everything the open rested on is checked again, under a deadline of
+	// its own: the name, the certificate and a client's reach. Any of them
+	// failing is undone, as a switch's failure is.
+	vctx, cancel := context.WithTimeout(ctx, orDefault(e.Deadline, DefaultDeadline))
+	defer cancel()
+	verify := func() error {
+		if err := e.retry(vctx, func() error { return e.confirm(vctx, s.Plan.IncomingID, s.Plan.Name) }); err != nil {
+			return fmt.Errorf("the incoming node's name before opening it: %w", err)
+		}
+		if s.Plan.Certificates {
+			if err := e.nameCertificate(vctx, s); err != nil {
+				return err
+			}
+		}
+		nodeID, err := e.incomingStableID(vctx, s.Plan.IncomingID)
+		if err != nil {
+			return err
+		}
+		return e.reaches(vctx, s.Plan.Name, nodeID)
+	}
+	if err := verify(); err != nil {
+		s.IncomingOpened = false
+		return e.undo(ctx, s, err)
 	}
 	if err := e.Endpoints.OpenIncoming(ctx); err != nil {
-		return s, fmt.Errorf("opening the incoming installation: %w", err)
+		s.IncomingOpened = false
+		return e.undo(ctx, s, fmt.Errorf("opening the incoming installation: %w", err))
 	}
 	s.Phase = Done
 	return s, e.save(ctx, s)
