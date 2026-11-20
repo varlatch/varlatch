@@ -1,0 +1,1571 @@
+{
+  "schema": 2,
+  "comment": "Recorded from the TypeScript CLI by apps/cli/test/go-transcripts.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "area": "5.4e-find-files",
+  "cases": [
+    {
+      "id": "found",
+      "title": "copies found: each with its Git state, and what to do; 1",
+      "args": [
+        "scan",
+        "--find-files",
+        "."
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}:\n  loose/server.pem: not in a Git repository\n  repo/.env: ignored by Git\n  repo/.env.local: not ignored by Git, so it can be committed\n  repo/keys/id.key: not ignored by Git, so it can be committed\n\nvarlatch scan: 4 file(s) look like copies of secrets (2 not ignored by Git); 11 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nStore a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>\nA file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "found.json",
+      "title": "the same with --json",
+      "args": [
+        "scan",
+        "--find-files",
+        ".",
+        "--json"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "{\n  \"version\": 1,\n  \"mode\": \"find-files\",\n  \"exitCode\": 1,\n  \"root\": \"{{dir}}\",\n  \"files\": [\n    {\n      \"path\": \"loose/server.pem\",\n      \"kind\": \"key\",\n      \"symlink\": false,\n      \"git\": \"no-repository\"\n    },\n    {\n      \"path\": \"repo/.env\",\n      \"kind\": \"dotenv\",\n      \"symlink\": false,\n      \"git\": \"ignored\"\n    },\n    {\n      \"path\": \"repo/.env.local\",\n      \"kind\": \"dotenv\",\n      \"symlink\": false,\n      \"git\": \"not-ignored\"\n    },\n    {\n      \"path\": \"repo/keys/id.key\",\n      \"kind\": \"key\",\n      \"symlink\": false,\n      \"git\": \"not-ignored\"\n    }\n  ],\n  \"notSearched\": [],\n  \"entriesChecked\": 11,\n  \"stopped\": false\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "found.repo",
+      "title": "searching the repository alone",
+      "args": [
+        "scan",
+        "--find-files",
+        "repo"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}/repo:\n  .env: ignored by Git\n  .env.local: not ignored by Git, so it can be committed\n  keys/id.key: not ignored by Git, so it can be committed\n\nvarlatch scan: 3 file(s) look like copies of secrets (2 not ignored by Git); 7 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nStore a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>\nA file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "found.cwd",
+      "title": "no directory: the working directory",
+      "args": [
+        "scan",
+        "--find-files"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n"
+      },
+      "cwd": "repo",
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}/repo:\n  .env: ignored by Git\n  .env.local: not ignored by Git, so it can be committed\n  keys/id.key: not ignored by Git, so it can be committed\n\nvarlatch scan: 3 file(s) look like copies of secrets (2 not ignored by Git); 7 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nStore a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>\nA file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "clean",
+      "title": "nothing that looks like a copy: 0",
+      "args": [
+        "scan",
+        "--find-files",
+        "."
+      ],
+      "files": {
+        "src/app.ts": "x\n",
+        ".env.example": "A=\n"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: no file looks like a copy of a secret; 4 entries checked by name, without reading their contents.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          ".env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "src/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "src/app.ts": {
+            "mode": "0644",
+            "content": "x\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "clean.json",
+      "title": "the same with --json",
+      "args": [
+        "scan",
+        "--json",
+        "--find-files",
+        "."
+      ],
+      "files": {
+        "src/app.ts": "x\n"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"mode\": \"find-files\",\n  \"exitCode\": 0,\n  \"root\": \"{{dir}}\",\n  \"files\": [],\n  \"notSearched\": [],\n  \"entriesChecked\": 3,\n  \"stopped\": false\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "src/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "src/app.ts": {
+            "mode": "0644",
+            "content": "x\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "incomplete",
+      "title": "nothing found, but a directory was below the depth bound: 2",
+      "args": [
+        "scan",
+        "--find-files",
+        "deep"
+      ],
+      "files": {
+        "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/notes.md": "x\n"
+      },
+      "expect": {
+        "status": 2,
+        "stdout": "Not searched (1), so not known to be clean:\n  d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/: below the depth bound of 20 directory levels\n\nvarlatch scan: no file looks like a copy of a secret; 21 entries checked by name, without reading their contents.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "deep/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/notes.md": {
+            "mode": "0644",
+            "content": "x\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "incomplete.json",
+      "title": "the same with --json",
+      "args": [
+        "scan",
+        "--find-files",
+        "deep",
+        "--json"
+      ],
+      "files": {
+        "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/notes.md": "x\n"
+      },
+      "expect": {
+        "status": 2,
+        "stdout": "{\n  \"version\": 1,\n  \"mode\": \"find-files\",\n  \"exitCode\": 2,\n  \"root\": \"{{dir}}/deep\",\n  \"files\": [],\n  \"notSearched\": [\n    {\n      \"path\": \"d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/\",\n      \"reason\": \"below the depth bound of 20 directory levels\"\n    }\n  ],\n  \"entriesChecked\": 21,\n  \"stopped\": false\n}\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "deep/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/notes.md": {
+            "mode": "0644",
+            "content": "x\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "found-and-incomplete",
+      "title": "a copy found and a directory not searched: 1",
+      "args": [
+        "scan",
+        "--find-files",
+        "."
+      ],
+      "files": {
+        "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/notes.md": "x\n",
+        ".env": "A=1\n"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}:\n  .env: not in a Git repository\n\nNot searched (1), so not known to be clean:\n  deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/: below the depth bound of 20 directory levels\n\nvarlatch scan: 1 file(s) look like copies of secrets; 23 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          ".env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "deep/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "deep/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/notes.md": {
+            "mode": "0644",
+            "content": "x\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "global-config",
+      "title": "GIT_CONFIG_GLOBAL names the global configuration, and its core.excludesFile",
+      "args": [
+        "scan",
+        "--find-files",
+        "repo"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n",
+        "g/config": "[core]\n\texcludesFile = ~/my-ignore\n",
+        "home/my-ignore": "*.key\n"
+      },
+      "env": {
+        "GIT_CONFIG_GLOBAL": "{{dir}}/g/config"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}/repo:\n  .env: ignored by Git\n  .env.local: not ignored by Git, so it can be committed\n  keys/id.key: ignored by Git\n\nvarlatch scan: 3 file(s) look like copies of secrets (1 not ignored by Git); 7 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nStore a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>\nA file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "g/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "g/config": {
+            "mode": "0644",
+            "content": "[core]\n\texcludesFile = ~/my-ignore\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "home/my-ignore": {
+            "mode": "0644",
+            "content": "*.key\n"
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "global-config.include",
+      "title": "a global configuration that includes another: every state unknown",
+      "args": [
+        "scan",
+        "--find-files",
+        "repo"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n",
+        "g/config": "[include]\n\tpath = other\n"
+      },
+      "env": {
+        "GIT_CONFIG_GLOBAL": "{{dir}}/g/config"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}/repo:\n  .env: Git status unknown: the global Git configuration: {{dir}}/g/config includes other files, which are not read\n  .env.local: Git status unknown: the global Git configuration: {{dir}}/g/config includes other files, which are not read\n  keys/id.key: Git status unknown: the global Git configuration: {{dir}}/g/config includes other files, which are not read\n\nvarlatch scan: 3 file(s) look like copies of secrets; 7 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nStore a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "g/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "g/config": {
+            "mode": "0644",
+            "content": "[include]\n\tpath = other\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "xdg",
+      "title": "XDG_CONFIG_HOME: git/ignore there is the default excludes file",
+      "args": [
+        "scan",
+        "--find-files",
+        "repo"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n",
+        "xdg/git/ignore": "*.key\n"
+      },
+      "env": {
+        "XDG_CONFIG_HOME": "{{dir}}/xdg"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}/repo:\n  .env: ignored by Git\n  .env.local: not ignored by Git, so it can be committed\n  keys/id.key: ignored by Git\n\nvarlatch scan: 3 file(s) look like copies of secrets (1 not ignored by Git); 7 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nStore a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>\nA file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          },
+          "xdg/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "xdg/git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "xdg/git/ignore": {
+            "mode": "0644",
+            "content": "*.key\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "home-gitconfig",
+      "title": "~/.gitconfig's core.excludesFile",
+      "args": [
+        "scan",
+        "--find-files",
+        "repo"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n",
+        "home/.gitconfig": "[core]\n\texcludesFile = ~/ign\n",
+        "home/ign": ".env.local\n"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}/repo:\n  .env: ignored by Git\n  .env.local: ignored by Git\n  keys/id.key: not ignored by Git, so it can be committed\n\nvarlatch scan: 3 file(s) look like copies of secrets (1 not ignored by Git); 7 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nStore a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>\nA file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "home/.gitconfig": {
+            "mode": "0644",
+            "content": "[core]\n\texcludesFile = ~/ign\n"
+          },
+          "home/ign": {
+            "mode": "0644",
+            "content": ".env.local\n"
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "unusual",
+      "title": "an include in the repository's configuration: unknown, with why",
+      "args": [
+        "scan",
+        "--find-files",
+        "repo"
+      ],
+      "files": {
+        "repo/.git/HEAD": "ref: refs/heads/main\n",
+        "repo/.git/config": "[include]\n\tpath = x\n",
+        "repo/.git/objects/.keep": "",
+        "repo/.git/refs/.keep": "",
+        "repo/.gitignore": ".env\n",
+        "repo/.env": "A=1\n",
+        "repo/.env.local": "B=2\n",
+        "repo/keys/id.key": "k\n",
+        "repo/.env.example": "A=\n",
+        "loose/server.pem": "p\n"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}/repo:\n  .env: Git status unknown: {{dir}}/repo/.git/config includes other files, which Git would read\n  .env.local: Git status unknown: {{dir}}/repo/.git/config includes other files, which Git would read\n  keys/id.key: Git status unknown: {{dir}}/repo/.git/config includes other files, which Git would read\n\nvarlatch scan: 3 file(s) look like copies of secrets; 7 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nStore a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "loose/server.pem": {
+            "mode": "0644",
+            "content": "p\n"
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "repo/.env.example": {
+            "mode": "0644",
+            "content": "A=\n"
+          },
+          "repo/.env.local": {
+            "mode": "0644",
+            "content": "B=2\n"
+          },
+          "repo/.git/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0644",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0644",
+            "content": "[include]\n\tpath = x\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0644",
+            "content": ""
+          },
+          "repo/.gitignore": {
+            "mode": "0644",
+            "content": ".env\n"
+          },
+          "repo/keys/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/keys/id.key": {
+            "mode": "0644",
+            "content": "k\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "missing",
+      "title": "a directory that does not exist: 1",
+      "args": [
+        "scan",
+        "--find-files",
+        "nope"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: cannot search nope: does not exist\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "not-a-directory",
+      "title": "a file, not a directory: 1",
+      "args": [
+        "scan",
+        "--find-files",
+        "notes.md"
+      ],
+      "files": {
+        "notes.md": "x\n"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: --find-files takes a directory; notes.md is not one\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "notes.md": {
+            "mode": "0644",
+            "content": "x\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "usage.two",
+      "title": "two directories: 1, with the usage",
+      "args": [
+        "scan",
+        "--find-files",
+        "a",
+        "b"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: --find-files takes one directory\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "usage.staged",
+      "title": "--find-files with --staged",
+      "args": [
+        "scan",
+        "--find-files",
+        "--staged"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: --find-files lists files by name and takes no --staged; it accepts one directory and --json\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "usage.environment",
+      "title": "--find-files with -e",
+      "args": [
+        "scan",
+        "--find-files",
+        "-e",
+        "dev"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: --find-files lists files by name and takes no -e; it accepts one directory and --json\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "usage.unknown",
+      "title": "an unknown option",
+      "args": [
+        "scan",
+        "--find-files",
+        "--bogus"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: unknown option --bogus\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "usage.needs-value",
+      "title": "-e without its value",
+      "args": [
+        "scan",
+        "-e",
+        "--find-files"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: -e needs a value\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "usage.size",
+      "title": "a size that is no size, before the find-files rule",
+      "args": [
+        "scan",
+        "--find-files",
+        "--max-file-size",
+        "lots"
+      ],
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: --max-file-size expects a size such as 64M, 1G, or a number of bytes; got \"lots\"\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "after-dashes",
+      "title": "after --, a directory named --find-files... is a path",
+      "args": [
+        "scan",
+        "--find-files",
+        "--",
+        "-odd"
+      ],
+      "files": {
+        "-odd/.env": "A=1\n"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "Files that look like copies of secrets, by name, under {{dir}}/-odd:\n  .env: not in a Git repository\n\nvarlatch scan: 1 file(s) look like copies of secrets; 1 entries checked by name, without reading their contents.\nMove a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source\nSee docs/reference/secret-scanning.md and docs/reference/import.md.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "-odd/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "-odd/.env": {
+            "mode": "0644",
+            "content": "A=1\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    }
+  ]
+}

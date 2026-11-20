@@ -1,0 +1,3701 @@
+{
+  "schema": 1,
+  "comment": "Recorded from apps/cli/src/findFiles.ts by apps/cli/test/go-vectors-findfiles.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "defaultLimits": {
+    "maxEntries": 200000,
+    "maxDepth": 20
+  },
+  "cases": [
+    {
+      "id": "names.kinds",
+      "tree": {
+        "files": {
+          ".env": "",
+          ".env.local": "",
+          ".env.production.local": "",
+          ".env.example": "",
+          ".env.schema": "",
+          ".envrc": "",
+          "env": "",
+          "x.env": "",
+          "server.pem": "",
+          "id.key": "",
+          "A.PEM": "",
+          "B.KEY": "",
+          "x.key.bak": "",
+          ".pem": "",
+          ".key": "",
+          "key": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": ".env.local",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": ".env.production.local",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": ".key",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": ".pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "server.pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 17,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not in a Git repository",
+          "  .env.local: not in a Git repository",
+          "  .env.production.local: not in a Git repository",
+          "  .key: not in a Git repository",
+          "  .pem: not in a Git repository",
+          "  id.key: not in a Git repository",
+          "  server.pem: not in a Git repository",
+          "",
+          "varlatch scan: 7 file(s) look like copies of secrets; 17 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "names.trailing-dot",
+      "tree": {
+        "files": {
+          ".env.": "",
+          "x.key": ""
+        }
+      },
+      "dir": ".",
+      "posixNames": true,
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env.",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "x.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env.: not in a Git repository",
+          "  x.key: not in a Git repository",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets; 3 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "names.empty",
+      "tree": {
+        "files": {
+          "README.md": "",
+          "src/app.ts": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 0,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 0,
+          "root": "{{dir}}",
+          "files": [],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "varlatch scan: no file looks like a copy of a secret; 4 entries checked by name, without reading their contents."
+        ]
+      }
+    },
+    {
+      "id": "names.control",
+      "tree": {
+        "files": {
+          "a\nb.env.x/.env": "",
+          ".env.": "",
+          "tab\t.key": "",
+          "quote\".pem": "",
+          "back\\slash.key": ""
+        }
+      },
+      "dir": ".",
+      "posixNames": true,
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env.",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "a\nb.env.x/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "back\\slash.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "quote\".pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "tab\t.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 7,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  \".env.\\u009b\": not in a Git repository",
+          "  \"a\\nb.env.x/.env\": not in a Git repository",
+          "  back\\slash.key: not in a Git repository",
+          "  quote\".pem: not in a Git repository",
+          "  \"tab\\t.key\": not in a Git repository",
+          "",
+          "varlatch scan: 5 file(s) look like copies of secrets; 7 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "names.unicode",
+      "tree": {
+        "files": {
+          "café/.env": "",
+          "日本/id.key": "",
+          " .pem": "",
+          "﻿bom/.env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "café/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": " .pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "日本/id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "﻿bom/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 8,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  café/.env: not in a Git repository",
+          "   .pem: not in a Git repository",
+          "  日本/id.key: not in a Git repository",
+          "  bom/.env: not in a Git repository",
+          "",
+          "varlatch scan: 4 file(s) look like copies of secrets; 8 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "names.raw",
+      "tree": {
+        "rawFiles": [
+          "Zv8vLmVudg==",
+          "eMMoLmtleQ==",
+          "77u//i5wZW0="
+        ],
+        "dirs": [
+          "fÿ"
+        ]
+      },
+      "dir": ".",
+      "rawNames": true,
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "f�/.env",
+              "pathBase64": "Zv8vLmVudg==",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "x�(.key",
+              "pathBase64": "eMMoLmtleQ==",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "﻿�.pem",
+              "pathBase64": "77u//i5wZW0=",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  \"f\\xff/.env\": not in a Git repository",
+          "  \"x\\xc3(.key\": not in a Git repository",
+          "  \"\\xfe.pem\": not in a Git repository",
+          "",
+          "varlatch scan: 3 file(s) look like copies of secrets; 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.skipped-dirs",
+      "tree": {
+        "files": {
+          ".git/x.env.d/.env": "",
+          "node_modules/a/.env": "",
+          ".hg/.env": "",
+          ".svn/k.key": "",
+          "nodes/.env": "",
+          ".gitx/.env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".gitx/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.git/HEAD is missing"
+            },
+            {
+              "path": "nodes/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.git/HEAD is missing"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 9,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .gitx/.env: Git status unknown: {{dir}}/.git/HEAD is missing",
+          "  nodes/.env: Git status unknown: {{dir}}/.git/HEAD is missing",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets; 9 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.links",
+      "tree": {
+        "files": {
+          "real/.env": "",
+          "target.txt": ""
+        },
+        "dirs": [
+          "empty"
+        ],
+        "links": {
+          ".env": "target.txt",
+          "dangling.key": "nowhere",
+          "linkdir": "real",
+          "real/self.pem": "../real",
+          ".env.abs": "{{dir}}/target.txt"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": true,
+              "git": "no-repository"
+            },
+            {
+              "path": ".env.abs",
+              "kind": "dotenv",
+              "symlink": true,
+              "git": "no-repository"
+            },
+            {
+              "path": "dangling.key",
+              "kind": "key",
+              "symlink": true,
+              "git": "no-repository"
+            },
+            {
+              "path": "real/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "real/self.pem",
+              "kind": "key",
+              "symlink": true,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 10,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: a symbolic link, not followed; not in a Git repository",
+          "  .env.abs: a symbolic link, not followed; not in a Git repository",
+          "  dangling.key: a symbolic link, not followed; not in a Git repository",
+          "  real/.env: not in a Git repository",
+          "  real/self.pem: a symbolic link, not followed; not in a Git repository",
+          "",
+          "varlatch scan: 5 file(s) look like copies of secrets; 10 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.depth",
+      "tree": {
+        "files": {
+          "a/b/c/.env": "",
+          "a/b/.env": "",
+          "a/.env": "",
+          "x/y/z/w/k.key": ""
+        }
+      },
+      "dir": ".",
+      "limits": {
+        "maxEntries": 1000,
+        "maxDepth": 2
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "a/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "a/b/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [
+            {
+              "path": "a/b/c/",
+              "reason": "below the depth bound of 2 directory levels"
+            },
+            {
+              "path": "x/y/z/",
+              "reason": "below the depth bound of 2 directory levels"
+            }
+          ],
+          "entriesChecked": 9,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  a/.env: not in a Git repository",
+          "  a/b/.env: not in a Git repository",
+          "",
+          "Not searched (2), so not known to be clean:",
+          "  a/b/c/: below the depth bound of 2 directory levels",
+          "  x/y/z/: below the depth bound of 2 directory levels",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets; 9 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.depth-clean",
+      "tree": {
+        "files": {
+          "a/b/c/d/notes.md": ""
+        }
+      },
+      "dir": ".",
+      "limits": {
+        "maxEntries": 1000,
+        "maxDepth": 2
+      },
+      "expect": {
+        "exitCode": 2,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 2,
+          "root": "{{dir}}",
+          "files": [],
+          "notSearched": [
+            {
+              "path": "a/b/c/",
+              "reason": "below the depth bound of 2 directory levels"
+            }
+          ],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Not searched (1), so not known to be clean:",
+          "  a/b/c/: below the depth bound of 2 directory levels",
+          "",
+          "varlatch scan: no file looks like a copy of a secret; 4 entries checked by name, without reading their contents."
+        ]
+      }
+    },
+    {
+      "id": "walk.stopped",
+      "tree": {
+        "files": {
+          "a/.env": "",
+          "b/.env": "",
+          "c/.env": "",
+          "d/1": "",
+          "d/2": "",
+          "e/.env": ""
+        }
+      },
+      "dir": ".",
+      "limits": {
+        "maxEntries": 6,
+        "maxDepth": 20
+      },
+      "expect": {
+        "exitCode": 2,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 2,
+          "root": "{{dir}}",
+          "files": [],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": true
+        },
+        "human": [
+          "The search stopped after 6 entries; what follows was not searched. Search a smaller directory.",
+          "",
+          "varlatch scan: no file looks like a copy of a secret; 6 entries checked by name, without reading their contents."
+        ]
+      }
+    },
+    {
+      "id": "walk.stopped-clean",
+      "tree": {
+        "files": {
+          "a/1": "",
+          "a/2": "",
+          "a/3": "",
+          "b/4": ""
+        }
+      },
+      "dir": ".",
+      "limits": {
+        "maxEntries": 3,
+        "maxDepth": 20
+      },
+      "expect": {
+        "exitCode": 2,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 2,
+          "root": "{{dir}}",
+          "files": [],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": true
+        },
+        "human": [
+          "The search stopped after 3 entries; what follows was not searched. Search a smaller directory.",
+          "",
+          "varlatch scan: no file looks like a copy of a secret; 3 entries checked by name, without reading their contents."
+        ]
+      }
+    },
+    {
+      "id": "walk.unreadable",
+      "tree": {
+        "files": {
+          "open/.env": "",
+          "closed/.env": "",
+          "closed2/notes": ""
+        },
+        "modes": {
+          "closed": 0,
+          "closed2": 0
+        }
+      },
+      "dir": ".",
+      "notRoot": true,
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "open/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [
+            {
+              "path": "closed/",
+              "reason": "directory unreadable (EACCES)"
+            },
+            {
+              "path": "closed2/",
+              "reason": "directory unreadable (EACCES)"
+            }
+          ],
+          "entriesChecked": 5,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  open/.env: not in a Git repository",
+          "",
+          "Not searched (2), so not known to be clean:",
+          "  closed/: directory unreadable (EACCES)",
+          "  closed2/: directory unreadable (EACCES)",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 5 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.unreadable-clean",
+      "tree": {
+        "files": {
+          "closed/notes": ""
+        },
+        "modes": {
+          "closed": 0
+        }
+      },
+      "dir": ".",
+      "notRoot": true,
+      "expect": {
+        "exitCode": 2,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 2,
+          "root": "{{dir}}",
+          "files": [],
+          "notSearched": [
+            {
+              "path": "closed/",
+              "reason": "directory unreadable (EACCES)"
+            }
+          ],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Not searched (1), so not known to be clean:",
+          "  closed/: directory unreadable (EACCES)",
+          "",
+          "varlatch scan: no file looks like a copy of a secret; 2 entries checked by name, without reading their contents."
+        ]
+      }
+    },
+    {
+      "id": "walk.subdir",
+      "tree": {
+        "files": {
+          "app/.env": "",
+          "other/.env": ""
+        }
+      },
+      "dir": "app",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/app",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 1,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/app:",
+          "  .env: not in a Git repository",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 1 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.trailing-slash",
+      "tree": {
+        "files": {
+          "app/.env": ""
+        }
+      },
+      "dir": "app/",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/app",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 1,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/app:",
+          "  .env: not in a Git repository",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 1 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.dot-dot",
+      "tree": {
+        "files": {
+          "app/.env": "",
+          "other/id.key": ""
+        }
+      },
+      "dir": "app/../other",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/other",
+          "files": [
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 1,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/other:",
+          "  id.key: not in a Git repository",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 1 entries checked by name, without reading their contents.",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.through-link",
+      "tree": {
+        "files": {
+          "real/.env": ""
+        },
+        "links": {
+          "via": "real"
+        }
+      },
+      "dir": "via",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/real",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 1,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/real:",
+          "  .env: not in a Git repository",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 1 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "walk.missing",
+      "tree": {
+        "files": {
+          "a": ""
+        }
+      },
+      "dir": "nope",
+      "expect": {
+        "error": "cannot search nope: does not exist"
+      }
+    },
+    {
+      "id": "walk.not-a-directory",
+      "tree": {
+        "files": {
+          "a.txt": ""
+        }
+      },
+      "dir": "a.txt",
+      "expect": {
+        "error": "--find-files takes a directory; a.txt is not one"
+      }
+    },
+    {
+      "id": "walk.control-in-dir-argument",
+      "tree": {
+        "files": {
+          "a": ""
+        }
+      },
+      "dir": "no\u0007pe",
+      "expect": {
+        "error": "cannot search \"no\\u0007pe\": does not exist"
+      }
+    },
+    {
+      "id": "walk.empty-argument",
+      "tree": {
+        "files": {
+          ".env": ""
+        }
+      },
+      "dir": "",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not in a Git repository",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.plain",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore": ".env\n",
+          ".env": "",
+          ".env.local": "",
+          "id.key": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": ".env.local",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "  .env.local: not ignored by Git, so it can be committed",
+          "  id.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 3 file(s) look like copies of secrets (2 not ignored by Git); 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.no-ignore-file",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets (1 not ignored by Git); 3 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.negation",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore": ".env*\n!.env.keep\n",
+          ".env.keep": "",
+          ".env.x": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env.keep",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": ".env.x",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 5,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env.keep: not ignored by Git, so it can be committed",
+          "  .env.x: ignored by Git",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 5 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.directory-only",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore": "secrets/\n",
+          "secrets/.env": "",
+          "notsecrets/.env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "notsecrets/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "secrets/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 7,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  notsecrets/.env: not ignored by Git, so it can be committed",
+          "  secrets/.env: ignored by Git",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 7 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.double-star",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore": "**/certs/*.pem\nsub/**\n",
+          "a/b/certs/x.pem": "",
+          "certs/y.pem": "",
+          "sub/q/r.key": "",
+          "c/z.pem": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "a/b/certs/x.pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "c/z.pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "certs/y.pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "sub/q/r.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 14,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  a/b/certs/x.pem: ignored by Git",
+          "  c/z.pem: not ignored by Git, so it can be committed",
+          "  certs/y.pem: ignored by Git",
+          "  sub/q/r.key: ignored by Git",
+          "",
+          "varlatch scan: 4 file(s) look like copies of secrets (1 not ignored by Git); 14 entries checked by name, without reading their contents.",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.escapes",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore": "\\#x.key\n\\!y.key\n#z.key\n",
+          "#x.key": "",
+          "!y.key": "",
+          "#z.key": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "!y.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "#x.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "#z.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  !y.key: ignored by Git",
+          "  #x.key: ignored by Git",
+          "  #z.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 3 file(s) look like copies of secrets (1 not ignored by Git); 6 entries checked by name, without reading their contents.",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.trailing-spaces",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore": "a.key   \nb.key\\ \n",
+          "a.key": "",
+          "b.key ": "",
+          "b.key": ""
+        }
+      },
+      "dir": ".",
+      "posixNames": true,
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "a.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "b.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  a.key: ignored by Git",
+          "  b.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 6 entries checked by name, without reading their contents.",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.nested-gitignore",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore": "*.pem\n",
+          "sub/.gitignore": "!keep.pem\n.env\n",
+          "sub/keep.pem": "",
+          "sub/other.pem": "",
+          "sub/.env": "",
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "sub/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "sub/keep.pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "sub/other.pem",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 9,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "  sub/.env: ignored by Git",
+          "  sub/keep.pem: not ignored by Git, so it can be committed",
+          "  sub/other.pem: ignored by Git",
+          "",
+          "varlatch scan: 4 file(s) look like copies of secrets (2 not ignored by Git); 9 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.info-exclude",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".git/info/exclude": ".env\n",
+          ".env": "",
+          "id.key": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "  id.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.repo-excludes-file",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".git/config": "[core]\n\trepositoryformatversion = 0\n\texcludesFile = {{dir}}/excl/ignore\n",
+          ".env": "",
+          "id.key": "",
+          "excl/ignore": "*.key\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "  id.key: ignored by Git",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.global-excludes",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "id.key": "",
+          "global/gitconfig": "[core]\n\texcludesFile = {{dir}}/global/ignore\n",
+          "global/ignore": "*.key\n"
+        }
+      },
+      "dir": ".",
+      "env": {
+        "GIT_CONFIG_GLOBAL": "{{dir}}/global/gitconfig"
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 7,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "  id.key: ignored by Git",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 7 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.global-tilde",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "id.key": "",
+          "home/.gitconfig": "[core]\n\texcludesfile = ~/my-ignore\n",
+          "home/my-ignore": ".env\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "  id.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.xdg-default-ignore",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "id.key": "",
+          "xdg/git/ignore": ".env\n"
+        }
+      },
+      "dir": ".",
+      "env": {
+        "XDG_CONFIG_HOME": "{{dir}}/xdg"
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 7,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "  id.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 7 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.xdg-config",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "id.key": "",
+          "xdg/git/config": "[core]\n\texcludesFile = {{dir}}/xdg/other-ignore\n",
+          "xdg/other-ignore": "*.key\n"
+        }
+      },
+      "dir": ".",
+      "env": {
+        "XDG_CONFIG_HOME": "{{dir}}/xdg"
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 8,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "  id.key: ignored by Git",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 8 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.home-over-xdg",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "id.key": "",
+          "xdg/git/config": "[core]\n\texcludesFile = {{dir}}/xdg/a\n",
+          "home/.gitconfig": "[core]\n\texcludesFile = {{dir}}/b\n",
+          "xdg/a": "*.key\n",
+          "b": ".env\n"
+        }
+      },
+      "dir": ".",
+      "env": {
+        "XDG_CONFIG_HOME": "{{dir}}/xdg"
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 10,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "  id.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 10 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.global-dev-null",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\texcludesFile = {{dir}}/b\n",
+          "b": ".env\n"
+        }
+      },
+      "dir": ".",
+      "env": {
+        "GIT_CONFIG_GLOBAL": "/dev/null"
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 5,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets (1 not ignored by Git); 5 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.global-empty",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\texcludesFile = {{dir}}/b\n",
+          "b": ".env\n"
+        }
+      },
+      "dir": ".",
+      "env": {
+        "GIT_CONFIG_GLOBAL": ""
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 5,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets (1 not ignored by Git); 5 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.global-missing",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "env": {
+        "GIT_CONFIG_GLOBAL": "{{dir}}/nope"
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets (1 not ignored by Git); 3 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "git.empty-xdg",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.config/git/ignore": ".env\n"
+        }
+      },
+      "dir": ".",
+      "env": {
+        "XDG_CONFIG_HOME": ""
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.nested",
+      "tree": {
+        "repos": [
+          ".",
+          "inner"
+        ],
+        "files": {
+          ".gitignore": "*.key\n",
+          "a.key": "",
+          "inner/b.key": "",
+          "inner/.gitignore": ".env\n",
+          "inner/.env": "",
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            },
+            {
+              "path": "a.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "inner/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "inner/b.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 10,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "  a.key: ignored by Git",
+          "  inner/.env: ignored by Git",
+          "  inner/b.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 4 file(s) look like copies of secrets (2 not ignored by Git); 10 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.above-root",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore": "app/.env\n",
+          "app/.env": "",
+          "app/id.key": ""
+        }
+      },
+      "dir": "app",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/app",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/app:",
+          "  .env: ignored by Git",
+          "  id.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.none",
+      "tree": {
+        "files": {
+          ".env": "",
+          "sub/id.key": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "no-repository"
+            },
+            {
+              "path": "sub/id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "no-repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not in a Git repository",
+          "  sub/id.key: not in a Git repository",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets; 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.gitfile",
+      "tree": {
+        "repos": [
+          "store"
+        ],
+        "files": {
+          "wt/.git": "gitdir: {{dir}}/store/.git\n",
+          "wt/.gitignore": ".env\n",
+          "wt/.env": "",
+          "wt/x.key": ""
+        }
+      },
+      "dir": "wt",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/wt",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            },
+            {
+              "path": "x.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/wt:",
+          "  .env: ignored by Git",
+          "  x.key: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.gitfile-relative",
+      "tree": {
+        "repos": [
+          "store"
+        ],
+        "files": {
+          "wt/.git": "gitdir: ../store/.git\n",
+          "wt/.env": ""
+        }
+      },
+      "dir": "wt",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/wt",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/wt:",
+          "  .env: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets (1 not ignored by Git); 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.gitfile-bom",
+      "tree": {
+        "repos": [
+          "store"
+        ],
+        "files": {
+          "wt/.git": "﻿gitdir: ../store/.git\r\n",
+          "wt/.env": ""
+        }
+      },
+      "dir": "wt",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/wt",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "Git refused or failed (exit status 128)"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/wt:",
+          "  .env: Git status unknown: Git refused or failed (exit status 128)",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.gitfile-bad",
+      "tree": {
+        "files": {
+          "wt/.git": "nonsense\n",
+          "wt/.env": ""
+        }
+      },
+      "dir": "wt",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/wt",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/wt/.git is not what Git writes there"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/wt:",
+          "  .env: Git status unknown: {{dir}}/wt/.git is not what Git writes there",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.gitfile-nowhere",
+      "tree": {
+        "files": {
+          "wt/.git": "gitdir: ../missing\n",
+          "wt/.env": ""
+        }
+      },
+      "dir": "wt",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/wt",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/wt/.git does not point to a directory"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/wt:",
+          "  .env: Git status unknown: {{dir}}/wt/.git does not point to a directory",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.gitfile-big",
+      "tree": {
+        "files": {
+          "wt/.git": "gitdir: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+          "wt/.env": ""
+        }
+      },
+      "dir": "wt",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/wt",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/wt/.git is not what Git writes there"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/wt:",
+          "  .env: Git status unknown: {{dir}}/wt/.git is not what Git writes there",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.commondir",
+      "tree": {
+        "repos": [
+          "main"
+        ],
+        "files": {
+          "main/.git/worktrees/w/HEAD": "ref: refs/heads/main\n",
+          "main/.git/worktrees/w/commondir": "../..\n",
+          "w/.git": "gitdir: {{dir}}/main/.git/worktrees/w\n",
+          "w/.env": "",
+          "main/.git/info/exclude": ".env\n"
+        }
+      },
+      "dir": "w",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/w",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/w:",
+          "  .env: ignored by Git",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.commondir-bad",
+      "tree": {
+        "repos": [
+          "main"
+        ],
+        "files": {
+          "main/.git/worktrees/w/HEAD": "ref: refs/heads/main\n",
+          "main/.git/worktrees/w/commondir": "../../nope\n",
+          "w/.git": "gitdir: {{dir}}/main/.git/worktrees/w\n",
+          "w/.env": ""
+        }
+      },
+      "dir": "w",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/w",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/main/.git/worktrees/w/commondir does not point to a directory"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/w:",
+          "  .env: Git status unknown: {{dir}}/main/.git/worktrees/w/commondir does not point to a directory",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.git-link",
+      "tree": {
+        "repos": [
+          "real"
+        ],
+        "files": {
+          "w/.env": ""
+        },
+        "links": {
+          "w/.git": "../real/.git"
+        }
+      },
+      "dir": "w",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/w",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/w/.git is a symbolic link"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/w:",
+          "  .env: Git status unknown: {{dir}}/w/.git is a symbolic link",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.git-fifo-like",
+      "tree": {
+        "files": {
+          "w/.env": ""
+        },
+        "dirs": [
+          "w/.git"
+        ]
+      },
+      "dir": "w",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/w",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/w/.git/HEAD is missing"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 2,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/w:",
+          "  .env: Git status unknown: {{dir}}/w/.git/HEAD is missing",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 2 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.bare-above",
+      "tree": {
+        "dirs": [
+          "objects",
+          "refs"
+        ],
+        "files": {
+          "app/.env": ""
+        }
+      },
+      "dir": "app",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}/app",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}} looks like a bare repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 1,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}/app:",
+          "  .env: Git status unknown: {{dir}} looks like a bare repository",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 1 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "repo.bare-at-root",
+      "tree": {
+        "dirs": [
+          "objects",
+          "refs"
+        ],
+        "files": {
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}} looks like a bare repository"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}} looks like a bare repository",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.include",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".git/config": "[core]\n\trepositoryformatversion = 0\n[include]\n\tpath = other\n",
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.git/config includes other files, which Git would read"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}}/.git/config includes other files, which Git would read",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 3 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.include-if",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".git/config": "[core]\n\trepositoryformatversion = 0\n[includeIf \"gitdir:/x/\"]\n\tpath = other\n",
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.git/config includes other files, which Git would read"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}}/.git/config includes other files, which Git would read",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 3 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.worktree",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".git/config": "[core]\n\trepositoryformatversion = 0\n\tworktree = /elsewhere\n",
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.git/config sets core.worktree"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}}/.git/config sets core.worktree",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 3 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.alternates",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".git/objects/info/alternates": "/elsewhere\n",
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "the repository uses another object store ({{dir}}/.git/objects/info/alternates)"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: the repository uses another object store ({{dir}}/.git/objects/info/alternates)",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 3 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.config-worktree",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".git/config.worktree": "[core]\n\texcludesFile = {{dir}}/w-ignore\n",
+          "w-ignore": ".env\n",
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.gitignore-link",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          "real-ignore": ".env\n",
+          ".env": ""
+        },
+        "links": {
+          ".gitignore": "real-ignore"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.gitignore is a symbolic link"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 5,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}}/.gitignore is a symbolic link",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 5 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.gitignore-hardlink",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          "real-ignore": ".env\n",
+          ".env": ""
+        },
+        "hardLinks": {
+          ".gitignore": "real-ignore"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.gitignore has another name (a hard link)"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 5,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}}/.gitignore has another name (a hard link)",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 5 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.gitignore-dir",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".gitignore/x": "",
+          ".env": ""
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.gitignore is not a regular file"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 5,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}}/.gitignore is not a regular file",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 5 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.nested-gitignore-link",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          "sub/.env": "",
+          "real": "*\n"
+        },
+        "links": {
+          "sub/.gitignore": "../real"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "sub/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/sub/.gitignore is a symbolic link"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  sub/.env: Git status unknown: {{dir}}/sub/.gitignore is a symbolic link",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.exclude-link",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          "real": ".env\n",
+          ".env": ""
+        },
+        "links": {
+          ".git/info/exclude": "../../real"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.git/info/exclude is a symbolic link"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}}/.git/info/exclude is a symbolic link",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.head-missing",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": ""
+        },
+        "remove": [
+          ".git/HEAD"
+        ]
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "{{dir}}/.git/HEAD is missing"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 3,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: {{dir}}/.git/HEAD is missing",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 3 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.excludes-relative",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\texcludesFile = relative/ignore\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "core.excludesFile relative/ignore is not an absolute path"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: core.excludesFile relative/ignore is not an absolute path",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.excludes-secret-name",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\texcludesFile = {{dir}}/x/.env.ignore\n",
+          "x/.env.ignore": ".env\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "core.excludesFile: {{dir}}/x/.env.ignore has the name of a secret copy"
+            },
+            {
+              "path": "x/.env.ignore",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "core.excludesFile: {{dir}}/x/.env.ignore has the name of a secret copy"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: core.excludesFile: {{dir}}/x/.env.ignore has the name of a secret copy",
+          "  x/.env.ignore: Git status unknown: core.excludesFile: {{dir}}/x/.env.ignore has the name of a secret copy",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets; 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.excludes-link-to-secret",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\texcludesFile = {{dir}}/ign\n",
+          "keys/id.key": ""
+        },
+        "links": {
+          "ign": "keys/id.key"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "core.excludesFile: {{dir}}/keys/id.key has the name of a secret copy"
+            },
+            {
+              "path": "keys/id.key",
+              "kind": "key",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "core.excludesFile: {{dir}}/keys/id.key has the name of a secret copy"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 7,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: core.excludesFile: {{dir}}/keys/id.key has the name of a secret copy",
+          "  keys/id.key: Git status unknown: core.excludesFile: {{dir}}/keys/id.key has the name of a secret copy",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets; 7 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.excludes-link-chain",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\texcludesFile = {{dir}}/ign\n",
+          "real-ignore": ".env\n"
+        },
+        "links": {
+          "ign": "ign2",
+          "ign2": "real-ignore"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 7,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 7 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.excludes-link-loop",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\texcludesFile = {{dir}}/ign\n"
+        },
+        "links": {
+          "ign": "ign2",
+          "ign2": "ign"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "core.excludesFile: {{dir}}/ign: too many symbolic links"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: core.excludesFile: {{dir}}/ign: too many symbolic links",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.excludes-not-utf8",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\texcludesFile = /xÿ\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets (1 not ignored by Git); 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.global-include",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[include]\n\tpath = x\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "the global Git configuration: {{dir}}/home/.gitconfig includes other files, which are not read"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: the global Git configuration: {{dir}}/home/.gitconfig includes other files, which are not read",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.global-worktree",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core]\n\tworktree = /x\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "the global Git configuration: {{dir}}/home/.gitconfig sets core.worktree"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: the global Git configuration: {{dir}}/home/.gitconfig sets core.worktree",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.global-link",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "real-config": "[core]\n\texcludesFile = {{dir}}/b\n",
+          "b": ".env\n"
+        },
+        "links": {
+          "home/.gitconfig": "../real-config"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 6,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: ignored by Git",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 6 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.global-unreadable-syntax",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "home/.gitconfig": "[core\n\tbroken\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "the global Git configuration: Git could not read {{dir}}/home/.gitconfig (exit status 128)"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 4,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: the global Git configuration: Git could not read {{dir}}/home/.gitconfig (exit status 128)",
+          "",
+          "varlatch scan: 1 file(s) look like copies of secrets; 4 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.global-secret-name",
+      "tree": {
+        "repos": [
+          "."
+        ],
+        "files": {
+          ".env": "",
+          "g/.env.gitconfig": "[core]\n"
+        }
+      },
+      "dir": ".",
+      "env": {
+        "GIT_CONFIG_GLOBAL": "{{dir}}/g/.env.gitconfig"
+      },
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": ".env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "the global Git configuration: {{dir}}/g/.env.gitconfig has the name of a secret copy"
+            },
+            {
+              "path": "g/.env.gitconfig",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "the global Git configuration: {{dir}}/g/.env.gitconfig has the name of a secret copy"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 5,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  .env: Git status unknown: the global Git configuration: {{dir}}/g/.env.gitconfig has the name of a secret copy",
+          "  g/.env.gitconfig: Git status unknown: the global Git configuration: {{dir}}/g/.env.gitconfig has the name of a secret copy",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets; 5 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    },
+    {
+      "id": "unusual.two-repos-one-unusual",
+      "tree": {
+        "repos": [
+          "good",
+          "bad"
+        ],
+        "files": {
+          "good/.env": "",
+          "bad/.env": "",
+          "bad/.git/objects/info/alternates": "/x\n"
+        }
+      },
+      "dir": ".",
+      "expect": {
+        "exitCode": 1,
+        "json": {
+          "version": 1,
+          "mode": "find-files",
+          "exitCode": 1,
+          "root": "{{dir}}",
+          "files": [
+            {
+              "path": "bad/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "unknown",
+              "gitError": "the repository uses another object store ({{dir}}/bad/.git/objects/info/alternates)"
+            },
+            {
+              "path": "good/.env",
+              "kind": "dotenv",
+              "symlink": false,
+              "git": "not-ignored"
+            }
+          ],
+          "notSearched": [],
+          "entriesChecked": 7,
+          "stopped": false
+        },
+        "human": [
+          "Files that look like copies of secrets, by name, under {{dir}}:",
+          "  bad/.env: Git status unknown: the repository uses another object store ({{dir}}/bad/.git/objects/info/alternates)",
+          "  good/.env: not ignored by Git, so it can be committed",
+          "",
+          "varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git); 7 entries checked by name, without reading their contents.",
+          "Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source",
+          "A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.",
+          "See docs/reference/secret-scanning.md and docs/reference/import.md."
+        ]
+      }
+    }
+  ]
+}

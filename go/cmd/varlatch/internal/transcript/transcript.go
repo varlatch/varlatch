@@ -351,7 +351,7 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		return Outcome{}, nil, err
 	}
 	unfill := func(s string) string {
-		s = strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir, "{{dir}}")
+		s = UnfillDir(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir)
 		s, _ = ApplyPatterns(c.Patterns, s, began, end)
 		return s
 	}
@@ -409,6 +409,18 @@ func run(cmd *exec.Cmd, c Case) (status int, stdout, stderr string, callbacks []
 	end = time.Now().UnixMilli()
 	stdout, stderr = watch.text()
 	return status, stdout, stderr, callbacks, began, end, nil
+}
+
+// UnfillDir is goKit.ts's unfillDir: the case directory as {{dir}}, both as
+// it is printed and as a JSON string holds it (each backslash doubled, so
+// on Windows `C:\\Users\\...` in a --json document or a file the CLI wrote
+// as JSON is the directory too). On Linux and macOS a directory holds no
+// backslash, so the two forms are the same.
+func UnfillDir(s, dir string) string {
+	if escaped := strings.ReplaceAll(dir, `\`, `\\`); escaped != dir {
+		s = strings.ReplaceAll(s, escaped, "{{dir}}")
+	}
+	return strings.ReplaceAll(s, dir, "{{dir}}")
 }
 
 // GeneratedPattern is goKit.ts's generatedPattern, the "generated" pattern:
