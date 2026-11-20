@@ -172,12 +172,8 @@ func readLimited(stdin io.Reader, n int64, what string) ([]byte, error) {
 // there}); with --write, the journal on stdin written in its place. A
 // journal of another migration is replaced only once that one was undone
 // (released).
-func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout io.Writer, fail func(int, string, ...any) int) int {
+func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writer, fail func(int, string, ...any) int) int {
 	if a.write {
-		b, err := readLimited(stdin, 1<<20, "the journal")
-		if err != nil {
-			return fail(64, "%v", err)
-		}
 		h, err := parseJournal(b)
 		if err != nil {
 			return fail(ExitFailure, "%v; nothing was written", err)
