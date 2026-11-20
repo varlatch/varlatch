@@ -52,14 +52,12 @@ func (osEnv) EnvironNames() []string {
 	return names
 }
 
-// In the single-container image (go/image/Dockerfile sets imageMarker),
-// the CLI runs beside varlatchd and refuses, as varlatchd serve does, an
-// environment that holds the Root KEK or the Backup Encryption Key that
-// imageConfig names, or a variable the TypeScript line kept a key in
-// (lib/keyenv): exit 78, the variable named, never its value. It needs no
-// key itself; keys reach varlatchd only as mounted files.
-const imageMarker = "VARLATCH_IMAGE"
-
+// In the single-container image (go/image/Dockerfile sets
+// keyenv.ImageMarker), the CLI runs beside varlatchd and refuses, as
+// varlatchd does, an environment that holds the Root KEK or the Backup
+// Encryption Key that imageConfig names, or a key or passphrase variable
+// name (lib/keyenv): exit 78, the variable named, never its value. It
+// needs no key itself; keys reach varlatchd only as mounted files.
 var imageConfig = "/etc/varlatch/varlatchd.conf"
 
 // exitConfig is the exit status of a refused environment (EX_CONFIG, as
@@ -67,7 +65,7 @@ var imageConfig = "/etc/varlatch/varlatchd.conf"
 const exitConfig = 78
 
 func imageRefusal() string {
-	if os.Getenv(imageMarker) == "" {
+	if os.Getenv(keyenv.ImageMarker) == "" {
 		return ""
 	}
 	keys := keyenv.Configured(imageConfig)

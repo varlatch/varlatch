@@ -54,7 +54,7 @@ func TestRefusal(t *testing.T) {
 	for _, name := range Variables {
 		for _, n := range []string{name, strings.ToLower(name)} {
 			why := Refusal([]string{n + "=a-value-of-its-own"}, keys...)
-			if !strings.Contains(why, "the environment variable "+n+" is where the TypeScript line kept a key") || strings.Contains(why, "a-value-of-its-own") {
+			if !strings.Contains(why, "the environment variable "+n+" is a key or passphrase variable name") || strings.Contains(why, "a-value-of-its-own") {
 				t.Errorf("%s: %q", n, why)
 			}
 		}
@@ -84,6 +84,11 @@ func TestConfigured(t *testing.T) {
 	got := Configured(conf)
 	if len(got) != 2 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) || got[1].What != BEK || hex.EncodeToString(got[1].Bytes) != hex.EncodeToString(bek) {
 		t.Fatalf("both keys: %d", len(got))
+	}
+	// A byte order mark before the first line, as config.Parse allows.
+	write("\uFEFFroot_kek_file = " + filepath.Join(dir, "root-kek") + "\n")
+	if got := Configured(conf); len(got) != 1 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) {
+		t.Fatalf("after a byte order mark: %d", len(got))
 	}
 	// A key file it cannot read, or that holds no key, is left out.
 	write("root_kek_file = " + filepath.Join(dir, "missing") + "\nbackup_key_file = " + conf + "\n")
