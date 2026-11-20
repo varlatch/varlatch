@@ -273,8 +273,9 @@ func TestPublishedInstallSh(t *testing.T) {
 				env = append(env, "PATH="+c.path(t)+":"+os.Getenv("PATH"))
 			}
 			code, out, target := runSh(t, p, srv.URL+"/v"+p.version, caFile(t, srv), env...)
-			if code == 0 || !strings.Contains(out, c.want) || !strings.Contains(out, "nothing was installed") && !strings.Contains(out, "does not verify") {
-				t.Fatalf("exit %d, want %q:\n%s", code, c.want, out)
+			// Each refusal names its reason and says nothing was installed.
+			if code == 0 || !strings.Contains(out, c.want) || !strings.Contains(out, "nothing was installed") {
+				t.Fatalf("exit %d, want %q and nothing installed:\n%s", code, c.want, out)
 			}
 			if _, err := os.Stat(target); err == nil {
 				t.Fatal("something was installed")
@@ -367,7 +368,10 @@ func TestPublishedInstallPS1(t *testing.T) {
 				want string
 			}{
 				"a bad signature": {tp: func(tp *tampered) { tp.change = map[string][]byte{"SHA256SUMS": p.badSums(t)} }, want: "release signature does not verify"},
-				"a cut-off asset": {tp: func(tp *tampered) { tp.cutOff = cli }, want: "varlatch install:"},
+				// The partial body is delivered and checked: if a Windows run
+				// ever shows .NET failing the read instead, this is where to
+				// accept "varlatch install:" alone.
+				"a cut-off asset": {tp: func(tp *tampered) { tp.cutOff = cli }, want: "does not match SHA256SUMS"},
 			}
 			if runtime.GOARCH == "amd64" {
 				// The arm64 build, listed, matching its line: an x64 Windows
