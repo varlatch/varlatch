@@ -408,9 +408,6 @@ var shared struct {
 	sourceFile, decisions  string
 	pin                    string
 	err                    error
-	// current is the world the public URL's proxy serves now.
-	mu      sync.Mutex
-	current *world
 }
 
 func setUpShared(t *testing.T) {
@@ -566,9 +563,6 @@ func newWorld(t *testing.T, image bool) *world {
 		_ = os.Setenv("G5_STATE", w.stateDir)
 		_ = stopService()
 	})
-	shared.mu.Lock()
-	shared.current = w
-	shared.mu.Unlock()
 	return w
 }
 
@@ -847,6 +841,14 @@ func TestG5Interruptions(t *testing.T) {
 				if code := w.run(""); code != 1 {
 					t.Errorf("a run over the interrupted migration: %d", code)
 				}
+				if !c.abort {
+					// Past the switch an abort is refused, and changes
+					// nothing.
+					if code := w.run("", "--abort"); code != 1 {
+						t.Fatalf("--abort past the switch: %d\n%s", code, w.outputs[len(w.outputs)-1])
+					}
+					w.expect("an abort refused at "+c.point, c.src, c.tgt, c.answers, c.gate)
+				}
 				final := c.resumed
 				if abort {
 					final = "released"
@@ -860,15 +862,18 @@ func TestG5Interruptions(t *testing.T) {
 						t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
 					}
 				}
-				switch final {
-				case "open":
-					w.expect("resumed", "open", "open", "target-open", "migrated-out")
-				case "released":
-					w.expect("undone", "released", "released", "source", "")
-					if _, err := os.Stat(filepath.Join(w.data, "varlatch.db")); !os.IsNotExist(err) {
-						t.Errorf("the target's database was not discarded: %v", err)
+				finished := func(when string) {
+					switch final {
+					case "open":
+						w.expect(when, "open", "open", "target-open", "migrated-out")
+					case "released":
+						w.expect(when, "released", "released", "source", "")
+						if _, err := os.Stat(filepath.Join(w.data, "varlatch.db")); !os.IsNotExist(err) {
+							t.Errorf("%s: the target's database was not discarded: %v", when, err)
+						}
 					}
 				}
+				finished(map[bool]string{false: "resumed", true: "undone"}[abort])
 				if after := w.sourceHash(); after != before {
 					t.Error("the source's data changed")
 				}
@@ -876,6 +881,7 @@ func TestG5Interruptions(t *testing.T) {
 				if code := w.run("", "--resume"); code != 0 {
 					t.Errorf("a second --resume: %d", code)
 				}
+				finished("after a second --resume")
 				w.noSecrets()
 			})
 		}

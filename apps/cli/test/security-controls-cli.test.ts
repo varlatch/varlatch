@@ -11,6 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Approval, SecurityControl, SecurityControlList } from "@varlatch/protocol";
 import { EXIT } from "../src/exitCodes.js";
 import { commandHelp } from "../src/usage.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch security controls` and `varlatch security set` end to end
@@ -169,7 +170,7 @@ interface Result {
 
 function cli(args: string[], options: { assisted?: boolean; interruptWhen?: string } = {}): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd: repo,
       // An explicit mode for each run (assisted mode is on under a coding agent's session).
       env: {
