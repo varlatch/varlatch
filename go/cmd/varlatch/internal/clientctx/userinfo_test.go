@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -384,30 +385,32 @@ var maskRegressions = []string{
 // hook tests judge it): for an input eight times as large, the time may
 // grow at most 24-fold. Linear work grows about eightfold and quadratic
 // about 64-fold, and 24 sits near their geometric middle, so the limit
-// separates them with room for noise (the race detector, a shared runner,
-// a garbage collection) on either side; it judges growth only, never a
-// machine's speed. 20 ms of slack keeps a run of a few milliseconds from
+// separates them with room for noise on either side; it judges growth
+// only, never a machine's speed. 20 ms of slack keeps a short run from
 // failing on jitter.
 func growsLinearly(small, large time.Duration) bool {
 	return large <= 24*small+20*time.Millisecond
 }
 
-// timed is one run of f, after a garbage collection.
+// timed is one run of f, after a garbage collection and with the
+// collector off while it runs: a collection's pause is the noise that
+// made a run of under a millisecond look 78 times slower once.
 func timed(f func()) time.Duration {
 	runtime.GC()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
 	began := time.Now()
 	f()
 	return time.Since(began)
 }
 
-// interleaved times small and large three times each, alternately, each
-// after a garbage collection, and gives the fastest of each, after one
-// untimed run of small: noise only ever adds time, and a CPU still cold or
-// clocking up slows the first runs, so neither size's runs all come first.
+// interleaved times small and large five times each, alternately, and
+// gives the fastest of each, after one untimed run of small: noise only
+// ever adds time, and a CPU still cold or clocking up slows the first
+// runs, so neither size's runs all come first.
 func interleaved(small, large func()) (time.Duration, time.Duration) {
 	small() // warm up
 	var s, l time.Duration
-	for i := range 3 {
+	for i := range 5 {
 		ts, tl := timed(small), timed(large)
 		if i == 0 || ts < s {
 			s = ts
@@ -418,6 +421,15 @@ func interleaved(small, large func()) (time.Duration, time.Duration) {
 	}
 	return s, l
 }
+
+// The timing tests' sizes: large enough that the smaller run takes a
+// millisecond or more (about 10 ms for the slowest inputs), so a pause of
+// the machine is small beside it; smaller under the race detector, which
+// slows the work about tenfold.
+const (
+	timedSmall = 400_000 / raceSlowdown
+	timedLarge = 8 * timedSmall
+)
 
 // TestMaskingIsLinear: inputs that made the earlier scanners rescan (a tab
 // after every letter, a URL every ten bytes, quotes, escapes, "@"s, and
@@ -430,25 +442,25 @@ func TestMaskingIsLinear(t *testing.T) {
 		`http:u:p@h\`, "a:\n@b\n", "%40", `\U00000040`, "a:\n", "[redacted]@", "\n@", "x: [redacted]@h, ",
 	} {
 		repeat := func(size int) string { return strings.Repeat(unit, size/len(unit)+1)[:size] }
-		smallIn, largeIn := repeat(25_000), repeat(200_000)
+		smallIn, largeIn := repeat(timedSmall), repeat(timedLarge)
 		mask := func(in string) func() { return func() { MaskUserinfoInText(in); MaskUserinfo(in) } }
 		small, large := interleaved(mask(smallIn), mask(largeIn))
 		if !growsLinearly(small, large) {
-			t.Errorf("%q: 25 KB in %v, 200 KB in %v (%.0f times; linear is about 8)", unit, small, large, float64(large)/float64(max(small, time.Microsecond)))
+			t.Errorf("%q: %d KB in %v, %d KB in %v (%.0f times; linear is about 8)", unit, timedSmall/1000, small, timedLarge/1000, large, float64(large)/float64(max(small, time.Microsecond)))
 		}
 	}
 }
 
 // TestMaskingIsLinearOnLargeMessages: a message of URLs, colons and
 // at-signs eight times as large is masked in at most 24 times the time,
-// up to 2 MB.
+// up to 3.2 MB.
 func TestMaskingIsLinearOnLargeMessages(t *testing.T) {
 	line := "open https://u:p@h/x: denied\n"
-	smallIn, largeIn := strings.Repeat(line, 250_000/len(line)), strings.Repeat(line, 2_000_000/len(line))
+	smallIn, largeIn := strings.Repeat(line, timedSmall/len(line)), strings.Repeat(line, timedLarge/len(line))
 	var out string
 	small, large := interleaved(func() { MaskUserinfoInText(smallIn) }, func() { out = MaskUserinfoInText(largeIn) })
 	if !growsLinearly(small, large) {
-		t.Errorf("250 KB in %v, 2 MB in %v (%.0f times; linear is about 8)", small, large, float64(large)/float64(max(small, time.Microsecond)))
+		t.Errorf("%d KB in %v, %d KB in %v (%.0f times; linear is about 8)", timedSmall/1000, small, timedLarge/1000, large, float64(large)/float64(max(small, time.Microsecond)))
 	}
 	if strings.Contains(out, "u:p") {
 		t.Error("a password survived")
