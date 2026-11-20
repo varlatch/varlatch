@@ -291,7 +291,9 @@ func orDefault(d, def time.Duration) time.Duration {
 
 // HandoffError is a failed handoff: what failed, and in which phase the
 // handoff stands now (Prepared when it failed before any change, Undone
-// when the undo returned the name, UndoPending when it is to be resumed).
+// when the undo returned the name, UndoPending when it is to be resumed,
+// Switching when a resumed open could not be verified again: the incoming
+// installation may be open, so nothing is undone).
 type HandoffError struct {
 	Phase Phase
 	Err   error
@@ -301,6 +303,8 @@ func (e *HandoffError) Error() string {
 	switch e.Phase {
 	case Undone:
 		return fmt.Sprintf("the handoff failed and was undone, the serving installation is open again at its name: %v", e.Err)
+	case Switching:
+		return fmt.Sprintf("the handoff was interrupted while opening the incoming installation and its name, certificate or reach could not be verified again: the incoming installation may be open, so it is not undone (an undo would take the name from an open listener); close the incoming installation, or run a reverse handoff, or resume it once the check holds: %v", e.Err)
 	case UndoPending:
 		return fmt.Sprintf("the handoff failed and its undo could not finish: neither installation is opened on the tailnet (the serving one closed, or closing when the failure came first); resume it once the control plane answers: %v", e.Err)
 	default:
@@ -555,8 +559,8 @@ func (e *Engine) nameCertificate(ctx context.Context, s *State) error {
 	return nil
 }
 
-// allowIssuance refuses when need more certificates for name would pass
-// the CA's weekly limit by the installation's count.
+// allowIssuance refuses when requesting need more certificates for name
+// would pass the CA's weekly limit, by the installation's own count.
 func (e *Engine) allowIssuance(ctx context.Context, name string, need int) error {
 	n, err := e.Ledger.Count(ctx, name, e.now().Add(-7*24*time.Hour))
 	if err != nil {
@@ -676,8 +680,10 @@ func (e *Engine) reaches(ctx context.Context, name, nodeID string) error {
 		select {
 		case <-ctx.Done():
 			// Whatever the last check answered, what failed is the reach.
+			// The last check's error is kept unless it is the deadline
+			// itself, so the deadline is said once.
 			cause := ctx.Err()
-			if err != nil {
+			if err != nil && !errors.Is(err, cause) {
 				cause = errors.Join(err, cause)
 			}
 			return fmt.Errorf("%s does not reach the incoming node from a client: %w", name, cause)
@@ -779,8 +785,12 @@ func (e *Engine) confirm(ctx context.Context, id, name string) error {
 // incoming installation: the name is read back again first.
 func (e *Engine) finishOpen(ctx context.Context, s *State) (*State, error) {
 	// Everything the open rested on is checked again, under a deadline of
-	// its own: the name, the certificate and a client's reach. Any of them
-	// failing is undone, as a switch's failure is.
+	// its own: the name, the certificate and a client's reach. The crash may
+	// have come after the listener opened, so a failed check is not undone
+	// (undoSteps refuses an open incoming installation for the same reason):
+	// the journal keeps IncomingOpened and the failure, and the operator
+	// closes the incoming installation, runs a reverse handoff, or resumes
+	// once the check holds.
 	vctx, cancel := context.WithTimeout(ctx, orDefault(e.Deadline, DefaultDeadline))
 	defer cancel()
 	verify := func() error {
@@ -799,10 +809,15 @@ func (e *Engine) finishOpen(ctx context.Context, s *State) (*State, error) {
 		return e.reaches(vctx, s.Plan.Name, nodeID)
 	}
 	if err := verify(); err != nil {
-		s.IncomingOpened = false
-		return e.undo(ctx, s, err)
+		s.Failure = err.Error()
+		if serr := e.save(ctx, s); serr != nil {
+			err = errors.Join(err, serr)
+		}
+		return s, &HandoffError{Phase: Switching, Err: err}
 	}
 	if err := e.Endpoints.OpenIncoming(ctx); err != nil {
+		// It is not open (OpenIncoming is all or nothing, and does nothing
+		// when open already): the undo may take the name back.
 		s.IncomingOpened = false
 		return e.undo(ctx, s, fmt.Errorf("opening the incoming installation: %w", err))
 	}
@@ -812,8 +827,10 @@ func (e *Engine) finishOpen(ctx context.Context, s *State) (*State, error) {
 
 // Resume finishes a handoff a crash or a lost control plane interrupted: a
 // switch that did not finish, or an undo, is undone (the serving
-// installation takes its name back and reopens); a prepared, done or undone
-// one is answered as it is.
+// installation takes its name back and reopens), except one interrupted
+// while opening the incoming installation, which is finished if its checks
+// hold again and otherwise left as it is (finishOpen); a prepared, done or
+// undone one is answered as it is.
 func (e *Engine) Resume(ctx context.Context, operation string) (*State, error) {
 	s, err := e.Journal.Load(ctx, operation)
 	if err != nil {

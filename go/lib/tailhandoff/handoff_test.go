@@ -161,8 +161,12 @@ type fakeEndpoints struct {
 	closeErr, openErr          error
 	onClose                    func()
 	reopens, closes, openCalls int
-	// strict makes ReopenServing fail when there is nothing to reopen, and
-	// CloseServing when there is nothing to close: a dead node's.
+	// reopenedClosed counts the ReopenServing calls that found the listener
+	// closed and opened it; the others did nothing (the contract).
+	reopenedClosed int
+	// strict makes CloseServing fail when there is nothing to close: a dead
+	// node's. ReopenServing on an open listener does nothing, as the
+	// contract says, strict or not.
 	strict bool
 }
 
@@ -188,8 +192,8 @@ func (e *fakeEndpoints) ReopenServing(context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.reopens++
-	if e.strict && e.servingOpen {
-		return errors.New("there is nothing to reopen")
+	if !e.servingOpen {
+		e.reopenedClosed++
 	}
 	e.servingOpen = true
 	return nil
@@ -829,11 +833,12 @@ func TestACrashAfterTheReopen(t *testing.T) {
 	s.Phase, s.ServingClosed, s.ServingRenamed, s.IncomingRenamed, s.Failure = tailhandoff.Undoing, true, true, true, "the final check failed"
 	_ = r.j.Save(ctx, s)
 	// The names are back and the listener is open: only the journal is behind.
+	r.ep.strict = true
 	r.ep.servingOpen = true
 	s, err := r.engine.Resume(ctx, op)
 	assertUndone(t, r, s, err)
-	if r.ep.reopens != 1 {
-		t.Errorf("reopened %d times", r.ep.reopens)
+	if r.ep.reopens != 1 || r.ep.reopenedClosed != 0 {
+		t.Errorf("ReopenServing called %d times, opening a closed listener %d times: on an open one it does nothing", r.ep.reopens, r.ep.reopenedClosed)
 	}
 }
 
@@ -889,7 +894,10 @@ func TestARenewalNeedsRoomForTwo(t *testing.T) {
 
 // TestFinishOpenVerifiesAgain: a switch that died while opening the
 // incoming installation is finished only if the name, the certificate and
-// a client's reach hold again; otherwise it is undone.
+// a client's reach hold again. Otherwise it is not undone: the crash may
+// have come after the listener opened, and an undo would take the name
+// from it. The journal keeps the open, and a later Resume finishes it once
+// the check holds.
 func TestFinishOpenVerifiesAgain(t *testing.T) {
 	r := newRig(t)
 	if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
@@ -904,8 +912,41 @@ func TestFinishOpenVerifiesAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The crash came after the listener opened.
+	r.ep.incomingOpen = true
 	r.engine.Deadline = 300 * time.Millisecond
 	r.r.never.Store(true) // a client no longer reaches it
 	s, err := r.engine.Resume(ctx, op)
-	assertUndone(t, r, s, err)
+	var he *tailhandoff.HandoffError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.Switching || !strings.Contains(err.Error(), "may be open") {
+		t.Fatalf("%+v, %v", s, err)
+	}
+	if strings.Count(err.Error(), "context deadline exceeded") != 1 {
+		t.Errorf("the deadline is not said once: %v", err)
+	}
+	if s.Phase != tailhandoff.Switching || !s.IncomingOpened || s.Failure == "" {
+		t.Errorf("the journal lost the open: %+v", s)
+	}
+	saved, _ := r.j.Load(ctx, op)
+	if saved.Phase != tailhandoff.Switching || !saved.IncomingOpened || saved.Failure == "" {
+		t.Errorf("the journal lost the open: %+v", saved)
+	}
+	// Nothing was undone: the incoming node keeps the name, its listener
+	// stays open, the serving one stays closed and off the name.
+	if n := r.names(); n["2"] != "vault" || n["1"] != s.ServingTemp {
+		t.Errorf("names %v", n)
+	}
+	if serving, incoming := r.ep.state(); serving || !incoming || r.ep.reopens != 0 {
+		t.Errorf("serving open %v, incoming open %v, reopens %d", serving, incoming, r.ep.reopens)
+	}
+
+	// The check holds again: Resume finishes it.
+	r.r.never.Store(false)
+	s, err = r.engine.Resume(ctx, op)
+	if err != nil || s.Phase != tailhandoff.Done {
+		t.Fatalf("finished: %+v, %v", s, err)
+	}
+	if _, incoming := r.ep.state(); !incoming || r.ep.openCalls != 1 {
+		t.Errorf("incoming open %v after %d OpenIncoming calls", incoming, r.ep.openCalls)
+	}
 }
