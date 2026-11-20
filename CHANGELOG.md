@@ -19,6 +19,8 @@ as on 0.22.4.
   - `barrier` stops the installation at a fixed point: it drains the
     requests in flight, then pauses every request and background loop
     until `release` or `mark-migrated-out`. `status` shows the barrier.
+  - `release` lifts the barrier: the installation serves again, as it
+    was. That is how a move is called off before the switch.
   - `export` writes the installation, as it stands behind the barrier,
     to a migration bundle (a new file, mode 0600). With `--dry-run` it
     reads a consistent snapshot of a running installation instead, with
