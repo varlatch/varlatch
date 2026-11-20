@@ -53,7 +53,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && !conformance && !operator && !backup && !keys {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "schema" && !conformance && !operator && !backup && !keys {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -95,6 +95,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		}
 	case sub == "doctor":
 		if _, msg := doctorArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "schema":
+		if _, _, msg := schemaArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
@@ -141,6 +146,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runDoctor(cfg, path, asJSON, stdout, stderr)
 	case sub == "backup" && rest[0] == "restore":
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
+	case sub == "schema":
+		return runSchema(cfg, rest, stdout, stderr)
 	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
@@ -150,7 +157,8 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] | "+
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
-		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt]] [--json] | varlatchd admin doctor [--json]  (each with [--config <file>])\n", msg)
+		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
+		"varlatchd admin schema status|upgrade [--json] | varlatchd admin doctor [--json]  (each with [--config <file>])\n", msg)
 	return 64
 }
 

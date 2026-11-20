@@ -24,26 +24,14 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// Schema returns schema.sql, the statements that create the schema of
-// version SchemaVersion on an empty database.
-func Schema() string { return schemaSQL }
+// Schema returns the statements that create the schema of version
+// SchemaVersion on an empty database: schema.sql (and, in G6's fixture
+// build, its synthetic change).
+func Schema() string { return schemaSQL + schemaExtra }
 
-// SchemaVersion is the version of schema.sql, recorded in the database's
-// schema_version table.
-//
-// The version is a table row, not PRAGMA user_version, for three reasons:
-// the storage engine refuses PRAGMA assignments inside a write job, so a
-// pragma could not be set in the job that creates or upgrades the schema,
-// and the version would not commit atomically with it; the row also holds
-// compatible_from, which rollback-safe upgrades need (ADR-0059 Decision 8,
-// G6: an older varlatchd may open a database a rollback-safe newer release
-// wrote); and it says which release created and last changed the schema.
-//
-// Until the first Go release, schema.sql changes in place under version 1;
-// a database made by a development build is not upgraded. From that
-// release on, every change to schema.sql raises this number and comes with
-// its upgrade, which `varlatch upgrade` (step 6) runs.
-const SchemaVersion = 1
+// SchemaVersion, CompatibleFrom and the upgrade steps are in version.go
+// (and, in a build with the g6fixture tag, version_g6fixture.go: G6's
+// synthetic release).
 
 // ErrNotVarlatch is returned by Init for a database that has tables but no
 // schema version: not one varlatchd created.
@@ -77,12 +65,13 @@ type State struct {
 // Init prepares the database for varlatchd, before anything else uses it.
 //
 // On a database with no tables (a new file) it creates the schema and
-// records SchemaVersion, both in one write job: either all of it commits or
-// none. On a database that has the schema it checks the recorded version:
-// the same version is ready; a newer one is accepted when its
-// compatible_from allows this varlatchd (a rollback-safe release wrote it);
-// anything else is a *VersionError. A database with tables but no
-// schema_version is ErrNotVarlatch. Init never changes an existing schema.
+// records SchemaVersion and CompatibleFrom, all in one write job: either
+// all of it commits or none. On a database that has the schema it checks
+// the recorded version: the same version is ready; a newer one is accepted
+// when its compatible_from allows this varlatchd (a rollback-safe release
+// wrote it); anything else is a *VersionError (an older one needs
+// Upgrade). A database with tables but no schema_version is
+// ErrNotVarlatch. Init never changes an existing schema.
 //
 // release names the varlatchd release, recorded as the schema's creator
 // (1 to 64 characters).
@@ -99,17 +88,17 @@ func Init(ctx context.Context, s *storage.DB, release string) (State, error) {
 		}
 		q := query.New(tx)
 		if tables == 0 {
-			if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+			if _, err := tx.ExecContext(ctx, Schema()); err != nil {
 				return fmt.Errorf("db: creating the schema: %w", err)
 			}
 			now := time.Now().UnixMicro()
 			if err := q.CreateSchemaVersion(ctx, query.CreateSchemaVersionParams{
-				Version: SchemaVersion, CompatibleFrom: SchemaVersion,
+				Version: SchemaVersion, CompatibleFrom: CompatibleFrom,
 				CreatedAt: now, CreatedByRelease: release, UpdatedAt: now, UpdatedByRelease: release,
 			}); err != nil {
 				return fmt.Errorf("db: recording the schema version: %w", err)
 			}
-			st = State{Created: true, Version: SchemaVersion, CompatibleFrom: SchemaVersion}
+			st = State{Created: true, Version: SchemaVersion, CompatibleFrom: CompatibleFrom}
 			return nil
 		}
 		var present int

@@ -52,6 +52,7 @@ on:
       - "packages/contract/src/**"
       - "packages/contract/test/vectors/**"
       - "scripts/check-licenses.mjs"
+      - "scripts/check-timing-tests.sh"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"
       - "scripts/conformance/inventory.json"
@@ -125,6 +126,16 @@ concurrency:
   group: go-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # The timing tests: each judges how a run's time grows with its input
+  # (growsLinearly), so a CPU shared with other test binaries reads as
+  # nonlinear work. The test steps skip them (-skip), and a step of their
+  # own runs them alone right after (-p 1). scripts/check-timing-tests.sh
+  # (go job) fails when a test calls growsLinearly and this list misses it.
+  # Keep it a flat list of test names, ^(TestA|TestB|...)$: the check reads
+  # the names back from that shape and refuses any other.
+  TIMING_TESTS: "^(TestTheLinearityCriterion|TestHookLinearTime|TestHookLongReaderIsLinear|TestMaskingIsLinear|TestMaskingIsLinearOnLargeMessages|TestFindIsLinear|TestMatcherIsLinear|TestScanIsLinear|TestManyKeys)$"
+
 jobs:
   # Whether this run's change touches anything the Go jobs check. A push
   # is filtered by the trigger's paths instead, and runs every job.
@@ -157,6 +168,7 @@ jobs:
             packages/contract/src/*
             packages/contract/test/vectors/*
             scripts/check-licenses.mjs
+            scripts/check-timing-tests.sh
             packages/protocol/openapi.yaml
             scripts/conformance/run.mjs
             scripts/conformance/inventory.json
@@ -386,7 +398,52 @@ jobs:
         env:
           CGO_ENABLED: "0"
           VARLATCH_REQUIRE_DASHBOARD: "1"
-        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test -count=1 ./...
+        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test -count=1 -skip "$TIMING_TESTS" ./...
+
+      # The timing tests the step above skipped, alone: one test binary at a
+      # time (TIMING_TESTS says why).
+      - name: Timing tests, alone
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -p 1 -run "$TIMING_TESTS" ./...
+
+      - name: Every timing test runs alone
+        run: scripts/check-timing-tests.sh
+
+      # G6's static half (ADR-0059 Decision 8; internal docs/design/
+      # go-step6.md decision 5): go/release/release.json, the release's
+      # rollback-safety declaration, matches this build's schema version,
+      # and the schema's changes since the previous Go release are ones the
+      # declaration allows (go/server/db/schemadiff). Before the first Go
+      # release there is no previous one: the g6fixture build (a synthetic
+      # rollback-safe step on this commit's schema) is checked against this
+      # commit's schema instead, to prove the machinery. Either way, the
+      # negative fixture (a breaking change in a release declared
+      # rollback-safe) must fail the check. G6's run is go-binary's, shard 1.
+      - name: G6, the release's declaration and its schema check
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go run ./server/db/releasecheck declaration
+          previous=$(jq -r '.previous.version // empty' release/release.json)
+          if [ -n "$previous" ]; then
+            git fetch --no-tags --depth=1 origin "refs/tags/v$previous:refs/tags/v$previous"
+            git show "v$previous:go/server/db/schema.sql" > "$RUNNER_TEMP/previous-schema.sql"
+            go run ./server/db/releasecheck schema --previous "$RUNNER_TEMP/previous-schema.sql"
+          else
+            go test -count=1 -tags g6fixture -run '^TestTheG6FixtureUpgradesToItsSchema$' ./server/db/
+            go run -tags g6fixture ./server/db/releasecheck declaration --declaration release/testdata/g6/fixture.json
+            go run -tags g6fixture ./server/db/releasecheck schema --previous server/db/schema.sql --declaration release/testdata/g6/fixture.json
+            go run -tags g6fixture,g6unsafe ./server/db/releasecheck declaration --declaration release/testdata/g6/fixture-unsafe.json
+          fi
+          cat server/db/schema.sql release/testdata/g6/breaking.sql > "$RUNNER_TEMP/breaking-schema.sql"
+          status=0
+          go run ./server/db/releasecheck schema --previous server/db/schema.sql --current "$RUNNER_TEMP/breaking-schema.sql" \
+            --declaration release/testdata/g6/fixture.json || status=$?
+          [ "$status" -eq 1 ] || { echo "::error::G6's schema check did not fail a release declared rollback-safe that breaks the schema (exit $status)"; exit 1; }
+          echo "The negative fixture failed the check, as it must."
 
       # The conformance build's own tests: its host override, which the
       # sync suite's fake platforms rely on, is still decided by the
@@ -456,8 +513,11 @@ jobs:
 
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
-      - name: install.sh, the G9a runner and the restore drill pass shellcheck
-        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh
+      - name: install.sh, the G9a runner, the restore drill and G6 pass shellcheck
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh
+
+      - name: The release's asset scripts pass shellcheck
+        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh
 
       # G13 (ADR-0059 step 4.14), and the Go replacement of
       # scripts/test-backup-s3.mjs: the S3 client against a local S3 server
@@ -705,7 +765,17 @@ jobs:
         # inside the job's 40.
         run: |
           # shellcheck disable=SC2046 # one argument per package
-          go test -count=1 -race -timeout 20m $(go list ./... | grep -v '/go/install$')
+          go test -count=1 -race -timeout 20m -skip "$TIMING_TESTS" $(go list ./... | grep -v '/go/install$')
+
+      # The timing tests the step above skipped, alone, with the race
+      # detector (TIMING_TESTS says why).
+      - name: Timing tests, alone, with the race detector
+        working-directory: go
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          # shellcheck disable=SC2046 # one argument per package
+          go test -count=1 -race -p 1 -timeout 20m -run "$TIMING_TESTS" $(go list ./... | grep -v '/go/install$')
 
       - name: Save Go's caches
         if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -807,7 +877,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.conformance == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # The nightly (and a dispatched) run's G6 takes every suite it names in
+    # shard 1 (about 35 minutes more); pull requests and merge groups keep
+    # the 40 minutes.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 80 || 40 }}
     strategy:
       fail-fast: false
       matrix:
@@ -854,6 +927,21 @@ jobs:
           cd go
           go generate ./server/web
           go build -tags conformance -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+      # The Go release assets (internal docs/design/go-step6.md, slice
+      # 6.1a), built from this commit exactly as release.yml builds them for
+      # a tag of 0.50.0 or later: the dashboard just generated, which must
+      # be clean and from this commit, every binary, the stamped installers,
+      # the unit, the manifest (release.json) and SHA256SUMS; then checked
+      # as release.yml checks them before signing. A version no release
+      # uses; nothing is signed, uploaded or published.
+      - name: The release's Go assets build and check
+        if: matrix.shard == 1
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          version="0.0.0-check.${GITHUB_RUN_NUMBER}"
+          go/release/build-assets.sh --version "$version" --out "$RUNNER_TEMP/release-assets"
+          go/release/check-assets.sh "$RUNNER_TEMP/release-assets" "$version"
       # G3 (ADR-0059 step 3.6), the direction the Go tests cannot take: the
       # TypeScript server's own read path (its effective-configuration and
       # disclosure routes, in PGlite) opens a database fixture whose
@@ -956,6 +1044,59 @@ jobs:
         run: VARLATCH_GO_BINARY="$RUNNER_TEMP/varlatchd" node --test scripts/conformance/test/go-binary.test.mjs
       - name: Install Chromium
         run: scripts/ci-install-chromium.sh
+      # G6's run (ADR-0059 Decision 8; go/release/g6.sh), in shard 1: the
+      # previous release's varlatchd on a database the new release
+      # upgraded, with the conformance suites below, then the new release on
+      # what the previous one wrote. The previous release is the one
+      # go/release/release.json names, built from its tag; before the first
+      # Go release, this commit's varlatchd is the previous release and its
+      # g6fixture build (one rollback-safe schema step) the new one. It runs
+      # after Chromium is installed: every conformance run starts with the
+      # passkey bootstrap, which drives a browser. Pull
+      # requests and merge groups take the suites that write each kind
+      # quickly (about 100 seconds a phase, shard-weights.json); the nightly
+      # run and a dispatched one add sync, deletion and webhooks (about 990
+      # seconds a phase).
+      - name: G6, the upgrade gate
+        if: matrix.shard == 1
+        env:
+          CGO_ENABLED: "0"
+          EVENT: ${{ github.event_name }}
+        run: |
+          previous=$(jq -r '.previous.version // empty' go/release/release.json)
+          if [ -n "$previous" ]; then
+            git fetch --no-tags --depth=1 origin "refs/tags/v$previous:refs/tags/v$previous"
+            git worktree add --detach "$RUNNER_TEMP/previous-release" "v$previous"
+            (cd "$RUNNER_TEMP/previous-release/go" && go build -tags conformance -o "$RUNNER_TEMP/varlatchd-previous" ./cmd/varlatchd)
+            old="$RUNNER_TEMP/varlatchd-previous" new="$RUNNER_TEMP/varlatchd"
+            safe=$(jq -r '.rollbackSafe' go/release/release.json)
+          else
+            (cd go && go build -tags conformance,g6fixture -o "$RUNNER_TEMP/varlatchd-g6fixture" ./cmd/varlatchd)
+            old="$RUNNER_TEMP/varlatchd" new="$RUNNER_TEMP/varlatchd-g6fixture"
+            safe=$(jq -r '.rollbackSafe' go/release/testdata/g6/fixture.json)
+          fi
+          suites="cli-core security oidc broker client-runtime audit-export realtime-events"
+          case "$EVENT" in schedule | workflow_dispatch) suites="$suites sync deletion webhooks" ;; esac
+          # shellcheck disable=SC2086 # one argument per suite
+          G6_ROLLBACK_SAFE=$safe sh go/release/g6.sh "$old" "$new" "$RUNNER_TEMP/g6" $suites
+          if [ -z "$previous" ]; then
+            # The not-rollback-safe path, cheaply (no conformance runs): the
+            # same fixture step declared not rollback-safe (g6unsafe:
+            # compatibleFrom 2) passes declared so, since the previous
+            # release refuses its database, and fails declared rollback-safe.
+            (cd go && go build -tags conformance,g6fixture,g6unsafe -o "$RUNNER_TEMP/varlatchd-g6unsafe" ./cmd/varlatchd)
+            G6_ROLLBACK_SAFE=false G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe"
+            status=0
+            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe-declared-safe" \
+              2> "$RUNNER_TEMP/g6-unsafe-declared-safe.err" || status=$?
+            cat "$RUNNER_TEMP/g6-unsafe-declared-safe.err" >&2
+            # Exit 1 for this reason alone: a step that fails earlier also exits 1.
+            if [ "$status" -ne 1 ] || ! grep -q "declared rollback-safe, but the previous release cannot open" "$RUNNER_TEMP/g6-unsafe-declared-safe.err"; then
+              echo "::error::G6 did not fail a release declared rollback-safe whose database the previous release refuses, for that reason (exit $status)"
+              exit 1
+            fi
+            echo "G6 failed the release declared rollback-safe whose database the previous release refuses, as it must."
+          fi
       # G13's restore drill (ADR-0059 step 4.14): a Go archive restored into
       # a fresh container that holds only the archive and the two keys (a
       # scratch image with varlatchd alone, no network), and the source's
@@ -1123,7 +1264,18 @@ jobs:
           # not allow); the log leaves out the lines of tests that ran and
           # passed.
           # shellcheck disable=SC2086 # one argument per package
-          go test -count=1 -v ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
+          go test -count=1 -v -skip "$TIMING_TESTS" ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
+
+      # The timing tests the step above skipped, alone (TIMING_TESTS says
+      # why); their skips join the same log for the summary below.
+      - name: Timing tests, alone
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          libs=$(go list -deps ./cmd/varlatch/... | grep '^github.com/varlatch/varlatch/go/lib/')
+          # shellcheck disable=SC2086 # one argument per package
+          go test -count=1 -v -p 1 -run "$TIMING_TESTS" ./cmd/varlatch/... $libs 2>&1 | tee -a "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
 
       - name: Skipped tests
         if: always()
