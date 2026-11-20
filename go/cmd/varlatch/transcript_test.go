@@ -222,6 +222,14 @@ var differences = map[string]transcript.Difference{
 	// Node.js prints a stack and exits 1; the Go CLI exits 1 too, with one
 	// line saying what went wrong. Only that stderr is accepted; the status
 	// and everything else are compared as recorded.
+	// A command `run` cannot start: TypeScript lets Node's error escape
+	// (its stack), Go prints Node's own message, `spawn <command> <code>`.
+	// Accepted only where Go says exactly the recorded error.
+	"spawn-error": func(o *transcript.Outcome, got transcript.Outcome) {
+		if m := recordedSpawnError.FindStringSubmatch(o.Stderr); m != nil && o.Status == 1 && got.Stderr == "varlatch: "+m[1]+"\n" {
+			o.Stderr = got.Stderr
+		}
+	},
 	"uncaught": func(o *transcript.Outcome, got transcript.Outcome) {
 		if strings.HasPrefix(o.Stderr, "{{uncaught") && o.Status == 1 && goFailure.MatchString(got.Stderr) {
 			o.Stderr = got.Stderr
@@ -384,6 +392,10 @@ var schemaFragment = regexp.MustCompile(`(?s)^(\.env\.schema line [0-9]+: (?:Unr
 
 // recordedActivation is a recorded `contract activate` success.
 var recordedActivation = regexp.MustCompile(`^Activated .+\.\n$`)
+
+// recordedSpawnError is a recorded spawn failure, as the recorder keeps an
+// error that escaped.
+var recordedSpawnError = regexp.MustCompile(`^\{\{uncaught Error: (spawn \S+ [A-Z]+)\}\}\n$`)
 
 // recordedRevisionName is a revision `types` names; recordedRevisionHint is
 // the --revision its --check hint repeats; revisionShape is the server's

@@ -559,7 +559,7 @@ func TestTheBrowserEndpointFollowsThePinEverywhere(t *testing.T) {
 	m = manager() // a restart: the closure is latched
 	m.Check(ctx)
 	seen("")
-	if _, _, err := m.Repin(ctx, false); err != nil {
+	if _, _, err := m.Repin(ctx, false, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	seen("https://varlatch.corp-new.ts.net:8443")
