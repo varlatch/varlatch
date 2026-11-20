@@ -85,16 +85,17 @@ export function lastError(stderr) {
     .split("\n")
     .map((l) => l.replace(/\s+$/, ""));
   const frame = (l) => /^\s+at\s/.test(l);
-  for (let i = lines.length - 1; i > 0; i--) {
-    if (!frame(lines[i]) || frame(lines[i - 1])) continue;
-    let message = lines[i - 1].trim();
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!frame(lines[i]) || (i > 0 && frame(lines[i - 1]))) continue;
+    let message = i > 0 ? lines[i - 1].trim() : "";
     // Node prints a thrown object's extra fields after the frames, its name
     // among them ("  name: 'TimeoutError'"), when the message lacks it.
     const name = lines
       .slice(i + 1, i + 12)
-      .map((l) => /^\s+name: '([A-Za-z]+)',?$/.exec(l)?.[1])
+      .map((l) => /^\s+name: '([A-Za-z0-9_$]+)',?$/.exec(l)?.[1])
       .find(Boolean);
-    if (name && !message.startsWith(name)) message = `${name}: ${message}`;
+    if (name && !message.startsWith(name)) message = message ? `${name}: ${message}` : name;
+    if (!message) message = "an error";
     const at = lines[i].trim().replace(/\s*\{$/, "");
     return `${message} (${at})`.slice(0, 400);
   }

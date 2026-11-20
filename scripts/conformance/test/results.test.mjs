@@ -94,6 +94,13 @@ test("a suite that did not finish is named by the error it last wrote", () => {
     "    at async main (/x/e2e-values.mjs:20:3)",
   ].join("\n");
   assert.equal(lastError(two), "TypeError: Cannot read properties of undefined (reading 'id') (at step (/x/e2e-values.mjs:85:12))");
+  // An error name with digits and underscores; a trace that starts the output.
+  assert.equal(
+    lastError(["Kaboom_2: it broke", "    at x (/x/a.mjs:2:2) {", "  name: 'Kaboom_2'", "}"].join("\n")),
+    "Kaboom_2: it broke (at x (/x/a.mjs:2:2))",
+  );
+  assert.equal(lastError(["page.click: Timeout", "    at y (/y.mjs:3:4) {", "  name: 'E2eTimeout_1'", "}"].join("\n")), "E2eTimeout_1: page.click: Timeout (at y (/y.mjs:3:4))");
+  assert.equal(lastError("    at z (/z.mjs:1:1)\n"), "an error (at z (/z.mjs:1:1))");
   // No trace: the last line; nothing: null.
   assert.equal(lastError("starting\nthe server went away\n\n"), "the server went away");
   assert.equal(lastError(""), null);

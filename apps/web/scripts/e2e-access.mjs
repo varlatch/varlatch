@@ -55,6 +55,42 @@ const confirmDialog = async () => {
   await page.waitForSelector('[data-testid="confirm-ok"]', { timeout: 10000 });
   await page.click('[data-testid="confirm-ok"]');
 };
+// Whether a wait was met in time: a check reports false instead of the
+// suite crashing, so the checks after it still report.
+const settled = (wait) =>
+  wait.then(
+    () => true,
+    (err) => {
+      if (err?.name !== "TimeoutError") throw err;
+      return false;
+    },
+  );
+// Saves a requirement's editor: clicks its save and waits for the PATCH's
+// answer. The open editor already shows a new tag as a chip, so the row's
+// text cannot say the save happened; the answer, then the editor closing,
+// can (savedInPlace).
+const saveRequirement = async (id) => {
+  const [answer] = await Promise.all([
+    page.waitForResponse((r) => r.request().method() === "PATCH" && new URL(r.url()).pathname.endsWith(`/requirements/${id}`), {
+      timeout: 10000,
+    }),
+    page.click(`[data-testid="save-requirement-${id}"]`),
+  ]);
+  return answer;
+};
+// After an OK save: the review and the editor are gone, and the requirement's
+// row (rowSelector) shows text.
+const savedInPlace = (id, rowSelector, text) =>
+  settled(
+    page.waitForFunction(
+      ({ id, rowSelector, text }) =>
+        !document.querySelector('[data-testid="requirement-review"]') &&
+        !document.querySelector(`[data-testid="requirement-editor-${id}"]`) &&
+        document.querySelector(rowSelector)?.textContent.includes(text),
+      { id, rowSelector, text },
+      { timeout: 10000 },
+    ),
+  );
 const createMachine = async (name, kind, extra = async () => {}) => {
   await page.click('[data-testid="new-machine"]');
   await page.waitForSelector('[data-testid="machine-name"]', { timeout: 10000 });
@@ -400,22 +436,31 @@ if (kit.group("roles-groups-teams")) {
     ),
     page.locator('[data-testid^="save-grant-"]').click(),
   ]);
-  await page.waitForFunction(
-    (old) => {
-      const subject = document.querySelector('[data-grant-subject="ci-deployer"]');
-      const rows = subject ? [...subject.querySelectorAll('[data-testid^="revoke-grant-"]')] : [];
-      return (
-        subject &&
-        !subject.querySelector('[data-testid^="grant-editor-"]') &&
-        rows.length === 1 &&
-        rows[0].getAttribute("data-testid") !== `revoke-grant-${old}` &&
-        subject.textContent.includes("reader-role")
-      );
-    },
-    replacedId,
-    { timeout: 10000 },
+  // A refused replace leaves the old row: reported, not waited for.
+  const successorShown =
+    replaced.status() === 201 &&
+    (await settled(
+      page.waitForFunction(
+        (old) => {
+          const subject = document.querySelector('[data-grant-subject="ci-deployer"]');
+          const rows = subject ? [...subject.querySelectorAll('[data-testid^="revoke-grant-"]')] : [];
+          return (
+            subject &&
+            !subject.querySelector('[data-testid^="grant-editor-"]') &&
+            rows.length === 1 &&
+            rows[0].getAttribute("data-testid") !== `revoke-grant-${old}` &&
+            subject.textContent.includes("reader-role")
+          );
+        },
+        replacedId,
+        { timeout: 10000 },
+      ),
+    ));
+  check(
+    "access.replaced-grant-row-now-cites-role", "replaced grant row now cites the role",
+    successorShown,
+    `replace ${replaced.status()}${replaced.status() === 201 && !successorShown ? ", the successor's row did not show in 10 s" : ""}`,
   );
-  check("access.replaced-grant-row-now-cites-role", "replaced grant row now cites the role", replaced.status() === 201, `replace ${replaced.status()}`);
   const replacedAccess = await asMachine(machineToken, "/organizations/acme/projects");
   check("access.successor-grant-authorizes-via-role", "successor grant authorizes via the role", replacedAccess.ok, `status ${replacedAccess.status}`);
   await page.locator('[data-grant-subject="ci-deployer"] [data-testid^="revoke-grant-"]').click();
@@ -479,25 +524,12 @@ if (kit.group("requirements")) {
     reviewText.includes("the production tier") && reviewText.includes("Devices tagged tag:ci") && reviewText.includes("Loosen and save"),
     reviewText.slice(0, 300),
   );
-  // As with the grant: the open editor already shows "tag:ci" as a chip, so
-  // wait for the save's answer and the editor to close before reading the row.
-  const [savedRequirement] = await Promise.all([
-    page.waitForResponse(
-      (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname.endsWith(`/requirements/${firstReq}`),
-      { timeout: 10000 },
-    ),
-    page.click(`[data-testid="save-requirement-${firstReq}"]`),
-  ]);
-  if (!savedRequirement.ok()) throw new Error(`saving the requirement answered ${savedRequirement.status()}`);
-  await page.waitForFunction(
-    (id) =>
-      !document.querySelector('[data-testid="requirement-review"]') &&
-      !document.querySelector(`[data-testid="save-requirement-${id}"]`) &&
-      document.querySelector("[data-requirement]")?.textContent.includes("tag:ci"),
-    firstReq,
-    { timeout: 10000 },
+  const savedRequirement = await saveRequirement(firstReq);
+  check(
+    "access.requirement-selector-edited-place-after-confirmation", "requirement selector edited in place after confirmation",
+    savedRequirement.ok() && (await savedInPlace(firstReq, `[data-requirement="${firstReq}"]`, "tag:ci")),
+    `PATCH ${savedRequirement.status()}`,
   );
-  check("access.requirement-selector-edited-place-after-confirmation", "requirement selector edited in place after confirmation", true);
 
   // 6c. A requirement scoped to one Environment with devices pinned by node ID
   // (as the API allows) is shown in full and now edited in the dashboard:
@@ -553,8 +585,11 @@ if (kit.group("requirements")) {
     "access.review-names-environment-change-applies", "the review names the environment the change applies to",
     (await page.textContent('[data-testid="requirement-review"]')).includes("api / production (and environments derived from it)"),
   );
-  await page.click(`[data-testid="save-requirement-${pinned.json.id}"]`);
-  await page.waitForFunction((row) => document.querySelector(row)?.textContent.includes("tag:e2e"), pinnedRow, { timeout: 10000 });
+  // The editor opens inside the row, where the new tag is already a chip:
+  // read the server only after the save's answer and the editor closing.
+  const savedPinned = await saveRequirement(pinned.json.id);
+  const pinnedSaved = savedPinned.ok() && (await savedInPlace(pinned.json.id, pinnedRow, "tag:e2e"));
+  if (!pinnedSaved) console.log(`  the pinned requirement's save: PATCH ${savedPinned.status()}, editor closed ${pinnedSaved}`);
   const afterEdit = await requirementNow(pinned.json.id);
   check(
     "access.editing-keeps-environment-target-pinned-device", "editing keeps the environment target and the pinned device",
