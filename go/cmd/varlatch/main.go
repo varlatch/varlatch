@@ -38,6 +38,20 @@ func (osEnv) Environ() map[string]string {
 	return env
 }
 
+// EnvironNames lists the process environment's names in the order the
+// process got them, the first of names that repeat.
+func (osEnv) EnvironNames() []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && k != "" && !seen[k] {
+			seen[k] = true
+			names = append(names, k)
+		}
+	}
+	return names
+}
+
 // In the single-container image (go/image/Dockerfile sets imageMarker),
 // the CLI runs beside varlatchd and refuses, as varlatchd serve does, an
 // environment that holds the Root KEK or the Backup Encryption Key that

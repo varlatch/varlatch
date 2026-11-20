@@ -772,8 +772,24 @@ comes. `verify-release`, which the installers run, is Go's own.
     `testdata/transcripts/5.4c-redact.json` records every combination, the
     terminal refusals under a pseudo-terminal (`terminal` cases), and
     `redact-run.test.ts` runs against Go.
-  - **Not built yet.** `--strict` (5.4f), `--agent-safe` and a run inside
-    an agent-safe run (5.5b) refuse with the CLI's not-built message (64).
+  - **`--strict` (slice 5.4f, `strictRun.ts`).** One strict retrieval
+    (`POST .../retrievals`, retried once after a server failure or a lost
+    connection) gives the values, the manifest and the Contract Revision.
+    The environment the command would receive is resolved and validated
+    against that revision (`lib/contract`'s semantics); `--allow-inherited`
+    accepts a parent's value, validated, and must name Contract items;
+    `--omit` of a required item is a violation. Every violation is printed
+    at once, names, classes and reasons, never a value, and the run ends
+    with 78 before the command starts (`5.4f-strict.json`, one case per
+    kind). A server without strict retrieval gets 78, never a default run.
+    The checks come after the strict retrieval, whose one answer holds the
+    Contract and the values: an `--allow-inherited` or `--omit` name that
+    is refused, or a violation, ends a run whose values were already
+    disclosed to the CLI process (and recorded as a disclosure); nothing
+    reaches the command before every check.
+  - **Not built yet.** `--agent-safe` (with `--strict` too) and a run
+    inside an agent-safe run (5.5b) refuse with the CLI's not-built message
+    (64).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
@@ -874,7 +890,9 @@ it to the recording.
 | `types` names a revision only by an id of the server's shape (`unrecognized-id`) | the id as the server or `--revision` gave it | a revision id that is not the server's shape (`rev_` and 26 characters of lower-case base32), from the answer or from `--revision`, is `an unrecognized id` in every message (`Wrote <file> from Contract Revision an unrecognized id (...)`, a 404 for `--revision`, every refusal of the revision), and `--check`'s hint gives `--revision <revision-id>` for such an argument; the module itself always holds the server's id, byte for byte | A mistyped argument or a server's free text never reaches the terminal (as `contract activate`); real revision ids keep their bytes |
 | `types` shows the server's text safely (`types-printable`) | not compared | a refusal of the revision has its control characters and bidirectional overrides escaped as `\uXXXX` (a Contract's unrecognized key, quoted in the validation issue, included), and the semantics version is shown only as a whole number from 1 to 999, else as `an unrecognized version` | A server's answer never drives the terminal (`TestTypesShowsTheServersVersionSafely`) |
 | `release` (a pattern of the transcripts, not a behaviour) | a module `types` writes names `varlatch 0.22.0` (its Generator lines, `generatedFrom` and the accessor schema) | this build's release | Each CLI names itself, and a module is current for another release when only those lines differ; a case that lists the `release` pattern has `varlatch <the CLI's release>` written `varlatch {{release}}` in the recording and the replay alike, and `{{release}}` in its files is the running CLI's release (`goKit.ts` `releasePattern`, `transcript.ReleaseFill`); another release a case names (`0.13.0`) is compared as it is |
-| `spawn-error`: a command `run` cannot start | Node's error escapes: its stack trace, exit 1 | `varlatch: spawn <command> ENOENT` (or `EINVAL` for a Windows `.bat` or `.cmd` file, `EACCES`), exit 1 | Node's own message without the stack (`run.no-command`) |
+| `spawn-error`: a command `run` cannot start | Node's error escapes: its stack trace, exit 1 | `varlatch: spawn <command> <errno>`, exit 1: `ENOENT` when PATH has no such file, `EACCES` when a file there may not be executed and no later one may (libuv's execvp), `ENOEXEC` for one the system cannot execute, `EINVAL` for a Windows `.bat` or `.cmd` file | Node's own message without the stack (`run.no-command`, `TestLookCommandRemembersEACCES`, `TestSpawnExecFormatError`) |
+| `run --strict` and an item type outside the Contract's eight | a value of an item whose `type` the CLI does not know passes, and the command starts | an `invalid` violation, `has a type this Contract Semantics version does not define`, and 78: nothing starts | A conforming server sends only the Contract's types; a type the CLI cannot validate is never taken as valid |
+| `run --strict`'s refusals of `--allow-inherited` and `--omit` names | the names echoed as given | the names escaped as `Printable` escapes server and user text (controls and bidirectional overrides as `\uXXXX`), as `run`'s other refusals do | A name the person typed never drives the terminal |
 | The order of the command's environment (`run`) | the parent's variables in the order the process got them, then the delivered ones | the parent's variables sorted by name, then the delivered ones (a variable set again keeps its place) | No program reads its environment's order; the values are the same (`5.4b-run` transcripts) |
 | `validate` and `import` show only documented fields | not compared | `validate` refuses a report whose lists are not the protocol's shape (each an array of names, or of objects whose documented members are strings; `valid` and `complete` booleans; a present `null` for any of them is not that shape, while an omitted `complete` or list, from a server before it, keeps its fallback) before judging or printing anything: `varlatch validate: the server's answer is not a validation report (<where> has an unexpected shape); nothing was judged.`, status 1; of a report of that shape it shows the documented members only, a requirement or reason outside the protocol's enumerations as `an unrecognized requirement` or `an unrecognized reason`; `import` shows a Contract item's type outside the Contract's types as `an unrecognized type` and its sensitivity as a boolean, in `--json`, human text and `--dry-run` alike | A server never puts an extra field, or a value, into what the CLI prints; a report or Contract of the protocol's shape gives the same bytes (`TestServerFieldsNeverPassThrough`, `TestValidateRefusesAReportOfAnotherShape`) |
 | `init-delete-link`: guided `init` and a `.env` that is a symbolic link | not compared | asked to delete it, guided `init` keeps a link and says so (`<file> is a symbolic link, so it was not deleted: deleting the link would leave the values in the file it points to.`), and deletes a regular file only if it still holds what was read and the path still names it (`TestGuidedDeleteNeverRemovesALink`) | Deleting the plaintext copy must not leave it in the file the link points to |
@@ -2808,6 +2826,33 @@ migrations.
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the
   recorded version, accepting a newer one only when its `compatible_from`
   allows (rollback-safe releases, G6).
+- `version.go` and `upgrade.go` (step 6, slice 6.6a): `SchemaVersion`,
+  `CompatibleFrom` (the oldest schema whose varlatchd may open a database
+  of this one) and the upgrade steps, one per released schema version.
+  `Upgrade` runs every step from the database's version on in one write
+  job and records the last step's `compatibleFrom`; a step never lowers
+  it. `varlatchd admin schema status|upgrade [--json]` fronts it: status
+  reads the database read-only, beside a running varlatchd too; upgrade
+  runs offline under the data directory's lock and is refused while
+  varlatchd runs or a restore is unfinished (`varlatch upgrade` runs it on
+  a copy first). Until the first Go release `schema.sql` still changes in
+  place under version 1; from it on, every change raises `SchemaVersion`
+  with its step.
+- The release's rollback-safety declaration (ADR-0059 Decision 8, G6):
+  `go/release/release.json` says the schema version, `compatibleFrom`,
+  whether the release is rollback-safe and the previous release it was
+  checked against; `build-assets.sh` attaches it as `release.json` with
+  the version (`go/lib/release` `Manifest`, format 1).
+  `server/db/schemadiff` classifies every change from the previous
+  release's schema as additive, review (an enumeration that only gains
+  values) or breaking, and `server/db/releasecheck` fails CI when the
+  declaration does not hold: a breaking change in a release declared
+  rollback-safe, or a changed schema that keeps its version. G6's run
+  (`go/release/g6.sh`, go-binary shard 1) serves the previous release on
+  a database the new one upgraded, with the conformance suites, then the
+  new release on what the previous one wrote. What the schema does not
+  show (a value the previous release misreads, an envelope format, a
+  restriction kept in code) is G6's run and the release checklist.
 - `query/`: typed queries generated by sqlc from `schema.sql` and
   `queries/*.sql` with `sqlc.json` (boolean columns as `bool`). sqlc is
   pinned by the `tool` directive in `go.mod` (v1.31.1, `go tool sqlc`);
@@ -2876,6 +2921,17 @@ blocked`, but that error reaches its generic handler, which prints
 (exit 1 either way). varlatchd prints the refusal itself.
 
 ## Before the first Go release
+
+- G6 has no previous Go release to check against yet
+  (`go/release/release.json` names none): until `0.50.0-rc.2` is checked
+  against `rc.1`, CI proves the machinery with the `g6fixture` build (this
+  commit's schema plus one rollback-safe step, `server/db/version_g6fixture.go`)
+  as the new release and this commit's build as the previous one. The
+  same step declared not rollback-safe (`g6fixture,g6unsafe`:
+  `compatibleFrom` 2) checks the other path without the conformance runs:
+  it passes declared so, since the previous release refuses its database,
+  and fails declared rollback-safe. The first release's declaration is not
+  rollback-safe: there is nothing to go back to.
 
 - G3 at the database level: `go test ./server/values -run TestG3Gate
   -args -g3-gate` passes, so every encryption class in

@@ -11,7 +11,8 @@
 #   with its true hash;
 # - each binary is an executable for its platform (ELF, Mach-O or PE), and
 #   the ones this machine can run report the version;
-# - the installers are stamped with the version.
+# - the installers are stamped with the version;
+# - release.json is a manifest of format 1 for the version.
 #
 # Usage: check-assets.sh <directory> <version>
 set -euo pipefail
@@ -32,7 +33,7 @@ for os in linux darwin windows; do
   done
 done
 expected+=("varlatchd-$version-linux-amd64" "varlatchd-$version-linux-arm64"
-  install.sh install.ps1 varlatchd.service varlatchd.conf.example)
+  install.sh install.ps1 varlatchd.service varlatchd.conf.example release.json)
 
 # Exactly these files and SHA256SUMS.
 want=$(printf '%s\n' "${expected[@]}" SHA256SUMS | LC_ALL=C sort)
@@ -79,6 +80,13 @@ fi
 grep -q '@VARLATCH_VERSION@' install.sh install.ps1 && bad "an installer is not stamped"
 grep -qx "VARLATCH_RELEASE='$version'" install.sh || bad "install.sh is not stamped with $version"
 grep -q "^ *\$VarlatchRelease = '$version'\$" install.ps1 || bad "install.ps1 is not stamped with $version"
+
+# The manifest names this version (go/lib/release's format 1; its rules are
+# releasecheck's, which wrote it).
+if [ -f release.json ]; then
+  jq -e --arg v "$version" '.manifestVersion == 1 and .version == $v and (.schemaVersion | type) == "number" and (.rollbackSafe | type) == "boolean"' release.json > /dev/null \
+    || bad "release.json is not a manifest of format 1 for $version"
+fi
 
 [ "$fail" = 0 ] && printf 'check-assets: %s files of %s checked\n' "${#expected[@]}" "$version"
 exit "$fail"
