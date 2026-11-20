@@ -5,6 +5,7 @@ package upgradejournal
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,8 @@ func TestJournal(t *testing.T) {
 	if err := Write(dir, j); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(filepath.Join(dir, File)); err != nil || info.Mode().Perm() != 0o644 {
+	// Windows has no Unix permission bits: a file there reads back 0666.
+	if info, err := os.Stat(filepath.Join(dir, File)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o644) {
 		t.Fatalf("mode: %v, %v", info, err)
 	}
 	back, err := Read(dir)

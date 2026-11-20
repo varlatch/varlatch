@@ -288,6 +288,8 @@ func TestSeamIsTestOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout may hold the file with CRLF line endings.
+	seam = bytes.ReplaceAll(seam, []byte("\r\n"), []byte("\n"))
 	if !bytes.Contains(seam, []byte("\n//go:build selfupdatetest\n")) {
 		t.Fatal("selfupdate_testseam.go is not built only with -tags selfupdatetest")
 	}

@@ -5,6 +5,7 @@ package release
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,8 @@ func TestReleaseCheckRecord(t *testing.T) {
 	if string(raw) != want {
 		t.Fatalf("the record, as the TypeScript line writes it:\n%s", raw)
 	}
-	if info, err := os.Stat(filepath.Join(dir, ReleaseCheckFile)); err != nil || info.Mode().Perm() != 0o644 {
+	// Windows has no Unix permission bits: a file there reads back 0666.
+	if info, err := os.Stat(filepath.Join(dir, ReleaseCheckFile)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o644) {
 		t.Fatalf("mode: %v, %v", info, err)
 	}
 

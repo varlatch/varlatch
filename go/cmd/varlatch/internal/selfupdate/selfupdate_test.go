@@ -271,8 +271,15 @@ func TestLocate(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
+	// Locate resolves links, as for Homebrew's bin/varlatch into its Cellar,
+	// so the temporary directory's own links resolve too (macOS: /var is
+	// /private/var).
+	want, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := selfupdate.Locate(link)
-	if err != nil || got.Path != real || got.Kind != selfupdate.KindHomebrew || !strings.Contains(got.PackageManaged(), "brew upgrade varlatch") {
+	if err != nil || got.Path != want || got.Kind != selfupdate.KindHomebrew || !strings.Contains(got.PackageManaged(), "brew upgrade varlatch") {
 		t.Fatalf("%+v, %v", got, err)
 	}
 }

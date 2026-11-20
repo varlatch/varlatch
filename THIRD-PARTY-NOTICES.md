@@ -275,7 +275,7 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | Go standard library and runtime | the release's Go toolchain | BSD-3-Clause | varlatch, varlatchd |
 | filippo.io/edwards25519 | v1.2.0 | BSD-3-Clause | varlatchd |
 | github.com/apapsch/go-jsonmerge/v2 | v2.0.0 | MIT | varlatchd |
-| github.com/asaskevich/govalidator | v0.0.0-20230301143203-a9d515a09cc2 | MIT | varlatch |
+| github.com/asaskevich/govalidator | v0.0.0-20230301143203-a9d515a09cc2 | MIT | varlatch, varlatchd |
 | github.com/aws/aws-sdk-go-v2 | v1.48.0 | Apache-2.0 | varlatchd |
 | github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream | v1.7.27 | Apache-2.0 | varlatchd |
 | github.com/aws/aws-sdk-go-v2/credentials | v1.21.0 | Apache-2.0 | varlatchd |
@@ -290,39 +290,39 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | github.com/aws/smithy-go | v1.28.9 | Apache-2.0 | varlatchd |
 | github.com/caddyserver/certmagic | v0.25.6 | Apache-2.0 | varlatchd |
 | github.com/caddyserver/zerossl | v0.1.6 | MIT | varlatchd |
-| github.com/cenkalti/backoff/v5 | v5.0.3 | MIT | varlatch |
-| github.com/cespare/xxhash/v2 | v2.3.0 | MIT | varlatch |
+| github.com/cenkalti/backoff/v5 | v5.0.3 | MIT | varlatch, varlatchd |
+| github.com/cespare/xxhash/v2 | v2.3.0 | MIT | varlatch, varlatchd |
 | github.com/coder/websocket | v1.8.15 | ISC | varlatchd |
 | github.com/creachadair/msync | v0.10.1 | BSD-2-Clause | varlatchd |
-| github.com/cyberphone/json-canonicalization | v0.0.0-20241213102144-19d51d7fe467 | Apache-2.0 | varlatch |
-| github.com/digitorus/pkcs7 | v0.0.0-20260821105541-05f79448fa77 | MIT | varlatch |
-| github.com/digitorus/timestamp | v0.0.0-20231217203849-220c5c2851b7 | BSD-2-Clause | varlatch |
+| github.com/cyberphone/json-canonicalization | v0.0.0-20241213102144-19d51d7fe467 | Apache-2.0 | varlatch, varlatchd |
+| github.com/digitorus/pkcs7 | v0.0.0-20260821105541-05f79448fa77 | MIT | varlatch, varlatchd |
+| github.com/digitorus/timestamp | v0.0.0-20231217203849-220c5c2851b7 | BSD-2-Clause | varlatch, varlatchd |
 | github.com/dustin/go-humanize | v1.1.0 | MIT | varlatchd |
 | github.com/fxamacker/cbor/v2 | v2.9.4 | MIT | varlatchd |
 | github.com/gaissmai/bart | v0.29.0 | MIT | varlatchd |
 | github.com/go-jose/go-jose/v4 | v4.1.6 | Apache-2.0 | varlatchd |
 | github.com/go-json-experiment/json | v0.0.0-20260820222146-c27c302e5fc3 | BSD-3-Clause | varlatchd |
-| github.com/go-logr/logr | v1.4.4 | Apache-2.0 | varlatch |
-| github.com/go-logr/stdr | v1.2.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/analysis | v1.0.0 | Apache-2.0 | varlatch |
-| github.com/go-openapi/errors | v0.22.9 | Apache-2.0 | varlatch |
-| github.com/go-openapi/jsonpointer | v1.0.1 | Apache-2.0 | varlatch |
-| github.com/go-openapi/jsonreference | v1.0.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/loads | v0.25.3 | Apache-2.0 | varlatch |
-| github.com/go-openapi/runtime | v0.33.3 | Apache-2.0 AND MIT | varlatch |
-| github.com/go-openapi/runtime/server-middleware | v0.33.3 | Apache-2.0 | varlatch |
-| github.com/go-openapi/spec | v1.0.1 | Apache-2.0 | varlatch |
-| github.com/go-openapi/strfmt | v0.27.4 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/conv | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/fileutils | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/jsonutils | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/loading | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/mangling | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/pools | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/stringutils | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/typeutils | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/swag/yamlutils | v0.29.2 | Apache-2.0 | varlatch |
-| github.com/go-openapi/validate | v1.0.0 | Apache-2.0 | varlatch |
+| github.com/go-logr/logr | v1.4.4 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-logr/stdr | v1.2.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/analysis | v1.0.0 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/errors | v0.22.9 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/jsonpointer | v1.0.1 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/jsonreference | v1.0.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/loads | v0.25.3 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/runtime | v0.33.3 | Apache-2.0 AND MIT | varlatch, varlatchd |
+| github.com/go-openapi/runtime/server-middleware | v0.33.3 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/spec | v1.0.1 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/strfmt | v0.27.4 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/conv | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/fileutils | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/jsonutils | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/loading | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/mangling | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/pools | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/stringutils | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/typeutils | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/swag/yamlutils | v0.29.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/go-openapi/validate | v1.0.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/go-viper/mapstructure/v2 | v2.5.0 | MIT | varlatch, varlatchd |
 | github.com/go-webauthn/webauthn | v0.18.2 | BSD-3-Clause | varlatchd |
 | github.com/go-webauthn/x | v0.3.1 | BSD-3-Clause | varlatchd |
@@ -330,15 +330,15 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | github.com/golang-jwt/jwt/v5 | v5.3.1 | MIT | varlatchd |
 | github.com/golang/groupcache | v0.0.0-20241129210726-2c02b8208cf8 | Apache-2.0 | varlatchd |
 | github.com/google/btree | v1.1.3 | Apache-2.0 | varlatchd |
-| github.com/google/certificate-transparency-go | v1.4.0 | Apache-2.0 | varlatch |
-| github.com/google/go-containerregistry | v0.22.1 | Apache-2.0 | varlatch |
+| github.com/google/certificate-transparency-go | v1.4.0 | Apache-2.0 | varlatch, varlatchd |
+| github.com/google/go-containerregistry | v0.22.1 | Apache-2.0 | varlatch, varlatchd |
 | github.com/google/go-tpm | v0.9.8 | Apache-2.0 | varlatchd |
 | github.com/google/uuid | v1.6.0 | BSD-3-Clause | varlatch, varlatchd |
-| github.com/grpc-ecosystem/grpc-gateway/v2 | v2.32.0 | BSD-3-Clause | varlatch |
+| github.com/grpc-ecosystem/grpc-gateway/v2 | v2.32.0 | BSD-3-Clause | varlatch, varlatchd |
 | github.com/hdevalence/ed25519consensus | v0.2.0 | BSD-3-Clause | varlatchd |
 | github.com/huin/goupnp | v1.3.0 | BSD-2-Clause | varlatchd |
-| github.com/in-toto/attestation | v1.2.0 | Apache-2.0 | varlatch |
-| github.com/in-toto/in-toto-golang | v0.11.0 | Apache-2.0 | varlatch |
+| github.com/in-toto/attestation | v1.2.0 | Apache-2.0 | varlatch, varlatchd |
+| github.com/in-toto/in-toto-golang | v0.11.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/jsimonetti/rtnetlink | v1.4.2 | MIT | varlatchd |
 | github.com/klauspost/compress | v1.20.1 | Apache-2.0 AND BSD-3-Clause AND MIT | varlatchd |
 | github.com/klauspost/cpuid/v2 | v2.4.0 | MIT | varlatchd |
@@ -350,37 +350,37 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | github.com/mitchellh/go-ps | v1.0.0 | MIT | varlatchd |
 | github.com/oapi-codegen/nullable | v1.1.0 | Apache-2.0 | varlatchd |
 | github.com/oapi-codegen/runtime | v1.8.0 | Apache-2.0 | varlatchd |
-| github.com/oklog/ulid/v2 | v2.1.2 | Apache-2.0 | varlatch |
-| github.com/opencontainers/go-digest | v1.0.0 | Apache-2.0 | varlatch |
+| github.com/oklog/ulid/v2 | v2.1.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/opencontainers/go-digest | v1.0.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/philhofer/fwd | v1.2.0 | MIT | varlatchd |
 | github.com/pires/go-proxyproto | v0.15.0 | Apache-2.0 | varlatchd |
-| github.com/pkg/errors | v0.9.1 | BSD-2-Clause | varlatch |
+| github.com/pkg/errors | v0.9.1 | BSD-2-Clause | varlatch, varlatchd |
 | github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | varlatchd |
 | github.com/safchain/ethtool | v0.7.0 | Apache-2.0 | varlatchd |
-| github.com/secure-systems-lab/go-securesystemslib | v0.11.1 | MIT | varlatch |
-| github.com/shibumi/go-pathspec | v1.3.0 | Apache-2.0 | varlatch |
-| github.com/sigstore/protobuf-specs | v0.5.2 | Apache-2.0 | varlatch |
-| github.com/sigstore/rekor | v1.5.5 | Apache-2.0 | varlatch |
-| github.com/sigstore/rekor-tiles/v2 | v2.4.0 | Apache-2.0 | varlatch |
-| github.com/sigstore/sigstore | v1.11.1 | Apache-2.0 | varlatch |
-| github.com/sigstore/sigstore-go | v1.4.0 | Apache-2.0 | varlatch |
-| github.com/sigstore/timestamp-authority/v2 | v2.2.0 | Apache-2.0 | varlatch |
+| github.com/secure-systems-lab/go-securesystemslib | v0.11.1 | MIT | varlatch, varlatchd |
+| github.com/shibumi/go-pathspec | v1.3.0 | Apache-2.0 | varlatch, varlatchd |
+| github.com/sigstore/protobuf-specs | v0.5.2 | Apache-2.0 | varlatch, varlatchd |
+| github.com/sigstore/rekor | v1.5.5 | Apache-2.0 | varlatch, varlatchd |
+| github.com/sigstore/rekor-tiles/v2 | v2.4.0 | Apache-2.0 | varlatch, varlatchd |
+| github.com/sigstore/sigstore | v1.11.1 | Apache-2.0 | varlatch, varlatchd |
+| github.com/sigstore/sigstore-go | v1.4.0 | Apache-2.0 | varlatch, varlatchd |
+| github.com/sigstore/timestamp-authority/v2 | v2.2.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/tailscale/hujson | v0.0.0-20260727124030-b80ff77dac4f | BSD-3-Clause | varlatchd |
 | github.com/tailscale/peercred | v0.0.0-20250107143737-35a0c7bd7edc | BSD-3-Clause | varlatchd |
 | github.com/tailscale/web-client-prebuilt | v0.0.0-20260917222731-e0ed2d0d0fea | BSD-3-Clause | varlatchd |
 | github.com/tailscale/wireguard-go | v0.0.0-20260928213032-417aef361226 | MIT | varlatchd |
-| github.com/theupdateframework/go-tuf/v2 | v2.4.2 | Apache-2.0 | varlatch |
+| github.com/theupdateframework/go-tuf/v2 | v2.4.2 | Apache-2.0 | varlatch, varlatchd |
 | github.com/tinylib/msgp | v1.6.4 | MIT | varlatchd |
-| github.com/transparency-dev/formats | v0.1.1 | Apache-2.0 | varlatch |
-| github.com/transparency-dev/merkle | v0.0.2 | Apache-2.0 | varlatch |
+| github.com/transparency-dev/formats | v0.1.1 | Apache-2.0 | varlatch, varlatchd |
+| github.com/transparency-dev/merkle | v0.0.2 | Apache-2.0 | varlatch, varlatchd |
 | github.com/x448/float16 | v0.8.4 | MIT | varlatchd |
-| github.com/youmark/pkcs8 | v0.0.0-20240726163527-a2c0da244d78 | MIT | varlatch |
+| github.com/youmark/pkcs8 | v0.0.0-20240726163527-a2c0da244d78 | MIT | varlatch, varlatchd |
 | github.com/zeebo/blake3 | v0.2.4 | CC0-1.0 | varlatchd |
-| go.opentelemetry.io/auto/sdk | v1.2.1 | Apache-2.0 | varlatch |
-| go.opentelemetry.io/otel | v1.47.0 | Apache-2.0 AND BSD-3-Clause | varlatch |
-| go.opentelemetry.io/otel/log | v1.47.0 | Apache-2.0 AND BSD-3-Clause | varlatch |
-| go.opentelemetry.io/otel/metric | v1.47.0 | Apache-2.0 AND BSD-3-Clause | varlatch |
-| go.opentelemetry.io/otel/trace | v1.47.0 | Apache-2.0 AND BSD-3-Clause | varlatch |
+| go.opentelemetry.io/auto/sdk | v1.2.1 | Apache-2.0 | varlatch, varlatchd |
+| go.opentelemetry.io/otel | v1.47.0 | Apache-2.0 AND BSD-3-Clause | varlatch, varlatchd |
+| go.opentelemetry.io/otel/log | v1.47.0 | Apache-2.0 AND BSD-3-Clause | varlatch, varlatchd |
+| go.opentelemetry.io/otel/metric | v1.47.0 | Apache-2.0 AND BSD-3-Clause | varlatch, varlatchd |
+| go.opentelemetry.io/otel/trace | v1.47.0 | Apache-2.0 AND BSD-3-Clause | varlatch, varlatchd |
 | go.uber.org/multierr | v1.11.0 | MIT | varlatchd |
 | go.uber.org/zap | v1.28.0 | MIT | varlatchd |
 | go.uber.org/zap/exp | v0.3.0 | MIT | varlatchd |
@@ -389,7 +389,7 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | go4.org/netipx | v0.0.0-20260823151212-3075585bcbeb | BSD-3-Clause | varlatchd |
 | golang.org/x/crypto | v0.58.0 | BSD-3-Clause | varlatch, varlatchd |
 | golang.org/x/exp | v0.0.0-20261014143641-f0251eb4aa3e | BSD-3-Clause | varlatchd |
-| golang.org/x/mod | v0.42.0 | BSD-3-Clause | varlatch |
+| golang.org/x/mod | v0.42.0 | BSD-3-Clause | varlatch, varlatchd |
 | golang.org/x/net | v0.61.0 | BSD-3-Clause | varlatch, varlatchd |
 | golang.org/x/oauth2 | v0.37.0 | BSD-3-Clause | varlatchd |
 | golang.org/x/sync | v0.24.0 | BSD-3-Clause | varlatch, varlatchd |
@@ -397,12 +397,12 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | golang.org/x/term | v0.47.0 | BSD-3-Clause | varlatch, varlatchd |
 | golang.org/x/text | v0.43.0 | BSD-3-Clause | varlatch, varlatchd |
 | golang.org/x/time | v0.16.0 | BSD-3-Clause | varlatchd |
-| google.golang.org/genproto/googleapis/api | v0.0.0-20261012220534-4341edf3f941 | Apache-2.0 | varlatch |
-| google.golang.org/genproto/googleapis/rpc | v0.0.0-20261005182115-fad411399dd8 | Apache-2.0 | varlatch |
-| google.golang.org/grpc | v1.84.0 | Apache-2.0 | varlatch |
-| google.golang.org/protobuf | v1.36.12 | BSD-3-Clause | varlatch |
+| google.golang.org/genproto/googleapis/api | v0.0.0-20261012220534-4341edf3f941 | Apache-2.0 | varlatch, varlatchd |
+| google.golang.org/genproto/googleapis/rpc | v0.0.0-20261005182115-fad411399dd8 | Apache-2.0 | varlatch, varlatchd |
+| google.golang.org/grpc | v1.84.0 | Apache-2.0 | varlatch, varlatchd |
+| google.golang.org/protobuf | v1.36.12 | BSD-3-Clause | varlatch, varlatchd |
 | gvisor.dev/gvisor | v0.0.0-20260915211658-a6f909f08a72 | Apache-2.0 AND BSD-3-Clause AND MIT | varlatchd |
-| k8s.io/klog/v2 | v2.140.0 | Apache-2.0 | varlatch |
+| k8s.io/klog/v2 | v2.140.0 | Apache-2.0 | varlatch, varlatchd |
 | modernc.org/libc | v1.80.1 | BSD-3-Clause AND MIT | varlatchd |
 | modernc.org/mathutil | v1.7.1 | BSD-3-Clause | varlatchd |
 | modernc.org/memory | v1.12.1 | BSD-3-Clause | varlatchd |
