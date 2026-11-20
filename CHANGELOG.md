@@ -63,6 +63,39 @@ fixes.
   `--cpu-shares` in its custom run options is overridden, and that a
   Compose resource needs `cpu_shares` in its Compose file.
 
+## 0.50.0-rc.2 (2026-11-20)
+
+The second prerelease of the Go line (ADR-0059), published to test more of
+the Go CLI and server against real installations. **It is not for
+production.** The TypeScript line (0.22.x) is unaffected: its images,
+Compose set and CLI do not change.
+
+- **What it contains.** As in 0.50.0-rc.1: `varlatch`, the CLI, for Linux,
+  macOS and Windows on amd64 and arm64; `varlatchd`, the server, for Linux
+  on amd64 and arm64; `install.sh` and `install.ps1` for this version; the
+  `varlatchd` systemd unit and its example configuration. `SHA256SUMS`
+  lists every asset and is signed keyless by the release workflow; the
+  installers check the signature before they install anything.
+- **The CLI's administration commands.** `varlatch org`, `project`,
+  `env-create`, `env-delete`, `identity`, `member`, `credential`, `invite`,
+  `tailnet` and `audit` run in the Go CLI, as in the TypeScript CLI.
+- **Security commands.** `varlatch security status`, `report`, `controls`
+  and `set` run in the Go CLI, as in the TypeScript CLI.
+- **Host commands of a Go installation.** `varlatch admin backup run`,
+  `backup status`, `backup test-bucket`, `backup restore`, `admin security
+  reset`, `admin unfreeze`, `admin outbound check` and `admin maintenance`
+  run `varlatchd admin` on the installation's host. A Compose
+  installation's host commands stay the TypeScript CLI's.
+- **Public HTTPS.** `varlatchd` can serve HTTPS itself with a certificate
+  it obtains and renews over ACME (Let's Encrypt by default):
+  `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca` and
+  `acme_ca_root` in `varlatchd.conf`. Off by default.
+- **Prerelease only.** It is published as a GitHub prerelease and never
+  becomes the latest release, so nothing that follows the latest release
+  (`varlatch upgrade`, the release notice, the CLI's self-update) offers
+  it. The Go server has no container image, `setup`, `upgrade` or `doctor`
+  yet, and there is no migration from a TypeScript installation.
+
 ## 0.50.0-rc.1 (2026-11-20)
 
 A prerelease of the Go line (ADR-0059): the first release built from the
