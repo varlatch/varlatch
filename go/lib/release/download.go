@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -44,6 +45,10 @@ type Downloader struct {
 	Transport http.RoundTripper
 	// UserAgent is sent with every request.
 	UserAgent string
+	// Stall bounds each request until its answer's headers arrive, and
+	// then each wait for more of its body: a host that stops sending
+	// fails the download within it (0: requestTimeout, 30 s).
+	Stall time.Duration
 }
 
 // maxRedirects is how many redirects one download may follow.
@@ -89,29 +94,41 @@ func (d Downloader) Get(ctx context.Context, rawURL string, limit int64) ([]byte
 		Transport:     d.Transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	stall := d.Stall
+	if stall <= 0 {
+		stall = requestTimeout // fetch.go's bound, as for a TUF download
+	}
 	for hop := 0; ; hop++ {
 		if err := d.allowed(u); err != nil {
 			return nil, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		// Each hop under its own context, cancelled when the host sends
+		// nothing for stall: the headers, then every wait for the body.
+		hopCtx, cancel := context.WithCancel(ctx)
+		var stalled atomic.Bool
+		timer := time.AfterFunc(stall, func() { stalled.Store(true); cancel() })
+		done := func() { timer.Stop(); cancel() }
+		req, err := http.NewRequestWithContext(hopCtx, http.MethodGet, u.String(), nil)
 		if err != nil {
+			done()
 			return nil, err
 		}
 		if d.UserAgent != "" {
 			req.Header.Set("User-Agent", d.UserAgent)
 		}
-		timer := time.AfterFunc(requestTimeout, cancel) // fetch.go's bound, as for a TUF download
 		res, err := client.Do(req)
-		timer.Stop()
 		if err != nil {
+			done()
+			if stalled.Load() {
+				return nil, &UnreachableError{fmt.Errorf("release: %s did not answer within %s", strip(u), stall)}
+			}
 			return nil, &UnreachableError{fmt.Errorf("release: could not download %s: %w", strip(u), err)}
 		}
 		switch res.StatusCode {
 		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
 			location := res.Header.Get("Location")
 			_ = res.Body.Close()
+			done()
 			if location == "" {
 				return nil, fmt.Errorf("release: %s answered %d without a location", strip(u), res.StatusCode)
 			}
@@ -125,9 +142,29 @@ func (d Downloader) Get(ctx context.Context, rawURL string, limit int64) ([]byte
 			u = next
 			continue
 		}
-		defer res.Body.Close()
-		return d.read(u, res, limit)
+		res.Body = progress{res.Body, func() { timer.Reset(stall) }}
+		body, err := d.read(u, res, limit)
+		_ = res.Body.Close()
+		done()
+		if err != nil && stalled.Load() {
+			return nil, &UnreachableError{fmt.Errorf("release: %s stopped sending for %s", strip(u), stall)}
+		}
+		return body, err
 	}
+}
+
+// progress calls moved whenever a read returns bytes.
+type progress struct {
+	io.ReadCloser
+	moved func()
+}
+
+func (p progress) Read(b []byte) (int, error) {
+	n, err := p.ReadCloser.Read(b)
+	if n > 0 {
+		p.moved()
+	}
+	return n, err
 }
 
 // read is a final answer's body.

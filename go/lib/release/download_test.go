@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestDownloaderStaysOnItsHosts(t *testing.T) {
@@ -88,5 +89,50 @@ func TestDownloaderStaysOnItsHosts(t *testing.T) {
 func TestDownloadURL(t *testing.T) {
 	if got := DownloadURL("0.50.0-rc.1", "varlatch-0.50.0-rc.1-linux-amd64"); got != "https://github.com/varlatch/varlatch/releases/download/v0.50.0-rc.1/varlatch-0.50.0-rc.1-linux-amd64" {
 		t.Fatal(got)
+	}
+}
+
+// A host that stops sending fails the download within the bound, before
+// its headers or after them; one that keeps sending, however slowly, does
+// not.
+func TestDownloaderStall(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/silent":
+			<-r.Context().Done()
+		case "/stalls":
+			w.Header().Set("Content-Length", "100")
+			_, _ = w.Write([]byte("a start"))
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		case "/slow":
+			w.Header().Set("Content-Length", "20")
+			for range 20 {
+				_, _ = w.Write([]byte("x"))
+				w.(http.Flusher).Flush()
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+		}
+	}))
+	defer srv.Close()
+	d := Downloader{Hosts: []string{srv.Listener.Addr().String()}, Transport: srv.Client().Transport, Stall: 200 * time.Millisecond}
+	for path, want := range map[string]string{"/silent": "did not answer within 200ms", "/stalls": "stopped sending for 200ms"} {
+		start := time.Now()
+		_, err := d.Get(context.Background(), srv.URL+path, 1<<10)
+		var ue *UnreachableError
+		if !errors.As(err, &ue) || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", path, err, want)
+		}
+		if took := time.Since(start); took > 5*time.Second {
+			t.Errorf("%s took %s", path, took)
+		}
+	}
+	// A second in all, never 200 ms without a byte.
+	if b, err := d.Get(context.Background(), srv.URL+"/slow", 1<<10); err != nil || len(b) != 20 {
+		t.Fatalf("slow: %d bytes, %v", len(b), err)
 	}
 }

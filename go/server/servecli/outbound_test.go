@@ -11,16 +11,21 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/release"
+	"github.com/varlatch/varlatch/go/lib/release/releasetest"
 	"github.com/varlatch/varlatch/go/server/outbound"
 )
 
@@ -34,6 +39,10 @@ type fakeGitHub struct {
 	policy *outbound.Policy
 	mu     sync.Mutex
 	hits   []string // host and path of every request served
+	// files, when set, are a release's on the storage host, by name;
+	// stallOnce makes the first SHA256SUMS sent stop after its headers.
+	files     map[string][]byte
+	stallOnce atomic.Bool
 }
 
 func newFakeGitHub(t *testing.T) *fakeGitHub {
@@ -101,6 +110,21 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://storage.example.invalid:"+f.port+"/x", http.StatusFound)
 	case host == "github.com" && r.URL.Path == "/private":
 		http.Redirect(w, r, "https://"+f.host("objects.githubusercontent.com")+"/x", http.StatusFound)
+	case host == "release-assets.githubusercontent.com" && f.files != nil && strings.HasPrefix(r.URL.Path, "/storage/"):
+		_, name, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/storage/"), "/")
+		body, ok := f.files[name]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if name == Sums && f.stallOnce.CompareAndSwap(true, false) {
+			_, _ = w.Write(body[:1])
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
+		_, _ = w.Write(body)
 	case host == "release-assets.githubusercontent.com" && strings.HasPrefix(r.URL.Path, "/storage/"):
 		_, _ = w.Write([]byte("the file " + strings.TrimPrefix(r.URL.Path, "/storage/")))
 	case host == "tuf-repo-cdn.sigstore.dev":
@@ -175,4 +199,55 @@ func TestTrustedRootNeverFollowsARedirect(t *testing.T) {
 			t.Fatalf("followed the redirect to %s", hit)
 		}
 	}
+}
+
+// serve_cli as varlatchd wires it, against a github.com whose first
+// SHA256SUMS stops after its headers: that attempt fails within the
+// Downloader's bound, and the Manager's next one serves the release.
+func TestManagerRetriesAStalledDownload(t *testing.T) {
+	f := newFakeGitHub(t)
+	s := releasetest.New()
+	src := published(t, s)
+	f.files = map[string][]byte{Sums: src.sums, Bundle: src.bundle}
+	for n, b := range src.files {
+		f.files[n] = b
+	}
+	f.stallOnce.Store(true)
+	d := release.Downloader{
+		Hosts:     []string{f.host("github.com"), f.host("release-assets.githubusercontent.com")},
+		Transport: f.policy.Transport(outbound.GitHub),
+		Stall:     200 * time.Millisecond,
+	}
+	o := options(t, s, nil, t.TempDir())
+	// GitHub's source, at the fake's port.
+	o.Source = sourceFunc(func(ctx context.Context, name string, limit int64) ([]byte, error) {
+		return d.Get(ctx, "https://"+f.host("github.com")+"/releases/download/v"+version+"/"+name, limit)
+	})
+	o.RetryAfter = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := Start(ctx, o, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	deadline := time.Now().Add(10 * time.Second)
+	for m.Current() == nil && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if m.Current() == nil {
+		t.Fatal("never served after a stalled download")
+	}
+	sums := 0
+	for _, hit := range f.served() {
+		if strings.HasSuffix(hit, "/"+Sums) && strings.Contains(hit, "/storage/") {
+			sums++
+		}
+	}
+	if sums < 2 || f.stallOnce.Load() {
+		t.Fatalf("SHA256SUMS served %d times, stalled %v", sums, !f.stallOnce.Load())
+	}
+}
+
+// sourceFunc is a Source from a function.
+type sourceFunc func(ctx context.Context, name string, limit int64) ([]byte, error)
+
+func (f sourceFunc) Get(ctx context.Context, name string, limit int64) ([]byte, error) {
+	return f(ctx, name, limit)
 }
