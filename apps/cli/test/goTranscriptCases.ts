@@ -63,7 +63,6 @@ const framework: TranscriptCase[] = [
   { id: "help.after-arguments", title: "--help anywhere before -- asks for the command's help", args: ["values", "set", "API_KEY", "--help"] },
 ];
 
-
 // ---- 5.1b: context and the credential store ---------------------------------
 //
 // Offline commands only: no case talks to a server. Times are fixed and far
@@ -258,7 +257,6 @@ const context51b: TranscriptCase[] = [
   { id: "context.toml-directory", title: "a varlatch.toml that is a directory stops context (TypeScript lets the read error escape)", args: ["context"], files: { "repo/varlatch.toml/.keep": "" }, ...IN_REPO, differences: ["uncaught"] },
   ...TOML_CASES.map(([id, title, toml]): TranscriptCase => ({ id: `context.toml.${id}`, title: `varlatch.toml: ${title}`, args: ["context", "--json"], files: repoFiles(toml), ...IN_REPO })),
 ];
-
 
 // ---- 5.1c: the API client and status --probe ------------------------------
 
@@ -519,7 +517,6 @@ const agentFiles51d: TranscriptCase[] = [
     ["no-agent-files-twice", "--no-agent-files twice is still one", ["--org", "acme", "--project", "web", "--no-agent-files", "--no-agent-files", "--server", "https://s.example"]],
   ].map(([id, title, rest]): TranscriptCase => ({ id: `init.usage.${id}`, title: title as string, args: ["init", ...(rest as string[])] })),
 ];
-
 
 // ---- 5.1e: session commands ------------------------------------------------
 //
@@ -1098,7 +1095,6 @@ const values53a: TranscriptCase[] = [
   v({ id: "import.usage.replace-missing-value", title: "--replace needs a value", args: ["import", ".env", "--replace"] }),
 ];
 
-
 // ---- 5.3b: Contracts ---------------------------------------------------------
 //
 // contract push, activate and show against the fake server, in the 5.3a
@@ -1417,6 +1413,40 @@ const run54b: TranscriptCase[] = [
   v({ id: "override.short-other", title: "another short Secret still stops the run", args: ["run", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM, { name: "PIN2", sensitive: true, source: "self", value: null }])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }, { name: "PIN2", value: "5678" }]), CONTRACT_NONE] }),
 ];
 
+// varlatch run --redact (5.4c): output redaction outside assisted mode
+// (ADR-0038 Decision 10), with every option it meets, and its refusals.
+// The command is RUN_PRINT, or a writer of the delivered Secret.
+const REDACT_SPLIT =
+  "const v=process.env.API_KEY;process.stdout.write('k='+v.slice(0,6));setTimeout(()=>process.stdout.write(v.slice(6)+'\\n'),100)";
+const REDACT_STDERR = "console.error('err='+process.env.API_KEY);console.log('out='+process.env.API_KEY)";
+const redact54c: TranscriptCase[] = [
+  v({ id: "surrogate.redact", title: "--redact masks a Secret with an unpaired surrogate as the command prints it (run.surrogate: one U+FFFD)", args: ["run", "--redact", "--", "node", "-e", "console.log('s='+process.env.SURR)"], server: [effectiveAt(ENV, SURROGATE_ITEMS), SURROGATE_DISCLOSED] }),
+  v({ id: "redact.masked", title: "--redact masks the delivered Secret in the command's output; plain values are shown", args: ["run", "--redact", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.stderr", title: "--redact masks stderr too", args: ["run", "--redact", "--", "node", "-e", REDACT_STDERR], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.split", title: "a Secret split across two writes is masked once", args: ["run", "--redact", "--", "node", "-e", REDACT_SPLIT], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.short", title: "a Secret too short to mask passes unchanged, and is named", args: ["run", "--redact", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }])] }),
+  v({ id: "redact.nothing-sensitive", title: "nothing sensitive delivered: the output as written", args: ["run", "--redact", ...runChildArgs()], server: [effectiveAt(ENV, [{ name: "PORT", sensitive: false, source: "self", value: "8080" }]), disclosed([])] }),
+  v({ id: "redact.inherited", title: "an inherited value is not masked: only what Varlatch delivered", args: ["run", "--redact", ...runChildArgs()], env: { LEGACY_KEY: "inherited-legacy-value" }, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.disclosure-denied", title: "the disclosure refused: nothing to mask, said", args: ["run", "--redact", ...runChildArgs()], server: [effectiveAt(ENV, runItems()), denied(DISCLOSURES, "POST")] }),
+  v({ id: "redact.exit-status", title: "the command's own status passes through", args: ["run", "--redact", "--", "node", "-e", "process.exit(3)"], server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "redact.omit", title: "--redact with --omit: the omitted Secret is never asked for", args: ["run", "--redact", "--omit", "API_KEY", ...runChildArgs()], server: [effectiveAt(ENV, runItems())] }),
+  v({ id: "redact.export-context", title: "--redact with --export-context: the context given, the Secret masked", args: ["run", "--redact", "--export-context", ...runChildArgs()], server: [exportedEffective(), revisionAnswer(), disclosed([{ name: "API_KEY", value: RUN_SECRET }], { stateDigest: DIGEST_A })] }),
+  v({ id: "redact.allow-unmasked", title: "--redact with the human's --allow-unmasked: the override's masking", args: ["run", "--redact", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }]), CONTRACT_NONE] }),
+  v({ id: "redact.assisted", title: "--redact in assisted mode: assisted masking", args: ["run", "--redact", ...runChildArgs()], env: ASSISTED, server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "redact.agent-safe", title: "--redact with --agent-safe: refused, nothing fetched", args: ["run", "--redact", "--agent-safe", "--agent", "coder", ...runChildArgs()] }),
+  v({ id: "redact.agent-safe-assisted", title: "--redact with --agent-safe in assisted mode: refused too", args: ["run", "--redact", "--agent-safe", ...runChildArgs()], env: ASSISTED }),
+  v({ id: "redact.twice", title: "--redact given twice", args: ["run", "--redact", "--redact", ...runChildArgs()] }),
+  v({ id: "redact.equals", title: "--redact=... is not parsed (the value shown as [redacted] by Go)", args: ["run", "--redact=1", ...runChildArgs()], differences: ["option-value"] }),
+  // On a terminal: refused before anything is fetched, unless assisted mode gives the command pipes
+  v({ id: "terminal.both", title: "--redact when stdout and stderr are a terminal: refused, nothing fetched", args: ["run", "--redact", ...runChildArgs()], terminal: "both" }),
+  v({ id: "terminal.stdout", title: "--redact when stdout is a terminal: refused", args: ["run", "--redact", ...runChildArgs()], terminal: "stdout" }),
+  v({ id: "terminal.stderr", title: "--redact when stderr is a terminal: refused", args: ["run", "--redact", ...runChildArgs()], terminal: "stderr" }),
+  v({ id: "terminal.agent-safe", title: "--redact with --agent-safe on a terminal: the agent-safe refusal", args: ["run", "--redact", "--agent-safe", ...runChildArgs()], terminal: "both" }),
+  v({ id: "terminal.assisted", title: "--redact in assisted mode on a terminal: runs, masked", args: ["run", "--redact", ...runChildArgs()], env: ASSISTED, terminal: "both", server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED, CONTRACT_NONE] }),
+  v({ id: "terminal.no-redact", title: "--no-redact on a terminal: a default run", args: ["run", "--no-redact", ...runChildArgs()], terminal: "both", server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+  v({ id: "terminal.plain", title: "a default run on a terminal: unmasked", args: ["run", ...runChildArgs()], terminal: "stderr", server: [effectiveAt(ENV, runItems()), API_KEY_DISCLOSED] }),
+];
+
 // ---- 5.4e: scan --find-files --------------------------------------------------
 //
 // Files that look like copies of secrets, by name, each with whether Git
@@ -1639,6 +1669,7 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.3b-contracts": contracts53b,
   "5.3c-types": types53c,
   "5.4b-run": run54b,
+  "5.4c-redact": redact54c,
   "5.4e-find-files": findFiles54e,
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,

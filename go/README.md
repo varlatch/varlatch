@@ -421,19 +421,24 @@ comes. `verify-release`, which the installers run, is Go's own.
   surrogates stay distinct. Both sides run under umask 022; on Windows only
   a mode's read-only bit is compared. A case may unset variables of the
   clean environment (`unset`, to reach the default configuration
-  directory). Regenerate after changing the cases with
-  `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter @varlatch/cli exec vitest run
-  test/go-transcripts.test.ts`. A case whose outcome names a path below its
-  directory (`{{dir}}/...`) also has a Windows expectation, recorded by the
-  TypeScript recorder on Windows (`apps/cli/test/goWindows.ts`) into
-  `testdata/transcripts/windows/`, which Windows replays it against; so do
-  the agents install and find-files vectors (`testdata/vectors/windows/`).
-  The directory inside a JSON string is mapped back to `{{dir}}` in its
-  escaped form too (`transcript.UnfillDir`), so such a case needs no
-  Windows expectation. `TestWindowsExpectationsComplete` fails on every
-  platform when a case needs one and has none: label the pull request
-  `record-windows` (the windows-expectations workflow) and put its
-  artifact in with `scripts/go-windows-expectations.sh <run id>`.
+  directory). A case may run the CLI on a pseudo-terminal (`terminal`:
+  its stdout, its stderr or both, and its stdin): the recorder uses
+  util-linux `script`, the replay opens one itself (`creack/pty`, Linux
+  and macOS; skipped on Windows), and what the terminal displayed is
+  compared as `expect.terminal`, its `\r\n` as `\n`. Regenerate after
+  changing the cases with `VARLATCH_WRITE_GO_VECTORS=1 pnpm --filter
+  @varlatch/cli exec vitest run test/go-transcripts.test.ts`. A case whose
+  outcome names a path below its directory (`{{dir}}/...`) also has a
+  Windows expectation, recorded by the TypeScript recorder on Windows
+  (`apps/cli/test/goWindows.ts`) into `testdata/transcripts/windows/`,
+  which Windows replays it against; so do the agents install and
+  find-files vectors (`testdata/vectors/windows/`). The directory inside a
+  JSON string is mapped back to `{{dir}}` in its escaped form too
+  (`transcript.UnfillDir`), so such a case needs no Windows expectation.
+  `TestWindowsExpectationsComplete` fails on every platform when a case
+  needs one and has none: label the pull request `record-windows` (the
+  windows-expectations workflow) and put its artifact in with
+  `scripts/go-windows-expectations.sh <run id>`.
 - `testdata/vectors/framework.json`: what the TypeScript code answers for
   the option parser, help, safe text, assisted mode, the global options,
   the User-Agents and the exit status of an API error
@@ -751,9 +756,17 @@ comes. `verify-release`, which the installers run, is Go's own.
   - **Finding the command.** As libuv does: in the command's own `PATH` on
     POSIX; on Windows, `.com` or `.exe` only, a `.bat` or `.cmd` file
     refused (decision 4, `TestLookCommandAsLibuv`).
-  - **Not built yet.** `--strict` (5.4f), `--redact` outside assisted mode
-    (5.4c), `--agent-safe` and a run inside an agent-safe run (5.5b) refuse
-    with the CLI's not-built message (64).
+  - **`--redact` (slice 5.4c).** Outside assisted mode, the command's
+    stdout and stderr go through `internal/matcher` too, masking the
+    Secrets this run delivered (`redact.ts`, ADR-0038 Decision 10); a
+    shorter one passes unchanged and is named. It is refused (64), before
+    anything is fetched, when stdout or stderr is a terminal (outside
+    assisted mode, which gives the command pipes) and in an agent-safe run.
+    `testdata/transcripts/5.4c-redact.json` records every combination, the
+    terminal refusals under a pseudo-terminal (`terminal` cases), and
+    `redact-run.test.ts` runs against Go.
+  - **Not built yet.** `--strict` (5.4f), `--agent-safe` and a run inside
+    an agent-safe run (5.5b) refuse with the CLI's not-built message (64).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
