@@ -31,6 +31,7 @@ export const CHAINS = [
     trusted: "varlatch-web,tailscale",
   },
   { name: "Coolify (generated)", files: [`${C}/docker-compose.coolify-tailscale.yml`], trusted: "varlatch-web,coolify-proxy" },
+  { name: "Coolify without Tailscale (generated)", files: [`${C}/docker-compose.coolify.yml`], trusted: "varlatch-web" },
 ];
 
 /** Files a program reads at a fixed path, by the mount's source file name. */

@@ -35,14 +35,22 @@ Never public: PostgreSQL, `varlatch-migrate`, the Convex dashboard.
 
 1. Create a Coolify resource of type **Docker Compose** pointing at this
    repository (private repo: connect via a GitHub App or deploy key):
-   - Base Directory: `/` (the `build:` contexts are the repo root)
-   - Docker Compose Location: `/infra/compose/docker-compose.yml`
+   - Base Directory: `/` (the files the Compose file mounts, such as
+     `convex-supervisor.cjs`, are found from the repo root)
+   - Docker Compose Location: `/infra/compose/docker-compose.coolify.yml`
    - With the Tailscale sidecar, use
-     `/infra/compose/docker-compose.coolify-tailscale.yml` instead. That file
-     is **generated** from the canonical file, the Tailscale overlay, and
-     `infra/coolify/compose.overlay.yml` (Coolify-only deltas); change those
-     inputs and run `pnpm compose:generate`. Never edit it by hand: CI
-     rejects hand edits.
+     `/infra/compose/docker-compose.coolify-tailscale.yml` instead.
+
+   Both files are **generated**: `docker-compose.coolify.yml` from the
+   canonical file, and `docker-compose.coolify-tailscale.yml` from the
+   canonical file, the Tailscale overlay and `infra/coolify/compose.overlay.yml`
+   (Coolify-only deltas). Both take `infra/coolify/compose.images.yml` last,
+   so Coolify runs the release's published, signed images by digest (step
+   4) instead of building from the checkout; `varlatch migrate` requires
+   that of its source too. Change the inputs and run `pnpm compose:generate`.
+   Never edit a generated file by hand: CI rejects hand edits. (The
+   canonical `/infra/compose/docker-compose.yml` still works in Coolify, but
+   builds from the checkout: see [Upgrades](#upgrades).)
 
 2. Assign the domain in Coolify: `https://app.<your-domain>` →
    `varlatch-web` port 80 (plus `https://convex.<your-domain>` →
@@ -69,7 +77,25 @@ Never public: PostgreSQL, `varlatch-migrate`, the Convex dashboard.
    env var below carries only the *path*.
 
 4. Set the environment variables in Coolify (see
-   `infra/compose/.env.example` for the full annotated list):
+   `infra/compose/.env.example` for the full annotated list).
+
+   **The release's images.** Take the release's
+   `coolify-image-digests.env` (a release file, listed in its signed
+   `SHA256SUMS`: check it as
+   [Verifying a release](../../docs/operations/verify-release.md) describes)
+   and set each of its lines as a Coolify variable:
+
+   ```sh
+   VARLATCH_IMAGE_REGISTRY=ghcr.io/varlatch
+   VARLATCH_VARLATCHD_DIGEST=sha256:<varlatchd's digest>
+   VARLATCH_WEB_DIGEST=sha256:<varlatch-web's digest>
+   VARLATCH_CONVEX_DEPLOY_DIGEST=sha256:<convex-deploy's digest>
+   ```
+
+   They are the same digests the release's `varlatch-release.json` pins.
+   A deploy without one stops before anything starts, naming the variable.
+   Set them again for every release, together with the repository ref
+   ([Upgrades](#upgrades)).
 
    > **Keep secrets out of Coolify's env settings (#28).** Coolify passes
    > *every* variable below to *every* service, regardless of the
@@ -234,11 +260,22 @@ the Convex supervisor; keep those mounts through every restart and restore.
 The former plaintext pre-deploy dump job is removed. Its existing volume is
 retained until an encrypted replacement and restore rehearsal are checked.
 
-Then update the repository ref, deploy, and confirm `/readyz`. Migrations run
+Then set the new release's four variables from its
+`coolify-image-digests.env` (Setup, step 4), update the repository ref to
+the release's tag, deploy, and confirm `/readyz`. The ref and the digests
+move together: the ref brings the release's Compose file, the digests its
+images. A rollback sets both back. Migrations run
 before `varlatchd` starts. With the combined Tailscale file, check the automatic
 `convex-deploy` job's exit; with canonical Compose, run that profiled job
 explicitly. Do not treat successful migration alone as a complete deployment:
 on the host, `varlatch doctor --dir <the resource's directory>` must report no
 mandatory failure. (`--gate`, which `varlatch upgrade` requires on plain
-Compose, also needs a release manifest; a source-built Coolify deployment has
-none, so its release consistency stays unknown there.)
+Compose, also needs a release manifest, which a Coolify deployment has
+none of, so its release consistency stays unknown there.)
+
+**From the canonical file** (`docker-compose.yml`, which builds from the
+checkout): switch the Docker Compose Location to
+`docker-compose.coolify.yml` in the same upgrade, with the four variables
+set. Nothing else changes: the services, volumes and networks are the
+same, only their images come from the release. `varlatch migrate` refuses
+an installation whose images were built locally.

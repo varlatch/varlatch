@@ -40,6 +40,19 @@ as on 0.22.4.
 - The Convex supervisor stops the backend behind the migration barrier and
   on a migrated-out installation, as it does under a backup or restore.
 
+### Coolify
+
+- **Coolify installations run the release's published images.** Both
+  Coolify files, `docker-compose.coolify-tailscale.yml` and the new
+  `docker-compose.coolify.yml` (without the Tailscale sidecar), pull
+  varlatchd, varlatch-web and convex-deploy by digest instead of building
+  them from the checkout, so a Coolify installation runs exactly the
+  images the release signed. `varlatch migrate` requires that of its
+  source. The digests are Coolify variables, published with each release
+  as `coolify-image-digests.env` and in its release notes; a deploy without
+  them stops before anything starts, naming the variable.
+- The release images carry the `org.opencontainers.image.version` label.
+
 ### Upgrading
 
 Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
@@ -50,6 +63,12 @@ describes.
   self-update`, or `brew upgrade varlatch`. It changes only its version.
 - The server: to move an installation to 0.23.0, follow the 0.22.1 notes
   below with the 0.23.0 CLI and version.
+- Coolify: before deploying 0.23.0, set the four variables of this
+  release's `coolify-image-digests.env` (checked against `SHA256SUMS`) in
+  the resource's environment, then update the repository ref as usual
+  ([Deploying on Coolify](infra/coolify/README.md#upgrades)). A resource
+  that deploys the canonical `docker-compose.yml` switches its Docker
+  Compose Location to `docker-compose.coolify.yml` in the same upgrade.
 - Audit consumers that list the event types they accept: add
   `installation.migrated`.
 

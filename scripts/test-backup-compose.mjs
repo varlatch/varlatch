@@ -10,8 +10,11 @@ const env = {
   VARLATCH_RUNTIME_PASSWORD: 'compose-test', CONVEX_DB_PASSWORD: 'compose-test',
   CONVEX_INSTANCE_SECRET: 'compose-test', TS_AUTHKEY: 'compose-test', VARLATCH_TAILNET_NAME: 'test.ts.net',
   VARLATCH_PUBLIC_URL: 'https://vault.compose.test',
+  // The Coolify files pull the release's images by digest (infra/coolify/compose.images.yml).
+  VARLATCH_VARLATCHD_DIGEST: `sha256:${'1'.repeat(64)}`, VARLATCH_WEB_DIGEST: `sha256:${'2'.repeat(64)}`,
+  VARLATCH_CONVEX_DEPLOY_DIGEST: `sha256:${'3'.repeat(64)}`,
 };
-const variants = [['docker-compose.yml'], ['docker-compose.yml', 'docker-compose.tailscale.yml'], ['docker-compose.coolify-tailscale.yml']];
+const variants = [['docker-compose.yml'], ['docker-compose.yml', 'docker-compose.tailscale.yml'], ['docker-compose.coolify-tailscale.yml'], ['docker-compose.coolify.yml']];
 for (const files of variants) {
   const name = files.join(' + ');
   const args = files.flatMap(f => ['-f', fileURLToPath(new URL(`../infra/compose/${f}`, import.meta.url))]);

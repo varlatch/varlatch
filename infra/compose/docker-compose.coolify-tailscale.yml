@@ -1,7 +1,8 @@
 # GENERATED FILE — do not edit. Regenerate with `pnpm compose:generate`
 # from infra/compose/docker-compose.yml,
 #      infra/compose/docker-compose.tailscale.yml,
-#      infra/coolify/compose.overlay.yml.
+#      infra/coolify/compose.overlay.yml,
+#      infra/coolify/compose.images.yml.
 
 # Coolify deployment WITH the Tailscale sidecar (ADR-0014/0019): Coolify
 # deploys exactly one Compose file (no overlay -f chaining), so this is the
@@ -25,6 +26,13 @@
 #   VARLATCH_TAILNET_NODE         the node's machine name (its certificate's host)
 #   VARLATCH_TAILNET_ENDPOINT     https://<machine>.<tailnet>:8688
 #   VARLATCH_TAILNET_CERT_UID     999 (varlatchd's user, for the certificate)
+
+# The release's images, by digest (infra/coolify/compose.images.yml), from
+# the release's coolify-image-digests.env; a deploy without them stops:
+#   VARLATCH_VARLATCHD_DIGEST       varlatchd and varlatch-migrate
+#   VARLATCH_WEB_DIGEST             varlatch-web
+#   VARLATCH_CONVEX_DEPLOY_DIGEST   convex-deploy
+#   VARLATCH_IMAGE_REGISTRY         optional, ghcr.io/varlatch by default
 
 name: varlatch
 
@@ -77,9 +85,6 @@ services:
   # One-shot elevated migration job. Holds the migrate credentials and no KEK
   # (ADR-0019 §23: no container receives every installation secret).
   varlatch-migrate:
-    build:
-      context: ../..
-      dockerfile: services/varlatchd/Dockerfile
     volumes:
       - varlatch-state:/var/lib/varlatch
     command: [ "migrate" ]
@@ -92,12 +97,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatchd@${VARLATCH_VARLATCHD_DIGEST:?set VARLATCH_VARLATCHD_DIGEST to the release's varlatchd digest (coolify-image-digests.env)}
 
   # The Secret Plane daemon: runtime DB role + the root KEK, nothing more.
   varlatchd:
-    build:
-      context: ../..
-      dockerfile: services/varlatchd/Dockerfile
     restart: unless-stopped
     environment:
       VARLATCH_STATE_DIR: /var/lib/varlatch
@@ -161,13 +164,11 @@ services:
       retries: 6
       start_period: 15s
     network_mode: service:tailscale
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatchd@${VARLATCH_VARLATCHD_DIGEST:?set VARLATCH_VARLATCHD_DIGEST to the release's varlatchd digest (coolify-image-digests.env)}
 
   # The dashboard (ADR-0005): static app + same-origin proxy to varlatchd's
   # ordinary listener. Reverse-proxy this behind TLS as app.<your-domain>.
   varlatch-web:
-    build:
-      context: ../..
-      dockerfile: apps/web/Dockerfile
     restart: unless-stopped
     environment:
       # Browser-facing Convex origin — runtime config (varlatch-config.js),
@@ -195,6 +196,7 @@ services:
     # web from the sidecar's `varlatchd` alias (nginx: host not found).
     networks:
       - default
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatch-web@${VARLATCH_WEB_DIGEST:?set VARLATCH_WEB_DIGEST to the release's varlatch-web digest (coolify-image-digests.env)}
 
   # Application Plane backend (ADR-0005): non-authoritative; its admin key is
   # Infrastructure Operator authority and never enters runtime varlatchd.
@@ -249,9 +251,6 @@ services:
   # CONVEX_ADMIN_KEY where an existing installation still sets one.
   # Runs on first boot, upgrade, and repair: docker compose run --rm convex-deploy
   convex-deploy:
-    build:
-      context: ../..
-      dockerfile: infra/compose/convex-deploy.Dockerfile
     environment:
       CONVEX_SELF_HOSTED_URL: http://convex-backend:3210
       CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_ADMIN_KEY:-}
@@ -272,6 +271,7 @@ services:
     # function push must not take the already-running stack down — it
     # surfaces in the deploy log instead.
     restart: "no"
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatch-convex-deploy@${VARLATCH_CONVEX_DEPLOY_DIGEST:?set VARLATCH_CONVEX_DEPLOY_DIGEST to the release's convex-deploy digest (coolify-image-digests.env)}
   tailscale:
     image: tailscale/tailscale:v1.102.3
     restart: unless-stopped

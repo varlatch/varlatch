@@ -1,29 +1,33 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Generates infra/compose/docker-compose.coolify-tailscale.yml (ADR-0035
- * design note, "Generated Coolify/Tailscale Compose file").
+ * Generates the Coolify Compose files (ADR-0035 design note, "Generated
+ * Coolify/Tailscale Compose file"):
+ *
+ *   infra/compose/docker-compose.coolify-tailscale.yml, from
+ *     infra/compose/docker-compose.yml          canonical contract (ADR-0019)
+ *     infra/compose/docker-compose.tailscale.yml Tailscale overlay (ADR-0014)
+ *     infra/coolify/compose.overlay.yml          Coolify-only deltas
+ *     infra/coolify/compose.images.yml           the release's images by digest
+ *   infra/compose/docker-compose.coolify.yml, from
+ *     infra/compose/docker-compose.yml
+ *     infra/coolify/compose.images.yml
  *
  * Coolify deploys exactly one Compose file, so the Tailscale variant used to
  * be a hand-merged copy of the canonical file and the Tailscale overlay — and
  * it drifted: fixes landed in the copy but not in the overlay. This script
- * applies, in order,
- *
- *   infra/compose/docker-compose.yml          canonical contract (ADR-0019)
- *   infra/compose/docker-compose.tailscale.yml Tailscale overlay (ADR-0014)
- *   infra/coolify/compose.overlay.yml          Coolify-only deltas
- *
+ * applies each file's inputs, in order,
  * with Compose's overlay semantics for the constructs these files use —
  * mappings merge recursively, sequences append items not already present,
  * scalars replace, and `!reset` removes the key — on the YAML document tree,
  * so comments survive. `${VAR}` placeholders are text and are never
  * interpolated: no values, and never secrets, enter the artifact.
  *
- *   node infra/coolify/generate-compose.mjs                 write the file
+ *   node infra/coolify/generate-compose.mjs                 write the files
  *   node infra/coolify/generate-compose.mjs --check         exit 1 if stale
  *   node infra/coolify/generate-compose.mjs --verify-docker also prove that
- *     `docker compose config` reads the generated file exactly as it reads
- *     the -f overlay chain (placeholders uninterpolated)
+ *     `docker compose config` reads each generated file exactly as it reads
+ *     its -f overlay chain (placeholders uninterpolated)
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -36,11 +40,25 @@ export const INPUTS = [
   "infra/compose/docker-compose.yml",
   "infra/compose/docker-compose.tailscale.yml",
   "infra/coolify/compose.overlay.yml",
+  "infra/coolify/compose.images.yml",
 ];
 export const OUTPUT = "infra/compose/docker-compose.coolify-tailscale.yml";
+export const PUBLIC_INPUTS = ["infra/compose/docker-compose.yml", "infra/coolify/compose.images.yml"];
+export const PUBLIC_OUTPUT = "infra/compose/docker-compose.coolify.yml";
 
-const HEADER = ` GENERATED FILE — do not edit. Regenerate with \`pnpm compose:generate\`
- from ${INPUTS.join(",\n      ")}.
+/** The release's images, as Coolify variables (infra/coolify/compose.images.yml). */
+const IMAGE_VARIABLES = `
+ The release's images, by digest (infra/coolify/compose.images.yml), from
+ the release's coolify-image-digests.env; a deploy without them stops:
+   VARLATCH_VARLATCHD_DIGEST       varlatchd and varlatch-migrate
+   VARLATCH_WEB_DIGEST             varlatch-web
+   VARLATCH_CONVEX_DEPLOY_DIGEST   convex-deploy
+   VARLATCH_IMAGE_REGISTRY         optional, ghcr.io/varlatch by default`;
+
+const generatedFrom = (inputs) => ` GENERATED FILE — do not edit. Regenerate with \`pnpm compose:generate\`
+ from ${inputs.join(",\n      ")}.`;
+
+const HEADER = `${generatedFrom(INPUTS)}
 
  Coolify deployment WITH the Tailscale sidecar (ADR-0014/0019): Coolify
  deploys exactly one Compose file (no overlay -f chaining), so this is the
@@ -63,7 +81,16 @@ const HEADER = ` GENERATED FILE — do not edit. Regenerate with \`pnpm compose:
    VARLATCH_TAILNET_HTTPS_PORT   8688
    VARLATCH_TAILNET_NODE         the node's machine name (its certificate's host)
    VARLATCH_TAILNET_ENDPOINT     https://<machine>.<tailnet>:8688
-   VARLATCH_TAILNET_CERT_UID     999 (varlatchd's user, for the certificate)`;
+   VARLATCH_TAILNET_CERT_UID     999 (varlatchd's user, for the certificate)
+${IMAGE_VARIABLES}`;
+
+const PUBLIC_HEADER = `${generatedFrom(PUBLIC_INPUTS)}
+
+ Coolify deployment without the Tailscale sidecar: the canonical contract
+ with the release's published images in place of \`build:\`, so Coolify runs
+ exactly the signed images. Assign the domain to varlatch-web port 80, as
+ infra/coolify/README.md describes.
+${IMAGE_VARIABLES}`;
 
 const RESET = "!reset";
 
@@ -117,11 +144,24 @@ function load(path) {
   return doc;
 }
 
-export function generate() {
-  const [base, ...overlays] = INPUTS.map(load);
+export function generate(inputs = INPUTS, header = HEADER) {
+  const [base, ...overlays] = inputs.map(load);
   for (const overlay of overlays) mergeInto(base.contents, overlay.contents, "");
-  base.commentBefore = HEADER;
+  base.commentBefore = header;
   return base.toString({ lineWidth: 0 });
+}
+
+/** Every generated file: its path, its inputs, its header. */
+export const FILES = [
+  { output: OUTPUT, inputs: INPUTS, header: HEADER, tailscale: true },
+  { output: PUBLIC_OUTPUT, inputs: PUBLIC_INPUTS, header: PUBLIC_HEADER, tailscale: false },
+];
+
+/** Every build: block is gone: Coolify runs the published images only. */
+export function checkNoBuild(text, output) {
+  for (const [name, service] of Object.entries(parseDocument(text).toJS().services ?? {})) {
+    if (service.build) throw new Error(`${output}: ${name} still builds from the checkout; give it its release image in infra/coolify/compose.images.yml`);
+  }
 }
 
 /** Normalizes `docker compose config` JSON so list/map spellings compare equal. */
@@ -173,28 +213,31 @@ export function checkAliasReachability(text) {
 
 function main() {
   const args = process.argv.slice(2);
-  const generated = generate();
-  checkAliasReachability(generated);
-  const outPath = join(ROOT, OUTPUT);
-  if (args.includes("--check")) {
-    const current = readFileSync(outPath, "utf8");
-    if (current !== generated) {
-      console.error(`${OUTPUT} is stale or hand-edited. Edit its inputs, then run \`pnpm compose:generate\`:\n  ${INPUTS.join("\n  ")}`);
-      process.exit(1);
+  for (const { output, inputs, header, tailscale } of FILES) {
+    const generated = generate(inputs, header);
+    if (tailscale) checkAliasReachability(generated);
+    checkNoBuild(generated, output);
+    const outPath = join(ROOT, output);
+    if (args.includes("--check")) {
+      const current = readFileSync(outPath, "utf8");
+      if (current !== generated) {
+        console.error(`${output} is stale or hand-edited. Edit its inputs, then run \`pnpm compose:generate\`:\n  ${inputs.join("\n  ")}`);
+        process.exit(1);
+      }
+      console.log(`${output} is current.`);
+    } else {
+      writeFileSync(outPath, generated);
+      console.log(`Wrote ${relative(process.cwd(), outPath)}`);
     }
-    console.log(`${OUTPUT} is current.`);
-  } else {
-    writeFileSync(outPath, generated);
-    console.log(`Wrote ${relative(process.cwd(), outPath)}`);
-  }
-  if (args.includes("--verify-docker")) {
-    const chain = composeConfig(INPUTS);
-    const single = composeConfig([OUTPUT]);
-    if (JSON.stringify(chain) !== JSON.stringify(single)) {
-      console.error("docker compose reads the generated file differently from the -f overlay chain");
-      process.exit(1);
+    if (args.includes("--verify-docker")) {
+      const chain = composeConfig(inputs);
+      const single = composeConfig([output]);
+      if (JSON.stringify(chain) !== JSON.stringify(single)) {
+        console.error(`docker compose reads ${output} differently from its -f overlay chain`);
+        process.exit(1);
+      }
+      console.log(`docker compose config: ${output} == its overlay chain (uninterpolated).`);
     }
-    console.log("docker compose config: generated file == overlay chain (uninterpolated).");
   }
 }
 
