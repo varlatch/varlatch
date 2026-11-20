@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 )
 
 // A restore onto a fresh host (slice 6.4c; ADR-0059's G13, through setup):
@@ -176,6 +178,55 @@ func (r *run) restore(ctx context.Context) error {
 	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").")
 }
 
+// takeName is a restore's tailnet handoff (go-step7 decision 11), with the
+// operator's OAuth client: the restored node enrols held under its
+// temporary name (<name>-vl-<op>-n), then varlatchd takes the dead node's
+// name over by rename (`varlatchd admin tailnet take-name`, the old node
+// renamed <name>-vl-<op>-o), before the unit first starts. The operation is
+// journalled first; a rerun finishes what an interrupted one began.
+func (r *run) takeName(ctx context.Context) error {
+	a := r.j.Answers
+	resumed := r.j.Restore.TailnetOperation != ""
+	if !resumed {
+		op, err := tailcontrol.NewOperationID()
+		if err != nil {
+			return err
+		}
+		r.j.Restore.TailnetOperation = op
+		if err := r.saveJournal(); err != nil {
+			return err
+		}
+	}
+	temp, err := tailcontrol.TempName(a.TailnetHostname, r.j.Restore.TailnetOperation, tailcontrol.RoleNew)
+	if err != nil {
+		return err
+	}
+	take := func() error {
+		out, err := r.h.Admin(ctx, "tailnet", "take-name", "--oauth-client-file", a.TailscaleOAuthClientFile, "--json")
+		if err != nil {
+			return err
+		}
+		var res struct {
+			Phase string `json:"phase"`
+		}
+		if json.Unmarshal(bytes.TrimSpace(out), &res) != nil || res.Phase != "done" {
+			return errors.New("setup: varlatchd admin tailnet take-name did not say the name was taken over")
+		}
+		return r.o.Say("This node holds the tailnet name " + a.TailnetHostname + "; the old node is renamed aside. Tailnet access opens when varlatchd starts.")
+	}
+	// An earlier run may have finished it: take-name says so.
+	if resumed && take() == nil {
+		return nil
+	}
+	if err := r.o.Say("Taking the tailnet name " + a.TailnetHostname + " over: this node joins as " + temp + " first (held, serving nothing), then the old node is renamed aside and this one takes the name."); err != nil {
+		return err
+	}
+	if _, err := r.h.Admin(ctx, "tailnet", "enroll", "--hostname", temp, "--json"); err != nil {
+		return err
+	}
+	return take()
+}
+
 // probeResult is `varlatchd admin tailnet probe-name --json`.
 type probeResult struct {
 	Seen       []string `json:"seen"`
@@ -194,6 +245,9 @@ func (r *run) nameCheck(ctx context.Context) error {
 	a := r.j.Answers
 	if r.j.Restore == nil || a.Ingress != Tailnet || r.j.Done["name"] != "" {
 		return nil
+	}
+	if a.TailscaleOAuthClientFile != "" {
+		return r.takeName(ctx)
 	}
 	if err := r.o.Say("Checking that the tailnet name " + a.TailnetHostname + " is free: a probe joins with your auth key, twice, and leaves."); err != nil {
 		return err

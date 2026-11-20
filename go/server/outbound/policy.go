@@ -35,6 +35,9 @@ const (
 	GitHub       Purpose = "github"
 	OIDC         Purpose = "oidc"
 	AuditExport  Purpose = "audit_export"
+	// TailnetControl is a restore's tailnet handoff: the control plane's
+	// API (lib/tailcontrol), a Go-only purpose.
+	TailnetControl Purpose = "tailnet_control"
 )
 
 // Answer is one DNS answer.

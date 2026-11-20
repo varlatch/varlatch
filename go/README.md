@@ -2041,6 +2041,41 @@ serves the tailnet listener on the node's own addresses
     The tailnet's access rules must let the node's tags see each other,
     or the probe sees nothing and the check fails closed: the answer then
     says so and names the tags.
+  - `varlatchd admin tailnet take-name --oauth-client-file <file> [--json]`
+    is the restore's handoff (step 7, slice 7.5b part 2c; decision 11, in
+    place of step 6 decision 16's interim rule). A restore onto a fresh
+    host takes the dead installation's name over, by rename, rather than
+    waiting for its node to be deleted. It runs offline, under the lock,
+    after `enroll` held the restored node under `<name>-vl-<op>-n`, and
+    before varlatchd first starts:
+    - the control plane is Tailscale's API with the operator's OAuth
+      client (devices:core only), read from its file (an absolute path,
+      never printed), through the outbound policy's client (purpose
+      `tailnet_control`, `outbound_allow` as configured);
+    - the one device under the configured name, the dead node, is renamed
+      `<name>-vl-<op>-o` and the restored node the name, each read back;
+      the dead node is never closed or reopened; with tailnet HTTPS the
+      name's certificate is obtained, counted in `tailnet-issuances.json`
+      (the installation's `certificate_issuances` once #344 is in this
+      line); the reach probe must see the name reach the restored node;
+      then the hold is removed, so varlatchd listens when it starts;
+    - the state is journalled in `tailnet-takeover.json` (0600) before each
+      act. Run again, it resumes: an unfinished switch is undone (the dead
+      node takes its name back), then done again; once done, it changes
+      nothing.
+
+    `varlatch setup --restore ... --tailscale-oauth-client-file <file>`
+    (ingress tailnet) runs it in place of the name probe: the operation
+    journalled first, then `enroll` and `take-name`, before the unit.
+    Tests: `daemon`'s `TestTheRestoreTakesTheName` (testcontrol and a fake
+    of Tailscale's API over it, a rename the control server's: the dead
+    node offline under the name, the takeover through the outbound policy,
+    varlatchd serving under the name, a client node's map),
+    `TestATakeoverCutShortIsResumed` (the control plane lost after the
+    first rename), `TestTakeNameRefusals`, and, in a crashpoint build,
+    `TestKillTheTakeoverAtEveryStep` (killed at each journalled step in a
+    process of its own, then resumed); `setup`'s
+    `TestRestoreTakesTheTailnetNameOver`.
   - **Tests.** `daemon`'s `TestTheHandoffNode` uses testcontrol and a
     test CA: enrolment, held, pinned and certified, run again, refusals,
     the expiry read without an issuance, varlatchd started held, silent on
