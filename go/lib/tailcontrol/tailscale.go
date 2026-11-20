@@ -34,7 +34,10 @@ type TailscaleConfig struct {
 	// ClientID and ClientSecret are the OAuth client's.
 	ClientID     string
 	ClientSecret string `json:"-"`
-	// HTTP is the client requests go through; http.DefaultClient when nil.
+	// HTTP is the client every request goes through, required: tailcontrol
+	// never makes one of its own. The CLI (varlatch migrate) passes its own
+	// client; varlatchd (the restore handoff, slice 7.5b) must pass the
+	// outbound policy's client (go/server/outbound, ADR-0057 Decision 9).
 	HTTP *http.Client `json:"-"`
 	// Now is the clock that judges a device's key expiry; time.Now when nil.
 	Now func() time.Time `json:"-"`
@@ -68,6 +71,9 @@ func NewTailscale(c TailscaleConfig) (*Tailscale, error) {
 	if c.ClientID == "" || c.ClientSecret == "" {
 		return nil, &OpError{Plane: "tailscale", Op: "configure", Err: errors.New("no OAuth client id or secret")}
 	}
+	if c.HTTP == nil {
+		return nil, &OpError{Plane: "tailscale", Op: "configure", Err: errNoClient}
+	}
 	tailnet := c.Tailnet
 	if tailnet == "" {
 		tailnet = "-"
@@ -77,7 +83,7 @@ func NewTailscale(c TailscaleConfig) (*Tailscale, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Tailscale{base: base, tailnet: tailnet, clientID: c.ClientID, secret: func() string { return secret }, http: httpClient(c.HTTP), now: now}, nil
+	return &Tailscale{base: base, tailnet: tailnet, clientID: c.ClientID, secret: func() string { return secret }, http: c.HTTP, now: now}, nil
 }
 
 // httpsOrigin is the configured origin, or the default when empty, refused
@@ -241,12 +247,11 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("status %d: %s", e.Code, e.Message)
 }
 
-func httpClient(c *http.Client) *http.Client {
-	if c == nil {
-		return http.DefaultClient
-	}
-	return c
-}
+// errNoClient is a configuration without its http.Client: tailcontrol never
+// makes one, so that inside varlatchd every request goes through the
+// outbound policy's client, and the guard in go/server/outbound
+// (TestNoRequestInLibOutsideItsExceptions) needs no exception for it.
+var errNoClient = errors.New("no http.Client: the caller passes one (varlatchd passes the outbound policy's)")
 
 // do sends req and decodes a 2xx answer's JSON into out (unless out is nil).
 // Any other answer is a StatusError carrying the answer's message (its

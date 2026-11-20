@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -350,18 +351,25 @@ func TestHeadscaleCLI(t *testing.T) {
 
 func TestOnlyHTTPS(t *testing.T) {
 	for _, base := range []string{"http://api.tailscale.example", "ftp://x", "api.tailscale.com", "https://"} {
-		if _, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: base, ClientID: "id", ClientSecret: "secret-value"}); err == nil {
+		if _, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: base, ClientID: "id", ClientSecret: "secret-value", HTTP: &http.Client{}}); err == nil {
 			t.Errorf("Tailscale at %q accepted", base)
 		}
-		if _, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{BaseURL: base, APIKey: "key-value"}); err == nil {
+		if _, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{BaseURL: base, APIKey: "key-value", HTTP: &http.Client{}}); err == nil {
 			t.Errorf("Headscale at %q accepted", base)
 		}
 	}
-	if _, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{APIKey: "key-value"}); err == nil {
+	if _, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{APIKey: "key-value", HTTP: &http.Client{}}); err == nil {
 		t.Error("Headscale without a URL accepted")
 	}
-	if _, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{ClientID: "id", ClientSecret: "secret-value"}); err != nil {
+	if _, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{ClientID: "id", ClientSecret: "secret-value", HTTP: &http.Client{}}); err != nil {
 		t.Errorf("Tailscale's own API: %v", err)
+	}
+	// No http.Client: refused, never a default one (the outbound guard).
+	if _, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{ClientID: "id", ClientSecret: "secret-value"}); err == nil || !strings.Contains(err.Error(), "no http.Client") {
+		t.Errorf("Tailscale without a client: %v", err)
+	}
+	if _, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{BaseURL: "https://hs.example", APIKey: "key-value"}); err == nil || !strings.Contains(err.Error(), "no http.Client") {
+		t.Errorf("Headscale without a client: %v", err)
 	}
 }
 
@@ -370,8 +378,8 @@ func TestOnlyHTTPS(t *testing.T) {
 // struct, shows no credential.
 func TestPrintingHoldsNoCredential(t *testing.T) {
 	const secret, key = "client-secret-for-printing", "api-key-for-printing"
-	tcfg := tailcontrol.TailscaleConfig{BaseURL: "https://ts.example", ClientID: "id", ClientSecret: secret}
-	hcfg := tailcontrol.HeadscaleAPIConfig{BaseURL: "https://hs.example", APIKey: key}
+	tcfg := tailcontrol.TailscaleConfig{BaseURL: "https://ts.example", ClientID: "id", ClientSecret: secret, HTTP: &http.Client{}}
+	hcfg := tailcontrol.HeadscaleAPIConfig{BaseURL: "https://hs.example", APIKey: key, HTTP: &http.Client{}}
 	ts, err := tailcontrol.NewTailscale(tcfg)
 	if err != nil {
 		t.Fatal(err)

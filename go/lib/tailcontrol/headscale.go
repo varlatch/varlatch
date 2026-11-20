@@ -90,7 +90,10 @@ type HeadscaleAPIConfig struct {
 	// APIKey is the key, as `headscale apikeys create --expiration 1h`
 	// printed it.
 	APIKey string `json:"-"`
-	// HTTP is the client requests go through; http.DefaultClient when nil.
+	// HTTP is the client every request goes through, required: tailcontrol
+	// never makes one of its own. The CLI (varlatch migrate) passes its own
+	// client; varlatchd (the restore handoff, slice 7.5b) must pass the
+	// outbound policy's client (go/server/outbound, ADR-0057 Decision 9).
 	HTTP *http.Client `json:"-"`
 	// Now is the clock that judges expiries; time.Now when nil.
 	Now func() time.Time `json:"-"`
@@ -127,12 +130,15 @@ func NewHeadscaleAPI(c HeadscaleAPIConfig) (*HeadscaleAPI, error) {
 	if c.APIKey == "" {
 		return nil, &OpError{Plane: "headscale", Op: "configure", Err: errors.New("no API key")}
 	}
+	if c.HTTP == nil {
+		return nil, &OpError{Plane: "headscale", Op: "configure", Err: errNoClient}
+	}
 	key := c.APIKey
 	now := c.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &HeadscaleAPI{base: base, key: func() string { return key }, http: httpClient(c.HTTP), now: now}, nil
+	return &HeadscaleAPI{base: base, key: func() string { return key }, http: c.HTTP, now: now}, nil
 }
 
 // Kind is "headscale".

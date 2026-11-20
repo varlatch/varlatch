@@ -2781,7 +2781,10 @@ slice 7.5b.
     path when named), with the new name after `--`.
   - Both APIs are https only, and are built with a constructor that
     keeps the credential in a closure, so printing a control plane shows
-    none.
+    none. The constructor requires the caller's `*http.Client` and never
+    makes one: `varlatch migrate` passes its own; varlatchd's restore
+    handoff (7.5b) passes the outbound policy's (`go/server/outbound`),
+    so the guard there needs no exception for `lib/tailcontrol`.
 - **Names.**
   - `TempName` is a handoff's temporary name, `<name>-vl-<operation
     id>-n|o`, in canonical form within 63 bytes; when too long, the name
