@@ -29,7 +29,7 @@ import (
 // this run, plus the value of each known Secret name the command inherits
 // unchanged from this process's environment. Only what the command holds
 // counts; empty values carry nothing to mask.
-func assistedRedactionSet(delivered []matcher.SecretEntry, child *orderedEnv, parent map[string]string, knownSecretNames []string) []matcher.SecretEntry {
+func assistedRedactionSet(delivered []matcher.SecretEntry, child *orderedEnv, parent parentVars, knownSecretNames []string) []matcher.SecretEntry {
 	var set []matcher.SecretEntry
 	covered := map[string]bool{}
 	for _, e := range delivered {
@@ -44,7 +44,7 @@ func assistedRedactionSet(delivered []matcher.SecretEntry, child *orderedEnv, pa
 			continue
 		}
 		seen[name] = true
-		inherited, _ := lookupEnv(parent, name)
+		inherited, _ := parent.lookup(name)
 		if v, ok := child.Get(name); inherited == "" || !ok || v != inherited {
 			continue
 		}
