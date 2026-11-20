@@ -74,10 +74,38 @@ EOF
 }
 conf "$out/upgraded"
 
+# previous_status <config> <out.json> [<previous schema>]: the previous
+# release's `admin schema status --json` on the installation. A previous
+# release without the command (`admin schema` came with slice 6.6b, #330;
+# v0.50.0-rc.1 has none) answers "unknown command schema", and only then:
+# the database is read by the new release's status, which reads it
+# read-only, and whether the previous release opens it is the previous
+# release's own rule (db.Init, unchanged since rc.1): the same schema
+# version, or a newer one whose compatible_from is at most the previous
+# release's. Its schema version is the one it created the installation
+# with (the third argument, from the first call). Once `previous` is a
+# release with `admin schema`, every call takes the direct path, and any
+# other failure fails G6 as before.
+previous_status() {
+  if "$previous" admin schema status --json --config "$1" > "$2" 2> "$2.err"; then
+    cat "$2.err" >&2
+    return 0
+  fi
+  cat "$2.err" >&2
+  grep -q "unknown command schema" "$2.err" || fail "the previous release's admin schema status failed (its message is above)"
+  echo "the previous release has no admin schema status: the database read by the new release's (read-only), opens by the previous release's rule"
+  "$new" admin schema status --json --config "$1" > "$2.new" || fail "the new release's admin schema status failed (its message is above)"
+  db=$(jq -er '.database.schemaVersion' "$2.new")
+  compat=$(jq -er '.database.compatibleFrom' "$2.new")
+  prev=${3:-$db}
+  jq -n --argjson db "$db" --argjson compat "$compat" --argjson prev "$prev" \
+    '{binary: {schemaVersion: $prev}, database: {schemaVersion: $db, compatibleFrom: $compat},
+      opens: (($db == $prev) or ($db > $prev and $compat <= $prev)), derived: true}' > "$2"
+}
+
 step "the previous release creates the installation"
 "$previous" admin backup run --config "$out/upgraded/varlatchd.conf"
-"$previous" admin schema status --json --config "$out/upgraded/varlatchd.conf" > "$out/previous-status.json" \
-  || fail "the previous release has no admin schema status"
+previous_status "$out/upgraded/varlatchd.conf" "$out/previous-status.json"
 before=$(jq -er '.database.schemaVersion' "$out/previous-status.json")
 previous_schema=$(jq -er '.binary.schemaVersion' "$out/previous-status.json")
 
@@ -92,7 +120,7 @@ new_schema=$(jq -er '.binary.schemaVersion' "$out/upgrade.json")
 echo "schema $before -> $after (the previous release knows $previous_schema)"
 
 step "the previous release on the upgraded database"
-"$previous" admin schema status --json --config "$out/upgraded/varlatchd.conf" > "$out/rollback-status.json"
+previous_status "$out/upgraded/varlatchd.conf" "$out/rollback-status.json" "$previous_schema"
 # -r, not -e: false is an answer here (the not-rollback-safe case).
 opens=$(jq -r '.opens' "$out/rollback-status.json")
 case "$opens" in
