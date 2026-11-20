@@ -2831,6 +2831,25 @@ migrations.
   `testdata/pgschema.mjs` on PGlite (MAPPING.md says how to regenerate it),
   and against a database `Init` created. The migration manifest (step 7)
   is built from the mapping.
+- The migration manifest and its encoding (step 7, slice 7.1):
+  - `server/migration/manifest/v1.json` lists every PostgreSQL table
+    and column, in the source's column order with its type: copied (to
+    its SQLite table and column), transformed (`session`: browser
+    sessions end), or left out with the reason (`account`, `verification`,
+    `audit_position`, `varlatch_migrations`). It also lists the two
+    transformations and what lives outside the database (Convex, the
+    keys, the tailnet node).
+  - `manifest_test.go` holds the manifest to `testdata/pg-v0.22.0.json`,
+    `mapping.json` and the schema `Init` creates. A column or table added
+    on either side fails until the manifest accounts for it.
+  - `server/migration/canonical` is the canonical encoding
+    (`CANONICAL.md`) of values, rows and decision 7's digest input.
+    `testdata/vectors.json` holds the cases, and the TypeScript server's
+    encoder reproduces them on the 0.22 line.
+  - **Accepted difference:** after a migration, Requirements are read in
+    rowid order, the order the migration inserts them in (the source's
+    physical order). That order is now defined. The TypeScript server's
+    heap order depended on PostgreSQL's planner.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the
