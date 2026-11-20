@@ -310,7 +310,36 @@ func serve(opts Options, h *hooks) int {
 	} else if g != nil {
 		log.Warn("installation maintenance is active; varlatchd answers 503 MAINTENANCE until it ends", "kind", g.Kind, "lease", g.ID)
 	}
-	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups}
+	// Public HTTPS (step 6's decision 4), when listen_https is set: the
+	// certificate manager first, so the listeners report can show it.
+	var public *publictls.Manager
+	if p := cfg.PublicHTTPS; p != nil {
+		popts := publictls.Options{
+			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
+			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
+		}
+		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
+		if p.CARootFile != "" {
+			pem, err := os.ReadFile(p.CARootFile)
+			if err != nil {
+				return fail(ExitFailure, "cannot read acme_ca_root", "file", p.CARootFile, "error", err)
+			}
+			roots := x509.NewCertPool()
+			if !roots.AppendCertsFromPEM(pem) {
+				return fail(ExitConfig, "acme_ca_root holds no PEM certificate", "file", p.CARootFile)
+			}
+			popts.CARoots = roots
+		}
+		if h.publicTLS != nil {
+			h.publicTLS(&popts)
+		}
+		public, err = publictls.New(popts)
+		if err != nil {
+			return fail(ExitFailure, "public HTTPS", "error", err)
+		}
+		defer public.Close()
+	}
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public}
 	env.backups = newBackups(env)
 	// The tailnet listener (step 4.13b), when tailnet = on: its node starts
 	// now and joins its tailnet in the background; the ordinary listener
@@ -484,35 +513,6 @@ func serve(opts Options, h *hooks) int {
 	// refuse an IP address as one: the dashboard cannot sign in there.
 	if u := cfg.PublicURL; u != nil && net.ParseIP(u.Hostname()) != nil {
 		log.Warn("public_url names an IP address, which browsers refuse as a passkey's relying party: the dashboard cannot sign in at it. Use a host name, such as http://localhost:8686 on this machine", "publicUrl", u.String())
-	}
-	// Public HTTPS (step 6's decision 4), when listen_https is set: the
-	// certificate manager first, so the listeners report can show it.
-	var public *publictls.Manager
-	if p := cfg.PublicHTTPS; p != nil {
-		popts := publictls.Options{
-			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
-			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
-		}
-		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
-		if p.CARootFile != "" {
-			pem, err := os.ReadFile(p.CARootFile)
-			if err != nil {
-				return fail(ExitFailure, "cannot read acme_ca_root", "file", p.CARootFile, "error", err)
-			}
-			roots := x509.NewCertPool()
-			if !roots.AppendCertsFromPEM(pem) {
-				return fail(ExitConfig, "acme_ca_root holds no PEM certificate", "file", p.CARootFile)
-			}
-			popts.CARoots = roots
-		}
-		if h.publicTLS != nil {
-			h.publicTLS(&popts)
-		}
-		public, err = publictls.New(popts)
-		if err != nil {
-			return fail(ExitFailure, "public HTTPS", "error", err)
-		}
-		defer public.Close()
 	}
 	hopts := httpserver.Options{
 		Outbound:       policy,

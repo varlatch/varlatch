@@ -24,12 +24,12 @@ const HELP_TOPICS = [
 ];
 
 /**
- * `admin`'s help is a Go installation's in the Go CLI (go/README.md, the
- * accepted difference `admin-usage`); this recording is the TypeScript
- * CLI's Compose usage.
+ * `admin`'s and `doctor`'s help are a Go installation's in the Go CLI
+ * (go/README.md, the accepted differences `admin-usage` and
+ * `doctor-usage`); these recordings are the TypeScript CLI's Compose usage.
  */
 const helpDifferences = (topic: string): { differences?: string[] } =>
-  topic === "admin" ? { differences: ["admin-usage"] } : {};
+  topic === "admin" ? { differences: ["admin-usage"] } : topic === "doctor" ? { differences: ["doctor-usage"] } : {};
 
 const framework: TranscriptCase[] = [
   { id: "usage.no-command", title: "no command prints the usage on stdout, status 0", args: [] },

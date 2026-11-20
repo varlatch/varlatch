@@ -57,7 +57,7 @@ var commands = []command{
 	{name: "setup", slice: "step 6"},
 	{name: "move", slice: "step 6"},
 	{name: "adopt", slice: "never"},
-	{name: "doctor", slice: "step 6"},
+	{name: "doctor", slice: "step 6", partial: doctorCommand},
 	{name: "version", slice: "5.1a", run: versionCommand},
 	{name: "--version", slice: "5.1a", run: versionCommand},
 	{name: "self-update", slice: "step 6"},

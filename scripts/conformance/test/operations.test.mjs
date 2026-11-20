@@ -269,10 +269,11 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
-  // G11's go-server checks (step 3.5) lack nothing either.
+  // G11's go-server checks (step 3.5) lack nothing either, nor the Go
+  // installation's doctor's (step 6.5).
   assert.deepEqual(
     Object.entries(inventory.checks).filter(([id, c]) => c.kind === "go-server" && !lacking.has(id)).map(([id]) => id).sort(),
-    Object.keys(inventory.checks).filter((id) => id.startsWith("realtime-events.")).sort(),
+    Object.keys(inventory.checks).filter((id) => id.startsWith("realtime-events.") || id.startsWith("go-doctor.")).sort(),
   );
   const notYet = {
     dashboard: [], values: [], p4: [], onboarding: [], webhooks: [],

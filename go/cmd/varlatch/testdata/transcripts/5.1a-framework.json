@@ -1108,6 +1108,9 @@
         "help",
         "doctor"
       ],
+      "differences": [
+        "doctor-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]\n                                                       # read-only installation health on this host\n",
@@ -1128,6 +1131,9 @@
         "doctor",
         "--help"
       ],
+      "differences": [
+        "doctor-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]\n                                                       # read-only installation health on this host\n",
@@ -1147,6 +1153,9 @@
       "args": [
         "doctor",
         "-h"
+      ],
+      "differences": [
+        "doctor-usage"
       ],
       "expect": {
         "status": 0,

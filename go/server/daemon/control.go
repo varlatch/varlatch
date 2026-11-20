@@ -20,6 +20,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/maintenance"
+	"github.com/varlatch/varlatch/go/server/publictls"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -73,6 +74,9 @@ type hostEnv struct {
 	// tailnet is the tailnet node's pin and report, in a running varlatchd
 	// with tailnet = on; nil otherwise.
 	tailnet *tailnet.Manager
+	// public is public HTTPS's certificate manager, in a running varlatchd
+	// with listen_https; nil otherwise.
+	public *publictls.Manager
 }
 
 type controlRequest struct {
