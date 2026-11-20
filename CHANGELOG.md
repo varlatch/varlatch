@@ -63,6 +63,28 @@ fixes.
   `--cpu-shares` in its custom run options is overridden, and that a
   Compose resource needs `cpu_shares` in its Compose file.
 
+## 0.50.0-rc.1 (2026-11-20)
+
+A prerelease of the Go line (ADR-0059): the first release built from the
+Go rewrite of the server and the CLI, published to test the installers and
+the release assets. **It is not for production.** The TypeScript line
+(0.22.x) is unaffected: its images, Compose set and CLI do not change.
+
+- **What it contains.** `varlatch`, the CLI, for Linux, macOS and Windows
+  on amd64 and arm64; `varlatchd`, the server, for Linux on amd64 and
+  arm64; `install.sh` and `install.ps1` for this version; the `varlatchd`
+  systemd unit and its example configuration.
+- **Signed.** `SHA256SUMS` lists every asset and is signed keyless by the
+  release workflow (`SHA256SUMS.sigstore.json`). The installers check the
+  signature with the CLI's embedded verifier before they install
+  anything; [verifying a release](docs/operations/verify-release.md) shows
+  how to check it with cosign.
+- **Prerelease only.** It is published as a GitHub prerelease and never
+  becomes the latest release, so nothing that follows the latest release
+  (`varlatch upgrade`, the release notice, the CLI's self-update) offers
+  it. The Go server has no container image, `setup`, `upgrade` or `doctor`
+  yet, and there is no migration from a TypeScript installation.
+
 ## 0.22.0 (2026-11-13)
 
 ### Sign-in
