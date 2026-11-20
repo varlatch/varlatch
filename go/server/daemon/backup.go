@@ -50,6 +50,9 @@ func commandTimeout(args []string) time.Duration {
 	if len(args) >= 2 && args[0] == "backup" && args[1] == "test-bucket" {
 		return time.Hour
 	}
+	if len(args) >= 2 && args[0] == "migrate" && args[1] == "barrier" {
+		return barrierTimeout(args)
+	}
 	return controlTimeout
 }
 

@@ -260,14 +260,25 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		Listen      string          `json:"listen"`
 		ListenHTTPS string          `json:"listenHttps"`
 		// MigrationGate is whether the transfer's gate stands (an
-		// unreadable gate counts: it isolates as well); Running whether
-		// a varlatchd answers on the data directory's control socket.
-		MigrationGate bool `json:"migrationGate"`
-		Running       bool `json:"running"`
+		// unreadable gate counts: it isolates as well); Barrier a reverse
+		// migration's barrier's phase (draining, paused), when one
+		// stands; Running whether a varlatchd answers on the data
+		// directory's control socket.
+		MigrationGate bool   `json:"migrationGate"`
+		Barrier       string `json:"barrier,omitempty"`
+		Running       bool   `json:"running"`
 	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https,
-		gerr != nil || (gate != nil && gate.Kind == "migration"), running})
+		gerr != nil || (gate != nil && gate.Kind == "migration" && gate.Phase == "transfer"), barrierPhase(gate), running})
 	fmt.Fprintln(stdout, string(out))
 	return ExitOK
+}
+
+// barrierPhase is a reverse migration's barrier's phase, "" for none.
+func barrierPhase(g *backup.Gate) string {
+	if g != nil && g.Kind == "migration" && g.Phase != "transfer" {
+		return g.Phase
+	}
+	return ""
 }
 
 // writeTransferGate writes the migration's gate (maintenance.json, kind
@@ -294,7 +305,8 @@ func writeTransferGate(dataDir, id string, owner int) error {
 // removeTransferGate removes the migration's gate, when it is this one's.
 func removeTransferGate(dataDir, id string) error {
 	g, err := backup.ReadGate(dataDir)
-	if err != nil || g == nil || g.Kind != "migration" || g.ID != id {
+	if err != nil || g == nil || g.Kind != "migration" || g.ID != id || g.Phase != "transfer" {
+		// A reverse's barrier is its own commands' (barrier, release).
 		return err
 	}
 	if err := os.Remove(filepath.Join(dataDir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {

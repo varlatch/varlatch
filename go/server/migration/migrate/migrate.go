@@ -85,6 +85,16 @@ type Options struct {
 	Release string
 	// Now is the clock (time.Now when nil).
 	Now func() time.Time
+	// The reverse export's (ExportReverse): From is the database file it
+	// reads instead of the data directory's (the migration barrier's
+	// frozen copy), whose last audit position must be FrozenAt; Keep is a
+	// new or empty directory the transformed copy is kept in (as
+	// varlatch.db, for the reverse checks), Work one the copy is made in
+	// and removed from otherwise (the data directory when empty).
+	From     string
+	FrozenAt int64
+	Keep     string
+	Work     string
 }
 
 func (o Options) now() func() time.Time {

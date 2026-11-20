@@ -12,6 +12,10 @@
 // real `varlatch migrate` (built with the crashpoint tag) killed at every
 // phase boundary and held to decision 14's stated states, against a real
 // target varlatchd and a stand-in for the last TypeScript release (its
-// header says what is real and what stands in). The reverse half is
-// 7.6a's.
+// header says what is real and what stands in). reverse_test.go is G5's
+// reverse half (slice 7.6a): Go's barrier, the reverse export from its
+// frozen copy, the TypeScript import and export stood in for
+// (migrationtest.FromReverse), the reverse checks, and a second forward
+// migration reproducing the state, on the seeded installation and after
+// each kind of change made on Go (kinds_test.go).
 package g5

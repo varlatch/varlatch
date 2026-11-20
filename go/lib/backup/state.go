@@ -285,9 +285,13 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 type Gate struct {
 	ID        string  `json:"id"`
 	Kind      string  `json:"kind"`  // "capture", "restore" or "migration"
-	Phase     string  `json:"phase"` // "draining", "paused" or "reconciling"; "transfer" for a migration
+	Phase     string  `json:"phase"` // "draining", "paused" or "reconciling"; for a migration "transfer", or its barrier's "draining" and "paused"
 	ExpiresAt *int64  `json:"expiresAt"`
 	ArchiveID *string `json:"archiveId"`
+	// FrozenPosition is a drained migration barrier's frozen point, the
+	// last audit position, in decimal (maintenance.ts's frozenPosition):
+	// set once the barrier is paused, absent otherwise.
+	FrozenPosition *string `json:"frozenPosition,omitempty"`
 }
 
 // ErrGateUnreadable keeps the installation isolated: a gate that cannot be
@@ -296,6 +300,9 @@ var ErrGateUnreadable = &Error{"Maintenance state is unreadable; isolation remai
 
 // GateFile is the gate's file in the state directory.
 const GateFile = "maintenance.json"
+
+// frozenPosition is a frozen point's text: a position, in decimal.
+var frozenPosition = regexp.MustCompile(`^(0|[1-9][0-9]{0,18})$`)
 
 // ReadGate reads the gate, nil when there is none (readGate).
 func ReadGate(dir string) (*Gate, error) {
@@ -307,10 +314,18 @@ func ReadGate(dir string) (*Gate, error) {
 	if err != nil || json.Unmarshal(raw, &g) != nil || g.ID == "" {
 		return nil, ErrGateUnreadable
 	}
-	// A migration's gate (go-step7 decisions 6 and 12) holds the target
-	// isolated while its address is transferred: phase transfer, no expiry.
-	migration := g.Kind == "migration" && g.Phase == "transfer" && g.ExpiresAt == nil
-	if !migration && (!slices.Contains([]string{"capture", "restore"}, g.Kind) || !slices.Contains([]string{"draining", "paused", "reconciling"}, g.Phase) ||
+	// A migration's gate (go-step7 decisions 6 and 12), with no expiry,
+	// holds the target isolated while its address is transferred (phase
+	// transfer), or, the barrier of a reverse migration, holds the
+	// installation while it drains (draining) and once frozen (paused, its
+	// frozen point recorded).
+	migration := g.Kind == "migration" && g.ExpiresAt == nil && g.ArchiveID == nil &&
+		(g.Phase == "transfer" && g.FrozenPosition == nil || g.Phase == "draining" && g.FrozenPosition == nil ||
+			g.Phase == "paused" && g.FrozenPosition != nil && frozenPosition.MatchString(*g.FrozenPosition))
+	if g.Kind == "migration" && !migration {
+		return nil, ErrGateUnreadable
+	}
+	if !migration && (g.FrozenPosition != nil || !slices.Contains([]string{"capture", "restore"}, g.Kind) || !slices.Contains([]string{"draining", "paused", "reconciling"}, g.Phase) ||
 		(g.Kind == "capture" && (g.ExpiresAt == nil || *g.ExpiresAt <= 0))) {
 		return nil, ErrGateUnreadable
 	}

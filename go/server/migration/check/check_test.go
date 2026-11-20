@@ -488,3 +488,81 @@ func loadManifest(t *testing.T) *manifest.Manifest {
 	}
 	return m
 }
+
+// The reverse checks: the transformed copy a reverse export kept, held
+// against the stand-in TypeScript release's export of the database it
+// rebuilt from the reverse bundle, pass with every check reading
+// something; the same pair fails the forward checks (no
+// installation.migrated after the frozen point); an event after the frozen
+// point in the copy fails the reverse audit check, and a browser session in
+// the rebuilt installation the reverse authentication check.
+func TestTheReverseChecks(t *testing.T) {
+	s := setUp(t)
+	keep := filepath.Join(t.TempDir(), "keep")
+	var rev bytes.Buffer
+	if _, err := migrate.ExportReverse(context.Background(), &rev, migrate.Options{DataDir: filepath.Dir(copyDB(t, s)), Keep: keep, Release: "0.50.0-check"}); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(keep, config.DatabaseFile)
+	rebuilt := migrationtest.FromReverse(t, rev.Bytes(), s.source.RootKEK)
+	db := openRO(t, kept)
+	decisions := []bundle.Decision{}
+	for _, d := range tuples(t, db) {
+		got, err := check.Evaluate(context.Background(), db, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decisions = append(decisions, got)
+	}
+	db.Close()
+	reexport := func(o migrationtest.Options) []byte {
+		o.Sections = &migrationtest.Sections{Digests: migrationtest.Digests(t, rebuilt, s.runKey), Decisions: decisions, At: 1}
+		return migrationtest.Bundle(t, rebuilt, o)
+	}
+	runOn := func(path string, b []byte, reverse bool) check.Report {
+		t.Helper()
+		db := openRO(t, path)
+		defer db.Close()
+		rep, err := check.Run(context.Background(), db, bytes.NewReader(b), check.Options{RootKEK: s.source.RootKEK, RunKey: s.runKey, Reverse: reverse})
+		if err != nil {
+			t.Fatal(err)
+		}
+		noSecrets(t, s, rep)
+		return rep
+	}
+	b := reexport(migrationtest.Options{})
+	rep := runOn(kept, b, true)
+	if !rep.Passed || !rep.Reverse || !strings.HasPrefix(rep.Text(), "The reverse checks passed") {
+		t.Fatalf("the reverse checks:\n%s", rep.Text())
+	}
+	for _, c := range rep.Checks {
+		if c.Checked == 0 {
+			t.Errorf("%s checked nothing", c.Name)
+		}
+	}
+	if rep := runOn(kept, b, false); rep.Passed || failed(rep)[check.Audit] == nil {
+		t.Errorf("the forward checks of the reverse's pair:\n%s", rep.Text())
+	}
+	// An event after the frozen point.
+	extra := migrationtest.CopyDB(t, kept)
+	damage(t, extra, `INSERT INTO audit_events (event_order, id, event_type, decision) SELECT max(event_order) + 1, 'evt_after_the_frozen_point', 'installation.migrated', 'info' FROM audit_events`)
+	if rep := runOn(extra, b, true); rep.Passed || failed(rep)[check.Audit] == nil || !strings.Contains(rep.Text(), "after the frozen point") {
+		t.Errorf("an event after the frozen point:\n%s", rep.Text())
+	}
+	// A browser session in the rebuilt installation.
+	session := migrationtest.ManifestTable(t, "session")
+	row := make([]any, len(session.Columns))
+	for i, c := range session.Columns {
+		switch c.Source {
+		case "id":
+			row[i] = "ses_rebuilt"
+		case "userId":
+			row[i] = "usr_migration"
+		case "expiresAt", "createdAt", "updatedAt":
+			row[i] = int64(1_800_000_000_000_000)
+		}
+	}
+	if rep := runOn(kept, reexport(migrationtest.Options{Extra: map[string][][]any{"session": {row}}}), true); rep.Passed || failed(rep)[check.Authentication] == nil || !strings.Contains(rep.Text(), "starts with none") {
+		t.Errorf("a session in the rebuilt installation:\n%s", rep.Text())
+	}
+}

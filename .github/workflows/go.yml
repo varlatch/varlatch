@@ -394,8 +394,11 @@ jobs:
       # the varlatchd binary on a seeded installation, every damage of the
       # bundle stream, its check sections and the imported database failing
       # at its stage and check, named, a killed import cleared by the next,
-      # and nothing secret printed. Its own step, so the gate's evidence is
-      # its own line in the run.
+      # and nothing secret printed; its interrupted half (7.4c) and its
+      # reverse half (7.6a: Go's barrier, the reverse export and checks, a
+      # second forward migration reproducing the state, after each kind of
+      # change on Go). Its own step, so the gate's evidence is its own line
+      # in the run.
       - name: G5, the migration's damage gate
         working-directory: go
         env:
