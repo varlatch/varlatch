@@ -62,6 +62,10 @@ type Host interface {
 	CreateUser(name string) error
 	// LoginShell is the user's login shell ("" when none is set).
 	LoginShell(name string) (string, error)
+	// SupplementaryGroups are the groups the user is in beyond its own
+	// (primary) group, as the name service sees them: systemd gives
+	// varlatchd every one of them.
+	SupplementaryGroups(name string) ([]string, error)
 	// SysUIDMax is the top of the system accounts' uids (login.defs'
 	// SYS_UID_MAX, 999 when it says none).
 	SysUIDMax() int
@@ -399,9 +403,11 @@ func (r *run) ask(a *Answers, question string) error {
 }
 
 // user: the varlatch system user. One that exists already must be a system
-// account (no login shell, a uid in the system range) unless the operator
-// says to use it anyway (--accept-existing-user): varlatchd runs as it and
-// owns the installation's data. Once the step is done, a rerun asks no more.
+// account (no login shell, a uid in the system range, in no group but its
+// own: systemd gives varlatchd every supplementary group, docker's or
+// wheel's included) unless the operator says to use it anyway
+// (--accept-existing-user): varlatchd runs as it and owns the
+// installation's data. Once the step is done, a rerun asks no more.
 func (r *run) user() error {
 	uid, _, found, err := r.h.LookupUser(User)
 	if err != nil {
@@ -432,6 +438,13 @@ func (r *run) user() error {
 	}
 	if most := r.h.SysUIDMax(); uid > most {
 		notes = append(notes, fmt.Sprintf("its uid %d is above the system accounts' range (SYS_UID_MAX %d)", uid, most))
+	}
+	groups, err := r.h.SupplementaryGroups(User)
+	if err != nil {
+		return err
+	}
+	if len(groups) > 0 {
+		notes = append(notes, "it is in the groups "+strings.Join(groups, ", ")+", which varlatchd would run with")
 	}
 	if len(notes) == 0 {
 		return nil
@@ -525,7 +538,10 @@ func (r *run) removeLeftovers() error {
 	}
 	removed := 0
 	for _, e := range entries {
-		if !e.Type().IsRegular() || !isStagedName(e.Name()) {
+		// The configuration's staged copy (config's ".setup") too: a run
+		// killed between its write and its rename leaves it, and the next
+		// writes it anew, but a run never repeated would keep it.
+		if !e.Type().IsRegular() || !isStagedName(e.Name()) && e.Name() != filepath.Base(ConfigFile)+".setup" {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
