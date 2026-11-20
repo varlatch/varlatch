@@ -173,3 +173,23 @@ func TestCheckStepsRefusesMalformedSteps(t *testing.T) {
 		}
 	}
 }
+
+// A schema_version row no varlatchd writes (a version below 1, or
+// compatible_from outside 1 to it) is refused, never indexed into the steps.
+func TestUpgradeRefusesARecordedVersionThatIsNoSchemaVersion(t *testing.T) {
+	ctx := context.Background()
+	for _, row := range []struct{ version, compatibleFrom int64 }{{0, 0}, {-3, 1}, {2, 3}, {1, 0}} {
+		s := openFile(t, filepath.Join(t.TempDir(), "varlatch.db"))
+		// schema_version without schema.sql's checks, as a hand-changed file
+		// could hold it.
+		exec(t, s, "CREATE TABLE schema_version (singleton INTEGER PRIMARY KEY, version INTEGER, compatible_from INTEGER, created_at INTEGER, created_by_release TEXT, updated_at INTEGER, updated_by_release TEXT)")
+		if err := tryExec(s, "INSERT INTO schema_version VALUES (1, ?, ?, 1, 'x', 1, 'x')", row.version, row.compatibleFrom); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Upgrade(ctx, s, testRelease)
+		if err == nil || !strings.Contains(err.Error(), "is not a varlatch schema version") {
+			t.Errorf("version %d, compatible from %d: %v", row.version, row.compatibleFrom, err)
+		}
+		_ = s.Close()
+	}
+}

@@ -75,7 +75,11 @@ func TestChangesAreClassified(t *testing.T) {
 		{"a new table", "CREATE TABLE tags (id INTEGER NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;", Additive, "table tags", "added"},
 		{"a nullable column", "ALTER TABLE projects ADD COLUMN description TEXT;", Additive, "column projects.description", "added"},
 		{"a NOT NULL column with a default", "ALTER TABLE projects ADD COLUMN weight INTEGER NOT NULL DEFAULT 0;", Additive, "column projects.weight", "added"},
-		{"a nullable reference", "ALTER TABLE values_ ADD COLUMN moved_to TEXT REFERENCES projects (id);", Additive, "column values_.moved_to", "added"},
+		{"a non-unique index removed", "DROP INDEX values_project;", Additive, "index values_project", "removed: the previous release stays correct, only slower"},
+
+		// Review.
+		{"a nullable reference on an existing table", "ALTER TABLE values_ ADD COLUMN moved_to TEXT REFERENCES projects (id);", Review, "column values_.moved_to",
+			"a new reference on an existing table: SQLite enforces it for the previous release's deletes and updates too"},
 		{"a non-unique index", "CREATE INDEX projects_state ON projects (state);", Additive, "index projects_state", "added"},
 		{"a view", "CREATE VIEW all_projects AS SELECT id FROM projects;", Additive, "view all_projects", "added"},
 		{"a trigger on a new table", "CREATE TABLE t2 (id INTEGER PRIMARY KEY) STRICT; CREATE TRIGGER t2_guard BEFORE DELETE ON t2 BEGIN SELECT RAISE(ABORT, 'x'); END;", Additive, "trigger t2_guard", "added"},
@@ -87,7 +91,6 @@ func TestChangesAreClassified(t *testing.T) {
 		{"a renamed table", "ALTER TABLE values_ RENAME TO items;", Breaking, "table values_", "removed"},
 		{"a new unique index", "CREATE UNIQUE INDEX values_body ON values_ (body);", Breaking, "index values_body", "a new unique index on the existing table values_"},
 		{"a new trigger on an existing table", "CREATE TRIGGER values_frozen BEFORE INSERT ON values_ BEGIN SELECT RAISE(ABORT, 'frozen'); END;", Breaking, "trigger values_frozen", "a new trigger on the existing table values_: it may refuse or change the previous release's writes"},
-		{"a removed index", "DROP INDEX values_project;", Breaking, "index values_project", "removed"},
 		{"a removed trigger", "DROP TRIGGER projects_no_rename;", Breaking, "trigger projects_no_rename", "removed"},
 		{"a changed view", "DROP VIEW active_projects; CREATE VIEW active_projects AS SELECT id, name FROM projects WHERE state = 'active';", Breaking, "view active_projects", "changed"},
 	} {
@@ -98,7 +101,7 @@ func TestChangesAreClassified(t *testing.T) {
 				if ch.Class == c.class && ch.Object == c.object && ch.What == c.what {
 					found = true
 				}
-				if c.class == Additive && ch.Class != Additive {
+				if c.class != Breaking && ch.Class == Breaking {
 					t.Errorf("an additive change also gave %v", ch)
 				}
 			}
@@ -152,6 +155,21 @@ func TestRebuiltTables(t *testing.T) {
 				t.Fatalf("want %q; got %v", c.what, changes)
 			}
 		})
+	}
+}
+
+// A unique index or constraint the older schema has and the newer one does
+// not is breaking: the previous release's ON CONFLICT upserts need it.
+func TestRemovedUniqueness(t *testing.T) {
+	withIndex := base + "CREATE UNIQUE INDEX values_body ON values_ (body);"
+	changes := diff(t, withIndex, base)
+	if len(changes) != 1 || changes[0].Class != Breaking || changes[0].Object != "index values_body" ||
+		changes[0].What != "a unique index removed: the previous release's upserts (ON CONFLICT) and its guarantees may need it" {
+		t.Fatalf("a unique index removed: %v", changes)
+	}
+	withColumn := strings.Replace(base, "note TEXT,", "note TEXT UNIQUE,", 1)
+	if changes := diff(t, withColumn, base); !Breaks(changes) {
+		t.Fatalf("a column's UNIQUE removed: %v", changes)
 	}
 }
 

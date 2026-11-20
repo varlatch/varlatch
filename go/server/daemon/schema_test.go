@@ -7,10 +7,12 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -123,6 +125,23 @@ func TestAdminSchemaStatusAndUpgrade(t *testing.T) {
 	}
 	if code, _, errOut = runAdmin(t, "schema", "upgrade", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "needs a varlatchd that knows version 2") {
 		t.Fatalf("%d %q", code, errOut)
+	}
+	// serve stops with a failure before it serves anything.
+	served := make(chan struct{}, 1)
+	done := make(chan int, 1)
+	stderr := &syncBuffer{}
+	go func() {
+		done <- Serve(Options{ConfigPath: in.conf, Stderr: stderr, Signals: make(chan os.Signal, 1), Ready: func(net.Addr) { served <- struct{}{} }})
+	}()
+	select {
+	case code := <-done:
+		if code != ExitFailure || !strings.Contains(stderr.String(), "needs a varlatchd that knows version 2") {
+			t.Fatalf("serve on a database it may not open: %d %q", code, stderr.String())
+		}
+	case <-served:
+		t.Fatal("serve served a database it may not open")
+	case <-time.After(30 * time.Second):
+		t.Fatal("serve neither served nor stopped")
 	}
 }
 

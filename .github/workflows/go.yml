@@ -413,6 +413,7 @@ jobs:
             go test -count=1 -tags g6fixture -run '^TestTheG6FixtureUpgradesToItsSchema$' ./server/db/
             go run -tags g6fixture ./server/db/releasecheck declaration --declaration release/testdata/g6/fixture.json
             go run -tags g6fixture ./server/db/releasecheck schema --previous server/db/schema.sql --declaration release/testdata/g6/fixture.json
+            go run -tags g6fixture,g6unsafe ./server/db/releasecheck declaration --declaration release/testdata/g6/fixture-unsafe.json
           fi
           cat server/db/schema.sql release/testdata/g6/breaking.sql > "$RUNNER_TEMP/breaking-schema.sql"
           status=0
@@ -823,9 +824,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.conformance == 'true'
     runs-on: ubuntu-latest
-    # The nightly run's G6 takes every suite it names in shard 1 (about 35
-    # minutes more); pull requests and merge groups keep the 40 minutes.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 80 || 40 }}
+    # The nightly (and a dispatched) run's G6 takes every suite it names in
+    # shard 1 (about 35 minutes more); pull requests and merge groups keep
+    # the 40 minutes.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 80 || 40 }}
     strategy:
       fail-fast: false
       matrix:
@@ -896,7 +898,8 @@ jobs:
       # g6fixture build (one rollback-safe schema step) the new one. Pull
       # requests and merge groups take the suites that write each kind
       # quickly (about 100 seconds a phase, shard-weights.json); the nightly
-      # run adds sync, deletion and webhooks (about 990 seconds a phase).
+      # run and a dispatched one add sync, deletion and webhooks (about 990
+      # seconds a phase).
       - name: G6, the upgrade gate
         if: matrix.shard == 1
         env:
@@ -916,9 +919,21 @@ jobs:
             safe=$(jq -r '.rollbackSafe' go/release/testdata/g6/fixture.json)
           fi
           suites="cli-core security oidc broker client-runtime audit-export realtime-events"
-          [ "$EVENT" != schedule ] || suites="$suites sync deletion webhooks"
+          case "$EVENT" in schedule | workflow_dispatch) suites="$suites sync deletion webhooks" ;; esac
           # shellcheck disable=SC2086 # one argument per suite
           G6_ROLLBACK_SAFE=$safe sh go/release/g6.sh "$old" "$new" "$RUNNER_TEMP/g6" $suites
+          if [ -z "$previous" ]; then
+            # The not-rollback-safe path, cheaply (no conformance runs): the
+            # same fixture step declared not rollback-safe (g6unsafe:
+            # compatibleFrom 2) passes declared so, since the previous
+            # release refuses its database, and fails declared rollback-safe.
+            (cd go && go build -tags conformance,g6fixture,g6unsafe -o "$RUNNER_TEMP/varlatchd-g6unsafe" ./cmd/varlatchd)
+            G6_ROLLBACK_SAFE=false G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe"
+            status=0
+            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe-declared-safe" || status=$?
+            [ "$status" -eq 1 ] || { echo "::error::G6 did not fail a release declared rollback-safe whose database the previous release refuses (exit $status)"; exit 1; }
+            echo "G6 failed the release declared rollback-safe whose database the previous release refuses, as it must."
+          fi
       # G3 (ADR-0059 step 3.6), the direction the Go tests cannot take: the
       # TypeScript server's own read path (its effective-configuration and
       # disclosure routes, in PGlite) opens a database fixture whose

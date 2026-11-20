@@ -15,8 +15,10 @@ package db
 // previous build then runs on a database holding them.
 const SchemaVersion = 2
 
-// CompatibleFrom: the step is rollback-safe, so version 1 may still open it.
-const CompatibleFrom = 1
+// CompatibleFrom is g6compat_safe.go's (1: the step is rollback-safe, so
+// version 1 may still open it) or, with the g6unsafe tag as well,
+// g6compat_unsafe.go's (2: the same step declared not rollback-safe, which
+// G6 checks the previous release then refuses).
 
 const g6FixtureSQL = `
 CREATE TABLE g6_fixture (
@@ -27,7 +29,7 @@ ALTER TABLE installation ADD COLUMN g6_note TEXT CHECK (g6_note IS NULL OR lengt
 `
 
 var steps = []Step{{
-	To: 2, CompatibleFrom: 1,
+	To: 2, CompatibleFrom: CompatibleFrom,
 	SQL: g6FixtureSQL + `
 INSERT INTO g6_fixture (note) VALUES ('written by the G6 fixture release');
 UPDATE installation SET g6_note = 'written by the G6 fixture release';

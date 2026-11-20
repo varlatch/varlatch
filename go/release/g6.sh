@@ -13,6 +13,10 @@
 # built) serves them through the go-binary target. With no suite named,
 # each run takes every suite. G6_ROLLBACK_SAFE is the new release's
 # declaration (go/release/release.json's rollbackSafe): true or false.
+# G6_CONFORMANCE=off leaves the conformance runs out (the steps around them
+# still run): go.yml's cheap checks that a release declared not
+# rollback-safe passes G6 only when the previous release refuses its
+# database, and one declared rollback-safe fails when it does.
 #
 # 1. The previous release creates an installation (`admin backup run`,
 #    offline, which also takes an archive of it).
@@ -42,6 +46,10 @@ done
 case "${G6_ROLLBACK_SAFE:-}" in
   true | false) ;;
   *) echo "g6: G6_ROLLBACK_SAFE must be true or false" >&2; exit 2 ;;
+esac
+case "${G6_CONFORMANCE:-on}" in
+  on | off) conformance=${G6_CONFORMANCE:-on} ;;
+  *) echo "g6: G6_CONFORMANCE must be on or off" >&2; exit 2 ;;
 esac
 command -v jq > /dev/null || { echo "g6: jq is needed" >&2; exit 2; }
 suites=''
@@ -74,7 +82,10 @@ before=$(jq -er '.database.schemaVersion' "$out/previous-status.json")
 previous_schema=$(jq -er '.binary.schemaVersion' "$out/previous-status.json")
 
 step "the new release upgrades it"
-"$new" admin schema upgrade --json --config "$out/upgraded/varlatchd.conf" | tee "$out/upgrade.json"
+# The upgrade's own message and status, not a pipe's.
+"$new" admin schema upgrade --json --config "$out/upgraded/varlatchd.conf" > "$out/upgrade.json" \
+  || fail "the new release's schema upgrade failed (its message is above)"
+cat "$out/upgrade.json"
 after=$(jq -er '.to' "$out/upgrade.json")
 new_schema=$(jq -er '.binary.schemaVersion' "$out/upgrade.json")
 [ "$after" = "$new_schema" ] || fail "the database's schema is $after after the upgrade, not the new release's $new_schema"
@@ -82,13 +93,24 @@ echo "schema $before -> $after (the previous release knows $previous_schema)"
 
 step "the previous release on the upgraded database"
 "$previous" admin schema status --json --config "$out/upgraded/varlatchd.conf" > "$out/rollback-status.json"
-opens=$(jq -er '.opens' "$out/rollback-status.json")
+# -r, not -e: false is an answer here (the not-rollback-safe case).
+opens=$(jq -r '.opens' "$out/rollback-status.json")
+case "$opens" in
+  true | false) ;;
+  *) fail "admin schema status gave no opens: $opens" ;;
+esac
 if [ "$G6_ROLLBACK_SAFE" = false ]; then
   [ "$opens" = false ] || [ "$after" = "$before" ] \
     || fail "declared not rollback-safe, but the previous release opens the upgraded database: raise compatibleFrom"
   echo "not rollback-safe: the previous release refuses the upgraded database, as declared"
 else
   [ "$opens" = true ] || fail "declared rollback-safe, but the previous release cannot open the upgraded database"
+  if [ "$conformance" = off ]; then
+    echo "the conformance runs are left out (G6_CONFORMANCE=off): the previous release opens the upgraded database"
+    echo
+    echo "G6 passed without the conformance runs: schema $before -> $after, rollback-safe $G6_ROLLBACK_SAFE"
+    exit 0
+  fi
   # shellcheck disable=SC2086 # one word per --suite and suite name
   VARLATCH_GO_BINARY_FROM="$out/upgraded" VARLATCH_GO_BINARY_KEEP="$out/after-previous" \
     node scripts/conformance/run.mjs --target "go-binary:$previous" --cli source $suites --report "$out/previous-report.json" \
@@ -97,13 +119,21 @@ else
   step "the new release on what the previous release wrote"
   [ -d "$out/after-previous/data" ] || fail "the previous release's run kept no data"
   conf "$out/after-previous"
-  "$new" admin schema upgrade --json --config "$out/after-previous/varlatchd.conf" | tee "$out/upgrade-again.json"
+  "$new" admin schema upgrade --json --config "$out/after-previous/varlatchd.conf" > "$out/upgrade-again.json" \
+    || fail "the new release's second upgrade failed (its message is above)"
+  cat "$out/upgrade-again.json"
   [ "$(jq -er '.changed' "$out/upgrade-again.json")" = false ] \
     || fail "the previous release changed the schema it was given"
   "$new" admin kek verify --config "$out/after-previous/varlatchd.conf" \
     || fail "the Root KEK no longer opens the installation the previous release wrote"
   "$new" admin backup run --config "$out/after-previous/varlatchd.conf" \
     || fail "the new release cannot archive what the previous release wrote"
+fi
+
+if [ "$conformance" = off ]; then
+  echo
+  echo "G6 passed without the conformance runs: schema $before -> $after, rollback-safe $G6_ROLLBACK_SAFE"
+  exit 0
 fi
 
 step "the conformance suites with the new release on the upgraded database"

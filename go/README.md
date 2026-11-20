@@ -2805,8 +2805,11 @@ blocked`, but that error reaches its generic handler, which prints
   against `rc.1`, CI proves the machinery with the `g6fixture` build (this
   commit's schema plus one rollback-safe step, `server/db/version_g6fixture.go`)
   as the new release and this commit's build as the previous one. The
-  first release's declaration is not rollback-safe: there is nothing to go
-  back to.
+  same step declared not rollback-safe (`g6fixture,g6unsafe`:
+  `compatibleFrom` 2) checks the other path without the conformance runs:
+  it passes declared so, since the previous release refuses its database,
+  and fails declared rollback-safe. The first release's declaration is not
+  rollback-safe: there is nothing to go back to.
 
 - G3 at the database level: `go test ./server/values -run TestG3Gate
   -args -g3-gate` passes, so every encryption class in

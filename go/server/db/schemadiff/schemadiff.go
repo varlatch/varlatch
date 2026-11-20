@@ -9,13 +9,18 @@
 // Decision 8's list, this check covers the part the schema shows:
 //
 //   - additive: a new table, view or non-unique index; a new column that is
-//     nullable or has a default, and is neither a key nor unique; a trigger
-//     on a new table;
+//     nullable or has a default, and is neither a key, unique nor a
+//     reference; a trigger on a new table; a non-unique index removed (the
+//     previous release stays correct, only slower);
 //   - review: a column's CHECK (x IN (...)) that only gains values, a new
 //     value in an existing enumeration, which is rollback-safe only if the
 //     previous release rejects the value or handles it safely (G6's writes
-//     of every new kind and the release checklist decide);
-//   - breaking: anything removed, renamed or changed; a new NOT NULL
+//     of every new kind and the release checklist decide); a new column
+//     with REFERENCES on an existing table, which SQLite enforces for the
+//     previous release's deletes and updates too;
+//   - breaking: anything else removed, renamed or changed (a unique index
+//     or constraint among them: the previous release's ON CONFLICT upserts
+//     need it); a new NOT NULL
 //     column without a default, a new key or unique column; a new table
 //     constraint, unique index or trigger on an existing table (a new
 //     restriction, which the previous release would either trip over or
@@ -98,6 +103,10 @@ func Diff(ctx context.Context, older, newer string) ([]Change, error) {
 		for _, name := range keys(oa) {
 			x, y := oa[name], ob[name]
 			switch {
+			case y == nil && kind == "index" && !x.unique:
+				add(Additive, kind+" "+name, "removed: the previous release stays correct, only slower")
+			case y == nil && kind == "index":
+				add(Breaking, kind+" "+name, "a unique index removed: the previous release's upserts (ON CONFLICT) and its guarantees may need it")
 			case y == nil:
 				add(Breaking, kind+" "+name, "removed")
 			case x.sql != y.sql:
@@ -190,6 +199,8 @@ func diffTable(a, b *table, add func(Class, string, string)) {
 			add(Breaking, obj, "a new NOT NULL column without a default: the previous release's inserts fail")
 		case slices.Contains(c.toks, "unique"):
 			add(Breaking, obj, "a new unique column")
+		case slices.Contains(c.toks, "references"):
+			add(Review, obj, "a new reference on an existing table: SQLite enforces it for the previous release's deletes and updates too")
 		default:
 			add(Additive, obj, "added")
 		}
