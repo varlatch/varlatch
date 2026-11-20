@@ -1708,20 +1708,26 @@ and never pushes: `release.yml` publishes it, from the same assets.
 Keys reach varlatchd only as files. `varlatchd serve` refuses to start
 (exit 78) when its environment holds the Root KEK or the Backup
 Encryption Key, as hex in either case or base64 with or without padding,
-standard or URL-safe, anywhere in a value; or holds a variable the
-TypeScript line kept a key or its passphrase in, whatever its value:
-`VARLATCH_KEK`, `VARLATCH_KEK_PASSPHRASE`, `VARLATCH_ROOT_KEK`,
-`VARLATCH_BEK`, `VARLATCH_BEK_PASSPHRASE` and `VARLATCH_BACKUP_KEY` (in any
-case). The refusal names the variable and never its value. In the image
-(`VARLATCH_IMAGE`), the CLI refuses to run the same way, against the keys
-the image's configuration names that it can read. `lib/keyenv` is the
-check; `keyenv_test.go`, `daemon.TestServeRefusesAKeyInItsEnvironment`
-and the CLI's `TestImageRefusesAKeyInTheEnvironment` test it, each
-checking the value is never in the message.
+standard or URL-safe, anywhere in a value; or has a key or passphrase
+variable name, whatever its value: `VARLATCH_KEK`,
+`VARLATCH_KEK_PASSPHRASE`, `VARLATCH_ROOT_KEK`, `VARLATCH_BEK`,
+`VARLATCH_BEK_PASSPHRASE` and `VARLATCH_BACKUP_KEY` (in any case; the
+TypeScript line used the first two). It checks names and the configured
+keys' own values only, never a guess at what looks like a key; when
+`backup_key_file` cannot be read at the check, only the Root KEK's value
+and the names are checked. The refusal names the variable and never its
+value. In the image (`VARLATCH_IMAGE`), `varlatchd admin` and the CLI
+refuse to run the same way, against the keys the image's configuration
+names that they can read. `lib/keyenv` is the check; `keyenv_test.go`,
+`daemon.TestServeRefusesAKeyInItsEnvironment`,
+`daemon.TestAdminRefusesAKeyInTheImage` and the CLI's
+`TestImageRefusesAKeyInTheEnvironment` test it, each checking the value is
+never in the message.
 
 `image/check-image.mjs` runs the image as an operator would (the
 replacement of `test-backup-compose.mjs`): its configuration, the refusal
-by both commands, a new installation on a new volume as the image user,
+by both commands, a new installation on a new volume as the image user
+with a read-only root filesystem,
 no key in `docker inspect` or `/proc/1/environ`, the recovery gate held in
 the volume across containers, and a backup restored into a new volume
 through the image alone. go.yml's `go-image` job builds the image for

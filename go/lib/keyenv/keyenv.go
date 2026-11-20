@@ -8,9 +8,11 @@
 // key in the environment is a key in every container of it.
 //
 // varlatchd serve refuses to start when its environment holds the Root KEK
-// or the Backup Encryption Key; the CLI in the single-container image
-// refuses to run the same way. Both refuse a variable the TypeScript line
-// kept a key or its passphrase in (Variables), whatever its value.
+// or the Backup Encryption Key; in the single-container image
+// (ImageMarker), varlatchd admin and the CLI refuse to run the same way.
+// All of them refuse a variable named for a key or a key's passphrase
+// (Variables), whatever its value. That is all: names, and the configured
+// keys' own values, never a guess at what looks like a key.
 package keyenv
 
 import (
@@ -26,8 +28,12 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 )
 
-// Variables are the TypeScript line's names for a key or a key's
-// passphrase, refused whatever their value (and whatever their case).
+// ImageMarker is set in the single-container image (go/image/Dockerfile).
+const ImageMarker = "VARLATCH_IMAGE"
+
+// Variables are names for a key or a key's passphrase (the TypeScript line
+// used VARLATCH_KEK and VARLATCH_KEK_PASSPHRASE; the others are their
+// obvious siblings), refused whatever their value and whatever their case.
 var Variables = []string{
 	"VARLATCH_KEK", "VARLATCH_KEK_PASSPHRASE", "VARLATCH_ROOT_KEK",
 	"VARLATCH_BEK", "VARLATCH_BEK_PASSPHRASE", "VARLATCH_BACKUP_KEY",
@@ -49,6 +55,10 @@ const (
 // first variable that holds one of keys (as hex in either case, or base64
 // with or without padding, standard or URL-safe), or is one of Variables.
 // It names the variable and never says its value.
+//
+// The encodings are those a key file may hold: envelope.ParseRootKEK (hex,
+// or base64 in either alphabet) and backup.ParseKey (hex or standard
+// base64). A new encoding either parser accepts belongs here too.
 func Refusal(environ []string, keys ...Key) string {
 	type form struct{ what, text string }
 	var forms []form
@@ -65,7 +75,7 @@ func Refusal(environ []string, keys ...Key) string {
 	for _, kv := range environ {
 		name, value, _ := strings.Cut(kv, "=")
 		if slices.Contains(Variables, strings.ToUpper(name)) {
-			return fmt.Sprintf("the environment variable %s is where the TypeScript line kept a key or its passphrase; keys reach varlatchd only as files (root_kek_file, backup_key_file): remove it from the environment and start again", name)
+			return fmt.Sprintf("the environment variable %s is a key or passphrase variable name; keys reach varlatchd only as files (root_kek_file, backup_key_file): remove it from the environment and start again", name)
 		}
 		for _, f := range forms {
 			if strings.Contains(value, f.text) {
@@ -88,8 +98,12 @@ func Configured(confPath string) []Key {
 	}
 	files := map[string]string{}
 	sc := bufio.NewScanner(f)
-	for sc.Scan() {
+	for n := 1; sc.Scan(); n++ {
 		line := strings.TrimSpace(sc.Text())
+		if n == 1 {
+			// A byte order mark, as config.Parse takes it off.
+			line = strings.TrimPrefix(line, "\uFEFF")
+		}
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}

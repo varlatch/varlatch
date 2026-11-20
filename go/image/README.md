@@ -39,15 +39,21 @@ with exit 78, when its environment:
 - holds the Root KEK or the Backup Encryption Key, as hex (either case) or
   base64 (with or without padding, standard or URL-safe), anywhere in a
   variable's value; or
-- has one of the variables the TypeScript line kept a key or its
-  passphrase in, whatever its value and in any case: `VARLATCH_KEK`,
-  `VARLATCH_KEK_PASSPHRASE`, `VARLATCH_ROOT_KEK`, `VARLATCH_BEK`,
-  `VARLATCH_BEK_PASSPHRASE`, `VARLATCH_BACKUP_KEY`.
+- has a key or passphrase variable name, whatever its value and in any
+  case: `VARLATCH_KEK`, `VARLATCH_KEK_PASSPHRASE`, `VARLATCH_ROOT_KEK`,
+  `VARLATCH_BEK`, `VARLATCH_BEK_PASSPHRASE`, `VARLATCH_BACKUP_KEY`. (The
+  TypeScript line used the first two.)
 
-The CLI in the image refuses to run the same way. The refusal names the
-variable and never shows its value. Coolify passes every environment
-variable to every service of a stack, so a key set there as a variable
-would be in every container: give it as a file instead.
+In the image, `varlatchd admin` and the CLI refuse to run the same way,
+against the keys the configuration names that they can read. The refusal
+names the variable and never shows its value. If `backup_key_file` cannot
+be read when the check runs, only the Root KEK's value and the names are
+checked. Coolify passes every environment variable to every service of a
+stack, so a key set there as a variable would be in every container: give
+it as a file instead.
+
+The container runs with a read-only root filesystem (`docker run
+--read-only`): it writes only to the data volume.
 
 ## Building and checking it
 

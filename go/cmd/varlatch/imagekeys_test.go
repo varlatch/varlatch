@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 )
 
 // In the image, the CLI refuses a key in its environment (78), naming the
@@ -41,15 +43,15 @@ func TestImageRefusesAKeyInTheEnvironment(t *testing.T) {
 	if code, _ := runVersion(); code != 0 {
 		t.Fatalf("outside the image: %d", code)
 	}
-	t.Setenv(imageMarker, "varlatchd")
+	t.Setenv(keyenv.ImageMarker, "varlatchd")
 	code, out := runVersion()
 	if code != exitConfig || !strings.Contains(out, "the environment variable APP_SETTING holds the Root KEK") || strings.Contains(out, text) || strings.Contains(out, strings.ToUpper(text)) {
 		t.Fatalf("the Root KEK: %d %q", code, strings.ReplaceAll(out, text, "[KEY]"))
 	}
 	t.Setenv("APP_SETTING", "")
 	t.Setenv("VARLATCH_BEK_PASSPHRASE", "a-passphrase-of-its-own")
-	if code, out := runVersion(); code != exitConfig || !strings.Contains(out, "VARLATCH_BEK_PASSPHRASE is where the TypeScript line kept a key") || strings.Contains(out, "a-passphrase-of-its-own") {
-		t.Fatalf("a TypeScript key variable: %d %q", code, out)
+	if code, out := runVersion(); code != exitConfig || !strings.Contains(out, "VARLATCH_BEK_PASSPHRASE is a key or passphrase variable name") || strings.Contains(out, "a-passphrase-of-its-own") {
+		t.Fatalf("a key variable name: %d %q", code, out)
 	}
 	os.Unsetenv("VARLATCH_BEK_PASSPHRASE")
 	if code, out := runVersion(); code != 0 {

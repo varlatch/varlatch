@@ -113,6 +113,10 @@ on:
       - "scripts/ci-shell.sh"
       - "scripts/redact-output.mjs"
       - "scripts/redact-tokens.mjs"
+      # IMAGE_PATTERNS: what the image's build copies in.
+      - "LICENSE"
+      - "THIRD-PARTY-NOTICES.md"
+      - "LICENSES/**"
   workflow_dispatch:
   # Nightly on main: every Go job, and the cache every pull request restores.
   schedule:
@@ -227,15 +231,26 @@ jobs:
           # checks that every file the suites and the G3 steps import or
           # load is selected.
           # The single-container image (go-image): its Dockerfile, build
-          # script and check, varlatchd's entrypoint and serve (daemon.go),
-          # the key-environment refusal varlatchd and the CLI share, and the
-          # CLI's entrypoint, which applies it in the image.
+          # script and check, and what its build copies in (the licenses
+          # and notices); varlatchd's entrypoint, serve and admin (the
+          # daemon), the configuration they parse; and the key-environment
+          # refusal varlatchd and the CLI share (lib/keyenv, with the key
+          # parsers it uses) and the CLI's entrypoint, which applies it in
+          # the image. scripts/conformance/test/routing.test.mjs checks
+          # that these select every file the image's build and check read
+          # and the refusal's Go sources.
           IMAGE_PATTERNS: |
             go/image/*
             go/cmd/varlatchd/*
-            go/server/daemon/daemon.go
+            go/server/daemon/*
+            go/server/config/*
             go/lib/keyenv/*
+            go/lib/backup/*
+            go/lib/envelope/*
             go/cmd/varlatch/main.go
+            LICENSE
+            THIRD-PARTY-NOTICES.md
+            LICENSES/*
             .github/workflows/go.yml
           CONFORMANCE_PATTERNS: |
             pnpm-lock.yaml

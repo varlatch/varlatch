@@ -14,12 +14,12 @@
  *      both run and name the same version
  *   2. a key in the environment is refused: serve exits 78 naming the
  *      variable, never its value, whether the variable holds the Root KEK
- *      or the Backup Encryption Key or is one of the TypeScript line's key
- *      variables; the CLI in the image refuses to run the same way
+ *      or the Backup Encryption Key or is a key or passphrase variable
+ *      name; varlatchd admin and the CLI in the image refuse the same way
  *   3. an installation as an operator runs it: a new volume for the data
  *      directory (the image user's, mode 0700), the keys as files on a
- *      volume of their own, the configuration read-only, the default user;
- *      ready, and as that user
+ *      volume of their own, the configuration read-only, the default user,
+ *      a read-only root filesystem; ready, and as that user
  *   4. no key in the running container's environment: neither in `docker
  *      inspect` nor in /proc/1/environ, read from a container that shares
  *      its PID namespace (CAP_SYS_PTRACE alone; no privilege)
@@ -43,7 +43,7 @@ const IMAGE_USER = "65532:65532";
 const CONF_DIR = "/etc/varlatch";
 const CONF = `${CONF_DIR}/varlatchd.conf`;
 const DATA = "/var/lib/varlatch";
-/** The TypeScript line's key variables (go/server/daemon/envkeys.go keyVariables). */
+/** The key and passphrase variable names varlatchd refuses (go/lib/keyenv/keyenv.go Variables). */
 const KEY_VARIABLES = ["VARLATCH_KEK", "VARLATCH_KEK_PASSPHRASE", "VARLATCH_ROOT_KEK", "VARLATCH_BEK", "VARLATCH_BEK_PASSPHRASE", "VARLATCH_BACKUP_KEY"];
 const EXIT_CONFIG = 78;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -90,7 +90,8 @@ function remove(name) {
 /** Starts varlatchd from the image, detached, on a loopback port: its name and origin. */
 async function serve(name, data, keys, conf) {
   const c = containerName(name);
-  docker(["run", "-d", "--name", c, "-p", "127.0.0.1:0:8686", "-v", `${data}:${DATA}`, "-v", `${keys}:/keys:ro`, "-v", `${conf}:${CONF_DIR}:ro`, image]);
+  // A read-only root filesystem: varlatchd writes only to the data volume.
+  docker(["run", "-d", "--name", c, "--read-only", "-p", "127.0.0.1:0:8686", "-v", `${data}:${DATA}`, "-v", `${keys}:/keys:ro`, "-v", `${conf}:${CONF_DIR}:ro`, image]);
   const port = docker(["port", c, "8686/tcp"]).stdout.trim().split("\n")[0].split(":").pop();
   return { c, origin: `http://127.0.0.1:${port}` };
 }
@@ -130,7 +131,7 @@ function config(dir) {
   ].join("\n");
 }
 
-/** Every encoding of a key a value could carry it in (envkeys.go keyEnvironment's forms). */
+/** Every encoding of a key a value could carry it in (go/lib/keyenv/keyenv.go Refusal's forms). */
 function forms(hexKey) {
   const raw = Buffer.from(hexKey, "hex");
   const b64 = raw.toString("base64");
@@ -182,13 +183,17 @@ async function main() {
   const refusals = [
     ["the Root KEK as hex", `APP_SETTING=${keyHex["the Root KEK"]}`],
     ["the Backup Encryption Key as base64", `APP_SETTING=${Buffer.from(keyHex["the Backup Encryption Key"], "hex").toString("base64")}`],
-    ...KEY_VARIABLES.map((v) => [`the TypeScript variable ${v}`, `${v}=a-value-of-its-own`]),
+    ...KEY_VARIABLES.map((v) => [`the key variable name ${v}`, `${v}=a-value-of-its-own`]),
   ];
   let n = 0;
-  for (const [who, entry] of [["varlatchd", []], ["the CLI", ["--entrypoint", "/opt/varlatch/varlatch"]]]) {
+  const runs = [
+    ["varlatchd serve", [], []],
+    ["varlatchd admin", [], ["admin", "kek", "verify", "--config", CONF]],
+    ["the CLI", ["--entrypoint", "/opt/varlatch/varlatch"], ["--version"]],
+  ];
+  for (const [who, entry, args] of runs) {
     for (const [label, env] of refusals) {
       n += 1;
-      const args = who === "the CLI" ? ["--version"] : [];
       const r = once(`refused-${n}`, [...mounts(refusedData), "-e", env, ...entry, image, ...args], { allowFail: true });
       const name = env.split("=")[0];
       const value = env.slice(name.length + 1);
