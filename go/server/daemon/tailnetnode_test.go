@@ -178,6 +178,44 @@ func TestTheHandoffNode(t *testing.T) {
 	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", "vault-vl-ffffffffffff-n", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "held under "+temp) {
 		t.Fatalf("a second handoff's enrolment: %d %q", code, errOut)
 	}
+	// The control plane names the node otherwise (its temporary name
+	// another node's: temp-1): refused, and nothing is latched into the
+	// pin; once the collision is cleared, the node enrols as before.
+	rename := func(label string) {
+		t.Helper()
+		for _, n := range control.AllNodes() {
+			if string(n.StableID) == en.StableID {
+				n.Name = label + ".corp.ts.net."
+				control.UpdateNode(n)
+				return
+			}
+		}
+		t.Fatal("the node is not in the control server")
+	}
+	rename(temp + "-1")
+	if err := os.WriteFile(keyFile, []byte("hermetic\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "joined as "+temp+"-1.corp.ts.net") {
+		t.Fatalf("a suffixed temporary name: %d %q", code, errOut)
+	}
+	if pin, err := tailnet.LoadPin(filepath.Join(in.data, tailnet.PinFile)); err != nil || pin == nil || pin.Closed != nil {
+		t.Fatalf("a suffixed temporary name latched the pin: %+v %v", pin, err)
+	}
+	rename(temp)
+	// The control plane's new name reaches the node with its next map.
+	for i := 0; i < 20; i++ {
+		if code, out, errOut = runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--json", "--config", in.conf); code == ExitOK {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if code != ExitOK || json.Unmarshal([]byte(out), &again) != nil || !again.Open {
+		t.Fatalf("enroll once the collision is cleared: %d %q %q", code, out, errOut)
+	}
+	if err := os.Remove(keyFile); err != nil {
+		t.Fatal(err)
+	}
 	// Expiry reads the cache: never an issuance.
 	mu.Lock()
 	issued := len(obtained)
@@ -380,11 +418,20 @@ func TestTheReachDirsAreSwept(t *testing.T) {
 	if err := os.Chtimes(old, past, past); err != nil {
 		t.Fatal(err)
 	}
+	// A probe at its longest (its largest --wait, its join and logout) is
+	// younger than the cutoff: never swept while it runs.
+	if reachSweepAfter <= reachMaxWait+reachSlack {
+		t.Fatalf("the sweep's cutoff %v is within a probe's lifetime %v", reachSweepAfter, reachMaxWait+reachSlack)
+	}
+	running := time.Now().Add(-(reachMaxWait + reachSlack))
+	if err := os.Chtimes(recent, running, running); err != nil {
+		t.Fatal(err)
+	}
 	elsewhere := t.TempDir()
 	if err := os.Symlink(elsewhere, filepath.Join(tmp, reachDirPrefix+"link")); err != nil {
 		t.Fatal(err)
 	}
-	sweepReachDirs(tmp, time.Now().Add(-10*time.Minute))
+	sweepReachDirs(tmp, time.Now().Add(-reachSweepAfter))
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Errorf("the old probe's directory stayed: %v", err)
 	}

@@ -85,8 +85,10 @@ type Manager struct {
 	// configured host name, the port, its certificate, and whether it
 	// bound its port.
 	browser *browserEndpoint
-	// hostname is the configured name, for the read-back (NameSuffixed).
+	// hostname is the configured name, for the read-back (NameSuffixed);
+	// held, the temporary name a handoff holds the node under.
 	hostname  string
+	held      bool
 	persisted struct {
 		json string
 		at   time.Time
@@ -149,7 +151,15 @@ func suffixedName(dnsName, hostname string) bool {
 // its name after enrolment (NameSuffixed).
 func (m *Manager) SetHostname(hostname string) {
 	m.mu.Lock()
-	m.hostname = hostname
+	m.hostname, m.held = hostname, false
+	m.mu.Unlock()
+}
+
+// SetHeldName gives the temporary name a handoff holds the node under, for
+// the read-back while the hold stands.
+func (m *Manager) SetHeldName(name string) {
+	m.mu.Lock()
+	m.hostname, m.held = name, true
 	m.mu.Unlock()
 }
 
@@ -451,6 +461,9 @@ func (m *Manager) checkLocked(ctx context.Context) {
 		m.verdict = NameSuffixed
 	}
 	switch {
+	case m.verdict == NameSuffixed && m.pin.Closed == nil && m.held:
+		m.log.Error("the control plane named this node with a suffix: its temporary name, under which a handoff holds it, is another node's; tailnet access is closed. Delete that node in the tailnet's admin console, rename this one to its temporary name, then re-pin on the host (varlatch tailnet repin --yes)",
+			"name", st.DNSName, "temporaryName", m.hostname)
 	case m.verdict == NameSuffixed && m.pin.Closed == nil:
 		m.log.Error("the control plane named this node with a suffix: its configured name is held by another node (after a restore, the old installation's); tailnet access is closed. Delete that node in the tailnet's admin console, rename this one to its configured name, then re-pin on the host (varlatch tailnet repin --yes)",
 			"name", st.DNSName, "hostname", m.hostname)
