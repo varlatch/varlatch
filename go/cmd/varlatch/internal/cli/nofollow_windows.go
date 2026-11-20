@@ -5,6 +5,8 @@ package cli
 import (
 	"os"
 	"syscall"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/longpath"
 )
 
 // openNoFollow opens a file for reading, for `import --delete-source`, as
@@ -15,7 +17,7 @@ import (
 // open without it, and the caller removes the file while it still holds
 // it open, so the file it checked is the file it removes.
 func openNoFollow(path string) (*os.File, error) {
-	p, err := syscall.UTF16PtrFromString(path)
+	p, err := syscall.UTF16PtrFromString(longpath.Of(path))
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}

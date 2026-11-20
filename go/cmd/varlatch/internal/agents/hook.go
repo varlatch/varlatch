@@ -72,24 +72,94 @@ func isGlob(name string) bool { return strings.ContainsAny(name, "*?[") }
 // not.
 var globCache = struct {
 	sync.Mutex
-	m map[string]*regexp.Regexp
-}{m: map[string]*regexp.Regexp{}}
+	m map[string]*globMatcher
+}{m: map[string]*globMatcher{}}
 
-// globRegex is a shell glob as a regular expression for one name, or nil
-// for a glob with an unclosed class (or one that is no regular expression).
-// The regular expression is RE2's (Go's regexp), not JavaScript's.
-func globRegex(glob string) *regexp.Regexp {
+// globMatcher is a shell glob for one name, matching exactly as the
+// regular expression compileGlob writes for it (RE2's, Go's regexp, not
+// JavaScript's: `*` is `.*` and `?` is `.`, so neither matches a line
+// feed). A glob of literals, `*` and `?` is matched directly over its
+// runes, decoded once: compiling a long glob into a regular expression
+// allocates hundreds of bytes per byte of it, which a walk of a search
+// with a megabyte-long --exclude made a gigabyte. A glob with a class
+// ([...]), or a name with a line feed, goes through RE2, compiled when
+// first needed.
+type globMatcher struct {
+	glob  string
+	runes []rune // the glob, for the direct match; nil when it needs RE2
+	once  sync.Once
+	re    *regexp.Regexp
+}
+
+// globRegex is a shell glob's matcher for one name, or nil for a glob with
+// an unclosed class (or one that is no regular expression, such as one
+// that is not UTF-8).
+func globRegex(glob string) *globMatcher {
 	globCache.Lock()
 	defer globCache.Unlock()
-	if re, ok := globCache.m[glob]; ok {
-		return re
+	if m, ok := globCache.m[glob]; ok {
+		return m
 	}
 	if len(globCache.m) >= 256 {
 		clear(globCache.m)
 	}
-	re := compileGlob(glob)
-	globCache.m[glob] = re
-	return re
+	m := &globMatcher{glob: glob}
+	switch {
+	case !utf8.ValidString(glob):
+		m = nil // regexp.Compile refuses it
+	case strings.ContainsAny(glob, "[\n"):
+		if m.regex() == nil {
+			m = nil
+		}
+	default:
+		m.runes = []rune(glob)
+	}
+	globCache.m[glob] = m
+	return m
+}
+
+// regex is the glob's regular expression, compiled once.
+func (m *globMatcher) regex() *regexp.Regexp {
+	m.once.Do(func() { m.re = compileGlob(m.glob) })
+	return m.re
+}
+
+// MatchString is whether the glob matches the whole of name.
+func (m *globMatcher) MatchString(name string) bool {
+	if m.runes == nil || strings.Contains(name, "\n") {
+		re := m.regex()
+		return re != nil && re.MatchString(name)
+	}
+	return wildMatch(m.runes, []rune(name))
+}
+
+// wildMatch is the glob's match without a line feed on either side: `*`
+// any runes, `?` one rune, anything else itself; each byte that is not
+// UTF-8 is one U+FFFD rune, as RE2 reads it. Linear in the glob for each
+// name it rejects at its start; at most the glob's length times the
+// name's otherwise.
+func wildMatch(p, s []rune) bool {
+	pi, si, star, mark := 0, 0, -1, 0
+	for si < len(s) {
+		switch {
+		case pi < len(p) && p[pi] == '*':
+			star, mark = pi, si
+			pi++
+		case pi < len(p) && (p[pi] == '?' || p[pi] == s[si]):
+			pi++
+			si++
+		case star >= 0:
+			pi = star + 1
+			mark++
+			si = mark
+		default:
+			return false
+		}
+	}
+	for pi < len(p) && p[pi] == '*' {
+		pi++
+	}
+	return pi == len(p)
 }
 
 func compileGlob(glob string) *regexp.Regexp {
@@ -139,8 +209,8 @@ func globMatches(glob, name string) bool {
 	if strings.HasPrefix(name, ".") && !strings.HasPrefix(glob, ".") {
 		return false
 	}
-	re := globRegex(glob)
-	return re != nil && re.MatchString(name)
+	m := globRegex(glob)
+	return m != nil && m.MatchString(name)
 }
 
 var envDotted = regexp.MustCompile(`^\.env\..+`)

@@ -205,7 +205,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.5b"
     },
     "--all": {
       "sources": [
@@ -1992,7 +1993,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.4c"
     },
     "--reenroll-hours": {
       "sources": [
@@ -2389,7 +2391,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.4f"
     },
     "--tags": {
       "sources": [

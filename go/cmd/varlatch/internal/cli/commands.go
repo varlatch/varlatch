@@ -31,7 +31,7 @@ var commands = []command{
 	{name: "server", slice: "5.1b", run: serverCommand},
 	{name: "context", slice: "5.1b", run: contextCommand},
 	{name: "env", slice: "5.1e", run: envCommand},
-	{name: "run", slice: "5.4b"},
+	{name: "run", slice: "5.4b", run: runCommand},
 	{name: "validate", slice: "5.3a", run: validateCommand},
 	{name: "scan", slice: "5.4d", run: scanCommand},
 	{name: "values", slice: "5.3a", run: valuesCommand},
