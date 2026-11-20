@@ -125,6 +125,28 @@ func (w *world) withRemote() *remote {
 	return rm
 }
 
+// finishRecord is the source journal's finish record.
+func (w *world) finishRecord() (f struct {
+	Removed  []string `json:"removed"`
+	Removing []string `json:"removing"`
+	DoneAt   string   `json:"doneAt"`
+}) {
+	w.t.Helper()
+	var j struct {
+		Finish *struct {
+			Removed  []string `json:"removed"`
+			Removing []string `json:"removing"`
+			DoneAt   string   `json:"doneAt"`
+		} `json:"finish"`
+	}
+	b, err := os.ReadFile(filepath.Join(w.compose, "migration.json"))
+	if err != nil || json.Unmarshal(b, &j) != nil || j.Finish == nil {
+		w.t.Fatalf("the source's journal: %v %s", err, b)
+	}
+	f.Removed, f.Removing, f.DoneAt = j.Finish.Removed, j.Finish.Removing, j.Finish.DoneAt
+	return f
+}
+
 func (w *world) journalPhase() string {
 	s, _ := w.phases()
 	return s
@@ -285,6 +307,54 @@ func TestG5Finish(t *testing.T) {
 			w.noSecrets()
 		})
 	}
+	// Killed between `docker volume rm` and its journal entry: the
+	// removal's intent was journalled first, so --resume takes the volume
+	// not there for removed and goes on.
+	t.Run("killed mid rm", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		if code := w.finish("finish volume removed", "--delete-old-data"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		f := w.finishRecord()
+		first := "g5-installation_postgres-data"
+		if vols, _ := w.removed(); !slices.Contains(vols, first) || !slices.Contains(f.Removing, first) || slices.Contains(f.Removed, first) {
+			t.Fatalf("at the kill: removed %v, journal removing %v removed %v", vols, f.Removing, f.Removed)
+		}
+		if code := w.resumeFinish(); code != 0 {
+			t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.expect("resumed", "finished", "finished", "target-open", "migrated-out")
+		vols, _ := w.removed()
+		if !slices.Contains(vols, "g5-installation_convex-data") || len(slices.DeleteFunc(slices.Clone(vols), func(v string) bool { return v != first })) != 1 {
+			t.Errorf("removed %v", vols)
+		}
+		if f := w.finishRecord(); !slices.Contains(f.Removed, first) || f.DoneAt == "" {
+			t.Errorf("the journal after the resume: %+v", f)
+		}
+	})
+	// A data volume gone by hand during an interrupted --finish, its
+	// removal never begun: --resume refuses it, and removes no data.
+	t.Run("gone, no intent", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		if code := w.finish("finish containers removed", "--delete-old-data"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		f, err := os.OpenFile(filepath.Join(w.stateDir, "removed-volumes"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = f.WriteString("g5-installation_convex-data\n")
+		f.Close()
+		if code := w.resumeFinish(); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "no run of --finish began to remove them") {
+			t.Fatalf("--resume, a volume gone by hand: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if vols, _ := w.removed(); slices.Contains(vols, "g5-installation_postgres-data") {
+			t.Errorf("data removed beside the refusal: %v", vols)
+		}
+		if rec := w.finishRecord(); len(rec.Removing) != 0 || rec.DoneAt != "" {
+			t.Errorf("the journal: %+v", rec)
+		}
+	})
 	t.Run("Coolify's resources are the operator's", func(t *testing.T) {
 		w := migratedWorld(t, false, true)
 		if code := w.finish("", "--delete-old-data"); code != 0 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "In Coolify, open the TypeScript application (not Go's): 1. Stop it. 2. Delete it") {
