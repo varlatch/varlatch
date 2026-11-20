@@ -1,0 +1,341 @@
+{
+  "comment": "canonical-v1 vectors (CANONICAL.md), shared by go/server/migration/canonical and the TypeScript server's encoder, which must reproduce every output byte for byte and refuse every refused input. Inputs are neutral: text as a string; timestamps (microseconds since the epoch, UTC), integers and bigints as decimal strings; booleans as true or false; jsonb as its JSON text; text[] as an array; bytea as hex; SQL NULL as null. A digest's plaintext is hex.",
+  "values": [
+    {
+      "name": "text, empty",
+      "type": "text",
+      "input": "",
+      "output": "\"\""
+    },
+    {
+      "name": "text, null",
+      "type": "text",
+      "input": null,
+      "output": "null"
+    },
+    {
+      "name": "text, escapes JSON.stringify writes",
+      "type": "text",
+      "input": "q\"b\\n\nt\tr\rf\fb\bc\u0001\u001f",
+      "output": "\"q\\\"b\\\\n\\nt\\tr\\rf\\fb\\bc\\u0001\\u001f\""
+    },
+    {
+      "name": "text, what JSON.stringify leaves as it is",
+      "type": "text",
+      "input": "<>&     é 𝄞",
+      "output": "\"<>&     é 𝄞\""
+    },
+    {
+      "name": "timestamp, the epoch",
+      "type": "timestamp with time zone",
+      "input": "0",
+      "output": "0"
+    },
+    {
+      "name": "timestamp, before the epoch",
+      "type": "timestamp with time zone",
+      "input": "-1",
+      "output": "-1"
+    },
+    {
+      "name": "timestamp, microseconds",
+      "type": "timestamp with time zone",
+      "input": "1700000000123456",
+      "output": "1700000000123456"
+    },
+    {
+      "name": "timestamp, past 2^53 (no double)",
+      "type": "timestamp with time zone",
+      "input": "253402300799999999",
+      "output": "253402300799999999"
+    },
+    {
+      "name": "timestamp, null",
+      "type": "timestamp with time zone",
+      "input": null,
+      "output": "null"
+    },
+    {
+      "name": "integer, largest",
+      "type": "integer",
+      "input": "2147483647",
+      "output": "2147483647"
+    },
+    {
+      "name": "integer, smallest",
+      "type": "integer",
+      "input": "-2147483648",
+      "output": "-2147483648"
+    },
+    {
+      "name": "integer, zero",
+      "type": "integer",
+      "input": "0",
+      "output": "0"
+    },
+    {
+      "name": "bigint, largest",
+      "type": "bigint",
+      "input": "9223372036854775807",
+      "output": "9223372036854775807"
+    },
+    {
+      "name": "bigint, smallest",
+      "type": "bigint",
+      "input": "-9223372036854775808",
+      "output": "-9223372036854775808"
+    },
+    {
+      "name": "boolean, true",
+      "type": "boolean",
+      "input": true,
+      "output": "1"
+    },
+    {
+      "name": "boolean, false",
+      "type": "boolean",
+      "input": false,
+      "output": "0"
+    },
+    {
+      "name": "boolean, null",
+      "type": "boolean",
+      "input": null,
+      "output": "null"
+    },
+    {
+      "name": "bytea, empty",
+      "type": "bytea",
+      "input": "",
+      "output": "\"\""
+    },
+    {
+      "name": "bytea, bytes",
+      "type": "bytea",
+      "input": "00ff10",
+      "output": "\"AP8Q\""
+    },
+    {
+      "name": "bytea, padding",
+      "type": "bytea",
+      "input": "6869",
+      "output": "\"aGk=\""
+    },
+    {
+      "name": "bytea, null",
+      "type": "bytea",
+      "input": null,
+      "output": "null"
+    },
+    {
+      "name": "text[], empty",
+      "type": "text[]",
+      "input": [],
+      "output": "[]"
+    },
+    {
+      "name": "text[], strings and null",
+      "type": "text[]",
+      "input": [
+        "a",
+        null,
+        "b\"c",
+        "é"
+      ],
+      "output": "[\"a\",null,\"b\\\"c\",\"é\"]"
+    },
+    {
+      "name": "text[], null",
+      "type": "text[]",
+      "input": null,
+      "output": "null"
+    },
+    {
+      "name": "jsonb, jsonb key order and no space",
+      "type": "jsonb",
+      "input": "{\"b\": 1, \"a\": 2, \"aa\": [3, {\"z\": null, \"y\": true}]}",
+      "output": "\"{\\\"a\\\":2,\\\"b\\\":1,\\\"aa\\\":[3,{\\\"y\\\":true,\\\"z\\\":null}]}\""
+    },
+    {
+      "name": "jsonb, keys by UTF-8 length, then bytes",
+      "type": "jsonb",
+      "input": "{\"é\": 1, \"ab\": 2, \"z\": 3}",
+      "output": "\"{\\\"z\\\":3,\\\"ab\\\":2,\\\"é\\\":1}\""
+    },
+    {
+      "name": "jsonb, a repeated key keeps its last value",
+      "type": "jsonb",
+      "input": "{\"a\": 1, \"a\": 2}",
+      "output": "\"{\\\"a\\\":2}\""
+    },
+    {
+      "name": "jsonb, numbers as ECMAScript writes them",
+      "type": "jsonb",
+      "input": "[1.0, 1e2, -0, 0.1, 1e21, 123456789012345678901, 1.5e-7]",
+      "output": "\"[1,100,0,0.1,1e+21,123456789012345680000,1.5e-7]\""
+    },
+    {
+      "name": "jsonb, the JSON null is not SQL NULL",
+      "type": "jsonb",
+      "input": "null",
+      "output": "\"null\""
+    },
+    {
+      "name": "jsonb, SQL NULL",
+      "type": "jsonb",
+      "input": null,
+      "output": "null"
+    },
+    {
+      "name": "jsonb, string escapes",
+      "type": "jsonb",
+      "input": "{\"s\": \"\\u2028<>\\u00e9\\n\"}",
+      "output": "\"{\\\"s\\\":\\\" <>é\\\\n\\\"}\""
+    },
+    {
+      "name": "jsonb, array index keys sort as text",
+      "type": "jsonb",
+      "input": "{\"10\": 1, \"9\": 2, \"b\": 3}",
+      "output": "\"{\\\"9\\\":2,\\\"b\\\":3,\\\"10\\\":1}\""
+    }
+  ],
+  "refused": [
+    {
+      "name": "integer above 32 bits",
+      "type": "integer",
+      "input": "2147483648",
+      "why": "outside an integer's 32 bits"
+    },
+    {
+      "name": "integer below 32 bits",
+      "type": "integer",
+      "input": "-2147483649",
+      "why": "outside an integer's 32 bits"
+    },
+    {
+      "name": "text holding U+0000",
+      "type": "text",
+      "input": "a\u0000b",
+      "why": "PostgreSQL text cannot hold U+0000"
+    },
+    {
+      "name": "text[] element holding U+0000",
+      "type": "text[]",
+      "input": [
+        "a\u0000"
+      ],
+      "why": "PostgreSQL text cannot hold U+0000"
+    },
+    {
+      "name": "jsonb, not JSON",
+      "type": "jsonb",
+      "input": "{",
+      "why": "not JSON"
+    },
+    {
+      "name": "jsonb holding U+0000",
+      "type": "jsonb",
+      "input": "[\"\\u0000\"]",
+      "why": "jsonb refuses U+0000"
+    },
+    {
+      "name": "jsonb holding a lone surrogate",
+      "type": "jsonb",
+      "input": "[\"\\ud800\"]",
+      "why": "jsonb refuses a lone surrogate"
+    },
+    {
+      "name": "text[], nested",
+      "type": "text[]",
+      "input": [
+        [
+          "a"
+        ]
+      ],
+      "why": "text[] is one-dimensional"
+    },
+    {
+      "name": "text[], a number",
+      "type": "text[]",
+      "input": [
+        1
+      ],
+      "why": "text[] holds strings and nulls"
+    },
+    {
+      "name": "a type the encoding does not define",
+      "type": "smallint",
+      "input": "1",
+      "why": "no smallint column at v0.22.0"
+    },
+    {
+      "name": "SQL NULL of a type the encoding does not define",
+      "type": "smallint",
+      "input": null,
+      "why": "the type is checked before the value"
+    }
+  ],
+  "rows": [
+    {
+      "name": "a row",
+      "types": [
+        "text",
+        "bigint",
+        "boolean",
+        "jsonb",
+        "bytea",
+        "timestamp with time zone",
+        "text[]"
+      ],
+      "inputs": [
+        "id_1",
+        "42",
+        true,
+        "{\"k\": [1, 2]}",
+        "00",
+        "1700000000000001",
+        [
+          "x"
+        ]
+      ],
+      "output": "[\"id_1\",42,1,\"{\\\"k\\\":[1,2]}\",\"AA==\",1700000000000001,[\"x\"]]"
+    },
+    {
+      "name": "a row of nulls",
+      "types": [
+        "text",
+        "integer",
+        "jsonb"
+      ],
+      "inputs": [
+        null,
+        null,
+        null
+      ],
+      "output": "[null,null,null]"
+    }
+  ],
+  "digests": [
+    {
+      "name": "a value",
+      "class": "value",
+      "ids": {
+        "orgId": "org_1",
+        "itemId": "itm_2"
+      },
+      "plaintext": "68656c6c6f",
+      "output": "{\"ids\":{\"orgId\":\"org_1\",\"itemId\":\"itm_2\"},\"class\":\"value\",\"plaintext\":\"aGVsbG8=\"}"
+    },
+    {
+      "name": "an empty plaintext, ids in jsonb order",
+      "class": "webhook-secret",
+      "ids": {
+        "webhookId": "whk_1",
+        "b": "2",
+        "a": "1"
+      },
+      "plaintext": "",
+      "output": "{\"ids\":{\"a\":\"1\",\"b\":\"2\",\"webhookId\":\"whk_1\"},\"class\":\"webhook-secret\",\"plaintext\":\"\"}"
+    }
+  ]
+}
