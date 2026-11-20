@@ -602,7 +602,10 @@ jobs:
       # varlatchd do what it needs and refuses the rest (unitprobe, run as
       # the unit's ExecStart; the runner is disposable, so the script may
       # install a unit and a system user).
+      # GitHub-hosted runners only, as the setup step below: it changes the
+      # machine's systemd and users.
       - name: The varlatchd unit verifies and its sandbox holds
+        if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
         env:
           CGO_ENABLED: "0"
         run: |
