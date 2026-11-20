@@ -353,9 +353,10 @@ func (s *Server) userID() (string, error) {
 	return "", fmt.Errorf("headscale users list: no user %s", User)
 }
 
-// Stop stops the control server (its state, in tmpfs, goes with it only
-// when the container is removed: a stopped container keeps nothing in
-// tmpfs either, so Start again is a new tailnet).
+// Stop makes the control server unreachable: its container is paused
+// (docker pause), so connections to it hang as to a server that is down,
+// and its state, in tmpfs, is kept for Resume. A stopped container would
+// lose that state.
 func (s *Server) Stop(t testing.TB) {
 	t.Helper()
 	if out, err := s.docker("pause", s.name); err != nil {
