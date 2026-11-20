@@ -409,7 +409,9 @@ func (s *Service) clean(backups string) {
 	entries, _ := os.ReadDir(backups)
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".work-") || strings.HasSuffix(name, ".partial") && strings.Contains(name, ".vltbak.") ||
+		// A killed run's work directory, a killed remote verification's
+		// download (.remote-<id>), a partial archive.
+		if strings.HasPrefix(name, ".work-") || strings.HasPrefix(name, ".remote-") || strings.HasSuffix(name, ".partial") && strings.Contains(name, ".vltbak.") ||
 			tests && strings.HasPrefix(name, bucketTestPrefix) {
 			if err := os.RemoveAll(filepath.Join(backups, name)); err != nil {
 				s.o.Log.Warn("backup: cannot remove a killed run's file", "file", name, "error", err)
@@ -676,6 +678,12 @@ func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verificat
 	if !s.HasDestination() {
 		return backup.Verification{}, ErrNoDestination
 	}
+	// Never beside a run, whose clean removes a .remote-<id> left by a
+	// killed verification.
+	if !s.running.TryLock() {
+		return backup.Verification{}, ErrRunning
+	}
+	defer s.running.Unlock()
 	st, err := backup.ReadStatus(s.dir, s.o.Now())
 	if err != nil {
 		return backup.Verification{}, err

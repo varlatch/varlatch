@@ -374,7 +374,7 @@ func (e *Engine) rolledBack(ctx context.Context, j *Journal) error {
 	e.say("Go's copy stays in %s, stopped, behind the reverse's barrier (its paused gate, and its frozen copy %s): varlatch migrate --finish --delete-old-data archives it, lifts the barrier (removing the frozen copy) and discards it; a plain --finish keeps it.",
 		j.Target.DataDir, ".migration-frozen-"+j.ID+".db")
 	if n := len(j.Rollback.Archives); n > 0 {
-		e.say("%d Go archives were made since the switch; the TypeScript release cannot read them, so they restore through a Go varlatchd (setup --restore) or a later forward migration's installation only. They are not deleted:", n)
+		e.say("%d Go archives were made since the switch; the TypeScript release cannot read them, so they restore through a Go varlatchd (setup --restore) or a later forward migration's installation only. migrate deletes none of them; their uploaded copies stay at Go's backup destination, and the local files follow Go's backup_keep (a later backup run, --finish --delete-old-data's final archive included, may remove the oldest):", n)
 		for _, a := range j.Rollback.Archives {
 			e.say("  %s (release %s, %s)", a.ArchiveID, a.Release, a.CreatedAt)
 		}

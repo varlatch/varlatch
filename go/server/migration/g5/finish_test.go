@@ -366,6 +366,114 @@ func TestG5Finish(t *testing.T) {
 			t.Errorf("the journal: %+v", rec)
 		}
 	})
+	// Killed between the source's journal and Go's: the source says
+	// finished, Go's open, and the window would read open to varlatch
+	// upgrade; --resume and --finish again both write Go's finished.
+	for _, again := range []string{"--resume", "--finish"} {
+		t.Run("between journals, "+again, func(t *testing.T) {
+			w := migratedWorld(t, false, false)
+			if code := w.finish("finished source written"); code != -1 {
+				t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			w.expect("killed", "finished", "open", "target-open", "migrated-out")
+			code := 0
+			if again == "--resume" {
+				code = w.resumeFinish()
+			} else {
+				code = w.finish("")
+			}
+			if code != 0 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "Go's journal says open: it is written finished") {
+				t.Fatalf("%s: %d\n%s", again, code, w.outputs[len(w.outputs)-1])
+			}
+			w.expect(again, "finished", "finished", "target-open", "migrated-out")
+		})
+	}
+	// Killed at "finish archived", then a plain --finish: the verified
+	// archive stays journalled, the data kept; a later --delete-old-data
+	// uses it, no second archive made.
+	t.Run("archived, plain rerun", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		if code := w.finish("finish archived", "--delete-old-data"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		creates := func() int {
+			return len(slices.DeleteFunc(w.calls("ts-calls"), func(c string) bool { return !strings.HasPrefix(c, "admin backup create") }))
+		}
+		made := creates()
+		if code := w.finish(""); code != 0 {
+			t.Fatalf("--finish: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "Final archive 0f0e0d0c-0b0a-4908-8706-050403020100 (format 2)") || !strings.Contains(out, "the old data kept") {
+			t.Errorf("the plain --finish's journal:\n%s", out)
+		}
+		if vols, _ := w.removed(); slices.Contains(vols, "g5-installation_postgres-data") {
+			t.Errorf("data removed by a plain --finish: %v", vols)
+		}
+		if code := w.finish("", "--delete-old-data"); code != 0 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "is this run's") {
+			t.Fatalf("--delete-old-data: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if n := creates(); n != made {
+			t.Errorf("%d archives made again", n-made)
+		}
+		if vols, _ := w.removed(); !slices.Contains(vols, "g5-installation_postgres-data") {
+			t.Errorf("the data: %v", vols)
+		}
+	})
+	// The final archive failing after its services were started for it:
+	// those go down again, said so, nothing removed.
+	t.Run("archive fails", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		if code := w.finish(""); code != 0 {
+			t.Fatalf("--finish: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if err := os.WriteFile(filepath.Join(w.stateDir, "fail-backup"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code := w.finish("", "--delete-old-data"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "started for the archive, are stopped again") {
+			t.Fatalf("a failing archive: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		for _, svc := range []string{"postgres", "varlatchd", "convex-backend"} {
+			if !w.stopped(svc) {
+				t.Errorf("%s left running", svc)
+			}
+		}
+		if vols, _ := w.removed(); slices.Contains(vols, "g5-installation_postgres-data") {
+			t.Errorf("removed %v", vols)
+		}
+		if out := string(w.outputs[len(w.outputs)-1]); strings.Contains(out, "old data to be deleted") || strings.Contains(out, "the old data deleted") {
+			t.Errorf("the refusal shown as a deletion:\n%s", out)
+		}
+	})
+	// Another installation's configuration (--config): Go's journal does
+	// not name the migration, on the finished path too: refused before any
+	// archive.
+	t.Run("wrong config", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		if code := w.finish(""); code != 0 {
+			t.Fatalf("--finish: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		conf, err := os.ReadFile(w.conf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := filepath.Join(w.stateDir, "other")
+		if err := os.MkdirAll(filepath.Join(other, "data"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		alt := filepath.Join(other, "varlatchd.conf")
+		if err := os.WriteFile(alt, []byte(strings.ReplaceAll(string(conf), "data_dir = "+w.data, "data_dir = "+filepath.Join(other, "data"))), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := len(w.calls("ts-calls"))
+		args := w.finishArgs("--delete-old-data")
+		args[slices.Index(args, w.conf)] = alt
+		if code := w.runArgs("", args); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "nothing was done") {
+			t.Fatalf("another installation's --config: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if slices.ContainsFunc(w.calls("ts-calls")[before:], func(c string) bool { return strings.HasPrefix(c, "admin backup create") }) {
+			t.Error("an archive made with another installation's configuration")
+		}
+	})
 	t.Run("Coolify's resources are the operator's", func(t *testing.T) {
 		w := migratedWorld(t, false, true)
 		if code := w.finish("", "--delete-old-data"); code != 0 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "In Coolify, open the TypeScript application (not Go's): 1. Stop it. 2. Delete it") {
@@ -422,6 +530,9 @@ func TestG5FinishAfterARollback(t *testing.T) {
 	// copy must open first, and with no destination it is refused.
 	if code := w.finish("", "--delete-old-data"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "names no backup destination") {
 		t.Fatalf("--delete-old-data with no destination: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "the old data kept") || strings.Contains(out, "old data to be deleted") {
+		t.Errorf("the refusal's journal shown as what was asked, not what is recorded:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(w.data, "varlatch.db")); err != nil {
 		t.Fatalf("Go's copy after the refusal: %v", err)

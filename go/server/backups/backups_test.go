@@ -770,9 +770,17 @@ func TestVerifyRemote(t *testing.T) {
 	if _, err := s.VerifyRemote(context.Background(), res.ArchiveID); err == nil || !strings.Contains(err.Error(), "no recorded upload") {
 		t.Fatalf("never uploaded: %v", err)
 	}
+	// A killed verification's download directory: the next run removes it.
+	killed := filepath.Join(f.dir, Dir, ".remote-"+res.ArchiveID)
+	if err := os.MkdirAll(killed, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	up, err := s.Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(killed); !os.IsNotExist(err) {
+		t.Errorf("a killed verification's directory after a run: %v", err)
 	}
 	v, err := s.VerifyRemote(context.Background(), up.ArchiveID)
 	if err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {

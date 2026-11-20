@@ -3146,9 +3146,11 @@ migrations.
       the rebuild left unused are removed. Never the ones in use.
   - In Coolify's shape, the removals are said as the operator's.
   - Interrupted after `finished`, `--resume` finishes it (each removal is
-    done again harmlessly); before, `--finish` runs again. G5's interrupted reverse (`server/migration/g5/
-  rollback_test.go`) kills it at every phase boundary and holds the stated
-  state there, with Go running until the address moves.
+    done again harmlessly); before, `--finish` runs again. G5's
+    `server/migration/g5/finish_test.go` kills it at each step.
+- G5's interrupted reverse (`server/migration/g5/rollback_test.go`) kills
+  it at every phase boundary and holds the stated state there, with Go
+  running until the address moves.
 - The live open: `varlatchd admin migrate open --id <migration>` ends the
   transfer's gate in the running varlatchd, through its control socket
   (offline, on the data directory), then writes its journal open (the gate

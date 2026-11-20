@@ -308,6 +308,10 @@ func fakeTSCLI(args []string) int {
 	const archive = "0f0e0d0c-0b0a-4908-8706-050403020100"
 	switch {
 	case strings.HasPrefix(j, "admin backup create "):
+		if _, err := os.Stat(state("fail-backup")); err == nil {
+			fmt.Fprintln(os.Stderr, "varlatch-ts: the backup failed (the test's)")
+			return 1
+		}
 		// The real CLI's backup reads the running varlatchd, Postgres and
 		// Convex (docker compose exec).
 		for _, svc := range []string{"varlatchd", "postgres", "convex-backend"} {

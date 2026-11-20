@@ -795,7 +795,15 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 		return j, e.resumeReverse(ctx, j)
 	}
 	if j.Phase == Finished {
-		if j.Finish != nil && j.Finish.DoneAt == "" {
+		if j.Finish == nil {
+			return j, nil
+		}
+		// Go's journal first: the same migration, and finished there too
+		// (written now when a run was killed between the two journals).
+		if err := e.finishAgrees(ctx, j); err != nil {
+			return j, err
+		}
+		if j.Finish.DoneAt == "" {
 			e.say("The migration %s's --finish was interrupted: it goes on.", j.ID)
 			return j, e.finishRemove(ctx, j)
 		}
