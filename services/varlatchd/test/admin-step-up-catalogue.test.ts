@@ -226,6 +226,7 @@ const WRITERS: Record<string, Writer> = {
   "auth/credentials.ts issueCredential": exempt("the credential primitive: its callers are in CALLERS", "host-command", "route"),
   "auth/credentials.ts revokeCredential": exempt("revoking a credential only restricts"),
   "domain/bootstrap.ts completePublicUrlChange": exempt("host command: revokes browser credentials on a public URL change", "host-command"),
+  "migration/import.ts Loader.flush (a table named at run time)": exempt("host command: the reverse migration's import loads every table into a fresh database (go-step7 decision 16)", "host-command"),
   "domain/bootstrap.ts consumeSetupGrant": exempt("enrollment through a setup grant (an invitation, bootstrap or recovery)", "host-command", "route"),
   "domain/bootstrap.ts issueBootstrapGrant": exempt("host command (admin bootstrap)", "host-command"),
   "domain/bootstrap.ts issueInviteGrant": protectedBy("member.invite_admin (a member invitation is exempt)"),
@@ -368,8 +369,18 @@ function callersOf(g: Graph): Record<string, string[]> {
 }
 
 /** Every writer of a protected table in a graph, with the classes of the roots reaching it ("route" for a route's own body). */
-function writersOf(g: Graph): Record<string, RootClass[] | string[]> {
-  return Object.fromEntries(writers(g, writePattern(WRITTEN_TABLES)).map((w) => {
+/**
+ * The functions that write a table chosen at run time, each by "file
+ * name": their writes cannot be read from the SQL, so each is named here
+ * and in WRITERS, and the graph finds its roots as any writer's.
+ */
+const RUNTIME_TABLE_WRITERS = new Set([
+  // The reverse migration's import (go-step7 decision 16) loads every table the manifest copies into a fresh database.
+  "migration/import.ts Loader.flush",
+]);
+
+function writersOf(g: Graph, runtimeTables: ReadonlySet<string> = RUNTIME_TABLE_WRITERS): Record<string, RootClass[] | string[]> {
+  return Object.fromEntries(writers(g, writePattern(WRITTEN_TABLES), runtimeTables).map((w) => {
     if (!w.symbol) return [w.label, ["route"]];
     const r = reach(g, w.symbol, ROOTS);
     const failed = r.entries.filter((e) => e.startsWith("??"));
@@ -1177,6 +1188,24 @@ describe("alternate callers", () => {
         const g = tampered((text) => `${text}\n// probe\n`, { [WRITER_PROBE]: probeFile });
         expect(Object.keys(addedWriters(g)).sort()).toEqual([2, 4, 5, 6].map((n) =>
           expect.stringMatching(new RegExp(`^\\?\\? domain/writer-probe\\.ts:${n} a write whose table is not a literal$`))));
+      }, GRAPH_TIMEOUT);
+
+      it("a function named as writing a table chosen at run time is entered with the roots that reach it: a route's, here", () => {
+        const probeFile = [
+          'import type { Querier } from "../db/migrate.js";',
+          "export async function runtimeWriter(db: Querier, t: string) { await db.query(`DELETE FROM ${t} WHERE id = $1`, [\"x\"]); }",
+          "",
+        ].join("\n");
+        const g = tampered(
+          (text) => intoRename("    await runtimeWriter(ctx.db, \"grants\");")(`import { runtimeWriter } from "../domain/writer-probe.js";\n${text}`),
+          { [WRITER_PROBE]: probeFile },
+        );
+        const listed = new Set([...RUNTIME_TABLE_WRITERS, `${WRITER_PROBE} runtimeWriter`]);
+        const base = writersOf(graph, listed);
+        const added = Object.fromEntries(Object.entries(writersOf(g, listed)).filter(([label]) => !(label in base)));
+        expect(added).toEqual({ [`${WRITER_PROBE} runtimeWriter (a table named at run time)`]: ["route"] });
+        // Unnamed, the same write fails closed.
+        expect(Object.keys(addedWriters(g))).toEqual([expect.stringMatching(/^\?\? domain\/writer-probe\.ts:2 a write whose table is not a literal$/)]);
       }, GRAPH_TIMEOUT);
 
       it("fails closed: a named handler passed to a router other than app", () => {

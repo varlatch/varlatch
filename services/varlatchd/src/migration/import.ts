@@ -339,6 +339,11 @@ class Loader {
     this.batch.push(values);
     if (this.batch.length * table.columns.length >= 20_000 || this.batch.length >= 500) await this.flush();
   }
+  /**
+   * The one write of a table named at run time (every table the manifest
+   * copies): the caller graph's catalogue lists it as such, reached from
+   * the host command only (test/admin-step-up-catalogue.test.ts WRITERS).
+   */
   async flush(): Promise<void> {
     const table = this.table;
     if (!table || this.batch.length === 0) return;
@@ -430,8 +435,8 @@ export async function importReverse(db: PoolQuerier, opts: { path: string; rootK
         `SELECT DISTINCT tgrelid::regclass::text AS tbl FROM pg_trigger WHERE NOT tgisinternal ORDER BY 1`,
       )).rows as { tbl: string }[]).map((r) => r.tbl);
       for (const t of triggered) await client.query(`ALTER TABLE ${t} DISABLE TRIGGER USER`);
-      // The migrations' seed rows: the bundle's replace them.
-      for (const t of Object.keys(SEEDED)) await client.query(`DELETE FROM ${quoteIdent(t)}`);
+      // The migrations' seed row: the bundle's replaces it (SEEDED names it).
+      await client.query("DELETE FROM exposure_backfill");
 
       const loader = new Loader(client);
       const again = await readReverseBundle(opts.path, manifest, (table, values) => loader.row(table, values));
