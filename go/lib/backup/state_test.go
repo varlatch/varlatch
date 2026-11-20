@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,9 +97,14 @@ func TestStatusListsTypeScriptArchivesApart(t *testing.T) {
 			t.Errorf("warnings %q", st.Warnings)
 		}
 	}
-	// The member is always there in Go's JSON, empty or not.
-	raw, _ := json.Marshal(Status{Archives: []StatusRecord{}, TypeScriptArchives: []StatusRecord{}, Warnings: []string{}})
-	if string(raw) != `{"archives":[],"typescriptArchives":[],"warnings":[]}` {
+	// The member is there with TypeScript archives, and left out without
+	// any: the status is then exactly the TypeScript server's.
+	raw, _ := json.Marshal(st)
+	if !strings.Contains(string(raw), `"typescriptArchives":[{"archiveId":"`+records[0].ArchiveID+`"`) {
+		t.Errorf("%s", raw)
+	}
+	raw, _ = json.Marshal(Status{Archives: []StatusRecord{}, TypeScriptArchives: []StatusRecord{}, Warnings: []string{}})
+	if string(raw) != `{"archives":[],"warnings":[]}` {
 		t.Errorf("%s", raw)
 	}
 

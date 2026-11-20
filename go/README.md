@@ -1066,7 +1066,8 @@ daemon's maintenance admission and its one backup at a time.
 - **TypeScript-format archives** (format 1 or 2, step 7 decision 18) stay
   where they are. A status record whose release is below 0.50 is one: the
   status (`admin backup status`, `GET /v1/installation/backups`) lists
-  them apart, newest first, in `typescriptArchives`, as restorable through
+  them apart, newest first, in `typescriptArchives` (left out when there
+  are none, so the status is then exactly the TypeScript server's), as restorable through
   the converter (`varlatch migrate --from-archive`), and none of the
   warnings about Go's own archives counts them (the Root KEK's does:
   converting one needs its key). `retainUntil` is when one's retention

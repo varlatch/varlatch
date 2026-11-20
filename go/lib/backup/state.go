@@ -235,10 +235,11 @@ var statusName = regexp.MustCompile(`^[a-f0-9-]{36}\.json$`)
 // archives (go-step7 decision 18) are listed apart, newest first: they are
 // restorable through the converter, with RetainUntil when their retention's
 // end is known, and none of the warnings about Go's own archives counts
-// them.
+// them. With none, the member is left out: the status is then exactly the
+// TypeScript server's.
 type Status struct {
 	Archives           []StatusRecord `json:"archives"`
-	TypeScriptArchives []StatusRecord `json:"typescriptArchives"`
+	TypeScriptArchives []StatusRecord `json:"typescriptArchives,omitempty"`
 	Warnings           []string       `json:"warnings"`
 }
 

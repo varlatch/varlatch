@@ -4406,7 +4406,7 @@ type IncidentFreezeLiftMethod string
 type InstallationBackups struct {
 	Archives []BackupArchiveStatus `json:"archives"`
 
-	// TypescriptArchives A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive) and never removed by its retention. None of the warnings about Go's own archives counts them; the Root KEK's does, since converting one needs its key. The TypeScript server does not send this member.
+	// TypescriptArchives A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive) and never removed by its retention. None of the warnings about Go's own archives counts them; the Root KEK's does, since converting one needs its key. Absent when there are none; the TypeScript server never sends it.
 	TypescriptArchives *[]BackupArchiveStatus `json:"typescriptArchives,omitempty"`
 	Warnings           []string               `json:"warnings"`
 }
