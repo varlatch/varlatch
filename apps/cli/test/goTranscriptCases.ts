@@ -1530,6 +1530,95 @@ const hook56a: TranscriptCase[] = [
   { id: "hook.assisted", title: "the same under --assisted", args: ["--assisted", ...HOOK("claude")], stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
 ];
 
+// varlatch run --strict (5.4f): one strict retrieval, the environment the
+// command would receive resolved and validated against its Contract
+// Revision, and 78 with every violation (names, classes and reasons, never a
+// value) before anything starts. The command prints what it received.
+const STRICT_PRINT =
+  "const o={};for(const k of ['API_KEY','PORT','LEVEL','REGION','NUM','EXTRA','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))";
+const strictChild = ["--", "node", "-e", STRICT_PRINT];
+const STRICT_SECRET = "s3cr3t-strict-api-key-value";
+const RETRIEVALS = `${ENV}/retrievals`;
+const STRICT_META = ok("/v1/meta", { serverVersion: "0.22.0", apiVersion: 1, capabilities: ["retrieval.strict"] });
+const ALWAYS = { required: { kind: "always" } };
+const STRICT_ITEMS = [
+  item("API_KEY", ALWAYS),
+  item("PORT", { ...ALWAYS, sensitive: false, type: "number" }),
+  item("LEVEL", { sensitive: false, type: "enum", enumValues: ["debug", "info", "warn"], defaultValue: "info" }),
+  item("REGION", { sensitive: false }),
+  item("NUM", { sensitive: false, type: "number" }),
+];
+const strictContract = (items: unknown[] = STRICT_ITEMS, semanticsVersion = 2) => ({ schemaVersion: 1, semanticsVersion, items });
+type Stored = { name: string; sensitive: boolean; value: string | null };
+const STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: STRICT_SECRET },
+  { name: "PORT", sensitive: false, value: "8080" },
+];
+const strictRetrieval = (o: { stored?: Stored[]; contract?: unknown; revision?: unknown; semanticsVersion?: number; withheld?: unknown[]; unexpanded?: unknown[] } = {}): Exchange => {
+  const stored = o.stored ?? STORED;
+  const semanticsVersion = o.semanticsVersion ?? 2;
+  return {
+    method: "POST",
+    path: RETRIEVALS,
+    status: 200,
+    answer: {
+      environmentId: "env_1",
+      manifest: {
+        manifestVersion: 1,
+        projectId: "prj_1",
+        environment: { id: "env_1", rootId: "env_root", parentId: null, tier: "development", expiresAt: null },
+        contract: o.revision === undefined ? { revisionId: RUN_REV, contentHash: RUN_HASH, semanticsVersion } : o.revision,
+        items: stored.map((i) => ({ name: i.name, source: "self", valueRowId: sid("val", i.name), versionId: sid("ver", i.name) })),
+      },
+      stateDigest: DIGEST_A,
+      contract: o.contract === undefined ? strictContract(STRICT_ITEMS, semanticsVersion) : o.contract,
+      items: stored.map((i) => ({ ...i, source: "self", versionId: sid("ver", i.name) })),
+      callerView: { withheld: o.withheld ?? [], unexpanded: o.unexpanded ?? [], contractWithheld: false },
+      validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [] },
+    },
+  };
+};
+const strictRun = (o: Parameters<typeof strictRetrieval>[0] = {}): Exchange[] => [STRICT_META, strictRetrieval(o)];
+const withheldKey = (reason = "permission", requires = "secret.reveal") => ({ stored: [{ name: "API_KEY", sensitive: true, value: null }, STORED[1] as Stored], withheld: [{ name: "API_KEY", reason, requires }] });
+const s = (c: Omit<TranscriptCase, "args"> & { args?: string[]; options?: string[] }): TranscriptCase =>
+  v({ ...c, args: c.args ?? ["run", "--strict", ...(c.options ?? []), ...strictChild] });
+const strict54f: TranscriptCase[] = [
+  // Starting
+  s({ id: "start.valid", title: "a valid configuration starts the command: delivered values, the Contract default, the run context", env: { VARLATCH_RUN_CONTEXT: "inherited-context" }, server: strictRun() }),
+  s({ id: "start.outside-contract", title: "a stored item outside the Contract is delivered as usual, and counted", server: strictRun({ stored: [...STORED, { name: "EXTRA", sensitive: false, value: "extra" }] }) }),
+  s({ id: "start.allow-inherited", title: "--allow-inherited accepts the parent's value, validated", options: ["--allow-inherited", "REGION"], env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "start.withheld-allowed", title: "an allowed inherited value stands in for a withheld one", options: ["--allow-inherited", "API_KEY"], env: { API_KEY: "parent-api-key-value" }, server: strictRun(withheldKey()) }),
+  s({ id: "start.omit-optional", title: "--omit of an item that is not required: absent, and the parent's copy removed", options: ["--omit", "REGION"], env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "start.capability-string", title: "capabilities given as a string: includes() finds a substring", server: [ok("/v1/meta", { serverVersion: "0.22.0", capabilities: "x retrieval.strict y" }), strictRetrieval()] }),
+  s({ id: "start.retry", title: "a server failure: the retrieval is made once more", server: [STRICT_META, { method: "POST", path: RETRIEVALS, status: 500, answer: apiError(500, "INTERNAL") }, strictRetrieval()] }),
+  s({ id: "start.assisted", title: "assisted mode masks the delivered Secret in the command's output", env: ASSISTED, server: strictRun() }),
+  // Each kind of violation: 78, nothing started
+  s({ id: "violation.no-contract", title: "contract: no active Contract", server: strictRun({ revision: null }) }),
+  s({ id: "violation.contract-unreadable", title: "contract: the Contract is not readable by this identity", server: strictRun({ contract: null }) }),
+  s({ id: "violation.semantics", title: "semantics: a version this CLI does not know", server: strictRun({ semanticsVersion: 9 }) }),
+  s({ id: "violation.reserved", title: "reserved: a stored item and a Contract item named VARLATCH_RUN_CONTEXT", server: strictRun({ stored: [...STORED, { name: "VARLATCH_RUN_CONTEXT", sensitive: false, value: "x" }], contract: strictContract([...STRICT_ITEMS, item("VARLATCH_RUN_CONTEXT", { sensitive: false })]) }) }),
+  s({ id: "violation.unresolved-reference", title: "unresolved-reference: a reference left literal for this identity", server: strictRun({ unexpanded: [{ name: "API_KEY", references: ["OTHER_KEY", "THIRD"] }] }) }),
+  s({ id: "violation.withheld", title: "withheld: a required Secret this identity cannot read; no default stands in", server: strictRun(withheldKey()) }),
+  s({ id: "violation.withheld-requirement", title: "withheld: a Requirement such as a Tailnet Constraint is not met", server: strictRun(withheldKey("requirement", "secret.reveal")) }),
+  s({ id: "violation.withheld-parent", title: "withheld: the parent sets it, which --allow-inherited would accept", env: { API_KEY: "parent-api-key-value" }, server: strictRun(withheldKey()) }),
+  s({ id: "violation.inherited", title: "inherited: an item set only in the parent environment", env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "violation.missing", title: "missing: a required item not stored", server: strictRun({ stored: [STORED[0] as Stored] }) }),
+  s({ id: "violation.invalid-delivered", title: "invalid: the delivered value, named, never shown", server: strictRun({ stored: [STORED[0] as Stored, { name: "PORT", sensitive: false, value: "eighty-eighty" }] }) }),
+  s({ id: "violation.invalid-inherited", title: "invalid: the allowed inherited value", options: ["--allow-inherited", "NUM"], env: { NUM: "not-a-number" }, server: strictRun() }),
+  s({ id: "violation.invalid-default", title: "invalid: the Contract default", server: strictRun({ contract: strictContract([...STRICT_ITEMS.filter((i) => i.name !== "LEVEL"), item("LEVEL", { sensitive: false, type: "enum", enumValues: ["debug", "info"], defaultValue: "loud" })]) }) }),
+  s({ id: "violation.omitted", title: "omitted: --omit of a required item", options: ["--omit", "API_KEY"], server: strictRun() }),
+  s({ id: "violation.context", title: "context: a run context over 64 KB is never truncated", server: strictRun({ contract: strictContract([...STRICT_ITEMS, ...Array.from({ length: 260 }, (_, i) => item(`N${String(i).padStart(3, "0")}_${"A".repeat(250)}`))]) }) }),
+  s({ id: "violation.many", title: "every violation at once, in Contract order", env: { REGION: "eu-west" }, server: strictRun({ stored: [{ name: "PORT", sensitive: false, value: "eighty" }], unexpanded: [] }) }),
+  s({ id: "violation.assisted", title: "assisted mode: the same violations, before any masking", env: ASSISTED, server: strictRun({ stored: [STORED[0] as Stored] }) }),
+  // Refusals before the command
+  s({ id: "refused.old-server", title: "a server without strict retrieval: 78, never a default run", server: [ok("/v1/meta", { serverVersion: "0.10.0", apiVersion: 1, capabilities: [] })] }),
+  s({ id: "refused.old-server-no-version", title: "no version given: an older release", server: [ok("/v1/meta", { capabilities: ["identity.whoami"] })] }),
+  s({ id: "refused.allow-inherited-unknown", title: "--allow-inherited names that are not Contract items: 64", options: ["--allow-inherited", "NOPE", "--allow-inherited", "ALSO_NOT", "--allow-inherited", "NOPE"], server: strictRun() }),
+  s({ id: "refused.omit-unknown", title: "--omit of a name neither stored nor in the Contract: 64", options: ["--omit", "NOPE"], server: strictRun() }),
+  s({ id: "refused.retrieval-denied", title: "the retrieval refused: the error's status", server: [STRICT_META, denied(RETRIEVALS, "POST")] }),
+  s({ id: "refused.short-assisted", title: "assisted mode: a Secret too short to mask still stops the run", env: ASSISTED, server: strictRun({ stored: [{ name: "API_KEY", sensitive: true, value: "1234" }, STORED[1] as Stored] }) }),
+];
+
 // ---- 5.6b: varlatch mcp ----------------------------------------------------------
 //
 // The server as an MCP host runs it: JSON-RPC lines on stdin, all sent at
@@ -2014,6 +2103,7 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.4b-run": run54b,
   "5.4c-redact": redact54c,
   "5.4e-find-files": findFiles54e,
+  "5.4f-strict": strict54f,
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,
   "5.7a-admin": admin57a,
