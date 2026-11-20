@@ -72,7 +72,9 @@ audit_export = on
 # this configuration's non-key settings, made while varlatchd serves. The
 # Backup Encryption Key's file (32 bytes, hex or base64), kept apart from
 # the Root KEK and held off this host too: an archive cannot be restored
-# without it. Without it, varlatchd makes no scheduled backup. Default: none.
+# without it. Without it, varlatchd makes no scheduled backup. Default: the
+# backup-key credential systemd hands the unit ($CREDENTIALS_DIRECTORY/
+# backup-key) when there is one (varlatch setup writes it), else none.
 backup_key_file =
 
 # How often a scheduled backup runs, from 1h to 744h, or off. Default: 24h.
@@ -128,7 +130,9 @@ tailnet = off
 # obtains its certificate again. Off (unset) keeps the installation as it
 # is: the plain listener above, behind your own proxy or on this machine.
 # No Strict-Transport-Security header is sent; add one at your own proxy or
-# CDN if you want browsers to remember HTTPS for this name.
+# CDN if you want browsers to remember HTTPS for this name. With it on,
+# listen must be a loopback address, and its clients connect directly: no
+# X-Forwarded-For is believed on it (trusted_proxies is listen's).
 #listen_https = :443
 # The plain HTTP listener: ACME HTTP-01 challenges and a redirect of
 # everything else to public_url, never a page. Default: port 80 on

@@ -90,6 +90,7 @@ export const CAPABILITIES = [
   "webhook-receiver",
   "object-store",
   "host-admin",
+  "go-host",
   "oidc-issuer",
   "platform-fakes",
 ];

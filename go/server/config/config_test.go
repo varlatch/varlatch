@@ -265,6 +265,14 @@ func TestParsePublicHTTPS(t *testing.T) {
 	if c, err := parse("public_url = https://vault.example.com\nlisten_https = 10.0.0.1:443\n"); err != nil || c.PublicHTTPS.RedirectListen != "10.0.0.1:80" {
 		t.Errorf("the redirect's default address: %+v %v", c, err)
 	}
+	for _, listen := range []string{"127.0.0.1:8686", "127.0.0.2:8686", "[::1]:8686"} {
+		if _, err := parse("listen = " + listen + "\npublic_url = https://vault.example.com\nlisten_https = :443\n"); err != nil {
+			t.Errorf("loopback listen %s with listen_https: %v", listen, err)
+		}
+	}
+	if c, err := parse("listen = 0.0.0.0:8686\npublic_url = https://vault.example.com\n"); err != nil || c.PublicHTTPS != nil {
+		t.Errorf("a non-loopback plain listener without public HTTPS, as before: %+v %v", c, err)
+	}
 	if c, err := parse("public_url = https://vault.example.com\n"); err != nil || c.PublicHTTPS != nil {
 		t.Errorf("off: %+v %v", c, err)
 	}
@@ -284,6 +292,9 @@ func TestParsePublicHTTPS(t *testing.T) {
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca = http://ca.example/directory\n", "is not an https ACME directory URL"},
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca = https://u:p@ca.example/directory\n", "is not an https ACME directory URL"},
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca_root = ca.pem\n", "is not an absolute path"},
+		{"listen = 0.0.0.0:8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
+		{"listen = 192.0.2.5:8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
+		{"listen = :8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
 		{"acme_email = ops@example.com\n", "listen_https is not"},
 		{"listen_http_redirect = :80\n", "listen_https is not"},
 		{"acme_ca = https://ca.example/d\n", "listen_https is not"},
@@ -297,5 +308,25 @@ func TestParsePublicHTTPS(t *testing.T) {
 		if err != nil && strings.Contains(err.Error(), "u:p") {
 			t.Errorf("%q: the error shows the URL's password", c.conf)
 		}
+	}
+}
+
+// TestBackupKeyCredential: without backup_key_file, the unit's backup-key
+// credential is the backup key when it exists, as the root-kek
+// credential is the Root KEK; without one, no scheduled backup.
+func TestBackupKeyCredential(t *testing.T) {
+	dir := t.TempDir()
+	c, err := Parse(strings.NewReader(""), env(map[string]string{"CREDENTIALS_DIRECTORY": dir}))
+	if err != nil || c.BackupKeyFile != "" || c.RootKEKFile != filepath.Join(dir, "root-kek") {
+		t.Fatalf("no backup-key credential: %+v %v", c, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "backup-key"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = Parse(strings.NewReader(""), env(map[string]string{"CREDENTIALS_DIRECTORY": dir})); err != nil || c.BackupKeyFile != filepath.Join(dir, "backup-key") {
+		t.Errorf("the backup-key credential: %+v %v", c, err)
+	}
+	if c, err = Parse(strings.NewReader("backup_key_file = /etc/bek\n"), env(map[string]string{"CREDENTIALS_DIRECTORY": dir})); err != nil || c.BackupKeyFile != "/etc/bek" {
+		t.Errorf("backup_key_file wins: %+v %v", c, err)
 	}
 }
