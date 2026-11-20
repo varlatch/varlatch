@@ -104,7 +104,7 @@ type columns struct {
 func targetColumns(t manifest.Table) columns {
 	var c columns
 	for i, col := range t.Columns {
-		if col.LeftOut != "" {
+		if col.LeftOut != nil {
 			continue
 		}
 		name := col.Target
@@ -361,7 +361,7 @@ func endSessions(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manife
 	cols := targetColumns(t)
 	tokenAt := -1
 	for i, c := range t.Columns {
-		if c.LeftOut != "" && c.Target == "token_hash" {
+		if c.LeftOut != nil && c.Target == "token_hash" {
 			tokenAt = i
 		}
 	}

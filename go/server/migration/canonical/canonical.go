@@ -170,7 +170,9 @@ func AppendRow(b []byte, types []Type, values []any) ([]byte, error) {
 // JSON.parse parses it (numbers as ECMAScript numbers, a repeated key's
 // last value), every object's members in jsonb's order (shorter keys first,
 // keys of one length by their UTF-8 bytes), written as JSON.stringify
-// writes it. Text jsonb would refuse (a lone surrogate, U+0000) is refused.
+// writes it. Text jsonb would refuse (a lone surrogate, U+0000) is refused,
+// and so is a number an ECMAScript double does not hold exactly
+// (checkNumbers): a migration never changes a value silently.
 func JsonbText(text []byte) (string, error) {
 	v, err := jsvalue.Parse(text)
 	if err != nil {
@@ -179,7 +181,48 @@ func JsonbText(text []byte) (string, error) {
 	if err := jsvalue.JsonbRefuses(v); err != nil {
 		return "", fmt.Errorf("canonical: %w", err)
 	}
+	if err := checkNumbers(text); err != nil {
+		return "", err
+	}
 	return string(jsvalue.Stringify(jsvalue.Jsonb(v))), nil
+}
+
+// checkNumbers refuses JSON text (already parsed, so well formed) holding a
+// number whose spelling is not the one ECMAScript writes for its double:
+// parsing it as a double and writing that back must give the same text.
+// "1.0", "0.10", "1e2", "-0", "123456789012345678901" and "1e999" are
+// refused; PostgreSQL's jsonb keeps them as written (as numeric), and a
+// double would change them.
+func checkNumbers(text []byte) error {
+	inString := false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if inString {
+			switch c {
+			case '\\':
+				i++ // the escaped byte; a \u escape's hex digits hold no quote
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch {
+		case c == '"':
+			inString = true
+		case c == '-' || c >= '0' && c <= '9':
+			j := i
+			for j < len(text) && strings.IndexByte("+-0123456789.eE", text[j]) >= 0 {
+				j++
+			}
+			token := string(text[i:j])
+			f, err := strconv.ParseFloat(token, 64)
+			if err != nil || jsvalue.Number(f) != token {
+				return fmt.Errorf("canonical: jsonb number %.40s is not exactly a double; the migration would change it", token)
+			}
+			i = j - 1
+		}
+	}
+	return nil
 }
 
 // DigestInput is what decision 7's keyed digest is computed over for one
