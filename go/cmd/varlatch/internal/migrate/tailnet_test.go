@@ -425,3 +425,38 @@ func TestTheRollbackGivesTheNameBack(t *testing.T) {
 		t.Fatalf("no authority: %v", err)
 	}
 }
+
+// The image's service, its undo after the name moved: stopping it is the
+// operator's, so the undo waits (exit 75) saying the name stays with Go's
+// node until then; once it is stopped, --resume gives the name back, then
+// the address.
+func TestTheImageUndoAfterTheNameMovedWaitsForTheOperator(t *testing.T) {
+	w := newTailnetWorld(t)
+	w.tgt.human = true
+	w.eng.Prober = failingProber{fakeProber: w.prober, t: w.tgt}
+	// The run stops for the service's start; the operator starts it.
+	if _, err := w.eng.Run(context.Background(), false); !errors.Is(err, ErrAwaitingOperator) {
+		t.Fatalf("the start step: %v", err)
+	}
+	w.tgt.running = true
+	j, err := w.eng.Resume(context.Background())
+	if !errors.Is(err, ErrAwaitingOperator) || j.Phase != Transfer || !j.Undoing {
+		t.Fatalf("the undo's stop step: %v %+v", err, j)
+	}
+	if n := w.names(); n["new"] != "vault" {
+		t.Fatalf("names while waiting %v", n)
+	}
+	said := strings.Join(w.said, "\n")
+	if !strings.Contains(said, "stays with the target's (Go's) node until the service is stopped") || !strings.Contains(said, "Stop the Go service") {
+		t.Fatalf("the instruction: %s", said)
+	}
+	// Stopped by the operator: --resume finishes the undo.
+	w.tgt.running = false
+	j, err = w.eng.Resume(context.Background())
+	if err == nil || j.Phase != Released {
+		t.Fatalf("resume: %v %+v", err, j)
+	}
+	if n := w.names(); n["old"] != "vault" || !w.src.running || w.src.ingressDown {
+		t.Fatalf("names %v, sidecar running %v, ingress down %v", n, w.src.running, w.src.ingressDown)
+	}
+}

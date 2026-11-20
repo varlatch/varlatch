@@ -723,7 +723,11 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	if from == Transfer {
 		// The tailnet name first, then the address (decision 12's reverse
 		// order); an address is never given back while the name is not.
-		if err := e.unwindTailnet(ctx, j); err != nil {
+		if err := e.unwindTailnet(ctx, j); errors.Is(err, ErrAwaitingOperator) {
+			// The operator's step first (exit 75); --resume goes on with
+			// the undo.
+			return fmt.Errorf("%w; undoing waits: %w", cause, err)
+		} else if err != nil {
 			problems = append(problems, err)
 		} else {
 			problems = append(problems, e.returnAddress(ctx, j)...)

@@ -544,6 +544,12 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 	if err != nil {
 		return err
 	}
+	// A reverse that changed nothing in the end (undone: an image's
+	// service still running, say) is planned again, under the same
+	// operation, so the target's node returns to its temporary name.
+	if rec.Reverse != nil && rec.Reverse.Phase == tailhandoff.Undone {
+		rec.Reverse = nil
+	}
 	if rec.Reverse == nil {
 		plan := tailhandoff.NewReverse(rec.Operation, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)
 		if _, err := he.Prepare(ctx, plan); err != nil {
@@ -555,6 +561,15 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 		st, err = he.Switch(ctx, rec.Operation)
 	} else {
 		st, err = he.Resume(ctx, rec.Operation)
+	}
+	var human *HumanStep
+	if errors.As(err, &human) {
+		// An image's service is the operator's to stop: until it is, the
+		// name stays with the target's node (the reverse was undone, and
+		// is planned again on --resume).
+		e.say("To undo, by hand: %s The tailnet name %s stays with the target's (Go's) node until the service is stopped. "+
+			"Then varlatch migrate --resume (or --abort) gives the name back to the TypeScript node, then the address.", human.Instruction, rec.Name)
+		return fmt.Errorf("%w: the tailnet name is with Go's node until its service is stopped", ErrAwaitingOperator)
 	}
 	if err != nil || st == nil || st.Phase != tailhandoff.Done {
 		return fmt.Errorf("giving the tailnet name back: %v", errors.Join(err, errors.New("the reverse handoff did not finish")))
