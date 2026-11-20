@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/creack/pty"
+
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/bundle"
 	"github.com/varlatch/varlatch/go/server/migration/check"
@@ -223,4 +225,25 @@ func TestAdminMigrateCheck(t *testing.T) {
 		t.Errorf("a check beside varlatchd: %d %q", code, errOut)
 	}
 	r.stop(t)
+}
+
+// The run key comes on a pipe: from a terminal, where it would be typed
+// and seen, `admin migrate check` refuses before reading a byte (exit 64).
+func TestAdminMigrateCheckRefusesATerminal(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	cfg, err := config.Load(in.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ptmx.Close()
+	defer tty.Close()
+	var stdout, stderr bytes.Buffer
+	code := runMigrate(cfg, []string{"check", "--in", filepath.Join(t.TempDir(), "forward.jsonl")}, tty, &stdout, &stderr)
+	if code != 64 || !strings.Contains(stderr.String(), "the run key comes on a pipe; standard input is a terminal") || stdout.Len() != 0 {
+		t.Fatalf("check from a terminal: %d %q %q", code, stdout.String(), stderr.String())
+	}
 }

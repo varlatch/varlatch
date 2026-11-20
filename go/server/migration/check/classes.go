@@ -107,9 +107,15 @@ func (c *checker) targetDigests(ctx context.Context) ([]bundle.Digest, error) {
 	opened := func(class string, key []byte, raw sql.NullString, ctx envelope.Context) []byte {
 		ids := map[string]string{}
 		for k, v := range ctx {
-			if k != "purpose" {
-				ids[k] = v.(string)
+			if k == "purpose" {
+				continue
 			}
+			s, ok := v.(string)
+			if !ok {
+				c.fail(Classes, classTables[class], class, "an item whose context member %s is not text", k)
+				return nil
+			}
+			ids[k] = s
 		}
 		d := bundle.Digest{Class: class, IDs: ids}
 		var env envelope.Envelope

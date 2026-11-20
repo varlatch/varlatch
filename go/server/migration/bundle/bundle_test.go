@@ -215,6 +215,7 @@ func refusals(good []byte) []refusal {
 		{"a decision with an unknown member", reseal(with(decisions+1, strings.Replace(lines[decisions+1], `"code":null`, `"code":null,"why":1`, 1))), "a decision line was due"},
 		{"an end line counting another digest", endWith(`"digests":2`, `"digests":3`), "3 digests"},
 		{"an end line counting another decision", endWith(`"decisions":2,"sha256"`, `"decisions":1,"sha256"`), "1 decisions"},
+		{"a negative decision moment", reseal(with(decisions, strings.Replace(lines[decisions], `"at":1795000000000002`, `"at":-1`, 1))), "before 1970"},
 		{"an end line without its section counts", endWith(`"digests":2,"decisions":2,`, ""), "the end line was due"},
 	}
 }

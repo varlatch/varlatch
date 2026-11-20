@@ -28,7 +28,9 @@ Every table the bundle carries, row by row:
 - `audit_events` is compared up to the frozen point (the audit check reads
   what follows it);
 - a credential the migration revoked (the audit check names it) is
-  expected with its `revoked_at` at its revocation event's moment;
+  expected with its `revoked_at` at its revocation event's moment,
+  exactly: the trigger writes both in the one DELETE statement, and
+  SQLite reads the time once per statement, so they are the same instant;
 - the `session` table leaves no row in `auth_sessions`;
 - the target holds no table the manifest does not account for; of its
   target-only tables, `schema_version` holds its one row and any other

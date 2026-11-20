@@ -234,7 +234,13 @@ func (c *checker) physical(t manifest.Table, n int, types []canonical.Type, targ
 // expectTransformed undoes, in a target row, what the transformations
 // changed by design, once the audit check has found it: a credential the
 // migration revoked shows the source's null revoked_at when its
-// revoked_at is its revocation event's moment.
+// revoked_at is its revocation event's moment. Equal, not merely close:
+// session_end_revokes_browser_credentials writes the event (occurred_at's
+// default) and the revocation (its UPDATE) with unixepoch('subsec') in one
+// trigger run of the one DELETE, and SQLite fixes the time once per
+// statement (sqlite3_step), so both read the same instant. A schema change
+// that wrote either outside that statement would fail this check, by
+// design, until the expectation is changed with it.
 func (c *checker) expectTransformed(t manifest.Table, vals []any) {
 	if t.Source != "credentials" {
 		return

@@ -597,6 +597,59 @@ func TestAnEndedAuditExportHoldsNoItem(t *testing.T) {
 	}
 }
 
+// check.Evaluate held to answers written by hand, not drawn from itself:
+// a person who is an Organization's admin may manage it; a revoked credential is
+// refused before authorization; a machine identity outside its own
+// Organization finds nothing; and the tailnet fixture's Requirement
+// refuses a reveal without a Tailnet Context, whatever the Grant allows.
+func TestEvaluateAgainstWrittenAnswers(t *testing.T) {
+	s := setUp(t)
+	db := openRO(t, s.db)
+	defer db.Close()
+	one := func(q string, args ...any) []string {
+		t.Helper()
+		var a, b string
+		if err := db.QueryRow(q, args...).Scan(&a, &b); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		return []string{a, b}
+	}
+	admin := one(`SELECT c.id, m.organization_id FROM credentials c JOIN identities i ON i.id = c.identity_id
+		JOIN org_memberships m ON m.identity_id = i.id AND m.role = 'admin' AND m.removed_at IS NULL
+		WHERE i.kind = 'human' AND c.revoked_at IS NULL ORDER BY c.id LIMIT 1`)
+	machine := one(`SELECT c.id, i.organization_id FROM credentials c JOIN identities i ON i.id = c.identity_id
+		WHERE i.kind <> 'human' AND i.organization_id IS NOT NULL AND c.revoked_at IS NULL ORDER BY c.id LIMIT 1`)
+	other := one(`SELECT id, slug FROM organizations WHERE id <> ? ORDER BY id LIMIT 1`, machine[1])
+	// The requirements fixture: the service credential's Grant allows
+	// secret.use on this development environment, and the active
+	// Requirement req_dcuzcxot4dkbxvsqtgecn6tfiq targets it: without a
+	// Tailnet Context, TAILNET_CONTEXT_REQUIRED.
+	reveal := one(`SELECT c.id, e.id FROM credentials c, environments e
+		WHERE c.id = 'crd_ovjf3vcoae6nkrsmbcywzmqnva' AND e.id = 'env_5tzcue6ry5edzdhgrqlxparw3a'`)
+	envOrg := one(`SELECT p.organization_id, p.id FROM environments e JOIN projects p ON p.id = e.project_id WHERE e.id = ?`, reveal[1])
+	for _, c := range []struct {
+		name    string
+		d       bundle.Decision
+		allowed bool
+		code    string
+	}{
+		{"an admin manages its Organization", bundle.Decision{Credential: admin[0], State: bundle.Active, Organization: admin[1], Action: "organization.manage"}, true, ""},
+		{"a revoked credential", bundle.Decision{Credential: admin[0], State: bundle.Revoked, Organization: admin[1], Action: "organization.read"}, false, "UNAUTHENTICATED"},
+		{"an expired credential", bundle.Decision{Credential: admin[0], State: bundle.Expired, Organization: admin[1], Action: "organization.read"}, false, "UNAUTHENTICATED"},
+		{"a machine identity in another Organization", bundle.Decision{Credential: machine[0], State: bundle.Active, Organization: other[0], Action: "organization.read"}, false, "RESOURCE_NOT_FOUND"},
+		{"a reveal without the Tailnet Context a Requirement asks", bundle.Decision{Credential: reveal[0], State: bundle.Active, Organization: envOrg[0],
+			Project: envOrg[1], Environment: reveal[1], Action: "secret.use"}, false, "TAILNET_CONTEXT_REQUIRED"},
+	} {
+		got, err := check.Evaluate(context.Background(), db, c.d)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got.Allowed != c.allowed || got.Code != c.code {
+			t.Errorf("%s: allowed %v (%s), want %v (%s)", c.name, got.Allowed, got.Code, c.allowed, c.code)
+		}
+	}
+}
+
 // A bundle without its decision table fails the authorization check: a
 // table that holds nothing is no pass.
 func TestNoDecisionTable(t *testing.T) {

@@ -188,6 +188,9 @@ func (w *Writer) Decisions(n int, at int64) error {
 	if n < 0 {
 		return errors.New("bundle: a negative decision count")
 	}
+	if at < 0 {
+		return errors.New("bundle: the decisions' moment is before 1970")
+	}
 	w.section, w.left = 2, n
 	w.nDecisions = n
 	w.line(jsvalue.Stringify(jsvalue.Object{{Key: "decisions", Value: n}, {Key: "at", Value: at}}))
@@ -277,6 +280,9 @@ func (r *Reader) Decisions() (n int, at int64, err error) {
 	}
 	if err := strict(line, &s); err != nil || s.Decisions == nil || s.At == nil || *s.Decisions < 0 {
 		return 0, 0, fmt.Errorf("bundle: the decision section's line was due: %s", shortLine(line))
+	}
+	if *s.At < 0 {
+		return 0, 0, errors.New("bundle: the decisions' moment is before 1970")
 	}
 	r.section, r.left, r.nDecisions = 2, *s.Decisions, *s.Decisions
 	return *s.Decisions, *s.At, nil

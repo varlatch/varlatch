@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
@@ -238,9 +240,13 @@ func runCheck(cfg *config.Config, a migrateArgs, rootKEK []byte, stdin io.Reader
 }
 
 // readRunKey reads the run key: one line of 64 lowercase hex digits, and
-// nothing after it. The line is cleared once decoded; an error never
+// nothing after it, from a pipe (or a file), never a terminal, where it
+// would be typed and seen. The line is cleared once decoded; an error never
 // quotes it.
 func readRunKey(stdin io.Reader) ([]byte, error) {
+	if f, ok := stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		return nil, errors.New("the run key comes on a pipe; standard input is a terminal")
+	}
 	buf := make([]byte, 66)
 	defer clear(buf)
 	n, err := io.ReadFull(stdin, buf)
