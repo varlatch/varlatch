@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,35 @@ func (h SystemHost) LoginShell(name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("setup: the user %s has no passwd entry", name)
+}
+
+// SupplementaryGroups is `id -nG` (every group of the user, the name
+// service's too) without `id -gn` (its primary group).
+func (h SystemHost) SupplementaryGroups(name string) ([]string, error) {
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command("id", append(args, "--", name)...)
+		cmd.Env = h.Env
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("setup: reading the user %s's groups (id %s): %v", name, strings.Join(args, " "), err)
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	all, err := run("-nG")
+	if err != nil {
+		return nil, err
+	}
+	primary, err := run("-gn")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, g := range strings.Fields(all) {
+		if g != primary && !slices.Contains(out, g) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
 }
 
 // SysUIDMax is /etc/login.defs' SYS_UID_MAX, 999 when it gives none.
