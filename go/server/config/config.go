@@ -81,8 +81,9 @@ type Config struct {
 	SyncAdapters []string
 
 	// Backups (ADR-0059 Decision 7). BackupKeyFile is the Backup Encryption
-	// Key's file (32 bytes, hex or base64); without one, varlatchd makes no
-	// scheduled backup.
+	// Key's file (32 bytes, hex or base64): backup_key_file, else the
+	// unit's backup-key credential when it exists; without one, varlatchd
+	// makes no scheduled backup.
 	BackupKeyFile string
 	// BackupInterval is how often a scheduled backup runs; 0 is off.
 	BackupInterval time.Duration
@@ -350,8 +351,17 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 			return nil, at(name, "%q is not an absolute path", v)
 		}
 	}
-	if v := values["backup_key_file"]; v != "" {
+	switch v := values["backup_key_file"]; {
+	case v != "":
 		c.BackupKeyFile = filepath.Clean(v)
+	case env("CREDENTIALS_DIRECTORY") != "":
+		// The unit's backup-key credential, as root_kek_file's: setup
+		// writes both keys beside the configuration, and the unit loads
+		// them (varlatchd.service, LoadCredential). Only when it is there:
+		// without one, no scheduled backup, as before.
+		if p := filepath.Join(env("CREDENTIALS_DIRECTORY"), "backup-key"); fileExists(p) {
+			c.BackupKeyFile = p
+		}
 	}
 	c.BackupInterval = DefaultBackupInterval
 	switch v := values["backup_interval"]; v {
@@ -418,6 +428,12 @@ func listenAddress(name, v string, zero bool, at func(string, string, ...any) er
 	return nil
 }
 
+// loopbackIP is whether host is a loopback IP address (127.0.0.0/8, ::1).
+func loopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // publicDNSName is a host name a public certificate can name: two labels
 // at least, letters, digits and hyphens.
 var publicDNSName = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -469,6 +485,12 @@ func parsePublicHTTPS(values map[string]string, at func(string, string, ...any) 
 	}
 	if v == c.Listen || p.RedirectListen != "" && p.RedirectListen == c.Listen {
 		return nil, at("listen_https", "and listen_http_redirect must differ from listen, the plain listener")
+	}
+	// The plain listener stays on this machine: with public HTTPS, the
+	// API and the dashboard are never served in plain text beyond it (a
+	// proxy in front of the plain listener runs on this host).
+	if lh, _, _ := net.SplitHostPort(c.Listen); !loopbackIP(lh) {
+		return nil, at("listen", "%q: with listen_https, the plain listener must be on a loopback address (such as 127.0.0.1:8686), so nothing is served in plain text beyond this machine", c.Listen)
 	}
 	if e := values["acme_email"]; e != "" {
 		if !emailAddress.MatchString(e) {
@@ -659,4 +681,10 @@ func Load(path string) (*Config, error) {
 	}
 	defer f.Close()
 	return Parse(f, os.Getenv)
+}
+
+// fileExists is whether path names something (a credential's file).
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

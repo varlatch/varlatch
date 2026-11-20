@@ -433,7 +433,7 @@ test("newlyNotApplicable: reclassified, moved and capability-dropped checks, eac
   dropped["go-binary"] = dropped["go-binary"].filter((c) => c !== "go-server");
   assert.deepEqual(
     newlyNotApplicable(base, { inventory, capabilities: dropped }),
-    Object.keys(inventory.checks).filter((c) => c.startsWith("realtime-events.")).map((c) => `go-binary|${c}`).sort(),
+    Object.keys(inventory.checks).filter((c) => inventory.checks[c].kind === "go-server").map((c) => `go-binary|${c}`).sort(),
   );
   const added = structuredClone(inventory);
   added.checks["realtime-events.another"] = { suite: "realtime-events", kind: "go-server", title: "new" };

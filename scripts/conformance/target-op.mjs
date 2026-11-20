@@ -95,6 +95,11 @@ switch (operation) {
     if (args[0] !== "audit-export") throw new Error("host-admin audit-export <args...>");
     print(JSON.stringify(await target.hostAdmin(state, ...args)));
     break;
+  case "go-host":
+    needs("go-host");
+    if (args[0] !== "doctor") throw new Error("go-host doctor");
+    print(JSON.stringify(await target.goHost(state, args[0])));
+    break;
   case "oidc-issuer":
     needs("oidc-issuer");
     if (!["start", "keys", "counts"].includes(args[0])) throw new Error("oidc-issuer start|keys <json>|counts");

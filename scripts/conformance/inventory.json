@@ -880,6 +880,15 @@
         "probe:audit-event-count"
       ]
     },
+    "go-doctor": {
+      "title": "read-only doctor of a Go installation on its host (ADR-0059 step 6.5)",
+      "script": "scripts/conformance/suites/go-doctor.mjs",
+      "needs": [
+        "go-server",
+        "go-host",
+        "probe:audit-event-count"
+      ]
+    },
     "convex-down": {
       "title": "dashboard keeps serving while Convex is down (ADR-0035 D5/D10)",
       "script": "scripts/conformance/suites/convex-down.mjs",
@@ -3985,36 +3994,28 @@
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor exits 0 (no mandatory failure)",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.exits-0"
     },
     "doctor.services-running": {
       "suite": "doctor",
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor: services.running passes",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.services-running"
     },
     "doctor.secret-plane-ready": {
       "suite": "doctor",
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor: secret-plane.ready passes",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.secret-plane-ready"
     },
     "doctor.config-public-url": {
       "suite": "doctor",
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor: config.public-url passes",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.config-public-url"
     },
     "doctor.mirror-catch-up": {
       "suite": "doctor",
@@ -4040,7 +4041,7 @@
       "feature": "doctor",
       "title": "doctor: release.pending-upgrade passes",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
+        "open": "ADR-0059 step 6.6: upgrade's journal (an upgrade left unfinished) is what doctor reports pending"
       }
     },
     "doctor.browser-reachability-unknown": {
@@ -4048,18 +4049,44 @@
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor: browser reachability is reported unknown",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.browser-reachability-unknown"
     },
     "doctor.no-audit-events": {
       "suite": "doctor",
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor wrote no audit events",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.no-audit-events"
+    },
+    "go-doctor.exits-0": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor exits 0 (no mandatory failure)"
+    },
+    "go-doctor.services-running": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor: varlatchd answered on its control socket"
+    },
+    "go-doctor.secret-plane-ready": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor: secret-plane.ready passes"
+    },
+    "go-doctor.config-public-url": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor: config.public-url passes"
+    },
+    "go-doctor.browser-reachability-unknown": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor: browser reachability is reported unknown"
+    },
+    "go-doctor.no-audit-events": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor wrote no audit events"
     },
     "convex-down.dashboard-serves": {
       "suite": "convex-down",
@@ -4394,7 +4421,13 @@
   "goServerChecks": {
     "realtime-events.no-signal-crosses-organizations": "It reads the Go server's own event stream (GET /auth/events). The TypeScript server's live updates are Convex subscriptions, scoped by the claims of a Convex token, which this suite cannot open as a stream.",
     "realtime-events.revocation-and-removal-close-streams": "The TypeScript server cannot pass it: a Convex subscription stays open until its 10-minute Convex token expires or is minted again, whatever was signed out, revoked or removed.",
-    "realtime-events.slow-client-cut-off-alone": "It needs the Go server's bounded per-stream buffer. On the TypeScript server, Convex serves the subscriptions and its own buffering is not varlatchd's to bound."
+    "realtime-events.slow-client-cut-off-alone": "It needs the Go server's bounded per-stream buffer. On the TypeScript server, Convex serves the subscriptions and its own buffering is not varlatchd's to bound.",
+    "go-doctor.exits-0": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.services-running": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.secret-plane-ready": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.config-public-url": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.browser-reachability-unknown": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.no-audit-events": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces)."
   },
   "externalSuites": {
     "setup": {

@@ -20,6 +20,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/maintenance"
+	"github.com/varlatch/varlatch/go/server/publictls"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -71,8 +72,13 @@ type hostEnv struct {
 	// tune adjusts the backup service's options (tests).
 	tune func(*backups.Options)
 	// tailnet is the tailnet node's pin and report, in a running varlatchd
-	// with tailnet = on; nil otherwise.
+	// with tailnet = on; nil otherwise. node is that varlatchd's tailnet
+	// runner (the node itself, its hold and its certificate).
 	tailnet *tailnet.Manager
+	node    *tailnetRunner
+	// public is public HTTPS's certificate manager, in a running varlatchd
+	// with listen_https; nil otherwise.
+	public *publictls.Manager
 	// barrier serializes the reverse's barrier and release commands: one
 	// at a time makes, or removes, the frozen copy and its temporary name.
 	barrier sync.Mutex
@@ -258,12 +264,14 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 }
 
 // fileOnly reports whether a host command reads and writes only the data
-// directory's files, never the database: the maintenance commands and
-// backup status, and the migration's commands but the barrier (whose frozen
-// copy is the database's).
+// directory's files, never the database: the maintenance commands, backup
+// status, the migration's commands but the barrier (whose frozen copy is
+// the database's), and the tailnet node's handoff commands
+// (tailnetnode.go), which run on a migration's empty data directory too.
 func fileOnly(args []string) bool {
 	return args[0] == "maintenance" || args[0] == "migrate" && !(len(args) > 1 && args[1] == "barrier") ||
-		args[0] == "backup" && len(args) > 1 && args[1] == "status"
+		args[0] == "backup" && len(args) > 1 && args[1] == "status" ||
+		args[0] == "tailnet" && isNodeCmd(args[1:])
 }
 
 func viaSocket(conn *net.UnixConn, what string, args []string, stdout, stderr io.Writer) int {
