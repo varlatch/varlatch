@@ -1058,8 +1058,22 @@ daemon's maintenance admission and its one backup at a time.
   the manifest, seals the snapshot and `configuration.json`, and opens the
   archive again to record its check, each at 16 MiB/s and with the archive
   key derived once for the run, then uploads it, records the delivery, and
-  removes the archives beyond `backup_keep` from this host. A stop ends a
-  run at its next snapshot step or paced MiB, and leaves no archive.
+  removes the archives beyond `backup_keep` from this host. Retention
+  counts and removes only Go's own archives, those whose status record
+  names a Go release (0.50 and later): never a TypeScript-format archive,
+  nor an archive without a readable record. A stop ends a run at its next
+  snapshot step or paced MiB, and leaves no archive.
+- **TypeScript-format archives** (format 1 or 2, step 7 decision 18) stay
+  where they are. A status record whose release is below 0.50 is one: the
+  status (`admin backup status`, `GET /v1/installation/backups`) lists
+  them apart, newest first, in `typescriptArchives`, as restorable through
+  the converter (`varlatch migrate --from-archive`), and none of the
+  warnings about Go's own archives counts them (the Root KEK's does:
+  converting one needs its key). `retainUntil` is when one's retention
+  ends, when that is known (the migration records it: an Object Lock
+  retain-until date, or the operator's); without it the bucket's lifecycle
+  rule decides, which Varlatch does not read. The TypeScript server sends
+  neither member; the dashboard reads neither.
 - **The schedule** first looks a minute after start, then takes a backup
   whenever the newest archive is `backup_interval` old (at that first look
   when there is none), retries an hour after a run that made no archive,

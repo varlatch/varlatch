@@ -66,9 +66,47 @@ type StatusRecord struct {
 	Verification        *Verification `json:"verification,omitempty"`
 	Delivery            *Delivery     `json:"delivery,omitempty"`
 	Capture             *CaptureStats `json:"capture,omitempty"`
+	// RetainUntil is when a TypeScript-format archive's retention ends, when
+	// it is known (the migration records it: an Object Lock retain-until
+	// date, or the operator's). Without it, the bucket's lifecycle rule
+	// decides, which Varlatch does not read.
+	RetainUntil string `json:"retainUntil,omitempty"`
 }
 
 var errStatus = errors.New("backup: an invalid status record")
+
+// releaseVersion is a record's release: major.minor.patch, with any suffix.
+var releaseVersion = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.[0-9]+`)
+
+// goLine is the first release of the Go line (ADR-0059 step 7, O1): the
+// TypeScript line ends below it.
+const goLine = 50
+
+// line is the release line a record's release names: "typescript" below
+// 0.50, "go" from 0.50, "" for one it cannot read.
+func (s StatusRecord) line() string {
+	m := releaseVersion.FindStringSubmatch(s.Release)
+	if m == nil {
+		return ""
+	}
+	var major, minor int
+	fmt.Sscan(m[1], &major)
+	fmt.Sscan(m[2], &minor)
+	if major == 0 && minor < goLine {
+		return "typescript"
+	}
+	return "go"
+}
+
+// TypeScript reports whether the record is a TypeScript-format archive's
+// (format 1 or 2, made by a release below 0.50): restorable only through
+// the converter (varlatch migrate --from-archive), never removed by Go's
+// retention.
+func (s StatusRecord) TypeScript() bool { return s.line() == "typescript" }
+
+// Go reports whether the record names a Go release: the only archives Go's
+// retention removes.
+func (s StatusRecord) Go() bool { return s.line() == "go" }
 
 func (v *Verification) valid() bool {
 	return v == nil || (utf16Len(v.TargetRelease) <= 100 && datetimePattern.MatchString(v.CheckedAt))
@@ -86,6 +124,7 @@ func (s StatusRecord) validate() error {
 	if c := s.Capture; c != nil {
 		ok = ok && c.Mode == "online" && c.SnapshotHeldMs >= 0 && c.DumpMs >= 0 && c.DumpBytes >= 0
 	}
+	ok = ok && (s.RetainUntil == "" || datetimePattern.MatchString(s.RetainUntil))
 	if !ok {
 		return errStatus
 	}
@@ -184,10 +223,15 @@ func DurableJSON(path string, v any, exclusive bool) error {
 var statusName = regexp.MustCompile(`^[a-f0-9-]{36}\.json$`)
 
 // Status is the backup status an Installation Admin reads (backupStatus):
-// the archives' records, newest first, and the warnings.
+// the archives' records, newest first, and the warnings. TypeScript-format
+// archives (go-step7 decision 18) are listed apart, newest first: they are
+// restorable through the converter, with RetainUntil when their retention's
+// end is known, and none of the warnings about Go's own archives counts
+// them.
 type Status struct {
-	Archives []StatusRecord `json:"archives"`
-	Warnings []string       `json:"warnings"`
+	Archives           []StatusRecord `json:"archives"`
+	TypeScriptArchives []StatusRecord `json:"typescriptArchives"`
+	Warnings           []string       `json:"warnings"`
 }
 
 const (
@@ -210,7 +254,7 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Status{}, err
 	}
-	archives := []StatusRecord{}
+	archives, typescript := []StatusRecord{}, []StatusRecord{}
 	for _, e := range entries {
 		if !statusName.MatchString(e.Name()) {
 			continue
@@ -223,9 +267,15 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 		if err := decodeExact(raw, &s); err != nil || s.validate() != nil {
 			return Status{}, errStatus
 		}
+		if s.TypeScript() {
+			typescript = append(typescript, s)
+			continue
+		}
 		archives = append(archives, s)
 	}
-	slices.SortStableFunc(archives, func(a, b StatusRecord) int { return strings.Compare(b.CreatedAt, a.CreatedAt) })
+	newestFirst := func(a, b StatusRecord) int { return strings.Compare(b.CreatedAt, a.CreatedAt) }
+	slices.SortStableFunc(archives, newestFirst)
+	slices.SortStableFunc(typescript, newestFirst)
 	warnings := []string{}
 	var newest *StatusRecord
 	if len(archives) > 0 {
@@ -257,8 +307,10 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 	} else if delivered && !(remote != nil && now.Sub(at(remote.Delivery.RemoteVerification.CheckedAt)) < remoteVerificationMaxAge) {
 		warnings = append(warnings, "No remote copy has passed retrieval and verification within the last 30 days")
 	}
+	// The Root KEK versions every archive needs, TypeScript-format ones
+	// included: converting one still needs its key.
 	var versions []int
-	for _, a := range archives {
+	for _, a := range slices.Concat(archives, typescript) {
 		for _, v := range a.RequiredKeyVersions {
 			if !slices.Contains(versions, v) {
 				versions = append(versions, v)
@@ -267,7 +319,7 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 	}
 	for _, v := range versions {
 		checked := false
-		for _, a := range archives {
+		for _, a := range slices.Concat(archives, typescript) {
 			if slices.Contains(a.RequiredKeyVersions, v) && a.Verification != nil && a.Verification.KeyMatch && now.Sub(at(a.Verification.CheckedAt)) < 30*day {
 				checked = true
 			}
@@ -276,7 +328,7 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 			warnings = append(warnings, fmt.Sprintf("Root KEK version %d required by recorded archives has no successful check within 30 days; retain it while those archives exist", v))
 		}
 	}
-	return Status{Archives: archives, Warnings: warnings}, nil
+	return Status{Archives: archives, TypeScriptArchives: typescript, Warnings: warnings}, nil
 }
 
 // Gate is the maintenance gate (maintenance.ts Gate): while one is open,
