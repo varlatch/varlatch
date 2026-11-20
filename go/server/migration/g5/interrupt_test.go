@@ -168,6 +168,9 @@ func writeGate(g *gateDoc) error {
 // fakeDocker answers as Docker and the TypeScript CLI in its container.
 func fakeDocker(args []string) int {
 	fail := func(f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1 }
+	if code, ok := fakeDockerReverse(args); ok {
+		return code
+	}
 	j := strings.Join(args, " ")
 	switch {
 	case j == "compose images --format json varlatchd":
@@ -189,7 +192,17 @@ func fakeDocker(args []string) int {
 	if len(args) < len(prefix)+1 || !slices.Equal(args[:len(prefix)], prefix) {
 		return fail("docker: unexpected %q", j)
 	}
-	verb, rest := args[len(prefix)], args[len(prefix)+1:]
+	if stopped("varlatchd") {
+		return fail("service \"varlatchd\" is not running")
+	}
+	return tsMigration(args[len(prefix)], args[len(prefix)+1:])
+}
+
+// tsMigration is the TypeScript CLI's `admin migration <verb>`, in the
+// daemon's container (exec) or a one-off one (run), on the database the
+// installation's Compose files name now.
+func tsMigration(verb string, rest []string) int {
+	fail := func(f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1 }
 	g := readGate()
 	switch verb {
 	case "status":
@@ -207,7 +220,7 @@ func fakeDocker(args []string) int {
 				return fail("%v", err)
 			}
 		}
-		s, err := loadSource(state("source.json"))
+		s, err := loadSource(currentDB())
 		if err != nil {
 			return fail("%v", err)
 		}
@@ -239,6 +252,9 @@ func fakeDocker(args []string) int {
 		if !dry && (g == nil || g.Kind != "migration") {
 			return fail("varlatchd admin migration export: no migration barrier is held; nothing was exported")
 		}
+		if dry && g != nil {
+			return fail("varlatchd admin migration export: a %s gate is open: a dry run reads a running installation only", g.Kind)
+		}
 		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 		key, kerr := hex.DecodeString(strings.TrimSpace(line))
 		if err != nil || kerr != nil || len(key) != 32 {
@@ -249,14 +265,18 @@ func fakeDocker(args []string) int {
 			fmt.Fprintln(f, hex.EncodeToString(key))
 			f.Close()
 		}
-		s, err := loadSource(state("source.json"))
+		s, err := loadSource(currentDB())
 		if err != nil {
 			return fail("%v", err)
 		}
 		var sec migrationtest.Sections
-		b, err := os.ReadFile(state("decisions.json"))
-		if err != nil || json.Unmarshal(b, &sec.Decisions) != nil {
-			return fail("the decision table")
+		if currentDB() == state("source.json") {
+			b, err := os.ReadFile(state("decisions.json"))
+			if err != nil || json.Unmarshal(b, &sec.Decisions) != nil {
+				return fail("the decision table")
+			}
+		} else if sec.Decisions, err = decideOn(s); err != nil {
+			return fail("the decision table: %v", err)
 		}
 		sec.At, sec.Digests = 1795000000000000, migrationtest.Digests(stdTB{}, s, key)
 		out := migrationtest.Bundle(stdTB{}, s, migrationtest.Options{Sections: &sec})
@@ -580,6 +600,11 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 		httputil.NewSingleHostReverseProxy(u).ServeHTTP(rw, r)
 		return
 	}
+	if _, err := os.Stat(filepath.Join(w.stateDir, "stopped-varlatchd")); err == nil {
+		// The dashboard runs, its varlatchd does not.
+		rw.WriteHeader(http.StatusBadGateway)
+		return
+	}
 	b, _ := os.ReadFile(filepath.Join(w.stateDir, "gate.json"))
 	if len(b) > 0 {
 		rw.WriteHeader(http.StatusServiceUnavailable)
@@ -614,11 +639,17 @@ func (w *world) args(extra ...string) []string {
 // run runs varlatch migrate; with pause, it is killed (SIGKILL) where it
 // pauses. It returns the exit status (-1 when killed).
 func (w *world) run(pause string, extra ...string) int {
+	w.t.Helper()
+	return w.runArgs(pause, w.args(extra...))
+}
+
+// runArgs is run with the CLI's arguments as given.
+func (w *world) runArgs(pause string, args []string) int {
 	t := w.t
 	t.Helper()
 	log := filepath.Join(w.stateDir, "crashpoints.log")
 	_ = os.Remove(log)
-	cmd := exec.Command(shared.varlatch, w.args(extra...)...)
+	cmd := exec.Command(shared.varlatch, args...)
 	cmd.Env = append(os.Environ(), "PATH="+shared.fakebin+":"+os.Getenv("PATH"), "G5_STATE="+w.stateDir, "VARLATCH_MIGRATE_PIN="+shared.pin,
 		"VARLATCH_MIGRATE_LOG="+log, "VARLATCH_MIGRATE_PAUSE="+pause, "TMPDIR="+w.stateDir,
 		fmt.Sprintf("VARLATCH_MIGRATE_IMAGE_USER=%d:%d", os.Getuid(), os.Getgid()))

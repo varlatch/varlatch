@@ -17,7 +17,7 @@ func TestMigrateCommand(t *testing.T) {
 		code := Main(args, MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut})
 		return code, out.String(), errOut.String()
 	}
-	if code, out, _ := run("migrate", "--help"); code != 0 || !strings.Contains(out, "varlatch migrate --resume") {
+	if code, out, _ := run("migrate", "--help"); code != 0 || !strings.Contains(out, "varlatch migrate --resume") || !strings.Contains(out, "varlatch migrate --rollback") {
 		t.Fatalf("--help: %d %q", code, out)
 	}
 	for _, c := range []struct {
@@ -35,6 +35,13 @@ func TestMigrateCommand(t *testing.T) {
 		{[]string{"migrate", "--max-downtime", "soon"}, "--max-downtime takes a duration"},
 		{[]string{"migrate", "--frm", "/x"}, "unknown option --frm"},
 		{[]string{"migrate", "--ingress", "public", "--unit", "--host=x"}, "--unit takes a systemd unit's name"},
+		{[]string{"migrate", "--resume"}, "--resume and --abort need the target"},
+		{[]string{"migrate", "--abort", "--bek-file", "/b"}, "--resume and --abort need the target"},
+		{[]string{"migrate", "--rollback"}, "--rollback needs the target"},
+		{[]string{"migrate", "--rollback", "--config", "/c", "--ingress", "proxy"}, "--rollback takes --from, the target"},
+		{[]string{"migrate", "--rollback", "--config", "/c", "--bek-file", "/b"}, "--rollback takes --from, the target"},
+		{[]string{"migrate", "--rollback", "--resume", "--config", "/c"}, "--rollback takes --from, the target"},
+		{[]string{"migrate", "--rollback", "--dry-run", "--config", "/c"}, "--rollback takes --from, the target"},
 	} {
 		if code, _, errOut := run(c.args...); code != ExitUsage || !strings.Contains(errOut, c.why) {
 			t.Errorf("%q: %d %q, want %q", c.args, code, errOut, c.why)

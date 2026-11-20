@@ -183,6 +183,8 @@ func (e *Engine) Run(ctx context.Context, dryRunOnly bool) (*Journal, error) {
 	case j == nil, j.Phase == Released, j.Stopped && slices.Contains(beforeBarrier, j.Phase):
 	case j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is open: this installation was migrated (varlatch migrate --status)", j.ID)
+	case j.Phase == RolledBack:
+		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves again, and the target holds Go's copy; varlatch migrate --finish removes it before a new migration", j.ID)
 	default:
 		return j, fmt.Errorf("the migration %s was interrupted in phase %s: varlatch migrate --resume continues or undoes it (varlatch migrate --status)", j.ID, j.Phase)
 	}
@@ -780,6 +782,9 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	if j == nil {
 		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to resume", e.Source.Dir())
 	}
+	if slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer || j.Phase == RolledBack {
+		return j, e.resumeReverse(ctx, j)
+	}
 	switch {
 	case j.Undoing && j.Phase != Released:
 		e.say("The migration %s was being undone: undoing goes on.", j.ID)
@@ -817,6 +822,19 @@ func (e *Engine) finishOpen(ctx context.Context, j *Journal) error {
 	_, st, err := e.Target.Describe(ctx)
 	if err != nil {
 		return err
+	}
+	if st.Barrier != "" && j.Rollback != nil && j.Rollback.Undone != nil {
+		// A reverse undone, interrupted before Go's barrier was lifted.
+		if rt, ok := e.Target.(ReverseTarget); ok && st.Running {
+			e.say("The reverse of the migration %s was undone, but Go's barrier stands: it is lifted.", j.ID)
+			if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
+				return err
+			}
+			_, st, err = e.Target.Describe(ctx)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if st.Journal != nil && st.Journal.ID == j.ID && st.Journal.Phase == Open && !st.Gate && st.Running {
 		return nil
@@ -883,6 +901,17 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to abort", e.Source.Dir())
 	case j.Phase == Released:
 		return j, nil
+	case slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer:
+		if j.Rollback == nil {
+			return j, fmt.Errorf("the migration %s is in phase %s, but its journal records no reverse", j.ID, j.Phase)
+		}
+		err := e.undoReverse(ctx, j, errors.New("aborted by the operator"))
+		if j.Phase == Open && j.Rollback.Undone != nil {
+			return j, nil
+		}
+		return j, err
+	case j.Phase == RolledBack:
+		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves; going to Go again is a new migration (after varlatch migrate --finish)", j.ID)
 	case j.Phase == Switched || j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is %s: past its switch it goes forward only (varlatch migrate --resume)", j.ID, j.Phase)
 	}

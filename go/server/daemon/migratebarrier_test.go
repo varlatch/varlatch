@@ -14,11 +14,13 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -409,6 +411,116 @@ func TestABarrierThatDoesNotDrain(t *testing.T) {
 	errOut.Reset()
 	if code := runMigrateBarrier(context.Background(), env, []string{"barrier", "--id", migA, "--drain-seconds", "1"}, &out, &errOut); code != ExitOK || !strings.Contains(out.String(), `"phase":"paused"`) {
 		t.Fatalf("the barrier again: %d %q %q", code, out.String(), errOut.String())
+	}
+}
+
+// The reverse's journal (go-step7 decision 16, slice 7.6a), written by
+// varlatch migrate in the data directory as in the source's directory:
+//   - beside the running varlatchd: from open into the reverse's phases,
+//     on through them, and back to open (the reverse undone), each the
+//     journal's word alone; going back within them, released, or rolled
+//     back (which keeps varlatchd from starting) are not;
+//   - at start: reversing, varlatchd serves (isolated by the barrier once
+//     it stands); past the export it starts behind its barrier only;
+//     rolled back, never.
+func TestTheReverseJournal(t *testing.T) {
+	in, _ := migrated(t)
+	r := start(t, in)
+	write := func(phase string) (int, string) {
+		code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write")
+		return code, errOut
+	}
+	if code, errOut := write("rollback"); code != ExitOK {
+		t.Fatalf("rollback beside the running varlatchd: %q", errOut)
+	}
+	if c := httpStatus(t, r, "GET", "/v1/whoami"); c == http.StatusServiceUnavailable {
+		t.Fatal("isolated before the barrier")
+	}
+	if code, _, errOut := runAdmin(t, "migrate", "barrier", "--id", migA, "--config", in.conf); code != ExitOK {
+		t.Fatalf("the barrier in phase rollback: %q", errOut)
+	}
+	for _, phase := range []string{"rollback-exported", "rollback-imported", "rollback-checked", "rollback-transfer"} {
+		if code, errOut := write(phase); code != ExitOK {
+			t.Fatalf("%s beside the running varlatchd: %q", phase, errOut)
+		}
+	}
+	for _, phase := range []string{"rollback-exported", "released", "switched", "rolled-back"} {
+		if code, errOut := write(phase); code != ExitFailure {
+			t.Errorf("%s beside the running varlatchd, from rollback-transfer: %d %q", phase, code, errOut)
+		}
+	}
+	if code, out, _ := migrateWith(t, in.conf, journalText(migB, "rollback"), "state", "--write"); code != ExitFailure {
+		t.Errorf("another migration's reverse: %q", out)
+	}
+	// Undone: back to open, beside it; the barrier is released after.
+	if code, errOut := write("open"); code != ExitOK {
+		t.Fatalf("the reverse undone beside the running varlatchd: %q", errOut)
+	}
+	if c := httpStatus(t, r, "GET", "/v1/whoami"); c != http.StatusServiceUnavailable {
+		t.Fatalf("the barrier lifted by a journal write: %d", c)
+	}
+	if code, _, errOut := runAdmin(t, "migrate", "release", "--id", migA, "--config", in.conf); code != ExitOK {
+		t.Fatal(errOut)
+	}
+	if c := httpStatus(t, r, "GET", "/v1/whoami"); c == http.StatusServiceUnavailable {
+		t.Fatal("isolated after the release")
+	}
+	r.stop(t)
+
+	// At start.
+	starts := func() (bool, string) {
+		var errOut syncBuffer
+		sig := make(chan os.Signal, 1)
+		done := make(chan int, 1)
+		ready := make(chan struct{}, 1)
+		go func() {
+			done <- Serve(Options{ConfigPath: in.conf, Stderr: &errOut, Signals: sig, Ready: func(net.Addr) { ready <- struct{}{} }})
+		}()
+		select {
+		case <-ready:
+			sig <- syscall.SIGTERM
+			<-done
+			return true, ""
+		case code := <-done:
+			_ = code
+			return false, errOut.String()
+		case <-time.After(30 * time.Second):
+			t.Fatal("varlatchd neither started nor refused")
+		}
+		return false, ""
+	}
+	if code, errOut := write("rollback"); code != ExitOK {
+		t.Fatal(errOut)
+	}
+	if ok, why := starts(); !ok {
+		t.Errorf("reversing, before the barrier: refused (%s)", why)
+	}
+	if code, errOut := write("rollback-exported"); code != ExitOK {
+		t.Fatal(errOut)
+	}
+	if ok, why := starts(); ok || !strings.Contains(why, "holds no barrier of it") {
+		t.Errorf("past the export without the barrier: %v %q", ok, why)
+	}
+	if code, _, errOut := runAdmin(t, "migrate", "barrier", "--id", migA, "--config", in.conf); code != ExitOK {
+		t.Fatal(errOut)
+	}
+	r = start(t, in)
+	if c := httpStatus(t, r, "GET", "/v1/whoami"); c != http.StatusServiceUnavailable {
+		t.Errorf("past the export, behind the barrier: %d", c)
+	}
+	r.stop(t)
+	for _, phase := range []string{"rollback-transfer", "rolled-back"} {
+		if code, errOut := write(phase); code != ExitOK {
+			t.Fatalf("%s, stopped: %q", phase, errOut)
+		}
+	}
+	if ok, why := starts(); ok || !strings.Contains(why, "was reversed") {
+		t.Errorf("rolled back: %v %q", ok, why)
+	}
+	for _, phase := range []string{"open", "rollback", "released"} {
+		if code, errOut := write(phase); code != ExitFailure {
+			t.Errorf("%s after rolled back: %d %q", phase, code, errOut)
+		}
 	}
 }
 

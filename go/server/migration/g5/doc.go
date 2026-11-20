@@ -17,5 +17,9 @@
 // frozen copy, the TypeScript import and export stood in for
 // (migrationtest.FromReverse), the reverse checks, and a second forward
 // migration reproducing the state, on the seeded installation and after
-// each kind of change made on Go (kinds_test.go).
+// each kind of change made on Go (kinds_test.go). rollback_test.go is the
+// interrupted reverse (slice 7.6a): the real `varlatch migrate --rollback`
+// killed at every phase boundary of the reverse, Go running until the
+// address moves back, the TypeScript side's rebuild on a fresh volume
+// stood in for (its header says what).
 package g5

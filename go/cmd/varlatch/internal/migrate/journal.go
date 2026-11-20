@@ -36,8 +36,26 @@ const (
 	Released  Phase = "released"  // undone before the switch
 )
 
+// The reverse migration's phases (go-step7 decisions 16 and 17, slice
+// 7.6a), after open. A reverse undone goes back to open; rolled back is it
+// done: the last TypeScript release is the installation again.
+const (
+	Rollback         Phase = "rollback"          // Go behind its migration barrier, or being put there
+	RollbackExported Phase = "rollback-exported" // the reverse bundle written, the transformed copy kept
+	RollbackImported Phase = "rollback-imported" // the TypeScript release rebuilt on a fresh database from it
+	RollbackChecked  Phase = "rollback-checked"  // the reverse checks passed
+	RollbackTransfer Phase = "rollback-transfer" // the address moving back to the TypeScript release
+	RolledBack       Phase = "rolled-back"       // the TypeScript release serves; Go never starts on its copy again
+)
+
 // Phases are the phases in order.
-var Phases = []Phase{Started, Preflight, DryRun, Barrier, Copied, Checked, Transfer, Switched, Open, Released}
+var Phases = []Phase{Started, Preflight, DryRun, Barrier, Copied, Checked, Transfer, Switched, Open, Released,
+	Rollback, RollbackExported, RollbackImported, RollbackChecked, RollbackTransfer, RolledBack}
+
+// reverseHeld are the reverse's phases before its address moves: an
+// interruption there is undone (Go's barrier lifted, the TypeScript side
+// as the forward migration left it).
+var reverseHeld = []Phase{Rollback, RollbackExported, RollbackImported, RollbackChecked}
 
 // beforeBarrier are the phases where the source runs unchanged: an
 // interruption there is redone from the preflight.
@@ -81,7 +99,62 @@ type Journal struct {
 	Ingress Ingress `json:"ingress"`
 	// Transfer is the address transfer's record.
 	Transfer *TransferRecord `json:"transfer,omitempty"`
+	// Rollback is the reverse migration's record (the last one begun).
+	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	History  []Step          `json:"history"`
+}
+
+// RollbackRecord is a reverse migration's: Go's barrier, the reverse
+// export, the TypeScript release's rebuild and import, the reverse checks,
+// the address moved back, and the Go archives made since the switch.
+type RollbackRecord struct {
+	StartedAt string         `json:"startedAt"`
+	Barrier   *BarrierRecord `json:"barrier,omitempty"`
+	Export    *CopyRecord    `json:"export,omitempty"`
+	// Rebuild is journalled before anything of it is made: the fresh
+	// volumes, the Compose file naming them, and .env's COMPOSE_FILE
+	// before, so an undo removes exactly those.
+	Rebuild *RebuildRecord  `json:"rebuild,omitempty"`
+	Import  *TSImportRecord `json:"import,omitempty"`
+	Checks  *CheckSummary   `json:"checks,omitempty"`
+	// GoStopped is Go's service stopped for the address (the public and
+	// own-proxy shapes, at the transfer; Coolify's once the domain moved).
+	GoStopped  bool   `json:"goStopped"`
+	Asked      bool   `json:"asked"`
+	VerifiedAt string `json:"verifiedAt,omitempty"`
+	// Archives are the Go (format 3) archives made since the switch,
+	// listed in the report and never deleted (decision 17).
+	Archives []ArchiveInfo `json:"archives,omitempty"`
+	Undoing  bool          `json:"undoing,omitempty"`
+	Undone   *UndoneRecord `json:"undone,omitempty"`
+	DoneAt   string        `json:"doneAt,omitempty"`
+}
+
+// RebuildRecord is the TypeScript side's fresh database: the Compose file
+// renaming its Postgres and Convex volumes, the fresh volumes' names, and
+// .env's COMPOSE_FILE before (null: unset).
+type RebuildRecord struct {
+	Override    string   `json:"override"`
+	Volumes     []string `json:"volumes"`
+	ComposeFile *string  `json:"composeFile"`
+	Image       string   `json:"image"`
+}
+
+// TSImportRecord is the TypeScript release's `admin migration import`.
+type TSImportRecord struct {
+	InstallationID string `json:"installationId"`
+	AuditPosition  string `json:"auditPosition"`
+	Tables         int64  `json:"tables"`
+	Rows           int64  `json:"rows"`
+	SHA256         string `json:"sha256"`
+	MigratedOut    string `json:"migratedOutGate"`
+}
+
+// ArchiveInfo is one Go archive.
+type ArchiveInfo struct {
+	ArchiveID string `json:"archiveId"`
+	CreatedAt string `json:"createdAt"`
+	Release   string `json:"release"`
 }
 
 // Step is one phase entered, and when.

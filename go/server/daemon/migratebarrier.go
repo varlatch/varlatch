@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -49,8 +50,10 @@ import (
 // release lifts the barrier (the reverse undone): the gate removed, the
 // frozen copy removed. varlatchd serves again at once.
 //
-// The data directory's journal must name the migration and say open: a
-// reverse migration starts from an installation that migrated to Go.
+// The data directory's journal must name the migration and say open, or
+// one of the reverse's phases before it is done (varlatch migrate journals
+// the reverse before it asks for the barrier): a reverse migration starts
+// from an installation that migrated to Go.
 
 // FrozenCopyName is the barrier's frozen copy's name in the data directory.
 func FrozenCopyName(id string) string { return ".migration-frozen-" + id + ".db" }
@@ -93,7 +96,7 @@ func migrationOpen(dir, id, what string) error {
 		return fmt.Errorf("the data directory holds no migration: %s is a reverse migration's, of an installation that migrated to Go", what)
 	case h.ID != id:
 		return fmt.Errorf("the data directory's journal is the migration %s, not %s", h.ID, id)
-	case h.Phase != "open":
+	case h.Phase != "open" && !slices.Contains(reversing, h.Phase):
 		return fmt.Errorf("the migration %s is in phase %s: its reverse starts from an open migration", h.ID, h.Phase)
 	}
 	return nil

@@ -3094,6 +3094,40 @@ migrations.
   the stated end, a second `--resume` changing nothing; the Coolify shape
   and the image's operator steps too. Every output, journal and log is
   scanned for the keys and the run keys.
+- `varlatch migrate --rollback` (step 7, slice 7.6a; decisions 16 and
+  17): the reverse migration, within 30 days of the switch, back to the
+  last TypeScript release. Its phases are journalled in both places, as
+  the forward migration's:
+  - `rollback`: Go's migration barrier, through its control socket (Go
+    keeps running, isolated, its frozen copy made);
+  - `rollback-exported`: the reverse bundle from the frozen copy, the
+    transformed copy kept;
+  - `rollback-imported`: the TypeScript release on a fresh database. A
+    Compose file of migrate's (`docker-compose.varlatch-rollback.yml`,
+    named in `.env`'s `COMPOSE_FILE`) renames the Postgres and Convex
+    volumes to fresh ones, the retained ones left as they are, and defines
+    the import's one-off service (the release's pinned image, the migrate
+    role and the Root KEK as the installation's own secrets and variables,
+    never an argument). Its `admin migration import` lifts the migrated-out
+    marker; Convex is reset;
+  - `rollback-checked`: the reverse checks;
+  - `rollback-transfer`: the address back (Go stops serving it, the
+    TypeScript release and its ingress start; in Coolify the operator moves
+    the domain back, then Go stops);
+  - `rolled-back`: Go's journal says so, and varlatchd never starts on that
+    data directory again.
+
+  An interruption, a failed check or `--abort` before the transfer undoes
+  it: the TypeScript side as the forward migration left it (its fresh
+  volumes removed, its marker made again), Go's journal open again, then its
+  barrier lifted. Go runs throughout. In the transfer, `--resume` checks
+  again; `--abort` gives the address back to Go first.
+
+  Its report lists the Go archives made since the switch, which the
+  TypeScript release cannot read (never deleted). `--finish` is 7.6a's
+  third part. G5's interrupted reverse (`server/migration/g5/
+  rollback_test.go`) kills it at every phase boundary and holds the stated
+  state there, with Go running until the address moves.
 - The live open: `varlatchd admin migrate open --id <migration>` ends the
   transfer's gate in the running varlatchd, through its control socket
   (offline, on the data directory), then writes its journal open (the gate

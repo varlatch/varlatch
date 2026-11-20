@@ -32,7 +32,11 @@ const migrateUsage = `Usage:
                    (instead of --config and --unit: the Go image's service, created in setup mode with nothing listening,
                     its bind paths on this host; you start and stop it when migrate asks)
   varlatch migrate --resume (the same options)
-  varlatch migrate --abort (the same options): undo a migration not yet switched
+  varlatch migrate --abort (the same options): undo a migration not yet switched, or a reverse not yet rolled back
+  varlatch migrate --rollback [--from <compose directory>] (--config <varlatchd.conf> | --to-data ... as above)
+                   [--drain <duration>] [--transfer-timeout <duration>]
+               (within 30 days of the switch: back to the last TypeScript release, rebuilt on a fresh database
+                from the Go installation, which keeps running until the address moves back)
   varlatch migrate --status [--from <compose directory>] [--json]
                (on the installation's host, as root: --from is the Compose installation of the last
                 TypeScript release, the current directory by default; --config the target's varlatchd.conf;
@@ -49,7 +53,7 @@ type migrateOptions struct {
 	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI, ingress, unit string
 	toData, toKeys, toConfig, toImage, toService                                                         string
 	maxDowntime, drain, transferTimeout                                                                  time.Duration
-	dryRun, resume, abort, status, asJSON                                                                bool
+	dryRun, resume, abort, status, asJSON, rollback                                                      bool
 }
 
 func parseMigrateOptions(args []string) (migrateOptions, error) {
@@ -59,7 +63,7 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		"--ingress": &o.ingress, "--unit": &o.unit, "--to-data": &o.toData, "--to-keys": &o.toKeys, "--to-config": &o.toConfig,
 		"--to-image": &o.toImage, "--to-service": &o.toService}
 	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
-	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON}
+	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback}
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch migrate: "+msg, "\n"+migrateUsage) }
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -106,9 +110,13 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--resume does what the interrupted run was asked, --abort undoes it; neither takes --dry-run")
 	case o.resume && o.abort:
 		return o, usage("--resume or --abort, not both")
+	case o.rollback && (o.resume || o.abort || o.dryRun || o.status || o.ingress != "" || o.bekFile != "" || o.destination != "" || o.readCredentials != "" || o.maxDowntime != 0):
+		return o, usage("--rollback takes --from, the target (--config, or --to-*), --drain and --transfer-timeout: the rest is the migration's journal's; --resume and --abort go on with an interrupted reverse")
+	case o.rollback && o.config == "" && o.toData == "":
+		return o, usage("--rollback needs the target: --config, or --to-data, --to-keys, --to-config, --to-image and --to-service")
 	case o.unit != "" && !migrate.ValidUnit(o.unit):
 		return o, usage("--unit takes a systemd unit's name (such as varlatchd), not an option or a path")
-	case !o.status && !o.resume && !o.abort && !slices.Contains([]string{"public", "proxy", "coolify"}, o.ingress):
+	case !o.status && !o.resume && !o.abort && !o.rollback && !slices.Contains([]string{"public", "proxy", "coolify"}, o.ingress):
 		return o, usage("--ingress is public, proxy or coolify: the source's ingress (its own Caddy, your reverse proxy, or Coolify's)")
 	case o.config != "" && (o.toData != "" || o.toKeys != "" || o.toConfig != "" || o.toImage != "" || o.toService != ""):
 		return o, usage("--config is a host install's target, --to-* the image's: give one of them")
@@ -117,7 +125,9 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("the image target takes --to-data, --to-keys, --to-config, --to-image and --to-service, all of them")
 	case o.toData != "" && o.unit != "":
 		return o, usage("--unit is a host install's: the image's service is started and stopped by you")
-	case !o.status && ((o.config == "" && o.toData == "") || o.bekFile == "" || o.destination == "" || o.readCredentials == ""):
+	case (o.resume || o.abort) && o.config == "" && o.toData == "":
+		return o, usage("--resume and --abort need the target: --config, or --to-data, --to-keys, --to-config, --to-image and --to-service")
+	case !o.status && !o.rollback && !o.resume && !o.abort && ((o.config == "" && o.toData == "") || o.bekFile == "" || o.destination == "" || o.readCredentials == ""):
 		return o, usage("give the target (--config, or --to-data, --to-keys, --to-config, --to-image and --to-service), --bek-file, --backup-destination and --read-credentials-file")
 	}
 	return o, nil
@@ -155,13 +165,19 @@ func migrateCommand(r *Run) error {
 		}
 		return r.showJournal(j, o.asJSON)
 	}
-	bek, err := os.ReadFile(o.bekFile)
-	if err != nil {
-		return Fail("varlatch migrate: the Backup Encryption Key file: "+err.Error(), ExitFailure)
-	}
-	defer clear(bek)
-	if len(bytes.TrimSpace(bek)) == 0 {
-		return Fail("varlatch migrate: the Backup Encryption Key file "+Printable(o.bekFile)+" is empty: a migration copies the source's BEK, so give its file", ExitFailure)
+	// --resume and --abort read the BEK when given: a migration redone
+	// from its preflight needs it (its backup refuses without it), a
+	// reverse never.
+	var bek []byte
+	if !o.rollback && (o.bekFile != "" || (!o.resume && !o.abort)) {
+		bek, err = os.ReadFile(o.bekFile)
+		if err != nil {
+			return Fail("varlatch migrate: the Backup Encryption Key file: "+err.Error(), ExitFailure)
+		}
+		defer clear(bek)
+		if len(bytes.TrimSpace(bek)) == 0 {
+			return Fail("varlatch migrate: the Backup Encryption Key file "+Printable(o.bekFile)+" is empty: a migration copies the source's BEK, so give its file", ExitFailure)
+		}
 	}
 	varlatchd, err := r.locateVarlatchd("varlatch migrate")
 	if err != nil {
@@ -184,7 +200,7 @@ func migrateCommand(r *Run) error {
 		if err != nil {
 			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
 		}
-		cleanup, err := migrate.PrepareImage(context.Background(), img, base, !o.resume && !o.abort)
+		cleanup, err := migrate.PrepareImage(context.Background(), img, base, !o.resume && !o.abort && !o.rollback)
 		defer cleanup()
 		if err != nil {
 			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
@@ -198,6 +214,8 @@ func migrateCommand(r *Run) error {
 		j, err = e.Resume(context.Background())
 	case o.abort:
 		j, err = e.Abort(context.Background())
+	case o.rollback:
+		j, err = e.Rollback(context.Background())
 	default:
 		j, err = e.Run(context.Background(), o.dryRun)
 	}
@@ -275,6 +293,36 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 	}
 	if u := j.Undone; u != nil {
 		fmt.Fprintf(&b, "Undone from phase %s: %s.\n", u.From, u.Why)
+	}
+	if rb := j.Rollback; rb != nil {
+		fmt.Fprintf(&b, "Reverse, begun %s:", rb.StartedAt)
+		if bar := rb.Barrier; bar != nil {
+			fmt.Fprintf(&b, " Go's barrier froze it at audit position %s;", bar.AuditPosition)
+		}
+		if ex := rb.Export; ex != nil {
+			fmt.Fprintf(&b, " the reverse bundle %d tables, %d rows, %d sessions ended;", ex.Tables, ex.Rows, ex.SessionsEnded)
+		}
+		if rr := rb.Rebuild; rr != nil {
+			fmt.Fprintf(&b, " fresh volumes %s;", strings.Join(rr.Volumes, ", "))
+		}
+		if im := rb.Import; im != nil {
+			fmt.Fprintf(&b, " imported by the TypeScript release up to audit position %s;", im.AuditPosition)
+		}
+		if c := rb.Checks; c != nil {
+			fmt.Fprintf(&b, " reverse checks passed %v;", c.Passed)
+		}
+		if rb.VerifiedAt != "" {
+			fmt.Fprintf(&b, " the public URL answered from the TypeScript release at %s;", rb.VerifiedAt)
+		} else if rb.Asked {
+			b.WriteString(" waiting for your step (then varlatch migrate --resume);")
+		}
+		if u := rb.Undone; u != nil {
+			fmt.Fprintf(&b, " undone from phase %s: %s", u.From, u.Why)
+		}
+		b.WriteString("\n")
+		for _, a := range rb.Archives {
+			fmt.Fprintf(&b, "Go archive made since the switch, not deleted: %s (release %s, %s).\n", a.ArchiveID, a.Release, a.CreatedAt)
+		}
 	}
 	return r.out(b.String())
 }

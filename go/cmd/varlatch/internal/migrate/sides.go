@@ -175,9 +175,11 @@ type TargetInfo struct {
 type TargetState struct {
 	Journal  *JournalHead
 	Database bool
-	// Gate is whether the transfer's gate stands; Running whether the
-	// target's varlatchd runs.
+	// Gate is whether the transfer's gate stands; Barrier a reverse's
+	// barrier's phase ("" for none); Running whether the target's
+	// varlatchd runs.
 	Gate    bool
+	Barrier string
 	Running bool
 }
 

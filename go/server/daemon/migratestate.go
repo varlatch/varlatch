@@ -43,8 +43,19 @@ import (
 const JournalFile = "migration.json"
 
 // The journal's phases, in order (`varlatch migrate`'s
-// internal/migrate.Phase); "released" is a migration undone.
-var journalPhases = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "transfer", "switched", "open", "released"}
+// internal/migrate.Phase); "released" is a migration undone. After them,
+// the reverse migration's (go-step7 decision 16, slice 7.6a): reversing
+// (Go behind its barrier, or being put there), then the reverse bundle
+// exported, imported by the TypeScript release onto a fresh database,
+// checked, the address moving back; "rolled-back" is the reverse done,
+// the TypeScript release the installation again. A reverse undone goes
+// back to "open".
+var journalPhases = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "transfer", "switched", "open", "released",
+	"rollback", "rollback-exported", "rollback-imported", "rollback-checked", "rollback-transfer", "rolled-back"}
+
+// reversing are the reverse migration's phases before it is done: Go
+// still the installation, behind its barrier once it froze.
+var reversing = []string{"rollback", "rollback-exported", "rollback-imported", "rollback-checked", "rollback-transfer"}
 
 // beforeBarrier are the phases a migration is redone from its start in.
 var beforeBarrier = []string{"started", "preflight", "dry-run"}
@@ -112,6 +123,22 @@ func migrationGate(dataDir string) error {
 		return nil
 	case h.Phase == "released":
 		return fmt.Errorf("the migration %s into this data directory was undone; its database is the old installation's copy, not to serve (varlatch migrate --status)", h.ID)
+	case h.Phase == "rollback":
+		// Reversing, Go is still the installation: it serves, isolated by
+		// its barrier once that stands (an interrupted reverse leaves Go
+		// running, decision 17).
+		return nil
+	case slices.Contains(reversing, h.Phase):
+		// Past the frozen point the rebuilt TypeScript installation holds
+		// Go's state as the barrier froze it: varlatchd serves behind
+		// that barrier only, never taking a write the rebuild lacks.
+		g, err := backup.ReadGate(dataDir)
+		if err != nil || g == nil || g.Kind != "migration" || g.ID != h.ID || g.Phase == "transfer" {
+			return fmt.Errorf("the migration %s is being reversed (phase %s), but the data directory holds no barrier of it; varlatchd starts behind it only (varlatch migrate --status)", h.ID, h.Phase)
+		}
+		return nil
+	case h.Phase == "rolled-back":
+		return fmt.Errorf("the migration %s was reversed: the TypeScript release is the installation again, and this data directory is Go's copy as it was, not to serve (varlatch migrate --status; varlatch migrate --finish removes it)", h.ID)
 	}
 	return fmt.Errorf("the migration %s into this data directory is in phase %s; varlatchd starts once varlatch migrate opens it (varlatch migrate --status)", h.ID, h.Phase)
 }
@@ -189,7 +216,12 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		// start before its barrier, or undone before its switch.
 		back := slices.Index(journalPhases, h.Phase) < slices.Index(journalPhases, old.Phase)
 		redone := h.Phase == "started" && slices.Contains(beforeBarrier, old.Phase)
-		if ok && old.ID == h.ID && back && h.Phase != "released" && !redone {
+		// A reverse undone goes back to open, and to nothing else.
+		reverseUndone := h.Phase == "open" && slices.Contains(reversing, old.Phase)
+		if ok && old.ID == h.ID && slices.Contains(append(slices.Clone(reversing), "rolled-back"), old.Phase) && !slices.Contains(append(slices.Clone(reversing), "open", "rolled-back"), h.Phase) {
+			return fail(ExitFailure, "the migration %s is in phase %s; its journal goes on to the reverse's phases, or back to open, not to %s; nothing was written", h.ID, old.Phase, h.Phase)
+		}
+		if ok && old.ID == h.ID && back && h.Phase != "released" && !redone && !reverseUndone {
 			return fail(ExitFailure, "the migration %s is in phase %s; its journal does not go back to %s; nothing was written", h.ID, old.Phase, h.Phase)
 		}
 		if ok && old.ID == h.ID && (old.Phase == "switched" || old.Phase == "open") && h.Phase == "released" {

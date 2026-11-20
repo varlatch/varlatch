@@ -87,6 +87,7 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		Listen      string       `json:"listen"`
 		ListenHTTPS string       `json:"listenHttps"`
 		Gate        *bool        `json:"migrationGate"`
+		Barrier     string       `json:"barrier"`
 		Running     bool         `json:"running"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &s); err != nil || s.DataDir == "" {
@@ -96,7 +97,7 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		return info, TargetState{}, errors.New("the target's varlatchd is older than this varlatch (its admin migrate state names no release, address or gate): install the varlatchd of this release")
 	}
 	info.DataDir, info.Release, info.PublicURL, info.Listen, info.ListenHTTPS = s.DataDir, s.Release, s.PublicURL, s.Listen, s.ListenHTTPS
-	return info, TargetState{Journal: s.Journal, Database: s.Database, Gate: *s.Gate, Running: s.Running}, nil
+	return info, TargetState{Journal: s.Journal, Database: s.Database, Gate: *s.Gate, Barrier: s.Barrier, Running: s.Running}, nil
 }
 
 // Keys is `admin migrate keys`, the keys on its stdin as JSON, each
@@ -177,9 +178,13 @@ func (h *Host) Import(ctx context.Context, bundle, scratch string) (CopyRecord, 
 // Check is `admin migrate check --json`, the run key on its stdin. A
 // report that fails is a CheckSummary not passed, not an error.
 func (h *Host) Check(ctx context.Context, bundle, scratch string, runKey []byte) (CheckSummary, error) {
+	return h.check(ctx, append([]string{"check", "--in", bundle, "--json"}, scratchArgs(scratch)...), runKey)
+}
+
+func (h *Host) check(ctx context.Context, args []string, runKey []byte) (CheckSummary, error) {
 	key := RunKeyText(runKey)
 	defer clear(key)
-	r, err := h.admin(ctx, append([]string{"check", "--in", bundle, "--json"}, scratchArgs(scratch)...), key)
+	r, err := h.admin(ctx, args, key)
 	if err != nil {
 		return CheckSummary{}, err
 	}

@@ -393,6 +393,14 @@ func (c *Compose) Barrier(ctx context.Context, drain time.Duration) (BarrierReco
 // under a new name, the run key on the export's stdin; its path on this
 // host.
 func (c *Compose) Export(ctx context.Context, runKey []byte, dryRun bool) (string, error) {
+	return c.export(ctx, runKey, dryRun, func(args ...string) []string {
+		return append([]string{"compose", "exec", "-T", service, "node", "dist/cli.js", "admin"}, args...)
+	})
+}
+
+// export runs the export with the command prefix gives (exec into the
+// running daemon's container, or a one-off one).
+func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix func(...string) []string) (string, error) {
 	suffix := make([]byte, 6)
 	if _, err := rand.Read(suffix); err != nil {
 		return "", err
@@ -404,7 +412,7 @@ func (c *Compose) Export(ctx context.Context, runKey []byte, dryRun bool) (strin
 	}
 	key := RunKeyText(runKey)
 	defer clear(key)
-	r, err := c.admin(ctx, args, key)
+	r, err := c.docker(ctx, prefix(args...), key)
 	host := filepath.Join(c.Directory, "backups", name)
 	if err != nil {
 		_ = os.Remove(host)
@@ -427,6 +435,9 @@ var leftoverBundle = regexp.MustCompile(`^migration-[0-9a-f]{12}\.jsonl(\.partia
 // installation's backups directory: Export's names only, regular files
 // only.
 func (c *Compose) CleanLeftovers() error {
+	if err := removeMatching(filepath.Join(c.Directory, "backups"), leftoverReverse, false); err != nil {
+		return err
+	}
 	return removeMatching(filepath.Join(c.Directory, "backups"), leftoverBundle, false)
 }
 
