@@ -90,6 +90,8 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, nil
 	case slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer:
 		return j, fmt.Errorf("the reverse of the migration %s was interrupted in phase %s: varlatch migrate --resume continues or undoes it (varlatch migrate --status)", j.ID, j.Phase)
+	case j.Phase == Finished:
+		return j, fmt.Errorf("the migration %s is finished: varlatch migrate --finish ended its rollback window, so no reverse starts from it", j.ID)
 	case j.Phase != Open:
 		return j, fmt.Errorf("the migration %s is in phase %s: --rollback reverses an open migration only", j.ID, j.Phase)
 	}

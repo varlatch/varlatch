@@ -184,13 +184,14 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	// open into the reverse's phases, on through them, or back to open
 	// (the reverse undone). Its barrier is its own commands' (barrier,
 	// release), never a state write's. Rolled back waits for varlatchd to
-	// stop: from then it does not start.
+	// stop: from then it does not start. Finished (the rollback window
+	// ended, from open) is the journal's word alone too.
 	inert := false
 	if journalIn != nil {
 		if h, err := parseJournal(journalIn); err == nil && h.Phase != "released" {
 			old, ok, oerr := readJournal(cfg.DataDir)
 			same := oerr == nil && ok && old.ID == h.ID
-			inert = h.Phase != "open" && (h.Phase == "switched" || same && old.Phase == h.Phase)
+			inert = h.Phase != "open" && (h.Phase == "switched" || same && old.Phase == h.Phase || same && old.Phase == "open" && h.Phase == "finished")
 			if same && (old.Phase == "open" || slices.Contains(reversing, old.Phase)) && (h.Phase == "open" || slices.Contains(reversing, h.Phase)) {
 				inert = !(old.Phase == "open" && h.Phase == "open")
 			}

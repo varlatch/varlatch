@@ -48,9 +48,15 @@ const (
 	RolledBack       Phase = "rolled-back"       // the TypeScript release serves; Go never starts on its copy again
 )
 
+// Finished is a migration whose rollback window `varlatch migrate --finish`
+// ended (decision 17), after open or rolled back: no reverse starts from
+// it, and what the old side kept is removed (its data only with
+// --delete-old-data).
+const Finished Phase = "finished"
+
 // Phases are the phases in order.
 var Phases = []Phase{Started, Preflight, DryRun, Barrier, Copied, Checked, Transfer, Switched, Open, Released,
-	Rollback, RollbackExported, RollbackImported, RollbackChecked, RollbackTransfer, RolledBack}
+	Rollback, RollbackExported, RollbackImported, RollbackChecked, RollbackTransfer, RolledBack, Finished}
 
 // reverseHeld are the reverse's phases before its address moves: an
 // interruption there is undone (Go's barrier lifted, the TypeScript side
@@ -101,7 +107,9 @@ type Journal struct {
 	Transfer *TransferRecord `json:"transfer,omitempty"`
 	// Rollback is the reverse migration's record (the last one begun).
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
-	History  []Step          `json:"history"`
+	// Finish is --finish's record.
+	Finish  *FinishRecord `json:"finish,omitempty"`
+	History []Step        `json:"history"`
 }
 
 // RollbackRecord is a reverse migration's: Go's barrier, the reverse

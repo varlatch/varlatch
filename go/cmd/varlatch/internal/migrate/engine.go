@@ -184,11 +184,17 @@ func (e *Engine) Run(ctx context.Context, dryRunOnly bool) (*Journal, error) {
 	case j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is open: this installation was migrated (varlatch migrate --status)", j.ID)
 	case j.Phase == RolledBack:
-		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves again, and the target holds Go's copy; varlatch migrate --finish removes it before a new migration", j.ID)
+		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves again, and the target holds Go's copy; varlatch migrate --finish --delete-old-data removes it before a new migration", j.ID)
+	case j.Phase == Finished && j.Finish != nil && j.Finish.After == RolledBack && j.Finish.DeleteOldData && j.Finish.DoneAt != "":
+		// Rolled back, Go's copy discarded: a new migration may start.
+	case j.Phase == Finished && j.Finish != nil && j.Finish.After == RolledBack:
+		return j, fmt.Errorf("the migration %s was rolled back and finished, but Go's copy is kept: varlatch migrate --finish --delete-old-data removes it before a new migration", j.ID)
+	case j.Phase == Finished:
+		return j, fmt.Errorf("the migration %s is finished: this installation was migrated, and its rollback window is closed (varlatch migrate --status)", j.ID)
 	default:
 		return j, fmt.Errorf("the migration %s was interrupted in phase %s: varlatch migrate --resume continues or undoes it (varlatch migrate --status)", j.ID, j.Phase)
 	}
-	reuse := j != nil && j.Phase != Released
+	reuse := j != nil && j.Phase != Released && j.Phase != Finished
 	return e.start(ctx, j, reuse, dryRunOnly)
 }
 
@@ -237,7 +243,10 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	} else if j.ID, err = newID(); err != nil {
 		return prev, err
 	}
-	if head != nil && head.ID != j.ID && head.Phase != Released {
+	// Another migration's journal: one undone (released), or reversed with
+	// its database discarded (rolled back, then finished with its old
+	// data deleted), gives way to a new one.
+	if head != nil && head.ID != j.ID && head.Phase != Released && !(head.Phase == RolledBack && !st.Database) {
 		return prev, fmt.Errorf("the target's data directory holds the migration %s, in phase %s: it is not this one", head.ID, head.Phase)
 	}
 	if head != nil && head.ID == j.ID && !slices.Contains(beforeBarrier, head.Phase) && head.Phase != Released {
@@ -785,6 +794,13 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	if slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer || j.Phase == RolledBack {
 		return j, e.resumeReverse(ctx, j)
 	}
+	if j.Phase == Finished {
+		if j.Finish != nil && j.Finish.DoneAt == "" {
+			e.say("The migration %s's --finish was interrupted: it goes on.", j.ID)
+			return j, e.finishRemove(ctx, j)
+		}
+		return j, nil
+	}
 	switch {
 	case j.Undoing && j.Phase != Released:
 		e.say("The migration %s was being undone: undoing goes on.", j.ID)
@@ -912,6 +928,8 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 		return j, err
 	case j.Phase == RolledBack:
 		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves; going to Go again is a new migration (after varlatch migrate --finish)", j.ID)
+	case j.Phase == Finished:
+		return j, fmt.Errorf("the migration %s is finished: its rollback window is closed, and nothing of it is undone", j.ID)
 	case j.Phase == Switched || j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is %s: past its switch it goes forward only (varlatch migrate --resume)", j.ID, j.Phase)
 	}

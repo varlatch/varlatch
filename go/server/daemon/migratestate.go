@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"golang.org/x/term"
@@ -48,9 +49,11 @@ const JournalFile = "migration.json"
 // exported, imported by the TypeScript release onto a fresh database,
 // checked, the address moving back; "rolled-back" is the reverse done,
 // the TypeScript release the installation again. A reverse undone goes
-// back to "open".
+// back to "open". "finished" is an open migration whose rollback window
+// `varlatch migrate --finish` ended (decision 17): Go is the installation
+// for good, and no reverse starts from it.
 var journalPhases = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "transfer", "switched", "open", "released",
-	"rollback", "rollback-exported", "rollback-imported", "rollback-checked", "rollback-transfer", "rolled-back"}
+	"rollback", "rollback-exported", "rollback-imported", "rollback-checked", "rollback-transfer", "rolled-back", "finished"}
 
 // reversing are the reverse migration's phases before it is done: Go
 // still the installation, behind its barrier once it froze.
@@ -109,7 +112,7 @@ func migrationGate(dataDir string) error {
 	switch {
 	case err != nil:
 		return fmt.Errorf("%s: %v; varlatchd does not start on a data directory whose migration it cannot read", filepath.Join(dataDir, JournalFile), err)
-	case !ok || h.Phase == "open":
+	case !ok || h.Phase == "open" || h.Phase == "finished":
 		return nil
 	case h.Phase == "transfer":
 		// The address transfer (decision 12): varlatchd serves, isolated
@@ -208,7 +211,12 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		if err != nil {
 			return fail(ExitFailure, "the data directory's journal: %v; nothing was written", err)
 		}
-		if ok && old.ID != h.ID && old.Phase != "released" {
+		// Another migration's journal is replaced once that one was undone
+		// (released), or reversed and its database discarded (rolled back,
+		// then finished with its old data deleted).
+		_, dbErr := os.Stat(cfg.DatabasePath())
+		replaceable := old.Phase == "released" || old.Phase == "rolled-back" && errors.Is(dbErr, fs.ErrNotExist)
+		if ok && old.ID != h.ID && !replaceable {
 			return fail(ExitFailure, "the data directory holds the migration %s, in phase %s; it is not replaced by %s; nothing was written", old.ID, old.Phase, h.ID)
 		}
 		// A journal goes forward, but for a migration redone from its
@@ -359,9 +367,14 @@ func runMigrateDiscard(cfg *config.Config, a migrateArgs, stdout io.Writer, fail
 		return fail(ExitFailure, "the data directory %s has no migration journal: its database is not a migration's to discard; nothing was removed", cfg.DataDir)
 	case h.ID != a.id:
 		return fail(ExitFailure, "the data directory's journal is the migration %s, not %s; nothing was removed", h.ID, a.id)
-	case !slices.Contains(undoable, h.Phase):
+	case !slices.Contains(undoable, h.Phase) && h.Phase != "rolled-back":
 		return fail(ExitFailure, "the migration %s is in phase %s, past its switch: its database is the installation's; nothing was removed", h.ID, h.Phase)
 	}
+	// Rolled back, the database is Go's copy, the TypeScript release the
+	// installation again: varlatch migrate --finish --delete-old-data
+	// discards it (and the reverse's frozen copy) once its final archive
+	// is verified.
+	frozen := FrozenCopyName(h.ID)
 	entries, err := os.ReadDir(cfg.DataDir)
 	if err != nil {
 		return fail(ExitFailure, "%v", err)
@@ -373,6 +386,9 @@ func runMigrateDiscard(cfg *config.Config, a migrateArgs, stdout io.Writer, fail
 			continue
 		}
 		db := n == config.DatabaseFile || n == config.DatabaseFile+"-wal" || n == config.DatabaseFile+"-shm" || n == config.DatabaseFile+"-journal"
+		if h.Phase == "rolled-back" && strings.HasPrefix(n, frozen) {
+			db = true
+		}
 		if !db && !migrate.IsLeftover(n) {
 			continue
 		}

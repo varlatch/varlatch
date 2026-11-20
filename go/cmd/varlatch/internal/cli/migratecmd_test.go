@@ -42,6 +42,12 @@ func TestMigrateCommand(t *testing.T) {
 		{[]string{"migrate", "--rollback", "--config", "/c", "--bek-file", "/b"}, "--rollback takes --from, the target"},
 		{[]string{"migrate", "--rollback", "--resume", "--config", "/c"}, "--rollback takes --from, the target"},
 		{[]string{"migrate", "--rollback", "--dry-run", "--config", "/c"}, "--rollback takes --from, the target"},
+		{[]string{"migrate", "--delete-old-data", "--config", "/c"}, "--delete-old-data goes with --finish only"},
+		{[]string{"migrate", "--rollback", "--delete-old-data", "--config", "/c"}, "--delete-old-data goes with --finish only"},
+		{[]string{"migrate", "--finish"}, "--finish needs the target"},
+		{[]string{"migrate", "--finish", "--rollback", "--config", "/c"}, "--finish takes --from, the target"},
+		{[]string{"migrate", "--finish", "--ingress", "proxy", "--config", "/c"}, "--finish takes --from, the target"},
+		{[]string{"migrate", "--finish", "--yes", "--config", "/c"}, "unknown option --yes"},
 	} {
 		if code, _, errOut := run(c.args...); code != ExitUsage || !strings.Contains(errOut, c.why) {
 			t.Errorf("%q: %d %q, want %q", c.args, code, errOut, c.why)

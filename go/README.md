@@ -3124,8 +3124,29 @@ migrations.
   again; `--abort` gives the address back to Go first.
 
   Its report lists the Go archives made since the switch, which the
-  TypeScript release cannot read (never deleted). `--finish` is 7.6a's
-  third part. G5's interrupted reverse (`server/migration/g5/
+  TypeScript release cannot read (never deleted).
+- `varlatch migrate --finish [--delete-old-data]` (slice 7.6a; decision
+  17): the operator ends the rollback window.
+  - **After a forward migration:**
+    - `finished` in both journals (Go's beside it: it serves as before);
+      `--rollback` then refuses, and `migrate.RollbackWindowOpen(dataDir)`
+      (false once finished) is what `varlatch upgrade` asks before a
+      release with `endsRollbackWindow`;
+    - the TypeScript installation's containers are removed (`docker
+      compose down`, its volumes kept), and its old node's state and
+      certificates (its Tailscale and Caddy volumes);
+    - with `--delete-old-data` only, which nothing implies: a final
+      archive of it (format 2, its own backup, uploaded, then downloaded
+      and verified) is journalled first, then its Postgres and Convex
+      volumes are removed.
+  - **After a reverse:**
+    - the source's journal says `finished`, and Go's stays `rolled-back`;
+    - with `--delete-old-data`: a final archive of Go's copy (format 3,
+      verified), then the copy is discarded and the pre-migration volumes
+      the rebuild left unused are removed. Never the ones in use.
+  - In Coolify's shape, the removals are said as the operator's.
+  - Interrupted after `finished`, `--resume` finishes it (each removal is
+    done again harmlessly); before, `--finish` runs again. G5's interrupted reverse (`server/migration/g5/
   rollback_test.go`) kills it at every phase boundary and holds the stated
   state there, with Go running until the address moves.
 - The live open: `varlatchd admin migrate open --id <migration>` ends the

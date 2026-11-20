@@ -191,9 +191,21 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 		}
 		return 0, true
+	case j == "compose down":
+		for _, svc := range []string{"varlatchd", "varlatch-web", "postgres", "convex-backend", "caddy", "tailscale"} {
+			if err := setStopped(svc, true); err != nil {
+				return fail("%v", err)
+			}
+		}
+		return okOr(os.WriteFile(state("down"), nil, 0o600)), true
 	case len(args) == 4 && args[0] == "volume" && args[1] == "rm" && args[2] == "-f":
-		if postgresVolume() == args[3] {
+		inUse := postgresVolume() == args[3] || postgresVolume() == "postgres-data" && strings.HasSuffix(args[3], "_postgres-data")
+		if inUse && !stopped("postgres") {
 			return fail("Error response from daemon: remove %s: volume is in use", args[3])
+		}
+		if f, err := os.OpenFile(state("removed-volumes"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+			fmt.Fprintln(f, args[3])
+			f.Close()
 		}
 		if err := os.Remove(state("db-" + args[3] + ".json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fail("%v", err)

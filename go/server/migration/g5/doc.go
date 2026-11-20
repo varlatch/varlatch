@@ -21,5 +21,8 @@
 // interrupted reverse (slice 7.6a): the real `varlatch migrate --rollback`
 // killed at every phase boundary of the reverse, Go running until the
 // address moves back, the TypeScript side's rebuild on a fresh volume
-// stood in for (its header says what).
+// stood in for (its header says what). finish_test.go is --finish: the
+// window ended after a forward migration and after a reverse, the old data
+// deleted only with --delete-old-data and only after its verified final
+// archive, killed at each step and finished by --resume.
 package g5

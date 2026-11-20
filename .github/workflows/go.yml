@@ -421,7 +421,7 @@ jobs:
       # reverse half (7.6a: Go's barrier, the reverse export and checks, a
       # second forward migration reproducing the state, after each kind of
       # change on Go; varlatch migrate --rollback interrupted at every
-      # phase boundary). Its own step, so the gate's evidence is its own line
+      # phase boundary; --finish and --delete-old-data). Its own step, so the gate's evidence is its own line
       # in the run.
       - name: G5, the migration's damage gate
         working-directory: go
