@@ -3,7 +3,6 @@
 package migrate
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -80,34 +79,34 @@ type ReverseSource interface {
 	UndoRebuild(ctx context.Context, plan RebuildRecord) error
 }
 
-// projectName is the installation's Compose project: .env's
-// COMPOSE_PROJECT_NAME, else its directory's name as Compose normalizes it.
-func (c *Compose) projectName() (string, error) {
-	env, err := c.envFile()
+// projectName is the installation's Compose project, as Compose itself
+// resolves it (its -p, COMPOSE_PROJECT_NAME, the files' top-level name:,
+// the directory's name, in that order): `docker compose config` in the
+// installation's directory, whose .env names its files. Uninterpolated:
+// the configuration interpolated would carry the installation's secrets
+// from .env, and only its name is read. Every volume name the reverse and
+// --finish derive starts with it.
+func (c *Compose) projectName(ctx context.Context) (string, error) {
+	r, err := c.docker(ctx, []string{"compose", "config", "--no-interpolate", "--format", "json"}, nil)
 	if err != nil {
 		return "", err
 	}
-	name := env["COMPOSE_PROJECT_NAME"]
-	if name == "" {
-		name = filepath.Base(c.Directory)
+	if r.Code != 0 {
+		return "", errors.New("docker compose config failed: the installation's Compose project could not be read")
 	}
-	name = strings.ToLower(name)
-	var b strings.Builder
-	for _, r := range name {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
-			b.WriteRune(r)
-		}
+	var m struct {
+		Name string `json:"name"`
 	}
-	if b.Len() == 0 {
-		return "", fmt.Errorf("%s has no Compose project name", c.Directory)
+	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &m); err != nil || m.Name == "" || strings.ContainsAny(m.Name, "/ \t\n") {
+		return "", errors.New("docker compose config did not name the installation's Compose project")
 	}
-	return b.String(), nil
+	return m.Name, nil
 }
 
 // RebuildPlan: the fresh volumes, named by the project and the migration
 // (its id's last 8 letters), and COMPOSE_FILE as it is now.
-func (c *Compose) RebuildPlan(_ context.Context, j *Journal) (RebuildRecord, error) {
-	project, err := c.projectName()
+func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, error) {
+	project, err := c.projectName(ctx)
 	if err != nil {
 		return RebuildRecord{}, err
 	}
@@ -193,10 +192,19 @@ func (c *Compose) composeFiles(plan RebuildRecord) string {
 	return strings.Join(append(files, OverrideFile), sep)
 }
 
-// setEnv writes .env with name set to value (nil: the line removed),
-// every other line as it is; the file's mode kept.
+// setEnv writes .env with name set to value (nil: the line removed), every
+// other byte as it was: the file is split on newlines, never scanned, so a
+// line of any length is kept whole (a scanner stopped by its token limit
+// would write a truncated .env over the operator's). A .env that is a
+// symbolic link is written at its target, which is replaced through a
+// temporary name beside it; the link stays. Its mode is kept.
 func (c *Compose) setEnv(name string, value *string) error {
 	path := filepath.Join(c.Directory, ".env")
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -207,20 +215,25 @@ func (c *Compose) setEnv(name string, value *string) error {
 	}
 	var out bytes.Buffer
 	done := false
-	sc := bufio.NewScanner(bytes.NewReader(b))
-	for sc.Scan() {
-		line := sc.Text()
-		key, _, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && strings.TrimSpace(key) == name && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+	for _, line := range bytes.SplitAfter(b, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		text := strings.TrimSpace(string(line))
+		key, _, ok := strings.Cut(text, "=")
+		if ok && strings.TrimSpace(key) == name && !strings.HasPrefix(text, "#") {
 			if value != nil && !done {
 				out.WriteString(name + "=" + *value + "\n")
 			}
 			done = true
 			continue
 		}
-		out.WriteString(line + "\n")
+		out.Write(line)
 	}
 	if value != nil && !done {
+		if out.Len() > 0 && !bytes.HasSuffix(out.Bytes(), []byte("\n")) {
+			out.WriteByte('\n')
+		}
 		out.WriteString(name + "=" + *value + "\n")
 	}
 	return writeFileDurably(path, out.Bytes(), mode)
