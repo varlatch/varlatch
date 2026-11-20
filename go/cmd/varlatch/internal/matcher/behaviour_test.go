@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -200,29 +201,37 @@ func TestPushNeverKeepsTheCallersBuffer(t *testing.T) {
 
 // growth times the small and the large work: each runs once untimed first
 // (a cold or still clocking-up CPU would make whichever runs first look
-// slow), then they are timed in turn, small, large, small, large, small,
-// large, each run after a garbage collection, and the fastest of each is
-// given. Noise (a shared runner's pauses, another job's load) only ever
-// adds time, and timing the two in turn makes a busy spell slow both alike
+// slow), then they are timed in turn, small, large, five times each, each
+// run after a garbage collection and with the collector off while it runs,
+// and the fastest of each is given. Noise (a shared runner's pauses,
+// another job's load, a collection landing in one run) only ever adds
+// time, and timing the two in turn makes a busy spell slow both alike
 // instead of one.
 func growth(small, large func()) (time.Duration, time.Duration) {
 	small()
 	large()
 	var bestSmall, bestLarge time.Duration
-	for i := range 3 {
+	for i := range 5 {
 		for _, f := range []struct {
 			run  func()
 			best *time.Duration
 		}{{small, &bestSmall}, {large, &bestLarge}} {
-			runtime.GC()
-			start := time.Now()
-			f.run()
-			if took := time.Since(start); i == 0 || took < *f.best {
+			if took := timed(f.run); i == 0 || took < *f.best {
 				*f.best = took
 			}
 		}
 	}
 	return bestSmall, bestLarge
+}
+
+// timed is one run of f, after a garbage collection and with the collector
+// off while it runs.
+func timed(f func()) time.Duration {
+	runtime.GC()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	start := time.Now()
+	f()
+	return time.Since(start)
 }
 
 // growsLinearly is the timing tests' criterion: for an input eight times
@@ -281,12 +290,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 	// never stops the sizing early and shrinks the control's margin.
 	n := 2000
 	for n < 32000 {
-		probe := func() time.Duration {
-			runtime.GC()
-			start := time.Now()
-			quadratic(n)()
-			return time.Since(start)
-		}
+		probe := func() time.Duration { return timed(quadratic(n)) }
 		if min(probe(), probe()) >= 50*time.Millisecond {
 			break
 		}
@@ -309,7 +313,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 // chain of overlaps, a hold that never completes, a chunk holding
 // thousands of matches, many Secrets, every encoded form) takes time
 // linear in the input, by growsLinearly: an eighth of the input against
-// all of it, warmed up, then timed in turn, best of three each (growth). No absolute
+// all of it, warmed up, then timed in turn, best of five each (growth). No absolute
 // time bound: a slow runner is not a failure. Under the race detector the
 // inputs are a quarter the size.
 func TestMatcherIsLinear(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"testing"
 	"time"
 )
@@ -62,20 +63,24 @@ func TestNeverReadsACandidate(t *testing.T) {
 	}
 }
 
-// timed is one run of f, after a garbage collection.
+// timed is one run of f, after a garbage collection and with the
+// collector off while it runs: a collection's pause landing in one run and
+// not the other is the noise that made a linear shape look 26 times slower
+// at eight times the size once (macOS CI, 2026-11-20).
 func timed(f func()) time.Duration {
 	runtime.GC()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
 	began := time.Now()
 	f()
 	return time.Since(began)
 }
 
-// interleaved times small and large three times each, alternately, after
-// one untimed run of small, and gives the fastest of each.
+// interleaved times small and large five times each, alternately, each by
+// timed, after one untimed run of small, and gives the fastest of each.
 func interleaved(small, large func()) (time.Duration, time.Duration) {
 	small()
 	var s, l time.Duration
-	for i := range 3 {
+	for i := range 5 {
 		ts, tl := timed(small), timed(large)
 		if i == 0 || ts < s {
 			s = ts

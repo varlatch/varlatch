@@ -2,9 +2,20 @@
 
 package audit
 
+// GoOnlyEventTypes are the audit event types only the Go varlatchd records
+// (go/README.md lists each among the accepted differences): the TypeScript
+// server's list is frozen. Record accepts them beside EventTypes; the
+// vectors check none is in AUDIT_EVENT_TYPES.
+var GoOnlyEventTypes = []string{
+	// The host re-pinned the tailnet, reopened tailnet access on its pin,
+	// or adopted the tailnet an enrolled node without a pin is on
+	// (`varlatchd admin tailnet repin --yes`, step 6.2b).
+	"tailnet.repinned",
+}
+
 // EventTypes is every audit event type varlatchd records, as
 // audit/events.ts AUDIT_EVENT_TYPES lists them (the vectors check the two
-// lists are the same). Record refuses any other.
+// lists are the same). Record refuses any other, but GoOnlyEventTypes.
 var EventTypes = []string{
 	"audit_export.abandoned",
 	"audit_export.changed",

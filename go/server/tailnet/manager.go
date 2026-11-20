@@ -4,7 +4,8 @@ package tailnet
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -465,19 +466,69 @@ func (m *Manager) checkLocked(ctx context.Context) {
 }
 
 // RepinView is what a re-pin shows the operator.
+// Its JSON names are stable: `varlatchd admin tailnet repin --json` prints
+// them, and `varlatch tailnet repin` reads them.
 type RepinView struct {
-	Pinned   *Pin
-	Observed *Observed
+	Pinned   *Pin      `json:"pinned"`
+	Observed *Observed `json:"observed"`
 	// Reason is Pin.Check's on what the node is on now, "" when it holds.
-	Reason string
+	Reason string `json:"reason"`
 	// Closed is the latched closure's reason, "" when none.
-	Closed string
+	Closed string `json:"closed"`
 	// Missing: the node was enrolled before but its pin is missing; only
 	// an adoption pins it.
-	Missing bool
+	Missing bool `json:"missing"`
 	// Offered is whether a re-pin (or, when Missing, an adoption) may take
 	// the observed tailnet.
-	Offered bool
+	Offered bool `json:"offered"`
+	// Offer binds a confirmation to what was shown: a value-free token
+	// (OfferToken) over the pin, the observed tailnet and what is offered;
+	// "" when nothing is offered. A re-pin given it acts only while the
+	// offer is still the same (ErrOfferChanged otherwise).
+	Offer string `json:"offer"`
+}
+
+// OfferToken is v's offer: the first 128 bits of a SHA-256, in hex, over
+// what is offered (an adoption, a new suffix, or reopening after a
+// closure, with its reason), the pinned tailnet and the observed one
+// (control URL, StableID, suffix). It reveals none of them; "" when
+// nothing is offered.
+func (v RepinView) OfferToken() string {
+	if !v.Offered || v.Observed == nil {
+		return ""
+	}
+	kind := "repin"
+	switch {
+	case v.Missing:
+		kind = "adopt"
+	case v.Reason == "" && v.Closed != "":
+		kind = "reopen:" + v.Closed
+	}
+	h := sha256.New()
+	field := func(s string) { h.Write([]byte(s)); h.Write([]byte{0}) }
+	field("varlatch tailnet repin offer v1")
+	field(kind)
+	if p := v.Pinned; p != nil {
+		field(p.ControlURL)
+		field(p.TailnetID)
+		field(p.Suffix)
+	} else {
+		field("no pin")
+	}
+	field(v.Observed.ControlURL)
+	field(v.Observed.TailnetID)
+	field(v.Observed.Suffix)
+	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// ErrOfferChanged is Repin's refusal when the offer a confirmation was
+// given for is not the current one: the pin or the observed tailnet
+// changed since it was shown. Nothing is re-pinned and nothing recorded;
+// View is the fresh view, to show and ask again.
+type ErrOfferChanged struct{ View RepinView }
+
+func (e *ErrOfferChanged) Error() string {
+	return "the tailnet changed since the re-pin was offered: nothing was re-pinned; look at the new observation and confirm again"
 }
 
 // RepinView is the pinned and the observed tailnet, from a fresh check.
@@ -502,6 +553,7 @@ func (m *Manager) viewLocked() RepinView {
 	case m.pin != nil && !m.pin.Enrolling:
 		v.Offered = v.Reason == PinSuffix || v.Reason == "" && v.Closed != ""
 	}
+	v.Offer = v.OfferToken()
 	return v
 }
 
@@ -519,12 +571,31 @@ var (
 // nil on an adoption; new nil when there was nothing to do). Only the host
 // calls it (`varlatchd admin tailnet repin`, which step 6's `varlatch
 // tailnet repin` runs).
-func (m *Manager) Repin(ctx context.Context, adopt bool) (*Pin, *Pin, error) {
+//
+// offer, when not "", is the offer a confirmation was given for (the
+// view's Offer when it was shown): the re-pin is decided on this check's
+// view, under the same locks, and only when its offer is still the same;
+// otherwise nothing changes and the error is *ErrOfferChanged with the
+// fresh view. "" acts on the observation at that moment.
+//
+// record, when not nil, is called with the old and the new pin and the
+// reason this check found (Pin.Check's, or the closure's) once the re-pin
+// is decided and before anything is changed: the host's audit event,
+// committed first. When it fails, nothing is re-pinned.
+func (m *Manager) Repin(ctx context.Context, adopt bool, offer string, record func(old, next *Pin, reason string) error) (*Pin, *Pin, error) {
 	m.checking.Lock()
 	defer m.checking.Unlock()
 	m.checkLocked(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	view := m.viewLocked()
+	if offer != "" && view.Offer != offer {
+		return m.pin, nil, &ErrOfferChanged{View: view}
+	}
+	reason := view.Reason
+	if reason == "" {
+		reason = view.Closed
+	}
 	if m.observed == nil {
 		return m.pin, nil, ErrNothingToRepin
 	}
@@ -546,7 +617,13 @@ func (m *Manager) Repin(ctx context.Context, adopt bool) (*Pin, *Pin, error) {
 			return m.pin, nil, err
 		}
 	}
+	if record != nil {
+		if err := record(m.pin, next, reason); err != nil {
+			return m.pin, nil, err
+		}
+	}
 	if err := SavePin(filepath.Join(m.dataDir, PinFile), next); err != nil {
+		m.log.Error("the re-pin is recorded in the audit log, but the pin could not be saved: nothing changed", "error", err)
 		return m.pin, nil, err
 	}
 	old := m.pin
@@ -728,17 +805,4 @@ func (m *Manager) persistLocked() {
 		return
 	}
 	m.persisted.json, m.persisted.at = key, now
-}
-
-// MarshalJSON lets a view print as JSON (the host command's --json).
-func (v RepinView) MarshalJSON() ([]byte, error) {
-	type view struct {
-		Pinned   *Pin      `json:"pinned"`
-		Observed *Observed `json:"observed"`
-		Reason   string    `json:"reason"`
-		Closed   string    `json:"closed"`
-		Missing  bool      `json:"missing"`
-		Offered  bool      `json:"offered"`
-	}
-	return json.Marshal(view(v))
 }
