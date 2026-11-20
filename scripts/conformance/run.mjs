@@ -385,7 +385,12 @@ async function main() {
         // whenever the target can recover, seed or not (a target that lacks
         // the seed's writes still signs in with it; cli-core's token sign-in).
         if (!setupLacks(inventory, "admin-recover", lacks)) {
-          if (!ctx.adminId) throw new Error("the passkey suite named no identity: nothing after it can run");
+          if (!ctx.adminId) {
+            // The passkey suite's own failure (it did not finish: a browser
+            // that would not launch, a crash) is why; say it here too.
+            const why = errors.find((e) => e.suite === "passkey")?.message;
+            throw new Error(`the passkey suite named no identity${why ? ` (passkey: ${why})` : ""}: nothing after it can run`);
+          }
           ctx.token = await ctx.cliCredential();
         }
         if (setupLacks(inventory, "seed", lacks)) {
