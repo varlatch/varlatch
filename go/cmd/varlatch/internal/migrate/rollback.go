@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"slices"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 )
 
 // `varlatch migrate --rollback` (go-step7 decisions 16 and 17, slice
@@ -411,6 +413,13 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		}
 		if err := rs.StopServing(ctx, j.Ingress); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release: %w", err))
+		}
+		// Its sidecar too, which starting it started: the tailnet name is
+		// Go's node's, the old node stays stopped (not logged out).
+		if ts, ok := e.Source.(TailnetSource); ok && j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.Phase == tailhandoff.Done {
+			if err := ts.StopTailnet(ctx); err != nil {
+				problems = append(problems, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", err))
+			}
 		}
 		if j.Ingress == Coolify {
 			e.say("The address goes back by hand: in Coolify, move the domain of %s back to the Go application.", originOf(j))
