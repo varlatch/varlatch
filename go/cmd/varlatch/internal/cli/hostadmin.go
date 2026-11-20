@@ -42,6 +42,7 @@ const adminUsage = `Usage:
   varlatch admin maintenance begin --ttl <duration>
   varlatch admin maintenance end <lease id>
   varlatch admin maintenance status
+  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>]
                (a Go installation's host commands: each runs varlatchd admin with the same words on this host,
                 as root; each also takes --config <file>, the installation's varlatchd.conf, default
                 /etc/varlatch/varlatchd.conf. A Compose installation's are the TypeScript CLI's, varlatch-ts)`
@@ -71,12 +72,12 @@ var adminForms = []adminForm{
 	{words: []string{"maintenance", "status"}, json: true},
 }
 
-// adminCommand is `admin`'s partial: the forms above. `admin reenroll`
-// (slice 6.9) is not built yet; the TypeScript CLI's `backup create` and
+// adminCommand is `admin`'s partial: the forms above, and `admin
+// reenroll` (slice 6.9, move.go); the TypeScript CLI's `backup create` and
 // `backup verify` say what a Go installation runs instead.
 func adminCommand(r *Run) (bool, error) {
 	if len(r.Args) > 0 && r.Args[0] == "reenroll" {
-		return false, nil
+		return true, reenrollCommand(r)
 	}
 	if i := slices.Index(r.Args, "--dir"); i >= 0 {
 		return true, composeRefusal(r)
@@ -302,33 +303,49 @@ func isCredentialVariable(name string) bool {
 // fail-safe (RedactValue), any other output and every line on stderr
 // through the fail-safe. Its exit status is the command's.
 func (r *Run) runVarlatchd(form adminForm, args []string, config string) error {
-	path, err := r.locateVarlatchd("varlatch admin")
+	answer, said, code, err := r.execVarlatchd("varlatch admin", args, config)
 	if err != nil {
 		return err
 	}
+	if err := r.showVarlatchd(form, args, answer); err != nil {
+		return err
+	}
+	return r.varlatchdEnded("varlatch admin", said, code)
+}
+
+// execVarlatchd runs `varlatchd args... [--config file]` and returns what
+// it wrote on its standard output and standard error, each read whole and
+// shown by nobody yet, and its exit status. prefix names the command.
+func (r *Run) execVarlatchd(prefix string, args []string, config string) (answer, said []byte, code int, err error) {
+	path, err := r.locateVarlatchd(prefix)
+	if err != nil {
+		return nil, nil, 0, err
+	}
 	if config != "" {
-		args = append(args, "--config", config)
+		args = append(slices.Clone(args), "--config", config)
 	}
 	cmd := exec.Command(path, args...)
 	cmd.Env = varlatchdEnviron(r)
 	// What varlatchd prints is read whole, then shown through the
-	// fail-safe below: nothing of it reaches this process's streams as it
-	// is.
-	answer, said, err := runChild(cmd)
-	code := 0
+	// fail-safe: nothing of it reaches this process's streams as it is.
+	answer, said, err = runChild(cmd)
 	if err != nil {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) {
-			return Fail("varlatch admin: could not run "+path+": "+err.Error(), ExitUnavailable)
+			return nil, nil, 0, Fail(prefix+": could not run "+path+": "+err.Error(), ExitUnavailable)
 		}
 		code = exit.ExitCode()
 		if code < 0 {
 			code = ExitFailure // ended by a signal
 		}
 	}
-	if err := r.showVarlatchd(form, args, answer); err != nil {
-		return err
-	}
+	return answer, said, code, nil
+}
+
+// varlatchdEnded shows what varlatchd wrote on its standard error, each
+// line through the fail-safe, then the root hint after a 78, and ends the
+// command with varlatchd's status when it is not 0.
+func (r *Run) varlatchdEnded(prefix string, said []byte, code int) error {
 	for _, line := range strings.Split(strings.TrimRight(string(said), "\n"), "\n") {
 		if line == "" {
 			continue
@@ -338,7 +355,7 @@ func (r *Run) runVarlatchd(form adminForm, args []string, config string) error {
 		}
 	}
 	if code == ExitConfig && runtime.GOOS != "windows" && os.Geteuid() != 0 {
-		if err := r.warn("varlatch admin: the installation's configuration, data directory and control socket are its service's; run this as root (sudo varlatch admin ...)"); err != nil {
+		if err := r.warn(prefix + ": the installation's configuration, data directory and control socket are its service's; run this as root (sudo " + prefix + " ...)"); err != nil {
 			return err
 		}
 	}

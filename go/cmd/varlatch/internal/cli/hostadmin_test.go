@@ -209,7 +209,9 @@ func TestAdminRefusals(t *testing.T) {
 		{[]string{"maintenance", "end"}, 64, "needs the lease id"},
 		{[]string{"maintenance", "begin", "--ttl"}, 64, "--ttl needs a value"},
 		{[]string{"backup", "run", "--config"}, 64, "--config needs a file"},
-		{[]string{"reenroll", "--all"}, 64, "not in this build of the Go CLI yet (ADR-0059 step 6)"},
+		{[]string{"reenroll"}, 64, "Usage: varlatch admin reenroll (--all | --identity <id>...)"},
+		{[]string{"reenroll", "--all", "--identity", "idn_x"}, 64, "Usage: varlatch admin reenroll"},
+		{[]string{"reenroll", "--all", "--dir", "."}, 64, "varlatch-ts"},
 	} {
 		code, out, errText := runAdmin(t, dir, c.args...)
 		if code != c.code || out != "" || !strings.Contains(errText, c.has) {

@@ -159,6 +159,14 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = cli.AdminHelp + "\n"
 		}
 	},
+	// `varlatch help move` (and `move --help`, `move -h`) prints a Go
+	// installation's move (slice 6.9); the TypeScript usage is a Compose
+	// installation's. The recording's usage becomes the Go one.
+	"move-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch move ") {
+			o.Stdout = cli.MoveHelp + "\n"
+		}
+	},
 	// A --json document's fields the API defines as scalars: an object or
 	// array a server sent there is left out by the Go CLI (go/README.md,
 	// "--json documents hold only scalars where the API defines them"), so

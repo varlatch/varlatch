@@ -54,12 +54,15 @@ func CommandHelp(command string) (string, bool) {
 }
 
 // commandHelp is what `varlatch help <command>` and `<command> --help`
-// print: CommandHelp, except for `admin`, whose forms are a Go
-// installation's (adminUsage; go/README.md, the accepted difference
-// admin-usage).
+// print: CommandHelp, except for `admin` and `move`, whose forms are a Go
+// installation's (adminUsage, moveUsage; go/README.md, the accepted
+// differences admin-usage and move-usage).
 func commandHelp(command string) (string, bool) {
 	if command == "admin" {
 		return adminUsage, true
+	}
+	if command == "move" {
+		return moveUsage, true
 	}
 	return CommandHelp(command)
 }
