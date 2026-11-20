@@ -21,7 +21,7 @@ import { buildApp } from "../src/http/app.js";
 import { loadManifest } from "../src/migration/bundle.js";
 import { encodeRow, type ColumnType, type Value } from "../src/migration/canonical.js";
 import { exportSource } from "../src/migration/export.js";
-import { ImportRefused, importReverse, MAX_LINE, readReverseBundle } from "../src/migration/import.js";
+import { IMPORT_LOCK, ImportRefused, importReverse, MAX_LINE, readReverseBundle } from "../src/migration/import.js";
 import { MIGRATIONS } from "../src/db/migrations/index.js";
 import { changedDomain, syncAllMirrors } from "../src/mirror/publisher.js";
 import { PUBLIC_URL } from "./helpers/device-sign-in.js";
@@ -266,6 +266,32 @@ describe.skipIf(!url)("the migration's import", () => {
     expect((different as Error).message).toMatch(/the database is not empty/);
   }, 180_000);
 
+  it("refuses a second import while one holds the database, cleanly", async () => {
+    const path = write("reverse.jsonl", reverseOf(await exportOf(source)));
+    // The lock another import holds, from its first look to its commit.
+    const other = await target.connect();
+    try {
+      await other.query("SELECT pg_advisory_lock($1::bigint)", [IMPORT_LOCK.toString()]);
+      const err = await importReverse(target, { path, rootKek: ctx.rootKek }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ImportRefused);
+      expect((err as Error).message).toBe("another import is running on this database; nothing was loaded");
+      expect(await relations(target)).toBe(0);
+      await other.query("SELECT pg_advisory_unlock($1::bigint)", [IMPORT_LOCK.toString()]);
+    } finally {
+      other.release();
+    }
+    // Two at once: one loads, the other refuses (or, if it starts after the commit, finds the rows).
+    const both = await Promise.allSettled([importReverse(target, { path, rootKek: ctx.rootKek }), importReverse(target, { path, rootKek: ctx.rootKek })]);
+    const loaded = both.filter((r) => r.status === "fulfilled" && !r.value.alreadyImported);
+    expect(loaded.length).toBe(1);
+    for (const r of both) {
+      if (r.status === "rejected") {
+        expect(r.reason).toBeInstanceOf(ImportRefused);
+        expect((r.reason as Error).message).toBe("another import is running on this database; nothing was loaded");
+      }
+    }
+  }, 180_000);
+
   it("refuses an older schema that holds rows as it is: no migration runs on it first", async () => {
     // The first 30 migrations, as an earlier release left them, and a row.
     const c = await target.connect();
@@ -317,12 +343,18 @@ describe.skipIf(!url)("the migration's import", () => {
 });
 
 describe("the import's reader", () => {
-  it("refuses a line longer than varlatchd's reader takes, before holding it whole", async () => {
+  it("refuses a line of 64 MiB or more, as varlatchd's reader does, before holding it whole", async () => {
     const dir = mkdtempSync(join(tmpdir(), "varlatch-import-line-"));
     try {
       const path = join(dir, "long.jsonl");
-      writeFileSync(path, Buffer.alloc(MAX_LINE + 1, 0x61));
-      await expect(readReverseBundle(path, loadManifest())).rejects.toThrow(/a line longer than 64 MiB/);
+      // One byte short of the limit, ended: read, then refused as no header.
+      writeFileSync(path, Buffer.concat([Buffer.alloc(MAX_LINE - 1, 0x61), Buffer.from("\n")]));
+      await expect(readReverseBundle(path, loadManifest())).rejects.toThrow(/^line 1 is not a bundle's header$/);
+      // At the limit, ended or not: refused by its length.
+      writeFileSync(path, Buffer.concat([Buffer.alloc(MAX_LINE, 0x61), Buffer.from("\n")]));
+      await expect(readReverseBundle(path, loadManifest())).rejects.toThrow(/a line of 64 MiB or more/);
+      writeFileSync(path, Buffer.alloc(MAX_LINE, 0x61));
+      await expect(readReverseBundle(path, loadManifest())).rejects.toThrow(/a line of 64 MiB or more/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

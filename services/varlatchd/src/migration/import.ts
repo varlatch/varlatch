@@ -88,8 +88,15 @@ const SEEDED: Readonly<Record<string, number>> = { exposure_backfill: 1 };
 /** Tables of the manifest that are this schema's own bookkeeping, never data the import checks for emptiness. */
 const BOOKKEEPING = new Set(["audit_position", "varlatch_migrations"]);
 
-/** The longest line a bundle may hold: varlatchd's reader's limit (bundle.go maxLine). */
+/** A bundle's line holds fewer bytes than this: varlatchd's reader's limit (bundle.go maxLine). */
 export const MAX_LINE = 64 << 20;
+
+/**
+ * The advisory lock one import holds on its database from the first look
+ * at it to the commit, so a second import refuses cleanly instead of
+ * racing it through the schema's build.
+ */
+export const IMPORT_LOCK = 7_302_003_001n;
 
 /**
  * The bundle's lines, each without its "\n"; a last line without one is the
@@ -99,13 +106,13 @@ export const MAX_LINE = 64 << 20;
 async function* readLines(path: string): AsyncGenerator<Buffer> {
   let pending: Buffer[] = [];
   let pendingLength = 0;
-  const tooLong = () => new ImportRefused(`the bundle holds a line longer than ${MAX_LINE >> 20} MiB, which no bundle-v1 writer writes`);
+  const tooLong = () => new ImportRefused(`the bundle holds a line of ${MAX_LINE >> 20} MiB or more, which no bundle-v1 writer writes`);
   for await (const chunk of createReadStream(path) as AsyncIterable<Buffer>) {
     let start = 0;
     let nl: number;
     while ((nl = chunk.indexOf(0x0a, start)) !== -1) {
       const length = pendingLength + (nl - start);
-      if (length > MAX_LINE) throw tooLong();
+      if (length >= MAX_LINE) throw tooLong();
       yield pending.length > 0 ? Buffer.concat([...pending, chunk.subarray(start, nl)], length) : chunk.subarray(start, nl);
       pending = [];
       pendingLength = 0;
@@ -114,7 +121,7 @@ async function* readLines(path: string): AsyncGenerator<Buffer> {
     if (start < chunk.length) {
       pending.push(chunk.subarray(start));
       pendingLength += chunk.length - start;
-      if (pendingLength > MAX_LINE) throw tooLong();
+      if (pendingLength >= MAX_LINE) throw tooLong();
     }
   }
   if (pendingLength > 0) throw new ImportRefused("the bundle is cut short: its last line does not end");
@@ -371,7 +378,10 @@ export async function importReverse(db: PoolQuerier, opts: { path: string; rootK
   }
 
   const client = await db.connect();
+  let locked = false;
   try {
+    locked = ((await client.query("SELECT pg_try_advisory_lock($1::bigint) AS ok", [IMPORT_LOCK.toString()])).rows[0] as { ok: boolean }).ok;
+    if (!locked) throw new ImportRefused("another import is running on this database; nothing was loaded");
     // 2. A fresh database, at this release's schema. Whether it is fresh is
     // decided before any migration runs: an older schema holding rows is
     // refused as it is, never moved forward first (its own release could
@@ -392,7 +402,13 @@ export async function importReverse(db: PoolQuerier, opts: { path: string; rootK
         throw notEmpty(holding);
       }
     }
-    await runMigrations(client);
+    try {
+      await runMigrations(client);
+    } catch (err) {
+      // Its message carries PostgreSQL's text: only the migration is named.
+      const step = /^Migration ([0-9]+) \(([a-z0-9_]+)\) failed/.exec(err instanceof Error ? err.message : "");
+      throw new ImportRefused(`the schema could not be built at this release's level${step ? ` (migration ${step[1]}, ${step[2]})` : ""}; nothing was loaded`);
+    }
     const sequences = (await client.query(
       `SELECT count(*)::int AS n FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'S'`,
     )).rows[0] as { n: number };
@@ -448,6 +464,7 @@ export async function importReverse(db: PoolQuerier, opts: { path: string; rootK
     }
     return { bundle, alreadyImported: false };
   } finally {
+    if (locked) await client.query("SELECT pg_advisory_unlock($1::bigint)", [IMPORT_LOCK.toString()]).catch(() => {});
     client.release();
   }
 }
