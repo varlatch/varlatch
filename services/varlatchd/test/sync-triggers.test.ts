@@ -65,6 +65,7 @@ const TRIGGERING = [
   "identity.renamed",
   "identity.retired",
   "installation.initialized",
+  "installation.migrated",
   "installation.public_url_changed",
   "invitation.issued",
   "invitation.revoked",

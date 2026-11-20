@@ -525,7 +525,7 @@ export function startWebhookLoop(ctx: AppCtx, intervalMs = 30_000): () => void {
   let busy = false;
   const tick = async () => {
     if (busy) return;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("webhooks");
     if (ctx.maintenance && !leave) return;
     busy = true;
     try { await deliverWebhooksOnce(ctx); }

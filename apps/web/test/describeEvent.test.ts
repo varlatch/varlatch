@@ -246,3 +246,11 @@ describe("security control events (ADR-0054)", () => {
     expect(describeEvent(summary, names).title).toBe("Security control report");
   });
 });
+
+describe("the migration's audit kind (ADR-0059 step 7)", () => {
+  it("describes installation.migrated as a known kind, not the fallback for rare types", () => {
+    const d = describeEvent(event({ eventType: "installation.migrated", decision: "info", resource: {} }), names);
+    expect(d.title).toBe("Installation migrated");
+    expect(segmentsText(d.segments)).toBe("moved this installation to another server");
+  });
+});

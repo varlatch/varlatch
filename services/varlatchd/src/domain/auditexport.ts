@@ -1734,7 +1734,7 @@ export function startAuditExportLoop(ctx: AppCtx, intervalMs: number = AUDIT_EXP
   let busy = false;
   const tick = async () => {
     if (busy) return;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("audit-export");
     if (ctx.maintenance && !leave) return;
     busy = true;
     try {

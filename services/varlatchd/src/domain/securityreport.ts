@@ -423,7 +423,7 @@ async function runAccessCount(ctx: AppCtx, report: PendingAccessReport, operatio
   try {
     // Admission can throw (unreadable maintenance state): the count is
     // dropped, never left as an unhandled rejection in the queue.
-    leave = ctx.maintenance?.enter();
+    leave = ctx.maintenance?.enter("access-count");
     if (ctx.maintenance && !leave) return;
     await accessCountHooks.beforeCount?.();
     await countWouldBlockAfter(ctx, report, operation);
@@ -647,7 +647,7 @@ export function startSecurityReportLoop(ctx: AppCtx, intervalMs = 60_000): () =>
   let busy = false;
   const tick = async () => {
     if (busy) return;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("security-report");
     if (ctx.maintenance && !leave) return;
     busy = true;
     try {

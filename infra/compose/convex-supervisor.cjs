@@ -40,7 +40,9 @@ const sockets = new Set();
 function gate() {
   try {
     const g = JSON.parse(fs.readFileSync(`${state}/maintenance.json`, 'utf8'));
-    if (!g.id || !['capture', 'restore'].includes(g.kind)) throw Error('invalid gate');
+    // The migration's barrier and marker (go-step7 decisions 6, 15) stop
+    // the backend like any other gate once paused.
+    if (!g.id || !['capture', 'restore', 'migration', 'migrated-out'].includes(g.kind)) throw Error('invalid gate');
     if (g.kind === 'capture' && Number.isFinite(g.expiresAt) && g.expiresAt <= Date.now()) return null;
     return g;
   } catch (e) {

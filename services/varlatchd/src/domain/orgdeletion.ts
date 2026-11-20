@@ -661,7 +661,7 @@ export function startDeletionLoop(ctx: AppCtx, intervalMs = 60_000): () => void 
   let busy = false;
   const tick = async () => {
     if (busy) return;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("organization-deletion");
     if (ctx.maintenance && !leave) return;
     busy = true;
     try {

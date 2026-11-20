@@ -1447,7 +1447,7 @@ export function startSyncLoop(
   let started = false;
   const tick = async () => {
     if (busy) return;
-    const leave = ctx.maintenance?.enter();
+    const leave = ctx.maintenance?.enter("sync");
     if (ctx.maintenance && !leave) return;
     busy = true;
     try {

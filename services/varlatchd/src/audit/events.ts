@@ -77,6 +77,10 @@ export const AUDIT_EVENT_TYPES = [
   "identity.retired",
   "installation.custody_attested",
   "installation.initialized",
+  // The migration to the Go line (ADR-0059 step 7): recorded by the Go
+  // line, and present in a database rebuilt from its bundle (go-step7
+  // slice 7.2a), so every path here lists, exports and delivers it.
+  "installation.migrated",
   "installation.public_url_changed",
   "installation.restored",
   "invitation.accepted",
