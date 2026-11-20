@@ -197,13 +197,17 @@ func (c *Compose) composeFiles(plan RebuildRecord) string {
 // line of any length is kept whole (a scanner stopped by its token limit
 // would write a truncated .env over the operator's). A .env that is a
 // symbolic link is written at its target, which is replaced through a
-// temporary name beside it; the link stays. Its mode is kept.
+// temporary name beside it; the link stays. A link whose target is not
+// there is refused, never replaced by a file. Its mode is kept.
 func (c *Compose) setEnv(name string, value *string) error {
 	path := filepath.Join(c.Directory, ".env")
 	if target, err := filepath.EvalSymlinks(path); err == nil {
 		path = target
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
+	} else if st, lerr := os.Lstat(path); lerr == nil && st.Mode()&fs.ModeSymlink != 0 {
+		link, _ := os.Readlink(path)
+		return fmt.Errorf("%s is a symbolic link to %s, which is not there: the installation's .env is not replaced by a file; restore its target, then run varlatch migrate again", path, link)
 	}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -422,7 +426,20 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 		return err
 	}
 	for _, v := range plan.Volumes {
-		r, err := c.docker(ctx, []string{"volume", "rm", "-f", v}, nil)
+		// Asked directly before its removal: no container, running or
+		// stopped, still uses the fresh volume (the services are back on
+		// their own ones).
+		r, err := c.docker(ctx, []string{"ps", "-a", "--filter", "volume=" + v, "--format", "{{.Names}}"}, nil)
+		if err != nil {
+			return err
+		}
+		if r.Code != 0 {
+			return failure("docker ps --filter volume="+v, r)
+		}
+		if users := strings.Fields(string(r.Answer)); len(users) > 0 {
+			return fmt.Errorf("the reverse's fresh volume %s is still used by %s: left as it is", v, strings.Join(users, ", "))
+		}
+		r, err = c.docker(ctx, []string{"volume", "rm", "-f", v}, nil)
 		if err != nil {
 			return err
 		}

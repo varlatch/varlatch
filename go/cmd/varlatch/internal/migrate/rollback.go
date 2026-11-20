@@ -368,7 +368,9 @@ func (e *Engine) rolledBack(ctx context.Context, j *Journal) error {
 	}
 	_ = e.Source.CleanLeftovers()
 	e.cleanReverseScratch()
-	e.say("Rolled back: the TypeScript release serves %s again, on a fresh database rebuilt from Go's. The volumes it ran on before the migration are kept until varlatch migrate --finish.", originOf(j))
+	e.say("Rolled back: the TypeScript release serves %s again, on a fresh database rebuilt from Go's. The volumes it ran on before the migration are kept until varlatch migrate --finish --delete-old-data.", originOf(j))
+	e.say("Go's copy stays in %s, stopped, behind the reverse's barrier (its paused gate, and its frozen copy %s): varlatch migrate --finish --delete-old-data archives it, lifts the barrier (removing the frozen copy) and discards it; a plain --finish keeps it.",
+		j.Target.DataDir, ".migration-frozen-"+j.ID+".db")
 	if n := len(j.Rollback.Archives); n > 0 {
 		e.say("%d Go archives were made since the switch; the TypeScript release cannot read them, so they restore through a Go varlatchd (setup --restore) or a later forward migration's installation only. They are not deleted:", n)
 		for _, a := range j.Rollback.Archives {
@@ -423,8 +425,10 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	if len(problems) > 0 {
 		return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, errors.Join(problems...))
 	}
+	_ = e.Source.CleanLeftovers()
 	e.cleanReverseScratch()
-	j.Rollback.Undone = &UndoneRecord{From: from, Why: cause.Error(), Released: true, At: e.now().UTC().Format(time.RFC3339Nano)}
+	// Released is journalled once the barrier is lifted, never before.
+	j.Rollback.Undone = &UndoneRecord{From: from, Why: cause.Error(), At: e.now().UTC().Format(time.RFC3339Nano)}
 	j.Rollback.Undoing = false
 	// Go's journal open first (beside the running varlatchd), then its
 	// barrier lifted: an interruption between leaves Go open behind its
@@ -435,6 +439,10 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	crashPoint("rollback undone open")
 	if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
 		return fmt.Errorf("%w; the reverse was undone, but Go's barrier could not be lifted: %v; varlatch migrate --resume lifts it", cause, err)
+	}
+	j.Rollback.Undone.Released = true
+	if err := e.save(ctx, j); err != nil {
+		return fmt.Errorf("%w; the reverse was undone and Go's barrier lifted, but the journals could not record it: %v; varlatch migrate --resume records it", cause, err)
 	}
 	return fmt.Errorf("%w; the reverse was undone: Go serves again, the TypeScript installation is as the migration left it", cause)
 }
