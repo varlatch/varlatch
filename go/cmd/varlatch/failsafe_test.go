@@ -52,6 +52,10 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		"internal/cli/cli.go:ask":         true, // the hidden prompt's question (5.3a)
 		"internal/cli/cli.go:out":         true,
 		"internal/cli/cli.go:outJSON":     false,
+		// The command `run` starts writes to the process's streams (directly,
+		// or through internal/matcher's redaction): its own bytes, never the
+		// CLI's text, so the fail-safe does not rewrite them (5.4b).
+		"internal/cli/runchild.go:runChild": false,
 	}
 	// newFileSites may call os.NewFile: each wraps a handle it opened
 	// itself for reading, never a stream.
