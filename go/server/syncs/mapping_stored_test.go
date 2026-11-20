@@ -5,10 +5,12 @@ package syncs_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/paritytest"
 	"github.com/varlatch/varlatch/go/server/syncs"
 )
 
@@ -86,7 +88,88 @@ func TestUnreadableMappingFailsOnlyItsTarget(t *testing.T) {
 	if failed != 2 || len(rows) < 3 {
 		t.Fatalf("%v", rows)
 	}
-	// And again: still no panic, still only those two.
+	// And again, past the backoff: still no panic, still only those two,
+	// each failed once more.
 	w.later()
 	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
+	for _, r := range w.targets() {
+		dest, _ := r["canonical_destination"].(string)
+		want := int64(0)
+		if dest == ghAPI || dest == appOne {
+			want = 2
+		}
+		if r["failure_count"] != want {
+			t.Errorf("second pass, %s: %v", dest, r)
+		}
+	}
+}
+
+// A stored destination this server cannot read is an error on the PATCH
+// paths that read it (server/syncs and server/httpserver both go through
+// StoredDestination), never a panic.
+func TestStoredDestinationRefusesWhatItCannotRead(t *testing.T) {
+	for _, text := range []string{`[]`, `"repo"`, `null`, `1`, `not json`, ``} {
+		if _, err := syncs.StoredDestination(text); !errors.Is(err, syncs.ErrStoredDestination) {
+			t.Errorf("%q: %v", text, err)
+		}
+	}
+	if o, err := syncs.StoredDestination(`{"repo":"api","environment":"production"}`); err != nil || len(o) != 2 {
+		t.Errorf("%v %v", o, err)
+	}
+}
+
+// A run that panics (a bug in rendering or an adapter) fails its own
+// Target as an error does, counted and backed off, its lease and run row
+// gone; the other Targets converge, and the log names the panic's type,
+// never its value. (A test's Crash still stops the engine: the G7 tests.)
+func TestPanickingRunFailsOnlyItsTarget(t *testing.T) {
+	w := newEngineWorld(t)
+	var logged strings.Builder
+	w.engine.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	value := strings.Join([]string{"a", "value", "in", "the", "panic"}, "-")
+	panicked := false
+	syncs.OnCommit(w.engine, func(point string) {
+		if point == "values-decrypted" && !panicked {
+			panicked = true
+			panic(errors.New(value))
+		}
+	})
+	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
+	if !panicked {
+		t.Fatal("no run reached its values")
+	}
+	failed := 0
+	for _, r := range w.targets() {
+		result, _ := r["last_result"].(string)
+		if strings.Contains(result, "failed unexpectedly") {
+			failed++
+			if r["failure_count"] != int64(1) || r["backed_off"] != int64(1) {
+				t.Errorf("the panicked Target: %v", r)
+			}
+			continue
+		}
+		if r["failure_count"] != int64(0) {
+			t.Errorf("another Target failed: %v", r)
+		}
+	}
+	if failed != 1 {
+		t.Fatalf("%d Targets failed: %v", failed, w.targets())
+	}
+	if rows := paritytest.Rows(t, w.store, `SELECT target_id FROM sync_runs`); len(rows) != 0 {
+		t.Errorf("run rows left: %v", rows)
+	}
+	if rows := paritytest.Rows(t, w.store, `SELECT id FROM sync_targets WHERE lease_expires_at IS NOT NULL`); len(rows) != 0 {
+		t.Errorf("leases left: %v", rows)
+	}
+	if !strings.Contains(logged.String(), "sync run panicked") || !strings.Contains(logged.String(), "*errors.errorString") || strings.Contains(logged.String(), value) {
+		t.Errorf("the log: %s", logged.String())
+	}
+	// The next pass, without the bug, converges it.
+	w.later()
+	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
+	for _, r := range w.targets() {
+		if result, _ := r["last_result"].(string); strings.Contains(result, "failed unexpectedly") {
+			t.Errorf("still failed: %v", r)
+		}
+	}
 }
