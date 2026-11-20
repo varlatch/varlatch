@@ -12,7 +12,10 @@
 # - each binary is an executable for its platform (ELF, Mach-O or PE), and
 #   the ones this machine can run report the version;
 # - the installers are stamped with the version;
-# - release.json is a manifest of format 1 for the version.
+# - release.json is a manifest of format 2 for the version, declaring what
+#   the release does to a migration's rollback window: reversibleTo the
+#   last TypeScript release (0.23.0), or endsRollbackWindow, exactly one
+#   (internal docs/design/go-step7.md decision 17).
 #
 # Usage: check-assets.sh <directory> <version>
 set -euo pipefail
@@ -89,7 +92,9 @@ grep -q "^ *\$VarlatchRelease = '$version'\$" install.ps1 || bad "install.ps1 is
 if [ -f release.json ]; then
   jq -e --arg v "$version" '.manifestVersion == 2 and .version == $v and (.schemaVersion | type) == "number" and (.rollbackSafe | type) == "boolean"' release.json > /dev/null \
     || bad "release.json is not a manifest of format 2 for $version"
-  jq -e '(.reversibleTo == "0.23.0" and .endsRollbackWindow == false) or (.reversibleTo == null and .endsRollbackWindow == true)' release.json > /dev/null \
+  # Both keys present (jq reads a missing key as null, which Go refuses),
+  # then exactly one of the two declarations.
+  jq -e 'has("reversibleTo") and has("endsRollbackWindow") and ((.reversibleTo == "0.23.0" and .endsRollbackWindow == false) or (.reversibleTo == null and .endsRollbackWindow == true))' release.json > /dev/null \
     || bad "release.json declares neither reversibleTo 0.23.0 nor endsRollbackWindow: a release keeps the migration's rollback window or says it ends it"
 fi
 
