@@ -22,6 +22,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate/fakerelease"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 	"github.com/varlatch/varlatch/go/lib/release"
+	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
 func runUpgrade(t *testing.T, env MapEnv, args ...string) (int, string, string) {
@@ -62,6 +63,9 @@ func TestUpgradeUsageAndPrivilege(t *testing.T) {
 		{[]string{"--check", "--yes"}, "--check upgrades nothing"},
 		{[]string{"--repo", "someone/fork"}, "releases come from varlatch/varlatch only"},
 		{[]string{"a", "b"}, "Usage:\n  varlatch upgrade"},
+		{[]string{"--rollback", "--check"}, "--rollback returns to the last upgrade's previous release"},
+		{[]string{"--rollback", "0.50.0"}, "--rollback returns to the last upgrade's previous release"},
+		{[]string{"--accept-data-loss"}, "--accept-data-loss goes with --rollback"},
 	} {
 		if code, _, errs := runUpgrade(t, nil, c.args...); code != ExitUsage || !strings.Contains(errs, c.want) {
 			t.Errorf("%v: %d %q", c.args, code, errs)
@@ -108,7 +112,7 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	h := newCLIHost(t, from)
 	publish(unsafe, release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, Previous: prev})
 	code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
-	if code != ExitFailure || !strings.Contains(out, "rollback:  NOT safe") || !strings.Contains(errs, "pass --accept-not-rollback-safe") {
+	if code != ExitFailure || !strings.Contains(out, "rollback:  NOT safe") || !strings.Contains(out, notCounted) || !strings.Contains(errs, "pass --accept-not-rollback-safe") {
 		t.Fatalf("not rollback-safe: %d %q %q", code, out, errs)
 	}
 	h.serves(t, "0.50.0-rc.1")
@@ -117,6 +121,22 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 		t.Fatalf("accepted: %d %q %q", code, out, errs)
 	}
 	h.serves(t, "0.50.0-rc.2")
+
+	// Its rollback restores the snapshot: what is lost is listed first, and
+	// nothing happens without --accept-data-loss (--yes is not enough).
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--config", h.conf)
+	if code != ExitFailure || !strings.Contains(out, "the pre-upgrade snapshot is restored") || !strings.Contains(out, "LOST:") || !strings.Contains(errs, "pass --accept-data-loss") ||
+		!strings.Contains(out, "  UNDONE:    ") || !strings.Contains(out, "  NOT COUNTED: "+notCounted) ||
+		strings.Index(out, "UNDONE:") > strings.Index(out, "LOST:") {
+		t.Fatalf("a rollback that loses changes, not accepted: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.2")
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--accept-data-loss", "--config", h.conf)
+	if code != ExitOK || !strings.Contains(out, "Rolled back to 0.50.0-rc.1") || !strings.Contains(out, "What to do now: the restore took the changes listed above back.") ||
+		!strings.Contains(out, "varlatch credential revoke <identity-id> <credential-id>") || !strings.Contains(out, "0.50.0-rc.1 has no\n    command that signs everyone out") {
+		t.Fatalf("accepted: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.1")
 
 	// Rollback-safe: --check records it, upgrade --yes upgrades.
 	h = newCLIHost(t, from)
@@ -140,6 +160,12 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	if code, out, _ = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf); code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.2 is up to date") {
 		t.Fatalf("again: %d %q", code, out)
 	}
+	// A rollback-safe rollback keeps the database: --yes is enough.
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--config", h.conf)
+	if code != ExitOK || !strings.Contains(out, "database:  kept as it is") || strings.Contains(out, "LOST:") || !strings.Contains(out, "Rolled back to 0.50.0-rc.1") {
+		t.Fatalf("a rollback-safe rollback: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.1")
 }
 
 var (
@@ -267,4 +293,25 @@ func (s *cliService) Stop(context.Context) error {
 	}
 	s.cmd = nil
 	return nil
+}
+
+// A recovered rollback says so, and how to go back further.
+func TestRecoveredMessage(t *testing.T) {
+	j := &journal.Journal{From: "0.50.0-rc.2", To: "0.50.0-rc.1", Kind: journal.Rollback, State: journal.Undone, Reason: "interrupted after step \"stopped\"", Snapshot: "/data/upgrades/x/snapshot.vltbak"}
+	if got := recoveredMessage(j); !strings.HasPrefix(got, "Undid the interrupted rollback from 0.50.0-rc.2 to 0.50.0-rc.1") ||
+		!strings.Contains(got, "0.50.0-rc.2 serves") || !strings.Contains(got, "varlatchd admin backup restore --in /data/upgrades/x/snapshot.vltbak") {
+		t.Fatalf("an undone rollback: %q", got)
+	}
+	j.State = journal.Done
+	if got := recoveredMessage(j); got != "Finished the interrupted rollback from 0.50.0-rc.2 to 0.50.0-rc.1: 0.50.0-rc.1 serves, after its health checks." {
+		t.Fatalf("a finished rollback: %q", got)
+	}
+	j.Kind, j.From, j.To = journal.Upgrade, "0.50.0-rc.1", "0.50.0-rc.2"
+	if got := recoveredMessage(j); !strings.HasPrefix(got, "Finished the interrupted upgrade from 0.50.0-rc.1 to 0.50.0-rc.2") {
+		t.Fatalf("a finished upgrade: %q", got)
+	}
+	j.State = journal.Undone
+	if got := recoveredMessage(j); !strings.HasPrefix(got, "Undid the interrupted upgrade") || !strings.Contains(got, "Run varlatch upgrade again to upgrade.") {
+		t.Fatalf("an undone upgrade: %q", got)
+	}
 }

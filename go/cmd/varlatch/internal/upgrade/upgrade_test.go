@@ -236,8 +236,12 @@ func TestUpgradeBetweenTwoPrereleases(t *testing.T) {
 	h := newHost(t)
 	inst := h.inspect(t)
 	rel := h.release(t, "to", safe)
-	if !RollbackSafe(rel.Manifest, inst) {
-		t.Fatal("a manifest compatible from schema 1 is rollback-safe for schema 1")
+	if !RollbackSafe(rel.Manifest, inst) || !DeclaredRollbackSafe(rel.Manifest, inst) {
+		t.Fatal("a manifest declared rollback-safe for rc.1 and compatible from schema 1 is rollback-safe for it")
+	}
+	jump := h.release(t, "to", release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: "0.50.0-rc.0", SchemaVersion: 1}})
+	if RollbackSafe(jump.Manifest, inst) || DeclaredRollbackSafe(jump.Manifest, inst) {
+		t.Fatal("a manifest checked against another release declares nothing about rc.1")
 	}
 	var log bytes.Buffer
 	u := h.upgrader(nil)
@@ -246,7 +250,7 @@ func TestUpgradeBetweenTwoPrereleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, log.String())
 	}
-	if j.State != journal.Done || j.Step != journal.Checked || !j.RollbackSafe || j.From != fromVersion || j.To != toVersion || j.ToSchema != 2 {
+	if j.State != journal.Done || j.Step != journal.Checked || !j.RollbackSafe || !j.DeclaredRollbackSafe || j.From != fromVersion || j.To != toVersion || j.ToSchema != 2 {
 		t.Fatalf("journal: %+v", j)
 	}
 	u.mustServe(t, toVersion, 2)

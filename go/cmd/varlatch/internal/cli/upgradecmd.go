@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,12 +27,16 @@ import (
 const upgradeUsage = `Usage:
   varlatch upgrade [<version>] [--prerelease] [--accept-not-rollback-safe] [--yes] [--config <file>]
   varlatch upgrade --check [--prerelease] [--json] [--config <file>]
+  varlatch upgrade --rollback [--yes] [--accept-data-loss] [--config <file>]
                (a Go installation's upgrade, on its host, as root: downloads the release's varlatch, varlatchd and
                 release.json, checks that SHA256SUMS is signed by the release workflow of varlatch/varlatch for that
                 version, takes an encrypted snapshot kept 30 days, updates a copy of the database, swaps the binaries
                 and the database, restarts varlatchd and keeps the new release only when its health checks pass;
                 anything else ends with the previous release serving. --check looks for a newer release and records
-                what it found for the dashboard's notice. A Compose installation's upgrade is varlatch-ts upgrade)`
+                what it found for the dashboard's notice. --rollback returns to the release the last upgrade came
+                from: keeping every change when that release opens the database as it is, else restoring the
+                pre-upgrade snapshot, after listing what is lost (--accept-data-loss). A Compose installation's
+                upgrade is varlatch-ts upgrade)`
 
 // UpgradeHelp is upgradeUsage, for the transcripts' accepted difference.
 const UpgradeHelp = upgradeUsage
@@ -65,7 +70,7 @@ func upgradeCommand(r *Run) (bool, error) {
 func (r *Run) upgrade() error {
 	parsed, err := strictOptions("upgrade", r.Args, OptionSpec{
 		Values:      []string{"--config", "--repo"},
-		Booleans:    []string{"--check", "--json", "--yes", "--prerelease", "--accept-not-rollback-safe"},
+		Booleans:    []string{"--check", "--json", "--yes", "--prerelease", "--accept-not-rollback-safe", "--rollback", "--accept-data-loss"},
 		Positionals: 1,
 	}, upgradeUsage)
 	if err != nil {
@@ -79,6 +84,13 @@ func (r *Run) upgrade() error {
 		return UsageErrorWithUsage("varlatch upgrade: releases come from "+release.Repository+" only (the signature check pins its release workflow), not "+shownArgument(repo), "\n"+upgradeUsage)
 	}
 	check := parsed.Has("--check")
+	rollback := parsed.Has("--rollback")
+	if rollback && (check || len(parsed.Positionals) > 0 || parsed.Has("--prerelease") || parsed.Has("--accept-not-rollback-safe") || parsed.Has("--json")) {
+		return UsageErrorWithUsage("varlatch upgrade: --rollback returns to the last upgrade's previous release: it takes no version, --check, --prerelease, --json or --accept-not-rollback-safe", "\n"+upgradeUsage)
+	}
+	if parsed.Has("--accept-data-loss") && !rollback {
+		return UsageErrorWithUsage("varlatch upgrade: --accept-data-loss goes with --rollback", "\n"+upgradeUsage)
+	}
 	if parsed.Has("--json") && !check {
 		return UsageErrorWithUsage("varlatch upgrade: --json goes with --check", "\n"+upgradeUsage)
 	}
@@ -114,10 +126,10 @@ func (r *Run) upgrade() error {
 	if j, err := u.Recover(ctx); err != nil {
 		return upgradeFailure(err)
 	} else if j != nil {
-		if j.State == journal.Done {
-			return r.println(fmt.Sprintf("Finished the interrupted upgrade from %s to %s: %s serves. Run varlatch upgrade again to look for a newer release.", j.From, j.To, j.To))
-		}
-		return r.println(fmt.Sprintf("Undid the interrupted upgrade from %s to %s (%s): %s serves. Run varlatch upgrade again to upgrade.", j.From, j.To, j.Reason, j.From))
+		return r.println(recoveredMessage(j))
+	}
+	if rollback {
+		return r.upgradeRollback(ctx, u, parsed.Has("--yes"), parsed.Has("--accept-data-loss"))
 	}
 	inst, err := u.Inspect(ctx)
 	if err != nil {
@@ -147,11 +159,20 @@ func (r *Run) upgrade() error {
 		"  changes:   " + plan.ReleaseURL,
 	}
 	if safe {
-		lines = append(lines, "  rollback:  safe: "+inst.Version+" can open the upgraded database, so going back keeps every change")
+		lines = append(lines, "  rollback:  safe: "+rel.Version+"'s release.json declares it rollback-safe for "+inst.Version+", and "+inst.Version+" can open the",
+			"             upgraded database, so going back keeps every change")
+	} else if !upgrade.DeclaredRollbackSafe(rel.Manifest, inst) {
+		checked := "no release"
+		if p := rel.Manifest.Previous; p != nil {
+			checked = p.Version
+		}
+		lines = append(lines, "  rollback:  NOT safe: "+rel.Version+"'s release.json does not declare it rollback-safe for "+inst.Version+" (it was checked",
+			"             against "+checked+"). Going back means restoring the pre-upgrade snapshot, which loses every change",
+			"             made after it. "+notCounted)
 	} else {
 		lines = append(lines, "  rollback:  NOT safe: once upgraded, the database needs varlatchd of schema "+fmt.Sprint(rel.Manifest.CompatibleFrom)+" or later,",
 			"             which "+inst.Version+" (schema "+fmt.Sprint(inst.Schema)+") is not. Going back means restoring the pre-upgrade",
-			"             snapshot, which loses every change made after it.")
+			"             snapshot, which loses every change made after it. "+notCounted)
 	}
 	lines = append(lines, "")
 	for _, line := range lines {
@@ -298,4 +319,158 @@ func runQuiet(ctx context.Context, name string, args ...string) error {
 		return err
 	}
 	return nil
+}
+
+// upgradeRollback is `upgrade --rollback`: the plan shown first (and, when
+// the snapshot is restored, every change it loses), then the rollback.
+func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acceptLoss bool) error {
+	plan, err := u.PlanRollback(ctx)
+	if err != nil {
+		return Fail("varlatch upgrade --rollback: "+err.Error()+". Nothing was changed.", ExitFailure)
+	}
+	last := plan.Last
+	lines := []string{"", "  varlatchd " + last.To + " -> back to " + last.From, "  rule:      " + plan.Rule}
+	if plan.Safe {
+		lines = append(lines, "  database:  kept as it is, so every change made since the upgrade stays")
+	} else {
+		lines = append(lines,
+			"  database:  the pre-upgrade snapshot is restored",
+			"  snapshot:  "+last.Snapshot+" (taken "+last.SnapshotAt+")",
+		)
+		lines = append(lines, undoneLines(plan.Lost)...)
+		lines = append(lines, fmt.Sprintf("  LOST:      %d audit events recorded since %s (a few in the snapshot's last minute may be in it):", plan.Lost.Total, plan.Lost.Since))
+		types := make([]string, 0, len(plan.Lost.ByType))
+		for t := range plan.Lost.ByType {
+			types = append(types, t)
+		}
+		slices.Sort(types)
+		for _, t := range types {
+			lines = append(lines, fmt.Sprintf("             %6d  %s", plan.Lost.ByType[t], Printable(t)))
+		}
+		if len(plan.Lost.Latest) > 0 {
+			lines = append(lines, "             the newest:")
+			for _, c := range plan.Lost.Latest {
+				org := "the installation"
+				if c.OrganizationID != nil {
+					org = Printable(*c.OrganizationID)
+				}
+				lines = append(lines, "               "+Printable(c.OccurredAt)+"  "+Printable(c.EventType)+" ("+Printable(c.Decision)+", "+org+")")
+			}
+		}
+		lines = append(lines, "  NOT COUNTED: "+notCounted, "             The database the rollback replaces is kept with it for 30 days.")
+	}
+	lines = append(lines, "")
+	for _, line := range lines {
+		if err := r.println(line); err != nil {
+			return err
+		}
+	}
+	switch {
+	case !plan.Safe && !acceptLoss:
+		if !isTerminal(r.Stdin) || yes {
+			return Fail("varlatch upgrade --rollback: restoring the snapshot loses the changes listed above: pass --accept-data-loss to go on. Nothing was changed.", ExitFailure)
+		}
+		ok, err := newTerminalPrompter(r).confirm("Restore the pre-upgrade snapshot and lose these changes?", false)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return r.println("Nothing was changed.")
+		}
+	case !yes:
+		if !isTerminal(r.Stdin) {
+			return Fail("varlatch upgrade --rollback: not a terminal: pass --yes to roll back without a prompt. Nothing was changed.", ExitFailure)
+		}
+		ok, err := newTerminalPrompter(r).confirm("Roll back to "+last.From+"?", false)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return r.println("Nothing was changed.")
+		}
+	}
+	j, err := u.Rollback(ctx, plan)
+	if err != nil {
+		return upgradeFailure(err)
+	}
+	if err := r.println("Rolled back to " + last.From + "."); err != nil {
+		return err
+	}
+	if plan.Safe {
+		return nil
+	}
+	for _, line := range afterRestore(last.From, filepath.Join(j.Work, "original")) {
+		if err := r.println(line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// notCounted is what a snapshot restore also loses or reverts beyond the
+// audited changes it lists.
+const notCounted = "Only audited changes are counted. Also lost or reverted: sign-ins and sign-outs, pending approvals, and delivery and sync cursors (webhooks may be delivered again, and sync targets converge back)."
+
+// undoneLines are the revocations, removals, rotations, replacements,
+// deletions and freezes the restore takes back, listed before anything
+// else it loses.
+func undoneLines(lost *upgrade.Changes) []string {
+	if lost.RevocationsTotal == 0 {
+		return []string{"  UNDONE:    no revocations, removals, rotations, replacements, deletions and freezes were recorded since the snapshot"}
+	}
+	lines := []string{fmt.Sprintf("  UNDONE:    revocations, removals, rotations, replacements, deletions and freezes made since the snapshot that the restore undoes (%d):", lost.RevocationsTotal)}
+	for _, c := range lost.Revocations {
+		org := "the installation"
+		if c.OrganizationID != nil {
+			org = Printable(*c.OrganizationID)
+		}
+		what := ""
+		if c.Resource != nil {
+			what = " " + Printable(*c.Resource)
+		}
+		lines = append(lines, "               "+Printable(c.OccurredAt)+"  "+Printable(c.EventType)+" ("+org+")"+what)
+	}
+	if more := lost.RevocationsTotal - int64(len(lost.Revocations)); more > 0 {
+		lines = append(lines, fmt.Sprintf("               and %d more (varlatchd admin changes --since %s --json lists them all)", more, lost.Since))
+	}
+	return lines
+}
+
+// afterRestore is what to do once a restore has taken changes back:
+// with the commands the release returned to has, and no command run for
+// the operator.
+func afterRestore(release, kept string) []string {
+	return []string{
+		"",
+		"What to do now: the restore took the changes listed above back.",
+		"  - Revoke again each credential listed as revoked (varlatch credential revoke <identity-id> <credential-id>), retire again",
+		"    each identity listed as retired (varlatch identity retire <identity-id> --confirm <name>), revoke again each grant,",
+		"    capability, binding, invitation or requirement, and remove again each member, as they are listed.",
+		"  - Rotate again each Secret listed as rotated and replace again each credential listed as replaced: the old values are",
+		"    current again. Delete again what is listed as deleted.",
+		"  - Sign-outs since the snapshot are undone: a session ended since then is valid again until it expires. " + release + " has no",
+		"    command that signs everyone out; ask the people affected to sign out of the dashboard and in again.",
+		"  - Approvals pending at the snapshot are pending again; webhooks may deliver events again; sync targets converge back to",
+		"    the restored values.",
+		"  The database the rollback replaced is kept in " + kept + " (30 days).",
+	}
+}
+
+// recoveredMessage says what Recover did with an interrupted upgrade or
+// rollback.
+func recoveredMessage(j *journal.Journal) string {
+	what := "upgrade"
+	again := "Run varlatch upgrade again to upgrade."
+	if j.Kind == journal.Rollback {
+		// A rollback is not run twice: going back further is by hand.
+		what = "rollback"
+		again = "A rollback is not run again: to go back, stop varlatchd and restore the pre-upgrade snapshot by hand with " + j.To + "'s varlatchd admin backup restore --in " + j.Snapshot + "."
+	}
+	if j.State == journal.Done {
+		if j.Kind == journal.Rollback {
+			return fmt.Sprintf("Finished the interrupted rollback from %s to %s: %s serves, after its health checks.", j.From, j.To, j.To)
+		}
+		return fmt.Sprintf("Finished the interrupted upgrade from %s to %s: %s serves. Run varlatch upgrade again to look for a newer release.", j.From, j.To, j.To)
+	}
+	return fmt.Sprintf("Undid the interrupted %s from %s to %s (%s): %s serves. %s", what, j.From, j.To, j.Reason, j.From, again)
 }
