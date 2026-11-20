@@ -2996,9 +2996,44 @@ migrations.
     on their stdin; the keys go to `admin migrate keys` on its stdin, as
     base64 JSON. None is in an argument, the environment, the journal or
     the output.
-  - Not yet: the address transfer (7.4b), the image target shape
-    (`--to-data`, decision 20's second shape), the interruptions' CI cases
-    (7.4c) and the run against a Compose installation of 0.23.0.
+  - Not yet: the image target shape (`--to-data`, decision 20's second
+    shape), the interruptions' CI cases (7.4c) and the run against a
+    Compose installation of 0.23.0.
+- The address transfer (step 7, slice 7.4b; decision 12, O3):
+  `varlatch migrate --ingress public|proxy|coolify`. The preflight
+  refuses a target whose `public_url` origin (scheme, host, port; so the
+  passkeys' RP ID) is not the source's `VARLATCH_PUBLIC_URL`, public
+  ingress without the source's Caddy overlay or the target's
+  `listen_https`, and an own proxy whose target `listen` is not the
+  dashboard's `BIND_ADDRESS:VARLATCH_WEB_PORT`.
+  - The phases after the checks are transfer, switched, open: the address
+    moves before the switch, so an undo still reopens the source. Entering
+    transfer, `admin migrate state --write` writes the migration's gate
+    (`maintenance.json`, kind `migration`, phase `transfer`, no expiry);
+    varlatchd starts on a journal in transfer only under it, isolated,
+    answering `GET /v1/meta` and nothing else (`httpserver.MetaAdmission`).
+  - Public ingress: the source's Caddy stops (`docker compose stop
+    caddy`), the target starts (`systemctl start`, `--unit`) and takes its
+    certificate over ACME. Own proxy: the source's dashboard stops,
+    freeing its port, and the target starts on it. Coolify: the target
+    starts, and `migrate` stops (exit 75) with the exact domain move to
+    make; `--resume` checks it.
+  - The check: `<origin>/v1/meta` must answer with the migrated
+    installation's id and the target's release, within
+    `--transfer-timeout` (3 minutes). Then the source is marked migrated
+    out, and the target restarted out of its gate (the journal open removes
+    it). If the public URL does not answer, the address goes back (the
+    target stopped, the source's Caddy or dashboard started; Coolify: the
+    instruction to move the domain back) and the migration is undone.
+    `--abort` undoes any migration before its switch.
+  - The dry run's projection includes the transfer, estimated by shape
+    (a minute for an ACME issuance or a domain move, seconds for a port,
+    and the target's restart): nothing is transferred before the barrier,
+    so it is not measured.
+  - **Accepted difference:** Go's maintenance gate has a kind of its own,
+    `migration` with phase `transfer`; a gate the TypeScript server wrote
+    with another phase is unreadable to Go, which fails closed.
+  - Not yet: an end-to-end transfer with Pebble (7.4c, 7.8).
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

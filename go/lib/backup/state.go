@@ -284,8 +284,8 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 // milliseconds); a restore gate holds until the restore completes.
 type Gate struct {
 	ID        string  `json:"id"`
-	Kind      string  `json:"kind"`  // "capture" or "restore"
-	Phase     string  `json:"phase"` // "draining", "paused" or "reconciling"
+	Kind      string  `json:"kind"`  // "capture", "restore" or "migration"
+	Phase     string  `json:"phase"` // "draining", "paused" or "reconciling"; "transfer" for a migration
 	ExpiresAt *int64  `json:"expiresAt"`
 	ArchiveID *string `json:"archiveId"`
 }
@@ -304,16 +304,21 @@ func ReadGate(dir string) (*Gate, error) {
 		return nil, nil
 	}
 	var g Gate
-	if err != nil || json.Unmarshal(raw, &g) != nil || g.ID == "" ||
-		!slices.Contains([]string{"capture", "restore"}, g.Kind) || !slices.Contains([]string{"draining", "paused", "reconciling"}, g.Phase) ||
-		(g.Kind == "capture" && (g.ExpiresAt == nil || *g.ExpiresAt <= 0)) {
+	if err != nil || json.Unmarshal(raw, &g) != nil || g.ID == "" {
+		return nil, ErrGateUnreadable
+	}
+	// A migration's gate (go-step7 decisions 6 and 12) holds the target
+	// isolated while its address is transferred: phase transfer, no expiry.
+	migration := g.Kind == "migration" && g.Phase == "transfer" && g.ExpiresAt == nil
+	if !migration && (!slices.Contains([]string{"capture", "restore"}, g.Kind) || !slices.Contains([]string{"draining", "paused", "reconciling"}, g.Phase) ||
+		(g.Kind == "capture" && (g.ExpiresAt == nil || *g.ExpiresAt <= 0))) {
 		return nil, ErrGateUnreadable
 	}
 	return &g, nil
 }
 
-// Active is whether a gate admits no work at now: a restore gate always,
-// a capture gate until its lease expires.
+// Active is whether a gate admits no work at now: a restore gate and a
+// migration's always, a capture gate until its lease expires.
 func (g *Gate) Active(now time.Time) bool {
 	return g != nil && (g.Kind != "capture" || *g.ExpiresAt > now.UnixMilli())
 }

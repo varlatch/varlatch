@@ -29,6 +29,8 @@ type fakeSource struct {
 	clock   *fakeClock
 	// exportTakes is how long an export takes on the clock.
 	exportTakes time.Duration
+	ingress     IngressInfo
+	ingressDown bool
 }
 
 func (s *fakeSource) call(name string) error {
@@ -39,6 +41,23 @@ func (s *fakeSource) call(name string) error {
 func (s *fakeSource) Dir() string { return s.dir }
 func (s *fakeSource) CleanLeftovers() error {
 	return s.call("clean")
+}
+func (s *fakeSource) Ingress(context.Context) (IngressInfo, error) {
+	return s.ingress, s.call("ingress")
+}
+func (s *fakeSource) StopIngress(_ context.Context, kind Ingress) error {
+	if err := s.call("stop " + string(kind)); err != nil {
+		return err
+	}
+	s.ingressDown = true
+	return nil
+}
+func (s *fakeSource) StartIngress(_ context.Context, kind Ingress) error {
+	if err := s.call("start " + string(kind)); err != nil {
+		return err
+	}
+	s.ingressDown = false
+	return nil
 }
 func (s *fakeSource) Discover(context.Context) (SourceInfo, error) {
 	return s.info, s.call("discover")
@@ -109,6 +128,8 @@ type fakeTarget struct {
 	journals [][]byte
 	fail     map[string]error
 	pass     bool
+	info     TargetInfo
+	running  bool
 }
 
 func (t *fakeTarget) call(name string) error {
@@ -116,7 +137,48 @@ func (t *fakeTarget) call(name string) error {
 	return t.fail[name]
 }
 func (t *fakeTarget) Describe(context.Context) (TargetInfo, TargetState, error) {
-	return TargetInfo{Config: "/etc/varlatch/varlatchd.conf", DataDir: t.dataDir}, TargetState{Journal: t.journal, Database: t.database}, t.call("describe")
+	info := t.info
+	info.Config, info.DataDir = "/etc/varlatch/varlatchd.conf", t.dataDir
+	return info, TargetState{Journal: t.journal, Database: t.database}, t.call("describe")
+}
+func (t *fakeTarget) Start(context.Context) error {
+	if err := t.call("start"); err != nil {
+		return err
+	}
+	t.running = true
+	return nil
+}
+func (t *fakeTarget) Stop(context.Context) error {
+	if err := t.call("stop"); err != nil {
+		return err
+	}
+	t.running = false
+	return nil
+}
+
+// fakeProber answers as the address's network would: the target's
+// installation once the source's ingress is down and the target runs (or,
+// in the Coolify shape, once the domain was moved).
+type fakeProber struct {
+	w      *world
+	probes int
+	moved  bool // Coolify: the operator moved the domain
+	wrong  string
+}
+
+func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, error) {
+	p.probes++
+	if origin != "https://vault.example.test" {
+		return "", "", errors.New("probed " + origin)
+	}
+	served := p.w.tgt.running && (p.w.src.ingressDown || (p.w.eng.Options.Ingress == Coolify && p.moved))
+	if !served {
+		return "", "", errors.New("connection refused")
+	}
+	if p.wrong != "" {
+		return p.wrong, "0.50.0", nil
+	}
+	return "inst_fake", "0.50.0", nil
 }
 func (t *fakeTarget) Keys(_ context.Context, kek, bek []byte) (string, string, error) {
 	t.keys = append(t.keys, slices.Clone(kek), slices.Clone(bek))
@@ -182,11 +244,12 @@ func phasesOf(j *Journal) (out []Phase) {
 func containsCall(calls []string, c string) bool { return slices.Contains(calls, c) }
 
 type world struct {
-	src  *fakeSource
-	tgt  *fakeTarget
-	eng  *Engine
-	said []string
-	bek  []byte
+	src    *fakeSource
+	tgt    *fakeTarget
+	eng    *Engine
+	said   []string
+	bek    []byte
+	prober *fakeProber
 }
 
 func newWorld(t *testing.T) *world {
@@ -198,8 +261,12 @@ func newWorld(t *testing.T) *world {
 		tgt: &fakeTarget{dataDir: t.TempDir(), fail: map[string]error{}, pass: true},
 		bek: []byte(hexOf(randomBytes(32)) + "\n"),
 	}
-	w.eng = &Engine{Source: w.src, Target: w.tgt, BEK: w.bek, Options: Options{Now: clock.now, Work: t.TempDir(),
-		Say: func(s string) { w.said = append(w.said, s) }}, pin: &imagePin{Repository: LastTypeScriptRepository, Digest: w.src.info.Digest}}
+	w.src.ingress = IngressInfo{PublicURL: "https://vault.example.test/", Caddy: true, WebAddress: "127.0.0.1:8787"}
+	w.tgt.info = TargetInfo{Release: "0.50.0", PublicURL: "https://VAULT.example.test:443", Listen: "127.0.0.1:8686", ListenHTTPS: ":443"}
+	w.prober = &fakeProber{w: w}
+	w.eng = &Engine{Source: w.src, Target: w.tgt, BEK: w.bek, Prober: w.prober, Options: Options{Now: clock.now, Work: t.TempDir(), Ingress: Public,
+		Say: func(s string) { w.said = append(w.said, s) }}, pin: &imagePin{Repository: LastTypeScriptRepository, Digest: w.src.info.Digest},
+		sleep: func(d time.Duration) { clock.advance(d) }}
 	w.src.info.DigestRepository = LastTypeScriptRepository
 	return w
 }
@@ -238,7 +305,7 @@ func TestAMigrationEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Phase{Started, Preflight, DryRun, Barrier, Copied, Checked, Switched, Open}
+	want := []Phase{Started, Preflight, DryRun, Barrier, Copied, Checked, Transfer, Switched, Open}
 	if !slices.Equal(phasesOf(j), want) {
 		t.Fatalf("phases %v, want %v", phasesOf(j), want)
 	}
@@ -248,6 +315,15 @@ func TestAMigrationEndToEnd(t *testing.T) {
 	}
 	if w.src.gate == nil || w.src.gate.Kind != "migrated-out" {
 		t.Fatalf("the source's gate: %+v", w.src.gate)
+	}
+	// The address: Caddy stopped, the target serving it, checked before the
+	// switch; restarted out of its isolation at open.
+	if !w.src.ingressDown || !w.tgt.running || w.prober.probes == 0 || j.Transfer == nil || j.Transfer.VerifiedAt == "" ||
+		j.Transfer.Origin != "https://vault.example.test" {
+		t.Fatalf("the transfer: down %v, running %v, probes %d, %+v", w.src.ingressDown, w.tgt.running, w.prober.probes, j.Transfer)
+	}
+	if i, k := slices.Index(w.src.calls, "stop public"), slices.Index(w.src.calls, "migrated-out gate-1"); i < 0 || k < i {
+		t.Fatalf("the source was switched before its address moved: %v", w.src.calls)
 	}
 	if len(w.src.runKeys) != 2 || len(w.tgt.runKeys) != 2 || !bytes.Equal(w.src.runKeys[0], w.tgt.runKeys[0]) ||
 		!bytes.Equal(w.src.runKeys[1], w.tgt.runKeys[1]) || bytes.Equal(w.src.runKeys[0], w.src.runKeys[1]) {
@@ -259,7 +335,8 @@ func TestAMigrationEndToEnd(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(w.src.dir, "bundle-*")); len(left) != 0 {
 		t.Errorf("bundles left: %v", left)
 	}
-	if j.DryRun == nil || !j.DryRun.Fits || j.DryRun.ExportMs != 20000 || j.DryRun.ProjectedMs != 20000+DefaultDrain.Milliseconds() {
+	if j.DryRun == nil || !j.DryRun.Fits || j.DryRun.ExportMs != 20000 || j.DryRun.TransferMs != 65000 || j.DryRun.TransferMeasured ||
+		j.DryRun.ProjectedMs != 20000+65000+DefaultDrain.Milliseconds() {
 		t.Errorf("the dry run's report: %+v", j.DryRun)
 	}
 	if j.Preflight == nil || j.Preflight.ArchiveID == "" || !containsCall(w.src.calls, "verify "+j.Preflight.ArchiveID) {
@@ -399,7 +476,8 @@ func interrupted(t *testing.T, p Phase) *world {
 	t.Helper()
 	w := newWorld(t)
 	j := &Journal{Format: 1, ID: "mig_bbbbbbbbbbbbbbbbbbbbbbbbbb", Source: w.src.info, History: []Step{}, Barrier: &BarrierRecord{},
-		Target: TargetInfo{Config: "/etc/varlatch/varlatchd.conf", DataDir: w.tgt.dataDir}}
+		Target:  TargetInfo{Config: "/etc/varlatch/varlatchd.conf", DataDir: w.tgt.dataDir, Release: "0.50.0"},
+		Ingress: Public, Transfer: &TransferRecord{Origin: "https://vault.example.test"}, Copy: &CopyRecord{InstallationID: "inst_fake"}}
 	for _, q := range Phases[:slices.Index(Phases, p)+1] {
 		j.enter(q, w.src.clock.now())
 	}
@@ -432,6 +510,7 @@ func TestResumeFromEachPhase(t *testing.T) {
 		{Barrier, Released, []string{"release gate-1"}},
 		{Copied, Released, []string{"release gate-1"}},
 		{Checked, Released, []string{"release gate-1"}},
+		{Transfer, Open, []string{"stop public", "migrated-out gate-1"}},
 		{Switched, Open, []string{"migrated-out gate-1"}},
 	} {
 		t.Run(string(c.phase), func(t *testing.T) {
@@ -569,5 +648,120 @@ func TestLeftoversAreCleared(t *testing.T) {
 		if _, err := os.Lstat(d); (err != nil) != removed {
 			t.Errorf("%s: removed %v, want %v", d, err != nil, removed)
 		}
+	}
+}
+
+// Each shape's transfer, and what the preflight refuses of it: the origin
+// (and so the RP ID) must be the source's; public ingress needs the
+// target's own HTTPS and the source's Caddy; an own proxy, the target on
+// the dashboard's port.
+func TestTheAddressBeforeAnything(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		set  func(w *world)
+		why  string
+	}{
+		{"no ingress", func(w *world) { w.eng.Options.Ingress = "" }, "--ingress is public, proxy or coolify"},
+		{"another host", func(w *world) { w.tgt.info.PublicURL = "https://other.example.test" }, "a migration keeps the origin"},
+		{"another port", func(w *world) { w.tgt.info.PublicURL = "https://vault.example.test:8443" }, "a migration keeps the origin"},
+		{"another scheme", func(w *world) { w.tgt.info.PublicURL = "http://vault.example.test" }, "a migration keeps the origin"},
+		{"no public URL", func(w *world) { w.tgt.info.PublicURL = "" }, "the target's public_url"},
+		{"public without Caddy", func(w *world) { w.src.ingress.Caddy = false }, "runs no Caddy"},
+		{"public without listen_https", func(w *world) { w.tgt.info.ListenHTTPS = "" }, "no listen_https"},
+		{"a proxy on another port", func(w *world) { w.eng.Options.Ingress = Proxy }, "set the target's listen to it"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			c.set(w)
+			if _, err := w.eng.Run(context.Background(), false); err == nil || !strings.Contains(err.Error(), c.why) {
+				t.Fatalf("%v, want %q", err, c.why)
+			}
+			if containsCall(w.src.calls, "backup") {
+				t.Fatal("it went on")
+			}
+		})
+	}
+}
+
+// An own proxy: the dashboard stops, the target takes its port.
+func TestAnOwnProxysTransfer(t *testing.T) {
+	w := newWorld(t)
+	w.eng.Options.Ingress = Proxy
+	w.tgt.info.Listen, w.tgt.info.ListenHTTPS = "127.0.0.1:8787", ""
+	j, err := w.eng.Run(context.Background(), false)
+	if err != nil || j.Phase != Open || !containsCall(w.src.calls, "stop proxy") || j.DryRun.TransferMs != 10000 {
+		t.Fatalf("%+v %v %v", j, err, w.src.calls)
+	}
+}
+
+// The public URL does not answer from the target: the address goes back
+// (the target stopped, Caddy started), the migration undone.
+func TestATransferThatFailsGoesBack(t *testing.T) {
+	w := newWorld(t)
+	w.prober.wrong = "inst_other"
+	w.eng.Options.TransferTimeout = 10 * time.Second
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "not the migrated inst_fake") || j.Phase != Released || j.Undone.From != Transfer {
+		t.Fatalf("%+v %v", j, err)
+	}
+	if w.tgt.running || w.src.ingressDown || !containsCall(w.src.calls, "start public") || !containsCall(w.src.calls, "release gate-1") ||
+		containsCall(w.src.calls, "migrated-out gate-1") || w.tgt.database {
+		t.Fatalf("not given back: running %v, down %v, %v", w.tgt.running, w.src.ingressDown, w.src.calls)
+	}
+	if w.prober.probes < 5 {
+		t.Errorf("probed %d times in 10 s", w.prober.probes)
+	}
+}
+
+// The Coolify shape: migrate stops at the prompt; --resume before the
+// domain moved waits (nothing undone); after it, the migration opens.
+func TestCoolifysTransferByHand(t *testing.T) {
+	w := newWorld(t)
+	w.eng.Options.Ingress = Coolify
+	w.eng.Options.TransferTimeout = 4 * time.Second
+	j, err := w.eng.Run(context.Background(), false)
+	if !errors.Is(err, ErrAwaitingOperator) || j.Phase != Transfer || !j.Transfer.Asked || !w.tgt.running || w.src.ingressDown {
+		t.Fatalf("the prompt: %+v %v", j, err)
+	}
+	said := strings.Join(w.said, "\n")
+	if !strings.Contains(said, "move the domain of https://vault.example.test") || !strings.Contains(said, "varlatch migrate --resume") {
+		t.Fatalf("the instruction: %s", said)
+	}
+	if j, err = w.eng.Resume(context.Background()); err == nil || !strings.Contains(err.Error(), "once the domain is moved") || j.Phase != Transfer {
+		t.Fatalf("a resume before the move: %+v %v", j, err)
+	}
+	if containsCall(w.src.calls, "release gate-1") {
+		t.Fatal("a resume before the move undid")
+	}
+	w.prober.moved = true
+	if j, err = w.eng.Resume(context.Background()); err != nil || j.Phase != Open {
+		t.Fatalf("the resume after the move: %+v %v", j, err)
+	}
+	w.noSecrets(t)
+}
+
+// --abort: before the switch it undoes (in the transfer, the address
+// first); past it, refused.
+func TestAbort(t *testing.T) {
+	w := newWorld(t)
+	w.eng.Options.Ingress = Coolify
+	if _, err := w.eng.Run(context.Background(), false); !errors.Is(err, ErrAwaitingOperator) {
+		t.Fatal(err)
+	}
+	j, err := w.eng.Abort(context.Background())
+	if err != nil || j.Phase != Released || w.tgt.running || !containsCall(w.src.calls, "release gate-1") ||
+		!strings.Contains(strings.Join(w.said, "\n"), "move the domain of https://vault.example.test back") {
+		t.Fatalf("an abort in the transfer: %+v %v %v", j, err, w.said)
+	}
+	w2 := newWorld(t)
+	if _, err := w2.eng.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if j, err := w2.eng.Abort(context.Background()); err != nil || j.Phase != Released {
+		t.Fatalf("an abort after a dry run: %+v %v", j, err)
+	}
+	w3 := interrupted(t, Switched)
+	if _, err := w3.eng.Abort(context.Background()); err == nil || !strings.Contains(err.Error(), "goes forward only") {
+		t.Fatalf("an abort after the switch: %v", err)
 	}
 }

@@ -58,7 +58,17 @@ type Options struct {
 	// Work is a directory of this host's for the dry run's scratch
 	// database (removed after it).
 	Work string
+	// Ingress is the source's ingress shape (decision 12); required.
+	Ingress Ingress
+	// TransferTimeout bounds the wait for the public URL to answer from
+	// the target (3 minutes by default: an ACME issuance, a domain move).
+	TransferTimeout time.Duration
+	// ProbeEvery is the wait between two probes (2 s by default).
+	ProbeEvery time.Duration
 }
+
+// DefaultTransferTimeout bounds the transfer's wait for the public URL.
+const DefaultTransferTimeout = 3 * time.Minute
 
 // DefaultMaxDowntime is O7's budget.
 const DefaultMaxDowntime = 10 * time.Minute
@@ -74,20 +84,30 @@ type Engine struct {
 	// BEK is the source's Backup Encryption Key file's text, given to the
 	// target's key file (nil: none is copied). The caller clears it.
 	BEK []byte
+	// Prober asks the public URL which installation serves it.
+	Prober Prober
 	// pin replaces the published image's (the tests' fakes only).
 	pin *imagePin
+	// sleep waits between probes (time.Sleep; the tests' clock).
+	sleep func(time.Duration)
 }
 
 // DryRunReport is the dry run's: each part of the projected downtime
 // (decision 19), the total against the budget, and the checks.
 type DryRunReport struct {
-	At               string        `json:"at"`
-	ExportMs         int64         `json:"exportMs"`
-	ImportMs         int64         `json:"importMs"`
-	CheckMs          int64         `json:"checkMs"`
-	DrainMs          int64         `json:"drainMs"`
+	At       string `json:"at"`
+	ExportMs int64  `json:"exportMs"`
+	ImportMs int64  `json:"importMs"`
+	CheckMs  int64  `json:"checkMs"`
+	DrainMs  int64  `json:"drainMs"`
+	// TransferMs is the address transfer's share, estimated for the
+	// ingress shape (decision 19: an ACME issuance or a domain move about
+	// a minute, an own proxy's port a few seconds), and the target's
+	// restart at open; it is included in ProjectedMs. The dry run cannot
+	// measure it: nothing is transferred before the barrier.
 	TransferMs       int64         `json:"transferMs"`
 	TransferMeasured bool          `json:"transferMeasured"`
+	Ingress          Ingress       `json:"ingress"`
 	ProjectedMs      int64         `json:"projectedMs"`
 	MaxDowntimeMs    int64         `json:"maxDowntimeMs"`
 	Fits             bool          `json:"fits"`
@@ -177,8 +197,16 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if head == nil && st.Database {
 		return prev, fmt.Errorf("the target's data directory %s holds a database and no migration journal: a migration imports into an empty one only", tgt.DataDir)
 	}
+	ing, err := e.Source.Ingress(ctx)
+	if err != nil {
+		return prev, err
+	}
+	origin, err := e.sameAddress(ing, tgt)
+	if err != nil {
+		return prev, err
+	}
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
-		Drain: int64(e.drain() / time.Second), Transfer: "none: the address transfer is slice 7.4b's", History: []Step{}}
+		Drain: int64(e.drain() / time.Second), Ingress: e.Options.Ingress, Transfer: &TransferRecord{Origin: origin}, History: []Step{}}
 	if reuse {
 		// The same migration goes on only to the same target.
 		if prev.Target.Config != tgt.Config || prev.Target.DataDir != tgt.DataDir {
@@ -396,7 +424,8 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 	checked := e.now()
 	r := &DryRunReport{At: checked.UTC().Format(time.RFC3339Nano), ExportMs: exported.Sub(start).Milliseconds(),
 		ImportMs: imported.Sub(exported).Milliseconds(), CheckMs: checked.Sub(imported).Milliseconds(),
-		DrainMs: e.drain().Milliseconds(), MaxDowntimeMs: e.maxDowntime().Milliseconds(), Copy: cp, Checks: &checks}
+		DrainMs: e.drain().Milliseconds(), MaxDowntimeMs: e.maxDowntime().Milliseconds(), Copy: cp, Checks: &checks,
+		TransferMs: transferEstimate(j.Ingress).Milliseconds(), Ingress: j.Ingress}
 	r.ProjectedMs = r.DrainMs + r.ExportMs + r.ImportMs + r.CheckMs + r.TransferMs
 	r.Fits = r.ProjectedMs <= r.MaxDowntimeMs
 	j.DryRun = r
@@ -439,6 +468,9 @@ func (e *Engine) cutover(ctx context.Context, j *Journal) (*Journal, error) {
 	if err := e.finalCopy(ctx, j); err != nil {
 		return j, e.undo(ctx, j, err)
 	}
+	if err := e.transfer(ctx, j); err != nil {
+		return j, err
+	}
 	return j, e.switchAndOpen(ctx, j)
 }
 
@@ -475,8 +507,10 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 	return e.enter(ctx, j, Checked)
 }
 
-// switchAndOpen: the source marked migrated out (journalled first: from
-// here the migration goes forward only), then the target opened.
+// switchAndOpen: once the public URL answers from the target, the source
+// marked migrated out (journalled first: from here the migration goes
+// forward only), then the target opened: stopped, its journal open (which
+// removes the transfer's gate), started again.
 func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 	if err := e.enter(ctx, j, Switched); err != nil {
 		return err
@@ -485,11 +519,25 @@ func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 		return err
 	}
 	e.say("Switched: the source refuses writes from now on.")
-	// The address transfer (slice 7.4b) goes here.
+	return e.open(ctx, j)
+}
+
+// open restarts the target out of the transfer's isolation.
+func (e *Engine) open(ctx context.Context, j *Journal) error {
+	if err := e.Target.Stop(ctx); err != nil {
+		return fmt.Errorf("stopping the target to open it: %w (varlatch migrate --resume tries again)", err)
+	}
 	if err := e.enter(ctx, j, Open); err != nil {
 		return err
 	}
-	e.say("Open: start varlatchd on the target; it serves the migrated installation.")
+	if err := e.Target.Start(ctx); err != nil {
+		return fmt.Errorf("the migration is open, but the target's service did not start: %w; start it", err)
+	}
+	at := "its address"
+	if j.Transfer != nil {
+		at = j.Transfer.Origin
+	}
+	e.say("Open: the target serves the migrated installation at %s.", at)
 	return nil
 }
 
@@ -524,6 +572,9 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	from := j.Phase
 	e.say("Undoing: %v.", cause)
 	var problems []error
+	if from == Transfer {
+		problems = append(problems, e.returnAddress(ctx, j)...)
+	}
 	released := false
 	g, err := e.Source.Gate(ctx)
 	switch {
@@ -599,18 +650,49 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	case slices.Contains(held, j.Phase):
 		e.say("The migration %s was interrupted in phase %s: it is undone.", j.ID, j.Phase)
 		return j, e.undo(ctx, j, fmt.Errorf("interrupted in phase %s", j.Phase))
+	case j.Phase == Transfer:
+		e.say("The migration %s is transferring its address: the public URL is checked again.", j.ID)
+		if err := e.transfer(ctx, j); err != nil {
+			return j, err
+		}
+		return j, e.switchAndOpen(ctx, j)
 	case j.Phase == Switched:
 		e.say("The migration %s was switched: it goes on to open.", j.ID)
 		if err := e.migratedOut(ctx, j); err != nil {
 			return j, err
 		}
-		if err := e.enter(ctx, j, Open); err != nil {
-			return j, err
-		}
-		e.say("Open: start varlatchd on the target; it serves the migrated installation.")
-		return j, nil
+		return j, e.open(ctx, j)
 	}
 	return j, nil
+}
+
+// Abort is `varlatch migrate --abort`: a migration not yet switched
+// undone on purpose, from any phase before the switch (the address
+// returned first, during the transfer). A switched one is not: it goes
+// forward only.
+func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
+	unlock, err := lockDir(e.Source.Dir())
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	j, err := readJournal(e.Source.Dir())
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case j == nil:
+		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to abort", e.Source.Dir())
+	case j.Phase == Released:
+		return j, nil
+	case j.Phase == Switched || j.Phase == Open:
+		return j, fmt.Errorf("the migration %s is %s: past its switch it goes forward only (varlatch migrate --resume)", j.ID, j.Phase)
+	}
+	err = e.undo(ctx, j, errors.New("aborted by the operator"))
+	if j.Phase == Released {
+		return j, nil
+	}
+	return j, err
 }
 
 // RunKeyText is a run key as the sides read it: 64 lowercase hex digits

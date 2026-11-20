@@ -58,6 +58,36 @@ type Source interface {
 	// left of the source's on this host (the bundles), by their exact
 	// names only.
 	CleanLeftovers() error
+	// Ingress is what the source's address is served by: its public URL
+	// and, by shape, what serves it here.
+	Ingress(ctx context.Context) (IngressInfo, error)
+	// StopIngress and StartIngress stop and start what serves the
+	// address (Caddy for public ingress, the dashboard's port for an own
+	// proxy); the Coolify shape has nothing here to stop or start.
+	StopIngress(ctx context.Context, kind Ingress) error
+	StartIngress(ctx context.Context, kind Ingress) error
+}
+
+// Ingress is a source's ingress shape (decision 12).
+type Ingress string
+
+// The shapes.
+const (
+	Public  Ingress = "public"  // the installation's Caddy terminates HTTPS on 80 and 443; varlatchd's own ACME takes over
+	Proxy   Ingress = "proxy"   // the operator's reverse proxy targets the dashboard's loopback port; varlatchd binds it
+	Coolify Ingress = "coolify" // Coolify's proxy routes the domain by application: the operator moves it, at the prompt
+)
+
+// Ingresses are the shapes.
+var Ingresses = []Ingress{Public, Proxy, Coolify}
+
+// IngressInfo is a source's: its public URL (the origin people open, the
+// passkeys' RP ID its host), whether its Caddy runs, and the dashboard's
+// address on this host.
+type IngressInfo struct {
+	PublicURL  string
+	Caddy      bool
+	WebAddress string
 }
 
 // SourceInfo is what a migration starts from.
@@ -97,12 +127,27 @@ type Target interface {
 	// Discard removes the database migration id built in the data
 	// directory (before the switch only).
 	Discard(ctx context.Context, id string) error
+	// Start and Stop start and stop the target's service.
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+}
+
+// Prober asks a public URL which installation serves it: GET /v1/meta's
+// installationId and serverVersion.
+type Prober interface {
+	Probe(ctx context.Context, publicURL string) (installationID, serverVersion string, err error)
 }
 
 // TargetInfo is the target, as the journal records it.
 type TargetInfo struct {
 	Config  string `json:"config"`
 	DataDir string `json:"dataDir"`
+	// Release is the target's varlatchd's; PublicURL, Listen and
+	// ListenHTTPS its configuration's.
+	Release     string `json:"release"`
+	PublicURL   string `json:"publicUrl"`
+	Listen      string `json:"listen"`
+	ListenHTTPS string `json:"listenHttps"`
 }
 
 // TargetState is what the target holds: its journal's head (nil for

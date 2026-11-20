@@ -5,9 +5,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,14 +24,16 @@ import (
 // none, so it is outside the parity table (goOnlyCommands).
 
 const migrateUsage = `Usage:
-  varlatch migrate --config <varlatchd.conf> --bek-file <file> --backup-destination <name>
-                   --read-credentials-file <file> [--from <compose directory>] [--dry-run]
-                   [--max-downtime <duration>] [--drain <duration>] [--kek-file <file>]
-                   [--destinations-file <file>] [--ts-cli <program>] [--json]
+  varlatch migrate --ingress public|proxy|coolify --config <varlatchd.conf> --bek-file <file>
+                   --backup-destination <name> --read-credentials-file <file> [--from <compose directory>]
+                   [--dry-run] [--max-downtime <duration>] [--drain <duration>] [--transfer-timeout <duration>]
+                   [--unit <systemd unit>] [--kek-file <file>] [--destinations-file <file>] [--ts-cli <program>] [--json]
   varlatch migrate --resume (the same options)
+  varlatch migrate --abort (the same options): undo a migration not yet switched
   varlatch migrate --status [--from <compose directory>] [--json]
                (on the installation's host, as root: --from is the Compose installation of the last
-                TypeScript release, the current directory by default; --config the target's varlatchd.conf)`
+                TypeScript release, the current directory by default; --config the target's varlatchd.conf;
+                --ingress the source's: its own Caddy (public), your reverse proxy (proxy), or Coolify's)`
 
 // goOnlyCommands are the Go CLI's commands the TypeScript CLI does not
 // have: host commands of a migration to a Go installation. They are not
@@ -39,17 +43,18 @@ var goOnlyCommands = map[string]func(*Run) error{
 }
 
 type migrateOptions struct {
-	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI string
-	maxDowntime, drain                                                                    time.Duration
-	dryRun, resume, status, asJSON                                                        bool
+	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI, ingress, unit string
+	maxDowntime, drain, transferTimeout                                                                  time.Duration
+	dryRun, resume, abort, status, asJSON                                                                bool
 }
 
 func parseMigrateOptions(args []string) (migrateOptions, error) {
 	o := migrateOptions{}
 	values := map[string]*string{"--from": &o.from, "--config": &o.config, "--bek-file": &o.bekFile, "--backup-destination": &o.destination,
-		"--read-credentials-file": &o.readCredentials, "--destinations-file": &o.destinationsFile, "--kek-file": &o.kekFile, "--ts-cli": &o.tsCLI}
-	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain}
-	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--status": &o.status, "--json": &o.asJSON}
+		"--read-credentials-file": &o.readCredentials, "--destinations-file": &o.destinationsFile, "--kek-file": &o.kekFile, "--ts-cli": &o.tsCLI,
+		"--ingress": &o.ingress, "--unit": &o.unit}
+	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
+	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON}
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch migrate: "+msg, "\n"+migrateUsage) }
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -90,10 +95,14 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("unknown option " + shownArgument(a))
 	}
 	switch {
-	case o.status && (o.resume || o.dryRun || o.config != "" || o.bekFile != "" || o.destination != ""):
+	case o.status && (o.resume || o.abort || o.dryRun || o.config != "" || o.bekFile != "" || o.destination != ""):
 		return o, usage("--status takes --from and --json only")
-	case o.resume && o.dryRun:
-		return o, usage("--resume does what the interrupted run was asked; it takes no --dry-run")
+	case (o.resume || o.abort) && o.dryRun:
+		return o, usage("--resume does what the interrupted run was asked, --abort undoes it; neither takes --dry-run")
+	case o.resume && o.abort:
+		return o, usage("--resume or --abort, not both")
+	case !o.status && !o.resume && !o.abort && !slices.Contains([]string{"public", "proxy", "coolify"}, o.ingress):
+		return o, usage("--ingress is public, proxy or coolify: the source's ingress (its own Caddy, your reverse proxy, or Coolify's)")
 	case !o.status && (o.config == "" || o.bekFile == "" || o.destination == "" || o.readCredentials == ""):
 		return o, usage("give --config, --bek-file, --backup-destination and --read-credentials-file")
 	}
@@ -148,20 +157,30 @@ func migrateCommand(r *Run) error {
 	e := &migrate.Engine{
 		Source: &migrate.Compose{Directory: o.from, Run: run, TSCLI: o.tsCLI, KEKFile: o.kekFile, BEKFile: o.bekFile,
 			Destination: o.destination, DestinationsFile: o.destinationsFile, ReadCredentialsFile: o.readCredentials},
-		Target:  &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: varlatchdEnviron(r)}},
-		Options: migrate.Options{MaxDowntime: o.maxDowntime, Drain: o.drain, Say: func(s string) { _ = r.warn(s) }},
-		BEK:     bek,
+		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: varlatchdEnviron(r)}, Unit: o.unit},
+		Options: migrate.Options{MaxDowntime: o.maxDowntime, Drain: o.drain, TransferTimeout: o.transferTimeout, Ingress: migrate.Ingress(o.ingress),
+			Say: func(s string) { _ = r.warn(s) }},
+		BEK:    bek,
+		Prober: migrate.HTTPProber{},
 	}
 	var j *migrate.Journal
-	if o.resume {
+	switch {
+	case o.resume:
 		j, err = e.Resume(context.Background())
-	} else {
+	case o.abort:
+		j, err = e.Abort(context.Background())
+	default:
 		j, err = e.Run(context.Background(), o.dryRun)
 	}
 	if j != nil {
 		if serr := r.showJournal(j, o.asJSON); serr != nil {
 			return serr
 		}
+	}
+	if errors.Is(err, migrate.ErrAwaitingOperator) {
+		// The Coolify shape's stop: the instruction was said; --resume
+		// goes on once the domain is moved (EX_TEMPFAIL).
+		return ExitWith(75)
 	}
 	if err != nil {
 		return Fail("varlatch migrate: "+err.Error(), ExitFailure)
@@ -198,7 +217,7 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		if !d.Fits {
 			verdict = "EXCEEDS"
 		}
-		transfer := "not measured (the address transfer is slice 7.4b's)"
+		transfer := ms(d.TransferMs) + " (estimated for " + string(d.Ingress) + " ingress, the target's restart included; included in the projection)"
 		if d.TransferMeasured {
 			transfer = ms(d.TransferMs)
 		}
@@ -215,6 +234,15 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		if c.Checks != nil {
 			fmt.Fprintf(&b, "Checks passed: %v.\n", c.Checks.Passed)
 		}
+	}
+	if tr := j.Transfer; tr != nil && (j.Phase == migrate.Transfer || tr.VerifiedAt != "") {
+		state := "waiting for the public URL to answer from the target"
+		if tr.VerifiedAt != "" {
+			state = "the public URL answered from the target at " + tr.VerifiedAt
+		} else if tr.Asked {
+			state = "waiting for the domain move in Coolify (then varlatch migrate --resume)"
+		}
+		fmt.Fprintf(&b, "Address %s (%s ingress): %s.\n", tr.Origin, j.Ingress, state)
 	}
 	if u := j.Undone; u != nil {
 		fmt.Fprintf(&b, "Undone from phase %s: %s.\n", u.From, u.Why)

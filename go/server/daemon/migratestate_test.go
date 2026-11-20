@@ -8,13 +8,17 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/creack/pty"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/migrationtest"
@@ -256,5 +260,106 @@ func TestAdminMigrateDiscardAndScratch(t *testing.T) {
 		if _, msg := parseMigrate(args); msg == "" {
 			t.Errorf("%q parsed", args)
 		}
+	}
+}
+
+// The address transfer (decision 12): the journal entering transfer
+// writes the migration's gate; varlatchd starts under it and answers GET
+// /v1/meta (its installation's id) and nothing else; open removes the
+// gate. Without the gate, a journal in transfer does not start.
+func TestTheTransfersGate(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	r := start(t, in)
+	r.stop(t)
+	for _, phase := range []string{"started", "barrier", "checked"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "transfer"), "state", "--write"); code != ExitOK {
+		t.Fatal(errOut)
+	}
+	g, err := backup.ReadGate(in.data)
+	if err != nil || g == nil || g.Kind != "migration" || g.ID != migA || g.Phase != "transfer" || g.ExpiresAt != nil {
+		t.Fatalf("the gate: %+v %v", g, err)
+	}
+	if code, out, _ := migrateWith(t, in.conf, nil, "state"); code != ExitOK || !strings.Contains(out, `"release":`) || !strings.Contains(out, `"listen":"127.0.0.1:0"`) {
+		t.Fatalf("state: %q", out)
+	}
+	r = start(t, in)
+	get := func(path string) (int, string) {
+		res, err := http.Get("http://" + r.addr + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	if code, body := get("/v1/meta"); code != http.StatusOK || !strings.Contains(body, `"serverVersion"`) {
+		t.Errorf("/v1/meta under the transfer's gate: %d %s", code, body)
+	}
+	for _, p := range []string{"/v1/whoami", "/v1/orgs", "/readyz"} {
+		if code, body := get(p); code != http.StatusServiceUnavailable {
+			t.Errorf("%s under the transfer's gate: %d %s", p, code, body)
+		}
+	}
+	res, err := http.Post("http://"+r.addr+"/v1/meta", "application/json", strings.NewReader("{}"))
+	if err == nil {
+		res.Body.Close()
+		if res.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("POST /v1/meta under the gate: %d", res.StatusCode)
+		}
+	}
+	r.stop(t)
+	// No gate: it does not start.
+	_ = os.Remove(filepath.Join(in.data, backup.GateFile))
+	var errOut syncBuffer
+	if code := Serve(Options{ConfigPath: in.conf, Stderr: &errOut, Signals: make(chan os.Signal, 1)}); code != ExitConfig || !strings.Contains(errOut.String(), "holds no gate of it") {
+		t.Fatalf("transfer without its gate: %d %q", code, errOut.String())
+	}
+	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "transfer"), "state", "--write"); code != ExitOK {
+		t.Fatal(errOut)
+	}
+	// Open removes the gate; varlatchd serves as ever.
+	for _, phase := range []string{"switched", "open"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	if g, err := backup.ReadGate(in.data); g != nil || err != nil {
+		t.Fatalf("the gate after open: %+v %v", g, err)
+	}
+	r = start(t, in)
+	if code, _ := get("/v1/whoami"); code == http.StatusServiceUnavailable {
+		t.Error("isolated after open")
+	}
+	r.stop(t)
+}
+
+// Released removes the transfer's gate; another gate is never replaced.
+func TestTheTransfersGateIsItsOwn(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	for _, phase := range []string{"started", "transfer", "released"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	if g, err := backup.ReadGate(in.data); g != nil || err != nil {
+		t.Fatalf("the gate after released: %+v %v", g, err)
+	}
+	expires := time.Now().Add(time.Hour).UnixMilli()
+	lease, _ := json.Marshal(backup.Gate{ID: "lease-1", Kind: "capture", Phase: "draining", ExpiresAt: &expires})
+	if err := os.WriteFile(filepath.Join(in.data, backup.GateFile), lease, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"started", "transfer"} {
+		code, _, errOut := migrateWith(t, in.conf, journalText(migB, phase), "state", "--write")
+		if phase == "transfer" && (code != ExitFailure || !strings.Contains(errOut, "capture gate")) {
+			t.Fatalf("the transfer over a lease: %d %q", code, errOut)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(in.data, backup.GateFile)); !bytes.Equal(b, lease) {
+		t.Fatal("the lease was replaced")
 	}
 }

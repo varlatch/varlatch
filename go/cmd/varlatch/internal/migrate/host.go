@@ -20,6 +20,33 @@ type Host struct {
 	Varlatchd string
 	Config    string
 	Run       Runner
+	// Unit is the target's systemd unit ("varlatchd"), started and
+	// stopped around the address transfer.
+	Unit string
+}
+
+func (h *Host) unit() string {
+	if h.Unit == "" {
+		return "varlatchd"
+	}
+	return h.Unit
+}
+
+// Start is `systemctl start <unit>`.
+func (h *Host) Start(ctx context.Context) error { return h.systemctl(ctx, "start") }
+
+// Stop is `systemctl stop <unit>`.
+func (h *Host) Stop(ctx context.Context) error { return h.systemctl(ctx, "stop") }
+
+func (h *Host) systemctl(ctx context.Context, verb string) error {
+	r, err := h.Run.Run(ctx, "", "systemctl", []string{verb, h.unit()}, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return failure("systemctl "+verb+" "+h.unit(), r)
+	}
+	return nil
 }
 
 func (h *Host) admin(ctx context.Context, args []string, stdin []byte) (Ran, error) {
@@ -41,14 +68,18 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		return info, TargetState{}, failure("varlatchd admin migrate state", r)
 	}
 	var s struct {
-		Journal  *JournalHead `json:"journal"`
-		Database bool         `json:"database"`
-		DataDir  string       `json:"dataDir"`
+		Journal     *JournalHead `json:"journal"`
+		Database    bool         `json:"database"`
+		DataDir     string       `json:"dataDir"`
+		Release     string       `json:"release"`
+		PublicURL   string       `json:"publicUrl"`
+		Listen      string       `json:"listen"`
+		ListenHTTPS string       `json:"listenHttps"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &s); err != nil || s.DataDir == "" {
 		return info, TargetState{}, errors.New("varlatchd admin migrate state did not answer in JSON")
 	}
-	info.DataDir = s.DataDir
+	info.DataDir, info.Release, info.PublicURL, info.Listen, info.ListenHTTPS = s.DataDir, s.Release, s.PublicURL, s.Listen, s.ListenHTTPS
 	return info, TargetState{Journal: s.Journal, Database: s.Database}, nil
 }
 

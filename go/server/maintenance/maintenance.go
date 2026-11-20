@@ -89,6 +89,15 @@ func (a *Admission) Enter() (leave func(), ok bool) {
 	}, true
 }
 
+// AdmitsMeta reports whether the open gate is a migration's, under which
+// GET /v1/meta still answers (httpserver.MetaAdmission).
+func (a *Admission) AdmitsMeta() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	g := a.active()
+	return !a.unreadable && g != nil && g.Kind == "migration"
+}
+
 // Busy is how many admitted requests are still running.
 func (a *Admission) Busy() int {
 	a.mu.Lock()

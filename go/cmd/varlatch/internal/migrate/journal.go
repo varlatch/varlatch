@@ -30,13 +30,14 @@ const (
 	Barrier   Phase = "barrier"   // the source behind its migration barrier, or being put there
 	Copied    Phase = "copied"    // the final copy imported into the target
 	Checked   Phase = "checked"   // the checks passed on the final copy
+	Transfer  Phase = "transfer"  // the address moving to the target, which serves isolated (decision 12)
 	Switched  Phase = "switched"  // the source marked migrated out: it refuses writes from here
 	Open      Phase = "open"      // the target may serve
 	Released  Phase = "released"  // undone before the switch
 )
 
 // Phases are the phases in order.
-var Phases = []Phase{Started, Preflight, DryRun, Barrier, Copied, Checked, Switched, Open, Released}
+var Phases = []Phase{Started, Preflight, DryRun, Barrier, Copied, Checked, Transfer, Switched, Open, Released}
 
 // beforeBarrier are the phases where the source runs unchanged: an
 // interruption there is redone from the preflight.
@@ -73,10 +74,12 @@ type Journal struct {
 	Barrier     *BarrierRecord   `json:"barrier,omitempty"`
 	Copy        *CopyRecord      `json:"copy,omitempty"`
 	Undone      *UndoneRecord    `json:"undone,omitempty"`
-	// Transfer is the address transfer's record (slice 7.4b); until it
-	// is built, what it says is that none was made.
-	Transfer string `json:"transfer"`
-	History  []Step `json:"history"`
+	// Ingress is the source's ingress, which the transfer moves: public,
+	// proxy or coolify (decision 12).
+	Ingress Ingress `json:"ingress"`
+	// Transfer is the address transfer's record.
+	Transfer *TransferRecord `json:"transfer,omitempty"`
+	History  []Step          `json:"history"`
 }
 
 // Step is one phase entered, and when.
@@ -113,6 +116,15 @@ type CopyRecord struct {
 	CredsRevoked     int64         `json:"credentialsRevoked"`
 	MigratedPosition int64         `json:"migratedPosition"`
 	Checks           *CheckSummary `json:"checks,omitempty"`
+}
+
+// TransferRecord is the address transfer's: the origin it keeps, whether
+// the operator was asked (the Coolify shape), and when the public URL
+// answered with the migrated installation.
+type TransferRecord struct {
+	Origin     string `json:"origin"`
+	Asked      bool   `json:"asked"`
+	VerifiedAt string `json:"verifiedAt,omitempty"`
 }
 
 // UndoneRecord says why a migration was undone, and what undoing did.

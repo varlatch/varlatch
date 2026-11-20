@@ -20,6 +20,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
+	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
@@ -41,14 +42,14 @@ const JournalFile = "migration.json"
 
 // The journal's phases, in order (`varlatch migrate`'s
 // internal/migrate.Phase); "released" is a migration undone.
-var journalPhases = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "switched", "open", "released"}
+var journalPhases = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "transfer", "switched", "open", "released"}
 
 // beforeBarrier are the phases a migration is redone from its start in.
 var beforeBarrier = []string{"started", "preflight", "dry-run"}
 
 // undoable are the phases before the switch: the target's database may be
 // discarded then.
-var undoable = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "released"}
+var undoable = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "transfer", "released"}
 
 var journalID = regexp.MustCompile(`^mig_[a-z2-7]{26}$`)
 
@@ -97,6 +98,15 @@ func migrationGate(dataDir string) error {
 	case err != nil:
 		return fmt.Errorf("%s: %v; varlatchd does not start on a data directory whose migration it cannot read", filepath.Join(dataDir, JournalFile), err)
 	case !ok || h.Phase == "open":
+		return nil
+	case h.Phase == "transfer":
+		// The address transfer (decision 12): varlatchd serves, isolated
+		// by the migration's own gate, so the public URL can be checked;
+		// without that gate it does not start.
+		g, err := backup.ReadGate(dataDir)
+		if err != nil || g == nil || g.Kind != "migration" || g.ID != h.ID {
+			return fmt.Errorf("the migration %s is transferring its address, but the data directory holds no gate of it; varlatchd starts isolated by it only (varlatch migrate --status)", h.ID)
+		}
 		return nil
 	case h.Phase == "released":
 		return fmt.Errorf("the migration %s into this data directory was undone; its database is the old installation's copy, not to serve (varlatch migrate --status)", h.ID)
@@ -195,8 +205,20 @@ func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout 
 		if st, err := os.Stat(cfg.DataDir); err == nil {
 			owner = statOwner(st)
 		}
+		// The transfer's gate: written before the journal says transfer,
+		// removed once it says open or released (writeTransferGate).
+		if h.Phase == "transfer" {
+			if err := writeTransferGate(cfg.DataDir, h.ID, owner); err != nil {
+				return fail(ExitFailure, "%v; nothing was written", err)
+			}
+		}
 		if err := writeDurably(filepath.Join(cfg.DataDir, JournalFile), append(compact.Bytes(), '\n'), owner); err != nil {
 			return fail(ExitFailure, "%v", err)
+		}
+		if h.Phase == "open" || h.Phase == "released" {
+			if err := removeTransferGate(cfg.DataDir, h.ID); err != nil {
+				return fail(ExitFailure, "the journal says %s, but the transfer's gate stays: %v", h.Phase, err)
+			}
 		}
 	}
 	b, err := os.ReadFile(filepath.Join(cfg.DataDir, JournalFile))
@@ -211,13 +233,58 @@ func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout 
 		return fail(ExitFailure, "%v", err)
 	}
 	_, dbErr := os.Stat(cfg.DatabasePath())
+	public := ""
+	if cfg.PublicURL != nil {
+		public = cfg.PublicURL.String()
+	}
+	https := ""
+	if cfg.PublicHTTPS != nil {
+		https = cfg.PublicHTTPS.Listen
+	}
 	out, _ := json.Marshal(struct {
-		Journal  json.RawMessage `json:"journal"`
-		Database bool            `json:"database"`
-		DataDir  string          `json:"dataDir"`
-	}{journal, dbErr == nil, cfg.DataDir})
+		Journal     json.RawMessage `json:"journal"`
+		Database    bool            `json:"database"`
+		DataDir     string          `json:"dataDir"`
+		Release     string          `json:"release"`
+		PublicURL   string          `json:"publicUrl"`
+		Listen      string          `json:"listen"`
+		ListenHTTPS string          `json:"listenHttps"`
+	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https})
 	fmt.Fprintln(stdout, string(out))
 	return ExitOK
+}
+
+// writeTransferGate writes the migration's gate (maintenance.json, kind
+// migration, phase transfer, no expiry): varlatchd then starts isolated,
+// answering GET /v1/meta only (httpserver.MetaAdmission). Another gate
+// (a lease, a restore) is refused, never replaced.
+func writeTransferGate(dataDir, id string, owner int) error {
+	g, err := backup.ReadGate(dataDir)
+	switch {
+	case err != nil:
+		return fmt.Errorf("the data directory's maintenance gate: %w", err)
+	case g != nil && (g.Kind != "migration" || g.ID != id):
+		return fmt.Errorf("the data directory holds a %s gate (%s); the transfer's is not written over it", g.Kind, g.ID)
+	case g != nil:
+		return nil
+	}
+	b, err := json.Marshal(backup.Gate{ID: id, Kind: "migration", Phase: "transfer"})
+	if err != nil {
+		return err
+	}
+	return writeDurably(filepath.Join(dataDir, backup.GateFile), b, owner)
+}
+
+// removeTransferGate removes the migration's gate, when it is this one's.
+func removeTransferGate(dataDir, id string) error {
+	g, err := backup.ReadGate(dataDir)
+	if err != nil || g == nil || g.Kind != "migration" || g.ID != id {
+		return err
+	}
+	if err := os.Remove(filepath.Join(dataDir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return syncFile(dataDir)
 }
 
 // runMigrateDiscard is `admin migrate discard --id <migration>`: the

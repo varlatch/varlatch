@@ -24,9 +24,11 @@ func TestMigrateCommand(t *testing.T) {
 		args []string
 		why  string
 	}{
-		{[]string{"migrate"}, "give --config, --bek-file, --backup-destination and --read-credentials-file"},
+		{[]string{"migrate"}, "--ingress is public, proxy or coolify"},
+		{[]string{"migrate", "--ingress", "public"}, "give --config, --bek-file, --backup-destination and --read-credentials-file"},
+		{[]string{"migrate", "--resume", "--abort", "--config", "/c", "--bek-file", "/b", "--backup-destination", "d", "--read-credentials-file", "/r"}, "not both"},
 		{[]string{"migrate", "--status", "--config", "/x"}, "--status takes --from and --json only"},
-		{[]string{"migrate", "--resume", "--dry-run", "--config", "/c", "--bek-file", "/b", "--backup-destination", "d", "--read-credentials-file", "/r"}, "takes no --dry-run"},
+		{[]string{"migrate", "--resume", "--dry-run", "--config", "/c", "--bek-file", "/b", "--backup-destination", "d", "--read-credentials-file", "/r"}, "neither takes --dry-run"},
 		{[]string{"migrate", "--max-downtime", "soon"}, "--max-downtime takes a duration"},
 		{[]string{"migrate", "--frm", "/x"}, "unknown option --frm"},
 	} {
@@ -46,7 +48,7 @@ func TestMigrateCommand(t *testing.T) {
 	if err := writeEmpty(empty); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := run("migrate", "--config", "/c", "--bek-file", empty, "--backup-destination", "d", "--read-credentials-file", "/r", "--from", dir); code != ExitFailure || !strings.Contains(errOut, "is empty") {
+	if code, _, errOut := run("migrate", "--ingress", "proxy", "--config", "/c", "--bek-file", empty, "--backup-destination", "d", "--read-credentials-file", "/r", "--from", dir); code != ExitFailure || !strings.Contains(errOut, "is empty") {
 		t.Fatalf("an empty BEK file: %d %q", code, errOut)
 	}
 	// Not in the parity table.
