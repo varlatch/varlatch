@@ -180,13 +180,17 @@ func migrateCommand(r *Run) error {
 	if o.toData != "" {
 		img := &migrate.Image{Host: &migrate.Host{Varlatchd: varlatchd, Run: migrate.ExecRunner{Env: varlatchdEnviron(r), As: &migrate.ImageUser}},
 			Service: o.toService, Ref: o.toImage, DataDir: o.toData, KeysDir: o.toKeys, ServiceConfig: o.toConfig, User: migrate.ImageUser}
-		cleanup, err := migrate.PrepareImage(context.Background(), img, "", !o.resume && !o.abort)
+		base, err := migrate.StageBase(o.from)
+		if err != nil {
+			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
+		}
+		cleanup, err := migrate.PrepareImage(context.Background(), img, base, !o.resume && !o.abort)
 		defer cleanup()
 		if err != nil {
 			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
 		}
 		e.Target = img
-		e.Options.Stage = &migrate.ImageUser
+		e.Options.Stage, e.Options.StageBase, e.Options.StageKeep = &migrate.ImageUser, base, filepath.Dir(img.Host.Config)
 	}
 	var j *migrate.Journal
 	switch {

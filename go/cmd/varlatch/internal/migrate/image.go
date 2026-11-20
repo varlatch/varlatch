@@ -5,8 +5,11 @@ package migrate
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,6 +60,30 @@ type Image struct {
 // leftoverConf is a derived configuration's directory.
 var leftoverConf = regexp.MustCompile(`^\.varlatch-migrate-conf-[0-9]+$`)
 
+// StageBase is the directory under the system's temporary directory that
+// a migration from source stages in (its bundles, the dry run's scratch
+// database, an image's derived configuration): one per source, root's,
+// mode 0711 so the image's user reaches the directories given to it, and
+// nothing in it but this source's runs' own.
+func StageBase(source string) (string, error) {
+	sum := sha256.Sum256([]byte(filepath.Clean(source)))
+	dir := filepath.Join(os.TempDir(), "varlatch-migrate-"+hex.EncodeToString(sum[:8]))
+	if err := os.Mkdir(dir, 0o711); err != nil && !errors.Is(err, fs.ErrExist) {
+		return "", err
+	}
+	st, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !st.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", dir)
+	}
+	if uid, _, ok := ownerOf(st); ok && int(uid) != os.Getuid() {
+		return "", fmt.Errorf("%s is not this user's: another user made it", dir)
+	}
+	return dir, os.Chmod(dir, 0o711)
+}
+
 // imageRef is a pinned image reference: repository:tag@sha256:<64 hex>.
 var imageRef = regexp.MustCompile(`^([a-z0-9][a-z0-9._/-]*(?::[0-9]+)?/[a-z0-9._/-]+):([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})@(sha256:[0-9a-f]{64})$`)
 
@@ -67,16 +94,23 @@ var imageRef = regexp.MustCompile(`^([a-z0-9][a-z0-9._/-]*(?::[0-9]+)?/[a-z0-9._
 // path of the three settings that read files is refused: this host cannot
 // reach it.
 func DeriveConfig(text, data, keys, confDir string) (string, error) {
-	mapPath := func(v string) (string, bool) {
+	mapPath := func(v string) (string, bool, error) {
 		for _, m := range []struct{ from, to string }{{imageData, data}, {imageKeys, keys}, {imageConfig, confDir}} {
 			if v == m.from {
-				return m.to, true
+				return m.to, true, nil
 			}
 			if strings.HasPrefix(v, m.from+"/") {
-				return filepath.Join(m.to, strings.TrimPrefix(v, m.from+"/")), true
+				// Joined and cleaned, it must stay inside the bind path: a
+				// ".." does not lead out of it.
+				root := filepath.Clean(m.to)
+				mapped := filepath.Join(root, strings.TrimPrefix(v, m.from+"/"))
+				if mapped != root && !strings.HasPrefix(mapped, root+"/") {
+					return "", false, fmt.Errorf("%s leads out of %s", v, m.from)
+				}
+				return mapped, true, nil
 			}
 		}
-		return v, false
+		return v, false, nil
 	}
 	var out strings.Builder
 	sawData := false
@@ -90,7 +124,10 @@ func DeriveConfig(text, data, keys, confDir string) (string, error) {
 			continue
 		}
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
-		mapped, hit := mapPath(value)
+		mapped, hit, err := mapPath(value)
+		if err != nil {
+			return "", fmt.Errorf("the service's %s: %v", key, err)
+		}
 		switch key {
 		case "data_dir", "root_kek_file", "backup_key_file":
 			if !hit {
@@ -140,16 +177,9 @@ func PrepareImage(ctx context.Context, img *Image, tmp string, fresh bool) (clea
 	if err != nil {
 		return cleanup, fmt.Errorf("--to-config %s: %w", img.ServiceConfig, err)
 	}
-	base := tmp
-	if base == "" {
-		base = os.TempDir()
-	}
-	// What a run killed before its cleanup left (its derived configuration:
-	// paths, never a key).
-	if err := removeMatching(base, leftoverConf, true); err != nil {
-		return cleanup, err
-	}
-	dir, err := os.MkdirTemp(base, ".varlatch-migrate-conf-")
+	// In this source's own directory (StageBase); what a killed run left
+	// there is the engine's to remove, under its lock.
+	dir, err := os.MkdirTemp(tmp, ".varlatch-migrate-conf-")
 	if err != nil {
 		return cleanup, err
 	}
@@ -170,7 +200,7 @@ func PrepareImage(ctx context.Context, img *Image, tmp string, fresh bool) (clea
 	if fresh && st.Running {
 		return cleanup, fmt.Errorf("varlatchd serves on %s already: the service %s must be in setup mode, nothing listening, until migrate asks you to start it", img.DataDir, img.Service)
 	}
-	if tag := strings.TrimPrefix(m[2], "v"); tag != info.Release {
+	if tag := strings.TrimPrefix(strings.TrimPrefix(m[2], "v"), "V"); tag != info.Release {
 		return cleanup, fmt.Errorf("--to-image is release %s; this host's varlatchd is %s: install the varlatchd of the image's release (the release's assets)", tag, info.Release)
 	}
 	return cleanup, nil

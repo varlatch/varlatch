@@ -937,7 +937,7 @@ func TestAnAbortWithoutATransferRecord(t *testing.T) {
 func TestStagedForTheImagesUser(t *testing.T) {
 	w := newWorld(t)
 	me := Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
-	w.eng.Options.Stage = &me
+	w.eng.Options.Stage, w.eng.Options.StageBase = &me, t.TempDir()
 	if j, err := w.eng.Run(context.Background(), false); err != nil || j.Phase != Open {
 		t.Fatalf("%+v %v", j, err)
 	}
@@ -945,11 +945,35 @@ func TestStagedForTheImagesUser(t *testing.T) {
 		t.Fatalf("bundles %v", w.tgt.bundles)
 	}
 	for _, b := range w.tgt.bundles {
-		if filepath.Base(b) != "bundle.jsonl" || !strings.HasPrefix(filepath.Base(filepath.Dir(b)), ".varlatch-migrate-stage-") || filepath.Dir(filepath.Dir(b)) != filepath.Clean(os.TempDir()) {
+		if filepath.Base(b) != "bundle.jsonl" || !strings.HasPrefix(filepath.Base(filepath.Dir(b)), ".varlatch-migrate-stage-") || filepath.Dir(filepath.Dir(b)) != w.eng.Options.StageBase {
 			t.Errorf("a bundle not staged: %s", b)
 		}
 		if _, err := os.Stat(filepath.Dir(b)); !os.IsNotExist(err) {
 			t.Errorf("a staged bundle left: %s", b)
+		}
+	}
+}
+
+// The stage's leftovers: a killed run's stage and configuration directories
+// in this source's base removed under the lock, this run's own spared,
+// nothing outside the base touched.
+func TestStageLeftovers(t *testing.T) {
+	w := newWorld(t)
+	me := Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	base := t.TempDir()
+	keep := filepath.Join(base, ".varlatch-migrate-conf-111")
+	for _, d := range []string{filepath.Join(base, ".varlatch-migrate-stage-222"), filepath.Join(base, ".varlatch-migrate-conf-333"), keep, filepath.Join(base, "other")} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.eng.Options.Stage, w.eng.Options.StageBase, w.eng.Options.StageKeep = &me, base, keep
+	if _, err := w.eng.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	for d, gone := range map[string]bool{".varlatch-migrate-stage-222": true, ".varlatch-migrate-conf-333": true, ".varlatch-migrate-conf-111": false, "other": false} {
+		if _, err := os.Stat(filepath.Join(base, d)); os.IsNotExist(err) != gone {
+			t.Errorf("%s: gone %v, want %v", d, os.IsNotExist(err), gone)
 		}
 	}
 }

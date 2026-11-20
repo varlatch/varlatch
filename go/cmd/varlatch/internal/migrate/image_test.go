@@ -37,6 +37,15 @@ func TestDeriveConfig(t *testing.T) {
 	if _, err := DeriveConfig("root_kek_file = /run/secrets/kek\n", "/d", "/k", "/c"); err == nil || !strings.Contains(err.Error(), "this host cannot reach it") {
 		t.Errorf("a key elsewhere: %v", err)
 	}
+	for _, out := range []string{"data_dir = /var/lib/varlatch/../elsewhere\nroot_kek_file = /keys/k\n", "root_kek_file = /keys/../../etc/shadow\n",
+		"access_log = /var/lib/varlatch/a/../../x\nroot_kek_file = /keys/k\n"} {
+		if _, err := DeriveConfig(out, "/srv/data", "/srv/keys", "/srv/conf"); err == nil || !strings.Contains(err.Error(), "leads out of") {
+			t.Errorf("%q: %v", out, err)
+		}
+	}
+	if got, err := DeriveConfig("data_dir = /var/lib/varlatch/./db/..\nroot_kek_file = /keys/k\n", "/srv/data", "/srv/keys", "/srv/conf"); err != nil || !strings.Contains(got, "data_dir = /srv/data\n") {
+		t.Errorf("a path that stays: %q %v", got, err)
+	}
 	if got, _ := DeriveConfig("data_dir = /var/lib/varlatch\nroot_kek_file = /keys/k\n", "/d", "/k", "/c"); strings.Count(got, "data_dir") != 1 {
 		t.Errorf("data_dir twice: %s", got)
 	}
@@ -73,6 +82,7 @@ func TestPrepareImage(t *testing.T) {
 		{"writable by others", "ghcr.io/varlatch/varlatchd:0.50.0@" + digest, me, false, 0o777, "writable by others"},
 		{"a service that serves", "ghcr.io/varlatch/varlatchd:0.50.0@" + digest, me, true, 0o700, "must be in setup mode"},
 		{"ready", "ghcr.io/varlatch/varlatchd:0.50.0@" + digest, me, false, 0o700, ""},
+		{"ready, a V tag", "ghcr.io/varlatch/varlatchd:V0.50.0@" + digest, me, false, 0o700, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			data, keys, conf := dirs()
@@ -145,6 +155,19 @@ func TestTheImagesSteps(t *testing.T) {
 // (standing in for the service) answering /v1/meta only, the switch
 // written beside it, and the live open through its control socket.
 func TestTheImageTargetEndToEnd(t *testing.T) {
+	imageEndToEnd(t, Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())})
+}
+
+// The same as root, dropping to the image's user (65532) as on a host:
+// runAs and chownAll for real. CI's container runs it as root.
+func TestTheImageTargetEndToEndAsTheImagesUser(t *testing.T) {
+	if os.Getuid() != 0 {
+		t.Skip("drops to the image's user from root only")
+	}
+	imageEndToEnd(t, ImageUser)
+}
+
+func imageEndToEnd(t *testing.T, user Owner) {
 	if testing.Short() {
 		t.Skip("builds varlatchd")
 	}
@@ -152,19 +175,35 @@ func TestTheImageTargetEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(t.TempDir(), "varlatchd")
+	// A base the image's user reaches (0711), the binary and the bind
+	// paths in it, as on a host.
+	base, err := os.MkdirTemp("", "varlatch-image-e2e-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	if err := os.Chmod(base, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(base, "varlatchd")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/varlatchd")
 	build.Dir = root
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
-	base := t.TempDir()
+	stage := filepath.Join(base, "stage")
+	if err := os.Mkdir(stage, 0o711); err != nil {
+		t.Fatal(err)
+	}
 	data, keys, confDir := filepath.Join(base, "data"), filepath.Join(base, "keys"), filepath.Join(base, "conf")
 	for _, d := range []string{data, keys, confDir} {
 		if err := os.Mkdir(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := chownAll(user, data, keys); err != nil {
+		t.Fatal(err)
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -177,11 +216,10 @@ func TestTheImageTargetEndToEnd(t *testing.T) {
 		"backup_key_file = /keys/backup-key\nbackup_interval = off\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	me := Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
-	img := &Image{Host: &Host{Varlatchd: bin, Run: ExecRunner{As: &me}}, Service: "varlatch-go", Ref: "ghcr.io/varlatch/varlatchd:dev@sha256:" + hexOf(randomBytes(32)),
-		DataDir: data, KeysDir: keys, ServiceConfig: conf, User: me}
+	img := &Image{Host: &Host{Varlatchd: bin, Run: ExecRunner{As: &user}}, Service: "varlatch-go", Ref: "ghcr.io/varlatch/varlatchd:dev@sha256:" + hexOf(randomBytes(32)),
+		DataDir: data, KeysDir: keys, ServiceConfig: conf, User: user}
 	ctx := context.Background()
-	cleanup, err := PrepareImage(ctx, img, t.TempDir(), true)
+	cleanup, err := PrepareImage(ctx, img, stage, true)
 	defer cleanup()
 	if err != nil && !strings.Contains(err.Error(), "is release dev") {
 		t.Fatal(err)
@@ -197,6 +235,19 @@ func TestTheImageTargetEndToEnd(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(keys, "root-kek")); string(got) != string(kek) {
 		t.Fatal("the Root KEK file in the keys bind path")
 	}
+	// Every file written in the bind paths is the image's user's.
+	for _, d := range []string{data, keys} {
+		_ = filepath.WalkDir(d, func(p string, e os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			fi, _ := e.Info()
+			if uid, gid, ok := ownerOf(fi); ok && (uid != user.UID || gid != user.GID) {
+				t.Errorf("%s is %d:%d, not the image's user's", p, uid, gid)
+			}
+			return nil
+		})
+	}
 	j := &Journal{Format: 1, ID: "mig_dddddddddddddddddddddddddd", History: []Step{}}
 	for _, p := range []Phase{Started, Transfer} {
 		j.enter(p, time.Now())
@@ -210,6 +261,9 @@ func TestTheImageTargetEndToEnd(t *testing.T) {
 	// The operator starts the service: here, varlatchd on the derived
 	// configuration.
 	svc := exec.Command(bin, "serve", "--config", img.Host.Config)
+	if err := runAs(svc, user); err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.Start(); err != nil {
 		t.Fatal(err)
 	}

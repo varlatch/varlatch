@@ -68,9 +68,13 @@ type Options struct {
 	ProbeEvery time.Duration
 	// Stage, when set (an image target, whose varlatchd runs as the
 	// image's user), is the user a bundle and the dry run's scratch
-	// database are given to: each in a directory of its own under the
-	// system's temporary directory, which that user owns.
-	Stage *Owner
+	// database are given to: each in a directory of its own in StageBase
+	// (this source's), which that user owns.
+	Stage     *Owner
+	StageBase string
+	// StageKeep is this run's own directory in StageBase (an image's
+	// derived configuration), which the leftovers' cleanup spares.
+	StageKeep string
 }
 
 // DefaultTransferTimeout bounds the transfer's wait for the public URL.
@@ -320,9 +324,11 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	if err := cleanScratch(e.work()); err != nil {
 		return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
 	}
-	if e.Options.Stage != nil {
-		if err := removeMatching(os.TempDir(), leftoverStage, true); err != nil {
-			return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
+	if e.Options.Stage != nil && e.Options.StageBase != "" {
+		for _, re := range []*regexp.Regexp{leftoverStage, leftoverConf} {
+			if err := removeMatchingExcept(e.Options.StageBase, re, true, e.Options.StageKeep); err != nil {
+				return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
+			}
 		}
 	}
 	e.say("Preflight: a fresh backup of the source, uploaded, then downloaded and verified.")
@@ -367,6 +373,11 @@ func cleanScratch(dir string) error {
 // removeMatching removes dir's entries whose names match: directories
 // (whole) when dirs, else regular files; nothing else, no symbolic link.
 func removeMatching(dir string, names *regexp.Regexp, dirs bool) error {
+	return removeMatchingExcept(dir, names, dirs, "")
+}
+
+// removeMatchingExcept is removeMatching sparing the path keep.
+func removeMatchingExcept(dir string, names *regexp.Regexp, dirs bool, keep string) error {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -379,6 +390,9 @@ func removeMatching(dir string, names *regexp.Regexp, dirs bool) error {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
+		if keep != "" && filepath.Clean(p) == filepath.Clean(keep) {
+			continue
+		}
 		switch {
 		case dirs && e.Type().IsDir():
 			err = os.RemoveAll(p)
@@ -462,7 +476,7 @@ func (e *Engine) scratchDir() (string, error) {
 	if e.Options.Stage == nil {
 		return os.MkdirTemp(e.work(), ".dry-run-")
 	}
-	dir, err := os.MkdirTemp("", ".varlatch-migrate-stage-")
+	dir, err := os.MkdirTemp(e.Options.StageBase, ".varlatch-migrate-stage-")
 	if err != nil {
 		return "", err
 	}

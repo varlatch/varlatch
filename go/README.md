@@ -3053,10 +3053,16 @@ migrations.
     `varlatchd`'s release), run as the image's user (uid and gid 65532)
     so every file is the image's, against a configuration derived from
     the service's (`/var/lib/varlatch`, `/keys` and `/etc/varlatch`
-    mapped to the bind paths; a file setting elsewhere refused). Each
-    bundle, and the dry run's scratch database, are staged in a directory
-    the image's user owns.
-  - The preflight refuses a reference not pinned by its digest, a tag
+    mapped to the bind paths; a file setting elsewhere, or a path whose
+    `..` leads out of its bind path, refused). Each bundle, the dry run's
+    scratch database and the derived configuration are staged in a
+    directory the image's user owns, in this source's own directory under
+    the system's temporary directory (`varlatch-migrate-<hash>`, mode
+    0711); a killed run's leftovers there are removed under the lock.
+  - The preflight refuses a reference not pinned by its digest (checked
+    by its shape only: without Docker, `migrate` does not resolve it, so
+    that the service runs that digest is the operator's, and 7.8's
+    Coolify rehearsal checks it), a tag
     that is not this varlatchd's release, bind paths not owned by
     65532:65532 or writable by others (the `chown` and `chmod` to run are
     said), and a service already serving on the bind path.
