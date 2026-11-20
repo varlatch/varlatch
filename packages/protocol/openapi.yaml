@@ -5691,6 +5691,12 @@ components:
             tailnet: { type: string }
             listenerPort: { type: integer }
             browserEndpoint: { type: [string, "null"] }
+            controlUrl:
+              type: string
+              description: >
+                The self-hosted control server the node joins (Headscale),
+                https on an IP address. Absent for Tailscale's coordination
+                server, and from older servers.
         observed:
           type: object
           required: [checkedAt, checks]

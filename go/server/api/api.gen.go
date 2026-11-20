@@ -5575,8 +5575,11 @@ type TailnetListenerReport struct {
 	// Configured From configuration only.
 	Configured struct {
 		BrowserEndpoint nullable.Nullable[string] `json:"browserEndpoint"`
-		ListenerPort    int                       `json:"listenerPort"`
-		Tailnet         string                    `json:"tailnet"`
+
+		// ControlUrl The self-hosted control server the node joins (Headscale), https on an IP address. Absent for Tailscale's coordination server, and from older servers.
+		ControlUrl   *string `json:"controlUrl,omitempty"`
+		ListenerPort int     `json:"listenerPort"`
+		Tailnet      string  `json:"tailnet"`
 	} `json:"configured"`
 	Observed struct {
 		// CheckedAt Null before the first check.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -450,6 +451,14 @@ func TestNodeTakesItsSettingsFromTheConfigOnly(t *testing.T) {
 	srv, err := newServer(cfg)
 	if err != nil || srv.ControlURL != TailscaleControlURL || TailscaleControlURL != config.TailscaleControlURL {
 		t.Fatalf("no control URL configured: %q %v", srv.ControlURL, err)
+	}
+	if !slices.Equal(srv.AdvertiseTags, []string{"tag:varlatch"}) {
+		t.Errorf("Tailscale's: the tags advertised, %v", srv.AdvertiseTags)
+	}
+	// A self-hosted control server takes the tags from the tagged pre-auth
+	// key and refuses a node that advertises any.
+	if keyed, err := newServer(NodeConfig{Dir: t.TempDir(), Hostname: "varlatch", ControlURL: "https://192.0.2.10", Tags: []string{"tag:varlatch"}, KeyTags: true}); err != nil || len(keyed.AdvertiseTags) != 0 {
+		t.Errorf("the key's tags: %v advertised, %v", keyed.AdvertiseTags, err)
 	}
 	for _, name := range tsnetEnv {
 		t.Run(name, func(t *testing.T) {

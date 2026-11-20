@@ -622,6 +622,11 @@ func (m *Manager) reportLocked() jsvalue.Object {
 		endpoint = fmt.Sprintf("https://%s:%d", host, m.browser.port)
 	}
 	configured := jsvalue.Object{{Key: "tailnet", Value: tailnetName}, {Key: "listenerPort", Value: m.port}, {Key: "browserEndpoint", Value: endpoint}}
+	if m.controlURL != "" {
+		// A self-hosted control server (Headscale), named; Tailscale's is
+		// the default and left out.
+		configured = append(configured, jsvalue.Member{Key: "controlUrl", Value: m.controlURL})
+	}
 	listener, localAPI, node := unchecked, unchecked, unchecked
 	wanted := []*bool{m.listening}
 	if m.browser != nil {

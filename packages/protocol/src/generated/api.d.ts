@@ -2441,6 +2441,8 @@ export interface components {
                 tailnet: string;
                 listenerPort: number;
                 browserEndpoint: string | null;
+                /** @description The self-hosted control server the node joins (Headscale), https on an IP address. Absent for Tailscale's coordination server, and from older servers. */
+                controlUrl?: string;
             };
             observed: {
                 /**
