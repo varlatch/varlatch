@@ -5,6 +5,54 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## 0.23.0 (2026-11-20)
+
+The last release of the TypeScript server. Varlatch's server is being
+rewritten in Go, with SQLite in place of PostgreSQL; this release adds the
+commands that move an installation to it. An installation that never runs
+them behaves as on 0.22.4.
+
+### Server
+
+- **`varlatchd admin migration`.** The commands the Go line's `varlatch
+  migrate` runs on a 0.23.0 installation:
+  - `barrier` stops the installation at a fixed point: it drains the
+    requests in flight, then pauses every request and background loop
+    until `release` or `mark-migrated-out`. `status` shows the barrier.
+  - `export` writes the installation, as it stands behind the barrier,
+    to a migration bundle (a new file, mode 0600). With `--dry-run` it
+    reads a consistent snapshot of a running installation instead, with
+    no barrier, to check the export before the move.
+  - `mark-migrated-out` marks an installation that moved: from then on it
+    answers no request, reads included.
+  - `import` rebuilds the database of a stopped installation from a
+    bundle the Go line wrote, which moves an installation back; once it
+    commits, the installation answers requests again.
+  - `backfill` finishes, in one run and with varlatchd stopped, the audit
+    backfill an export needs, for a database brought forward from a
+    release before 0.20.0.
+- **A new audit event, `installation.migrated`.** The Go line records it
+  when an installation moves to it, and an installation moved back keeps
+  it. The dashboard shows it as "Installation migrated"; audit exports and
+  webhooks deliver it like any other event.
+- The Convex supervisor stops the backend behind the migration barrier and
+  on a migrated-out installation, as it does under a backup or restore.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.23.0.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`. It changes only its version.
+- The server: to move an installation to 0.23.0, follow the 0.22.1 notes
+  below with the 0.23.0 CLI and version.
+- Audit consumers that list the event types they accept: add
+  `installation.migrated`.
+
+Backups: archives of 0.22.4 and earlier still restore into this release.
+
 ## 0.22.4 (2026-11-20)
 
 A CLI release: a fix to the agent-safe Broker's response scrubbing. The
