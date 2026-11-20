@@ -127,3 +127,16 @@ it('changes nothing for an installation that never runs the migration', () => {
   expect(new Maintenance(dir).clearInterruptedCapture()).toBeNull();
   expect(() => m.finishCapture(gate.id)).toThrow('ownership lost');
 });
+it('reads a gate whose frozen point is not a position (a string of digits) or null as unreadable', () => {
+  const base = { id: 'g', kind: 'migration', phase: 'paused', expiresAt: null, archiveId: null };
+  for (const frozenPosition of [42, 'abc', '', { p: '1' }, ['1'], '12a']) {
+    const dir = directory();
+    writeFileSync(join(dir, 'maintenance.json'), JSON.stringify({ ...base, frozenPosition }));
+    expect(() => new Maintenance(dir).enter(), JSON.stringify(frozenPosition)).toThrow('unreadable');
+  }
+  for (const frozenPosition of ['0', '123456789012', null, undefined]) {
+    const dir = directory();
+    writeFileSync(join(dir, 'maintenance.json'), JSON.stringify({ ...base, frozenPosition }));
+    expect(new Maintenance(dir).gate?.kind, String(frozenPosition)).toBe('migration');
+  }
+});

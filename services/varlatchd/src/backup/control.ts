@@ -16,6 +16,8 @@ import { OnlineCapture, CAPTURE_EXCLUSION } from './online.js';
 
 export const stateDir = () => process.env.VARLATCH_STATE_DIR ?? '/var/lib/varlatch';
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+/** The control commands that only read, answered even while another runs. */
+const READ_ONLY_COMMANDS = new Set(['migration-status', 'gate', 'status']);
 /** No TCP listener: only Infrastructure Operators with access to the container can invoke this. */
 export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror: MirrorConfig | null): OnlineCapture {
   const socket = join(maintenance.dir, 'backup.sock');
@@ -27,8 +29,11 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
       let body = '';
       for await (const chunk of req) { body += String(chunk); if (body.length > 64 * 1024) throw new Error('Control request too large'); }
       const input = JSON.parse(body || '{}') as { command: string; id?: string; ttlMs?: number; drainMs?: number; status?: unknown; installationId?: string; manifestIdentity?: string; releaseCheck?: unknown };
-      if (operation) throw new Error('Another control operation is running');
-      operation = true;
+      // The read-only commands answer beside a running operation (a drain
+      // in progress included); every other command runs alone.
+      const readOnly = READ_ONLY_COMMANDS.has(input.command);
+      if (!readOnly && operation) throw new Error('Another control operation is running');
+      if (!readOnly) operation = true;
       try {
         const getGate = () => maintenance.require(input.id ?? '');
         const drain = async () => {
@@ -132,7 +137,7 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
           default: throw new Error('Unknown backup control command');
         }
         res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result));
-      } finally { operation = false; }
+      } finally { if (!readOnly) operation = false; }
     } catch (error) {
       res.writeHead(409, { 'content-type': 'application/json' });
       // Our own operator diagnostics contain no credential or DB error details.
@@ -176,7 +181,13 @@ export async function migrationBarrier(ctx: AppCtx, maintenance: Maintenance, dr
     }
     await delay(50);
   }
-  await drainOperators(ctx.db as PoolQuerier, () => maintenance.require(gate.id));
+  // Operator processes, within what is left of the drain's time.
+  await drainOperators(ctx.db as PoolQuerier, () => {
+    maintenance.require(gate.id);
+    if (Date.now() - started > drainMs) {
+      throw new Error(`The migration barrier is held, but did not drain within ${Math.round(drainMs / 1000)} s; still running: an operator process. Run the barrier again to keep waiting, or release it.`);
+    }
+  });
   const held = await ctx.db.query('SELECT pg_try_advisory_lock($1) AS acquired', [CAPTURE_EXCLUSION]);
   if (!(held.rows[0] as { acquired: boolean }).acquired) throw new Error('A backup capture of another process is running; the barrier is held: run it again once the capture ends');
   await ctx.db.query('SELECT pg_advisory_unlock($1)', [CAPTURE_EXCLUSION]);
@@ -192,7 +203,11 @@ export async function control(input: unknown, dir = stateDir()): Promise<unknown
       let text = ''; res.on('data', c => { text += String(c); });
       res.on('end', () => { try { const value = JSON.parse(text); if (res.statusCode !== 200) reject(new Error(value.error)); else resolve(value); } catch { reject(new Error('Invalid backup control response')); } });
     });
-    req.on('error', () => reject(new Error('Backup supervisor is not running')));
+    // Only a socket that is not there, or that nobody listens on, means no
+    // daemon; any other failure (permissions, a transient error) is not.
+    req.on('error', (e: NodeJS.ErrnoException) => reject(new Error(
+      e.code === 'ENOENT' || e.code === 'ECONNREFUSED' ? 'Backup supervisor is not running' : `Backup control socket failed (${e.code ?? 'error'})`,
+    )));
     req.end(JSON.stringify(input));
   });
 }

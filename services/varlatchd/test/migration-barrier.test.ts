@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activeGate, Maintenance } from "@varlatch/backup";
@@ -218,6 +219,59 @@ describe("the control socket and host commands", () => {
       expect(activeGate(dir, Number.MAX_SAFE_INTEGER)?.kind).toBe("migrated-out");
     } finally {
       await db.close();
+    }
+  });
+});
+
+describe("the review's P3s", () => {
+  it("answers the read-only commands while the barrier drains, and runs no other beside it", async () => {
+    const db = await migratedTestDb();
+    const dir = directory();
+    try {
+      const m = new Maintenance(dir);
+      await ensureInstallation({ db, rootKek: generateKey() });
+      startBackupControl({ db: pool(db), rootKek: generateKey() }, m, null);
+      await sleep(50);
+      const leave = m.enter("webhooks")!;
+      const barrier = control({ command: "migration-barrier", drainMs: 10_000 }, dir);
+      await sleep(150);
+      const status = (await control({ command: "migration-status" }, dir)) as { gate: { kind: string; phase: string }; inFlight: Record<string, number> };
+      expect(status).toMatchObject({ gate: { kind: "migration", phase: "draining" }, inFlight: { webhooks: 1 } });
+      await expect(control({ command: "status" }, dir)).resolves.toBeTruthy();
+      await expect(control({ command: "migration-release", id: status.gate.kind }, dir)).rejects.toThrow("Another control operation is running");
+      leave();
+      await expect(barrier).resolves.toMatchObject({ gate: { phase: "paused" } });
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("bounds the operator drain by the drain's time, naming an operator process, and keeps the barrier", async () => {
+    // An operator process holds its lease: the exclusive lock is never free.
+    const db = {
+      query: async (sql: string) => ({ rows: [sql.includes("pg_try_advisory_lock") ? { acquired: false } : { p: "0" }], rowCount: 1 }),
+      connect: async () => ({ query: async () => ({ rows: [{ acquired: false }], rowCount: 1 }), release() {} }),
+    } as unknown as PoolQuerier;
+    const m = new Maintenance(directory());
+    await expect(migrationBarrier({ db, rootKek: generateKey(), maintenance: m }, m, 200)).rejects.toThrow(/did not drain within .*still running: an operator process/);
+    expect(m.gate).toMatchObject({ kind: "migration", phase: "draining" });
+  });
+
+  it("calls only a missing or unanswered socket 'not running'; any other failure is an error", async () => {
+    const none = directory();
+    await expect(control({ command: "status" }, none)).rejects.toThrow("Backup supervisor is not running");
+    const stale = directory();
+    writeFileSync(join(stale, "backup.sock"), "");
+    await expect(control({ command: "status" }, stale)).rejects.toThrow("Backup supervisor is not running");
+    if (process.getuid?.() === 0) return; // root opens a socket whatever its mode
+    const locked = directory();
+    const server = createServer();
+    await new Promise<void>((r) => server.listen(join(locked, "backup.sock"), () => r()));
+    try {
+      chmodSync(join(locked, "backup.sock"), 0o000);
+      await expect(control({ command: "status" }, locked)).rejects.toThrow("Backup control socket failed (EACCES)");
+    } finally {
+      server.close();
     }
   });
 });

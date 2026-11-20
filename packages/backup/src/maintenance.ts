@@ -43,7 +43,9 @@ export function readGate(dir: string): Gate | null {
     if (!value.id || !GATE_KINDS.includes(value.kind) || !['draining', 'paused', 'reconciling'].includes(value.phase) ||
         (value.kind === 'capture' && (!Number.isFinite(value.expiresAt) || (value.expiresAt as number) <= 0)) ||
         (isMigrationGate(value) && (value.expiresAt !== null || value.phase === 'reconciling')) ||
-        (value.kind === 'migrated-out' && value.phase !== 'paused')) throw new Error();
+        (value.kind === 'migrated-out' && value.phase !== 'paused') ||
+        (value.frozenPosition !== undefined && value.frozenPosition !== null &&
+          (typeof value.frozenPosition !== 'string' || !/^[0-9]+$/.test(value.frozenPosition)))) throw new Error();
     return value;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
