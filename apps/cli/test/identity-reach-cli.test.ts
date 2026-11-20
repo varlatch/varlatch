@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EXIT } from "../src/exitCodes.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch identity reach` end to end against a local server (ADR-0054
@@ -138,7 +139,7 @@ interface Result {
 // environment the tests run in.
 function cli(args: string[], env: Record<string, string> = {}): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd: repo,
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0", ...env },
       stdio: ["ignore", "pipe", "pipe"],

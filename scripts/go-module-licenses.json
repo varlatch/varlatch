@@ -61,6 +61,14 @@
       "license": "Apache-2.0",
       "sha256": "5b1c96778e814c5fe2287fb4a7b40c06f27ed9b13268e386e0e7689a160f77c1"
     },
+    "github.com/caddyserver/certmagic": {
+      "license": "Apache-2.0",
+      "sha256": "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a"
+    },
+    "github.com/caddyserver/zerossl": {
+      "license": "MIT",
+      "sha256": "1ef7b0f3816510e2c4727a6e45b770ddb5ab123d73074e7f0b424767db0f9f7b"
+    },
     "github.com/cenkalti/backoff/v5": {
       "license": "MIT",
       "sha256": "dbcf76cc433f5400d80fb6dacabab9d0edfceae164e57b97da280334973cb3c0"
@@ -265,6 +273,14 @@
       "license": "Apache-2.0 AND BSD-3-Clause AND MIT",
       "sha256": "ba479c17e31e6180d9b6f53cbea93a7fbe838baba13a6f3ad1b08a8163797212"
     },
+    "github.com/klauspost/cpuid/v2": {
+      "license": "MIT",
+      "sha256": "f28aa44a2bd6fd4a4843390462ba3937b4bceddb63567a774ccebc2d82d153f1"
+    },
+    "github.com/libdns/libdns": {
+      "license": "MIT",
+      "sha256": "3d00a672a8fc7ab18ce833a8de172bd061adf44402c74741c15827a97cfd93e6"
+    },
     "github.com/mdlayher/netlink": {
       "license": "MIT",
       "sha256": "b1d59a7e3e99611d794fc8de40de6dea9662e90a9e9c514d816c9bf725b7743d"
@@ -272,6 +288,14 @@
     "github.com/mdlayher/socket": {
       "license": "MIT",
       "sha256": "41e5a8b386296f2e54c74f1a6dd7032f2ab6bf2a267f088bbd12ef6d7f8e5505"
+    },
+    "github.com/mholt/acmez/v3": {
+      "license": "Apache-2.0",
+      "sha256": "283ea6cc2997a1a70da0049e09adf9317bb60ca1b51279b65196b83a69e1996b"
+    },
+    "github.com/miekg/dns": {
+      "license": "BSD-3-Clause",
+      "sha256": "146ac4c42fa83eee27b41d1eeb7d3c2b6bef638b81b13b4fce871349ac6b6808"
     },
     "github.com/mitchellh/go-ps": {
       "license": "MIT",
@@ -385,6 +409,10 @@
       "license": "MIT",
       "sha256": "6d13d89b6c33df37f92553cc95cec278d8770ddc78c9de84620cc16dfb48cef6"
     },
+    "github.com/zeebo/blake3": {
+      "license": "CC0-1.0",
+      "sha256": "b44ebe8e40a64ea5adb3ca1b3764039f4bb6fcdceeffed64aa9575b20622ee37"
+    },
     "go.opentelemetry.io/auto/sdk": {
       "license": "Apache-2.0",
       "sha256": "283ea6cc2997a1a70da0049e09adf9317bb60ca1b51279b65196b83a69e1996b"
@@ -404,6 +432,18 @@
     "go.opentelemetry.io/otel/trace": {
       "license": "Apache-2.0 AND BSD-3-Clause",
       "sha256": "2f76ca1185142625d80db033ffdc2aa34d20b31923c55f011d564f1062356fd1"
+    },
+    "go.uber.org/multierr": {
+      "license": "MIT",
+      "sha256": "eb23c972ce559988ff3dbd1f9c3e8bd5c8f15718acc7c59fa23cae3bb345a46e"
+    },
+    "go.uber.org/zap": {
+      "license": "MIT",
+      "sha256": "df08c6b63c244a1e24f9c02935daa81cbbf046a1f9e0f397fc2f2dda3a4f44e5"
+    },
+    "go.uber.org/zap/exp": {
+      "license": "MIT",
+      "sha256": "df08c6b63c244a1e24f9c02935daa81cbbf046a1f9e0f397fc2f2dda3a4f44e5"
     },
     "go.yaml.in/yaml/v3": {
       "license": "Apache-2.0 AND MIT",

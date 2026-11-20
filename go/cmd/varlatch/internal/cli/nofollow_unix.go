@@ -22,3 +22,7 @@ func openNoFollow(path string) (*os.File, error) {
 func openNoFollowWrite(path string, perm os.FileMode) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW, perm)
 }
+
+// createNoFollow refuses a symbolic link at the last component when a file
+// is created (credential issue's --out); O_EXCL refuses an existing one too.
+const createNoFollow = syscall.O_NOFOLLOW

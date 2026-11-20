@@ -34,6 +34,10 @@ type inventory struct {
 		// CoveredBy are the vectors or recorded cases that run an option of
 		// another program (an argument the CLI passes to git).
 		CoveredBy []string `json:"coveredBy"`
+		// CommandSlices: the commands for which the option belongs to a
+		// later slice than the command's (--confirm of org and project is
+		// their delete subcommands', 5.7c).
+		CommandSlices map[string]string `json:"commandSlices"`
 	} `json:"options"`
 	Environment map[string]struct {
 		Slice     string   `json:"slice"`
@@ -204,6 +208,9 @@ func TestInventoryCoverage(t *testing.T) {
 		for _, command := range o.Commands {
 			global := command == "*"
 			if !global && !cli.Built(command) || global && !built("5.1a") {
+				continue
+			}
+			if later, ok := o.CommandSlices[command]; ok && !built(later) {
 				continue
 			}
 			used := slices.ContainsFunc(cases, func(c recorded) bool {

@@ -488,6 +488,26 @@ jobs:
           VARLATCH_TEST_S3_ENDPOINT="$endpoint" VARLATCH_TEST_S3_ACCESS_KEY=vlts3test VARLATCH_TEST_S3_SECRET_KEY="$secret" VARLATCH_REQUIRE_S3=1 \
             go test -count=1 -v -run '^(TestS3UploadDownload|TestS3MultipartAbortAndRetry|TestBucketTest)$' ./lib/backup
 
+      # Public HTTPS (ADR-0059 step 6, slice 6.3a) against Pebble, Let's
+      # Encrypt's test CA, in containers on the runner's network, pinned by
+      # digest: issuance over HTTP-01 and over TLS-ALPN-01, renewal before
+      # expiry (45-second certificates), a failed challenge reported and
+      # retried with backoff, the store's modes, a restart serving the
+      # stored certificate, and varlatchd serving HTTPS with nothing before
+      # a certificate and only a redirect on its plain listener. No outside
+      # network: every name resolves to 127.0.0.1. Never Let's Encrypt from
+      # CI (its staging only by hand, with the owner).
+      - name: Public HTTPS against Pebble
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          eval "$(server/publictls/testdata/pebble.sh start "$RUNNER_TEMP/pebble")"
+          trap 'server/publictls/testdata/pebble.sh stop' EXIT
+          # One package at a time: both listen on Pebble's ports, 5001 and 5002.
+          VARLATCH_REQUIRE_PEBBLE=1 go test -count=1 -v -run '^TestPebble' ./server/publictls
+          VARLATCH_REQUIRE_PEBBLE=1 go test -count=1 -v -run '^TestPublicHTTPS' ./server/daemon
+
       # G9a at smoke scale (ADR-0059 step 3.6): 5 % of the profile's
       # length against varlatchd built with the g9a tag (the production
       # serve path with the W1 seed, the converge simulation and paced

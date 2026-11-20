@@ -39,3 +39,7 @@ func openNoFollow(path string) (*os.File, error) {
 func openNoFollowWrite(path string, perm os.FileMode) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.FILE_FLAG_OPEN_REPARSE_POINT, perm)
 }
+
+// createNoFollow is 0 on Windows: O_EXCL (CREATE_NEW) already fails on any
+// existing name, a symbolic link or other reparse point included.
+const createNoFollow = 0

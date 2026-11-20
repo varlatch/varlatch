@@ -169,7 +169,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 			topic = r.Args[0]
 		}
 		if topic != "" {
-			help, ok := CommandHelp(topic)
+			help, ok := commandHelp(topic)
 			if !ok {
 				return UsageErrorWithUsage("varlatch: no help for "+shownArgument(topic)+": not a command", "\n\n"+Usage)
 			}
@@ -187,7 +187,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 		}
 		for _, a := range own {
 			if a == "--help" || a == "-h" {
-				if help, ok := CommandHelp(r.Command); ok {
+				if help, ok := commandHelp(r.Command); ok {
 					return r.println(help)
 				}
 				break
@@ -293,6 +293,22 @@ func (r *Run) ask(text string) error {
 // RedactValue), so ordinary output keeps its bytes.
 func RedactOutput(text string, values ...string) string {
 	return redactSpans(text, append(tokenSpans(text), valueSpans(text, values)...))
+}
+
+// redactOutputShowing is RedactOutput with one text left as it is: shown,
+// which this command prints on purpose (invite's enrollment token, in the
+// link it exists to print). Only its exact occurrences in Varlatch's token
+// format are kept; every other token, and each value in flight, is
+// redacted as RedactOutput redacts it. An empty shown keeps nothing.
+func redactOutputShowing(text, shown string, values ...string) string {
+	var spans []span
+	for _, s := range tokenSpans(text) {
+		if shown != "" && text[s.a:s.b] == shown {
+			continue
+		}
+		spans = append(spans, s)
+	}
+	return redactSpans(text, append(spans, valueSpans(text, values)...))
 }
 
 // RedactValue is a JSON value with the fail-safe applied to every string
@@ -535,6 +551,14 @@ func (r *Run) println(text string) error {
 // (RedactOutput). TestEveryWriteGoesThroughTheFailSafe fails on any other.
 func (r *Run) out(text string) error {
 	_, err := io.WriteString(r.Stdout, jsval.NodeText(RedactOutput(text, r.inFlight...)))
+	return err
+}
+
+// outShowing writes stdout through the fail-safe with one token shown
+// (redactOutputShowing): the only writer that lets a token through, for
+// `invite`'s enrollment link. A value in flight is still redacted.
+func (r *Run) outShowing(text, shown string) error {
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(redactOutputShowing(text, shown, r.inFlight...)))
 	return err
 }
 
