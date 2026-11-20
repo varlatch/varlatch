@@ -37,6 +37,9 @@ func (s *fakeSource) call(name string) error {
 }
 
 func (s *fakeSource) Dir() string { return s.dir }
+func (s *fakeSource) CleanLeftovers() error {
+	return s.call("clean")
+}
 func (s *fakeSource) Discover(context.Context) (SourceInfo, error) {
 	return s.info, s.call("discover")
 }
@@ -196,7 +199,8 @@ func newWorld(t *testing.T) *world {
 		bek: []byte(hexOf(randomBytes(32)) + "\n"),
 	}
 	w.eng = &Engine{Source: w.src, Target: w.tgt, BEK: w.bek, Options: Options{Now: clock.now, Work: t.TempDir(),
-		Say: func(s string) { w.said = append(w.said, s) }}}
+		Say: func(s string) { w.said = append(w.said, s) }}, pin: &imagePin{Repository: LastTypeScriptRepository, Digest: w.src.info.Digest}}
+	w.src.info.DigestRepository = LastTypeScriptRepository
 	return w
 }
 
@@ -310,7 +314,10 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 		why  string
 	}{
 		{"another release", func(w *world) { w.src.info.Release = "0.22.4" }, "starts from the last TypeScript release, 0.23.0"},
-		{"no digest", func(w *world) { w.src.info.Digest = "" }, "not pinned by a digest"},
+		{"no digest", func(w *world) { w.src.info.Digest = "" }, "not pinned by a registry digest"},
+		{"another digest", func(w *world) { w.src.info.Digest = "sha256:" + hexOf(randomBytes(32)) }, "not the published 0.23.0 image"},
+		{"another repository", func(w *world) { w.src.info.DigestRepository = "ghcr.io/someone/varlatchd" }, "not the published 0.23.0 image"},
+		{"no pinned digest yet", func(w *world) { w.eng.pin = nil }, "0.23.0 is not yet published; this varlatch cannot migrate yet"},
 		{"a source behind a gate", func(w *world) { w.src.gate = &Gate{Kind: "restore", ID: "g"} }, "behind a restore gate"},
 		{"a target with a database", func(w *world) { w.tgt.database = true }, "holds a database and no migration journal"},
 		{"a target of another migration", func(w *world) { w.tgt.journal = &JournalHead{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Copied} }, "holds the migration mig_aaaa"},
@@ -391,7 +398,8 @@ func TestAnUnfinishedUndo(t *testing.T) {
 func interrupted(t *testing.T, p Phase) *world {
 	t.Helper()
 	w := newWorld(t)
-	j := &Journal{Format: 1, ID: "mig_bbbbbbbbbbbbbbbbbbbbbbbbbb", Source: w.src.info, History: []Step{}, Barrier: &BarrierRecord{}}
+	j := &Journal{Format: 1, ID: "mig_bbbbbbbbbbbbbbbbbbbbbbbbbb", Source: w.src.info, History: []Step{}, Barrier: &BarrierRecord{},
+		Target: TargetInfo{Config: "/etc/varlatch/varlatchd.conf", DataDir: w.tgt.dataDir}}
 	for _, q := range Phases[:slices.Index(Phases, p)+1] {
 		j.enter(q, w.src.clock.now())
 	}
@@ -484,5 +492,82 @@ func TestRunKeyText(t *testing.T) {
 	k := randomBytes(32)
 	if got := string(RunKeyText(k)); got != hexOf(k)+"\n" {
 		t.Fatal(got)
+	}
+}
+
+// A migration goes on to its own target only: a reused journal names
+// another target's configuration or data directory, and is refused.
+func TestNoRetarget(t *testing.T) {
+	w := newWorld(t)
+	if _, err := w.eng.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	w.tgt.dataDir = t.TempDir()
+	_, err := w.eng.Run(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "goes on to its own target only") || containsCall(w.src.calls, "barrier") {
+		t.Fatalf("a retarget: %v", err)
+	}
+}
+
+// Switched, but the barrier was lifted by hand: a person decides; nothing
+// is marked.
+func TestAStrandedSwitch(t *testing.T) {
+	for _, g := range []*Gate{nil, {Kind: "migration", ID: "another"}} {
+		w := interrupted(t, Switched)
+		w.src.gate = g
+		j, err := w.eng.Resume(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "A person must decide") || !strings.Contains(err.Error(), "loses every write") ||
+			j.Phase != Switched || slices.ContainsFunc(w.src.calls, func(c string) bool { return strings.HasPrefix(c, "migrated-out") }) {
+			t.Fatalf("gate %+v: %+v %v %v", g, j, err, w.src.calls)
+		}
+	}
+}
+
+// Preflight removes what a killed run left, by its exact names: the dry
+// run's scratch directories and the journal's temporary names in the work
+// directory, the bundles in the backups directory; nothing else.
+func TestLeftoversAreCleared(t *testing.T) {
+	work, dir := t.TempDir(), t.TempDir()
+	backups := filepath.Join(dir, "backups")
+	for _, d := range []string{filepath.Join(work, ".dry-run-123456"), filepath.Join(work, ".dry-run-x"), filepath.Join(work, ".dry-run-99", "data"), backups,
+		filepath.Join(backups, "migration-0123456789ab.jsonl.d")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]bool{ // path -> removed
+		filepath.Join(work, ".migration.json.0123456789ab.tmp"):        true,
+		filepath.Join(work, JournalFile):                               false,
+		filepath.Join(work, ".dry-run-5"):                              false, // a file, not a directory
+		filepath.Join(backups, "migration-0123456789ab.jsonl"):         true,
+		filepath.Join(backups, "migration-0123456789ab.jsonl.partial"): true,
+		filepath.Join(backups, "migration-0123456789AB.jsonl"):         false,
+		filepath.Join(backups, "archive.vltbak"):                       false,
+	}
+	for p := range files {
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(work, filepath.Join(backups, "migration-ba9876543210.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanScratch(work); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Compose{Directory: dir}).CleanLeftovers(); err != nil {
+		t.Fatal(err)
+	}
+	for p, removed := range files {
+		if _, err := os.Lstat(p); (err != nil) != removed {
+			t.Errorf("%s: removed %v, want %v", p, err != nil, removed)
+		}
+	}
+	for d, removed := range map[string]bool{filepath.Join(work, ".dry-run-123456"): true, filepath.Join(work, ".dry-run-99"): true,
+		filepath.Join(work, ".dry-run-x"): false, filepath.Join(backups, "migration-0123456789ab.jsonl.d"): false,
+		filepath.Join(backups, "migration-ba9876543210.jsonl"): false} {
+		if _, err := os.Lstat(d); (err != nil) != removed {
+			t.Errorf("%s: removed %v, want %v", d, err != nil, removed)
+		}
 	}
 }

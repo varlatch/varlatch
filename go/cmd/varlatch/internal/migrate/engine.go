@@ -36,8 +36,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"time"
 )
@@ -72,6 +74,8 @@ type Engine struct {
 	// BEK is the source's Backup Encryption Key file's text, given to the
 	// target's key file (nil: none is copied). The caller clears it.
 	BEK []byte
+	// pin replaces the published image's (the tests' fakes only).
+	pin *imagePin
 }
 
 // DryRunReport is the dry run's: each part of the projected downtime
@@ -162,8 +166,8 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if src.Release != LastTypeScriptRelease {
 		return prev, fmt.Errorf("the source runs %s; a migration starts from the last TypeScript release, %s, only: upgrade it first", orNone(src.Release), LastTypeScriptRelease)
 	}
-	if src.Digest == "" {
-		return prev, errors.New("the source's image is not pinned by a digest: a migration starts from the last TypeScript release's published image only")
+	if err := e.pinned(src); err != nil {
+		return prev, err
 	}
 	tgt, st, err := e.Target.Describe(ctx)
 	if err != nil {
@@ -176,6 +180,11 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
 		Drain: int64(e.drain() / time.Second), Transfer: "none: the address transfer is slice 7.4b's", History: []Step{}}
 	if reuse {
+		// The same migration goes on only to the same target.
+		if prev.Target.Config != tgt.Config || prev.Target.DataDir != tgt.DataDir {
+			return prev, fmt.Errorf("the migration %s's target is %s (data directory %s), not %s (data directory %s): it goes on to its own target only",
+				prev.ID, prev.Target.Config, prev.Target.DataDir, tgt.Config, tgt.DataDir)
+		}
 		j.ID = prev.ID
 		j.History = prev.History
 	} else if j.ID, err = newID(); err != nil {
@@ -215,6 +224,26 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	return e.cutover(ctx, j)
 }
 
+// pinned refuses a source that is not the last TypeScript release's
+// published image: its registry digest, of its own repository, must be the
+// pinned one. While no digest is pinned (0.23.0 not published yet), every
+// source is refused.
+func (e *Engine) pinned(src SourceInfo) error {
+	pin := imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
+	if e.pin != nil {
+		pin = *e.pin
+	}
+	switch {
+	case pin.Digest == "":
+		return fmt.Errorf("%s is not yet published; this varlatch cannot migrate yet (it pins the release's image by its digest)", LastTypeScriptRelease)
+	case src.Digest == "":
+		return errors.New("the source's image is not pinned by a registry digest: a migration starts from the last TypeScript release's published image only")
+	case src.DigestRepository != pin.Repository || src.Digest != pin.Digest:
+		return fmt.Errorf("the source's image is %s@%s, not the published %s image %s@%s", src.DigestRepository, src.Digest, LastTypeScriptRelease, pin.Repository, pin.Digest)
+	}
+	return nil
+}
+
 func orNone(s string) string {
 	if s == "" {
 		return "a release it does not name"
@@ -249,6 +278,14 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	if g != nil {
 		return fmt.Errorf("the source is behind a %s gate (%s): a migration starts from an installation that serves; nothing was done", g.Kind, g.ID)
 	}
+	// What a run killed before it could clean up left on this host: the
+	// dry run's scratch directories and the bundles (the lock is held).
+	if err := e.Source.CleanLeftovers(); err != nil {
+		return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
+	}
+	if err := cleanScratch(e.work()); err != nil {
+		return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
+	}
 	e.say("Preflight: a fresh backup of the source, uploaded, then downloaded and verified.")
 	archive, err := e.Source.Backup(ctx)
 	if err != nil {
@@ -268,6 +305,53 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	}
 	j.Preflight = &PreflightRecord{ArchiveID: archive, VerifiedAt: e.now().UTC().Format(time.RFC3339Nano), RootKEK: kekState, BEK: bekState}
 	return e.enter(ctx, j, Preflight)
+}
+
+// leftoverScratch is a dry run's scratch directory (os.MkdirTemp's
+// ".dry-run-" and its digits); leftoverJournal a journal's temporary name.
+var (
+	leftoverScratch = regexp.MustCompile(`^\.dry-run-[0-9]+$`)
+	leftoverJournal = regexp.MustCompile(`^\.migration\.json\.[0-9a-f]{12}\.tmp$`)
+)
+
+// cleanScratch removes what a killed run left in its work directory: the
+// dry run's scratch directories (directories only) and the journal's
+// temporary names (regular files only), by their exact names.
+func cleanScratch(dir string) error {
+	if err := removeMatching(dir, leftoverScratch, true); err != nil {
+		return err
+	}
+	return removeMatching(dir, leftoverJournal, false)
+}
+
+// removeMatching removes dir's entries whose names match: directories
+// (whole) when dirs, else regular files; nothing else, no symbolic link.
+func removeMatching(dir string, names *regexp.Regexp, dirs bool) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !names.MatchString(e.Name()) {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		switch {
+		case dirs && e.Type().IsDir():
+			err = os.RemoveAll(p)
+		case !dirs && e.Type().IsRegular():
+			err = os.Remove(p)
+		default:
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // newRunKey is a run key: 32 random bytes.
@@ -419,7 +503,16 @@ func (e *Engine) migratedOut(ctx context.Context, j *Journal) error {
 		return nil
 	}
 	if g == nil || g.Kind != "migration" || (j.Barrier.GateID != "" && g.ID != j.Barrier.GateID) {
-		return fmt.Errorf("the source's gate is %v, not this migration's barrier %s: it is not marked migrated out; varlatch migrate --status", g, j.Barrier.GateID)
+		// Switched, yet the barrier is gone: it was lifted (or replaced)
+		// by hand. The old installation may have taken writes since the
+		// frozen point, which the target does not hold. Not automated.
+		now := "no gate"
+		if g != nil {
+			now = fmt.Sprintf("a %s gate (%s)", g.Kind, g.ID)
+		}
+		return fmt.Errorf("the migration %s is switched, but the source holds %s, not its barrier %s: the barrier was lifted outside varlatch migrate. "+
+			"A person must decide: marking the source migrated out now loses every write it took since the frozen point (audit position %s), "+
+			"which the target does not have; varlatch migrate does neither on its own", j.ID, now, j.Barrier.GateID, j.Barrier.AuditPosition)
 	}
 	return e.Source.MarkMigratedOut(ctx, g.ID)
 }

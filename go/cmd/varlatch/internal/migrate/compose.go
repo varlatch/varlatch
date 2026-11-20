@@ -112,9 +112,12 @@ func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 	if info.Release == "" {
 		info.Release = strings.TrimPrefix(img.Tag, "v")
 	}
+	// The digest of the image's own repository, not of another name the
+	// same image was pulled under.
 	for _, d := range inspect.RepoDigests {
-		if at := strings.LastIndex(d, "@"); at >= 0 && strings.HasPrefix(d[at+1:], "sha256:") {
-			info.Digest = d[at+1:]
+		repo, digest, ok := strings.Cut(d, "@")
+		if ok && repo == img.Repository && strings.HasPrefix(digest, "sha256:") {
+			info.Digest, info.DigestRepository = digest, repo
 			break
 		}
 	}
@@ -330,6 +333,16 @@ func (c *Compose) Export(ctx context.Context, runKey []byte, dryRun bool) (strin
 		return "", fmt.Errorf("the export wrote no bundle at %s", host)
 	}
 	return host, nil
+}
+
+// leftoverBundle is a bundle Export names (and the export's .partial).
+var leftoverBundle = regexp.MustCompile(`^migration-[0-9a-f]{12}\.jsonl(\.partial)?$`)
+
+// CleanLeftovers removes the bundles a killed run left in the
+// installation's backups directory: Export's names only, regular files
+// only.
+func (c *Compose) CleanLeftovers() error {
+	return removeMatching(filepath.Join(c.Directory, "backups"), leftoverBundle, false)
 }
 
 // Release lifts the barrier.

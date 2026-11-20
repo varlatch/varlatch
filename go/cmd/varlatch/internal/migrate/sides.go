@@ -12,6 +12,21 @@ import (
 // varlatchd imports.
 const LastTypeScriptRelease = "0.23.0"
 
+// The last TypeScript release's published image: a migration starts from
+// that image only, by its registry digest (decision 20). The digest is
+// filled in when 0.23.0 is published (the release's Step 7 items); while
+// it is empty this varlatch refuses to migrate.
+const (
+	LastTypeScriptRepository = "ghcr.io/varlatch/varlatchd"
+	LastTypeScriptDigest     = ""
+)
+
+// imagePin is the image a migration starts from: the constants above, or
+// the tests' own.
+type imagePin struct {
+	Repository, Digest string
+}
+
 // Source is the old installation, driven as processes (go-step7 decision
 // 2): its CLI's commands inside its containers, and its host CLI. A
 // Source never opens a database itself.
@@ -39,6 +54,10 @@ type Source interface {
 	MarkMigratedOut(ctx context.Context, gateID string) error
 	// Dir is the directory the source's journal is written in.
 	Dir() string
+	// CleanLeftovers removes what a run killed before it could clean up
+	// left of the source's on this host (the bundles), by their exact
+	// names only.
+	CleanLeftovers() error
 }
 
 // SourceInfo is what a migration starts from.
@@ -48,6 +67,9 @@ type SourceInfo struct {
 	Release string `json:"release"`
 	Image   string `json:"image"`
 	Digest  string `json:"digest"`
+	// DigestRepository is the repository the digest is the registry's
+	// for (the image's own: Discover takes no other's).
+	DigestRepository string `json:"digestRepository"`
 }
 
 // Gate is a source's maintenance gate.

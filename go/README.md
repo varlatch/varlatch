@@ -2967,7 +2967,11 @@ migrations.
   `varlatch-ts`) for the preflight's backup; the target through
   `varlatchd admin migrate`.
   - The phases: preflight (the source is 0.23.0 by its image's version,
-    pinned by a digest, and behind no gate; a fresh backup made, uploaded,
+    and its image is the published one by its registry digest of
+    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, filled in when
+    0.23.0 is published: until then `migrate` refuses every source; it is
+    behind no gate; what an interrupted run left, its scratch directories
+    and bundles by their exact names, is removed; a fresh backup made, uploaded,
     downloaded and verified; the target's key files given the source's
     Root KEK and BEK, `admin migrate keys`, absent or the same); the dry
     run (a full copy from a snapshot of the running source, imported into
@@ -2981,10 +2985,12 @@ migrations.
     and, through `admin migrate state --write`, in the target's data
     directory. varlatchd does not start on a data directory whose journal
     is not open. `--status` prints it; `--resume` redoes a migration
-    interrupted before the barrier from its preflight, undoes one between
+    interrupted before the barrier from its preflight (on its own target
+    only), undoes one between
     the barrier and the switch (the barrier lifted, the old installation
     reopened unchanged, the target's database discarded, `admin migrate
-    discard`, before the switch only), and opens a switched one. Any
+    discard`, before the switch only), and opens a switched one (unless
+    its barrier was lifted by hand meanwhile: then a person decides). Any
     failure after the barrier undoes the same way.
   - The run key is made per copy and handed to the export and the checks
     on their stdin; the keys go to `admin migrate keys` on its stdin, as

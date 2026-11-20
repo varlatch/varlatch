@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -40,8 +41,18 @@ func TestMigrateCommand(t *testing.T) {
 	if code, out, _ := run("migrate", "--status", "--from", dir, "--json"); code != 0 || strings.TrimSpace(out) != "null" {
 		t.Fatalf("--status --json: %d %q", code, out)
 	}
+	// An empty BEK file is refused before anything runs.
+	empty := dir + "/bek"
+	if err := writeEmpty(empty); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := run("migrate", "--config", "/c", "--bek-file", empty, "--backup-destination", "d", "--read-credentials-file", "/r", "--from", dir); code != ExitFailure || !strings.Contains(errOut, "is empty") {
+		t.Fatalf("an empty BEK file: %d %q", code, errOut)
+	}
 	// Not in the parity table.
 	if lookup("migrate") != nil {
 		t.Fatal("migrate is in the parity table")
 	}
 }
+
+func writeEmpty(path string) error { return os.WriteFile(path, []byte("\n"), 0o600) }

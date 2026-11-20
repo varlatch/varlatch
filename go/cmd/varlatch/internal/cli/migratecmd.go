@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -131,15 +132,18 @@ func migrateCommand(r *Run) error {
 		}
 		return r.showJournal(j, o.asJSON)
 	}
-	varlatchd, err := r.locateVarlatchd("varlatch migrate")
-	if err != nil {
-		return err
-	}
 	bek, err := os.ReadFile(o.bekFile)
 	if err != nil {
 		return Fail("varlatch migrate: the Backup Encryption Key file: "+err.Error(), ExitFailure)
 	}
 	defer clear(bek)
+	if len(bytes.TrimSpace(bek)) == 0 {
+		return Fail("varlatch migrate: the Backup Encryption Key file "+Printable(o.bekFile)+" is empty: a migration copies the source's BEK, so give its file", ExitFailure)
+	}
+	varlatchd, err := r.locateVarlatchd("varlatch migrate")
+	if err != nil {
+		return err
+	}
 	run := migrate.ExecRunner{Env: environ(r)}
 	e := &migrate.Engine{
 		Source: &migrate.Compose{Directory: o.from, Run: run, TSCLI: o.tsCLI, KEKFile: o.kekFile, BEKFile: o.bekFile,
