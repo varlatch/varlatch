@@ -1703,7 +1703,16 @@ a volume (a new one starts the image user's, mode 0700), the
 configuration at `/etc/varlatch/varlatchd.conf`, the keys mounted as files
 under `/keys`. `image/build.sh` builds it with buildx from a directory of
 release assets (the named build context `assets`), for both platforms,
-and never pushes: `release.yml` publishes it, from the same assets.
+and never pushes: `release.yml` publishes it, from the same assets. On a
+Go-line tag, `go-image` builds it from the release's own Linux binaries
+and pushes `ghcr.io/varlatch/varlatchd:<version>` (never `latest`) with
+provenance and SBOM attestations, checks that both platforms hold those
+binaries byte for byte and runs `check-image.mjs` on the pushed amd64
+image; `go-image-conformance` runs the conformance suites against it (with
+varlatchd's conformance build of the same commit in place of the release
+build, which has no probes); only then `go-image-sign` signs it keyless,
+and the release notes give its digest. `docs/operations/verify-release.md`
+shows how to check it.
 
 Keys reach varlatchd only as files. `varlatchd serve` refuses to start
 (exit 78) when its environment holds the Root KEK or the Backup
