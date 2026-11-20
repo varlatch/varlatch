@@ -416,9 +416,9 @@ const notCounted = "Only audited changes are counted. Also lost or reverted: sig
 // else it loses.
 func undoneLines(lost *upgrade.Changes) []string {
 	if lost.RevocationsTotal == 0 {
-		return []string{"  UNDONE:    no revocation, removal or rotation was recorded since the snapshot"}
+		return []string{"  UNDONE:    no revocations, removals, rotations, replacements, deletions and freezes were recorded since the snapshot"}
 	}
-	lines := []string{fmt.Sprintf("  UNDONE:    revocations, removals and rotations made since the snapshot that the restore undoes (%d):", lost.RevocationsTotal)}
+	lines := []string{fmt.Sprintf("  UNDONE:    revocations, removals, rotations, replacements, deletions and freezes made since the snapshot that the restore undoes (%d):", lost.RevocationsTotal)}
 	for _, c := range lost.Revocations {
 		org := "the installation"
 		if c.OrganizationID != nil {

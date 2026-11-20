@@ -84,6 +84,14 @@ type RollbackPlan struct {
 // made while the archive was sealed is listed rather than lost unseen.
 const lostMargin = time.Minute
 
+// kindName names the change a journal records: an upgrade or a rollback.
+func kindName(j *journal.Journal) string {
+	if j.Kind == journal.Rollback {
+		return "a rollback"
+	}
+	return "an upgrade"
+}
+
 // PlanRollback reads the journal and the host: the last upgrade must be
 // done, its release must still be installed, and the previous release's
 // kept binaries (and, unless the database stays, the snapshot) must be
@@ -96,7 +104,7 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	case last == nil:
 		return RollbackPlan{}, errors.New("no upgrade is recorded on this host (" + filepath.Join(u.configDir(), journal.File) + "): there is nothing to roll back")
 	case last.Pending():
-		return RollbackPlan{}, fmt.Errorf("an upgrade from %s to %s is not over (%s at step %q): run varlatch upgrade first to finish or undo it", last.From, last.To, last.State, last.Step)
+		return RollbackPlan{}, fmt.Errorf("%s from %s to %s is not over (%s at step %q): run varlatch upgrade first to finish or undo it", kindName(last), last.From, last.To, last.State, last.Step)
 	case last.Kind == journal.Rollback:
 		// Any rollback, done or undone: the upgrade it rolled back is no
 		// longer the last change. Going back further is by hand.

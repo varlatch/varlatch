@@ -149,7 +149,10 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 	for _, t := range restoreUndoes {
 		args = append(args, t)
 	}
-	where := "occurred_at >= ? AND decision = 'allow' AND event_type IN (" + marks + ")"
+	// Every event of a listed type, whatever its decision: the services
+	// record these changes as info (a refusal is authorization.denied,
+	// another type), so a filter on the decision would hide them.
+	where := "occurred_at >= ? AND event_type IN (" + marks + ")"
 	if err := conn.QueryRow("SELECT count(*) FROM audit_events WHERE "+where, args...).Scan(&out.RevocationsTotal); err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
 		return ExitFailure
@@ -174,7 +177,7 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 	if asJSON {
 		return printJSON(stdout, stderr, what, out)
 	}
-	fmt.Fprintf(stdout, "%d audit events since %s, %d of them revocations or removals.\n", out.Total, out.Since, out.RevocationsTotal)
+	fmt.Fprintf(stdout, "%d audit events since %s, %d of them revocations, removals, rotations, replacements, deletions and freezes.\n", out.Total, out.Since, out.RevocationsTotal)
 	for _, c := range out.Latest {
 		org := "the installation"
 		if c.OrganizationID != nil {

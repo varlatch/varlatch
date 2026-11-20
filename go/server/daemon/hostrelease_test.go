@@ -7,9 +7,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"github.com/varlatch/varlatch/go/lib/storage"
-	"github.com/varlatch/varlatch/go/server/audit"
-	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +16,9 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/release"
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/db"
 )
 
@@ -146,14 +146,20 @@ func TestAdminChanges(t *testing.T) {
 		t.Fatalf("changes: %d %q %q", code, out, errOut)
 	}
 	r.stop(t)
-	// A revocation since then: listed first, with its resource.
+	// A revocation since then, made by the write path the server's routes
+	// use (auth.RevokeCredential, behind DELETE /v1/me/credentials/{id} and
+	// identity and credential revocation), with the decision it records:
+	// listed first, with its resource.
 	s, err := storage.Open(context.Background(), storage.Options{Path: filepath.Join(in.data, "varlatch.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
+	var credentialID, identityID string
 	if err := s.Write(context.Background(), func(tx *storage.Tx) error {
-		_, err := audit.Record(context.Background(), tx, audit.Event{Type: "credential.revoked", Decision: audit.Allow, Resource: jsvalue.Object{{Key: "type", Value: "credential"}, {Key: "id", Value: "crd_revokedinatest"}}})
-		return err
+		if err := tx.QueryRowContext(context.Background(), "SELECT id, identity_id FROM credentials WHERE revoked_at IS NULL ORDER BY created_at LIMIT 1").Scan(&credentialID, &identityID); err != nil {
+			return err
+		}
+		return auth.RevokeCredential(context.Background(), tx, time.Now().UnixMicro(), credentialID, identityID, nil)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -161,8 +167,11 @@ func TestAdminChanges(t *testing.T) {
 	code, out, _ = runAdmin(t, "changes", "--since", before, "--json", "--config", in.conf)
 	var withRevocation changesJSON
 	if code != ExitOK || json.Unmarshal([]byte(out), &withRevocation) != nil || withRevocation.RevocationsTotal != 1 || len(withRevocation.Revocations) != 1 ||
-		withRevocation.Revocations[0].EventType != "credential.revoked" || withRevocation.Revocations[0].Resource == nil || !strings.Contains(*withRevocation.Revocations[0].Resource, "crd_revokedinatest") {
+		withRevocation.Revocations[0].EventType != "credential.revoked" || withRevocation.Revocations[0].Resource == nil || !strings.Contains(*withRevocation.Revocations[0].Resource, identityID) {
 		t.Fatalf("a revocation: %d %q", code, out)
+	}
+	if code, out, _ = runAdmin(t, "changes", "--since", before, "--config", in.conf); code != ExitOK || !strings.Contains(out, ", 1 of them revocations, removals, rotations, replacements, deletions and freezes.") {
+		t.Fatalf("the revocation counted: %d %q", code, out)
 	}
 	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	if code, out, _ = runAdmin(t, "changes", "--since", future, "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, "0 audit events since") {
@@ -195,6 +204,7 @@ func TestRestoreUndoesCoversEveryRevocation(t *testing.T) {
 		"security_control.reset":            "the restore turns controls back on: no access comes back",
 		"security_control.would_block":      "a report, nothing changed",
 		"authentication.device_code_locked": "the restore unlocks a device sign-in code that has expired by then",
+		"exposure.revocation_confirmed":     "the revocation at the provider stands whatever the restore takes back",
 	}
 	in := map[string]bool{}
 	for _, e := range restoreUndoes {
@@ -204,7 +214,7 @@ func TestRestoreUndoesCoversEveryRevocation(t *testing.T) {
 	for _, e := range audit.EventTypes {
 		known[e] = true
 	}
-	words := regexp.MustCompile(`revok|remov|delet|retir|disabl|froz|rotat|replac|lock`)
+	words := regexp.MustCompile(`revok|revoc|remov|delet|retir|disabl|froz|rotat|replac|lock`)
 	for _, e := range audit.EventTypes {
 		if !words.MatchString(e) {
 			continue

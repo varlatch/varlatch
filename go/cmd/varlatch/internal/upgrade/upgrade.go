@@ -297,7 +297,7 @@ func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journ
 	if prev, err := journal.Read(u.configDir()); err != nil {
 		return nil, &Error{Message: err.Error()}
 	} else if prev.Pending() {
-		return prev, &Error{Message: fmt.Sprintf("an upgrade from %s to %s is not over (%s at step %q): run varlatch upgrade again to finish or undo it first", prev.From, prev.To, prev.State, prev.Step), Journal: prev}
+		return prev, &Error{Message: fmt.Sprintf("%s from %s to %s is not over (%s at step %q): run varlatch upgrade again to finish or undo it first", kindName(prev), prev.From, prev.To, prev.State, prev.Step), Journal: prev}
 	}
 	m := rel.Manifest
 	if m.Version != rel.Version {

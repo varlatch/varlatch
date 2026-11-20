@@ -298,8 +298,16 @@ func TestARollbackIsRefusedOnAHostItDoesNotFit(t *testing.T) {
 	if err := journal.Write(dir, &pending); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "is not over") || !strings.Contains(err.Error(), "run varlatch upgrade first") {
+	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "an upgrade from ") || !strings.Contains(err.Error(), "is not over") || !strings.Contains(err.Error(), "run varlatch upgrade first") {
 		t.Fatalf("an upgrade not over: %v", err)
+	}
+	// An interrupted rollback is named as one.
+	pending.Kind = journal.Rollback
+	if err := journal.Write(dir, &pending); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.HasPrefix(err.Error(), "a rollback from ") || !strings.Contains(err.Error(), "is not over") {
+		t.Fatalf("a rollback not over: %v", err)
 	}
 	if err := journal.Write(dir, done); err != nil {
 		t.Fatal(err)
