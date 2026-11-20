@@ -39,6 +39,14 @@ const { check, finish } = kit;
 page.on("console", (m) => {
   if (m.type() === "error") console.log(`  [browser] ${m.text().slice(0, 140)}`);
 });
+// The browser's console names a failed request's status, not the request:
+// every API answer of 400 or more is logged with its method and path (no
+// query), so a failure names the call that caused it.
+page.on("response", (r) => {
+  if (r.status() < 400) return;
+  const url = new URL(r.url());
+  if (url.pathname.startsWith("/v1/")) console.log(`  [api] ${r.request().method()} ${url.pathname} ${r.status()}`);
+});
 
 const asMachine = (token, path) =>
   fetch(`${base}/v1${path}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -373,18 +381,41 @@ if (kit.group("roles-groups-teams")) {
   await page.selectOption('[data-testid="grant-permission"]', "preset:read-config");
   await page.click('[data-testid="create-grant"]');
   await page.waitForSelector('[data-grant-subject="ci-deployer"]', { timeout: 10000 });
-  await page.locator('[data-grant-subject="ci-deployer"] [data-testid^="edit-grant-"]').click();
+  const editGrant = page.locator('[data-grant-subject="ci-deployer"] [data-testid^="edit-grant-"]');
+  const replacedId = (await editGrant.getAttribute("data-testid")).slice("edit-grant-".length);
+  await editGrant.click();
   await page.waitForSelector('[data-testid^="grant-editor-"]', { timeout: 10000 });
   await page
     .locator('select[data-testid^="edit-grant-role-"]')
     .selectOption({ label: "reader-role" });
-  await page.locator('[data-testid^="save-grant-"]').click();
+  // The open editor's role picker holds "reader-role" as text, so the row's
+  // text alone cannot say the grant was replaced: wait for the replace's
+  // answer, then for the old grant's row to give way to its successor's.
+  // (Waiting on the text once let the next step revoke the old, already
+  // replaced grant: 404, and the row never went.)
+  const [replaced] = await Promise.all([
+    page.waitForResponse(
+      (r) => r.request().method() === "POST" && new URL(r.url()).pathname.endsWith(`/grants/${replacedId}/replace`),
+      { timeout: 10000 },
+    ),
+    page.locator('[data-testid^="save-grant-"]').click(),
+  ]);
   await page.waitForFunction(
-    () => document.querySelector('[data-grant-subject="ci-deployer"]')?.textContent.includes("reader-role"),
-    null,
+    (old) => {
+      const subject = document.querySelector('[data-grant-subject="ci-deployer"]');
+      const rows = subject ? [...subject.querySelectorAll('[data-testid^="revoke-grant-"]')] : [];
+      return (
+        subject &&
+        !subject.querySelector('[data-testid^="grant-editor-"]') &&
+        rows.length === 1 &&
+        rows[0].getAttribute("data-testid") !== `revoke-grant-${old}` &&
+        subject.textContent.includes("reader-role")
+      );
+    },
+    replacedId,
     { timeout: 10000 },
   );
-  check("access.replaced-grant-row-now-cites-role", "replaced grant row now cites the role", true);
+  check("access.replaced-grant-row-now-cites-role", "replaced grant row now cites the role", replaced.status() === 201, `replace ${replaced.status()}`);
   const replacedAccess = await asMachine(machineToken, "/organizations/acme/projects");
   check("access.successor-grant-authorizes-via-role", "successor grant authorizes via the role", replacedAccess.ok, `status ${replacedAccess.status}`);
   await page.locator('[data-grant-subject="ci-deployer"] [data-testid^="revoke-grant-"]').click();
@@ -448,10 +479,22 @@ if (kit.group("requirements")) {
     reviewText.includes("the production tier") && reviewText.includes("Devices tagged tag:ci") && reviewText.includes("Loosen and save"),
     reviewText.slice(0, 300),
   );
-  await page.click(`[data-testid="save-requirement-${firstReq}"]`);
+  // As with the grant: the open editor already shows "tag:ci" as a chip, so
+  // wait for the save's answer and the editor to close before reading the row.
+  const [savedRequirement] = await Promise.all([
+    page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname.endsWith(`/requirements/${firstReq}`),
+      { timeout: 10000 },
+    ),
+    page.click(`[data-testid="save-requirement-${firstReq}"]`),
+  ]);
+  if (!savedRequirement.ok()) throw new Error(`saving the requirement answered ${savedRequirement.status()}`);
   await page.waitForFunction(
-    () => document.querySelector("[data-requirement]")?.textContent.includes("tag:ci"),
-    null,
+    (id) =>
+      !document.querySelector('[data-testid="requirement-review"]') &&
+      !document.querySelector(`[data-testid="save-requirement-${id}"]`) &&
+      document.querySelector("[data-requirement]")?.textContent.includes("tag:ci"),
+    firstReq,
     { timeout: 10000 },
   );
   check("access.requirement-selector-edited-place-after-confirmation", "requirement selector edited in place after confirmation", true);

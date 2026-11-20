@@ -72,6 +72,36 @@ export function endProblem(channel, { suite, nonce, code, signal }) {
   return null;
 }
 
+/**
+ * The error a suite that did not finish last wrote on stderr, in one line:
+ * the message of its last stack trace and the trace's first frame (a
+ * Playwright timeout: "TimeoutError: page.waitForFunction: Timeout 10000ms
+ * exceeded. (at …/e2e-access.mjs:392:14)"), or, with no trace, its last
+ * line. null when it wrote nothing. So a crash names its cause instead of
+ * showing only as checks that did not report.
+ */
+export function lastError(stderr) {
+  const lines = String(stderr ?? "")
+    .split("\n")
+    .map((l) => l.replace(/\s+$/, ""));
+  const frame = (l) => /^\s+at\s/.test(l);
+  for (let i = lines.length - 1; i > 0; i--) {
+    if (!frame(lines[i]) || frame(lines[i - 1])) continue;
+    let message = lines[i - 1].trim();
+    // Node prints a thrown object's extra fields after the frames, its name
+    // among them ("  name: 'TimeoutError'"), when the message lacks it.
+    const name = lines
+      .slice(i + 1, i + 12)
+      .map((l) => /^\s+name: '([A-Za-z]+)',?$/.exec(l)?.[1])
+      .find(Boolean);
+    if (name && !message.startsWith(name)) message = `${name}: ${message}`;
+    const at = lines[i].trim().replace(/\s*\{$/, "");
+    return `${message} (${at})`.slice(0, 400);
+  }
+  const last = lines.filter((l) => l.trim() !== "").at(-1);
+  return last === undefined ? null : last.trim().slice(0, 400);
+}
+
 /** A result line, as a suite prints it; the runner uses it for the checks it reports itself. */
 export function resultLine(status, id, text) {
   if (!STATUSES.includes(status) && !RUNNER_STATUSES.includes(status)) throw new Error(`not a result status: ${status}`);
