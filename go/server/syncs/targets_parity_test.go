@@ -154,7 +154,10 @@ func TestPauseWaitsForALiveRun(t *testing.T) {
 	if took < 400*time.Millisecond || took > 5*time.Second {
 		t.Errorf("answered after %v: not once the run was gone", took)
 	}
-	if rec, took = pause("?wait=true"); rec.Code != http.StatusOK || took > 200*time.Millisecond {
+	// No live run: the pause answers without waiting for one. A wait polls
+	// every 250 ms for up to 30 s, so 2 s tells the two apart and leaves
+	// room for a slow runner (the race detector).
+	if rec, took = pause("?wait=true"); rec.Code != http.StatusOK || took > 2*time.Second {
 		t.Errorf("no live run: %d after %v", rec.Code, took)
 	}
 }

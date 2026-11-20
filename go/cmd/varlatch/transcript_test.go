@@ -150,6 +150,15 @@ var differences = map[string]transcript.Difference{
 	"option-value": func(o *transcript.Outcome, _ transcript.Outcome) {
 		o.Stderr = cli.OptionValueDifference(o.Stderr)
 	},
+	// `varlatch help admin` (and `admin --help`, `admin -h`) prints the
+	// admin forms of a Go installation, which the Go CLI runs through
+	// varlatchd; the TypeScript usage is a Compose installation's (slice
+	// 6.2a). The recording's usage becomes the Go one.
+	"admin-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch admin ") {
+			o.Stdout = cli.AdminHelp + "\n"
+		}
+	},
 	// `varlatch help self-update` (and `self-update --help`, `-h`) prints
 	// the Go CLI's forms: it replaces a native binary, always checks the
 	// signature, and takes --prerelease and --allow-downgrade (slice 6.7a).
