@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -279,8 +278,7 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 	}
 	gate, gerr := backup.ReadGate(cfg.DataDir)
 	running := false
-	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 2*time.Second); err == nil {
-		_ = conn.Close()
+	if controlAnswers(cfg.DataDir, 2*time.Second) {
 		running = true
 	}
 	out, _ := json.Marshal(struct {

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -235,8 +234,7 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	if err != nil {
 		return fail(ExitConfig, "%v; nothing was written", err)
 	}
-	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second); err == nil {
-		_ = conn.Close()
+	if controlAnswers(cfg.DataDir, 5*time.Second) {
 		if a.sub == "export" {
 			return fail(ExitFailure, "varlatchd is running on %s: the reverse export reads the frozen copy its migration barrier makes (varlatchd admin migrate barrier), or a stopped varlatchd's database; nothing was written", cfg.DataDir)
 		}

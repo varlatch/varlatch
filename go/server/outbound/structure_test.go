@@ -62,7 +62,7 @@ type exception struct {
 // serverExceptions are go/server's and go/cmd/varlatchd's (paths relative
 // to go/).
 var serverExceptions = []exception{
-	{"server/daemon/control.go", "net.DialTimeout", 1, "the daemon's own Unix control socket in the data directory (decision 11)"},
+	{"server/daemon/control.go", "net.DialTimeout", 2, "the daemon's own Unix control socket in the data directory (decision 11): route's client, and controlAnswers, the probe of commands that must not run beside a running varlatchd (the migration's)"},
 	{"server/daemon/backup.go", "net.DialTimeout", 1, "restore checks that no varlatchd answers on the data directory's control socket"},
 	{"server/daemon/schema.go", "net.DialTimeout", 1, "a schema upgrade checks that no varlatchd answers on the data directory's control socket, as restore does"},
 	{"server/clientaddr/clientaddr.go", "net.DefaultResolver", 1, "the names in the host's trusted_proxies, looked up every 30 seconds (the host's configuration, never an Organization's)"},
