@@ -193,11 +193,8 @@ func (t *fakeTarget) WriteJournal(_ context.Context, j *Journal) error {
 	if err := t.call("journal " + string(j.Phase)); err != nil {
 		return err
 	}
-	// As varlatchd: beside a running varlatchd, only the switch, or the
-	// same migration's journal in the phase it holds already.
-	same := t.journal != nil && t.journal.ID == j.ID && t.journal.Phase == j.Phase && j.Phase != Open && j.Phase != Released
-	if t.running && j.Phase != Switched && !same {
-		return errors.New("varlatchd is running: stop it first; nothing was written")
+	if err := t.refuses(j); err != nil {
+		return err
 	}
 	b, _ := j.Encode()
 	t.journals = append(t.journals, b)
@@ -210,6 +207,40 @@ func (t *fakeTarget) WriteJournal(_ context.Context, j *Journal) error {
 	}
 	return nil
 }
+
+// refuses is what varlatchd's admin migrate state --write refuses
+// (runMigrateState and runMigrate): another migration's journal over one
+// not released; a journal going back, but to started before the barrier
+// or to released before the switch; and, beside a running varlatchd,
+// anything but the switch or the same migration's journal in the phase it
+// holds (open and released excepted).
+func (t *fakeTarget) refuses(j *Journal) error {
+	old := t.journal
+	if t.running {
+		same := old != nil && old.ID == j.ID && old.Phase == j.Phase && j.Phase != Open && j.Phase != Released
+		if j.Phase != Switched && !same {
+			return errors.New("varlatchd is running: stop it first; nothing was written")
+		}
+	}
+	if old == nil {
+		return nil
+	}
+	if old.ID != j.ID && old.Phase != Released {
+		return errors.New("the data directory holds another migration; nothing was written")
+	}
+	if old.ID == j.ID {
+		back := slices.Index(Phases, j.Phase) < slices.Index(Phases, old.Phase)
+		redone := j.Phase == Started && slices.Contains(beforeBarrier, old.Phase)
+		if back && j.Phase != Released && !redone {
+			return errors.New("the journal does not go back; nothing was written")
+		}
+		if (old.Phase == Switched || old.Phase == Open) && j.Phase == Released {
+			return errors.New("a switched migration is not undone; nothing was written")
+		}
+	}
+	return nil
+}
+
 func (t *fakeTarget) Import(_ context.Context, bundle, scratch string) (CopyRecord, error) {
 	what := "import"
 	if scratch != "" {
@@ -894,5 +925,36 @@ func TestAnAbortWithoutATransferRecord(t *testing.T) {
 	j, err := w.eng.Abort(context.Background())
 	if err != nil || j.Phase != Released || !strings.Contains(strings.Join(w.said, "\n"), "move the domain of the installation's address back") {
 		t.Fatalf("%+v %v %v", j, err, w.said)
+	}
+}
+
+// The fake target refuses what varlatchd refuses (TestTheSwitchBeside
+// ARunningVarlatchd holds varlatchd to the same table).
+func TestTheFakeTargetRefusesAsVarlatchd(t *testing.T) {
+	j := func(id string, p Phase) *Journal { return &Journal{Format: 1, ID: id, Phase: p} }
+	a, b := "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", "mig_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+	for _, c := range []struct {
+		held    *JournalHead
+		running bool
+		write   *Journal
+		ok      bool
+	}{
+		{nil, true, j(a, Switched), true},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(b, Switched), false},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(a, Transfer), true},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(a, Checked), false},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(a, Open), false},
+		{&JournalHead{ID: a, Phase: Transfer}, true, j(a, Released), false},
+		{&JournalHead{ID: a, Phase: Transfer}, false, j(a, Released), true},
+		{&JournalHead{ID: a, Phase: Switched}, false, j(a, Released), false},
+		{&JournalHead{ID: a, Phase: DryRun}, false, j(a, Started), true},
+		{&JournalHead{ID: a, Phase: Barrier}, false, j(a, Started), false},
+		{&JournalHead{ID: a, Phase: Released}, false, j(b, Started), true},
+		{&JournalHead{ID: a, Phase: Copied}, false, j(b, Started), false},
+	} {
+		ft := &fakeTarget{journal: c.held, running: c.running, fail: map[string]error{}}
+		if err := ft.WriteJournal(context.Background(), c.write); (err == nil) != c.ok {
+			t.Errorf("held %+v running %v, writing %s %s: %v", c.held, c.running, c.write.ID, c.write.Phase, err)
+		}
 	}
 }
