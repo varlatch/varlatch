@@ -875,3 +875,18 @@ func TestValidUnit(t *testing.T) {
 		}
 	}
 }
+
+// A hand-made journal in transfer with no transfer record: an abort in the
+// Coolify shape says how to move the domain back, without a panic.
+func TestAnAbortWithoutATransferRecord(t *testing.T) {
+	w := interrupted(t, Transfer)
+	j, _ := readJournal(w.src.dir)
+	j.Ingress, j.Transfer = Coolify, nil
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	j, err := w.eng.Abort(context.Background())
+	if err != nil || j.Phase != Released || !strings.Contains(strings.Join(w.said, "\n"), "move the domain of the installation's address back") {
+		t.Fatalf("%+v %v %v", j, err, w.said)
+	}
+}

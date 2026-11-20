@@ -600,7 +600,11 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	}
 	j.Undone = &UndoneRecord{From: from, Why: cause.Error(), Released: released, At: e.now().UTC().Format(time.RFC3339Nano)}
 	if err := e.enter(ctx, j, Released); err != nil {
-		return fmt.Errorf("%w; it was undone (the barrier lifted, the address returned, the target's database discarded), but a journal could not say released: %v; varlatch migrate --resume finishes it", cause, err)
+		did := "the barrier lifted, the target's database discarded"
+		if from == Transfer {
+			did = "the address returned, " + did
+		}
+		return fmt.Errorf("%w; it was undone (%s), but a journal could not say released: %v; varlatch migrate --resume finishes it", cause, did, err)
 	}
 	return fmt.Errorf("%w; the barrier was lifted and the old installation reopened unchanged", cause)
 }
@@ -630,8 +634,12 @@ func (e *Engine) discard(ctx context.Context, j *Journal) error {
 //   - between the barrier and the switch: undone (the barrier lifted, the
 //     old installation reopened unchanged, the target's database
 //     discarded);
+//   - transfer: the public URL checked again, then switched and opened (or,
+//     in the public and proxy shapes, the address given back and undone);
 //   - switched: continued to open (the source refuses writes);
-//   - open or released: nothing to do.
+//   - open or released: finished on the target if it was not (its journal
+//     open and its service started, or its journal released), else
+//     nothing.
 func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	unlock, err := lockDir(e.Source.Dir())
 	if err != nil {

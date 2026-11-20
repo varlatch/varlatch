@@ -127,6 +127,17 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 		fmt.Fprintf(stderr, what+": "+format+"\n", args...)
 		return status
 	}
+	// Reading the state writes nothing, not even the data directory (a
+	// target not set up yet has none): it answers beside a running
+	// varlatchd too, and says whether one runs.
+	if a.sub == "state" && !a.write {
+		if _, err := os.Stat(cfg.DataDir); err == nil {
+			if _, _, err := checkClientDir(cfg.DataDir, os.Getuid()); err != nil {
+				return fail(ExitConfig, "%v", err)
+			}
+		}
+		return runMigrateState(cfg, a, stdin, stdout, fail)
+	}
 	if a.sub == "import" || a.sub == "keys" || a.sub == "state" {
 		if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 			return fail(ExitFailure, "%v", err)
@@ -135,11 +146,6 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
 		return fail(ExitConfig, "%v; nothing was written", err)
-	}
-	// Reading the state writes nothing: it answers beside a running
-	// varlatchd too, and says whether one runs.
-	if a.sub == "state" && !a.write {
-		return runMigrateState(cfg, a, stdin, stdout, fail)
 	}
 	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second); err == nil {
 		_ = conn.Close()

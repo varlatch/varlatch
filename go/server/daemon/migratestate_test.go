@@ -401,3 +401,19 @@ func TestAStuckTransferGate(t *testing.T) {
 		t.Fatalf("state beside a running varlatchd: %d %q %q", code, out, errOut)
 	}
 }
+
+// Reading the state creates nothing: a target whose data directory does
+// not exist yet answers with no journal and no database.
+func TestStateReadsWithoutADataDirectory(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	if err := os.Remove(in.data); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := migrateWith(t, in.conf, nil, "state")
+	if code != ExitOK || !strings.Contains(out, `"journal":null`) || !strings.Contains(out, `"running":false`) {
+		t.Fatalf("%d %q %q", code, out, errOut)
+	}
+	if _, err := os.Stat(in.data); !os.IsNotExist(err) {
+		t.Fatal("reading the state created the data directory")
+	}
+}

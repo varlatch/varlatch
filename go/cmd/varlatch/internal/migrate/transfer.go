@@ -219,7 +219,11 @@ func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
 	}
 	switch j.Ingress {
 	case Coolify:
-		e.say("The address goes back by hand: in Coolify, move the domain of %s back to the TypeScript application.", j.Transfer.Origin)
+		origin := "the installation's address"
+		if j.Transfer != nil {
+			origin = j.Transfer.Origin
+		}
+		e.say("The address goes back by hand: in Coolify, move the domain of %s back to the TypeScript application.", origin)
 	default:
 		if err := e.Source.StartIngress(ctx, j.Ingress); err != nil {
 			problems = append(problems, fmt.Errorf("starting the source's %s again: %w", ingressPart(j.Ingress), err))
