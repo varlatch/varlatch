@@ -560,9 +560,19 @@ func (s *Service) reconcile(ctx context.Context, targetID string, opts RunOption
 		return err
 	}
 	r.stats.Generation = r.gen
+	// The run's lease and row go however it ends (C25, C26), even when the
+	// failure's own bookkeeping panics; a test's Crash alone writes nothing
+	// more.
+	crashed := false
+	defer func() {
+		if !crashed {
+			r.finish(ctx, began)
+		}
+	}()
 	defer func() {
 		if p := recover(); p != nil {
-			if _, crashed := p.(Crash); crashed {
+			if _, crash := p.(Crash); crash {
+				crashed = true
 				panic(p) // a test's crash: nothing more is written
 			}
 			// A bug in this Target's run (rendering, an adapter): the run
@@ -576,7 +586,6 @@ func (s *Service) reconcile(ctx context.Context, targetID string, opts RunOption
 				r.s.logger().Error("sync failure bookkeeping failed", "target", r.target.ID, "error", err)
 			}
 		}
-		r.finish(ctx, began)
 	}()
 	r.attempt(ctx)
 	return nil

@@ -33,6 +33,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -499,7 +500,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if v == http.ErrAbortHandler {
 				panic(v)
 			}
-			s.opts.Log.Error("a request handler panicked", "method", r.Method, "path", p, "requestId", id, "panic", fmt.Sprint(v))
+			// The panic's type and where it was, never its value: it can hold a request's or a row's data.
+			s.opts.Log.Error("a request handler panicked", "method", r.Method, "path", p, "requestId", id, "panic", fmt.Sprintf("%T", v), "stack", string(debug.Stack()))
 			if rec.status == 0 {
 				writeError(rec, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
 			}

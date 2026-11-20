@@ -173,3 +173,41 @@ func TestPanickingRunFailsOnlyItsTarget(t *testing.T) {
 		}
 	}
 }
+
+// A panic in the failure's own bookkeeping still lets the run's lease and
+// row go: nothing waits out the lease's TTL.
+func TestPanicInTheFailureBookkeepingStillFinishesTheRun(t *testing.T) {
+	w := newEngineWorld(t)
+	var logged strings.Builder
+	w.engine.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	value := strings.Join([]string{"a", "value", "in", "the", "second", "panic"}, "-")
+	points := map[string]bool{}
+	syncs.OnCommit(w.engine, func(point string) {
+		if (point == "values-decrypted" || point == "failure") && !points[point] {
+			points[point] = true
+			panic(errors.New(value))
+		}
+	})
+	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
+	if !points["values-decrypted"] || !points["failure"] {
+		t.Fatalf("panicked at %v", points)
+	}
+	if rows := paritytest.Rows(t, w.store, `SELECT target_id FROM sync_runs`); len(rows) != 0 {
+		t.Errorf("run rows left: %v", rows)
+	}
+	if rows := paritytest.Rows(t, w.store, `SELECT id FROM sync_targets WHERE lease_expires_at IS NOT NULL`); len(rows) != 0 {
+		t.Errorf("leases left: %v", rows)
+	}
+	if strings.Contains(logged.String(), value) {
+		t.Errorf("the log holds the panic's value: %s", logged.String())
+	}
+	// The next pass converges every Target.
+	syncs.OnCommit(w.engine, nil)
+	w.later()
+	w.engine.RunOnce(context.Background(), syncs.RunOptions{})
+	for _, r := range w.targets() {
+		if result, _ := r["last_result"].(string); strings.Contains(result, "failed unexpectedly") {
+			t.Errorf("still failed: %v", r)
+		}
+	}
+}
