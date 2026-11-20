@@ -143,7 +143,8 @@ func TestArchiveRefusesBeforeAnyProgram(t *testing.T) {
 		want string
 	}{
 		{"no image", func(o *ArchiveOptions) { o.TSImage = "" }, "give --ts-image"},
-		{"an image by tag", func(o *ArchiveOptions) { o.TSImage = "ghcr.io/varlatch/varlatchd:0.23.0" }, "is not pinned by digest"},
+		{"an image by tag", func(o *ArchiveOptions) { o.TSImage = "ghcr.io/varlatch/varlatchd:0.23.0" }, "is not pinned by its registry digest"},
+		{"a local image ID without VARLATCH_ALLOW_LOCAL_TS_IMAGE", func(o *ArchiveOptions) { o.TSImage = "sha256:" + strings.Repeat("ef", 32) }, "is not pinned by its registry digest"},
 		{"an output that exists", func(o *ArchiveOptions) { o.Out = exists }, "exists: the converter writes a new archive"},
 		{"another installation's Root KEK", func(o *ArchiveOptions) { o.KEKFile = wrongKEK }, "does not open the archive's canaries"},
 		{"a wrong BEK", func(o *ArchiveOptions) { o.BEKFile = wrongBEK }, "Archive integrity check failed (wrong BEK, corruption, or truncation)"},
@@ -152,12 +153,15 @@ func TestArchiveRefusesBeforeAnyProgram(t *testing.T) {
 		}, "give --out-bek-file"},
 		{"a Go archive", func(o *ArchiveOptions) { o.Archive = goArchive }, "is a varlatchd archive (format 3)"},
 		{"a BEK that is the Root KEK", func(o *ArchiveOptions) { o.BEKFile = keyVec.kekFile }, "must be independent of the Root KEK"},
+		{"an output key that is the passphrase BEK's file", func(o *ArchiveOptions) {
+			o.Archive, o.KEKFile, o.BEKFile, o.OutBEKFile = passVec.archive, passVec.kekFile, passVec.bekFile, passVec.bekFile
+		}, "holds no 32-byte key"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			run := &fakeRunner{}
 			scratch := t.TempDir()
 			o := ArchiveOptions{Archive: keyVec.archive, Out: filepath.Join(dir, "out-"+strings.ReplaceAll(c.name, " ", "-")+".vltbak"),
-				KEKFile: keyVec.kekFile, BEKFile: keyVec.bekFile, TSImage: image, Varlatchd: "varlatchd", Scratch: scratch, Run: run}
+				KEKFile: keyVec.kekFile, BEKFile: keyVec.bekFile, TSImage: image, Varlatchd: "varlatchd", Scratch: scratch, Run: run, LockDir: t.TempDir()}
 			c.mod(&o)
 			_, err := ConvertArchive(context.Background(), o)
 			var refused *ErrArchive
@@ -272,7 +276,7 @@ func TestArchiveConversionSequence(t *testing.T) {
 	}
 	image := "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("cd", 32)
 	res, err := ConvertArchive(context.Background(), ArchiveOptions{Archive: v.archive, Out: out, KEKFile: v.kekFile, BEKFile: v.bekFile,
-		TSImage: image, Varlatchd: "varlatchd", Scratch: dir, Run: run, User: "1000:1000"})
+		TSImage: image, Varlatchd: "varlatchd", Scratch: dir, Run: run, User: "1000:1000", LockDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,9 +305,15 @@ func TestArchiveConversionSequence(t *testing.T) {
 				}
 				continue
 			}
-			for _, want := range []string{"--network", "container:" + pg, "--read-only", "--cap-drop", "ALL", "--user", "1000:1000", image} {
+			for _, want := range []string{"--network", "container:" + pg, "--read-only", "--cap-drop", "ALL", "--user", "1000:1000", image,
+				"--security-opt", "no-new-privileges", "--tmpfs", "/tmp"} {
 				if !slices.Contains(c.args, want) {
 					t.Errorf("%v lacks %s", c.args, want)
+				}
+			}
+			for k, a := range c.args {
+				if a == "-v" && strings.Contains(c.args[k+1], "root-kek") && !strings.HasSuffix(c.args[k+1], ":/run/varlatch/root-kek:ro") {
+					t.Errorf("the Root KEK is mounted writable: %s", c.args[k+1])
 				}
 			}
 		}
@@ -315,7 +325,7 @@ func TestArchiveConversionSequence(t *testing.T) {
 			t.Errorf("the run key in an argument: %v", c.args)
 		}
 	}
-	want := []string{"docker run", "docker exec", "docker cp", "docker exec", "docker exec", "docker run", "docker run", "docker run", "docker rm",
+	want := []string{"docker ps", "docker run", "docker exec", "docker cp", "docker exec", "docker exec", "docker run", "docker run", "docker run", "docker rm",
 		"varlatchd admin migrate import", "varlatchd admin migrate check", "varlatchd admin backup run"}
 	if !slices.Equal(steps, want) {
 		t.Errorf("steps\n%q\nwant\n%q", steps, want)
@@ -340,6 +350,123 @@ func TestArchiveConversionSequence(t *testing.T) {
 	}
 	if !slices.Equal(leftNames, []string{"converted.vltbak"}) {
 		t.Errorf("left: %v", leftNames)
+	}
+}
+
+// An interrupt mid-run (the context ends, as the CLI's signals end it)
+// leaves nothing: every container it started is removed, and the scratch
+// directory with the decrypted dump in it is gone.
+func TestArchiveInterruptCleansUp(t *testing.T) {
+	v := loadVectors(t)[0]
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var dumpSeen bool
+	run := &fakeRunner{}
+	run.answer = func(c call) Ran {
+		switch {
+		case c.args[0] == "exec" && slices.Contains(c.args, "SELECT 1"):
+			return Ran{Answer: []byte("1\n")}
+		case c.args[0] == "cp":
+			_, err := os.Stat(c.args[1])
+			dumpSeen = err == nil
+		case c.args[0] == "run" && slices.Contains(c.args, "backfill"):
+			cancel() // the interrupt arrives while the TypeScript release runs
+			return Ran{Code: 1}
+		}
+		return Ran{}
+	}
+	_, err := ConvertArchive(ctx, ArchiveOptions{Archive: v.archive, Out: filepath.Join(dir, "out.vltbak"), KEKFile: v.kekFile, BEKFile: v.bekFile,
+		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: dir, Run: run, LockDir: t.TempDir()})
+	if err == nil || ctx.Err() == nil || !dumpSeen {
+		t.Fatalf("err %v, ctx %v, the dump was in scratch %v", err, ctx.Err(), dumpSeen)
+	}
+	var started, removed []string
+	for _, c := range run.calls {
+		if c.args[0] == "run" {
+			started = append(started, c.args[slices.Index(c.args, "--name")+1])
+		}
+		if c.args[0] == "rm" {
+			removed = c.args[2:]
+		}
+	}
+	if len(started) != 3 || !slices.Equal(removed, started) {
+		t.Errorf("started %v, removed %v", started, removed)
+	}
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Errorf("left after the interrupt: %v", left)
+	}
+}
+
+// A conversion starts by sweeping what a killed one left: its containers
+// (by the converter's label, each by its exact ID) and its working
+// directories in the scratch root (directories only: a symbolic link of
+// that name, or a file, is left alone).
+func TestArchiveSweepsLeftovers(t *testing.T) {
+	v := loadVectors(t)[0]
+	dir := t.TempDir()
+	old := filepath.Join(dir, "varlatch-convert-1234567")
+	if err := os.MkdirAll(filepath.Join(old, "varlatch-backup-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(old, "varlatch-backup-1", "secret-plane.dump"), []byte("a decrypted dump"))
+	elsewhere := t.TempDir()
+	write(t, filepath.Join(elsewhere, "keep"), []byte("not the converter's"))
+	if err := os.Symlink(elsewhere, filepath.Join(dir, "varlatch-convert-7654321")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "varlatch-convert-5555555"), []byte("a file of that name"))
+	run := &fakeRunner{}
+	run.answer = func(c call) Ran {
+		switch {
+		case c.args[0] == "ps":
+			return Ran{Answer: []byte("0a1b2c3d4e5f\n6f5e4d3c2b1a\n")}
+		case c.args[0] == "run":
+			return Ran{Code: 1, Said: []byte("stopped here for the test")}
+		}
+		return Ran{}
+	}
+	_, err := ConvertArchive(context.Background(), ArchiveOptions{Archive: v.archive, Out: filepath.Join(t.TempDir(), "out.vltbak"), KEKFile: v.kekFile, BEKFile: v.bekFile,
+		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: dir, Run: run, LockDir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "stopped here for the test") {
+		t.Fatalf("%v", err)
+	}
+	if got := run.calls[0].args; !slices.Equal(got, []string{"ps", "-aq", "--filter", "label=varlatch.convert"}) {
+		t.Errorf("first %v", got)
+	}
+	if got := run.calls[1].args; !slices.Equal(got, []string{"rm", "-fv", "0a1b2c3d4e5f", "6f5e4d3c2b1a"}) {
+		t.Errorf("second %v", got)
+	}
+	if _, err := os.Lstat(old); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the old working directory: %v", err)
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, "varlatch-convert-7654321")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the symbolic link: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, "keep")); err != nil {
+		t.Errorf("the link's target: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "varlatch-convert-5555555")); err != nil {
+		t.Errorf("the file: %v", err)
+	}
+}
+
+// One conversion at a time on a host: a second refuses before anything
+// runs, so its sweep never touches the first's containers.
+func TestArchiveOneAtATime(t *testing.T) {
+	v := loadVectors(t)[0]
+	lockDir := t.TempDir()
+	unlock, err := lockConversion(lockDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	run := &fakeRunner{}
+	_, err = ConvertArchive(context.Background(), ArchiveOptions{Archive: v.archive, Out: filepath.Join(t.TempDir(), "out.vltbak"), KEKFile: v.kekFile, BEKFile: v.bekFile,
+		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: t.TempDir(), Run: run, LockDir: lockDir})
+	var refused *ErrArchive
+	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "another varlatch migrate --from-archive is running") || len(run.calls) != 0 {
+		t.Fatalf("%v, ran %v", err, run.calls)
 	}
 }
 
@@ -371,7 +498,8 @@ for target in 1.1.1.1/53 8.8.8.8/443 172.17.0.1/2375; do
   if timeout 5 bash -c "exec 3<>/dev/tcp/$target" 2>/dev/null; then echo "reached $target"; exit 3; fi
 done
 if getent hosts example.com >/dev/null 2>&1; then echo "resolved a name"; exit 4; fi
-ip -o link 2>/dev/null | grep -v ' lo:' && { echo "an interface besides lo"; exit 5; }
+for i in /sys/class/net/*; do [ "${i##*/}" = lo ] || { echo "an interface besides lo: ${i##*/}"; exit 5; }; done
+[ -e /sys/class/net/lo ] || { echo "no /sys/class/net/lo to look at"; exit 6; }
 echo isolated`
 	r, err := iso.inNamespace(ctx, pg, PostgresImage, "probe", &started, nil, []string{"bash", "-c", probe}, nil)
 	if err != nil {
@@ -433,6 +561,7 @@ func TestConvertArchives(t *testing.T) {
 			defer cancel()
 			res, err := ConvertArchive(ctx, ArchiveOptions{Archive: at(c.Archive), Out: out, KEKFile: at(c.KEKFile), BEKFile: at(c.BEKFile),
 				OutBEKFile: at(c.OutBEKFile), TSImage: image, Varlatchd: varlatchd, Scratch: work, Run: ExecRunner{},
+				AllowLocalImage: os.Getenv("VARLATCH_ALLOW_LOCAL_TS_IMAGE") == "1", LockDir: t.TempDir(),
 				Say: func(s string) { t.Log(s) }})
 			if err != nil {
 				t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/signal"
 	"slices"
 	"strings"
 
@@ -98,12 +99,22 @@ func migrateArchiveCommand(r *Run) error {
 	if err != nil {
 		return err
 	}
-	res, err := migrate.ConvertArchive(context.Background(), migrate.ArchiveOptions{
+	// An interrupt (Ctrl-C, a terminal closed, a stop) ends the conversion
+	// through its context, so its own cleanup runs: the containers holding
+	// the restored Secret Plane removed, the decrypted scratch copy too. A
+	// kill it cannot see is swept by the next conversion.
+	ctx, stop := signal.NotifyContext(context.Background(), conversionSignals...)
+	defer stop()
+	allowLocal, _ := r.Env.LookupEnv("VARLATCH_ALLOW_LOCAL_TS_IMAGE")
+	res, err := migrate.ConvertArchive(ctx, migrate.ArchiveOptions{
 		Archive: o.archive, Out: o.out, KEKFile: o.kekFile, BEKFile: o.bekFile, OutBEKFile: o.outBEKFile,
-		TSImage: o.tsImage, Varlatchd: varlatchd, Scratch: o.scratch,
+		TSImage: o.tsImage, Varlatchd: varlatchd, Scratch: o.scratch, AllowLocalImage: allowLocal == "1",
 		Run: migrate.ExecRunner{Env: environ(r)}, VarlatchdRun: migrate.ExecRunner{Env: varlatchdEnviron(r)},
 		Say: func(s string) { _ = r.warn(s) },
 	})
+	if err != nil && ctx.Err() != nil {
+		return Fail("varlatch migrate --from-archive: interrupted: cleaned up (its containers and scratch files removed); nothing was written", ExitFailure)
+	}
 	if err != nil {
 		var refused *migrate.ErrArchive
 		if errors.As(err, &refused) {

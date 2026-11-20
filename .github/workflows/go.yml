@@ -1436,7 +1436,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           go build -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
-          VARLATCH_REQUIRE_CONVERTER=1 VARLATCH_TEST_CONVERTER_DIR="$RUNNER_TEMP/converter" VARLATCH_TEST_TS_IMAGE="$TS_IMAGE" \
+          VARLATCH_REQUIRE_CONVERTER=1 VARLATCH_ALLOW_LOCAL_TS_IMAGE=1 VARLATCH_TEST_CONVERTER_DIR="$RUNNER_TEMP/converter" VARLATCH_TEST_TS_IMAGE="$TS_IMAGE" \
             VARLATCH_TEST_VARLATCHD="$RUNNER_TEMP/varlatchd" go test -count=1 -v -timeout 50m -run '^TestConvertArchives$' ./cmd/varlatch/internal/migrate
 
   go-ok:

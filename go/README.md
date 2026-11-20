@@ -3011,8 +3011,10 @@ migrations.
   Then an isolated restore: a throwaway PostgreSQL 17.6 (by digest) with
   `--network none` takes the Secret Plane's dump as the TypeScript
   restore does, and the last TypeScript release's image (`--ts-image`,
-  by registry digest or local image ID, required until 0.23.0's digest is
-  in `LastTypeScriptDigest`) runs in its namespace, read-only, as this
+  by registry digest, required until 0.23.0's digest is in
+  `LastTypeScriptDigest`; a local image ID only with
+  `VARLATCH_ALLOW_LOCAL_TS_IMAGE=1`, for the tests, with a warning) runs
+  in its namespace, read-only, as this
   user, with no capability: `migrate` (an older schema brought forward),
   `admin migration backfill` (the exposure index an archive from before
   0.20.0 lacks) and `admin migration export --dry-run --digests`, the run
@@ -3020,7 +3022,14 @@ migrations.
   scratch data directory: `admin migrate import`, `admin migrate check`
   (every check passes) and `admin backup run`, whose archive is placed at
   `--out` once its installation and key versions are the source's. Both
-  containers and the scratch directory are removed. Its tests: the
+  containers and the scratch directory are removed, on an interrupt too
+  (SIGINT, SIGTERM, SIGHUP end it through its context). One conversion
+  runs at a time on a host (an flock in the temporary directory), and
+  each starts by sweeping what a killed one left: the converter's
+  labelled containers, by ID, and its working directories in the scratch
+  root (directories only, never a symbolic link). PostgreSQL's own
+  messages (psql, pg_restore) are not shown: they can quote the
+  archive's data. Its tests: the
   refusals before any program runs and the conversion's sequence, with
   fakes; the isolation per pull request in go.yml
   (`TestArchiveIsolationHasNoNetwork`, Docker); the conversions of

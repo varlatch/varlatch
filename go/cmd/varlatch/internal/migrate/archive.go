@@ -50,10 +50,17 @@ import (
 // file's 17.6, by its index digest.
 const PostgresImage = "postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
 
-// pinnedImage is an image by its content: a name with its registry digest
-// (name@sha256:...), or a local image's ID (sha256:..., an image built
-// here, as the tests' and the nightly run's are).
-var pinnedImage = regexp.MustCompile(`^([a-z0-9][a-z0-9._/:-]*@)?sha256:[0-9a-f]{64}$`)
+// pinnedImage is an image by its registry digest (name@sha256:...).
+var pinnedImage = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$`)
+
+// localImage is a local image's ID (sha256:...): an image built on this
+// host, as the tests' and the nightly run's are. Taken only with
+// AllowLocalImage (VARLATCH_ALLOW_LOCAL_TS_IMAGE=1), and said.
+var localImage = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// leftover names what an interrupted conversion leaves in its scratch
+// root: its working directory.
+var leftover = regexp.MustCompile(`^varlatch-convert-[0-9]+$`)
 
 // DefaultTSImage is the last TypeScript release's image, once its digest
 // is published (sides.go); "" until then, when --ts-image is required.
@@ -88,7 +95,14 @@ type ArchiveOptions struct {
 	// User is the user the export runs as in its container ("uid:gid", so
 	// it can write the scratch directory); "" for this process's.
 	User string
-	Say  func(string)
+	// AllowLocalImage lets TSImage be a local image's ID (sha256:...), not
+	// only a registry digest: the tests' and the nightly run's own builds.
+	AllowLocalImage bool
+	// LockDir is where the conversion's host-wide lock is ("" for the
+	// system's temporary directory): one conversion at a time, so the sweep
+	// of an interrupted one's leftovers never touches a running one's.
+	LockDir string
+	Say     func(string)
 }
 
 // ArchiveResult is what a conversion did.
@@ -176,7 +190,9 @@ func readKeys(o ArchiveOptions) (*archiveKeys, error) {
 		k.clear()
 		return nil, refuse("the Backup Encryption Key %s is a passphrase: it opens the archive, but varlatchd seals with a key file; give --out-bek-file (32 bytes, hex or base64)", o.BEKFile)
 	}
-	if k.outBEKFile != o.BEKFile {
+	// A key file given for the output is checked even when it is the BEK's
+	// own file: a passphrase there is no key.
+	if o.OutBEKFile != "" {
 		raw, err := os.ReadFile(k.outBEKFile)
 		if err != nil {
 			k.clear()
@@ -227,8 +243,8 @@ func ConvertArchive(ctx context.Context, o ArchiveOptions) (ArchiveResult, error
 	switch {
 	case tsImage == "":
 		return res, refuse("give --ts-image: the last TypeScript release's image (%s %s), by its digest (name@sha256:...), until this varlatch carries it", LastTypeScriptRepository, LastTypeScriptRelease)
-	case !pinnedImage.MatchString(tsImage):
-		return res, refuse("--ts-image %q is not pinned by digest (name@sha256:<64 hex>, or a local image's sha256:<64 hex> ID): the converter runs one exact image", tsImage)
+	case localImage.MatchString(tsImage) && !o.AllowLocalImage, !localImage.MatchString(tsImage) && !pinnedImage.MatchString(tsImage):
+		return res, refuse("--ts-image %q is not pinned by its registry digest (name@sha256:<64 hex>): the converter runs one exact image", tsImage)
 	case !pinnedImage.MatchString(pgImage):
 		return res, refuse("the PostgreSQL image %q is not pinned by digest", pgImage)
 	case o.Out == "":
@@ -239,11 +255,34 @@ func ConvertArchive(ctx context.Context, o ArchiveOptions) (ArchiveResult, error
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return res, refuse("%s: %v", o.Out, err)
 	}
+	if localImage.MatchString(tsImage) {
+		say("Warning: --ts-image is a local image ID, not the published release's registry digest (VARLATCH_ALLOW_LOCAL_TS_IMAGE is set): for tests only.")
+	}
 	keys, err := readKeys(o)
 	if err != nil {
 		return res, err
 	}
 	defer keys.clear()
+
+	// One conversion at a time on this host; then what an interrupted one
+	// left in the scratch root goes (its containers, once the archive has
+	// opened: no program runs before that).
+	lockDir := o.LockDir
+	if lockDir == "" {
+		lockDir = os.TempDir()
+	}
+	unlock, err := lockConversion(lockDir)
+	if err != nil {
+		return res, refuse("%v", err)
+	}
+	defer unlock()
+	scratchRoot := o.Scratch
+	if scratchRoot == "" {
+		scratchRoot = os.TempDir()
+	}
+	if err := removeMatching(scratchRoot, leftover, true); err != nil {
+		return res, fmt.Errorf("an interrupted conversion's working directory in %s could not be removed: %w", scratchRoot, err)
+	}
 
 	work, err := os.MkdirTemp(o.Scratch, "varlatch-convert-")
 	if err != nil {
@@ -285,6 +324,9 @@ func ConvertArchive(ctx context.Context, o ArchiveOptions) (ArchiveResult, error
 	iso := &isolation{docker: o.Docker, run: o.Run, pgImage: pgImage, tsImage: tsImage, user: o.User, say: say}
 	if iso.docker == "" {
 		iso.docker = "docker"
+	}
+	if err := iso.sweep(ctx); err != nil {
+		return res, err
 	}
 	if iso.user == "" {
 		iso.user = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
@@ -434,6 +476,37 @@ func (i *isolation) do(ctx context.Context, what string, args []string, stdin []
 	return r, nil
 }
 
+// quiet is do for PostgreSQL's own tools (psql, pg_restore), whose errors
+// can quote a row's values: a failure names the step and its exit only.
+func (i *isolation) quiet(ctx context.Context, what string, args []string, stdin []byte) error {
+	r, err := i.run.Run(ctx, "", i.docker, args, stdin)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return fmt.Errorf("%s failed (exit %d; PostgreSQL's own message is not shown: it can hold the archive's data)", what, r.Code)
+	}
+	return nil
+}
+
+// sweep removes the containers an interrupted conversion left (killed
+// before its own cleanup ran): every container with the converter's
+// label, by its exact ID. The host-wide lock makes them no running
+// conversion's.
+func (i *isolation) sweep(ctx context.Context) error {
+	r, err := i.do(ctx, "listing an interrupted conversion's containers", []string{"ps", "-aq", "--filter", "label=varlatch.convert"}, nil)
+	if err != nil {
+		return err
+	}
+	ids := strings.Fields(string(r.Answer))
+	if len(ids) == 0 {
+		return nil
+	}
+	i.say(fmt.Sprintf("Removing %d container(s) an interrupted conversion left.", len(ids)))
+	_, err = i.do(ctx, "removing an interrupted conversion's containers", append([]string{"rm", "-fv"}, ids...), nil)
+	return err
+}
+
 // name is a container's: the converter's prefix and a random suffix, so
 // nothing else's container is ever touched.
 func name(role string) (string, error) {
@@ -528,14 +601,14 @@ func (i *isolation) export(ctx context.Context, dump, kekFile, bundleDir string,
 	// owning role (apps/cli backup.ts restoreInstallation).
 	roles := "CREATE ROLE varlatchd_migrate LOGIN; CREATE ROLE varlatchd_runtime LOGIN;\n" +
 		"CREATE DATABASE varlatch OWNER varlatchd_migrate;\nGRANT CONNECT ON DATABASE varlatch TO varlatchd_runtime;\n"
-	if _, err := i.do(ctx, "creating the TypeScript installation's roles", []string{"exec", "-i", pg, "psql", "-h", "127.0.0.1", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-q"}, []byte(roles)); err != nil {
+	if err := i.quiet(ctx, "creating the TypeScript installation's roles", []string{"exec", "-i", pg, "psql", "-h", "127.0.0.1", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-q"}, []byte(roles)); err != nil {
 		return "", err
 	}
 	if _, err := i.do(ctx, "copying the Secret Plane's dump in", []string{"cp", dump, pg + ":/tmp/secret-plane.dump"}, nil); err != nil {
 		return "", err
 	}
 	i.say("Restoring the Secret Plane.")
-	if _, err := i.do(ctx, "restoring the Secret Plane (pg_restore)", []string{"exec", pg, "pg_restore", "-h", "127.0.0.1", "-U", "postgres",
+	if err := i.quiet(ctx, "restoring the Secret Plane (pg_restore)", []string{"exec", pg, "pg_restore", "-h", "127.0.0.1", "-U", "postgres",
 		"--exit-on-error", "--no-owner", "--role", "varlatchd_migrate", "-d", "varlatch", "/tmp/secret-plane.dump"}, nil); err != nil {
 		return "", err
 	}
