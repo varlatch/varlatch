@@ -201,6 +201,9 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   shares that.
 - `lib/diskprobe/`: the fsync probe (Decision 2's disk requirement, p99
   under 10 ms) that setup, `varlatch doctor` and the G9a harness run.
+- `lib/keyenv/`: the refusal of a key in the environment, shared by
+  `varlatchd serve` and the CLI in the single-container image (slice
+  6.10a; see "The single-container image").
 - `lib/envelope/`: the encryption envelope (ADR-0011, unchanged by
   Decision 2): AES-256-GCM, canonical-JSON associated data, the purposes
   in use (`context.go`, including ADR-0056's audit export credential and
@@ -274,6 +277,10 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   published release of the Go line as people install it, on Linux, macOS
   and Windows (`install/published_test.go`, G8's published-asset half):
   after the Release workflow publishes a prerelease, or by hand for any.
+- `image/` (step 6, slice 6.10a): the single-container image, varlatchd
+  and the CLI in one distroless image for linux/amd64 and arm64, built by
+  `image/build.sh` from the release's own Linux binaries. See "The
+  single-container image" below; `image/README.md` is how to run it.
 - `bench/g9a/`: the G9a storage benchmark harness (`run.sh`, the k6
   script, the `g9a` command): G9a's load profile, every checkpoint and the
   WAL size logged, paced backups, converge runs, the disk record, and a
@@ -1737,6 +1744,47 @@ the drains and `admin audit-export discard-plan`.
   directions. The `audit-export` conformance suite checks the stream the
   worker writes and the host command's refusals on every target (the
   `host-admin` capability).
+
+### The single-container image (step 6, slice 6.10a)
+
+`image/Dockerfile` is one image with `varlatchd` and `varlatch`
+(`/opt/varlatch/`, where the host backup job finds the CLI), distroless
+static, run as uid and gid 65532, the data directory `/var/lib/varlatch`
+a volume (a new one starts the image user's, mode 0700), the
+configuration at `/etc/varlatch/varlatchd.conf`, the keys mounted as files
+under `/keys`. `image/build.sh` builds it with buildx from a directory of
+release assets (the named build context `assets`), for both platforms,
+and never pushes: `release.yml` publishes it, from the same assets.
+
+Keys reach varlatchd only as files. `varlatchd serve` refuses to start
+(exit 78) when its environment holds the Root KEK or the Backup
+Encryption Key, as hex in either case or base64 with or without padding,
+standard or URL-safe, anywhere in a value; or has a key or passphrase
+variable name, whatever its value: `VARLATCH_KEK`,
+`VARLATCH_KEK_PASSPHRASE`, `VARLATCH_ROOT_KEK`, `VARLATCH_BEK`,
+`VARLATCH_BEK_PASSPHRASE` and `VARLATCH_BACKUP_KEY` (in any case; the
+TypeScript line used the first two). It checks names and the configured
+keys' own values only, never a guess at what looks like a key; when
+`backup_key_file` cannot be read at the check, only the Root KEK's value
+and the names are checked. The refusal names the variable and never its
+value. In the image (`VARLATCH_IMAGE`), `varlatchd admin` and the CLI
+refuse to run the same way, against the keys the image's configuration
+names that they can read. `lib/keyenv` is the check; `keyenv_test.go`,
+`daemon.TestServeRefusesAKeyInItsEnvironment`,
+`daemon.TestAdminRefusesAKeyInTheImage` and the CLI's
+`TestImageRefusesAKeyInTheEnvironment` test it, each checking the value is
+never in the message.
+
+`image/check-image.mjs` runs the image as an operator would (the
+replacement of `test-backup-compose.mjs`): its configuration, the refusal
+by both commands, a new installation on a new volume as the image user
+with a read-only root filesystem,
+no key in `docker inspect` or `/proc/1/environ`, the recovery gate held in
+the volume across containers, and a backup restored into a new volume
+through the image alone. go.yml's `go-image` job builds the image for
+both platforms and runs it on every pull request that touches it;
+`go-container` runs the conformance suites against it nightly (target
+`go-container:<image>`, which runs as go-binary with its expectations).
 
 ### Public HTTPS (step 6, slice 6.3a)
 

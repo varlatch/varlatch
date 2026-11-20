@@ -27,6 +27,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auditexport"
@@ -204,6 +205,21 @@ func serve(opts Options, h *hooks) int {
 	clear(material)
 	if err != nil {
 		return fail(ExitConfig, "the Root KEK file does not hold a Root KEK", "file", cfg.RootKEKFile, "error", err)
+	}
+	// No key in the environment (lib/keyenv): checked before anything is
+	// opened, against the Root KEK and, when one is configured, the BEK.
+	keys := []keyenv.Key{{What: keyenv.RootKEK, Bytes: rootKEK}}
+	if cfg.BackupKeyFile != "" {
+		if raw, err := os.ReadFile(cfg.BackupKeyFile); err == nil {
+			if bek, err := backup.ParseKey(string(raw)); err == nil {
+				keys = append(keys, keyenv.Key{What: keyenv.BEK, Bytes: bek})
+				defer clear(bek)
+			}
+			clear(raw)
+		}
+	}
+	if why := keyenv.Refusal(os.Environ(), keys...); why != "" {
+		return fail(ExitConfig, why)
 	}
 	if st, err := os.Stat(cfg.DataDir); err != nil || !st.IsDir() {
 		return fail(ExitFailure, "the data directory is not there", "dir", cfg.DataDir, "error", err)

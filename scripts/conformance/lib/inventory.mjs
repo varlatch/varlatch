@@ -329,6 +329,18 @@ export function predates(inventory, feature, cliVersion) {
  */
 export function evaluate({ inventory, reports, errors = [], cliVersion = null, cliSpec = null, lacking = new Map(), clientLacking = new Map() }) {
   const problems = errors.map((e) => `${e.suite}: ${e.message}`);
+  // Why a check did not report, when the run knows: its suite's first error
+  // (a fixture that did not start, a crash), else the run's stop. A check
+  // left unreported then names the failure behind it.
+  const suiteError = new Map();
+  for (const e of errors) if (!suiteError.has(e.suite)) suiteError.set(e.suite, e.message);
+  const stopped = errors.find((e) => e.suite === "runner" && e.message.startsWith("the run stopped"))?.message;
+  const unreported = (suite) => {
+    const cause = suiteError.get(suite) ?? stopped;
+    if (!cause) return "did not report";
+    const line = cause.replace(/\s+/g, " ").trim();
+    return `did not report: ${line.length > 240 ? `${line.slice(0, 239)}…` : line}`;
+  };
   const byId = new Map();
   for (const r of reports) {
     const entry = inventory.checks[r.id];
@@ -358,7 +370,7 @@ export function evaluate({ inventory, reports, errors = [], cliVersion = null, c
     // unconfirmed PREDATES-CLI) is a reporting failure, never an assertion
     // an expectation could excuse.
     const invalid = [...statuses].filter((st) => !STATUSES.includes(st) && !RUNNER_STATUSES.includes(st));
-    if (got.length === 0) reporting("did not report");
+    if (got.length === 0) reporting(unreported(entry.suite));
     else if (invalid.length > 0) reporting(`reported an invalid status: ${invalid.join(", ")}`);
     else if (statuses.size > 1) {
       const failed = got.find((r) => r.status === "FAIL");
