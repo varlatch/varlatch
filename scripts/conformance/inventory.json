@@ -797,6 +797,27 @@
         "listAuditEvents"
       ]
     },
+    "security-cli": {
+      "title": "The security commands with the CLI under test (slice 5.7b): one check per command, exit 0 and --json parsing, a loosening that waits for its approval, in an Organization of its own",
+      "script": "scripts/conformance/suites/security-cli.mjs",
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "whoami",
+        "createOrganization",
+        "listSecurityControls",
+        "changeSecurityControl",
+        "cancelApproval",
+        "myOrganizationPermissions",
+        "getIncidentFreeze",
+        "securityControlReport",
+        "securityApprovalKeys",
+        "credentialReview",
+        "refusedDestinations",
+        "listRequirements",
+        "getAuditExport"
+      ]
+    },
     "deletion": {
       "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce; an Organization's deletion scheduled, approved by a second admin, cancelled and run when due, and the audit-access tombstone's readers; what the due run tears down (a Sync Target and its Connection, a webhook, the GitHub App) and the audit export's drain, completed or abandoned at its deadline",
       "script": "scripts/conformance/suites/deletion.mjs",
@@ -3844,6 +3865,51 @@
       "kind": "conformance",
       "title": "audit list --json lists the organization's events"
     },
+    "security-cli.controls": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security controls lists the organization's controls"
+    },
+    "security-cli.controls-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security controls --json lists them"
+    },
+    "security-cli.set": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security set turns a control up at once (security controls agrees)"
+    },
+    "security-cli.set-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security set --json prints the change"
+    },
+    "security-cli.set-loosen-waits": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "a loosening in assisted mode stops for the approval (75), unchanged and with no credential printed"
+    },
+    "security-cli.status": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security status shows the organization's security"
+    },
+    "security-cli.status-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security status --json shows it"
+    },
+    "security-cli.report": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security report shows the credential review"
+    },
+    "security-cli.report-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security report --json shows it"
+    },
     "deletion.project-deleted": {
       "suite": "deletion",
       "kind": "conformance",
@@ -4352,7 +4418,7 @@
       "script": "scripts/test-backup-compose.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go container image and upgrade's recovery gate"
+        "none": "Its Go counterpart is go/image/check-image.mjs, not a runner check: the Go workflow (.github/workflows/go.yml) runs it in the job go-image, in the step 'The image as an operator runs it', against the single-container image built from the commit (go/image/Dockerfile): the user, entrypoint, volume and license label of the image; a key in the environment refused by varlatchd and by the CLI in the image (exit 78, the variable named, never its value); an installation on a new volume, owned by the image user alone and run as that user; no key in docker inspect or /proc/1/environ; the recovery gate (a maintenance lease) held in the volume across containers until it ends; and a backup restored into a new volume through the image alone, served and its canary opened. The job go-container runs the conformance suites against the image nightly (target go-container)."
       }
     },
     "backup-e2e": {

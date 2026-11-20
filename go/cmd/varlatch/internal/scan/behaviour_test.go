@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -13,27 +14,52 @@ import (
 
 var testKey = Secret{Item: "API_KEY", VersionID: "ver_api", Value: "api-key-aaaabbbbccccdddd"}
 
+// timed is one run of f, after a garbage collection and with the
+// collector off while it runs: a collection's pause landing in one run and
+// not the other is noise the growth would read as the work's.
+func timed(f func()) time.Duration {
+	runtime.GC()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	began := time.Now()
+	f()
+	return time.Since(began)
+}
+
 // growth times the small and the large work: each once untimed first, then
-// small, large, small, large, small, large, each after a garbage
-// collection, and the fastest of each (internal/matcher's helper).
+// small, large, five times each, each by timed, and the fastest of each
+// (internal/matcher's helper). Noise only ever adds time.
 func growth(small, large func()) (time.Duration, time.Duration) {
 	small()
 	large()
 	var bestSmall, bestLarge time.Duration
-	for i := range 3 {
+	for i := range 5 {
 		for _, f := range []struct {
 			run  func()
 			best *time.Duration
 		}{{small, &bestSmall}, {large, &bestLarge}} {
-			runtime.GC()
-			start := time.Now()
-			f.run()
-			if took := time.Since(start); i == 0 || took < *f.best {
+			if took := timed(f.run); i == 0 || took < *f.best {
 				*f.best = took
 			}
 		}
 	}
 	return bestSmall, bestLarge
+}
+
+// measured sizes n by sized, times run(n) and run(8n) by growth, and, when
+// the measured smaller run is still under floor (the sizing's probe ran on
+// a cold or busy CPU), grows n by half again and measures once more, up to
+// limit: the measured run decides, as in internal/agents. On Windows CI a
+// probe once chose a size whose measured run took 10 ms, and 20 ms of
+// slack does not absorb that run's noise.
+func measured(start, limit int, floor time.Duration, run func(n int) func()) (n int, small, large time.Duration) {
+	n = sized(start, limit, floor, run)
+	for {
+		small, large = growth(run(n), run(8*n))
+		if small >= floor || n >= limit {
+			return n, small, large
+		}
+		n = min(n*3/2, limit)
+	}
 }
 
 // growsLinearly is the shared criterion: eight times the input in at most
@@ -61,10 +87,7 @@ func sized(start, limit int, floor time.Duration, run func(n int) func()) int {
 		work := run(n)
 		best := time.Duration(0)
 		for i := range 2 {
-			runtime.GC()
-			began := time.Now()
-			work()
-			if took := time.Since(began); i == 0 || took < best {
+			if took := timed(work); i == 0 || took < best {
 				best = took
 			}
 		}
@@ -92,8 +115,9 @@ func scanOnce(secrets []Secret, content []byte) *Report {
 // occurrences past the listing limit, markers at every turn, markers cut
 // at each chunk's end, names at their longest bound, a value's start that
 // never completes) takes time linear in the file's size by growsLinearly,
-// each shape sized on this machine so its smaller run lasts at least
-// minSmall; and a deliberately quadratic control, sized to at least
+// each shape sized on this machine so its smaller run, as measured (best
+// of five, the collector off in each run), lasts at least minSmall; and a
+// deliberately quadratic control, sized to at least
 // minControl and timed the same way, is judged not linear, so the
 // criterion can fail.
 func TestScanIsLinear(t *testing.T) {
@@ -116,8 +140,7 @@ func TestScanIsLinear(t *testing.T) {
 			content := []byte(strings.Repeat(shape.unit, size/len(shape.unit)+1)[:size])
 			return func() { scanOnce([]Secret{testKey}, content) }
 		}
-		n := sized(64<<10, 16<<20, minSmall, run)
-		small, large := growth(run(n), run(8*n))
+		n, small, large := measured(64<<10, 16<<20, minSmall, run)
 		t.Logf("%s: %d bytes %v, %d bytes %v (%.1fx)", shape.name, n, small, 8*n, large, float64(large)/float64(small))
 		if !growsLinearly(small, large) {
 			t.Errorf("%s: %d bytes %v, %d bytes %v: not linear", shape.name, n, small, 8*n, large)
@@ -140,8 +163,7 @@ func TestScanIsLinear(t *testing.T) {
 			}
 		}
 	}
-	n := sized(500, 32000, minControl, quadratic)
-	small, large := growth(quadratic(n), quadratic(8*n))
+	n, small, large := measured(500, 32000, minControl, quadratic)
 	t.Logf("the quadratic control, n = %d: %v then %v (%.1fx)", n, small, large, float64(large)/float64(small))
 	if growsLinearly(small, large) {
 		t.Errorf("the quadratic control (%v then %v) was judged linear", small, large)
