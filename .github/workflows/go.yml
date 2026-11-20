@@ -79,6 +79,17 @@ on:
       - "scripts/conformance/client-go.json"
       # Line ends on checkout (the Windows jobs).
       - ".gitattributes"
+      # The Typed Accessor runtimes the Go CLI's `types` embeds
+      # (go/cmd/varlatch/internal/typegen/embedded/, from these packages'
+      # build scripts): "Generated code is current" fails on a stale copy.
+      - "packages/accessor/src/**"
+      - "packages/accessor/scripts/**"
+      - "packages/accessor/package.json"
+      - "packages/accessor-python/src/**"
+      - "packages/accessor-python/scripts/**"
+      - "packages/accessor-python/package.json"
+      # The esbuild that bundles the accessor runtime is pinned in
+      # pnpm-lock.yaml (below).
       # CONFORMANCE_PATTERNS: what the conformance cells build and read.
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -168,6 +179,13 @@ jobs:
             apps/cli/src/agents/skillFiles.generated.ts
             scripts/conformance/client-go.json
             .gitattributes
+            packages/accessor/src/*
+            packages/accessor/scripts/*
+            packages/accessor/package.json
+            packages/accessor-python/src/*
+            packages/accessor-python/scripts/*
+            packages/accessor-python/package.json
+            pnpm-lock.yaml
           # The Go CLI (internal docs/design/go-cli.md, decision 14): its
           # code, the shared libraries it may use, every file its tests read
           # from outside go/ (the skill files and the TypeScript CLI's copy of
@@ -328,7 +346,12 @@ jobs:
       #     packages/protocol/openapi.yaml by oapi-codegen; ci.yml checks the
       #     TypeScript types generated from the same document;
       #   - the typed queries (go/server/db/query/), from
-      #     go/server/db/schema.sql and queries/ by sqlc.
+      #     go/server/db/schema.sql and queries/ by sqlc;
+      #   - the Typed Accessor runtimes the CLI's `types` embeds
+      #     (go/cmd/varlatch/internal/typegen/embedded/), built by
+      #     packages/accessor's and packages/accessor-python's own scripts
+      #     (esbuild pinned in the lockfile) through embed-runtimes.mjs, so
+      #     the Go CLI's modules keep the TypeScript CLI's bytes.
       # A stale or hand-edited file fails here; `go generate ./...` in go/
       # repairs it. go generate ./server/web also builds the dashboard into
       # go/server/web/dist/, which is not committed (so not compared) and
@@ -1020,8 +1043,9 @@ jobs:
   # merge group runs them when it touches the CLI's code or a file its tests
   # read (the changes job's CLI_PATTERNS); the nightly run always does. On
   # Windows the recorded cases that name a path below their directory are
-  # skipped until step 5.9 records Windows outcomes; the step lists every
-  # skipped test, and the job summary counts them.
+  # compared with the TypeScript CLI's Windows recordings (testdata/*/windows,
+  # the windows-expectations workflow); the step lists every skipped test,
+  # and the job summary counts them.
   go-cli-platforms:
     needs: changes
     if: needs.changes.outputs.cli == 'true'
@@ -1074,9 +1098,10 @@ jobs:
           printf "The CLI's libraries:\n%s\n" "$libs"
           # shellcheck disable=SC2086 # one argument per package
           go vet ./cmd/varlatch/... $libs
-          # Verbose, so every skipped test is listed with its reason (on
-          # Windows: the recorded cases that name a path, until step 5.9);
-          # the log leaves out the lines of tests that ran and passed.
+          # Verbose, so every skipped test is listed with its reason (cases a
+          # platform cannot hold: POSIX modes and signals, names Windows does
+          # not allow); the log leaves out the lines of tests that ran and
+          # passed.
           # shellcheck disable=SC2086 # one argument per package
           go test -count=1 -v ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
 

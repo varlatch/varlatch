@@ -157,8 +157,12 @@ func TestContractIdentifiersAreNeverRewritten(t *testing.T) {
 				if c.shown != (strings.Contains(stdout, c.id) && strings.Contains(stdout, c.hash)) || c.shown == strings.Contains(stderr, "is not shown") {
 					t.Errorf("shown %v: %q %q", c.shown, stdout, stderr)
 				}
-				if asJSON && !c.shown && !strings.Contains(stdout, "null") {
-					t.Errorf("no null: %q", stdout)
+				// --json: null, never the placeholder; text: the placeholder.
+				if asJSON && !c.shown && (!strings.Contains(stdout, "null") || strings.Contains(stdout, "an unrecognized")) {
+					t.Errorf("not null: %q", stdout)
+				}
+				if !asJSON && !c.shown && !strings.Contains(stdout, UnrecognizedID) && !strings.Contains(stdout, UnrecognizedHash) {
+					t.Errorf("no placeholder: %q", stdout)
 				}
 			})
 		}
@@ -166,10 +170,11 @@ func TestContractIdentifiersAreNeverRewritten(t *testing.T) {
 }
 
 // TestContractShowMasksKeys: an object key holding a secret is masked as a
-// value is, and the keys stay unique.
+// value is, and the keys stay unique, even beside keys that are
+// "[redacted]" in the answer itself.
 func TestContractShowMasksKeys(t *testing.T) {
 	s := newValuesServer(t)
-	s.answer("GET", contractPath, 200, `{"id": "rev_x", "`+canary+`": 1, "x`+canary+`": 2, "vlt_cli_secretTestAAAA": 3, "contract": {"schemaVersion": 1, "items": [
+	s.answer("GET", contractPath, 200, `{"id": "rev_x", "`+canary+`": 1, "x`+canary+`": 2, "vlt_cli_secretTestAAAA": 3, "[redacted]": 4, "[redacted] (2)": 5, "contract": {"schemaVersion": 1, "items": [
 		{"name": "API_KEY", "required": {"kind": "never"}, "sensitive": true, "type": "string", "defaultValue": "`+canary+`"}]}}`)
 	code, stdout, stderr := runIn(t, s, "", nil, nil, "contract", "show")
 	noneShown(t, stdout, stderr, canary, "vlt_cli_secretTestAAAA")
@@ -184,7 +189,7 @@ func TestContractShowMasksKeys(t *testing.T) {
 		}
 		keys[m.Key] = true
 	}
-	if len(keys) != 5 {
+	if len(keys) != 7 || !keys["[redacted]"] || !keys["[redacted] (2)"] {
 		t.Errorf("%d keys: %q", len(keys), stdout)
 	}
 }

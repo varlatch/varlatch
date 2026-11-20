@@ -14,6 +14,10 @@ type command struct {
 	name  string
 	slice string
 	run   func(*Run) error
+	// partial runs the forms of a command not built yet that an earlier
+	// slice builds (`scan --find-files`, slice 5.4e, of `scan`, 5.4d): it
+	// says whether the command line is one of them.
+	partial func(*Run) (handled bool, err error)
 }
 
 // commands is the table, in the TypeScript CLI's dispatch order.
@@ -29,14 +33,14 @@ var commands = []command{
 	{name: "env", slice: "5.1e", run: envCommand},
 	{name: "run", slice: "5.4b", run: runCommand},
 	{name: "validate", slice: "5.3a", run: validateCommand},
-	{name: "scan", slice: "5.4d"},
+	{name: "scan", slice: "5.4d", partial: scanFindFiles},
 	{name: "values", slice: "5.3a", run: valuesCommand},
-	{name: "mcp", slice: "5.6b"},
+	{name: "mcp", slice: "5.6b", run: mcpCommand},
 	{name: "request", slice: "5.5b"},
 	{name: "import", slice: "5.3a", run: importCommand},
 	{name: "sync", slice: "5.8b"},
 	{name: "contract", slice: "5.3b", run: contractCommand},
-	{name: "types", slice: "5.3c"},
+	{name: "types", slice: "5.3c", run: typesCommand},
 	{name: "invite", slice: "5.7a"},
 	{name: "tailnet", slice: "5.7a"},
 	{name: "audit", slice: "5.7a"},

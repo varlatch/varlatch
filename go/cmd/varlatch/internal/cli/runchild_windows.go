@@ -63,10 +63,10 @@ func lookCommand(name, path string) (string, error) {
 	return "", errNotFound
 }
 
-// errnoName is the error's name as libuv gives it on Windows, for the
+// spawnErrnoName is the error's name as libuv gives it on Windows, for the
 // errors starting a command can end with; "" for another (its message is
 // then kept).
-func errnoName(errno syscall.Errno) string {
+func spawnErrnoName(errno syscall.Errno) string {
 	switch errno {
 	case syscall.ERROR_FILE_NOT_FOUND, syscall.ERROR_PATH_NOT_FOUND:
 		return "ENOENT"

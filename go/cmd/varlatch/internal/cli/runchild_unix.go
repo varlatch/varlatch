@@ -110,9 +110,9 @@ func lookCommand(name, path string) (string, error) {
 	return "", errNotFound
 }
 
-// errnoName is the errno's name as libuv and Node.js give it, for the
+// spawnErrnoName is the errno's name as libuv and Node.js give it, for the
 // errors starting a command can end with; "" for another.
-func errnoName(errno syscall.Errno) string {
+func spawnErrnoName(errno syscall.Errno) string {
 	switch errno {
 	case unix.ENOENT:
 		return "ENOENT"

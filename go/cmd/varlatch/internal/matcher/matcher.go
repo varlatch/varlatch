@@ -275,7 +275,14 @@ func (m *StreamMatcher) addMatch(match key) {
 	tail = slices.Insert(tail, at, region)
 	// In place: tail is the scratch space, built before anything is
 	// overwritten, and the head (every segment before i) stays where it is.
+	// The entries the slice no longer holds, and the scratch space once
+	// copied, are zeroed, so no stale segment keeps a caller's chunk alive.
+	was := len(m.segments)
 	m.segments = append(m.segments[:i], tail...)
+	if was > len(m.segments) {
+		clear(m.segments[len(m.segments):was])
+	}
+	clear(tail)
 	m.scratch = tail[:0]
 }
 
@@ -295,6 +302,7 @@ func (m *StreamMatcher) emitFinal(boundary int, out *[]byte) {
 				return
 			}
 			m.emitSegment(first, out)
+			m.segments[0] = segment{} // no stale segment keeps a chunk alive
 			m.segments = m.segments[1:]
 			continue
 		}
@@ -304,6 +312,7 @@ func (m *StreamMatcher) emitFinal(boundary int, out *[]byte) {
 		}
 		*out = append(*out, first.bytes[:final]...)
 		if final == len(first.bytes) {
+			m.segments[0] = segment{}
 			m.segments = m.segments[1:]
 			continue
 		}

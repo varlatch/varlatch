@@ -10,10 +10,6 @@
       "reason": "varlatch doctor: not ported to the Go CLI yet",
       "slice": "step 6"
     },
-    "mcp": {
-      "reason": "varlatch mcp: not ported to the Go CLI yet",
-      "slice": "5.6b"
-    },
     "run-redact": {
       "reason": "varlatch run --redact: not ported to the Go CLI yet",
       "slice": "5.4c"
@@ -25,14 +21,6 @@
     "scan": {
       "reason": "varlatch scan: not ported to the Go CLI yet",
       "slice": "5.4d"
-    },
-    "types-python": {
-      "reason": "varlatch types: the Python module and its Typed Accessor: not ported to the Go CLI yet",
-      "slice": "5.3c"
-    },
-    "types-typescript": {
-      "reason": "varlatch types: the TypeScript module and its Typed Accessor: not ported to the Go CLI yet",
-      "slice": "5.3c"
     }
   }
 }

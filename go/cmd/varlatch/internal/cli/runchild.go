@@ -150,10 +150,10 @@ func spawnError(command string, err error) error {
 		code = "ENOENT"
 	case errors.Is(err, errBatchFile):
 		code = "EINVAL"
-	case errors.As(err, &errno) && errnoName(errno) != "":
+	case errors.As(err, &errno) && spawnErrnoName(errno) != "":
 		// The system's own errno, named as Node names it (an exec format
 		// error is ENOEXEC, not Go's "fork/exec ...: exec format error").
-		code = errnoName(errno)
+		code = spawnErrnoName(errno)
 	case errors.Is(err, os.ErrNotExist):
 		code = "ENOENT"
 	case errors.Is(err, os.ErrPermission):
