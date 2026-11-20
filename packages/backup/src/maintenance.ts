@@ -23,6 +23,12 @@ export interface Gate {
   expiresAt: number | null; archiveId: string | null;
   /** The migration barrier's frozen point: the last audit position (event_order), once drained. */
   frozenPosition?: string | null;
+  /**
+   * The PostgreSQL snapshot the barrier exported at its frozen point and
+   * holds while it stands (the export reads from it); null when none is
+   * held (the barrier ran with no daemon).
+   */
+  frozenSnapshot?: string | null;
 }
 const GATE_KINDS: readonly GateKind[] = ['capture', 'restore', 'migration', 'migrated-out'];
 /** Whether a gate belongs to the migration: kept across a restart, never expiring. */
@@ -45,7 +51,9 @@ export function readGate(dir: string): Gate | null {
         (isMigrationGate(value) && (value.expiresAt !== null || value.phase === 'reconciling')) ||
         (value.kind === 'migrated-out' && value.phase !== 'paused') ||
         (value.frozenPosition !== undefined && value.frozenPosition !== null &&
-          (typeof value.frozenPosition !== 'string' || !/^[0-9]+$/.test(value.frozenPosition)))) throw new Error();
+          (typeof value.frozenPosition !== 'string' || !/^[0-9]+$/.test(value.frozenPosition))) ||
+        (value.frozenSnapshot !== undefined && value.frozenSnapshot !== null &&
+          (typeof value.frozenSnapshot !== 'string' || !/^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i.test(value.frozenSnapshot)))) throw new Error();
     return value;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -129,10 +137,10 @@ export class Maintenance {
     return gate;
   }
   /** The barrier drained: paused, with its frozen point. */
-  freezeMigration(id: string, frozenPosition: string): Gate {
+  freezeMigration(id: string, frozenPosition: string, frozenSnapshot: string | null = null): Gate {
     const gate = this.require(id);
     if (gate.kind !== 'migration') throw new BackupError('Not a migration barrier');
-    const next: Gate = { ...gate, phase: 'paused', frozenPosition };
+    const next: Gate = { ...gate, phase: 'paused', frozenPosition, frozenSnapshot };
     durableJson(join(this.dir, 'maintenance.json'), next);
     return next;
   }
