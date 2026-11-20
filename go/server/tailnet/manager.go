@@ -120,6 +120,11 @@ const NameSuffixed = "name-suffixed"
 // control plane's suffix.
 var ErrNameSuffixed = errors.New("tailnet: the node's name still carries a suffix the control plane added (its configured name is held by another node): delete that node in the tailnet's admin console and rename this one to its configured name, then re-pin")
 
+// SuffixedName is suffixedName: whether a name would read back as the
+// control plane's collision suffix of hostname (a handoff's temporary name
+// must never).
+func SuffixedName(dnsName, hostname string) bool { return suffixedName(dnsName, hostname) }
+
 // suffixedName is whether dnsName's first label is hostname with the
 // control plane's collision suffix (-1, -2, ...), case-insensitively. A
 // name an administrator chose is not one.

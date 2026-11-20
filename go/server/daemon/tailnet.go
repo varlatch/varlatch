@@ -115,7 +115,9 @@ func startTailnet(cfg *config.Config, controlURL string, certs tailnet.CertSourc
 		return nil, err
 	}
 	// The read-back: a name the control plane suffixed keeps access closed.
-	m.SetHostname(t.Hostname)
+	// While a handoff holds the node, it is read back as the hold's name
+	// (open sets the configured one again).
+	m.SetHostname(hostname)
 	r := &tailnetRunner{cfg: t, node: node, manager: m, resolver: tailnet.NewPinnedResolver(node, m, log), log: log, done: make(chan struct{}),
 		dataDir: cfg.DataDir, held: hold != nil, openCh: make(chan struct{}), listened: make(chan error, 1)}
 	if t.HTTPSPort != 0 {
@@ -210,6 +212,7 @@ func (r *tailnetRunner) open(ctx context.Context) error {
 	if err := tailnet.ClearHold(r.dataDir); err != nil {
 		return fmt.Errorf("removing the hold: %w", err)
 	}
+	r.manager.SetHostname(r.cfg.Hostname)
 	first := false
 	r.openOnce.Do(func() { first = true; close(r.openCh) })
 	if !first {

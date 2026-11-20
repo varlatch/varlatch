@@ -2002,12 +2002,17 @@ serves the tailnet listener on the node's own addresses
     - it reports the node's StableID, MagicDNS name, suffix, tailnet and
       control server.
 
-    It refuses the configured name, a name the control plane changed, a
-    node enrolled and not held, and a second handoff's name. Run again for
-    the same name, it reports the same node.
+    It refuses the configured name, a name shaped like the control
+    plane's collision suffix of it (`vault-1` for `vault`, which would
+    latch the tailnet closed), a name the control plane changed, a data
+    directory setup has not made, and a name other than the one a hold
+    already names, enrolled or not. Run again for the same name, it
+    reports the same node; an enrolled node no handoff holds is held again
+    only while the control plane names it exactly the temporary name.
   - **A varlatchd started under the hold** joins under the hold's
     temporary name, never announcing the configured one, which another
-    node holds. Nothing listens on the tailnet until `varlatchd admin
+    node holds, and reads its name back as the hold's (open sets the
+    configured one again). Nothing listens on the tailnet until `varlatchd admin
     tailnet open [--json]`, which:
     - removes the hold first;
     - then, through the control socket, starts the tailnet listener and
@@ -2028,7 +2033,10 @@ serves the tailnet listener on the node's own addresses
       probe does, so the key must be reusable;
     - it looks among its peers, every second until `--wait` has passed,
       for the name to be held by exactly the node with that StableID;
-    - it logs out and leaves no state.
+    - it logs out and leaves no state, on SIGINT or SIGTERM too; a
+      killed probe's directory (`varlatchd-reach-*` in the system's
+      temporary directory, this user's, older than 10 minutes) is swept
+      by the next probe.
 
     The tailnet's access rules must let the node's tags see each other,
     or the probe sees nothing and the check fails closed: the answer then

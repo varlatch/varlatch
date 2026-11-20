@@ -7,6 +7,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -129,6 +130,22 @@ func TestTheHandoffNode(t *testing.T) {
 	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", "vault", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "configured name") {
 		t.Fatalf("enrolling under the configured name: %d %q", code, errOut)
 	}
+	// A temporary name that reads as the control plane's suffix of the
+	// configured one would latch the tailnet closed: refused.
+	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", "vault-1", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "suffix of the configured name") {
+		t.Fatalf("enrolling under vault-1: %d %q", code, errOut)
+	}
+	// A hold written for another name (a run stopped after it), not yet
+	// enrolled: refused, and the hold stays.
+	if err := tailnet.SaveHold(in.data, &tailnet.Hold{Hostname: "vault-vl-aaaaaaaaaaaa-n", Since: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "held under vault-vl-aaaaaaaaaaaa-n") {
+		t.Fatalf("enrolling under another hold's name: %d %q", code, errOut)
+	}
+	if err := tailnet.ClearHold(in.data); err != nil {
+		t.Fatal(err)
+	}
 	if code, _, errOut := runAdmin(t, "tailnet", "certificate", "expiry", "--name", temp, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "no pinned tailnet") {
 		t.Fatalf("expiry before enrolment: %d %q", code, errOut)
 	}
@@ -178,6 +195,17 @@ func TestTheHandoffNode(t *testing.T) {
 	if len(obtained) != issued {
 		t.Fatalf("expiry issued: %v", obtained)
 	}
+	mu.Unlock()
+	if code, out, errOut := runAdmin(t, "tailnet", "certificate", "expiry", "--name", temp, "--timeout", "1m", "--config", in.conf); code != 64 {
+		t.Fatalf("expiry with --timeout: %d %q %q", code, out, errOut)
+	}
+	// Offline, obtain starts the enrolled node for it (never enrolling).
+	code, out, errOut = runAdmin(t, "tailnet", "certificate", "obtain", "--name", temp, "--json", "--config", in.conf)
+	if code != ExitOK || !strings.Contains(out, `"domain":"`+temp+`.corp.ts.net"`) || !strings.Contains(out, `"held":true`) {
+		t.Fatalf("obtain offline: %d %q %q", code, out, errOut)
+	}
+	mu.Lock()
+	issued = len(obtained)
 	mu.Unlock()
 	// The node's files stay the data directory's: no database was made.
 	if _, err := os.Stat(filepath.Join(in.data, "varlatch.db")); err == nil {
@@ -267,5 +295,113 @@ func TestTheHandoffNode(t *testing.T) {
 	}
 	if hold, err := tailnet.LoadHold(in.data); err != nil || hold == nil || hold.Hostname != temp {
 		t.Fatalf("the hold again: %+v %v", hold, err)
+	}
+}
+
+// A held varlatchd reads its name back as the hold's, not the configured
+// one: a hold whose name has the shape of the configured name's collision
+// suffix (made by hand here: enroll refuses one) latches nothing; and an
+// enrolment needs the data directory setup made.
+func TestAHeldNodeReadsBackItsHoldsName(t *testing.T) {
+	control := startTestControl(t)
+	prev := nodeControlURL
+	nodeControlURL = control.BaseURL()
+	t.Cleanup(func() { nodeControlURL = prev })
+	in := newInstall(t, "")
+	keyFile := filepath.Join(in.dir, "tailnet-auth-key")
+	if err := os.WriteFile(keyFile, []byte("hermetic\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in.write(t, fmt.Sprintf("tailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_auth_key_file = %s\n", keyFile))
+	if err := tailnet.SaveHold(in.data, &tailnet.Hold{Hostname: "vault-1", Since: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	r := startWith(t, in, &hooks{tailnetControl: control.BaseURL()})
+	report := filepath.Join(in.data, tailnet.ListenersFile)
+	var b []byte
+	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		b, _ = os.ReadFile(report)
+		if strings.Contains(string(b), "vault-1.corp.ts.net") {
+			break
+		}
+	}
+	if !strings.Contains(string(b), "vault-1.corp.ts.net") {
+		t.Fatalf("the held node never reported its name: %s\n%s", b, r.stderr.String())
+	}
+	r.stop(t)
+	if strings.Contains(string(b), tailnet.NameSuffixed) {
+		t.Fatalf("a held node latched name-suffixed: %s", b)
+	}
+	if pin, err := tailnet.LoadPin(filepath.Join(in.data, tailnet.PinFile)); err != nil || pin == nil || pin.Closed != nil {
+		t.Fatalf("the pin: %+v %v", pin, err)
+	}
+
+	gone := newInstall(t, "")
+	gone.write(t, fmt.Sprintf("tailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_auth_key_file = %s\n", keyFile))
+	if err := os.Remove(gone.data); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", "vault-vl-0a1b2c3d4e5f-n", "--config", gone.conf); code != ExitFailure || !strings.Contains(errOut, "does not exist") {
+		t.Fatalf("enroll on a missing data directory: %d %q", code, errOut)
+	}
+	if _, err := os.Stat(gone.data); err == nil {
+		t.Fatal("enroll made the data directory")
+	}
+}
+
+// The no-retry trigger: a certificate authority's rate-limit refusal is
+// named so, whatever its wording; nothing else is.
+func TestCertRefusal(t *testing.T) {
+	for msg, limited := range map[string]bool{
+		"acme: error: 429 :: POST :: urn:ietf:params:acme:error:rateLimited :: too many certificates": true,
+		"Rate limit exceeded for this name":       true,
+		"too many certificates already issued":    true,
+		"context deadline exceeded":               false,
+		"acme: authorization failed: dns problem": false,
+	} {
+		got := certRefusal(errors.New(msg))
+		if strings.HasPrefix(got.Error(), "rate-limited: ") != limited {
+			t.Errorf("%q: %v", msg, got)
+		}
+	}
+}
+
+// What a killed reach probe left is swept: this user's own directories,
+// older than the cutoff; a newer one (a probe running now) and a link stay.
+func TestTheReachDirsAreSwept(t *testing.T) {
+	tmp := t.TempDir()
+	old, recent := filepath.Join(tmp, reachDirPrefix+"old"), filepath.Join(tmp, reachDirPrefix+"new")
+	for _, d := range []string{old, recent} {
+		if err := os.MkdirAll(filepath.Join(d, "state"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(old, past, past); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(tmp, reachDirPrefix+"link")); err != nil {
+		t.Fatal(err)
+	}
+	sweepReachDirs(tmp, time.Now().Add(-10*time.Minute))
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("the old probe's directory stayed: %v", err)
+	}
+	if _, err := os.Stat(recent); err != nil {
+		t.Errorf("a running probe's directory went: %v", err)
+	}
+	if _, err := os.Stat(elsewhere); err != nil {
+		t.Errorf("a link was followed: %v", err)
+	}
+}
+
+// A socket-routed obtain waits as long as it asked the daemon to try.
+func TestObtainsCommandTimeout(t *testing.T) {
+	if got := commandTimeout([]string{"tailnet", "certificate", "obtain", "--name", "vault", "--timeout", "9m"}); got != 9*time.Minute+30*time.Second {
+		t.Fatalf("%v", got)
+	}
+	if got := commandTimeout([]string{"tailnet", "certificate", "obtain", "--name", "vault"}); got != controlTimeout {
+		t.Fatalf("%v", got)
 	}
 }
