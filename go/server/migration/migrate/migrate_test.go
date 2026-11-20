@@ -357,7 +357,8 @@ func reseal(t *testing.T, b []byte) []byte { return migrationtest.Reseal(t, b) }
 func TestAnInterruptedExportsLeftovers(t *testing.T) {
 	s := loadSource(t)
 	dir := t.TempDir()
-	for _, name := range []string{".migrate-export-0123456789ab.db", ".migrate-export-0123456789ab.db-wal", ".migrate-export-0123456789ab.db-shm"} {
+	for _, name := range []string{".migrate-export-0123456789ab.db", ".migrate-export-0123456789ab.db-wal", ".migrate-export-0123456789ab.db-shm",
+		".migrate-export-ba9876543210.db", ".migrate-export-ba9876543210.db-journal"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("an export cut short"), 0o600); err != nil {
 			t.Fatal(err)
 		}
