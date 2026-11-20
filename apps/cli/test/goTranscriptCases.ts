@@ -2156,6 +2156,222 @@ const admin57a: TranscriptCase[] = [
   a({ id: "member.unknown-option", title: "member is parsed strictly", args: ["member", "list", "--all"] }),
 ];
 
+// ---------------------------------------------------------------------------
+// 5.7b: Security (security status, report, controls and set). Times that
+// `ago` and `until` word are in 2100 ("just now") or in 2020 ("within a
+// day"), so the recording reads the same on any day; the process tests
+// hold the other wordings.
+
+const SEC = `${ORG}/security`;
+const SEC_CAPS = ["security.controls", "security.report", "security.approval-keys", "security.credential-review", "security.refused-destinations", "organizations.permissions", "organizations.incident-freeze", "audit.storage-export"];
+const META_SEC = { ...META, capabilities: SEC_CAPS };
+const META_CONTROLS = { ...META, capabilities: ["security.controls"] };
+const META_REVIEW = { ...META, capabilities: ["security.credential-review"] };
+const META_BARE = { serverVersion: "0.19.0", apiVersion: 1, capabilities: [] as string[] };
+const ctl = (control: string, extra: Record<string, unknown> = {}) => ({ control, mode: "off", config: null, version: 0, changedAt: null, changedBy: null, ...extra });
+const LIFETIME = ctl("credential-lifetime", { mode: "report", config: { defaultTtlSeconds: 43200, maxTtlSeconds: 2592000 }, version: 3, changedAt: "2026-11-10T09:00:00Z", changedBy: { id: ADA, name: "Ada" } });
+const STEP_UP = ctl("admin-step-up", { availableModes: ["off", "report", "enforce"], mode: "report", version: 1, changedAt: "2026-11-11T09:00:00.000Z" });
+const PASSKEY = ctl("passkey-verification", { availableModes: ["off", "report", "enforce"] });
+const PROTECTION = ctl("requirement-protection", { changedBy: { id: BOB, name: null } });
+const CONTROLS = { availableModes: ["off", "report"], items: [LIFETIME, STEP_UP, PASSKEY, PROTECTION] };
+const PLAIN_CONTROLS = { availableModes: ["off", "report"], items: [ctl("requirement-protection"), ctl("admin-step-up"), ctl("passkey-verification"), ctl("credential-lifetime")] };
+const metaAt = (meta: unknown) => ok("/v1/meta", meta);
+const controlsAt = (list: unknown = CONTROLS) => ok(`${SEC}/controls`, list);
+const patch = (control: string, status: number, answer: unknown) => exch("PATCH", `${SEC}/controls/${control}`, status, answer);
+const changed = (control: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ control, changed: true, loosened: false, ...extra });
+const SET = (...rest: string[]) => ["security", "set", ...rest];
+const SEC_APPROVAL = { ...APPROVAL, summary: { title: "Change credential-lifetime in Acme", changes: [{ field: "mode", from: "report", to: "off", loosens: true }] } };
+const loosening = (control: string) => patch(control, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }));
+const secPoll = (state: string) => ({ ...ok("/v1/me/approvals/apr_1", { ...SEC_APPROVAL, state }) });
+
+const FUTURE = "2100-01-01T00:00:00.000Z";
+const PAST = "2020-01-01T00:00:00.000Z";
+const reviewed = (id: string, extra: Record<string, unknown> = {}) => ({
+  id, name: null, createdAt: FUTURE, lastUsedAt: null, expiresAt: null, issuedBy: null, reasons: [] as string[],
+  identity: { id: SVC, name: "deployer", kind: "service", state: "live", disabledReason: null }, ...extra,
+});
+const CRED_REVIEW = {
+  idleDays: 30,
+  summary: { reviewed: 5, listed: 3 },
+  items: [
+    reviewed("crd_deploy", { name: "deployer credential", reasons: ["never-used", "no-expiry"], issuedBy: { id: ADA, name: "Ada" } }),
+    reviewed("crd_old", { name: "nightly", lastUsedAt: FUTURE, expiresAt: "2027-06-01T00:00:00Z", reasons: ["idle"], identity: { id: "idn_runner", name: "runner", kind: "workload", state: "disabled", disabledReason: null } }),
+    reviewed("crd_doomed", { createdAt: "not a time", lastUsedAt: FUTURE, reasons: ["no-expiry"], identity: { id: "idn_doomed", name: "doomed", kind: "broker", state: "disabled", disabledReason: "organization-deletion" } }),
+  ],
+  expiry: {
+    warningDays: 7,
+    summary: { soon: 1, expired: 1 },
+    items: [
+      { ...reviewed("crd_soon", { name: "ci" }), expiresAt: PAST, state: "soon" },
+      { ...reviewed("crd_gone"), expiresAt: FUTURE, state: "expired" },
+    ],
+  },
+};
+const QUIET_REVIEW = { idleDays: 30, summary: { reviewed: 1, listed: 0 }, items: [], expiry: { warningDays: 7, summary: { soon: 0, expired: 0 }, items: [] } };
+const OLD_REVIEW = { idleDays: 30, summary: { reviewed: 0, listed: 0 }, items: [] };
+const ONE_REVIEW = { idleDays: 14, summary: { reviewed: 1, listed: 1 }, items: [reviewed("crd_one", { reasons: ["never-used"] })], expiry: { warningDays: 7, summary: { soon: 2, expired: 0 }, items: [] } };
+const REFUSED = {
+  sinceDays: 30,
+  checked: 4,
+  unresolved: 1,
+  items: [
+    { kind: "webhook", name: "Deploy hook", id: "whk_1", scheme: "http", host: "10.0.0.5", port: 80, reason: "private_address", since: FUTURE },
+    { kind: "oidc-issuer", name: null, id: "oidc_1", scheme: "https", host: "issuer.internal", port: 443, reason: "mixed_answers", since: null },
+    { kind: "coolify", name: "", id: "conn_1", scheme: "https", host: "coolify.lan", port: 8443, reason: "port", since: null },
+  ],
+};
+const reviewAt = (review: unknown = CRED_REVIEW) => ok(`${SEC}/credential-review`, review);
+const refusedAt = (answer: unknown = REFUSED, status = 200) => ({ ...ok(`${SEC}/refused-destinations`, answer), status });
+const REPORT = ["security", "report"];
+
+const PERMS_ADMIN = { role: "admin", actions: ["organization.read", "organization.manage", "identity.manage", "policy.read"] };
+const PERMS_MEMBER = { role: "member", actions: ["organization.read"] };
+const entry = (operation: string, n: number, actor: Record<string, unknown> = { id: ADA, name: "Ada", kind: "human" }) => ({ operation, reason: "no-approval", actor, count: n });
+const CONTROL_REPORT = {
+  days: 30, since: "2026-10-20T00:00:00.000Z", generatedAt: "2026-11-19T00:00:00.000Z",
+  controls: [
+    { control: "admin-step-up", total: 7, currentHour: 2, pending: 0, entries: [entry("grant.create", 3), entry("identity.create", 2, { id: SVC, name: null, kind: "service" }), entry("role.update", 1), entry("team.delete", 1)] },
+    { control: "passkey-verification", total: 0, currentHour: 0, pending: 0, entries: [] },
+    { control: "credential-lifetime", total: 4, currentHour: 0, pending: 1, entries: [entry("credential.issue", 4, { id: BOB, name: "Bob" })] },
+  ],
+};
+const KEYS = { summary: { admins: 2, withoutTrustedKey: 1 }, items: [{ identity: { id: ADA, name: "Ada" }, trusted: 2, unconfirmed: 0 }, { identity: { id: BOB, name: "Bob" }, trusted: 0, unconfirmed: 1 }] };
+const REQUIREMENTS = { items: [{ id: "req_1", kind: "tailnet", target: { tier: "production" }, selector: { tailnet: "example.ts.net" } }] };
+const FROZEN = { freeze: { frozenAt: "2026-11-18T08:00:00Z", frozenBy: { id: ADA, name: "Ada" }, reason: "Laptop stolen\u0007 call Bob" } };
+const AUDIT_ACTIVE = {
+  enabled: true,
+  export: {
+    state: "active", destination: { endpoint: "https://s3.eu-central-1.example.com:9000/x", region: "eu-central-1", bucket: "audit", prefix: "", pathStyle: true },
+    retention: { mode: "compliance", days: 400 }, objectLock: "verified", streamId: "st_1", cursor: 42, lag: { pending: 1, oldestPendingAt: "2026-11-19T00:00:00.000Z" },
+    lastSuccessAt: "2026-11-19T01:00:00.000Z", lastAttemptAt: "2026-11-19T01:05:00.000Z", lastHeartbeatAt: "2026-11-19T01:00:00.000Z", lastError: "SlowDown: reduce your request rate",
+    failingSince: "2026-11-19T01:05:00.000Z", stoppedReason: null, unsupportedPlanFormat: null, keyCanRead: false, retentionReadable: null, version: 3, drainDeadline: null,
+  },
+};
+const AUDIT_DRAINING = {
+  enabled: false,
+  export: {
+    ...AUDIT_ACTIVE.export, state: "draining", drainDeadline: "2026-11-20T00:00:00.000Z", destination: { endpoint: "not a url", region: "x", bucket: "b", prefix: "logs/", pathStyle: false },
+    retention: null, objectLock: "not-set", lag: null, lastSuccessAt: null, lastAttemptAt: null, lastHeartbeatAt: null, lastError: null, stoppedReason: "object_conflict", unsupportedPlanFormat: 2, keyCanRead: null,
+  },
+};
+const AUDIT_OFF = { enabled: false, export: { ...AUDIT_ACTIVE.export, state: "removed" } };
+const AUDIT_NONE = { enabled: true, export: null };
+const statusAt = (o: { meta?: unknown; perms?: unknown; freeze?: unknown; list?: unknown; report?: Exchange | null; keys?: Exchange | null; review?: Exchange | null; reqs?: Exchange | null; audit?: Exchange | null } = {}): Exchange[] => [
+  metaAt(o.meta ?? META_SEC),
+  ...(o.perms === null ? [] : [ok(`${ORG}/me/permissions`, o.perms ?? PERMS_ADMIN)]),
+  ...(o.freeze === null ? [] : [ok(`${ORG}/incident-freeze`, o.freeze ?? { freeze: null })]),
+  controlsAt(o.list ?? CONTROLS),
+  ...(o.report === null ? [] : [o.report ?? ok(`${SEC}/control-report?days=30`, CONTROL_REPORT)]),
+  ...(o.keys === null ? [] : [o.keys ?? ok(`${SEC}/approval-keys`, KEYS)]),
+  ...(o.review === null ? [] : [o.review ?? reviewAt()]),
+  ...(o.reqs === null ? [] : [o.reqs ?? ok(`${ORG}/requirements`, REQUIREMENTS)]),
+  ...(o.audit === null ? [] : [o.audit ?? ok(`${ORG}/audit-export`, AUDIT_ACTIVE)]),
+];
+const STATUS = ["security", "status"];
+const UNCAUGHT = ["uncaught"];
+
+const security57b: TranscriptCase[] = [
+  // security controls
+  a({ id: "controls.human", title: "security controls: each control's mode, settings, version and last change", args: ["security", "controls"], server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.json", title: "security controls --json: the organization, then the server's list", args: ["security", "controls", "--json"], server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.no-enforce", title: "a server that enforces nothing yet", args: ["security", "controls"], server: [metaAt(META_CONTROLS), controlsAt(PLAIN_CONTROLS)] }),
+  a({ id: "controls.empty", title: "a server listing no control", args: ["security", "controls"], server: [metaAt(META_CONTROLS), controlsAt({ availableModes: ["off"], items: [] })] }),
+  a({ id: "controls.no-capability", title: "a server without security controls: its version and the capability named (1)", args: ["security", "controls"], server: [metaAt(META_BARE)] }),
+  a({ id: "controls.odd-version", title: "a server version that is not a version: an older release", args: ["security", "controls"], server: [metaAt({ ...META_BARE, serverVersion: "dev build" })] }),
+  a({ id: "controls.refused", title: "the list refused: the server's error", args: ["security", "controls"], server: [metaAt(META_SEC), { ...controlsAt(apiError(403, "PERMISSION_DENIED")), status: 403 }] }),
+  a({ id: "controls.outside", title: "outside a repository: --org and --server", args: ["security", "controls", "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.outside-default", title: "outside a repository, the only credential's server and --org", args: ["security", "controls", "--org", "acme"], ...OUTSIDE, server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.outside-no-org", title: "outside a repository without --org (64)", args: ["security", "controls"], ...OUTSIDE }),
+  a({ id: "controls.org-flag", title: "--org names another organization inside a repository", args: ["security", "controls", "--org", "other"], server: [metaAt(META_SEC), ok("/v1/organizations/other/security/controls", CONTROLS)] }),
+  a({ id: "controls.bad-option", title: "an unknown option (64)", args: ["security", "controls", "--jsno"] }),
+  a({ id: "controls.extra", title: "an extra argument (64)", args: ["security", "controls", "now"] }),
+  a({ id: "controls.not-signed-in", title: "no credential (77)", args: ["security", "controls"], files: NOT_SIGNED_IN }),
+  a({ id: "controls.items-not-a-list", title: "items of another shape stops controls (TypeScript throws a TypeError)", args: ["security", "controls"], server: [metaAt(META_SEC), controlsAt({ availableModes: ["off"], items: { a: 1 } })], differences: UNCAUGHT }),
+
+  // security set: the command line, before any request
+  a({ id: "set.usage.none", title: "set without a control and a mode (64)", args: SET() }),
+  a({ id: "set.usage.mode-missing", title: "set without a mode (64)", args: SET("admin-step-up") }),
+  a({ id: "set.usage.control", title: "an unknown control: the controls listed (64)", args: SET("mfa", "report") }),
+  a({ id: "set.usage.mode", title: "an unknown mode: the modes listed (64)", args: SET("admin-step-up", "strict") }),
+  a({ id: "set.usage.ttl-zero", title: "--default-ttl 0 (64)", args: SET("credential-lifetime", "report", "--default-ttl", "0") }),
+  a({ id: "set.usage.ttl-word", title: "--max-ttl that is not a number (64)", args: SET("credential-lifetime", "report", "--max-ttl", "1d") }),
+  a({ id: "set.usage.ttl-long", title: "--max-ttl of eleven digits (64)", args: SET("credential-lifetime", "report", "--max-ttl", "12345678901") }),
+  a({ id: "set.usage.ttl-other-control", title: "lifetimes with another control (64)", args: SET("admin-step-up", "report", "--max-ttl", "60") }),
+  a({ id: "set.usage.clear-other-control", title: "--clear-config with another control (64)", args: SET("passkey-verification", "off", "--clear-config") }),
+  a({ id: "set.usage.clear-and-ttl", title: "--clear-config with a lifetime (64)", args: SET("credential-lifetime", "off", "--clear-config", "--default-ttl", "60") }),
+  a({ id: "set.usage.default-over-max", title: "--default-ttl above --max-ttl (64)", args: SET("credential-lifetime", "report", "--default-ttl", "7200", "--max-ttl", "3600") }),
+  a({ id: "set.usage.extra", title: "a third argument (64)", args: SET("admin-step-up", "report", "now") }),
+  a({ id: "set.usage.outside", title: "outside a repository without --org (64, after the arguments are checked)", args: SET("admin-step-up", "report"), ...OUTSIDE }),
+
+  // security set: changes
+  a({ id: "set.tighten", title: "turning a control up: applied at once", args: SET("passkey-verification", "report"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "report", version: 1, changedAt: "2026-11-19T10:00:00.000Z", changedBy: { id: ADA, name: "Ada" } }))] }),
+  a({ id: "set.tighten.json", title: "the same, --json: the organization, then the server's change", args: SET("passkey-verification", "report", "--json"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "report", version: 1 }))] }),
+  a({ id: "set.already", title: "the mode it already has: nothing changed", args: SET("credential-lifetime", "report"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, { control: LIFETIME, changed: false, loosened: false })] }),
+  a({ id: "set.already.plain", title: "the same without settings", args: SET("admin-step-up", "report"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 200, { control: STEP_UP, changed: false, loosened: false })] }),
+  a({ id: "set.default-ttl", title: "--default-ttl keeps the maximum the control has", args: SET("credential-lifetime", "report", "--default-ttl", "3600"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, changed({ ...LIFETIME, config: { defaultTtlSeconds: 3600, maxTtlSeconds: 2592000 }, version: 4 }))] }),
+  a({ id: "set.max-ttl.odd", title: "--max-ttl of 90 seconds; a lifetime in minutes", args: SET("credential-lifetime", "report", "--default-ttl", "60", "--max-ttl", "90"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, changed({ ...LIFETIME, config: { defaultTtlSeconds: 60, maxTtlSeconds: 90 }, version: 4 }))] }),
+  a({ id: "set.ttl-without-lifetimes", title: "one lifetime for a control with none yet (64, after reading it)", args: SET("credential-lifetime", "report", "--max-ttl", "3600"), server: [metaAt(META_SEC), controlsAt(PLAIN_CONTROLS)] }),
+  a({ id: "set.default-over-current-max", title: "--default-ttl above the control's maximum (64, after reading it)", args: SET("credential-lifetime", "report", "--default-ttl", "9999999"), server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "set.enforce-step-up", title: "admin-step-up to enforce: what it means from now on", args: SET("admin-step-up", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "enforce", version: 2 }))] }),
+  a({ id: "set.enforce-passkey", title: "passkey-verification to enforce: what it means from now on", args: SET("passkey-verification", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "enforce", version: 1 }))] }),
+  a({ id: "set.not-offered", title: "a mode this server does not offer for the control (1, nothing sent)", args: SET("credential-lifetime", "enforce"), server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "set.no-such-control", title: "a control this server does not list (1, nothing sent)", args: SET("passkey-verification", "report"), server: [metaAt(META_SEC), controlsAt({ ...CONTROLS, items: [LIFETIME] })] }),
+  a({ id: "set.no-capability", title: "a server without security controls (1)", args: SET("admin-step-up", "report"), server: [metaAt(META_BARE)] }),
+  a({ id: "set.mode-unavailable", title: "the server refuses the mode: its words, nothing changed (1)", args: SET("admin-step-up", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 409, apiError(409, "CONTROL_MODE_UNAVAILABLE", "enforce is not available for admin-step-up"))] }),
+  a({ id: "set.version-conflict", title: "the control changed meanwhile: run it again (1)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 409, apiError(409, "VERSION_CONFLICT", "version 1 is not current"))] }),
+  a({ id: "set.refused", title: "another error: the server's error", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "set.clear-config.assisted", title: "loosening in assisted mode: the approval to give, the command to run again (75)", args: ["--assisted", ...SET("credential-lifetime", "off", "--clear-config")], server: [metaAt(META_SEC), controlsAt(), loosening("credential-lifetime")] }),
+  a({ id: "set.loosen.approved", title: "loosening: waits for the approval, then sends the change again with it", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), loosening("admin-step-up"), secPoll("approved"), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "off", version: 2 }, { loosened: true }))] }),
+  a({ id: "set.loosen.cancelled", title: "loosening: the approval cancelled (77)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), loosening("admin-step-up"), secPoll("closed")] }),
+  a({ id: "set.resume", title: "--approval <id>: waits for it before the change, then sends it with the approval", args: ["--approval", "apr_1", ...SET("admin-step-up", "off", "--json")], server: [metaAt(META_SEC), controlsAt(), secPoll("approved"), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "off", version: 2 }, { loosened: true }))] }),
+  a({ id: "set.list-not-a-list", title: "items of another shape stops set before any change (TypeScript throws a TypeError)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt({ availableModes: ["off"], items: null })], differences: UNCAUGHT }),
+
+  // security report
+  a({ id: "report.human", title: "security report: the review by reason, the expiry warnings and the refused destinations", args: REPORT, server: [metaAt(META_SEC), reviewAt(), refusedAt()] }),
+  a({ id: "report.json", title: "security report --json", args: [...REPORT, "--json"], server: [metaAt(META_SEC), reviewAt(), refusedAt()] }),
+  a({ id: "report.review-only", title: "a server without refused destinations: the review alone", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(ONE_REVIEW)] }),
+  a({ id: "report.review-only.json", title: "the same, --json: no refusedDestinations", args: [...REPORT, "--json"], server: [metaAt(META_REVIEW), reviewAt(ONE_REVIEW)] }),
+  a({ id: "report.quiet", title: "nothing to look at", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(QUIET_REVIEW)] }),
+  a({ id: "report.before-expiry", title: "a server before expiry warnings: no expiry line", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(OLD_REVIEW)] }),
+  a({ id: "report.refused-403", title: "refused destinations not permitted: said, and null in --json", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(403, "PERMISSION_DENIED"), 403)] }),
+  a({ id: "report.refused-404.json", title: "hidden (404): refusedDestinations null", args: [...REPORT, "--json"], server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(404, "RESOURCE_NOT_FOUND"), 404)] }),
+  a({ id: "report.refused-500", title: "refused destinations failing otherwise: the server's error", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(500, "INTERNAL"), 500)] }),
+  a({ id: "report.refused-none", title: "every destination checked, none refused", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 3, unresolved: 0, items: [] })] }),
+  a({ id: "report.refused-no-destinations", title: "no destinations configured", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 0, unresolved: 0, items: [] })] }),
+  a({ id: "report.refused-unresolved", title: "none refused of those checked; one name did not resolve", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 2, unresolved: 1, items: [] })] }),
+  a({ id: "report.refused-unresolved-old", title: "the same from a server that does not count what it checked", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, unresolved: 2, items: [] })] }),
+  a({ id: "report.refused-old-server", title: "a server that sends neither count: all clear", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, items: [] })] }),
+  a({ id: "report.no-capability", title: "a server without the credential review (1)", args: REPORT, server: [metaAt(META_CONTROLS)] }),
+  a({ id: "report.outside", title: "outside a repository: --org and --server", args: [...REPORT, "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: [metaAt(META_REVIEW), reviewAt(QUIET_REVIEW)] }),
+  a({ id: "report.outside-no-org", title: "outside a repository without --org (64)", args: REPORT, ...OUTSIDE }),
+  a({ id: "report.usage.bare", title: "security alone (64)", args: ["security"] }),
+  a({ id: "report.usage.unknown", title: "an unknown subcommand (64)", args: ["security", "audit"] }),
+  a({ id: "report.usage.extra", title: "report with an extra argument (64)", args: [...REPORT, "extra"] }),
+  a({ id: "report.usage.option", title: "report with an unknown option (64)", args: [...REPORT, "--jsno"] }),
+  a({ id: "report.not-signed-in", title: "no credential (77)", args: REPORT, files: NOT_SIGNED_IN }),
+  a({ id: "report.review-null", title: "a review of another shape stops report (TypeScript throws a TypeError)", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(null)], differences: UNCAUGHT }),
+
+  // security status
+  a({ id: "status.full", title: "security status: the freeze, controls with counts, keys, credentials, requirements, the audit export, the checklist", args: STATUS, server: statusAt({ freeze: FROZEN }) }),
+  a({ id: "status.full.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ freeze: FROZEN }) }),
+  a({ id: "status.member", title: "a member: only the controls; what needs more is named, never asked for", args: STATUS, server: statusAt({ perms: PERMS_MEMBER, report: null, keys: null, review: null, reqs: null, audit: null }) }),
+  a({ id: "status.member.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ perms: PERMS_MEMBER, report: null, keys: null, review: null, reqs: null, audit: null }) }),
+  a({ id: "status.old-server", title: "a server with only the controls: the rest not offered; Requirements still asked", args: STATUS, server: statusAt({ meta: META_CONTROLS, perms: null, freeze: null, report: null, keys: null, review: null, audit: null, list: PLAIN_CONTROLS }) }),
+  a({ id: "status.refused", title: "a server that cannot say what the caller holds: refusals turn into not shown", args: STATUS, server: statusAt({ meta: { ...META, capabilities: SEC_CAPS.filter((c) => c !== "organizations.permissions") }, perms: null, report: { ...ok(`${SEC}/control-report?days=30`, apiError(403, "PERMISSION_DENIED")), status: 403 }, keys: null, review: { ...reviewAt(apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }, audit: { ...ok(`${ORG}/audit-export`, apiError(403, "PERMISSION_DENIED")), status: 403 } }) }),
+  a({ id: "status.refused.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ meta: { ...META, capabilities: SEC_CAPS.filter((c) => c !== "organizations.permissions") }, perms: null, report: { ...ok(`${SEC}/control-report?days=30`, apiError(403, "PERMISSION_DENIED")), status: 403 }, keys: null, review: { ...reviewAt(apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }, audit: { ...ok(`${ORG}/audit-export`, apiError(403, "PERMISSION_DENIED")), status: 403 } }) }),
+  a({ id: "status.audit-off", title: "the audit export stopped by the host operator, and removed", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_OFF), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.audit-none", title: "no audit export yet", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_NONE), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.audit-draining", title: "a draining export: its deadline, the conflict and the plan format it cannot upload", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_DRAINING), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.all-off", title: "every control off, no counts", args: STATUS, server: statusAt({ list: PLAIN_CONTROLS, report: ok(`${SEC}/control-report?days=30`, { days: 7, since: PAST, generatedAt: PAST, controls: [] }), keys: ok(`${SEC}/approval-keys`, { summary: { admins: 1, withoutTrustedKey: 0 }, items: [{ identity: { id: ADA, name: "Ada" }, trusted: 1, unconfirmed: 0 }] }), review: reviewAt(QUIET_REVIEW), reqs: ok(`${ORG}/requirements`, { items: [] }), audit: ok(`${ORG}/audit-export`, AUDIT_NONE) }) }),
+  a({ id: "status.audit-error", title: "the audit export failing otherwise: the server's error", args: STATUS, server: statusAt({ audit: { ...ok(`${ORG}/audit-export`, apiError(500, "INTERNAL")), status: 500 } }) }),
+  a({ id: "status.no-capability", title: "a server without security controls (1)", args: STATUS, server: [metaAt(META_BARE)] }),
+  a({ id: "status.outside", title: "outside a repository: --org and --server", args: [...STATUS, "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: statusAt({ meta: META_CONTROLS, perms: null, freeze: null, report: null, keys: null, review: null, audit: null, list: PLAIN_CONTROLS }) }),
+  a({ id: "status.outside-no-org", title: "outside a repository without --org (64)", args: STATUS, ...OUTSIDE }),
+  a({ id: "status.bad-option", title: "an unknown option (64)", args: [...STATUS, "--all"] }),
+  a({ id: "status.not-signed-in", title: "no credential (77)", args: STATUS, files: NOT_SIGNED_IN }),
+  a({ id: "status.items-not-a-list", title: "a list of another shape stops status (TypeScript throws a TypeError)", args: STATUS, server: statusAt({ list: { availableModes: ["off"], items: "x" }, report: null, keys: null, review: null, reqs: null, audit: null, perms: { actions: [] } }), differences: UNCAUGHT }),
+];
+
 // ---- 5.8a: guided init, and what it never does off a terminal ---------------
 //
 // Guided `init` runs only with a terminal on both ends, outside assisted
@@ -2191,5 +2407,6 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,
   "5.7a-admin": admin57a,
+  "5.7b-security": security57b,
   "5.8a-guided-init": guided58a,
 };

@@ -26,7 +26,7 @@ jsonb `null`.
 | `integer` | The integer in decimal | A value outside -2147483648..2147483647 |
 | `bigint` | The integer in decimal | |
 | `boolean` | `1` for true, `0` for false | |
-| `jsonb` | A JSON string holding the value's canonical jsonb text (below) | Text that is not JSON; what jsonb refuses (a lone surrogate, U+0000) |
+| `jsonb` | A JSON string holding the value's canonical jsonb text (below) | Text that is not JSON; what jsonb refuses (a lone surrogate, U+0000); a number a double does not hold exactly (below) |
 | `text[]` | A JSON array of the elements, each a quoted string or `null` | A nested array, or an element that is not a string or null; an element `text` refuses |
 | `bytea` | A JSON string holding the bytes in base64 (RFC 4648, the standard alphabet, padded) | |
 
@@ -61,9 +61,25 @@ Go's `encoding/json` escapes some of these, so varlatchd uses `jsvalue.Quote`.
    `Number.prototype.toString`'s form (`1.0` is `1`, `1e21` is `1e+21`,
    `-0` is `0`).
 
+**A jsonb number must be exactly a double.** Both servers read jsonb
+numbers as ECMAScript doubles, but PostgreSQL's jsonb keeps a number as
+written (as `numeric`), so a double would change some of them silently:
+- `1.0` becomes `1`;
+- `123456789012345678901` becomes `123456789012345680000`;
+- `1e999` cannot be held at all.
+
+A migration never changes a value silently, so both encoders **refuse** a
+jsonb number unless writing its double (`Number.prototype.toString`) gives
+back the number's own spelling in the text. `1`, `0.1`, `-2.5`, `1e+21`
+and `5e-324` pass. `1.0`, `0.10`, `1e2`, `-0`, `1E+21`, and PostgreSQL's
+`1000000000000000000000` are refused. A number spelt inside a string is
+text and is not checked. The export's preflight (7.2b) reports every row
+holding such a number before any barrier, so the operator can correct it
+first.
+
 PostgreSQL's own spelling (`{"a": 1}`, with spaces) and varlatchd's
 compact text therefore give the same canonical text. `JsonbText` in this
-package is `jsvalue.Canonical` with jsonb's refusals.
+package is `jsvalue.Canonical` with jsonb's refusals and the number check.
 
 ## Rows
 
