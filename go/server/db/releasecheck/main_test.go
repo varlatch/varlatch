@@ -174,3 +174,48 @@ func TestUsage(t *testing.T) {
 		t.Fatalf("%d %q", code, errs)
 	}
 }
+
+// previous: release.json's previous release is the last Go release among
+// the tags reachable from HEAD, by semantic version; the TypeScript
+// server's tags (below 0.50.0) and lines that are no release tag do not
+// count. G6's static step runs it on `git tag --merged HEAD -l 'v*'`.
+func TestPreviousIsTheLastRelease(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, text string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	decl := func(previous string) string {
+		prev := "null"
+		if previous != "" {
+			prev = fmt.Sprintf(`{"version": %q, "schemaVersion": 1}`, previous)
+		}
+		return write("release-"+previous+".json", fmt.Sprintf(`{"schemaVersion": 2, "compatibleFrom": 1, "rollbackSafe": %t, "previous": %s}`, previous != "", prev))
+	}
+	for _, c := range []struct {
+		previous, tags string
+		ok             bool
+		newest         string
+	}{
+		{"0.50.0-rc.1", "v0.22.4\nv0.23.0\nv0.50.0-rc.1\nnot-a-tag\nv1\n", true, ""},
+		{"0.50.0-rc.1", "v0.50.0-rc.1\nv0.50.0-rc.2\n", false, "v0.50.0-rc.2"},
+		{"0.50.0-rc.9", "v0.50.0-rc.9\nv0.50.0-rc.10\n", false, "v0.50.0-rc.10"},
+		{"0.50.0-rc.10", "v0.50.0-rc.9\nv0.50.0-rc.10\n", true, ""},
+		{"0.50.0-rc.3", "v0.50.0-rc.3\nv0.50.0\n", false, "v0.50.0"},
+		{"0.50.1", "v0.50.0\nv0.50.1\nv0.50.0-rc.12\n", true, ""},
+		{"", "v0.22.4\nv0.23.0\n", true, ""},
+		{"", "v0.23.0\nv0.50.0-rc.1\n", false, "v0.50.0-rc.1"},
+	} {
+		code, out, errs := runIt(t, "previous", "--tags", write("tags", c.tags), "--declaration", decl(c.previous))
+		if c.ok != (code == exitOK) || !c.ok && !strings.Contains(errs, ": "+c.newest) {
+			t.Errorf("previous %q, tags %q: %d %q %q", c.previous, c.tags, code, out, errs)
+		}
+	}
+	if code, _, _ := runIt(t, "previous"); code != exitUsage {
+		t.Errorf("previous without --tags: %d", code)
+	}
+}

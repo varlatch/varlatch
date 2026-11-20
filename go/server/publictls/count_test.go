@@ -68,11 +68,11 @@ func TestIssuanceCountRefusesAtTheLimit(t *testing.T) {
 	f := &fakeIssuances{counted: LetsEncryptLimit, oldest: now.Add(-2 * 24 * time.Hour)}
 	m := newCounted(t, f, LetsEncryptLimit, now)
 	m.attempt(context.Background())
-	until := now.Add(5 * 24 * time.Hour)
+	until := now.Add(5*24*time.Hour + time.Hour)
 	if len(f.begun) != 0 || m.state.nextAttempt != until || m.state.failures != 1 || !strings.Contains(m.state.lastError, "the issuance count: 5 certificates for Vault.Varlatch.Test") {
 		t.Fatalf("at the limit: begun %q, state %+v", f.begun, m.state)
 	}
-	if d := m.due(now); d != 5*24*time.Hour {
+	if d := m.due(now); d != 5*24*time.Hour+time.Hour {
 		t.Errorf("due in %v", d)
 	}
 }
@@ -108,9 +108,45 @@ func TestIssuanceOutcomes(t *testing.T) {
 	m.endIssuance(1, nil)
 	m.endIssuance(2, fmt.Errorf("obtaining: %w", acme.Problem{Type: "urn:ietf:params:acme:error:unauthorized", Status: 403}))
 	m.endIssuance(3, context.DeadlineExceeded)
+	m.endIssuance(4, fmt.Errorf("obtaining: %w", rateLimit("too many certificates (5) already issued for this exact set of identifiers in the last 168h0m0s, retry after 2026-11-21 08:37:05 UTC: see https://letsencrypt.org/docs/rate-limits/")))
 	m.endIssuance(-1, nil)
 	if f.ended[1] != OutcomeIssued || f.ended[2] != OutcomeRefused || len(f.ended) != 2 {
-		t.Errorf("ended %v", f.ended)
+		t.Errorf("ended %v (the rate-limited attempt stays counted)", f.ended)
+	}
+}
+
+func rateLimit(detail string) acme.Problem {
+	return acme.Problem{Type: "urn:ietf:params:acme:error:rateLimited", Status: 429, Detail: detail}
+}
+
+// TestRateLimitRetryAfter: the CA's rate-limit problem names when to retry,
+// and that is the next attempt when it is later than the backoff's; a
+// problem without one, or another problem, keeps the backoff.
+func TestRateLimitRetryAfter(t *testing.T) {
+	limited, until := rateLimitedUntil(fmt.Errorf("wrapped: %w", rateLimit("too many certificates, retry after 2026-11-21 08:37:05 UTC: see the docs")))
+	if !limited || !until.Equal(time.Date(2026, 11, 21, 8, 37, 5, 0, time.UTC)) {
+		t.Errorf("%v %v", limited, until)
+	}
+	if limited, until := rateLimitedUntil(rateLimit("too many new orders recently")); !limited || !until.IsZero() {
+		t.Errorf("without a time: %v %v", limited, until)
+	}
+	if limited, _ := rateLimitedUntil(acme.Problem{Type: "urn:ietf:params:acme:error:unauthorized"}); limited {
+		t.Error("another problem is not a rate limit")
+	}
+	if limited, _ := rateLimitedUntil(context.DeadlineExceeded); limited {
+		t.Error("a timeout is not a rate limit")
+	}
+	// The next attempt: the CA's time when later than the backoff's, the
+	// backoff's otherwise.
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	m := newCounted(t, &fakeIssuances{}, LetsEncryptLimit, now)
+	m.failedLocked(rateLimit("retry after 2026-11-21 08:37:05 UTC"))
+	if !m.state.nextAttempt.Equal(time.Date(2026, 11, 21, 8, 37, 5, 0, time.UTC)) {
+		t.Errorf("after a rate limit: %v", m.state.nextAttempt)
+	}
+	m.failedLocked(rateLimit("retry after 2026-11-20 12:00:30 UTC"))
+	if !m.state.nextAttempt.Equal(now.Add(time.Minute)) {
+		t.Errorf("a retry time before the backoff's: %v", m.state.nextAttempt)
 	}
 }
 

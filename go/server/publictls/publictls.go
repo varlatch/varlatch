@@ -35,6 +35,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -331,12 +332,7 @@ func (m *Manager) attempt(ctx context.Context) {
 	defer m.mu.Unlock()
 	m.state.attempting = false
 	if err != nil {
-		wait := m.o.Backoff[min(m.state.failures, len(m.o.Backoff)-1)]
-		m.state.failures++
-		m.state.lastError = oneLine(err)
-		m.state.nextAttempt = m.o.Now().Add(wait)
-		m.o.Log.Warn("the public certificate could not be obtained; varlatchd tries again", "host", m.o.Host,
-			"failures", m.state.failures, "retryIn", wait.String(), "error", m.state.lastError)
+		m.failedLocked(err)
 		return
 	}
 	m.state.failures, m.state.lastError, m.state.nextAttempt, m.state.lastSuccess = 0, "", time.Time{}, m.o.Now()
@@ -360,7 +356,9 @@ func (m *Manager) beginIssuance(ctx context.Context, now time.Time) (id int64, u
 		return -1, time.Time{}, fmt.Errorf("the issuance count cannot be read: %w", err)
 	}
 	if m.o.IssuanceLimit > 0 && n >= m.o.IssuanceLimit {
-		return -1, oldest.Add(IssuanceWindow), nil
+		// An hour past the week: the CA's own window may end a little
+		// after this installation's clock says.
+		return -1, oldest.Add(IssuanceWindow + time.Hour), nil
 	}
 	id, err = m.o.Issuances.Begin(ctx, strings.ToLower(m.o.Host), now)
 	if err != nil {
@@ -369,9 +367,47 @@ func (m *Manager) beginIssuance(ctx context.Context, now time.Time) (id int64, u
 	return id, time.Time{}, nil
 }
 
+// failedLocked records a failed attempt: the next one after the backoff, or
+// when the CA's rate limit says, if that is later.
+func (m *Manager) failedLocked(err error) {
+	wait := m.o.Backoff[min(m.state.failures, len(m.o.Backoff)-1)]
+	m.state.failures++
+	m.state.lastError = oneLine(err)
+	m.state.nextAttempt = m.o.Now().Add(wait)
+	if _, until := rateLimitedUntil(err); until.After(m.state.nextAttempt) {
+		m.state.nextAttempt, wait = until, until.Sub(m.o.Now())
+	}
+	m.o.Log.Warn("the public certificate could not be obtained; varlatchd tries again", "host", m.o.Host,
+		"failures", m.state.failures, "retryIn", wait.String(), "error", m.state.lastError)
+}
+
+// rateLimited is the CA's rate-limit problem (RFC 8555 §6.7).
+const rateLimited = "urn:ietf:params:acme:error:rateLimited"
+
+// retryAfter is the time Let's Encrypt names in a rate-limit problem's
+// detail ("retry after 2026-11-21 08:37:05 UTC"); acmez does not carry the
+// Retry-After header of an order's error.
+var retryAfter = regexp.MustCompile(`retry after (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC`)
+
+// rateLimitedUntil reports whether err is the CA's rate-limit problem, and
+// the time it says to retry after (zero when it says none).
+func rateLimitedUntil(err error) (bool, time.Time) {
+	var problem acme.Problem
+	if !errors.As(err, &problem) || problem.Type != rateLimited {
+		return false, time.Time{}
+	}
+	if m := retryAfter.FindStringSubmatch(problem.Detail); m != nil {
+		if t, perr := time.ParseInLocation(time.DateTime, m[1], time.UTC); perr == nil {
+			return true, t
+		}
+	}
+	return true, time.Time{}
+}
+
 // endIssuance records how an attempt ended: issued, or refused when the CA
 // answered with a problem. Any other failure (a timeout, the network) is
-// left started, which counts as issued: the CA may have issued.
+// left started, which counts as issued: the CA may have issued. So is the
+// CA's rate-limit problem: the CA counts what this installation asked for.
 func (m *Manager) endIssuance(id int64, err error) {
 	if id < 0 {
 		return
@@ -380,6 +416,9 @@ func (m *Manager) endIssuance(id int64, err error) {
 	if err != nil {
 		var problem acme.Problem
 		if !errors.As(err, &problem) {
+			return
+		}
+		if limited, _ := rateLimitedUntil(err); limited {
 			return
 		}
 		outcome = OutcomeRefused
