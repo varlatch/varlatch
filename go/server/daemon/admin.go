@@ -53,7 +53,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "config-check" && !conformance && !operator && !backup && !keys {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "config-check" && sub != "bootstrap-status" && !conformance && !operator && !backup && !keys {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -96,6 +96,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	case sub == "config-check":
 		if len(rest) != 0 {
 			fmt.Fprintln(stderr, "Usage: varlatchd admin config-check [--config <file>]")
+			return 64
+		}
+	case sub == "bootstrap-status":
+		if len(rest) != 0 {
+			fmt.Fprintln(stderr, "Usage: varlatchd admin bootstrap-status [--config <file>]")
 			return 64
 		}
 	case sub == "doctor":
@@ -141,6 +146,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":
 		return runCustodyStatus(cfg, stdout, stderr)
+	case sub == "bootstrap-status":
+		return runBootstrapStatus(cfg, stdout, stderr)
 	case sub == "config-check":
 		// The configuration parses and holds together (what setup checks
 		// before it starts the unit); nothing else is read or written.

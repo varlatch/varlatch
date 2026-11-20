@@ -36,6 +36,16 @@ type fakeHost struct {
 	checkMsg  string
 	readyErr  error
 	failUnit  bool
+	// The fake varlatchd's admin commands: the first administrator, the
+	// links issued, the attestations, the backups.
+	admin                 string
+	bootstrapped, passkey bool
+	manualEnroll          bool // a link is not enrolled at once
+	links                 []string
+	attested              map[string]bool
+	backups               int
+	backupUnverified      bool
+	adminCalls            []string
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -88,7 +98,67 @@ func (h *fakeHost) Systemctl(args ...string) (string, error) {
 func (h *fakeHost) Probe(context.Context, string) (diskprobe.Result, error) {
 	return h.probe, h.probeErr
 }
-func (h *fakeHost) CheckConfig(string) (string, error)  { return h.checkMsg, nil }
+func (h *fakeHost) CheckConfig(string) (string, error) { return h.checkMsg, nil }
+
+// Admin is a fake varlatchd's admin commands. A link issued is enrolled at
+// once (the operator's browser), unless manualEnroll.
+func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
+	h.adminCalls = append(h.adminCalls, strings.Join(args, " "))
+	if !h.active {
+		return nil, errors.New("varlatchd is not running")
+	}
+	link := func() []byte {
+		h.links = append(h.links, fmt.Sprintf("http://localhost:8686/enroll#link-%d", len(h.links)+1))
+		if !h.manualEnroll {
+			h.enroll()
+		}
+		return []byte("Open this one-time enrollment URL in your browser to create\nthe first Installation Admin's passkey (ADR-0006):\n  " +
+			h.links[len(h.links)-1] + "\nExpires: 2026-11-20T12:15:00.000Z. If it lapses, run bootstrap again.\n")
+	}
+	switch args[0] {
+	case "bootstrap-status":
+		admins := "[]"
+		if h.admin != "" {
+			admins = fmt.Sprintf(`[{"id":%q,"enabled":true,"hasPasskey":%t}]`, h.admin, h.passkey)
+		}
+		return []byte(fmt.Sprintf(`{"initialized":true,"bootstrapped":%t,"admins":%s}`, h.bootstrapped, admins)), nil
+	case "bootstrap":
+		if h.bootstrapped {
+			return nil, errors.New("Installation is already bootstrapped; use recovery instead.")
+		}
+		return link(), nil
+	case "recover":
+		return link(), nil
+	case "custody":
+		if args[1] == "status" {
+			at := func(k string) string {
+				if h.attested[k] {
+					return `{"key":"` + k + `","method":"copy","at":"2026-11-20T12:00:00.000Z","keyVersion":null}`
+				}
+				return "null"
+			}
+			return []byte(`{"rootKekVersion":1,"attestations":{"root-kek":` + at("root-kek") + `,"backup-key":` + at("backup-key") + `}}`), nil
+		}
+		if h.attested == nil {
+			h.attested = map[string]bool{}
+		}
+		h.attested[args[3]] = true
+		return []byte("{}"), nil
+	case "backup":
+		h.backups++
+		ok := !h.backupUnverified
+		return []byte(fmt.Sprintf(`{"archiveId":"bak_%d","path":"/var/lib/varlatch/backups/x","verification":{"integrity":%t,"compatibility":true,"keyMatch":true},"removed":[]}`, h.backups, ok)), nil
+	}
+	return nil, fmt.Errorf("unknown admin command %q", args)
+}
+
+// enroll is the operator's browser enrolling a passkey from the last link.
+func (h *fakeHost) enroll() {
+	if h.admin == "" {
+		h.admin = "idn_first"
+	}
+	h.bootstrapped, h.passkey = true, true
+}
 func (h *fakeHost) Ready(context.Context, string) error { return h.readyErr }
 
 // recorder collects what setup says.
@@ -100,6 +170,7 @@ func localhostAnswers() Answers { return Answers{Ingress: Localhost, Backups: "h
 
 func options(h *fakeHost, said *recorder, out string) Options {
 	return Options{Host: h, Given: localhostAnswers(), Say: said.say, RootKEKOut: filepath.Join(out, "root-kek.copy"), BackupKeyOut: filepath.Join(out, "backup-key.copy"),
+		AdminLinkOut: filepath.Join(out, "enroll-link"), AdminWait: time.Second, PollEvery: time.Millisecond, Attest: true,
 		Now: func() time.Time { return time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC) }}
 }
 
@@ -193,6 +264,20 @@ func TestNonInteractiveSetup(t *testing.T) {
 	}
 	if !slices.Contains(h.systemctl, "enable --now varlatchd.service") {
 		t.Errorf("systemctl %q", h.systemctl)
+	}
+	// The first administrator: the link in its file only (0600), the
+	// custody attested, the first backup verified and journaled.
+	if b, _ := os.ReadFile(filepath.Join(out, "enroll-link")); len(h.links) != 1 || string(b) != h.links[0]+"\n" || mode(t, filepath.Join(out, "enroll-link")) != 0o600 {
+		t.Errorf("the link's file %q, links %q", b, h.links)
+	}
+	if strings.Contains(strings.Join(said.lines, "\n"), "#link-") || strings.Contains(string(raw), "#link-") {
+		t.Error("the enrollment link in setup's output or its journal")
+	}
+	if want := []string{"bootstrap-status", "bootstrap", "bootstrap-status", "custody status", "custody attest --key root-kek --method copy", "custody attest --key backup-key --method copy", "backup run --json"}; !slices.Equal(h.adminCalls, want) {
+		t.Errorf("admin calls %q, want %q", h.adminCalls, want)
+	}
+	if j.FirstBackup != "bak_1" {
+		t.Errorf("first backup %q", j.FirstBackup)
 	}
 	// Keys: only in their files and their copies.
 	everything := strings.Join(said.lines, "\n") + string(raw) + string(conf)
@@ -588,6 +673,16 @@ type fakeAsker struct {
 	asked   []string
 	confirm bool
 	texts   map[string]string
+	// secret answers a hidden prompt (the paste-back).
+	secret func(q string) []byte
+}
+
+func (a *fakeAsker) Secret(q string) ([]byte, error) {
+	a.asked = append(a.asked, q)
+	if a.secret == nil {
+		return nil, errors.New("no hidden answer")
+	}
+	return a.secret(q), nil
 }
 
 func (a *fakeAsker) Choose(q string, _ []string, pre int) (int, error) {
@@ -614,15 +709,21 @@ func (a *fakeAsker) Text(q, d string) (string, error) {
 func TestInteractiveSetup(t *testing.T) {
 	skipOffUnix(t)
 	h := newFakeHost(t)
-	ask := &fakeAsker{texts: map[string]string{"address people open": "https://vault.example.com"}}
-	shown := 0
+	ask := &fakeAsker{texts: map[string]string{"address people open": "https://vault.example.com"}, confirm: true, secret: pasteFrom(h)}
+	shown, links := 0, 0
 	o := Options{Host: h, Ask: ask, Say: (&recorder{}).say, ShowKeys: func(kek, bek []byte) error {
 		shown++
 		if len(kek) != 64 || len(bek) != 64 {
 			t.Errorf("keys %d %d", len(kek), len(bek))
 		}
 		return nil
-	}}
+	}, ShowLink: func(link, expires string) error {
+		links++
+		if link != h.links[len(h.links)-1] || expires != "2026-11-20T12:15:00.000Z" {
+			t.Errorf("link %q expires %q", link, expires)
+		}
+		return nil
+	}, AdminWait: time.Second, PollEvery: time.Millisecond}
 	if err := Run(context.Background(), o); err != nil {
 		t.Fatal(err)
 	}
@@ -633,8 +734,23 @@ func TestInteractiveSetup(t *testing.T) {
 	if !strings.Contains(string(conf), "public_url = https://vault.example.com\nlisten_https = :443\n") {
 		t.Errorf("config:\n%s", conf)
 	}
-	if err := Run(context.Background(), o); err != nil || shown != 1 {
-		t.Errorf("rerun: %v, shown %d", err, shown)
+	if err := Run(context.Background(), o); err != nil || shown != 1 || links != 1 {
+		t.Errorf("rerun: %v, shown %d, links %d", err, shown, links)
+	}
+	if !h.attested["root-kek"] || !h.attested["backup-key"] || h.backups != 1 {
+		t.Errorf("attested %v, backups %d", h.attested, h.backups)
+	}
+}
+
+// pasteFrom pastes back the key the prompt names, as stored.
+func pasteFrom(h *fakeHost) func(q string) []byte {
+	return func(q string) []byte {
+		p := BackupKey
+		if strings.Contains(q, "Root KEK") {
+			p = RootKEK
+		}
+		b, _ := os.ReadFile(h.Path(p))
+		return b
 	}
 }
 
@@ -670,5 +786,193 @@ func TestRenderConfigByIngress(t *testing.T) {
 				t.Errorf("%s has %q:\n%s", a.Ingress, s, conf)
 			}
 		}
+	}
+}
+
+// TestFirstAdministrator: without a terminal the link goes to its file and
+// setup waits for the passkey; with no wait it stops (ErrPending) and a
+// rerun issues a new link into the same file; an administrator made but
+// never enrolled gets a recovery link; a wait that ends without a passkey
+// stops; the link's file is never another file or a link.
+func TestFirstAdministrator(t *testing.T) {
+	skipOffUnix(t)
+	h, out := newFakeHost(t), t.TempDir()
+	h.manualEnroll = true
+	o := options(h, &recorder{}, out)
+	o.AdminWait = 0
+	if err := Run(context.Background(), o); !errors.Is(err, ErrPending) || !strings.Contains(err.Error(), "run setup again") {
+		t.Fatalf("no wait: %v", err)
+	}
+	linkFile := filepath.Join(out, "enroll-link")
+	if b, _ := os.ReadFile(linkFile); string(b) != h.links[0]+"\n" {
+		t.Errorf("the first link's file %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(out, "root-kek.copy")); err == nil {
+		t.Error("the keys' copies were written before the first administrator")
+	}
+	if err := Run(context.Background(), o); !errors.Is(err, ErrPending) || len(h.links) != 2 {
+		t.Fatalf("a rerun: %v, links %q", err, h.links)
+	}
+	if b, _ := os.ReadFile(linkFile); string(b) != h.links[1]+"\n" {
+		t.Errorf("the rerun's link's file %q", b)
+	}
+	// A wait that ends without a passkey.
+	o.AdminWait = 20 * time.Millisecond
+	if err := Run(context.Background(), o); !errors.Is(err, ErrPending) || !strings.Contains(err.Error(), "no passkey was enrolled") {
+		t.Errorf("a wait without a passkey: %v", err)
+	}
+	h.enroll()
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatalf("after enrolling: %v", err)
+	}
+
+	// Bootstrapped headless: a recovery link for that administrator.
+	h2, out2 := newFakeHost(t), t.TempDir()
+	h2.admin, h2.bootstrapped = "idn_headless", true
+	if err := Run(context.Background(), options(h2, &recorder{}, out2)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(h2.adminCalls, "recover --identity idn_headless") || slices.Contains(h2.adminCalls, "bootstrap") {
+		t.Errorf("admin calls %q", h2.adminCalls)
+	}
+
+	// The link's file: never another file, never through a link.
+	for name, prepare := range map[string]func(p string){
+		"another file": func(p string) { _ = os.WriteFile(p, []byte("notes\n"), 0o600) },
+		"a link":       func(p string) { _ = os.Symlink(filepath.Join(filepath.Dir(p), "elsewhere"), p) },
+	} {
+		h3, out3 := newFakeHost(t), t.TempDir()
+		o3 := options(h3, &recorder{}, out3)
+		prepare(o3.AdminLinkOut)
+		if err := Run(context.Background(), o3); err == nil || !strings.Contains(err.Error(), "nothing was written there") {
+			t.Errorf("%s: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(out3, "elsewhere")); err == nil {
+			t.Errorf("%s: written through the link", name)
+		}
+	}
+}
+
+// TestPasteBack: on a terminal the keys are shown once, then each is pasted
+// back: a wrong copy is refused (never echoed) and asked again; three wrong
+// ones stop setup before custody, and a rerun shows the keys again.
+func TestPasteBack(t *testing.T) {
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	wrong := 2
+	paste := pasteFrom(h)
+	ask := &fakeAsker{confirm: true, secret: func(q string) []byte {
+		if strings.Contains(q, "Root KEK") && wrong > 0 {
+			wrong--
+			return []byte("not-the-key-at-all")
+		}
+		return paste(q)
+	}}
+	said := &recorder{}
+	shown := 0
+	o := Options{Host: h, Ask: ask, Given: localhostAnswers(), Say: said.say, AdminWait: time.Second, PollEvery: time.Millisecond,
+		ShowKeys: func(kek, bek []byte) error { shown++; return nil }, ShowLink: func(string, string) error { return nil }}
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(said.lines, "\n")
+	if strings.Count(all, "That is not the Root KEK") != 2 || strings.Contains(all, "not-the-key-at-all") || !strings.Contains(all, "The backup key you stored matches.") {
+		t.Errorf("said %q", said.lines)
+	}
+
+	// Three wrong pastes: stopped, nothing attested; a rerun shows the keys again.
+	h2 := newFakeHost(t)
+	ask2 := &fakeAsker{confirm: true, secret: func(string) []byte { return []byte("wrong") }}
+	shown2 := 0
+	o2 := Options{Host: h2, Ask: ask2, Given: localhostAnswers(), Say: (&recorder{}).say, AdminWait: time.Second, PollEvery: time.Millisecond,
+		ShowKeys: func(kek, bek []byte) error { shown2++; return nil }, ShowLink: func(string, string) error { return nil }}
+	if err := Run(context.Background(), o2); err == nil || !strings.Contains(err.Error(), "did not match three times") {
+		t.Fatalf("three wrong pastes: %v", err)
+	}
+	if len(h2.attested) != 0 || h2.backups != 0 {
+		t.Errorf("attested %v, backups %d after a refused paste-back", h2.attested, h2.backups)
+	}
+	ask2.secret = pasteFrom(h2)
+	if err := Run(context.Background(), o2); err != nil || shown2 != 2 {
+		t.Errorf("rerun: %v, shown %d", err, shown2)
+	}
+}
+
+// TestCustodyAttestation: without a terminal the attestation needs
+// --attest (setup stops before it, and before the backup); on a terminal
+// it is asked; once recorded, a rerun records nothing more.
+func TestCustodyAttestation(t *testing.T) {
+	skipOffUnix(t)
+	h, out := newFakeHost(t), t.TempDir()
+	o := options(h, &recorder{}, out)
+	o.Attest = false
+	if err := Run(context.Background(), o); !errors.Is(err, ErrPending) || !strings.Contains(err.Error(), "--attest") || !strings.Contains(err.Error(), "root-kek.copy") {
+		t.Fatalf("without --attest: %v", err)
+	}
+	if len(h.attested) != 0 || h.backups != 0 {
+		t.Errorf("attested %v, backups %d", h.attested, h.backups)
+	}
+	o.Attest = true
+	if err := Run(context.Background(), o); err != nil || !h.attested["root-kek"] || !h.attested["backup-key"] {
+		t.Fatalf("with --attest: %v %v", err, h.attested)
+	}
+	calls := len(h.adminCalls)
+	if err := Run(context.Background(), o); err != nil || slices.ContainsFunc(h.adminCalls[calls:], func(c string) bool { return strings.HasPrefix(c, "custody attest") || strings.HasPrefix(c, "backup") }) {
+		t.Errorf("a rerun: %v %q", err, h.adminCalls[calls:])
+	}
+	// On a terminal, a "no" stops for a rerun.
+	h2 := newFakeHost(t)
+	o2 := Options{Host: h2, Ask: &fakeAsker{secret: pasteFrom(h2)}, Given: localhostAnswers(), Say: (&recorder{}).say, AdminWait: time.Second, PollEvery: time.Millisecond,
+		ShowKeys: func(kek, bek []byte) error { return nil }, ShowLink: func(string, string) error { return nil }}
+	if err := Run(context.Background(), o2); !errors.Is(err, ErrPending) || len(h2.attested) != 0 {
+		t.Errorf("a no: %v %v", err, h2.attested)
+	}
+}
+
+// TestFirstBackup: a backup that does not verify stops setup, and a rerun
+// makes another; a verified one is made once; with a bucket, one not
+// delivered stops setup.
+func TestFirstBackup(t *testing.T) {
+	skipOffUnix(t)
+	h, out := newFakeHost(t), t.TempDir()
+	h.backupUnverified = true
+	o := options(h, &recorder{}, out)
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "did not verify") {
+		t.Fatalf("unverified: %v", err)
+	}
+	h.backupUnverified = false
+	if err := Run(context.Background(), o); err != nil || h.backups != 2 {
+		t.Fatalf("verified: %v, backups %d", err, h.backups)
+	}
+	if err := Run(context.Background(), o); err != nil || h.backups != 2 {
+		t.Errorf("a rerun: %v, backups %d", err, h.backups)
+	}
+	h2, out2 := newFakeHost(t), t.TempDir()
+	o2 := options(h2, &recorder{}, out2)
+	o2.Given = Answers{Ingress: Localhost, Backups: "bucket", BackupDestinationsFile: "/etc/varlatch/destinations.json"}
+	if err := Run(context.Background(), o2); err == nil || !strings.Contains(err.Error(), "not delivered") {
+		t.Errorf("a bucket without delivery: %v", err)
+	}
+}
+
+// TestDoctorStep: setup ends with doctor's report; a mandatory check that
+// fails ends the run with ErrDoctor, everything else done, and a rerun runs
+// doctor again only.
+func TestDoctorStep(t *testing.T) {
+	skipOffUnix(t)
+	h, out := newFakeHost(t), t.TempDir()
+	o := options(h, &recorder{}, out)
+	runs, ok := 0, false
+	o.Doctor = func(context.Context) (bool, error) { runs++; return ok, nil }
+	if err := Run(context.Background(), o); !errors.Is(err, ErrDoctor) {
+		t.Fatalf("a failing doctor: %v", err)
+	}
+	ok = true
+	calls := len(h.adminCalls)
+	if err := Run(context.Background(), o); err != nil || runs != 2 || h.backups != 1 {
+		t.Errorf("a rerun: %v, doctor %d, backups %d", err, runs, h.backups)
+	}
+	if slices.ContainsFunc(h.adminCalls[calls:], func(c string) bool { return c == "bootstrap" || strings.HasPrefix(c, "custody attest") }) {
+		t.Errorf("a rerun repeated %q", h.adminCalls[calls:])
 	}
 }

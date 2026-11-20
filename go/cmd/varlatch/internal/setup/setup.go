@@ -50,7 +50,7 @@ const (
 )
 
 // Steps, in order. The journal records each once it is done.
-var Steps = []string{"answers", "user", "data-dir", "probe", "keys", "key-copies", "config", "unit", "ready"}
+var Steps = []string{"answers", "user", "data-dir", "probe", "keys", "config", "unit", "ready", "admin", "key-copies", "custody", "backup", "doctor"}
 
 // Host is what setup changes on the host; tests replace it.
 type Host interface {
@@ -75,6 +75,11 @@ type Host interface {
 	CheckConfig(path string) (string, error)
 	// Ready waits until the plain listener's /readyz answers 200.
 	Ready(ctx context.Context, listen string) error
+	// Admin is `varlatchd admin <args> --config /etc/varlatch/varlatchd.conf`
+	// (through the running unit's control socket): its standard output,
+	// which may hold a one-time link and is never logged; an error with
+	// what varlatchd said on standard error when it fails.
+	Admin(ctx context.Context, args ...string) ([]byte, error)
 }
 
 // Asker asks the operator (nil without a terminal).
@@ -82,6 +87,8 @@ type Asker interface {
 	Choose(question string, options []string, preselected int) (int, error)
 	Confirm(question string, defaultYes bool) (bool, error)
 	Text(question, defaultValue string) (string, error)
+	// Secret reads a line without echo (the paste-back of a key).
+	Secret(question string) ([]byte, error)
 }
 
 // Options are a run's.
@@ -95,6 +102,23 @@ type Options struct {
 	Say func(string) error
 	// ShowKeys shows the two keys on the terminal (interactive runs only).
 	ShowKeys func(rootKEK, backupKey []byte) error
+	// ShowLink shows the first administrator's one-time enrollment link on
+	// the terminal (interactive runs only).
+	ShowLink func(link, expires string) error
+	// AdminLinkOut is where a run without a terminal writes that link
+	// (0600): never its output.
+	AdminLinkOut string
+	// AdminWait is how long setup waits for the passkey; zero issues the
+	// link and stops (ErrPending), for a rerun to continue.
+	AdminWait time.Duration
+	// PollEvery is how often the wait asks varlatchd (2 s by default).
+	PollEvery time.Duration
+	// Attest is the operator's statement, without a terminal, that both
+	// keys' copies are stored off this host (--attest).
+	Attest bool
+	// Doctor runs `varlatch doctor` and shows its report: ok is false when
+	// a mandatory check failed. Nil skips the step.
+	Doctor func(ctx context.Context) (ok bool, err error)
 	// RootKEKOut and BackupKeyOut are where a run without a terminal
 	// writes the keys' copies.
 	RootKEKOut, BackupKeyOut string
@@ -115,6 +139,8 @@ type JournalDoc struct {
 	Answers       Answers           `json:"answers"`
 	Done          map[string]string `json:"done"`
 	Probe         *ProbeRecord      `json:"probe,omitempty"`
+	// FirstBackup is the first backup's archive id, once verified.
+	FirstBackup string `json:"firstBackup,omitempty"`
 }
 
 // ProbeRecord is what the fsync probe measured, and whether a slow disk
@@ -132,6 +158,11 @@ var (
 	ErrStopped = errors.New("setup: stopped after a step, as asked")
 	// ErrNotAnswered: a run without a terminal lacks an answer.
 	ErrNotAnswered = errors.New("setup: an answer is missing")
+	// ErrPending: setup waits for the operator (the passkey, the keys'
+	// custody); a rerun continues.
+	ErrPending = errors.New("setup: waiting for you")
+	// ErrDoctor: setup is done, and doctor found something to fix.
+	ErrDoctor = errors.New("setup: doctor found something to fix")
 )
 
 // UsageError is an answer's problem: the operator fixes the command line.
@@ -150,6 +181,9 @@ func Run(ctx context.Context, o Options) error {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	if o.PollEvery <= 0 {
+		o.PollEvery = 2 * time.Second
+	}
 	if o.Say == nil {
 		o.Say = func(string) error { return nil }
 	}
@@ -161,6 +195,9 @@ func Run(ctx context.Context, o Options) error {
 	// before anything is changed, as a missing answer is.
 	if o.Ask == nil && r.j.Done["key-copies"] == "" && (o.RootKEKOut == "" || o.BackupKeyOut == "") {
 		return fmt.Errorf("%w: without a terminal the keys are written to files you name: give --root-kek-out <file> and --backup-key-out <file>", ErrNotAnswered)
+	}
+	if o.Ask == nil && r.j.Done["admin"] == "" && o.AdminLinkOut == "" {
+		return fmt.Errorf("%w: without a terminal the first administrator's enrollment link is written to a file you name: give --admin-link-out <file>", ErrNotAnswered)
 	}
 	for _, step := range Steps {
 		var err error
@@ -183,6 +220,14 @@ func Run(ctx context.Context, o Options) error {
 			err = r.unit()
 		case "ready":
 			err = r.ready(ctx)
+		case "admin":
+			err = r.admin(ctx)
+		case "custody":
+			err = r.custody(ctx)
+		case "backup":
+			err = r.backup(ctx)
+		case "doctor":
+			err = r.doctor(ctx)
 		}
 		if err != nil {
 			return err
@@ -545,7 +590,10 @@ func (r *run) keyCopies() error {
 	}
 	defer clear(bek)
 	if r.o.Ask != nil && r.o.ShowKeys != nil {
-		return r.o.ShowKeys(bytes.TrimSpace(kek), bytes.TrimSpace(bek))
+		if err := r.o.ShowKeys(bytes.TrimSpace(kek), bytes.TrimSpace(bek)); err != nil {
+			return err
+		}
+		return r.pasteBack(kek, bek)
 	}
 	if r.o.RootKEKOut == "" || r.o.BackupKeyOut == "" {
 		return fmt.Errorf("%w: without a terminal the keys are written to files you name: give --root-kek-out <file> and --backup-key-out <file>", ErrNotAnswered)

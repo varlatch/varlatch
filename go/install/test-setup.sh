@@ -5,13 +5,17 @@
 # runner VM; ADR-0059 step 6, slice 6.4a): the setup suite's replacement.
 #
 #   sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 [VARLATCH_TEST_PEBBLE=<dir url> VARLATCH_TEST_PEBBLE_ROOT=<pem>] \
-#     go/install/test-setup.sh <directory holding varlatch and varlatchd>
+#     go/install/test-setup.sh <directory holding varlatch, varlatchd and enrollpasskey>
 #
 # For each ingress mode (localhost, own proxy, and public against Pebble
 # when it is given), from an empty host: the binaries and the unit
-# installed as install.sh --server installs them, then one non-interactive
-# `varlatch setup`, which must leave the unit running and ready, the keys
-# root's (0600) and their copies (0600) holding them, and no key in its
+# installed as install.sh --server installs them, then a non-interactive
+# `varlatch setup`: it writes the first administrator's enrollment link to
+# its file and stops (75); enrollpasskey (authtest's software
+# authenticator, as a browser) enrolls a passkey from it; setup run again
+# with --attest finishes. It must leave the unit running and ready, the
+# keys root's (0600) and their copies (0600) holding them, the custody
+# attested for both keys, the first backup verified, and no key in its
 # output, its journal, the configuration, the unit's journal or a backup;
 # a rerun must change nothing and restart nothing. Then setup stopped
 # after each step and run again ends as a run in one go.
@@ -28,7 +32,7 @@ set -eu
 }
 [ "$(id -u)" = 0 ] || { echo "refusing: needs root" >&2; exit 2; }
 bin=${1:-}
-[ -x "$bin/varlatch" ] && [ -x "$bin/varlatchd" ] || { echo "refusing: no varlatch and varlatchd in '$bin'" >&2; exit 2; }
+[ -x "$bin/varlatch" ] && [ -x "$bin/varlatchd" ] && [ -x "$bin/enrollpasskey" ] || { echo "refusing: no varlatch, varlatchd and enrollpasskey in '$bin'" >&2; exit 2; }
 unit=$(cd "$(dirname "$0")" && pwd)/varlatchd.service
 [ -f "$unit" ] || { echo "refusing: no $unit" >&2; exit 2; }
 
@@ -88,17 +92,45 @@ keys_leak_into() {
 
 mode_of() { stat -c '%a %U:%G' "$1"; }
 
-# setup_once <name> <flags...>: one non-interactive setup, its output in
-# $work/<name>.out, its status in $status.
+# setup_once <name> <flags...>: a non-interactive setup to its end: each
+# run's output in $work/<name>.out (appended), its status in $status. A run
+# that stops for the passkey (75, the link in $work/<name>-link) is
+# followed by enrollpasskey and another run; one stopped by
+# VARLATCH_SETUP_STOP_AFTER ends it. Every run attests (--attest): the
+# copies are this test's.
 setup_once() {
   name=$1
   shift
-  set +e
-  /usr/local/bin/varlatch setup "$@" --backups host --accept-slow-disk \
-    --root-kek-out "$work/$name-root-kek" --backup-key-out "$work/$name-backup-key" \
-    </dev/null >"$work/$name.out" 2>&1
-  status=$?
-  set -e
+  : >"$work/$name.out"
+  rounds=0
+  while :; do
+    rounds=$((rounds + 1))
+    set +e
+    /usr/local/bin/varlatch setup "$@" --backups host --accept-slow-disk --attest --admin-wait 0s \
+      --admin-link-out "$work/$name-link" --root-kek-out "$work/$name-root-kek" --backup-key-out "$work/$name-backup-key" \
+      </dev/null >>"$work/$name.out" 2>&1
+    status=$?
+    set -e
+    if [ "$status" != 75 ] || grep -q 'VARLATCH_SETUP_STOP_AFTER' "$work/$name.out" || [ "$rounds" -ge 3 ]; then
+      return
+    fi
+    enroll "$name"
+  done
+}
+
+# enroll <name>: a passkey from the link setup wrote, as a browser would.
+enroll() {
+  set -- "$work/$1-link"
+  if grep -q '^https://' "$1"; then
+    # The first certificate may still be on its way.
+    for _ in $(seq 1 60); do
+      curl -fsk -o /dev/null https://127.0.0.1:5001/readyz && break
+      sleep 1
+    done
+    "$bin/enrollpasskey" -link-file "$1" -connect https://127.0.0.1:5001 -insecure >/dev/null
+  else
+    "$bin/enrollpasskey" -link-file "$1" -connect http://127.0.0.1:8686 >/dev/null
+  fi
 }
 
 # check_installation <name> <flags...>: the run's results, then a rerun.
@@ -112,6 +144,16 @@ check_installation() {
   for f in root-kek backup-key setup.json; do
     if [ "$(mode_of /etc/varlatch/$f)" = "600 root:root" ]; then pass "$name: /etc/varlatch/$f is 600 root"; else fail "$name: /etc/varlatch/$f is $(mode_of /etc/varlatch/$f)"; fi
   done
+  if [ "$(stat -c %a "$work/$name-link")" = 600 ]; then pass "$name: the enrollment link's file is 600"; else fail "$name: the link's file is $(stat -c %a "$work/$name-link")"; fi
+  if grep -q '/enroll#' "$work/$name.out"; then fail "$name: the enrollment link in setup's output"; fi
+  custody=$(/usr/local/bin/varlatchd admin custody status --config /etc/varlatch/varlatchd.conf 2>&1 || true)
+  if printf '%s' "$custody" | grep -q '"root-kek":{"key":"root-kek","method":"copy"' && printf '%s' "$custody" | grep -q '"backup-key":{"key":"backup-key","method":"copy"'; then
+    pass "$name: both keys' custody is attested"
+  else
+    fail "$name: custody status $custody"
+  fi
+  if grep -q '"firstBackup": "bak_' /etc/varlatch/setup.json && grep -q 'is made and verified' "$work/$name.out"; then pass "$name: the first backup is verified"; else fail "$name: no verified first backup"; fi
+  if grep -q 'varlatch doctor:' "$work/$name.out"; then pass "$name: setup ran doctor"; else fail "$name: setup ran no doctor"; fi
   if ! [ "$(mode_of /etc/varlatch/varlatchd.conf)" = "640 root:varlatch" ]; then fail "$name: varlatchd.conf is $(mode_of /etc/varlatch/varlatchd.conf)"; fi
   if ! [ "$(mode_of /etc/varlatch)" = "750 root:varlatch" ]; then fail "$name: /etc/varlatch is $(mode_of /etc/varlatch)"; fi
   if ! [ "$(mode_of /var/lib/varlatch)" = "700 varlatch:varlatch" ]; then fail "$name: /var/lib/varlatch is $(mode_of /var/lib/varlatch)"; fi
@@ -143,7 +185,7 @@ check_installation() {
   started=$(systemctl show -p ActiveEnterTimestampMonotonic --value varlatchd.service)
   setup_once "$name-again" "$@"
   # The rerun's copies are the first run's own files.
-  if [ "$status" = 0 ] && [ "$before" = "$(cd /etc/varlatch && sha256sum root-kek backup-key varlatchd.conf setup.json)" ] &&
+  if [ "$status" = 0 ] && ! grep -q 'enrollment link' "$work/$name-again.out" && [ "$before" = "$(cd /etc/varlatch && sha256sum root-kek backup-key varlatchd.conf setup.json)" ] &&
      [ "$started" = "$(systemctl show -p ActiveEnterTimestampMonotonic --value varlatchd.service)" ]; then
     pass "$name: a rerun changes nothing and restarts nothing"
   else
@@ -182,17 +224,14 @@ else
 fi
 
 # Interrupted after each step, then run again: as a run in one go.
-for step in answers user data-dir probe keys key-copies config unit; do
-  set +e
-  VARLATCH_SETUP_STOP_AFTER=$step /usr/local/bin/varlatch setup --ingress localhost --backups host --accept-slow-disk \
-    --root-kek-out "$work/stop-$step-root-kek" --backup-key-out "$work/stop-$step-backup-key" </dev/null >"$work/stop-$step.out" 2>&1
-  stopped=$?
-  set -e
-  if ! [ "$stopped" = 75 ]; then fail "stopped after $step: exited $stopped: $(tail -n 3 "$work/stop-$step.out")"; fi
+for step in answers user data-dir probe keys config unit ready admin key-copies custody backup; do
+  export VARLATCH_SETUP_STOP_AFTER="$step"
+  setup_once "stop-$step" --ingress localhost
+  unset VARLATCH_SETUP_STOP_AFTER
+  if ! [ "$status" = 75 ] || ! grep -q "stopped after $step" "$work/stop-$step.out"; then fail "stopped after $step: exited $status: $(tail -n 3 "$work/stop-$step.out")"; fi
   setup_once "resume-$step" --ingress localhost
-  # The copies of a resumed run are its first part's.
   if [ "$status" = 0 ] && [ "$(systemctl is-active varlatchd.service)" = active ] && [ -s /etc/varlatch/root-kek ] &&
-     [ "$(grep -c '"' /etc/varlatch/setup.json)" -gt 0 ]; then
+     grep -q '"firstBackup"' /etc/varlatch/setup.json; then
     pass "stopped after $step, then resumed: ready"
   else
     fail "stopped after $step, then resumed: exited $status: $(tail -n 3 "$work/resume-$step.out")"

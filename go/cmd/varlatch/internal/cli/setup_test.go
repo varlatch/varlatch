@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSetupRefusals: what `varlatch setup` refuses before it changes
@@ -63,19 +64,25 @@ func TestSetupFlagValueForms(t *testing.T) {
 		t.Fatal(err)
 	}
 	spaced, err := parseSetupArgs([]string{"--answers", answers, "--trusted-proxies", "10.0.0.1,10.0.0.2", "--acme-ca", "https://ca.example/dir?a=b",
-		"--root-kek-out", "/root/k", "--backup-key-out", "/root/b", "--accept-slow-disk", "--accept-existing-user"})
+		"--root-kek-out", "/root/k", "--backup-key-out", "/root/b", "--accept-slow-disk", "--accept-existing-user",
+		"--admin-link-out", "/root/link", "--admin-wait", "0s", "--attest"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	attached, err := parseSetupArgs([]string{"--answers=" + answers, "--trusted-proxies=10.0.0.1,10.0.0.2", "--acme-ca=https://ca.example/dir?a=b",
-		"--root-kek-out=/root/k", "--backup-key-out=/root/b", "--accept-slow-disk", "--accept-existing-user"})
+		"--root-kek-out=/root/k", "--backup-key-out=/root/b", "--accept-slow-disk", "--accept-existing-user",
+		"--admin-link-out=/root/link", "--admin-wait=0s", "--attest"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if def, err := parseSetupArgs(nil); err != nil || def.adminWait != 15*time.Minute {
+		t.Errorf("the default wait: %v %v", def.adminWait, err)
 	}
 	if spaced != attached {
 		t.Errorf("--name value gives %+v, --name=value %+v", spaced, attached)
 	}
-	if attached.given.ACMECA != "https://ca.example/dir?a=b" || attached.given.Ingress != "proxy" || !attached.acceptSlow || !attached.acceptUser {
+	if attached.given.ACMECA != "https://ca.example/dir?a=b" || attached.given.Ingress != "proxy" || !attached.acceptSlow || !attached.acceptUser ||
+		attached.linkOut != "/root/link" || attached.adminWait != 0 || !attached.attest {
 		t.Errorf("parsed %+v", attached)
 	}
 	for _, c := range []struct {
@@ -86,6 +93,10 @@ func TestSetupFlagValueForms(t *testing.T) {
 		{[]string{"--answers="}, "--answers needs a value"},
 		{[]string{"--accept-slow-disk=yes"}, "--accept-slow-disk takes no value"},
 		{[]string{"--accept-existing-user=true"}, "--accept-existing-user takes no value"},
+		{[]string{"--attest=yes"}, "--attest takes no value"},
+		{[]string{"--admin-wait", "-1s"}, "--admin-wait must be a duration"},
+		{[]string{"--admin-wait=forever"}, "--admin-wait must be a duration"},
+		{[]string{"--admin-link-out="}, "--admin-link-out needs a value"},
 		{[]string{"--dir=/srv/varlatch"}, "varlatch-ts setup --dir"},
 		{[]string{"--answers=" + answers, "--ingress=public"}, "--ingress differs from the answers file"},
 		{[]string{"--root-kek-out=/root/k"}, "go together"},

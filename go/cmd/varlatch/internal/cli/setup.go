@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/setup"
 )
@@ -37,14 +38,19 @@ const setupUsage = `Usage:
                       [--tailnet-auth-key-file <file>]
                       [--backups host|bucket] [--backup-destinations-file <file>] [--backup-destination <name>]
                       [--root-kek-out <file> --backup-key-out <file>] [--accept-slow-disk] [--accept-existing-user]
+                      [--admin-link-out <file>] [--admin-wait <duration>] [--attest]
                (a Go installation on this host: the varlatch user, /etc/varlatch/varlatchd.conf, the Root KEK and
-                the backup key (root, 0600; shown once on a terminal, or, without one, written to the files
-                --root-kek-out and --backup-key-out name), the data directory after an fsync probe of its disk, and
-                the varlatchd unit started. Every question has its flag (--name value or --name=value); --answers
-                names a JSON file of them (the same names, as publicUrl). A varlatch user that exists already must
-                be a system account, or --accept-existing-user uses it anyway. A rerun continues where setup stopped
-                and changes nothing once done; its journal is /etc/varlatch/setup.json. A Compose installation's
-                setup is the TypeScript CLI's, varlatch-ts)`
+                the backup key (root, 0600), the data directory after an fsync probe of its disk, and the varlatchd
+                unit started; then the first administrator's passkey, from a one-time link shown on a terminal or,
+                without one, written to --admin-link-out (setup waits --admin-wait, default 15m; 0s stops for a
+                rerun); the keys, shown once on a terminal and pasted back, or without one written to the files
+                --root-kek-out and --backup-key-out name; your Custody Attestation (asked, or --attest once the
+                copies are stored off this host); the first backup, verified; and varlatch doctor. Every question
+                has its flag (--name value or --name=value); --answers names a JSON file of them (the same names,
+                as publicUrl). A varlatch user that exists already must be a system account, or
+                --accept-existing-user uses it anyway. A rerun continues where setup stopped and changes nothing
+                once done; its journal is /etc/varlatch/setup.json. Exit 75 when setup waits for you (the passkey,
+                the keys' custody). A Compose installation's setup is the TypeScript CLI's, varlatch-ts)`
 
 // SetupHelp is setupUsage, for the transcripts' accepted difference.
 const SetupHelp = setupUsage
@@ -54,11 +60,14 @@ type setupArgs struct {
 	given                  setup.Answers
 	kekOut, bekOut         string
 	acceptSlow, acceptUser bool
+	linkOut                string
+	adminWait              time.Duration
+	attest                 bool
 }
 
 // parseSetupArgs reads setup's command line and the answers file it names.
 func parseSetupArgs(argv []string) (setupArgs, error) {
-	var p setupArgs
+	p := setupArgs{adminWait: 15 * time.Minute}
 	var answersFile string
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch setup: "+msg, "\n"+setupUsage) }
 	for i := 0; i < len(argv); i++ {
@@ -88,8 +97,26 @@ func parseSetupArgs(argv []string) (setupArgs, error) {
 			return p, UsageError("varlatch setup: --dir names a Compose installation, which the Go CLI does not set up; run varlatch-ts setup --dir <directory> for one")
 		case a == "--restore":
 			return p, UsageError("varlatch setup --restore is not in this build of the Go CLI yet (slice 6.4c)")
-		case (a == "--accept-slow-disk" || a == "--accept-existing-user") && hasValue:
+		case (a == "--accept-slow-disk" || a == "--accept-existing-user" || a == "--attest") && hasValue:
 			return p, usage(a + " takes no value")
+		case a == "--attest":
+			p.attest = true
+		case a == "--admin-link-out":
+			v, err := value()
+			if err != nil {
+				return p, err
+			}
+			p.linkOut = v
+		case a == "--admin-wait":
+			v, err := value()
+			if err != nil {
+				return p, err
+			}
+			d, err := time.ParseDuration(v)
+			if err != nil || d < 0 || d > 24*time.Hour {
+				return p, usage("--admin-wait must be a duration from 0s to 24h, such as 15m (0s issues the link and stops)")
+			}
+			p.adminWait = d
 		case a == "--accept-slow-disk":
 			p.acceptSlow = true
 		case a == "--accept-existing-user":
@@ -156,18 +183,25 @@ func setupCommand(r *Run) (bool, error) {
 	o := setup.Options{
 		Host:  setup.SystemHost{Varlatchd: varlatchd, Env: varlatchdEnviron(r)},
 		Given: args.given, RootKEKOut: args.kekOut, BackupKeyOut: args.bekOut, AcceptSlowDisk: args.acceptSlow, AcceptExistingUser: args.acceptUser,
+		AdminLinkOut: args.linkOut, AdminWait: args.adminWait, Attest: args.attest,
+		Doctor:    func(context.Context) (bool, error) { return r.setupDoctor() },
 		Say:       func(line string) error { return r.out(line + "\n") },
 		StopAfter: r.Getenv("VARLATCH_SETUP_STOP_AFTER"),
 	}
 	if isTerminal(r.Stdin) && isTerminal(r.Stdout) {
 		o.Ask = setupAsker{newTerminalPrompter(r)}
 		o.ShowKeys = func(kek, bek []byte) error { return r.showKeys(kek, bek) }
+		o.ShowLink = func(link, expires string) error { return r.showEnrollLink(link, expires) }
 	}
 	err = setup.Run(context.Background(), o)
 	var usageErr *setup.UsageError
 	switch {
 	case err == nil:
 		return true, r.out("Setup is done: the installation runs. The first administrator comes next.\n")
+	case errors.Is(err, setup.ErrPending):
+		return true, Fail("varlatch "+strings.TrimPrefix(err.Error(), "setup: "), ExitTempfail)
+	case errors.Is(err, setup.ErrDoctor):
+		return true, Fail("varlatch setup is done, but "+strings.TrimPrefix(err.Error(), "setup: "), ExitFailure)
 	case errors.Is(err, setup.ErrStopped):
 		return true, Fail("varlatch setup: stopped after "+o.StopAfter+" (VARLATCH_SETUP_STOP_AFTER); run setup again to continue", ExitTempfail)
 	case errors.As(err, &usageErr), errors.Is(err, setup.ErrNotAnswered):
@@ -215,3 +249,39 @@ func (a setupAsker) Confirm(q string, defaultYes bool) (bool, error) {
 	return a.p.confirm(q, defaultYes)
 }
 func (a setupAsker) Text(q, defaultValue string) (string, error) { return a.p.text(q, defaultValue) }
+
+// Secret is the hidden prompt (secretinput's): nothing typed is echoed.
+func (a setupAsker) Secret(q string) ([]byte, error) {
+	v, err := a.p.r.promptHidden(q)
+	return []byte(v), err
+}
+
+// showEnrollLink shows the first administrator's one-time link on the
+// terminal, once per run.
+func (r *Run) showEnrollLink(link, expires string) error {
+	return r.out("\nOpen this one-time link in the browser where you will sign in, and create the first administrator's\n" +
+		"passkey. It works once and expires " + expires + "; setup waits for it, and a rerun gives a new one.\n\n" +
+		"  " + link + "\n\n")
+}
+
+// setupDoctor is setup's last step: `varlatch doctor`'s report, and
+// whether every mandatory check passed.
+func (r *Run) setupDoctor() (bool, error) {
+	if err := r.out("\nvarlatch doctor:\n"); err != nil {
+		return false, err
+	}
+	report, err := r.varlatchdDoctor("")
+	if err != nil {
+		return false, err
+	}
+	report.Checks = append(report.Checks, doctorCLIChecks(report)...)
+	if err := r.showDoctor(report); err != nil {
+		return false, err
+	}
+	for _, c := range report.Checks {
+		if c.Class == "mandatory" && c.Status == "fail" {
+			return false, nil
+		}
+	}
+	return true, nil
+}
