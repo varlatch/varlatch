@@ -88,6 +88,8 @@ func startTailnet(cfg *config.Config, controlURL string, certs tailnet.CertSourc
 		_ = node.Close()
 		return nil, err
 	}
+	// The read-back: a name the control plane suffixed keeps access closed.
+	m.SetHostname(t.Hostname)
 	r := &tailnetRunner{cfg: t, node: node, manager: m, resolver: tailnet.NewPinnedResolver(node, m, log), log: log, done: make(chan struct{})}
 	if t.HTTPSPort != 0 {
 		if certs == nil {
@@ -194,7 +196,7 @@ func (r *tailnetRunner) stop(ctx context.Context) {
 }
 
 // tailnetUsage is `admin tailnet`'s usage.
-const tailnetUsage = "Usage: varlatchd admin tailnet repin [--yes [--adopt]] [--json]"
+const tailnetUsage = "Usage: varlatchd admin tailnet repin [--yes [--adopt]] [--json] | varlatchd admin tailnet probe-name [--json]"
 
 // repinArgs are `admin tailnet repin`'s flags.
 type repinArgs struct{ yes, adopt, asJSON bool }
@@ -203,6 +205,15 @@ type repinArgs struct{ yes, adopt, asJSON bool }
 // usage error.
 func tailnetArgs(rest []string) (repinArgs, string) {
 	var a repinArgs
+	if len(rest) > 0 && rest[0] == "probe-name" {
+		for _, arg := range rest[1:] {
+			if arg != "--json" {
+				return repinArgs{}, tailnetUsage
+			}
+			a.asJSON = true
+		}
+		return a, ""
+	}
 	if len(rest) == 0 || rest[0] != "repin" {
 		return a, tailnetUsage
 	}
@@ -306,4 +317,61 @@ func describePin(controlURL, tailnetID, suffix string) string {
 		tailnetID = "(none)"
 	}
 	return fmt.Sprintf("suffix %s, tailnet %s, control %s", suffix, tailnetID, controlURL)
+}
+
+// runTailnetProbe is `varlatchd admin tailnet probe-name`, which a restore
+// runs before the restored installation's node first enrols (internal
+// docs/design/go-step6.md decision 16): tailnet.ProbeName with the
+// configured name, tags, control server and auth key, in this process,
+// while no node of this installation exists yet. With --json, exit 0
+// whenever the probe ran (setup reads its findings); without, 1 when a peer
+// holds the name or the key is single-use (said). 1 when the probe could
+// not join.
+func runTailnetProbe(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
+	a, _ := tailnetArgs(rest)
+	fail := func(format string, args ...any) int {
+		fmt.Fprintf(stderr, "varlatchd admin tailnet probe-name: "+format+"\n", args...)
+		return ExitFailure
+	}
+	t := cfg.Tailnet
+	if t == nil {
+		return fail("the tailnet listener is off (tailnet = off): there is no name to check")
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, tailnet.StateDir, "tailscaled.state")); err == nil {
+		return fail("this installation's node is enrolled already: the probe runs before its first enrolment")
+	}
+	if t.AuthKeyFile == "" {
+		return fail("no auth key (tailnet_auth_key_file): the probe joins with the key the node will enrol with")
+	}
+	raw, err := os.ReadFile(t.AuthKeyFile)
+	if err != nil {
+		return fail("cannot read the auth key file: %v", err)
+	}
+	key := strings.TrimSpace(string(raw))
+	clear(raw)
+	res, err := tailnet.ProbeName(context.Background(), tailnet.ProbeConfig{Dir: cfg.DataDir, Hostname: t.Hostname, ControlURL: t.ControlURL, AuthKey: key, Tags: t.Tags})
+	if err != nil {
+		return fail("%v", err)
+	}
+	if a.asJSON {
+		b, err := json.Marshal(res)
+		if err != nil {
+			return fail("%v", err)
+		}
+		fmt.Fprintln(stdout, string(b))
+	} else {
+		switch {
+		case len(res.Seen) > 0:
+			fmt.Fprintf(stdout, "The name %s is held by %s: delete that node in the tailnet's admin console first.\n", t.Hostname, strings.Join(res.Seen, ", "))
+		default:
+			fmt.Fprintf(stdout, "No node named %s is visible to the probe (the tailnet's access rules may hide some; the name is read back after enrolment).\n", t.Hostname)
+		}
+		if !res.Reusable {
+			fmt.Fprintf(stdout, "The auth key could not join a second time: it is single-use (%s).\n", res.SecondJoin)
+		}
+	}
+	if !a.asJSON && (len(res.Seen) > 0 || !res.Reusable) {
+		return ExitFailure
+	}
+	return ExitOK
 }

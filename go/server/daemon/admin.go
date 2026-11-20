@@ -150,6 +150,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":
 		return runCustodyStatus(cfg, stdout, stderr)
+	case sub == "tailnet" && rest[0] == "probe-name":
+		return runTailnetProbe(cfg, rest, stdout, stderr)
 	case sub == "bootstrap-status":
 		return runBootstrapStatus(cfg, stdout, stderr)
 	case sub == "config-check":

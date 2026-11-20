@@ -49,6 +49,9 @@ type fakeHost struct {
 	adminCalls            []string
 	// restoreURL is the restored archive's public_url.
 	restoreURL string
+	// The tailnet probe's findings.
+	probeSeen      []string
+	probeSingleUse bool
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -118,6 +121,15 @@ func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 		return []byte("Restore completed for inst_old from archive bak_old (created 2026-11-01T00:00:00.000Z): the database is restored and its canary verified.\n" +
 			"The archive's settings, to compare with this host's varlatchd.conf:\n  backup_interval = 24h\n  public_url = " + h.restoreURL + "\n" +
 			"Next: start varlatchd, then take and check a fresh archive (`varlatchd admin backup run`).\n"), nil
+	}
+	if args[0] == "tailnet" && args[1] == "probe-name" {
+		// Offline, before the unit: the probe's findings, as JSON.
+		seen, _ := json.Marshal(append([]string{}, h.probeSeen...))
+		second := ""
+		if h.probeSingleUse {
+			second = `,"secondJoin":"invalid authkey"`
+		}
+		return []byte(fmt.Sprintf(`{"seen":%s,"reusable":%t%s}`, seen, !h.probeSingleUse, second)), nil
 	}
 	if !h.active {
 		return nil, errors.New("varlatchd is not running")
@@ -1134,5 +1146,63 @@ func TestRestoreRefusals(t *testing.T) {
 	}
 	if slices.Contains(h5.systemctl, "enable --now varlatchd.service") {
 		t.Error("the unit started at another address than the archive's")
+	}
+}
+
+// TestRestoreChecksTheTailnetName: a restore with tailnet ingress probes
+// the name before the restored node first enrols: a name still held, or a
+// single-use key (the probe spent it), stops setup before the unit starts,
+// saying what to do; a name not seen goes on, and a rerun probes no more.
+func TestRestoreChecksTheTailnetName(t *testing.T) {
+	skipOffUnix(t)
+	tailnetRestore := func(h *fakeHost) Options {
+		out := t.TempDir()
+		kek, bek := operatorKeys(t, out)
+		o := options(h, &recorder{}, out)
+		o.RootKEKOut, o.BackupKeyOut = "", ""
+		o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
+		o.Given = Answers{Ingress: Tailnet, TailnetHostname: "varlatch", TailnetPort: "8687", TailnetTags: "tag:varlatch",
+			TailnetAuthKeyFile: "/etc/varlatch/tailnet-auth-key", Backups: "host"}
+		return o
+	}
+	h := newFakeHost(t)
+	h.probeSeen = []string{"varlatch.corp.ts.net"}
+	if err := Run(context.Background(), tailnetRestore(h)); err == nil || !strings.Contains(err.Error(), "still held by varlatch.corp.ts.net") {
+		t.Fatalf("a held name: %v", err)
+	}
+	if slices.Contains(h.systemctl, "enable --now varlatchd.service") {
+		t.Error("the unit started with the name held")
+	}
+	h2 := newFakeHost(t)
+	h2.probeSingleUse = true
+	o := tailnetRestore(h2)
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "single-use") || !strings.Contains(err.Error(), "Reusable, with those tags") ||
+		!strings.Contains(err.Error(), "tag:varlatch") || !strings.Contains(err.Error(), "/etc/varlatch/tailnet-auth-key") {
+		t.Fatalf("a single-use key: %v", err)
+	}
+	if slices.Contains(h2.systemctl, "enable --now varlatchd.service") {
+		t.Error("the unit started with a spent key")
+	}
+	// Freed (the old node deleted) and a reusable key: setup goes on.
+	h2.probeSingleUse = false
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	probes := func() int {
+		return len(slices.DeleteFunc(slices.Clone(h2.adminCalls), func(c string) bool { return c != "tailnet probe-name --json" }))
+	}
+	if probes() != 2 || !slices.Contains(h2.systemctl, "enable --now varlatchd.service") {
+		t.Errorf("probes %d, systemctl %q", probes(), h2.systemctl)
+	}
+	if err := Run(context.Background(), o); err != nil || probes() != 2 {
+		t.Errorf("a rerun: %v, probes %d", err, probes())
+	}
+	// Without tailnet ingress, a restore probes nothing.
+	h3 := newFakeHost(t)
+	h3.restoreURL = "http://localhost:8686"
+	o3 := tailnetRestore(h3)
+	o3.Given = localhostAnswers()
+	if err := Run(context.Background(), o3); err != nil || slices.Contains(h3.adminCalls, "tailnet probe-name --json") {
+		t.Errorf("a localhost restore: %v %q", err, h3.adminCalls)
 	}
 }

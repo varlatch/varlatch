@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -173,4 +174,45 @@ func (r *run) restore(ctx context.Context) error {
 		return err
 	}
 	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").")
+}
+
+// probeResult is `varlatchd admin tailnet probe-name --json`.
+type probeResult struct {
+	Seen       []string `json:"seen"`
+	Reusable   bool     `json:"reusable"`
+	SecondJoin string   `json:"secondJoin"`
+}
+
+// nameCheck: a restore with tailnet ingress checks, before the restored
+// installation's node first enrols, that its name is free (decision 16): a
+// probe joins with the auth key, twice, and leaves. A peer under the name
+// refuses the restore; so does a key that joins once only, since the
+// probe spent it. Nothing seen is not "free" (the tailnet's access rules
+// may hide nodes): varlatchd reads its name back after enrolment and keeps
+// tailnet access closed when the control plane suffixed it.
+func (r *run) nameCheck(ctx context.Context) error {
+	a := r.j.Answers
+	if r.j.Restore == nil || a.Ingress != Tailnet || r.j.Done["name"] != "" {
+		return nil
+	}
+	if err := r.o.Say("Checking that the tailnet name " + a.TailnetHostname + " is free: a probe joins with your auth key, twice, and leaves."); err != nil {
+		return err
+	}
+	out, err := r.h.Admin(ctx, "tailnet", "probe-name", "--json")
+	if err != nil {
+		return err
+	}
+	var res probeResult
+	if err := json.Unmarshal(out, &res); err != nil {
+		return errors.New("setup: varlatchd admin tailnet probe-name gave no result")
+	}
+	if len(res.Seen) > 0 {
+		return fmt.Errorf("setup: the tailnet name %s is still held by %s (the old installation's node, if it is not deleted): delete that node in the tailnet's admin console, then run setup again; nothing has enrolled",
+			a.TailnetHostname, strings.Join(res.Seen, ", "))
+	}
+	if !res.Reusable {
+		return fmt.Errorf("setup: the auth key in %s joined once only, so it is single-use and the probe has spent it (a restore checks the name with the key before enrolling with it). Create a reusable auth key tagged %s (Tailscale's admin console: Settings, Keys, Generate auth key, Reusable, with those tags), put it in %s, and run setup again; revoke it once the restore is done",
+			a.TailnetAuthKeyFile, a.TailnetTags, a.TailnetAuthKeyFile)
+	}
+	return r.o.Say("No node named " + a.TailnetHostname + " is visible to the probe. The tailnet's access rules may hide some: varlatchd reads its name back after enrolling, and keeps tailnet access closed if the control plane added a suffix.")
 }
