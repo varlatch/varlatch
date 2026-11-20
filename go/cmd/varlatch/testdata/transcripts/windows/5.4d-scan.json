@@ -1,0 +1,500 @@
+{
+  "schema": 2,
+  "comment": "Windows expectations, recorded from the TypeScript CLI on Windows by the windows-expectations workflow (apps/cli/test/goWindows.ts); do not edit. Only the cases whose Linux recording names a path below their directory are here.",
+  "area": "5.4d-scan",
+  "platform": "windows",
+  "cases": [
+    {
+      "id": "baseline.write",
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch scan: 3 file(s) checked against 3 Secret value(s) of dev: no findings. 3 allowed by a marker or the baseline.\n",
+        "stderr": "varlatch scan: added 3 entries to {{dir}}\\repo\\varlatch-scan-baseline.json (path, item, and version only). Review it before you commit it.\nvarlatch scan: values shorter than 8 bytes are not checked: PIN\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (win32; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/disclosures",
+            "headers": {
+              "authorization": "Bearer vlt_svc_scanAAAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (win32; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "scope": "all-authorized-secrets",
+              "purpose": "scan"
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0666",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0666",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0666",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch-scan-baseline.json": {
+            "mode": "0666",
+            "content": "{\n  \"version\": 1,\n  \"entries\": [\n    {\n      \"path\": \"dist/app.js\",\n      \"item\": \"API_KEY\",\n      \"versionId\": \"ver_api1\"\n    },\n    {\n      \"path\": \"dist/app.js\",\n      \"item\": \"API_KEY\",\n      \"versionId\": \"ver_api2\"\n    },\n    {\n      \"path\": \"dist/assets/blob.bin\",\n      \"item\": \"DB_PASS\",\n      \"versionId\": \"ver_db\"\n    }\n  ]\n}\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "baseline.explicit-missing",
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: no baseline file at {{dir}}\\repo\\nope.json\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0666",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0666",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0666",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "baseline.invalid",
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: invalid baseline {{dir}}\\repo\\varlatch-scan-baseline.json: entry 1 must have exactly \"path\", \"item\", and \"versionId\"\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/app.js": {
+            "mode": "0666",
+            "content": "var k=\"scan-key-aaaabbbbccccdddd\";\nvar old =\n  \"dXNlcjpzY2FuLWtleS1vbGRvbGRvbGRvbGRvbGQx\";\n"
+          },
+          "repo/dist/assets/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/dist/assets/blob.bin": {
+            "mode": "0666",
+            "content": "\u0000\u0000hunter2-hunter2-hunter2\u0000"
+          },
+          "repo/dist/clean.txt": {
+            "mode": "0666",
+            "content": "nothing here\n"
+          },
+          "repo/varlatch-scan-baseline.json": {
+            "mode": "0666",
+            "content": "{\"version\":1,\"entries\":[{\"path\":\"a\",\"item\":\"B\",\"versionId\":\"v\",\"hash\":\"x\"}]}"
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "fail.no-project",
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "No varlatch.toml found from {{dir}}\\repo upward. Run inside a configured repository or create one with the CLI.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/a.txt": {
+            "mode": "0666",
+            "content": "x"
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.install",
+      "expect": {
+        "status": 0,
+        "stdout": "Installed the pre-commit hook at {{dir}}\\repo\\.git\\hooks\\pre-commit: each commit runs \"varlatch scan --staged\" first.\nSkip it once with git commit --no-verify; delete that file to remove it.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0666",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0666",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0666",
+            "content": "#!/bin/sh\n# varlatch-scan-hook v1\n# Installed by `varlatch scan --install-hook`. Before each commit it checks\n# the staged content for Secrets and stops the commit when it finds one.\n# Skip it once with `git commit --no-verify`; delete this file to remove it.\n# Git runs hooks from the top of the working tree. Keep Git's paths valid\n# after changing directory.\ncase \"${GIT_INDEX_FILE:-/}\" in /*) ;; *) GIT_INDEX_FILE=\"$PWD/$GIT_INDEX_FILE\"; export GIT_INDEX_FILE ;; esac\ncase \"${GIT_DIR:-/}\" in /*) ;; *) GIT_DIR=\"$PWD/$GIT_DIR\"; export GIT_DIR ;; esac\nif [ -n \"${GIT_DIR:-}\" ] && [ -z \"${GIT_WORK_TREE:-}\" ]; then GIT_WORK_TREE=\"$PWD\"; export GIT_WORK_TREE; fi\nexec varlatch scan --staged\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.install.below",
+      "expect": {
+        "status": 0,
+        "stdout": "Installed the pre-commit hook at {{dir}}\\repo\\.git\\hooks\\pre-commit: each commit runs \"varlatch scan --staged\" first.\nSkip it once with git commit --no-verify; delete that file to remove it.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0666",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0666",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0666",
+            "content": "#!/bin/sh\n# varlatch-scan-hook v1\n# Installed by `varlatch scan --install-hook`. Before each commit it checks\n# the staged content for Secrets and stops the commit when it finds one.\n# Skip it once with `git commit --no-verify`; delete this file to remove it.\n# Git runs hooks from the top of the working tree. Keep Git's paths valid\n# after changing directory.\ncase \"${GIT_INDEX_FILE:-/}\" in /*) ;; *) GIT_INDEX_FILE=\"$PWD/$GIT_INDEX_FILE\"; export GIT_INDEX_FILE ;; esac\ncase \"${GIT_DIR:-/}\" in /*) ;; *) GIT_DIR=\"$PWD/$GIT_DIR\"; export GIT_DIR ;; esac\nif [ -n \"${GIT_DIR:-}\" ] && [ -z \"${GIT_WORK_TREE:-}\" ]; then GIT_WORK_TREE=\"$PWD\"; export GIT_WORK_TREE; fi\ncd 'services/api' || exit 1\nexec varlatch scan --staged --environment 'it'\\''s'\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/services/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/services/api/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/services/api/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.update",
+      "expect": {
+        "status": 0,
+        "stdout": "Installed the pre-commit hook at {{dir}}\\repo\\.git\\hooks\\pre-commit: each commit runs \"varlatch scan --staged\" first.\nSkip it once with git commit --no-verify; delete that file to remove it.\n",
+        "stderr": "",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0666",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0666",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0666",
+            "content": "#!/bin/sh\n# varlatch-scan-hook v1\n# Installed by `varlatch scan --install-hook`. Before each commit it checks\n# the staged content for Secrets and stops the commit when it finds one.\n# Skip it once with `git commit --no-verify`; delete this file to remove it.\n# Git runs hooks from the top of the working tree. Keep Git's paths valid\n# after changing directory.\ncase \"${GIT_INDEX_FILE:-/}\" in /*) ;; *) GIT_INDEX_FILE=\"$PWD/$GIT_INDEX_FILE\"; export GIT_INDEX_FILE ;; esac\ncase \"${GIT_DIR:-/}\" in /*) ;; *) GIT_DIR=\"$PWD/$GIT_DIR\"; export GIT_DIR ;; esac\nif [ -n \"${GIT_DIR:-}\" ] && [ -z \"${GIT_WORK_TREE:-}\" ]; then GIT_WORK_TREE=\"$PWD\"; export GIT_WORK_TREE; fi\nexec varlatch scan --staged --environment 'staging'\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.foreign",
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: {{dir}}\\repo\\.git\\hooks\\pre-commit already exists and was not written by varlatch; it was left unchanged. To run the scan from it, add this line:\n  varlatch scan --staged || exit 1\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0666",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0666",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0666",
+            "content": "#!/bin/sh\nexit 0\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "hook.foreign.below",
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch scan: {{dir}}\\repo\\.git\\hooks\\pre-commit already exists and was not written by varlatch; it was left unchanged. To run the scan from it, add this line:\n  (cd 'app' && varlatch scan --staged) || exit 1\nUsage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n                     [--max-file-size <size>] [--max-total-size <size>]\n       varlatch scan --install-hook [-e <env>]\n       varlatch scan --find-files [<dir>] [--json]\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/HEAD": {
+            "mode": "0666",
+            "content": "ref: refs/heads/main\n"
+          },
+          "repo/.git/config": {
+            "mode": "0666",
+            "content": "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+          },
+          "repo/.git/hooks/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/hooks/pre-commit": {
+            "mode": "0666",
+            "content": "#!/bin/sh\nexit 0\n"
+          },
+          "repo/.git/objects/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/objects/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/.git/refs/.keep": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/app/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/app/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    }
+  ]
+}

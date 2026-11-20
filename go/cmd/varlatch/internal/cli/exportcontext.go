@@ -71,7 +71,7 @@ func (r *Run) readConsistently(read func() (configurationRead, error)) (configur
 
 // exportedRunContext is exportedRunContext: for each Contract item, what
 // the server did and how a default run delivered it.
-func exportedRunContext(revision, environment, contractDoc, delivered any, parent map[string]string, omitted map[string]bool) jsjson.Object {
+func exportedRunContext(revision, environment, contractDoc, delivered any, parent parentVars, omitted map[string]bool) jsjson.Object {
 	byName := map[string]any{}
 	for _, item := range listOf(delivered, "items") {
 		if name, ok := stringField(item, "name"); ok {
@@ -96,7 +96,7 @@ func exportedRunContext(revision, environment, contractDoc, delivered any, paren
 			server = "withheld"
 		}
 		delivery := "absent"
-		_, inherited := lookupEnv(parent, name)
+		_, inherited := parent.lookup(name)
 		switch {
 		case left:
 		case server == "delivered":
@@ -125,7 +125,7 @@ func encodeRunContext(ctx jsjson.Object) (string, bool) {
 }
 
 // runContextEncoder builds the context once the environment is built.
-type runContextEncoder func(delivered any, parent map[string]string, omitted map[string]bool) (string, error)
+type runContextEncoder func(delivered any, parent parentVars, omitted map[string]bool) (string, error)
 
 // prepareExportedContext is prepareExportedContext: after the Effective
 // Configuration and before any Secret is disclosed, so a run that cannot
@@ -160,10 +160,10 @@ func (r *Run) prepareExportedContext(c *apiclient.Client, org, project string, e
 		longest[jsjson.String(fieldOf(item, "name"))] = ""
 	}
 	empty := jsjson.Object{{Key: "environmentId", Value: ""}, {Key: "items", Value: []any{}}}
-	if _, ok := encodeRunContext(exportedRunContext(revision, environment, contractDoc, empty, longest, nil)); !ok {
+	if _, ok := encodeRunContext(exportedRunContext(revision, environment, contractDoc, empty, parentVars{values: longest}, nil)); !ok {
 		return nil, exportContextError(tooLarge)
 	}
-	return func(delivered any, parent map[string]string, omitted map[string]bool) (string, error) {
+	return func(delivered any, parent parentVars, omitted map[string]bool) (string, error) {
 		encoded, ok := encodeRunContext(exportedRunContext(revision, environment, contractDoc, delivered, parent, omitted))
 		if !ok {
 			return "", exportContextError(tooLarge)
@@ -172,15 +172,24 @@ func (r *Run) prepareExportedContext(c *apiclient.Client, org, project string, e
 	}, nil
 }
 
-// lookupEnv is parent[name] as process.env reads it: by exact name, or on
-// Windows without case.
-func lookupEnv(parent map[string]string, name string) (string, bool) {
-	if v, ok := parent[name]; ok {
+// parentVars is this process's environment as process.env reads it: the
+// values, and the names in the order the process got them (on Windows,
+// the environment block's order).
+type parentVars struct {
+	names  []string
+	values map[string]string
+}
+
+// lookup is process.env[name]: by exact name, or on Windows without case,
+// the first such name in the process's order, as GetEnvironmentVariableW
+// finds it.
+func (p parentVars) lookup(name string) (string, bool) {
+	if v, ok := p.values[name]; ok {
 		return v, true
 	}
-	for k, v := range parent {
+	for _, k := range p.names {
 		if envNameEqual(k, name) {
-			return v, true
+			return p.values[k], true
 		}
 	}
 	return "", false

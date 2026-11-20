@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch scan` end to end: the CLI bundled from this checkout's source,
@@ -97,7 +98,8 @@ beforeAll(async () => {
   // The hook calls `varlatch` from PATH, as an installed CLI would be.
   mkdirSync(bin);
   mkdirSync(env.TMPDIR);
-  writeFileSync(join(bin, "varlatch"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(bundle)} "$@"\n`, { mode: 0o755 });
+  const [cmd, cmdArgs] = cliCommand(bundle, []);
+  writeFileSync(join(bin, "varlatch"), `#!/bin/sh\nexec ${[cmd, ...cmdArgs].map((a) => JSON.stringify(a)).join(" ")} "$@"\n`, { mode: 0o755 });
   server = http.createServer(answer);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   port = (server.address() as AddressInfo).port;
@@ -172,7 +174,7 @@ function run(
 }
 
 function varlatch(cwd: string, ...args: string[]) {
-  return run(process.execPath, [bundle, ...args], cwd);
+  return run(...cliCommand(bundle, args), cwd);
 }
 
 function commit(cwd: string, ...args: string[]) {
@@ -519,7 +521,12 @@ const write = fs.writeFileSync;
 process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
 `,
     );
-    const found = await run(process.execPath, ["-r", preload, bundle, "scan", "--find-files", "--json"], top, {
+    // The recorder preloads into Node.js; a Go CLI runs without it, and Go's
+    // own test (internal/findfiles TestNeverReadsACandidate) checks it opens
+    // no candidate.
+    const go = Boolean(process.env.VARLATCH_TEST_CLI);
+    const [cmd, cmdArgs] = go ? cliCommand(bundle, ["scan", "--find-files", "--json"]) : [process.execPath, ["-r", preload, bundle, "scan", "--find-files", "--json"]];
+    const found = await run(cmd, cmdArgs, top, {
       FS_LOG: log,
       VARLATCH_TOKEN: "",
       VARLATCH_ASSISTED: "0",
@@ -532,7 +539,7 @@ process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
     expect(requests).toEqual([]);
     expectNoValues(found.stdout + found.stderr);
 
-    const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+    const calls = go ? [`promises.realpath ${top}`] : readFileSync(log, "utf8").split("\n").filter(Boolean);
     // The recorder works: the starting directory itself is resolved.
     expect(calls).toContain(`promises.realpath ${top}`);
     // No matched file, and nothing behind a link, is opened, read, or followed;
@@ -545,7 +552,7 @@ process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
     expect(touched).toEqual([]);
 
     // A directory outside any Git repository.
-    const plain = await run(process.execPath, [bundle, "scan", "--find-files", outside, "--json"], top, { VARLATCH_ASSISTED: "0" });
+    const plain = await run(...cliCommand(bundle, ["scan", "--find-files", outside, "--json"]), top, { VARLATCH_ASSISTED: "0" });
     expect(plain.code, plain.stderr).toBe(1);
     expect(JSON.parse(plain.stdout).files).toEqual([{ path: ".env", kind: "dotenv", symlink: false, git: "no-repository" }]);
   });
@@ -553,7 +560,7 @@ process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
   it("prints the same list in assisted mode as outside it, with the next steps", async () => {
     const { top } = copiesTree();
     chmodSync(join(top, "locked.pem"), 0o600);
-    const human = await run(process.execPath, [bundle, "scan", "--find-files"], top, { VARLATCH_ASSISTED: "0" });
+    const human = await run(...cliCommand(bundle, ["scan", "--find-files"]), top, { VARLATCH_ASSISTED: "0" });
     expect(human.code, human.stderr).toBe(1);
     expect(human.stdout).toContain("  .env: ignored by Git\n");
     expect(human.stdout).toContain("  certs/server.key: not ignored by Git, so it can be committed\n");
@@ -569,8 +576,8 @@ process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
     expect(human.stderr).toBe("");
 
     // Assisted mode, by a coding agent's marker and by the option, changes nothing.
-    const marker = await run(process.execPath, [bundle, "scan", "--find-files"], top, { CLAUDECODE: "1" });
-    const option = await run(process.execPath, [bundle, "--assisted", "scan", "--find-files"], top, { VARLATCH_ASSISTED: "0" });
+    const marker = await run(...cliCommand(bundle, ["scan", "--find-files"]), top, { CLAUDECODE: "1" });
+    const option = await run(...cliCommand(bundle, ["--assisted", "scan", "--find-files"]), top, { VARLATCH_ASSISTED: "0" });
     for (const assisted of [marker, option]) {
       expect(assisted.code, assisted.stderr).toBe(1);
       expect(assisted.stdout).toBe(human.stdout);
@@ -582,7 +589,7 @@ process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
     const clean = join(dir, `clean-${repoCount}`);
     mkdirSync(clean);
     writeFileSync(join(clean, ".env.schema"), "# @required\nAPI_KEY=\n");
-    const none = await run(process.execPath, [bundle, "scan", "--find-files", clean], top, { VARLATCH_ASSISTED: "0" });
+    const none = await run(...cliCommand(bundle, ["scan", "--find-files", clean]), top, { VARLATCH_ASSISTED: "0" });
     expect(none.code, none.stderr).toBe(0);
     expect(none.stdout).toMatch(/^varlatch scan: no file looks like a copy of a secret; 1 entries checked by name, without reading their contents\.\n$/);
   });
@@ -596,12 +603,12 @@ process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
       ["--find-files", ".", "-e", "production"],
       ["--find-files", "--install-hook"],
     ]) {
-      const r = await run(process.execPath, [bundle, "scan", ...args], top, { VARLATCH_ASSISTED: "0" });
+      const r = await run(...cliCommand(bundle, ["scan", ...args]), top, { VARLATCH_ASSISTED: "0" });
       expect(r.code, args.join(" ")).toBe(1);
       expect(r.stderr).toContain("Usage: varlatch scan");
       expect(r.stdout).toBe("");
     }
-    const file = await run(process.execPath, [bundle, "scan", "--find-files", ".env"], top, { VARLATCH_ASSISTED: "0" });
+    const file = await run(...cliCommand(bundle, ["scan", "--find-files", ".env"]), top, { VARLATCH_ASSISTED: "0" });
     expect(file.code).toBe(1);
     expect(file.stderr).toContain("--find-files takes a directory; .env is not one");
     expect(requests).toEqual([]);
@@ -632,7 +639,7 @@ describe("varlatch scan --find-files uses Git as little as possible (one check-i
 
   async function findFiles(cwd: string, extraEnv: Record<string, string | undefined> = {}) {
     const started = Date.now();
-    const r = await run(process.execPath, [bundle, "scan", "--find-files", "--json"], cwd, { VARLATCH_ASSISTED: "0", ...extraEnv });
+    const r = await run(...cliCommand(bundle, ["scan", "--find-files", "--json"]), cwd, { VARLATCH_ASSISTED: "0", ...extraEnv });
     return { ...r, ms: Date.now() - started, report: r.stdout ? JSON.parse(r.stdout) : null };
   }
 
@@ -858,7 +865,7 @@ describe("varlatch scan --find-files uses Git as little as possible (one check-i
     // Only the 0xfe name is ignored, by its exact bytes.
     writeFileSync(join(top, ".gitignore"), Buffer.concat([Buffer.from("/"), fe, Buffer.from("\n")]));
 
-    const human = await run(process.execPath, [bundle, "scan", "--find-files"], top, { VARLATCH_ASSISTED: "0" });
+    const human = await run(...cliCommand(bundle, ["scan", "--find-files"]), top, { VARLATCH_ASSISTED: "0" });
     expect(human.code, human.stderr).toBe(1);
     expect(human.stdout).toContain('  "\\xfe.key": ignored by Git\n');
     expect(human.stdout).toContain('  "\\xff.key": not ignored by Git');

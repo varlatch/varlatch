@@ -40,6 +40,20 @@ func (osEnv) Environ() map[string]string {
 	return env
 }
 
+// EnvironNames lists the process environment's names in the order the
+// process got them, the first of names that repeat.
+func (osEnv) EnvironNames() []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && k != "" && !seen[k] {
+			seen[k] = true
+			names = append(names, k)
+		}
+	}
+	return names
+}
+
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "verify-release" {
 		return verifyRelease(args[1:], stdout, stderr)
