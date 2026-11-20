@@ -247,6 +247,12 @@ func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err e
 				return fmt.Errorf("migrate: table %s: %w", t.Source, err)
 			}
 		}
+		// The check sections are the checks' (server/migration/check),
+		// held against this database after the import; nothing of them
+		// is imported.
+		if err := r.SkipSections(); err != nil {
+			return err
+		}
 		if err := r.End(); err != nil {
 			return err
 		}

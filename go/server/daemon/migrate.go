@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,14 +17,16 @@ import (
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/migration/check"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
 )
 
 // The migration's host commands (internal docs/design/go-step7.md decision
-// 2, slice 7.3a), offline only, under the data directory's lock, with no
-// varlatchd running:
+// 2, slices 7.3a and 7.3b), offline only, under the data directory's lock,
+// with no varlatchd running:
 //
 //	varlatchd admin migrate import --in <bundle> [--json]
+//	varlatchd admin migrate check --in <bundle> [--json]  (the run key on stdin)
 //	varlatchd admin migrate export --reverse --out <bundle> [--json]
 //
 // import builds a fresh database in the configured data directory, which
@@ -33,8 +36,16 @@ import (
 // import, from a copy of the database; out is a new file, mode 0600. Both
 // print what they did; --json as one object. Neither prints a value of
 // the bundle.
+//
+// check holds the imported database against the bundle it was imported
+// from (server/migration/check/CHECKS.md): every check runs, and the report
+// names each fault's check, table or class. The run key, 64 hex digits on
+// one line, comes on standard input (from `varlatch migrate`, on a pipe:
+// never a file, an argument or the environment); the Root KEK from its
+// file. Neither is printed, nor any value of the database. Exit 0 when
+// every check passes, 1 when one fails.
 
-const migrateUsage = "Usage: varlatchd admin migrate import --in <bundle> [--json] | varlatchd admin migrate export --reverse --out <bundle> [--json]"
+const migrateUsage = "Usage: varlatchd admin migrate import --in <bundle> [--json] | varlatchd admin migrate check --in <bundle> [--json] (the run key on stdin) | varlatchd admin migrate export --reverse --out <bundle> [--json]"
 
 type migrateArgs struct {
 	sub, in, out string
@@ -43,7 +54,7 @@ type migrateArgs struct {
 
 func parseMigrate(rest []string) (migrateArgs, string) {
 	var a migrateArgs
-	if len(rest) == 0 || (rest[0] != "import" && rest[0] != "export") {
+	if len(rest) == 0 || (rest[0] != "import" && rest[0] != "export" && rest[0] != "check") {
 		return a, migrateUsage
 	}
 	a.sub = rest[0]
@@ -69,7 +80,7 @@ func parseMigrate(rest []string) (migrateArgs, string) {
 		}
 	}
 	switch {
-	case a.sub == "import" && (a.in == "" || a.out != "" || reverse):
+	case (a.sub == "import" || a.sub == "check") && (a.in == "" || a.out != "" || reverse):
 		return a, migrateUsage
 	case a.sub == "export" && (a.out == "" || a.in != "" || !reverse):
 		return a, migrateUsage
@@ -78,7 +89,7 @@ func parseMigrate(rest []string) (migrateArgs, string) {
 }
 
 // runMigrate is `admin migrate`, in this process, the data directory held.
-func runMigrate(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
+func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	a, _ := parseMigrate(rest)
 	what := "varlatchd admin migrate " + a.sub
 	fail := func(status int, format string, args ...any) int {
@@ -113,7 +124,7 @@ func runMigrate(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 	}
 	o := migrate.Options{DataDir: cfg.DataDir, Ignore: []string{LockFile}, Release: buildinfo.Version}
 	var res migrate.Result
-	if a.sub == "import" {
+	if a.sub == "import" || a.sub == "check" {
 		raw, err := os.ReadFile(cfg.RootKEKFile)
 		if err != nil {
 			return fail(ExitFailure, "cannot read the Root KEK file: %v", err)
@@ -124,6 +135,11 @@ func runMigrate(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 			return fail(ExitConfig, "the Root KEK file does not hold a Root KEK: %v", err)
 		}
 		defer clear(o.RootKEK)
+	}
+	if a.sub == "check" {
+		return runCheck(cfg, a, o.RootKEK, stdin, stdout, fail)
+	}
+	if a.sub == "import" {
 		in, err := os.Open(a.in)
 		if err != nil {
 			return fail(ExitFailure, "%v", err)
@@ -179,4 +195,73 @@ func syncFile(path string) error {
 	}
 	defer f.Close()
 	return f.Sync()
+}
+
+// runCheck is `admin migrate check`: the run key read from stdin, the
+// database opened read-only, the checks run, the report printed.
+func runCheck(cfg *config.Config, a migrateArgs, rootKEK []byte, stdin io.Reader, stdout io.Writer, fail func(int, string, ...any) int) int {
+	runKey, err := readRunKey(stdin)
+	if err != nil {
+		return fail(64, "%v", err)
+	}
+	defer clear(runKey)
+	db, err := openReadOnly(cfg)
+	if err != nil {
+		return fail(ExitFailure, "%v", err)
+	}
+	if db == nil {
+		return fail(ExitFailure, "the data directory %s holds no database: import first", cfg.DataDir)
+	}
+	defer db.Close()
+	in, err := os.Open(a.in)
+	if err != nil {
+		return fail(ExitFailure, "%v", err)
+	}
+	defer in.Close()
+	rep, err := check.Run(context.Background(), db, in, check.Options{RootKEK: rootKEK, RunKey: runKey})
+	if err != nil {
+		return fail(ExitFailure, "%v", err)
+	}
+	if a.asJSON {
+		b, err := json.Marshal(rep)
+		if err != nil {
+			return fail(ExitFailure, "%v", err)
+		}
+		fmt.Fprintln(stdout, string(b))
+	} else {
+		fmt.Fprint(stdout, rep.Text())
+	}
+	if !rep.Passed {
+		return ExitFailure
+	}
+	return ExitOK
+}
+
+// readRunKey reads the run key: one line of 64 lowercase hex digits, and
+// nothing after it. The line is cleared once decoded; an error never
+// quotes it.
+func readRunKey(stdin io.Reader) ([]byte, error) {
+	buf := make([]byte, 66)
+	defer clear(buf)
+	n, err := io.ReadFull(stdin, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("cannot read the run key from standard input: %v", err)
+	}
+	line := buf[:n]
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		line = line[:len(line)-1]
+	}
+	key := make([]byte, 32)
+	if len(line) != 64 || n == len(buf) {
+		return nil, errors.New("standard input does not hold the run key: one line of 64 lowercase hex digits")
+	}
+	for _, c := range line {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return nil, errors.New("standard input does not hold the run key: one line of 64 lowercase hex digits")
+		}
+	}
+	if _, err := hex.Decode(key, line); err != nil {
+		return nil, errors.New("standard input does not hold the run key: one line of 64 lowercase hex digits")
+	}
+	return key, nil
 }

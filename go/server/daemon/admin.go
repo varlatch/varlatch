@@ -146,7 +146,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
 	case sub == "migrate":
-		return runMigrate(cfg, rest, stdout, stderr)
+		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
 	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
@@ -157,7 +157,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] | varlatchd admin migrate import|export --reverse  (each with [--config <file>])\n", msg)
+		"varlatchd admin schema status|upgrade [--json] | varlatchd admin migrate import|check|export --reverse  (each with [--config <file>])\n", msg)
 	return 64
 }
 

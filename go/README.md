@@ -2901,6 +2901,43 @@ migrations.
   - **Accepted difference:** `installation.migrated` is an audit event of
     the Go server (`GoOnlyEventTypes`); the last TypeScript release
     (0.23.0, slice 7.2a) knows it too.
+- The migration's checks (step 7, slice 7.3b; ADR-0059 Decision 9 phase 4;
+  internal docs/design/go-step7.md decisions 7 and 8;
+  `server/migration/check/CHECKS.md`):
+  - The bundle gains two sections after the tables: the writer's keyed
+    digest of every encrypted item (HMAC-SHA256 under the migration's run
+    key over `canonical.DigestInput`; the key itself never in the bundle)
+    and its decision table (credential, credential state, resource,
+    action, Tailnet Context, answer). The end line counts both. An import
+    reads them past; a reverse bundle carries them empty until slice 7.6.
+  - `varlatchd admin migrate check --in <bundle> [--json]` (offline, the
+    data directory held, the database opened read-only; the run key, 64 hex
+    digits on one line, on standard input) holds the imported database
+    against the bundle in five checks, each run whatever another found:
+    rows (every copied row's canonical bytes, matched by key, or by
+    position for `requirements`; no extra row, no unaccounted table),
+    encryption classes (every item of the ten classes opened with the Root
+    KEK and digested, held against the bundle's digests), audit (the
+    source's log a prefix of the target's by position, then only the
+    migration's revocations and one `installation.migrated` carrying the
+    header; every cursor where the source left it), authorization
+    (every decision evaluated again with `authz.Decide`) and
+    authentication (identities, passkeys, credentials, OIDC bindings,
+    setup grants and device sign-ins by key; no session kept; every live
+    browser credential of an ended session revoked). Exit 0 when all
+    pass, 1 when one fails; the report names checks, tables, classes,
+    positions, ids and counts, never a value, a plaintext, a digest or a
+    key.
+  - The read side is its own: `server/migration/check` queries SQLite
+    directly through the manifest and imports nothing of
+    `server/migration/migrate` (`TestTheChecksDoNotImportTheImport` walks
+    its import graph).
+  - Seeded run (`TestASeededImportPasses`, on `migrationtest`'s twelve
+    parity fixtures under one Root KEK, every class real): every check
+    passes; each damage of the design's list fails at its own check, its
+    table or class named (`TestAChangedCiphertextByteFailsItsClass`,
+    `TestEachDamageFailsAtItsCheck`); the reports are scanned for every
+    seeded plaintext, the Root KEK, the run key and every digest.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

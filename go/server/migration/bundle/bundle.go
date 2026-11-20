@@ -2,7 +2,8 @@
 
 // Package bundle is the migration's bundle, bundle-v1 (BUNDLE.md): the
 // stream the TypeScript server's export and varlatchd's reverse export
-// write, a header, each manifest table's canonical rows, and an end line
+// write, a header, each manifest table's canonical rows, the check
+// sections (the writer's keyed digests and decisions), and an end line
 // carrying the stream's SHA-256, so a stream cut short is refused whole.
 package bundle
 
@@ -74,6 +75,11 @@ type Writer struct {
 	nTables int
 	nRows   int64
 	err     error
+	// section is 0 in the tables, 1 in the digests, 2 in the decisions.
+	section    int
+	nDigests   int
+	nDecisions int
+	lastDigest *Digest
 }
 
 // NewWriter writes h to w and returns the writer for m's tables.
@@ -130,7 +136,7 @@ func (w *Writer) Row(row []byte) error {
 	if w.err != nil {
 		return w.err
 	}
-	if w.left <= 0 {
+	if w.left <= 0 || w.section != 0 {
 		return errors.New("bundle: a row beyond its table's count")
 	}
 	if bytes.IndexByte(row, '\n') >= 0 {
@@ -147,11 +153,12 @@ func (w *Writer) Close() error {
 	if w.err != nil {
 		return w.err
 	}
-	if w.left != 0 || w.next != len(w.tables) {
-		return fmt.Errorf("bundle: closed after %d of %d tables, %d rows still due", w.next, len(w.tables), w.left)
+	if w.left != 0 || w.next != len(w.tables) || w.section != 2 {
+		return fmt.Errorf("bundle: closed after %d of %d tables and section %d, %d lines still due", w.next, len(w.tables), w.section, w.left)
 	}
 	end := jsvalue.Object{{Key: "end", Value: jsvalue.Object{
-		{Key: "tables", Value: w.nTables}, {Key: "rows", Value: w.nRows}, {Key: "sha256", Value: hex.EncodeToString(w.sum.Sum(nil))},
+		{Key: "tables", Value: w.nTables}, {Key: "rows", Value: w.nRows}, {Key: "digests", Value: w.nDigests},
+		{Key: "decisions", Value: w.nDecisions}, {Key: "sha256", Value: hex.EncodeToString(w.sum.Sum(nil))},
 	}}}
 	b := append(jsvalue.Stringify(end), '\n')
 	if _, err := w.w.Write(b); err != nil {
@@ -191,6 +198,11 @@ type Reader struct {
 	left   int
 	nRows  int64
 	head   Header
+	// section is 0 in the tables, 1 in the digests, 2 in the decisions.
+	section    int
+	nDigests   int
+	nDecisions int
+	lastDigest *Digest
 }
 
 // NewReader reads and checks the header against m.
@@ -277,7 +289,7 @@ func (r *Reader) line() ([]byte, error) {
 
 // NextTable reads the next table's line: the manifest's table and its row
 // count. It is an error while rows of the previous table are due, or after
-// the last table (call End).
+// the last table (read the sections, then call End).
 func (r *Reader) NextTable() (manifest.Table, int, error) {
 	if r.left != 0 {
 		return manifest.Table{}, 0, fmt.Errorf("bundle: %d rows of %s still due", r.left, r.tables[r.next-1].Source)
@@ -308,7 +320,7 @@ func (r *Reader) NextTable() (manifest.Table, int, error) {
 // Row reads the current table's next row (its canonical bytes; the caller
 // decodes them with the table's types).
 func (r *Reader) Row() ([]byte, error) {
-	if r.left <= 0 {
+	if r.left <= 0 || r.section != 0 {
 		return nil, errors.New("bundle: no row is due")
 	}
 	line, err := r.line()
@@ -320,11 +332,11 @@ func (r *Reader) Row() ([]byte, error) {
 	return line, nil
 }
 
-// End reads the end line once every table is read, and checks its counts
-// and the stream's digest; nothing may follow it.
+// End reads the end line once every table and both sections are read, and
+// checks its counts and the stream's digest; nothing may follow it.
 func (r *Reader) End() error {
-	if r.left != 0 || r.next != len(r.tables) {
-		return fmt.Errorf("bundle: the end before %d of %d tables were read", r.next, len(r.tables))
+	if r.left != 0 || r.next != len(r.tables) || r.section != 2 {
+		return fmt.Errorf("bundle: the end before %d of %d tables and both sections were read", r.next, len(r.tables))
 	}
 	want := hex.EncodeToString(r.sum.Sum(nil))
 	b, err := r.r.ReadSlice('\n')
@@ -333,16 +345,20 @@ func (r *Reader) End() error {
 	}
 	var e struct {
 		End *struct {
-			Tables *int    `json:"tables"`
-			Rows   *int64  `json:"rows"`
-			SHA256 *string `json:"sha256"`
+			Tables    *int    `json:"tables"`
+			Rows      *int64  `json:"rows"`
+			Digests   *int    `json:"digests"`
+			Decisions *int    `json:"decisions"`
+			SHA256    *string `json:"sha256"`
 		} `json:"end"`
 	}
-	if err := strict(b[:len(b)-1], &e); err != nil || e.End == nil || e.End.Tables == nil || e.End.Rows == nil || e.End.SHA256 == nil {
+	if err := strict(b[:len(b)-1], &e); err != nil || e.End == nil || e.End.Tables == nil || e.End.Rows == nil ||
+		e.End.Digests == nil || e.End.Decisions == nil || e.End.SHA256 == nil {
 		return errors.New("bundle: the end line was due")
 	}
-	if *e.End.Tables != len(r.tables) || *e.End.Rows != r.nRows {
-		return fmt.Errorf("bundle: the end line counts %d tables and %d rows; the stream holds %d and %d", *e.End.Tables, *e.End.Rows, len(r.tables), r.nRows)
+	if *e.End.Tables != len(r.tables) || *e.End.Rows != r.nRows || *e.End.Digests != r.nDigests || *e.End.Decisions != r.nDecisions {
+		return fmt.Errorf("bundle: the end line counts %d tables, %d rows, %d digests and %d decisions; the stream holds %d, %d, %d and %d",
+			*e.End.Tables, *e.End.Rows, *e.End.Digests, *e.End.Decisions, len(r.tables), r.nRows, r.nDigests, r.nDecisions)
 	}
 	if *e.End.SHA256 != want {
 		return errors.New("bundle: the stream's SHA-256 is not the end line's: damaged")
@@ -374,7 +390,8 @@ func shortLine(b []byte) string {
 }
 
 // Verify reads a whole bundle without keeping it: its header, every table
-// line and row count, the end line's counts and the stream's SHA-256. An
+// line and row count, the check sections' lines, the end line's counts and
+// the stream's SHA-256. An
 // import runs it first, so a bundle cut short or damaged is named so before
 // anything is written.
 func Verify(r io.Reader, m *manifest.Manifest) (Header, error) {
@@ -392,6 +409,9 @@ func Verify(r io.Reader, m *manifest.Manifest) (Header, error) {
 				return Header{}, err
 			}
 		}
+	}
+	if err := br.SkipSections(); err != nil {
+		return Header{}, err
 	}
 	return br.head, br.End()
 }
