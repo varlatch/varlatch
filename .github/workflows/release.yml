@@ -537,8 +537,10 @@ jobs:
   # for linux/amd64 and linux/arm64, with provenance (mode=max) and SBOM
   # attestations; pushed as ghcr.io/OWNER/varlatchd:<version> and never as
   # latest. Then both platforms' varlatchd and varlatch in the pushed image
-  # must be byte for byte the release's, and the pushed amd64 image must
-  # pass go/image/check-image.mjs. It is signed only once the conformance
+  # must be byte for byte the release's, the pushed amd64 image must pass
+  # go/image/check-image.mjs, each platform's provenance must name this
+  # commit and workflow with an SBOM beside it, and the arm64 binaries must
+  # run under emulation. It is signed only once the conformance
   # suites have passed against it too (go-image-sign). Always on a
   # GitHub-hosted runner: BuildKit cannot attach an SBOM
   # attestation in the self-hosted runner's sandbox, and the repository is
@@ -645,6 +647,41 @@ jobs:
         run: |
           docker pull --quiet --platform linux/amd64 "$IMAGE@$DIGEST" > /dev/null
           node go/image/check-image.mjs "$IMAGE@$DIGEST"
+      # The attestations, as verify-release.md checks them: each platform's
+      # provenance names this commit and this workflow, and each has an
+      # SBOM.
+      - name: The pushed image's provenance and SBOMs
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            provenance=$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --format "{{ json (index .Provenance \"$platform\") }}")
+            built=$(jq -r '[.. | objects | .["vcs:revision"]? // empty] | unique | join(" ")' <<<"$provenance")
+            by=$(jq -r '.SLSA.buildDefinition.internalParameters.github_workflow_ref' <<<"$provenance")
+            [ "$built" = "$GITHUB_SHA" ] || { echo "$platform: the provenance names $built, not $GITHUB_SHA" >&2; exit 1; }
+            [ "$by" = "$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF" ] || { echo "$platform: the provenance names the workflow $by" >&2; exit 1; }
+            docker buildx imagetools inspect "$IMAGE@$DIGEST" --format "{{ json (index .SBOM \"$platform\") }}" \
+              | jq -e '.SPDX.packages | length > 0' > /dev/null || { echo "$platform: no SBOM" >&2; exit 1; }
+            echo "$platform: built from $GITHUB_SHA by release.yml, with an SBOM"
+          done
+      # The arm64 image's binaries run, under emulation: a smoke check (the
+      # amd64 image is checked in full above and by the conformance suites).
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          platforms: arm64
+      - name: The arm64 image's binaries run
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          VERSION: ${{ needs.line.outputs.version }}
+        run: |
+          set -euo pipefail
+          d=$(docker run --rm --name "vl-release-arm64-$GITHUB_RUN_ID-d" --platform linux/arm64 "$IMAGE@$DIGEST" --version)
+          c=$(docker run --rm --name "vl-release-arm64-$GITHUB_RUN_ID-c" --platform linux/arm64 --entrypoint /opt/varlatch/varlatch "$IMAGE@$DIGEST" --version)
+          [ "$d" = "varlatchd $VERSION" ] && [ "$c" = "varlatch $VERSION" ] || { echo "linux/arm64: $d / $c" >&2; exit 1; }
+          echo "linux/arm64: $d, $c"
       - name: The pushed image's reference
         id: pushed
         env:

@@ -126,7 +126,10 @@ The image is `ghcr.io/varlatch/varlatchd`, tagged with the version alone
 below 0.50.0). The release notes name it by digest; pin it by that digest.
 The release workflow pushes it, checks that it holds the release's own
 binaries and passes the conformance suites, and only then signs it and
-publishes the release.
+publishes the release. If the workflow stops partway, a version's image can
+be in the registry, signed or not, with no published release: such an
+image is unverified. Take an image's digest only from a published
+release's notes, never from the registry's tags.
 
 ```sh
 IMAGE=$(gh release view "v$V" -R "$REPO" --json body -q .body \

@@ -1698,23 +1698,25 @@ the drains and `admin audit-export discard-plan`.
 
 `image/Dockerfile` is one image with `varlatchd` and `varlatch`
 (`/opt/varlatch/`, where the host backup job finds the CLI), distroless
-static, run as uid and gid 65532, the data directory `/var/lib/varlatch`
-a volume (a new one starts the image user's, mode 0700), the
-configuration at `/etc/varlatch/varlatchd.conf`, the keys mounted as files
-under `/keys`. `image/build.sh` builds it with buildx from a directory of
-release assets (the named build context `assets`), for both platforms,
-and never pushes: `release.yml` publishes it, from the same assets. On a
+static, run as uid and gid 65532, the data directory `/var/lib/varlatch` a
+volume (a new one starts the image user's, mode 0700), the configuration
+at `/etc/varlatch/varlatchd.conf`, the keys mounted as files under
+`/keys`. `image/build.sh` builds it with buildx from a directory of
+release assets (the named build context `assets`), for both platforms, and
+never pushes: `release.yml` publishes it, from the same assets. On a
 Go-line tag, `go-image` builds it from the release's own Linux binaries
 and pushes `ghcr.io/varlatch/varlatchd:<version>` (never `latest`) with
 provenance and SBOM attestations and the label
 `com.varlatch.release.sha256sums` (the SHA-256 of the release's
 `SHA256SUMS`, which binds the image to the signed assets), checks that
 both platforms hold those binaries byte for byte and carry that label, and
-runs `check-image.mjs` on the pushed amd64 image; `go-image-conformance` runs the conformance suites against it (with
-varlatchd's conformance build of the same commit in place of the release
-build, which has no probes); only then `go-image-sign` signs it keyless,
-and the release notes give its digest. `docs/operations/verify-release.md`
-shows how to check it.
+checks that the provenance names the commit and that each platform has an
+SBOM, runs both binaries of the arm64 image under emulation, and runs
+`check-image.mjs` on the pushed amd64 image; `go-image-conformance` runs
+the conformance suites against it (with varlatchd's conformance build of
+the same commit in place of the release build, which has no probes); only
+then `go-image-sign` signs it keyless, and the release notes give its
+digest. `docs/operations/verify-release.md` shows how to check it.
 
 Keys reach varlatchd only as files. `varlatchd serve` refuses to start
 (exit 78) when its environment holds the Root KEK or the Backup
