@@ -1799,6 +1799,21 @@ state stay as they were. `varlatch admin reenroll (--all | --identity
 person (a new one revokes the unused ones), a day by default, a week at
 most, each `reenrollment.grant_issued` without the token.
 
+**If the move stops**, rerun `varlatch move` (no `--public-url`): the
+journal says where it stands. `move.json` holds `from` and `fromIngress`,
+`to` and `toIngress`, `archive` (the archive taken first), `startedAt`,
+`passkeysRetiredAt` and `linksIssuedAt` once those steps are done, and
+`previousConfig` and `config`, `varlatchd.conf` before and after the move.
+A rerun puts `config` back if the move stopped before writing it, restarts
+varlatchd only when it does not serve the new address yet, and treats a
+removal that committed before the journal recorded it as done. A
+`varlatchd.conf` that is neither of the two is refused: put one back, or
+`varlatch move --abandon` (which writes `previousConfig` and restarts
+varlatchd). An unreadable journal stops the command with nothing changed:
+put the configuration varlatchd should run in place from the journal's
+text, restart varlatchd, and remove the journal. If the old passkeys were
+removed, only restoring `archive` brings them back.
+
 The links are the one credential a move prints. They go to the terminal
 only, through the fail-safe's one exception for them
 (`showReenrollLinks`, beside `invite`'s link): never to the journal, a log,

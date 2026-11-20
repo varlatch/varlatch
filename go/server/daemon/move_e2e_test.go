@@ -358,4 +358,29 @@ func TestMoveKeepsTheTailnetNode(t *testing.T) {
 		t.Fatalf("the node's state: %v, before %v", after, before)
 	}
 	waitReport(t, r, bearer, `"node":{"status":"pass"}`)
+
+	// The move stopped after varlatchd removed the passkeys and before its
+	// journal recorded it: a rerun takes the removal as done and goes on.
+	journalPath := filepath.Join(in.dir, "move.json")
+	raw, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal map[string]any
+	if err := json.Unmarshal(raw, &journal); err != nil || journal["passkeysRetiredAt"] == nil {
+		t.Fatalf("the journal: %v %s", err, raw)
+	}
+	delete(journal, "passkeysRetiredAt")
+	raw, _ = json.Marshal(journal)
+	if err := os.WriteFile(journalPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out = runMoveCLI(t, bin, restart, "--no-wait", "--config", in.conf)
+	if code != 75 || !strings.Contains(out, "the passkeys for https://vault.example.com were already removed (the move had stopped after removing them)") ||
+		!strings.Contains(out, "Links were issued at") {
+		t.Fatalf("the rerun after a stop: %d\n%s", code, out)
+	}
+	if raw, _ := os.ReadFile(journalPath); !strings.Contains(string(raw), `"passkeysRetiredAt"`) {
+		t.Fatalf("the rerun did not record the removal: %s", raw)
+	}
 }

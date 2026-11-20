@@ -248,7 +248,7 @@ func moveCommand(r *Run) error {
 		return err
 	}
 	if r.Getenv("VARLATCH_IMAGE") != "" {
-		return moveFail("in the container, a move is by hand: take an archive (varlatchd admin backup run), set the new public_url in the mounted varlatchd.conf and recreate the container, then run `varlatchd admin public-url-changed --from <the old URL>` and `varlatch admin reenroll --all` in it (docs/operations/move-installation.md). Nothing was changed.", ExitUsage)
+		return moveFail("in the container, a move is by hand: take an archive (varlatchd admin backup run), set the new public_url in the mounted varlatchd.conf and recreate the container, then run `varlatchd admin public-url-changed --from <the old URL>` and `varlatch admin reenroll --all` in it. Nothing was changed.", ExitUsage)
 	}
 	hours := 0
 	if h, ok := parsed.Values["--reenroll-hours"]; ok {
@@ -310,7 +310,7 @@ func (m *mover) readState() (*moveState, error) {
 	}
 	var s moveState
 	if json.Unmarshal(raw, &s) != nil || s.From == "" || s.To == "" || s.Config == "" {
-		return nil, moveFail(m.journal+" is unreadable, so the move's progress is unknown. Nothing was changed. See docs/operations/move-installation.md, \"If the move stops\", before you remove it.", ExitFailure)
+		return nil, moveFail(m.journal+" is unreadable, so the move's progress is unknown. Nothing was changed. It records the configuration before the move (\"previousConfig\") and after it (\"config\"): put the one varlatchd should run in varlatchd.conf and restart varlatchd, then remove it; rerun `varlatch move` only with a readable journal.", ExitFailure)
 	}
 	return &s, nil
 }
@@ -700,14 +700,29 @@ func (m *mover) finish(s *moveState) error {
 			PasskeysRemoved int `json:"passkeysRemoved"`
 			SessionsEnded   int `json:"sessionsEnded"`
 		}
-		if err := m.r.varlatchdJSON("varlatch move", []string{"admin", "public-url-changed", "--from", s.From}, m.config, &done); err != nil {
+		answer, said, code, err := m.r.execVarlatchd("varlatch move", []string{"admin", "public-url-changed", "--from", s.From}, m.config)
+		if err != nil {
 			return err
+		}
+		line := ""
+		switch {
+		case code == 0:
+			if json.Unmarshal(bytes.TrimSpace(answer), &done) != nil {
+				return Fail("varlatch move: varlatchd answered public-url-changed with no JSON document; is it the same release as this varlatch?", ExitFailure)
+			}
+			line = "  ✓ " + strconv.Itoa(done.PasskeysRemoved) + " passkey(s) for " + s.From + " removed, " + strconv.Itoa(done.SessionsEnded) + " browser session(s) ended"
+		case strings.Contains(string(said), "were already removed when the installation moved to "+s.To):
+			// The removal committed, and the move stopped before its journal
+			// recorded it: the step is done.
+			line = "  ✓ the passkeys for " + s.From + " were already removed (the move had stopped after removing them)"
+		default:
+			return m.r.varlatchdEnded("varlatch move", said, code)
 		}
 		s.PasskeysRetiredAt = time.Now().UTC().Format(time.RFC3339)
 		if err := m.writeState(s); err != nil {
 			return err
 		}
-		if err := m.say("  ✓ " + strconv.Itoa(done.PasskeysRemoved) + " passkey(s) for " + s.From + " removed, " + strconv.Itoa(done.SessionsEnded) + " browser session(s) ended"); err != nil {
+		if err := m.say(line); err != nil {
 			return err
 		}
 	}
