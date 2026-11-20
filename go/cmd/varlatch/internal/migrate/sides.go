@@ -168,6 +168,8 @@ type TargetInfo struct {
 	PublicURL   string `json:"publicUrl"`
 	Listen      string `json:"listen"`
 	ListenHTTPS string `json:"listenHttps"`
+	// Tailnet is its tailnet settings and node, nil when tailnet = off.
+	Tailnet *TargetTailnet `json:"tailnet,omitempty"`
 }
 
 // TargetState is what the target holds: its journal's head (nil for
