@@ -6,7 +6,10 @@ import { loadManifest, writeBundle, type BundleSummary, type Digest, type Frozen
 import { decisionTable } from "./decisions.js";
 import { digests } from "./digests.js";
 import { preflight, type Preflight } from "./preflight.js";
+import { ExportRefused } from "./refused.js";
 import { pgRowSource } from "./source.js";
+
+export { ExportRefused };
 
 /**
  * `varlatchd admin migration export` (ADR-0059 step 7, go-step7 slice
@@ -28,13 +31,6 @@ import { pgRowSource } from "./source.js";
  * The decisions are evaluated at the frozen point: their moment (`at`) is
  * the last audit event's, so it too is the same at every export.
  */
-
-export class ExportRefused extends Error {
-  override name = "ExportRefused";
-  constructor(message: string, readonly preflight?: Preflight) {
-    super(message);
-  }
-}
 
 const SNAPSHOT = /^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i;
 

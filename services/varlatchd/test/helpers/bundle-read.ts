@@ -36,7 +36,7 @@ export function readBundle(text: string): BundleParts {
       section = "digests";
     } else if (line.startsWith('{"decisions":')) {
       section = "decisions";
-      parts.at = BigInt(/"at":(\d+)/.exec(line)![1]!);
+      parts.at = BigInt(/"at":(-?\d+)/.exec(line)![1]!);
     } else if (section === "digests") {
       parts.digests.push(JSON.parse(line) as Digest);
       parts.digestLines.push(line);

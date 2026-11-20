@@ -73,7 +73,9 @@ describe("bundle-v1", () => {
   });
 
   it("writes none of varlatchd's refused bundles: each is refused, or comes out as the format says", async () => {
-    expect(refused.length).toBeGreaterThanOrEqual(30);
+    expect(refused.length).toBeGreaterThanOrEqual(31);
+    const unparsed: string[] = [];
+    let refusedByWriter = 0;
     for (const c of refused) {
       let parts: BundleParts | null = null;
       try {
@@ -81,10 +83,18 @@ describe("bundle-v1", () => {
       } catch {
         // Not even a bundle's shape: nothing of it can reach the writer.
       }
-      if (!parts) continue;
+      if (!parts) {
+        unparsed.push(c.name);
+        continue;
+      }
       const written = await write(parts).catch(() => null);
+      if (written === null) refusedByWriter++;
       expect(written, `${c.name} (${c.why})`).not.toBe(c.bundle);
     }
+    // Every case reaches the writer but these two, which are not lines a
+    // writer could be given; a new case of that kind is named here.
+    expect(unparsed.sort()).toEqual(["a digest that is not a line of its own", "text after the end line"]);
+    expect(refusedByWriter).toBeGreaterThanOrEqual(7);
   });
 
   it("sorts the digests by class, then by their ids as written in jsonb order, and refuses an item twice", async () => {

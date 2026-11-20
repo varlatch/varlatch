@@ -95,9 +95,15 @@ function memoized(client: Querier): Querier {
   } as Querier;
 }
 
-/** The contexts a Requirement's selector is tested with: one satisfying it, and per tailnet one satisfying none. */
+/**
+ * The contexts a Requirement's selector is tested with: one satisfying it
+ * (when it names a node, a tag or a user: a selector naming none is
+ * satisfied by no context), and per tailnet one satisfying none.
+ */
 function contextsFor(requirements: TailnetRequirementRecord[]): DecisionTailnet[] {
   const out: DecisionTailnet[] = [];
+  // Requirements with the same selector give the same context: it is
+  // decided once, as a second copy would decide the same tuples again.
   const seen = new Set<string>();
   const add = (t: DecisionTailnet) => {
     const key = JSON.stringify(t);
@@ -109,6 +115,7 @@ function contextsFor(requirements: TailnetRequirementRecord[]): DecisionTailnet[
   const sorted = [...requirements].sort((a, b) => Buffer.compare(Buffer.from(a.id), Buffer.from(b.id)));
   for (const r of sorted) {
     const s = r.selector;
+    if (!s.nodes?.length && !s.tags?.length && !s.users?.length) continue;
     add({ tailnet: s.tailnet, nodeId: s.nodes?.[0] ?? UNNAMED_NODE, tags: s.tags?.slice(0, 1) ?? [], userLogin: s.users?.[0] ?? null });
   }
   for (const r of sorted) add({ tailnet: r.selector.tailnet, nodeId: UNNAMED_NODE, tags: [], userLogin: null });

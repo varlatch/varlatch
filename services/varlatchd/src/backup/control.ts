@@ -239,8 +239,10 @@ async function holdSnapshot(db: PoolQuerier, gateId: string): Promise<{ snapshot
   }
 }
 
-/** Ends the held snapshot's transaction, if any. */
-/** Whether a held snapshot's transaction is still open. */
+/**
+ * Whether a held snapshot's transaction is still open: a query on its
+ * connection fails once the transaction or the backend has ended.
+ */
 async function stillHeld(client: Awaited<ReturnType<PoolQuerier['connect']>>): Promise<boolean> {
   try {
     await client.query('SELECT 1');
@@ -250,6 +252,7 @@ async function stillHeld(client: Awaited<ReturnType<PoolQuerier['connect']>>): P
   }
 }
 
+/** Ends the held snapshot's transaction, if any. */
 export async function releaseHeldSnapshot(): Promise<void> {
   const h = held;
   held = null;

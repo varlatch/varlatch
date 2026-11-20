@@ -135,6 +135,17 @@ describe.skipIf(!url)("the migration's export", () => {
       expect(digestLines[i]).toBe(`{"class":"${d.class}","ids":${idsText(d.ids)},"hmac":"${d.hmac}"}`);
     }
     expect(digestLines.find((l) => l.includes('"class":"value"'))).toMatch(/^\{"class":"value","ids":\{"secretId":"[^"]+","versionId":"[^"]+","organizationId":"[^"]+"\},"hmac":"[0-9a-f]{64}"\}$/);
+    // An item that does not open (here: the wrong Root KEK) refuses the
+    // export by where it is, never by a value, and writes nothing.
+    const wrong = generateKey();
+    const out = new PassThrough();
+    const written: Buffer[] = [];
+    out.on("data", (c: Buffer) => written.push(c));
+    const err = await exportSource(db, { gate: ctx.maintenance!.gate, dryRun: false, out, rootKek: wrong, runKey }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ExportRefused);
+    expect((err as Error).message).toMatch(/^the kek-canary item in installation\.kek_canary \(installationId inst_[a-z0-9]+\) does not open/);
+    for (const key of [wrong, ctx.rootKek, runKey]) expect((err as Error).message).not.toContain(key.toString("hex"));
+    expect(Buffer.concat(written).length).toBe(0);
     // Without a run key, an empty digest section.
     const plain = await run();
     expect(plain.result.bundle.digests).toBe(0);
