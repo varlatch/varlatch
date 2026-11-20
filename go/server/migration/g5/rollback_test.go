@@ -532,6 +532,36 @@ func (w *world) undoneReleased() (released, ok bool) {
 // again, and a forward migration run again is refused until --finish.
 // Then the reverse checks failing (a faulty import) undo it: Go serves.
 func TestG5RollbackWhole(t *testing.T) {
+	// Go obtained a certificate while the migration was open (its
+	// issuance count, certificate_issuances, holds rows): the reverse
+	// checks run on Go's copy, which an import never wrote, and the
+	// rollback goes through (the count is carried apart from the bundle).
+	t.Run("after an issuance", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		w.useState()
+		if err := stopService(); err != nil {
+			t.Fatal(err)
+		}
+		db, err := sql.Open("sqlite", "file:"+filepath.Join(w.data, "varlatch.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now().UnixMilli()
+		_, err = db.Exec("INSERT INTO certificate_issuances (name, started_at, outcome, ended_at) VALUES (?, ?, 'issued', ?), (?, ?, 'refused', ?)",
+			"varlatch.example.test", now-60_000, now-50_000, "varlatch.example.test", now-40_000, now-30_000)
+		db.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := startService(filepath.Join(filepath.Dir(shared.varlatch), "varlatchd"), filepath.Join(w.stateDir, "service.conf")); err != nil {
+			t.Fatal(err)
+		}
+		if code := w.rollback("", "--rollback"); code != 0 {
+			t.Fatalf("--rollback after an issuance: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.expectReverse("rolled back", rolledBackState)
+		w.noSecrets()
+	})
 	t.Run("rolled back", func(t *testing.T) {
 		w := migratedWorld(t, false, false)
 		old := w.oldDB()
