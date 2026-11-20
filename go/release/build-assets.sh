@@ -12,6 +12,10 @@
 #                                          <version>
 #   varlatchd.service                      the systemd unit
 #   varlatchd.conf.example                 the documented configuration
+#   release.json                           the manifest: the version and
+#                                          go/release/release.json's
+#                                          rollback-safety declaration
+#                                          (slice 6.6a)
 #   SHA256SUMS                             every file above, one line each
 #
 # These are the names install.sh and install.ps1 fetch; check-assets.sh
@@ -99,6 +103,12 @@ stamp() { # stamp <file>
 stamp install.sh
 stamp install.ps1
 cp "$install_dir/varlatchd.service" "$install_dir/varlatchd.conf.example" "$out/"
+
+# The manifest (ADR-0059 Decision 8): go/release/release.json, checked
+# against this build's schema version, with the release's version. A
+# declaration that does not hold stops the build.
+(cd "$gomod" && CGO_ENABLED=0 go run ./server/db/releasecheck manifest --version "$version") > "$out/release.json"
+printf 'wrote release.json\n'
 
 # One line per file, in byte order of the names, as sha256sum writes them.
 (

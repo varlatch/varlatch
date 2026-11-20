@@ -765,20 +765,75 @@ comes. `verify-release`, which the installers run, is Go's own.
     `testdata/transcripts/5.4c-redact.json` records every combination, the
     terminal refusals under a pseudo-terminal (`terminal` cases), and
     `redact-run.test.ts` runs against Go.
-  - **Not built yet.** `--strict` (5.4f), `--agent-safe` and a run inside
-    an agent-safe run (5.5b) refuse with the CLI's not-built message (64).
+  - **`--strict` (slice 5.4f, `strictRun.ts`).** One strict retrieval
+    (`POST .../retrievals`, retried once after a server failure or a lost
+    connection) gives the values, the manifest and the Contract Revision.
+    The environment the command would receive is resolved and validated
+    against that revision (`lib/contract`'s semantics); `--allow-inherited`
+    accepts a parent's value, validated, and must name Contract items;
+    `--omit` of a required item is a violation. Every violation is printed
+    at once, names, classes and reasons, never a value, and the run ends
+    with 78 before the command starts (`5.4f-strict.json`, one case per
+    kind). A server without strict retrieval gets 78, never a default run.
+    The checks come after the strict retrieval, whose one answer holds the
+    Contract and the values: an `--allow-inherited` or `--omit` name that
+    is refused, or a violation, ends a run whose values were already
+    disclosed to the CLI process (and recorded as a disclosure); nothing
+    reaches the command before every check.
+  - **Not built yet.** `--agent-safe` (with `--strict` too) and a run
+    inside an agent-safe run (5.5b) refuse with the CLI's not-built message
+    (64).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
   prompt's keys) and 2,022 texts split into grapheme clusters, `validate`'s
   outcome and `--json` document for 17 reports, and import's type
   inference (every semantics version), name checks and strict decoding.
+- Scan (slice 5.4d; ADR-0038 Decision 14): `scan (--staged | <path>...)
+  [-e <env>] [--json] [--baseline <file>] [--write-baseline]
+  [--max-file-size <size>] [--max-total-size <size>]` and `scan
+  --install-hook [-e <env>]` are `internal/scan` (`engine.go`,
+  `baseline.go`, `sources.go`: scan.ts and scanSources.ts) and
+  `internal/cli`'s `scancmd.go` (scanCommand.ts and main.ts's case, with
+  `--find-files`). Listing comes first and reads no content: `--staged`
+  takes the blobs the index records for every path the next commit adds or
+  changes (`git diff --cached --raw -z`, sizes from `git cat-file
+  --batch-check`, content from one `git cat-file --batch`, never the
+  working tree; inside a hook, Git's own environment as it is), and paths
+  are walked without following a symbolic link, in byte order of their
+  names. A file over `--max-file-size` (64 MiB) or past `--max-total-size`
+  (1 GiB) is refused by its listed size before it is opened, and every file
+  is read in chunks of 64 KiB, so memory stays bounded. Only when a file
+  will be read is there one disclosure, `scope: "all-authorized-secrets"`
+  with `purpose: "scan"` (a server without `secrets.disclosure-purpose` is
+  named), and the values (current and retiring) go to `internal/matcher`'s
+  `StreamScanner`, binary files as bytes; each value long enough to mask
+  is a value in flight, so no output or diagnostic shows one. A finding
+  names the path, line, byte column, item, version and form, never the
+  value or the line; a file ending with a value's start is counted, never
+  a finding; `varlatch:allow NAME` on a line the occurrence touches and a
+  baseline entry (path, item, version: nothing else is accepted) allow
+  one; past 1,000 findings a file's occurrences are counted by item and
+  version. `--install-hook` writes `.git/hooks/pre-commit` (Git's
+  `--git-path`) to run `varlatch scan --staged` from the project directory,
+  and never replaces a hook it did not write (it names the line to add
+  instead). Statuses: 1 for findings, 2 when nothing is found but a file
+  was not scanned, 0 otherwise, and 1 for every failure (usage, a refused
+  credential, a server that cannot be reached).
+  `testdata/vectors/scan.json` (`apps/cli/test/go-vectors-scan.test.ts`)
+  holds 33 engine cases (locations, forms, markers, bounds, baselines,
+  listing limits, incomplete starts; `internal/scan`'s `TestEngineVectors`
+  also feeds each in every chunk size up to 97 bytes), 26 trees scanned as
+  `--staged` or paths with real Git (`TestSourceVectors`), and
+  `parseSize`, `formatBytes`, the baseline's reading and writing, the
+  option parser and the hook's text; the transcripts (`5.4d-scan`, 38
+  cases) hold the command end to end against the fake server, a transcript
+  per failure class included. `scan-cli.test.ts` runs against Go (the
+  hook blocks real commits), and `TestScanIsLinear` holds every
+  adversarial shape to the shared growth rule.
 - Find files (slice 5.4e): `scan --find-files [<dir>] [--json]` is
-  `internal/findfiles`, run from `internal/cli`'s `findfilescmd.go`; the
-  rest of `scan` is slice 5.4d, so `scan` answers only the command lines
-  that name `--find-files` before `--` (read by `scan`'s whole option
-  parser, so its usage errors are scan's) and says the others are not
-  built. It lists the files whose names look like copies of secrets
+  `internal/findfiles`, run from `internal/cli`'s `scancmd.go`. It lists
+  the files whose names look like copies of secrets
   (`.env`, `.env.*` but the two templates, `*.pem`, `*.key`) by names and
   `lstat` alone: it never reads a candidate, never follows a symbolic link
   (one is listed by its own name), skips `.git`, `.hg`, `.svn` and
@@ -867,7 +922,9 @@ it to the recording.
 | `types` names a revision only by an id of the server's shape (`unrecognized-id`) | the id as the server or `--revision` gave it | a revision id that is not the server's shape (`rev_` and 26 characters of lower-case base32), from the answer or from `--revision`, is `an unrecognized id` in every message (`Wrote <file> from Contract Revision an unrecognized id (...)`, a 404 for `--revision`, every refusal of the revision), and `--check`'s hint gives `--revision <revision-id>` for such an argument; the module itself always holds the server's id, byte for byte | A mistyped argument or a server's free text never reaches the terminal (as `contract activate`); real revision ids keep their bytes |
 | `types` shows the server's text safely (`types-printable`) | not compared | a refusal of the revision has its control characters and bidirectional overrides escaped as `\uXXXX` (a Contract's unrecognized key, quoted in the validation issue, included), and the semantics version is shown only as a whole number from 1 to 999, else as `an unrecognized version` | A server's answer never drives the terminal (`TestTypesShowsTheServersVersionSafely`) |
 | `release` (a pattern of the transcripts, not a behaviour) | a module `types` writes names `varlatch 0.22.0` (its Generator lines, `generatedFrom` and the accessor schema) | this build's release | Each CLI names itself, and a module is current for another release when only those lines differ; a case that lists the `release` pattern has `varlatch <the CLI's release>` written `varlatch {{release}}` in the recording and the replay alike, and `{{release}}` in its files is the running CLI's release (`goKit.ts` `releasePattern`, `transcript.ReleaseFill`); another release a case names (`0.13.0`) is compared as it is |
-| `spawn-error`: a command `run` cannot start | Node's error escapes: its stack trace, exit 1 | `varlatch: spawn <command> ENOENT` (or `EINVAL` for a Windows `.bat` or `.cmd` file, `EACCES`), exit 1 | Node's own message without the stack (`run.no-command`) |
+| `spawn-error`: a command `run` cannot start | Node's error escapes: its stack trace, exit 1 | `varlatch: spawn <command> <errno>`, exit 1: `ENOENT` when PATH has no such file, `EACCES` when a file there may not be executed and no later one may (libuv's execvp), `ENOEXEC` for one the system cannot execute, `EINVAL` for a Windows `.bat` or `.cmd` file | Node's own message without the stack (`run.no-command`, `TestLookCommandRemembersEACCES`, `TestSpawnExecFormatError`) |
+| `run --strict` and an item type outside the Contract's eight | a value of an item whose `type` the CLI does not know passes, and the command starts | an `invalid` violation, `has a type this Contract Semantics version does not define`, and 78: nothing starts | A conforming server sends only the Contract's types; a type the CLI cannot validate is never taken as valid |
+| `run --strict`'s refusals of `--allow-inherited` and `--omit` names | the names echoed as given | the names escaped as `Printable` escapes server and user text (controls and bidirectional overrides as `\uXXXX`), as `run`'s other refusals do | A name the person typed never drives the terminal |
 | The order of the command's environment (`run`) | the parent's variables in the order the process got them, then the delivered ones | the parent's variables sorted by name, then the delivered ones (a variable set again keeps its place) | No program reads its environment's order; the values are the same (`5.4b-run` transcripts) |
 | `validate` and `import` show only documented fields | not compared | `validate` refuses a report whose lists are not the protocol's shape (each an array of names, or of objects whose documented members are strings; `valid` and `complete` booleans; a present `null` for any of them is not that shape, while an omitted `complete` or list, from a server before it, keeps its fallback) before judging or printing anything: `varlatch validate: the server's answer is not a validation report (<where> has an unexpected shape); nothing was judged.`, status 1; of a report of that shape it shows the documented members only, a requirement or reason outside the protocol's enumerations as `an unrecognized requirement` or `an unrecognized reason`; `import` shows a Contract item's type outside the Contract's types as `an unrecognized type` and its sensitivity as a boolean, in `--json`, human text and `--dry-run` alike | A server never puts an extra field, or a value, into what the CLI prints; a report or Contract of the protocol's shape gives the same bytes (`TestServerFieldsNeverPassThrough`, `TestValidateRefusesAReportOfAnotherShape`) |
 | `init-delete-link`: guided `init` and a `.env` that is a symbolic link | not compared | asked to delete it, guided `init` keeps a link and says so (`<file> is a symbolic link, so it was not deleted: deleting the link would leave the values in the file it points to.`), and deletes a regular file only if it still holds what was read and the path still names it (`TestGuidedDeleteNeverRemovesALink`) | Deleting the plaintext copy must not leave it in the file the link points to |
@@ -882,6 +939,11 @@ it to the recording.
 | `pending-sign-ins.json` and runs at the same time | not compared | not locked across processes, as in TypeScript: each run reads the file, changes its entry and replaces the file atomically, so of two runs that change it at once the later write wins (a `--start` replacing an entry another run's `--wait` is keeping, for example) | Parity: both CLIs share the file (decision 11), and a lock one of them does not take would not hold. A lost update costs at most a sign-in to start again |
 | Secrets in flight never show | not compared | a credential given or issued, a device code, a sign-in hand-off bearer, an OIDC ID token and the GitHub Actions request token are held for the run (`Run.holdValue`): every exact occurrence, and its escaped form, is `[redacted]` on stdout, in every `--json` document and on stderr, whatever their length or format, as well as in a server's free text | A server's answer or an error could echo one, and only Varlatch's own token formats are caught by shape. Pinned by `internal/cli`'s `TestInFlightSecretsNeverShow` and every 5.2 transcript, whose canaries appear in no output |
 | `now` (how transcripts compare, not a behaviour) | `login` and `env use` write the time of the run (`issuedAt`, `tierCachedAt`) | the same, at another time | A case that lists the `now` pattern has each ISO 8601 timestamp between its run's start and end written `{{now}}`, in the recording and the replay alike (`goKit.ts` `nowPattern`, `transcript.NowPattern`); a timestamp outside the run is compared as it is |
+| `scan-staged-total`: `--max-total-size` with `--staged` | not compared | each staged file is admitted with the sizes of the files admitted before it counted, as a path scan admits each file just before it reads it, so the staged content read in all stays within the bound; a file past it is named `over the total size bound of <size>` and not read | The bound limits how much one scan reads; the scan vectors' `staged.total-bound` case is compared through this difference (`internal/scan`'s `TestSourceVectors`, `TestStagedTotalBound`) |
+| `scan-values-in-flight`: a value `scan` holds | not compared | each disclosed value long enough to mask (8 characters or more) is a value in flight: a path, an item name or any other text that holds one is shown with it `[redacted]`, on stdout and stderr alike; the baseline file keeps paths as they are, since it must match them again (`TestScanNeverShowsAValue`) | A scan never puts a value on the terminal, whatever a file is named |
+| `scan-hook-link`: `scan --install-hook` where the pre-commit hook (its `git rev-parse --git-path hooks/pre-commit`, `core.hooksPath` honoured) is a symbolic link | not compared (TypeScript writes through the link, wherever it points) | refused, 1: `<hook> is a symbolic link; it was left unchanged, since varlatch does not write a hook through a link. Replace it with a file, or add "varlatch scan --staged \|\| exit 1" to the hook it points to yourself.`, the link and what it points to unchanged, a dangling link's target not created, and the target never named. The check is `Lstat` before anything is read, and the write itself never follows a link (`O_NOFOLLOW`; on Windows the reparse point is opened and seen) | A hook location that is a link can point anywhere outside `.git/hooks`, so writing through it could change a file the person never meant to give the hook. Pinned by `internal/cli`'s `TestInstallHookRefusesALink` and `TestWriteHookNeverFollowsALink` |
+| `scan-disclosure-shape`: a disclosure answer of another shape | not compared | an item whose `name`, `versionId` or `value` (or its retiring version's) is not a string, an item that is not an object, or `items` that cannot be iterated ends the scan with 1 before any file is read, the reason in Go's words and nothing of the answer shown (`TestScanRefusesADisclosureOfAnotherShape`) | A scan looks only for values it can name |
+| `baseline-json-syntax`: a baseline that is not JSON | `invalid baseline <path>: not valid JSON (<V8's message>)` | `invalid baseline <path>: not valid JSON (Unexpected end of JSON input)` for an empty file, `(Unexpected token in JSON)` otherwise | V8's wording quotes the text it stopped at; the scan vectors compare such a baseline by the start of the message |
 
 ## varlatchd
 
@@ -2766,6 +2828,33 @@ migrations.
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the
   recorded version, accepting a newer one only when its `compatible_from`
   allows (rollback-safe releases, G6).
+- `version.go` and `upgrade.go` (step 6, slice 6.6a): `SchemaVersion`,
+  `CompatibleFrom` (the oldest schema whose varlatchd may open a database
+  of this one) and the upgrade steps, one per released schema version.
+  `Upgrade` runs every step from the database's version on in one write
+  job and records the last step's `compatibleFrom`; a step never lowers
+  it. `varlatchd admin schema status|upgrade [--json]` fronts it: status
+  reads the database read-only, beside a running varlatchd too; upgrade
+  runs offline under the data directory's lock and is refused while
+  varlatchd runs or a restore is unfinished (`varlatch upgrade` runs it on
+  a copy first). Until the first Go release `schema.sql` still changes in
+  place under version 1; from it on, every change raises `SchemaVersion`
+  with its step.
+- The release's rollback-safety declaration (ADR-0059 Decision 8, G6):
+  `go/release/release.json` says the schema version, `compatibleFrom`,
+  whether the release is rollback-safe and the previous release it was
+  checked against; `build-assets.sh` attaches it as `release.json` with
+  the version (`go/lib/release` `Manifest`, format 1).
+  `server/db/schemadiff` classifies every change from the previous
+  release's schema as additive, review (an enumeration that only gains
+  values) or breaking, and `server/db/releasecheck` fails CI when the
+  declaration does not hold: a breaking change in a release declared
+  rollback-safe, or a changed schema that keeps its version. G6's run
+  (`go/release/g6.sh`, go-binary shard 1) serves the previous release on
+  a database the new one upgraded, with the conformance suites, then the
+  new release on what the previous one wrote. What the schema does not
+  show (a value the previous release misreads, an envelope format, a
+  restriction kept in code) is G6's run and the release checklist.
 - `query/`: typed queries generated by sqlc from `schema.sql` and
   `queries/*.sql` with `sqlc.json` (boolean columns as `bool`). sqlc is
   pinned by the `tool` directive in `go.mod` (v1.31.1, `go tool sqlc`);
@@ -2835,6 +2924,17 @@ blocked`, but that error reaches its generic handler, which prints
 (exit 1 either way). varlatchd prints the refusal itself.
 
 ## Before the first Go release
+
+- G6 has no previous Go release to check against yet
+  (`go/release/release.json` names none): until `0.50.0-rc.2` is checked
+  against `rc.1`, CI proves the machinery with the `g6fixture` build (this
+  commit's schema plus one rollback-safe step, `server/db/version_g6fixture.go`)
+  as the new release and this commit's build as the previous one. The
+  same step declared not rollback-safe (`g6fixture,g6unsafe`:
+  `compatibleFrom` 2) checks the other path without the conformance runs:
+  it passes declared so, since the previous release refuses its database,
+  and fails declared rollback-safe. The first release's declaration is not
+  rollback-safe: there is nothing to go back to.
 
 - G3 at the database level: `go test ./server/values -run TestG3Gate
   -args -g3-gate` passes, so every encryption class in

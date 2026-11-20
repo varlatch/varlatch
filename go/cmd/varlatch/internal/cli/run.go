@@ -24,9 +24,10 @@ import (
 // the run (78) unless the human allowed it (--allow-unmasked, outside
 // assisted mode); --redact (5.4c, redact.ts, ADR-0038 Decision 10) masks
 // the delivered Secrets outside assisted mode too, and refuses when stdout
-// or stderr is a terminal or the run is agent-safe. --strict (5.4f),
-// --agent-safe and a run inside an agent-safe run (5.5b) say they are not
-// built yet.
+// or stderr is a terminal or the run is agent-safe; --strict (5.4f,
+// strictrun.go) validates the whole environment against the Contract
+// first. --agent-safe and a run inside an agent-safe run (5.5b) say they
+// are not built yet.
 
 const runUsage = "Usage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]... " +
 	"[--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]"
@@ -244,9 +245,6 @@ func runCommand(r *Run) error {
 			return UsageError("varlatch: " + refusal + ". Nothing was started.")
 		}
 	}
-	if hasArg(pre, "--strict") {
-		return runNotBuilt("--strict", "5.4f")
-	}
 	if agentSafe {
 		return runNotBuilt("--agent-safe", "5.5b")
 	}
@@ -261,6 +259,9 @@ func runCommand(r *Run) error {
 	c, err := api.get()
 	if err != nil {
 		return err
+	}
+	if hasArg(pre, "--strict") {
+		return r.strictRun(ctx, c, pre, command, commandArgs, omit, allowUnmasked, assistedRedaction, redact)
 	}
 	return r.defaultRun(ctx, c, cwd, pre, command, commandArgs, omit, allowUnmasked, assistedRedaction, redact)
 }
@@ -366,7 +367,7 @@ func (r *Run) defaultRun(ctx *clientctx.Context, c *apiclient.Client, cwd string
 	if len(withheld) > 0 {
 		r.eprintln("varlatch: " + itoa(len(withheld)) + " value(s) withheld by policy: " + Printable(strings.Join(withheld, ", ")))
 	}
-	parent := r.Environ()
+	parent := r.parentVars()
 	env := buildEnv(r.parentEnv(), effective, omitted)
 	if got.encode != nil {
 		encoded, err := got.encode(effective, parent, omitted)
