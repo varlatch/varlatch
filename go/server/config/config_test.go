@@ -265,6 +265,14 @@ func TestParsePublicHTTPS(t *testing.T) {
 	if c, err := parse("public_url = https://vault.example.com\nlisten_https = 10.0.0.1:443\n"); err != nil || c.PublicHTTPS.RedirectListen != "10.0.0.1:80" {
 		t.Errorf("the redirect's default address: %+v %v", c, err)
 	}
+	for _, listen := range []string{"127.0.0.1:8686", "127.0.0.2:8686", "[::1]:8686"} {
+		if _, err := parse("listen = " + listen + "\npublic_url = https://vault.example.com\nlisten_https = :443\n"); err != nil {
+			t.Errorf("loopback listen %s with listen_https: %v", listen, err)
+		}
+	}
+	if c, err := parse("listen = 0.0.0.0:8686\npublic_url = https://vault.example.com\n"); err != nil || c.PublicHTTPS != nil {
+		t.Errorf("a non-loopback plain listener without public HTTPS, as before: %+v %v", c, err)
+	}
 	if c, err := parse("public_url = https://vault.example.com\n"); err != nil || c.PublicHTTPS != nil {
 		t.Errorf("off: %+v %v", c, err)
 	}
@@ -284,6 +292,9 @@ func TestParsePublicHTTPS(t *testing.T) {
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca = http://ca.example/directory\n", "is not an https ACME directory URL"},
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca = https://u:p@ca.example/directory\n", "is not an https ACME directory URL"},
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca_root = ca.pem\n", "is not an absolute path"},
+		{"listen = 0.0.0.0:8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
+		{"listen = 192.0.2.5:8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
+		{"listen = :8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
 		{"acme_email = ops@example.com\n", "listen_https is not"},
 		{"listen_http_redirect = :80\n", "listen_https is not"},
 		{"acme_ca = https://ca.example/d\n", "listen_https is not"},

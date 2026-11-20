@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -200,24 +201,22 @@ func TestPushNeverKeepsTheCallersBuffer(t *testing.T) {
 
 // growth times the small and the large work: each runs once untimed first
 // (a cold or still clocking-up CPU would make whichever runs first look
-// slow), then they are timed in turn, small, large, small, large, small,
-// large, each run after a garbage collection, and the fastest of each is
-// given. Noise (a shared runner's pauses, another job's load) only ever
-// adds time, and timing the two in turn makes a busy spell slow both alike
+// slow), then they are timed in turn, small, large, five times each, each
+// run after a garbage collection and with the collector off while it runs,
+// and the fastest of each is given. Noise (a shared runner's pauses,
+// another job's load, a collection landing in one run) only ever adds
+// time, and timing the two in turn makes a busy spell slow both alike
 // instead of one.
 func growth(small, large func()) (time.Duration, time.Duration) {
 	small()
 	large()
 	var bestSmall, bestLarge time.Duration
-	for i := range 3 {
+	for i := range 5 {
 		for _, f := range []struct {
 			run  func()
 			best *time.Duration
 		}{{small, &bestSmall}, {large, &bestLarge}} {
-			runtime.GC()
-			start := time.Now()
-			f.run()
-			if took := time.Since(start); i == 0 || took < *f.best {
+			if took := timed(f.run); i == 0 || took < *f.best {
 				*f.best = took
 			}
 		}
@@ -225,15 +224,27 @@ func growth(small, large func()) (time.Duration, time.Duration) {
 	return bestSmall, bestLarge
 }
 
+// timed is one run of f, after a garbage collection and with the collector
+// off while it runs.
+func timed(f func()) time.Duration {
+	runtime.GC()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	start := time.Now()
+	f()
+	return time.Since(start)
+}
+
 // growsLinearly is the timing tests' criterion: for an input eight times
 // as large, the time may grow at most 24-fold. Linear work grows about
 // eightfold and quadratic about 64-fold (on CI runners, where caches and
 // load flatten the curve, nearer 38-fold), so 24 sits near the geometric
 // middle, with room for noise on either side. It judges growth only, never
-// a machine's absolute speed; 20 ms of slack keeps a shape that takes a
-// few milliseconds from failing on jitter.
+// a machine's absolute speed. A little slack keeps a shape that takes a few
+// milliseconds from failing on jitter: 20 ms, but never more than twice the
+// small run, so it cannot hide growth where the runs are short (the race
+// detector's smaller inputs).
 func growsLinearly(small, large time.Duration) bool {
-	return large <= 24*small+20*time.Millisecond
+	return large <= 24*small+min(20*time.Millisecond, 2*small)
 }
 
 // TestTheLinearityCriterion: growth an eighth of the input to all of it
@@ -253,6 +264,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 		{100 * ms, 4000 * ms, false}, // 40 times
 		{50 * ms, 1900 * ms, false},  // 38 times
 		{100 * ms, 6400 * ms, false}, // 64 times
+		{2 * ms, 60 * ms, false},     // 30 times, at a few milliseconds: the slack is at most twice the small run
 	} {
 		if growsLinearly(c.small, c.large) != c.linear {
 			t.Errorf("%v then %v: judged linear %v", c.small, c.large, !c.linear)
@@ -281,12 +293,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 	// never stops the sizing early and shrinks the control's margin.
 	n := 2000
 	for n < 32000 {
-		probe := func() time.Duration {
-			runtime.GC()
-			start := time.Now()
-			quadratic(n)()
-			return time.Since(start)
-		}
+		probe := func() time.Duration { return timed(quadratic(n)) }
 		if min(probe(), probe()) >= 50*time.Millisecond {
 			break
 		}
@@ -309,7 +316,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 // chain of overlaps, a hold that never completes, a chunk holding
 // thousands of matches, many Secrets, every encoded form) takes time
 // linear in the input, by growsLinearly: an eighth of the input against
-// all of it, warmed up, then timed in turn, best of three each (growth). No absolute
+// all of it, warmed up, then timed in turn, best of five each (growth). No absolute
 // time bound: a slow runner is not a failure. Under the race detector the
 // inputs are a quarter the size.
 func TestMatcherIsLinear(t *testing.T) {
@@ -389,7 +396,11 @@ func FuzzStreamEqualsWhole(f *testing.F) {
 			if !bytes.Equal(got, want) {
 				t.Fatalf("got %q, want %q", got, want)
 			}
-			noFormSurvives(t, got, entries)
+			// The oracle finds the markers in the output by their text, so an
+			// input that holds marker text itself would confuse it.
+			if !bytes.Contains(input, []byte("[REDACTED:")) {
+				noFormSurvives(t, got, entries)
+			}
 		}
 		st, _, _ := scan(entries, input, randomCuts(r, len(input), r.IntN(12)))
 		var found []Occurrence

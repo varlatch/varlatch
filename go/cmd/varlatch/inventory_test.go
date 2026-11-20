@@ -31,6 +31,9 @@ type inventory struct {
 		Of       string   `json:"of"`
 		Commands []string `json:"commands"`
 		Slice    string   `json:"slice"`
+		// CoveredBy are the vectors or recorded cases that run an option of
+		// another program (an argument the CLI passes to git).
+		CoveredBy []string `json:"coveredBy"`
 		// CommandSlices: the commands for which the option belongs to a
 		// later slice than the command's (--confirm of org and project is
 		// their delete subcommands', 5.7c).
@@ -186,10 +189,19 @@ func TestInventoryCoverage(t *testing.T) {
 			continue // an option a later slice builds, of a command built already (status --probe)
 		}
 		if o.Of != "varlatch" {
-			// An option of a program whose command line the guardrail hook
-			// reads: a hook vector's command uses it.
-			if o.Slice != "" && built(o.Slice) && !(o.Of == "another program" && hookCommandsUse(t, option)) {
-				t.Errorf("option %s (%s) of built slice %s: no vector uses it", option, o.Of, o.Slice)
+			// An option of another program (an argument the CLI passes to
+			// git, or one the guardrail hook reads) of a built slice: the
+			// vectors or recorded cases coveredBy names, each of which must
+			// exist, or a hook vector's command that uses it.
+			if o.Slice != "" && built(o.Slice) {
+				for _, ref := range o.CoveredBy {
+					if !refExists(t, cases, ref) {
+						t.Errorf("option %s (%s): %s names no vector section or recorded case", option, o.Of, ref)
+					}
+				}
+				if len(o.CoveredBy) == 0 && !(o.Of == "another program" && hookCommandsUse(t, option)) {
+					t.Errorf("option %s (%s) of built slice %s: no vector or recorded case covers it (coveredBy), and no hook vector uses it", option, o.Of, o.Slice)
+				}
 			}
 			continue
 		}

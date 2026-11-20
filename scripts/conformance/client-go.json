@@ -13,10 +13,6 @@
     "run-strict-agent-safe": {
       "reason": "varlatch run --strict --agent-safe: not ported to the Go CLI yet",
       "slice": "5.5b"
-    },
-    "scan": {
-      "reason": "varlatch scan: not ported to the Go CLI yet",
-      "slice": "5.4d"
     }
   }
 }

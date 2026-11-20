@@ -79,7 +79,7 @@ func adminCommand(r *Run) (bool, error) {
 		return false, nil
 	}
 	if i := slices.Index(r.Args, "--dir"); i >= 0 {
-		return true, composeRefusal(r)
+		return true, composeRefusal(r, "admin")
 	}
 	if len(r.Args) >= 2 && r.Args[0] == "backup" && (r.Args[1] == "create" || r.Args[1] == "verify") {
 		return true, UsageError("varlatch admin backup " + r.Args[1] + ": a Go installation's backups are `varlatch admin backup run` (it makes the archive and verifies it) and `varlatch admin backup status`; `backup create` and `backup verify` are a Compose installation's, through the TypeScript CLI")
@@ -148,7 +148,7 @@ func (f adminForm) check(args []string) (config string, out []string, err error)
 
 // composeRefusal is decision 11's: a Compose installation keeps its
 // TypeScript CLI, installed beside the Go one as varlatch-ts.
-func composeRefusal(r *Run) error {
+func composeRefusal(r *Run, command string) error {
 	ts := "varlatch-ts"
 	for _, dir := range filepath.SplitList(r.Getenv("PATH")) {
 		candidate := filepath.Join(dir, "varlatch-ts")
@@ -159,7 +159,7 @@ func composeRefusal(r *Run) error {
 			}
 		}
 	}
-	return UsageError("varlatch admin: --dir names a Compose installation, which the Go CLI does not manage; run this with the TypeScript CLI, " + ts + ", until `varlatch migrate` moves the installation (ADR-0059 step 7)")
+	return UsageError("varlatch " + command + ": --dir names a Compose installation, which the Go CLI does not manage; run this with the TypeScript CLI, " + ts + ", until `varlatch migrate` moves the installation (ADR-0059 step 7)")
 }
 
 // findVarlatchd is the varlatchd the host commands run: the one installed
@@ -302,45 +302,15 @@ func isCredentialVariable(name string) bool {
 // fail-safe (RedactValue), any other output and every line on stderr
 // through the fail-safe. Its exit status is the command's.
 func (r *Run) runVarlatchd(form adminForm, args []string, config string) error {
-	path, err := r.locateVarlatchd("varlatch admin")
+	answer, said, code, err := r.varlatchd("varlatch admin", args, config)
 	if err != nil {
 		return err
-	}
-	if config != "" {
-		args = append(args, "--config", config)
-	}
-	cmd := exec.Command(path, args...)
-	cmd.Env = varlatchdEnviron(r)
-	// What varlatchd prints is read whole, then shown through the
-	// fail-safe below: nothing of it reaches this process's streams as it
-	// is.
-	answer, said, err := runChild(cmd)
-	code := 0
-	if err != nil {
-		var exit *exec.ExitError
-		if !errors.As(err, &exit) {
-			return Fail("varlatch admin: could not run "+path+": "+err.Error(), ExitUnavailable)
-		}
-		code = exit.ExitCode()
-		if code < 0 {
-			code = ExitFailure // ended by a signal
-		}
 	}
 	if err := r.showVarlatchd(form, args, answer); err != nil {
 		return err
 	}
-	for _, line := range strings.Split(strings.TrimRight(string(said), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		if err := r.warn(line); err != nil {
-			return err
-		}
-	}
-	if code == ExitConfig && runtime.GOOS != "windows" && os.Geteuid() != 0 {
-		if err := r.warn("varlatch admin: the installation's configuration, data directory and control socket are its service's; run this as root (sudo varlatch admin ...)"); err != nil {
-			return err
-		}
+	if err := r.warnLines(said); err != nil {
+		return err
 	}
 	if code != 0 {
 		return ExitWith(code)
