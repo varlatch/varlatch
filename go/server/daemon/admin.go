@@ -53,7 +53,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && !conformance && !operator && !backup && !keys {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && sub != "status" && sub != "release-check" && !conformance && !operator && !backup && !keys {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -95,6 +95,16 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		}
 	case sub == "schema":
 		if _, _, msg := schemaArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "status":
+		if _, msg := statusArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "release-check":
+		if _, msg := releaseCheckArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
@@ -140,6 +150,10 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
+	case sub == "status":
+		return statusOnline(cfg, rest, stdout, stderr)
+	case sub == "release-check":
+		return runReleaseCheck(cfg, rest, stdout, stderr)
 	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
@@ -150,7 +164,8 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json]  (each with [--config <file>])\n", msg)
+		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin status [--json] | "+
+		"varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>)  (each with [--config <file>])\n", msg)
 	return 64
 }
 
@@ -297,7 +312,7 @@ const MaintenanceRefusal = "Installation is in maintenance; ordinary admin opera
 // but the backup and maintenance commands, which take the admission their
 // own way (backup run enters it; maintenance manages it; backup status
 // only reads).
-func writes(sub string) bool { return sub != "backup" && sub != "maintenance" }
+func writes(sub string) bool { return sub != "backup" && sub != "maintenance" && sub != "status" }
 
 // runHost runs one host command, in the daemon or offline, with env. A
 // command that writes enters the maintenance admission first, before any
@@ -328,6 +343,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runAuditExport(ctx, env, rest, stdout, stderr)
 	case sub == "tailnet":
 		return runTailnetRepin(ctx, env, rest, stdout, stderr)
+	case sub == "status":
+		return runStatus(ctx, env, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":
 		return adminUsage(stderr, "unknown command "+sub)
 	}

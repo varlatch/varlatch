@@ -76,6 +76,10 @@ type Options struct {
 	Outbound *outbound.Policy
 	// Version is the server version /v1/meta reports.
 	Version string
+	// ReleaseCheckDir holds the host's release check (release-check.json,
+	// ADR-0049), which `varlatch upgrade --check` records and
+	// getInstallationRelease reads; "" when there is none to read.
+	ReleaseCheckDir string
 	// PublicURL is the configured public URL; nil when not set.
 	PublicURL *url.URL
 	// Sync is the outbound sync installation switch; SyncAdapters narrows

@@ -161,7 +161,7 @@ func TestAdminSchemaUsage(t *testing.T) {
 	in := newInstall(t, "")
 	for _, args := range [][]string{{"schema"}, {"schema", "migrate"}, {"schema", "status", "--json", "--json"}, {"schema", "upgrade", "--yes"}} {
 		code, out, errOut := runAdmin(t, append(args, "--config", in.conf)...)
-		if code != 64 || out != "" || !strings.Contains(errOut, "Usage: varlatchd admin schema status|upgrade [--json] [--config <file>]") {
+		if code != 64 || out != "" || !strings.Contains(errOut, schemaUsage) {
 			t.Errorf("%v: %d %q %q", args, code, out, errOut)
 		}
 	}
