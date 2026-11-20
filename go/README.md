@@ -2030,7 +2030,8 @@ serves the tailnet listener on the node's own addresses
     - it logs out and leaves no state.
 
     The tailnet's access rules must let the node's tags see each other,
-    or the probe sees nothing and the check fails closed.
+    or the probe sees nothing and the check fails closed: the answer then
+    says so and names the tags.
   - **Tests.** `daemon`'s `TestTheHandoffNode` uses testcontrol and a
     test CA: enrolment, held, pinned and certified, run again, refusals,
     the expiry read without an issuance, varlatchd started held, silent on

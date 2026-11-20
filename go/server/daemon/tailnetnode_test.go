@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//go:build linux
+
 package daemon
 
 import (
@@ -207,6 +209,15 @@ func TestTheHandoffNode(t *testing.T) {
 	}
 	if code, out, _ := runAdmin(t, "tailnet", "reaches", "--name", temp, "--stable-id", "nSomeoneElse", "--config", in.conf); code != ExitFailure || !strings.Contains(out, "does not reach") {
 		t.Fatalf("reaches another node: %d %q", code, out)
+	}
+	// A name the probe cannot see at all: the access rules are named, with
+	// the tags involved, and the check fails closed.
+	code, out, _ = runAdmin(t, "tailnet", "reaches", "--name", "nobody", "--stable-id", en.StableID, "--json", "--config", in.conf)
+	if code != ExitOK || !strings.Contains(out, `"reaches":false`) || !strings.Contains(out, "access rules must let the node's tags (tag:varlatch) see each other") {
+		t.Fatalf("reaches a name nobody holds: %d %q", code, out)
+	}
+	if code, out, _ := runAdmin(t, "tailnet", "reaches", "--name", "nobody", "--stable-id", en.StableID, "--config", in.conf); code != ExitFailure || !strings.Contains(out, "saw no node named nobody") {
+		t.Fatalf("reaches a name nobody holds, as text: %d %q", code, out)
 	}
 	// A certificate through the running varlatchd's node.
 	code, out, errOut = runAdmin(t, "tailnet", "certificate", "obtain", "--name", temp, "--json", "--config", in.conf)

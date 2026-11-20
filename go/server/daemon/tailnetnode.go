@@ -456,6 +456,13 @@ func nodeFor(ctx context.Context, env *hostEnv) (*tailnet.TSNode, func(), error)
 	return node, func() { _ = node.Close() }, nil
 }
 
+// reachOut is `admin tailnet reaches --json`: the probe's findings and
+// what they mean.
+type reachOut struct {
+	tailnet.ReachResult
+	Message string `json:"message"`
+}
+
 // runTailnetReaches is `varlatchd admin tailnet reaches`: in this process,
 // beside a running varlatchd or not; it writes nothing but the probe's
 // state, removed after.
@@ -488,11 +495,22 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	if err != nil {
 		return fail("%v", err)
 	}
-	text := fmt.Sprintf("%s does not reach the node %s from a client node yet.", c.name, c.stableID)
-	if res.Reaches {
-		text = fmt.Sprintf("%s reaches the node %s from a client node.", c.name, c.stableID)
+	out := reachOut{ReachResult: res}
+	tags := strings.Join(t.Tags, ", ")
+	switch {
+	case res.Reaches:
+		out.Message = fmt.Sprintf("%s reaches the node %s from a client node.", c.name, c.stableID)
+	case len(res.Holders) == 0:
+		// Seeing nothing is most often the access rules: the probe has the
+		// node's tags, and sees only the peers those rules let it see. It
+		// fails closed all the same: an unproven reach is undone.
+		out.Message = fmt.Sprintf("The probe (tags %s) saw no node named %s. The tailnet's access rules must let the node's tags (%s) see each other: "+
+			"a node with those tags must be allowed to reach another (in Tailscale's policy file, a grant or ACL from %s to %s). "+
+			"Until it can, the name's reach cannot be proven, and the handoff is undone.", tags, c.name, tags, tags, tags)
+	default:
+		out.Message = fmt.Sprintf("%s does not reach the node %s from a client node yet.", c.name, c.stableID)
 	}
-	nodeOut(stdout, c.asJSON, res, text)
+	nodeOut(stdout, c.asJSON, out, out.Message)
 	if !c.asJSON && !res.Reaches {
 		return ExitFailure
 	}
