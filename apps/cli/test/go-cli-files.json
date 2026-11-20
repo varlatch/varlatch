@@ -14,6 +14,7 @@
     "test/machine-interface.test.ts",
     "test/mcp-cli.test.ts",
     "test/member-cli.test.ts",
+    "test/redact-run.test.ts",
     "test/run-signals.test.ts",
     "test/server-text-cli.test.ts",
     "test/token-expiry-warning.test.ts",
