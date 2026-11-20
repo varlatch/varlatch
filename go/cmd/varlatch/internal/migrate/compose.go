@@ -3,7 +3,6 @@
 package migrate
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -161,9 +160,11 @@ func (c *Compose) envFile() (map[string]string, error) {
 		return nil, err
 	}
 	out := map[string]string{}
-	sc := bufio.NewScanner(bytes.NewReader(env))
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	// Split on newlines, not scanned: a line of any length is read whole
+	// (a scanner's token limit would stop at a long one and read on as if
+	// the file ended there).
+	for _, raw := range bytes.Split(env, []byte("\n")) {
+		line := strings.TrimSpace(string(raw))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
