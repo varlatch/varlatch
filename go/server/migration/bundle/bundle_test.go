@@ -7,10 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -89,7 +89,7 @@ func readAll(m *manifest.Manifest, b []byte) (map[string][][]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			if _, err := canonical.DecodeRow(tb.Types(), row); err != nil {
+			if _, err := Decode(tb, row); err != nil {
 				return nil, err
 			}
 			out[tb.Source] = append(out[tb.Source], row)
@@ -139,6 +139,7 @@ func refusals(good []byte) []refusal {
 		{"a row more than counted", with(instRow-1, strings.Replace(lines[instRow-1], `"rows":1`, `"rows":0`, 1)), "a table line was due"},
 		{"a blank line", join(lines[:1]) + "\n" + join(lines[1:]), "blank line"},
 		{"CRLF", with(0, strings.TrimSuffix(header, "\n")+"\r\n"), "blank line, or a line ending"},
+		{"a session token carried", reseal(withSession(lines, `["ses_vectors",1795000000000000,"a token",1795000000000000,1795000000000000,null,null,"usr_vectors"]`)), "session.token holds a value"},
 		{"a row that is not canonical", reseal(with(instRow, strings.Replace(lines[instRow], `"inst_vectors",`, `"inst_vectors", `, 1))), "not in canonical form"},
 	}
 }
@@ -199,7 +200,8 @@ func TestRefusedBundles(t *testing.T) {
 		}
 		// Verify refuses it too, but for a row's form: it checks the
 		// stream, not the rows.
-		if _, err := Verify(bytes.NewReader([]byte(c.Bundle)), m); (err == nil) != (c.Name == "a row that is not canonical") {
+		rowFault := c.Name == "a row that is not canonical" || c.Name == "a session token carried"
+		if _, err := Verify(bytes.NewReader([]byte(c.Bundle)), m); (err == nil) != rowFault {
 			t.Errorf("Verify, %s: %v", c.Name, err)
 		}
 	}
@@ -239,9 +241,26 @@ func TestTheWriterKeepsTheFormat(t *testing.T) {
 			t.Errorf("%s: a left-out table among the bundle's", tb.Source)
 		}
 	}
-	if !errors.Is(nil, nil) {
-		t.Fatal()
+}
+
+// withSession is the bundle with one session row in place of none.
+func withSession(lines []string, row string) string {
+	var out []string
+	for _, l := range lines {
+		if l == `{"table":"session","rows":0}`+"\n" {
+			out = append(out, `{"table":"session","rows":1}`+"\n", row+"\n")
+			continue
+		}
+		if strings.HasPrefix(l, `{"end":`) {
+			// One row more in the end line's count.
+			i := strings.Index(l, `"rows":`) + len(`"rows":`)
+			j := i + strings.IndexByte(l[i:], ',')
+			n, _ := strconv.Atoi(l[i:j])
+			l = l[:i] + strconv.Itoa(n+1) + l[j:]
+		}
+		out = append(out, l)
 	}
+	return strings.Join(out, "")
 }
 
 // reseal writes a bundle's end line again for its changed bytes, so the

@@ -19,8 +19,9 @@ import (
 //
 //   - an authorizer, active while a job runs, refuses transaction control,
 //     savepoints, ATTACH/DETACH and PRAGMA assignments in every statement
-//     SQLite compiles (several statements in one string included), but
-//     defer_foreign_keys turned on (deferringForeignKeys);
+//     SQLite compiles (several statements in one string included), but,
+//     when Options.DeferForeignKeys is set, defer_foreign_keys turned on
+//     (deferringForeignKeys);
 //   - a commit hook refuses any commit while a job runs, so nothing a job
 //     does can commit on its own, even after SQLite ended the transaction;
 //   - a rollback hook notes at once that SQLite rolled the batch's
@@ -38,6 +39,8 @@ type writerState struct {
 	batchActive atomic.Bool // between our BEGIN and our COMMIT or ROLLBACK
 	txLost      atomic.Bool // SQLite rolled the batch back on its own
 	fatal       atomic.Pointer[error]
+	// deferFKs is Options.DeferForeignKeys, fixed at Open.
+	deferFKs bool
 }
 
 func (s *writerState) noteFatal(err error) {
@@ -91,16 +94,16 @@ func (s *writerState) authorize(action sqlite.AuthorizerActionCode, arg1, arg2, 
 		// (synchronous, journal_mode) or checks (foreign_keys). SQLite gives
 		// the argument of a read (table_info(t)) the same way as an assigned
 		// value, so pragmas that only read take arguments from a list.
-		if arg2 != "" && !readOnlyPragmas[strings.ToLower(arg1)] && !deferringForeignKeys(arg1, arg2) {
+		if arg2 != "" && !readOnlyPragmas[strings.ToLower(arg1)] && !(s.deferFKs && deferringForeignKeys(arg1, arg2)) {
 			return sqlite.AuthorizerDeny
 		}
 	}
 	return sqlite.AuthorizerOK
 }
 
-// deferringForeignKeys is the one assignment a job may make: PRAGMA
-// defer_foreign_keys turned on (the migration's import, whose tables refer
-// to each other in cycles). It lasts until the transaction ends, and every
+// deferringForeignKeys is the one assignment a job may make, and only on a
+// DB opened with Options.DeferForeignKeys: PRAGMA defer_foreign_keys turned
+// on (the migration's import, whose tables refer to each other in cycles). It lasts until the transaction ends, and every
 // foreign key is still checked, at the commit; turning it off, and every
 // other assignment, stays refused.
 func deferringForeignKeys(name, value string) bool {

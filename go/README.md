@@ -2865,11 +2865,15 @@ migrations.
   - `varlatchd admin migrate import --in <bundle> [--json]` (offline, the
     data directory held and empty, `server/migration/migrate`): the bundle
     is read whole first (counts and SHA-256), then into a fresh database
-    in one write job, foreign keys deferred to the commit
-    (`PRAGMA defer_foreign_keys`, the one assignment `lib/storage` lets a
-    job make, ON only: the schema's tables refer to each other in a
-    cycle), every copied row inserted as it is (ciphertexts byte for
-    byte), and before the commit every foreign key checked
+    under a temporary name in the data directory (`.migrate-import-*`,
+    renamed to `varlatch.db` once committed, synced; one an import that
+    was killed left is removed by the next) in one write job, foreign keys
+    deferred to the commit (`PRAGMA defer_foreign_keys`, ON only, the one
+    assignment a job may make, and only on a database opened with
+    `storage.Options.DeferForeignKeys`, as the import's is: the schema's
+    tables refer to each other in a cycle), every copied row inserted as it is (ciphertexts byte for
+    byte; a left-out column, the session's token, must be null: the
+    export never reads it), and before the commit every foreign key checked
     (`foreign_key_check`, the broken ones named), no sequence present, and
     the Root KEK checked against the installation's canary. Anything that
     fails keeps nothing.
@@ -2879,16 +2883,20 @@ migrations.
     sign-out does (CLI hand-off credentials stay); the session itself is
     never kept. Then `installation.migrated` is appended, carrying the
     direction, the source release, the manifest version, the frozen point
-    and how many sessions ended and credentials were revoked, which
+    and how many sessions ended and credentials the trigger revoked
+    (counted from the `credential.revoked` events it wrote, so an expired
+    browser credential, which it leaves as it is, is not counted), which
     attributes those revocations to the migration.
   - `varlatchd admin migrate export --reverse --out <bundle> [--json]`
     writes the reverse bundle for the last TypeScript release's import
     from a snapshot copy of the database: every Go browser session ended
     and `installation.migrated` appended on the copy only, the database
     itself unchanged. The bundle is a new file, mode 0600.
-  - Round trip (`TestRoundTrip`): the core parity fixture's TypeScript rows
-    imported and exported back are the same rows, byte for byte, but for
-    the documented transformations.
+  - Round trip (`TestRoundTrip`): twelve v0.22.0 parity fixtures' TypeScript
+    rows (47 tables with rows, among them the audit log, audit export plans'
+    `bytea`, webhooks, platform connections, the sync cursor, passkeys and a
+    signing key) imported and exported back are the same rows, byte for
+    byte, but for the documented transformations.
   - **Accepted difference:** `installation.migrated` is an audit event of
     the Go server (`GoOnlyEventTypes`); the last TypeScript release
     (0.23.0, slice 7.2a) knows it too.

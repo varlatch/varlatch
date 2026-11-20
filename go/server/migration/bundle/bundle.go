@@ -19,6 +19,7 @@ import (
 	"strconv"
 
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/migration/canonical"
 	"github.com/varlatch/varlatch/go/server/migration/manifest"
 )
 
@@ -393,4 +394,21 @@ func Verify(r io.Reader, m *manifest.Manifest) (Header, error) {
 		}
 	}
 	return br.head, br.End()
+}
+
+// Decode reads one row of table t: canonical-v1 (canonical.DecodeRow), and
+// every column the manifest leaves out null. A left-out column is never
+// exported (the session's token, which is plaintext in PostgreSQL): a row
+// that carries a value there is refused.
+func Decode(t manifest.Table, row []byte) ([]any, error) {
+	values, err := canonical.DecodeRow(t.Types(), row)
+	if err != nil {
+		return nil, err
+	}
+	for i, c := range t.Columns {
+		if c.LeftOut != "" && values[i] != nil {
+			return nil, fmt.Errorf("bundle: %s.%s holds a value; the manifest leaves it out, so an export writes null there", t.Source, c.Source)
+		}
+	}
+	return values, nil
 }

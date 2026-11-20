@@ -28,6 +28,7 @@ package migrate
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -36,6 +37,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -48,7 +50,6 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/migration/bundle"
-	"github.com/varlatch/varlatch/go/server/migration/canonical"
 	"github.com/varlatch/varlatch/go/server/migration/manifest"
 )
 
@@ -135,25 +136,46 @@ func insertSQL(table string, names []string) string {
 	return "INSERT INTO " + ident(table) + " (" + strings.Join(quoted, ", ") + ") VALUES (" + strings.Join(q, ", ") + ")"
 }
 
-// fresh checks dir holds nothing but the ignored names.
+// staleImport is what an import that was killed leaves: its database under
+// the temporary name, and that name's WAL and shared memory.
+var staleImport = regexp.MustCompile(`^\.migrate-import-[0-9a-f]{12}\.db(-wal|-shm)?$`)
+
+// fresh checks dir holds nothing but the ignored names, after removing what
+// an import that was killed left (only that exact pattern: the caller holds
+// the data directory, so no other import runs).
 func fresh(dir string, ignore []string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		if !slices.Contains(ignore, e.Name()) {
-			return fmt.Errorf("the data directory %s is not empty (%s): an import builds a fresh database only", dir, e.Name())
+		if slices.Contains(ignore, e.Name()) {
+			continue
 		}
+		if staleImport.MatchString(e.Name()) && e.Type().IsRegular() {
+			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+				return fmt.Errorf("an interrupted import left %s, which cannot be removed: %w", e.Name(), err)
+			}
+			continue
+		}
+		return fmt.Errorf("the data directory %s is not empty (%s): an import builds a fresh database only", dir, e.Name())
 	}
 	return nil
 }
 
+// importPrefix names the database an import builds before it is renamed
+// into place: a dotted temporary name in the data directory, which a
+// later import removes when an interrupted one left it (fresh).
+const importPrefix = ".migrate-import-"
+
 // Import builds a fresh database in o.DataDir from the forward bundle in.
 // The bundle is read twice: first whole, its counts and SHA-256 checked
 // (bundle.Verify), so a stream cut short or damaged is refused as such
-// before anything is written; then into the database. On any error nothing
-// is kept: the database files it made are removed.
+// before anything is written; then into a database under a temporary
+// name, which is renamed to varlatch.db only once its one write job
+// committed and its file is synced. On an error nothing is kept, and an
+// import that was killed leaves only the temporary name, which the next
+// import removes.
 func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err error) {
 	m, err := manifest.Load()
 	if err != nil {
@@ -176,19 +198,29 @@ func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err e
 	if h.Direction != bundle.Forward {
 		return res, errors.New("migrate: an import reads a forward bundle (the TypeScript server's export); this one is a reverse bundle")
 	}
-	path := filepath.Join(o.DataDir, config.DatabaseFile)
-	store, err := storage.Open(ctx, storage.Options{Path: path})
+	suffix := make([]byte, 6)
+	if _, err := rand.Read(suffix); err != nil {
+		return res, err
+	}
+	temp := filepath.Join(o.DataDir, importPrefix+hex.EncodeToString(suffix)+".db")
+	removeTemp := func() {
+		for _, s := range []string{"", "-wal", "-shm"} {
+			_ = os.Remove(temp + s)
+		}
+	}
+	defer func() {
+		if err != nil {
+			removeTemp()
+		}
+	}()
+	store, err := storage.Open(ctx, storage.Options{Path: temp, DeferForeignKeys: true})
 	if err != nil {
 		return res, err
 	}
+	closed := false
 	defer func() {
-		if cerr := store.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
-			for _, suffix := range []string{"", "-wal", "-shm"} {
-				_ = os.Remove(path + suffix)
-			}
+		if !closed {
+			_ = store.Close()
 		}
 	}()
 	if _, err := db.Init(ctx, store, o.Release); err != nil {
@@ -232,12 +264,47 @@ func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err e
 		res.InstallationID = id
 		return err
 	})
-	return res, err
+	if err != nil {
+		return res, err
+	}
+	// Closed, the WAL checkpointed into the file (TRUNCATE): the file is
+	// the whole database, synced, then renamed into place.
+	closed = true
+	if err := store.Close(); err != nil {
+		return res, err
+	}
+	if st, err := os.Stat(temp + "-wal"); err == nil && st.Size() > 0 {
+		return res, errors.New("migrate: the imported database's WAL was not checkpointed into it on close")
+	}
+	if err := syncFile(temp); err != nil {
+		return res, err
+	}
+	final := filepath.Join(o.DataDir, config.DatabaseFile)
+	if err := os.Rename(temp, final); err != nil {
+		return res, err
+	}
+	for _, s := range []string{"-wal", "-shm"} {
+		_ = os.Remove(temp + s)
+	}
+	if err := syncFile(o.DataDir); err != nil {
+		_ = os.Remove(final)
+		return res, err
+	}
+	return res, nil
+}
+
+// syncFile makes a file, or a directory's entries, durable.
+func syncFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 // importTable inserts one table's rows, or applies its transformation.
 func importTable(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manifest.Table, n int, res *Result) error {
-	types := t.Types()
 	cols := targetColumns(t)
 	switch {
 	case t.Action == manifest.Transform && t.Transformation == sessionTransformation:
@@ -261,7 +328,7 @@ func importTable(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manife
 		if err != nil {
 			return err
 		}
-		values, err := canonical.DecodeRow(types, row)
+		values, err := bundle.Decode(t, row)
 		if err != nil {
 			return fmt.Errorf("row %d: %w", i+1, err)
 		}
@@ -280,7 +347,6 @@ func importTable(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manife
 // so the trigger ends it as a sign-out does. Its token is not carried; the
 // row holds, for the moment it exists, a hash no token has.
 func endSessions(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manifest.Table, n int, res *Result) error {
-	types := t.Types()
 	cols := targetColumns(t)
 	tokenAt := -1
 	for i, c := range t.Columns {
@@ -303,7 +369,7 @@ func endSessions(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manife
 		if err != nil {
 			return err
 		}
-		values, err := canonical.DecodeRow(types, row)
+		values, err := bundle.Decode(t, row)
 		if err != nil {
 			return fmt.Errorf("row %d: %w", i+1, err)
 		}
@@ -319,17 +385,34 @@ func endSessions(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manife
 		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
 			return fmt.Errorf("row %d: %w", i+1, err)
 		}
-		var live int
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM credentials WHERE auth_session_id = ? AND kind = 'browser' AND revoked_at IS NULL", id).Scan(&live); err != nil {
+		revoked, err := revokedBy(ctx, tx, func() error {
+			_, err := tx.ExecContext(ctx, "DELETE FROM auth_sessions WHERE id = ?", id)
 			return err
-		}
-		if _, err := tx.ExecContext(ctx, "DELETE FROM auth_sessions WHERE id = ?", id); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("row %d: ending the session: %w", i+1, err)
 		}
 		res.SessionsEnded++
-		res.CredentialsRevoked += live
+		res.CredentialsRevoked += revoked
 	}
 	return nil
+}
+
+// revokedBy runs end, which deletes sessions, and counts the
+// credential.revoked events the trigger wrote for it: what it revoked,
+// never a guess at the trigger's predicate (an expired credential is left
+// as it is, and counted nowhere).
+func revokedBy(ctx context.Context, tx *storage.Tx, end func() error) (int, error) {
+	var before int64
+	if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(event_order), 0) FROM audit_events").Scan(&before); err != nil {
+		return 0, err
+	}
+	if err := end(); err != nil {
+		return 0, err
+	}
+	var n int
+	err := tx.QueryRowContext(ctx, "SELECT count(*) FROM audit_events WHERE event_order > ? AND event_type = 'credential.revoked'", before).Scan(&n)
+	return n, err
 }
 
 func migratedMetadata(m *manifest.Manifest, h bundle.Header, res Result) jsvalue.Object {

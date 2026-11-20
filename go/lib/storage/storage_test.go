@@ -409,7 +409,7 @@ func TestTransactionControlRefused(t *testing.T) {
 		"COMMIT", "rollback", "-- c\n/* d */ RELEASE job0", "SAVEPOINT x", "BEGIN", "END",
 		"SELECT 1; COMMIT", "INSERT INTO item (name) VALUES ('x'); ROLLBACK",
 		"PRAGMA synchronous = OFF", "PRAGMA foreign_keys = 0", "PRAGMA journal_mode = DELETE",
-		"PRAGMA defer_foreign_keys = OFF", "PRAGMA defer_foreign_keys = 0", "PRAGMA foreign_keys = ON",
+		"PRAGMA defer_foreign_keys = ON", "PRAGMA defer_foreign_keys = OFF", "PRAGMA defer_foreign_keys = 0", "PRAGMA foreign_keys = ON",
 		"PRAGMA defer_foreign_keys = ON; PRAGMA synchronous = OFF", "PRAGMA ignore_check_constraints = 1",
 		"ATTACH DATABASE ':memory:' AS other",
 	} {

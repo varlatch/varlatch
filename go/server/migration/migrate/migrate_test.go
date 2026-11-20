@@ -6,13 +6,17 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -38,14 +42,6 @@ type source struct {
 
 func loadSource(t *testing.T) source {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "paritytest", "testdata", "core-v0.22.0.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, err := jsvalue.Parse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
 	get := func(o jsvalue.Object, k string) any {
 		for _, m := range o {
 			if m.Key == k {
@@ -54,50 +50,106 @@ func loadSource(t *testing.T) source {
 		}
 		return nil
 	}
-	root := doc.(jsvalue.Object)
-	kek, err := hex.DecodeString(get(root, "rootKek").(string))
+	fixture := func(name string) jsvalue.Object {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join("..", "..", "paritytest", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc, err := jsvalue.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doc.(jsvalue.Object)
+	}
+	core := fixture("core-v0.22.0.json")
+	kek, err := hex.DecodeString(get(core, "rootKek").(string))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := source{rootKEK: kek, rows: map[string][]jsvalue.Object{}}
-	for _, tm := range get(root, "rows").(jsvalue.Object) {
-		for _, r := range tm.Value.([]any) {
-			s.rows[tm.Key] = append(s.rows[tm.Key], r.(jsvalue.Object))
+	// The v0.22.0 parity fixtures whose rows do not meet (several reuse
+	// fixed ids, so not all of them), each written by the TypeScript server
+	// from a seeded installation of its own. The installation (the canary
+	// under core's Root KEK) is core's, and the audit log org-deletion's, so
+	// its positions run 1..n.
+	for _, base := range []string{"core", "org-deletion", "audit-export", "converge", "security", "exposure", "capabilities",
+		"oidc", "requirements", "outbound", "tailnet", "audit-export-worker"} {
+		for _, tm := range get(fixture(base+"-v0.22.0.json"), "rows").(jsvalue.Object) {
+			switch {
+			case tm.Key == "installation" && base != "core":
+				continue
+			case tm.Key == "audit_events" && base != "org-deletion":
+				continue
+			}
+			for _, r := range tm.Value.([]any) {
+				row := r.(jsvalue.Object)
+				// Organization slugs repeat from one fixture to another
+				// (acme): each fixture's get its name.
+				if tm.Key == "organizations" && base != "core" {
+					row = slices.Clone(row)
+					for i, m := range row {
+						if m.Key == "slug" {
+							row[i].Value = m.Value.(string) + "-" + base
+						}
+					}
+				}
+				s.rows[tm.Key] = append(s.rows[tm.Key], row)
+			}
 		}
 	}
-	// The additions: a person, a live session, its browser credential and
-	// a CLI hand-off credential, the backfill finished.
+	// The additions: a person, a live session, its browser credential, an
+	// expired browser credential and a CLI hand-off credential from it, a
+	// signing key, the backfill finished.
 	admin := ""
 	for _, id := range s.rows["identities"] {
-		if get(id, "installation_admin") == true {
+		if get(id, "installation_admin") == true && admin == "" {
 			admin = get(id, "id").(string)
 		}
 	}
 	if admin == "" {
-		t.Fatal("no installation admin in the fixture")
+		t.Fatal("no installation admin in the fixtures")
 	}
 	at := "2026-11-17T08:05:00.000Z"
-	hash := func() string {
-		b := make([]byte, 32)
+	random := func(n int) []byte {
+		b := make([]byte, n)
 		_, _ = rand.Read(b)
-		return hex.EncodeToString(b)
+		return b
 	}
+	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 	s.rows["user"] = append(s.rows["user"], jsvalue.Object{{Key: "id", Value: "usr_migration"}, {Key: "name", Value: "Admin"},
-		{Key: "email", Value: "admin@varlatch.test"}, {Key: "emailVerified", Value: false}, {Key: "image", Value: nil},
+		{Key: "email", Value: "migration-admin@varlatch.test"}, {Key: "emailVerified", Value: false}, {Key: "image", Value: nil},
 		{Key: "createdAt", Value: at}, {Key: "updatedAt", Value: at}})
 	s.rows["auth_user_links"] = append(s.rows["auth_user_links"], jsvalue.Object{{Key: "better_auth_user_id", Value: "usr_migration"},
 		{Key: "identity_id", Value: admin}, {Key: "created_at", Value: at}})
+	// The token is null: the export never reads it (BUNDLE.md).
 	s.rows["session"] = append(s.rows["session"], jsvalue.Object{{Key: "id", Value: "ses_migration"}, {Key: "expiresAt", Value: "2027-11-17T08:05:00.000Z"},
-		{Key: "token", Value: "a session token the export never carries"}, {Key: "createdAt", Value: at}, {Key: "updatedAt", Value: at},
+		{Key: "token", Value: nil}, {Key: "createdAt", Value: at}, {Key: "updatedAt", Value: at},
 		{Key: "ipAddress", Value: nil}, {Key: "userAgent", Value: nil}, {Key: "userId", Value: "usr_migration"}})
-	cred := func(id, kind string) jsvalue.Object {
+	cred := func(id, kind, expires string) jsvalue.Object {
 		return jsvalue.Object{{Key: "id", Value: id}, {Key: "identity_id", Value: admin}, {Key: "kind", Value: kind}, {Key: "name", Value: kind},
-			{Key: "token_hash", Value: hash()}, {Key: "created_at", Value: at}, {Key: "expires_at", Value: "2027-11-17T08:05:00.000Z"},
+			{Key: "token_hash", Value: hex.EncodeToString(random(32))}, {Key: "created_at", Value: at}, {Key: "expires_at", Value: expires},
 			{Key: "revoked_at", Value: nil}, {Key: "max_uses", Value: nil}, {Key: "use_count", Value: float64(0)}, {Key: "last_used_at", Value: nil},
 			{Key: "client", Value: nil}, {Key: "auth_session_id", Value: "ses_migration"}, {Key: "issued_by", Value: nil},
 			{Key: "evidence_user_verified", Value: nil}, {Key: "evidence_passkey_id", Value: nil}}
 	}
-	s.rows["credentials"] = append(s.rows["credentials"], cred("crd_migration_browser", "browser"), cred("crd_migration_cli", "cli"))
+	s.rows["credentials"] = append(s.rows["credentials"],
+		cred("crd_migration_browser", "browser", "2027-11-17T08:05:00.000Z"),
+		cred("crd_migration_expired", "browser", "2026-11-17T08:06:00.000Z"),
+		cred("crd_migration_cli", "cli", "2027-11-17T08:05:00.000Z"))
+	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, y := make([]byte, 32), make([]byte, 32)
+	signer.PublicKey.X.FillBytes(x)
+	signer.PublicKey.Y.FillBytes(y)
+	s.rows["signing_keys"] = append(s.rows["signing_keys"], jsvalue.Object{{Key: "id", Value: "key_migration"}, {Key: "algorithm", Value: "ES256"},
+		{Key: "public_jwk", Value: jsvalue.Object{{Key: "kty", Value: "EC"}, {Key: "crv", Value: "P-256"}, {Key: "x", Value: b64(x)}, {Key: "y", Value: b64(y)}}},
+		{Key: "private_key_wrapped", Value: jsvalue.Object{{Key: "nonce", Value: base64.StdEncoding.EncodeToString(random(12))},
+			{Key: "authTag", Value: base64.StdEncoding.EncodeToString(random(16))}, {Key: "algorithm", Value: "aes-256-gcm"},
+			{Key: "ciphertext", Value: base64.StdEncoding.EncodeToString(random(150))}, {Key: "formatVersion", Value: float64(1)}}},
+		{Key: "created_at", Value: at}, {Key: "retired_at", Value: nil}})
 	s.rows["exposure_backfill"] = []jsvalue.Object{{{Key: "singleton", Value: true}, {Key: "cursor", Value: float64(0)},
 		{Key: "until_order", Value: float64(0)}, {Key: "finished_at", Value: at}}}
 	return s
@@ -122,14 +174,23 @@ func value(t *testing.T, ty canonical.Type, v any) any {
 		case float64:
 			return int64(x)
 		case string:
-			var n int64
-			for _, c := range x {
-				n = n*10 + int64(c-'0')
+			n, err := strconv.ParseInt(x, 10, 64)
+			if err != nil {
+				t.Fatal(err)
 			}
 			return n
 		}
 	case canonical.Jsonb:
 		return string(jsvalue.Stringify(jsvalue.Jsonb(v)))
+	case canonical.Bytea:
+		// PostgreSQL's hex output, as the fixtures hold it.
+		b, err := hex.DecodeString(strings.TrimPrefix(v.(string), "\\x"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	case canonical.Boolean:
+		return v
 	case canonical.TextArray:
 		return v.([]any)
 	}
@@ -272,6 +333,24 @@ func importInto(t *testing.T, dir string, b []byte, kek []byte) (Result, error) 
 func TestRoundTrip(t *testing.T) {
 	s := loadSource(t)
 	src := sourceBundle(t, s, nil, false)
+	// The tables the round trip carries rows of.
+	var withData []string
+	for table, rows := range tablesOf(t, src) {
+		if len(rows) > 0 {
+			withData = append(withData, table)
+		}
+	}
+	slices.Sort(withData)
+	t.Logf("%d tables with rows: %s", len(withData), strings.Join(withData, ", "))
+	for _, want := range []string{"audit_events", "signing_keys", "audit_export_plans", "audit_exports", "webhooks", "platform_connections",
+		"sync_cursor", "sync_targets", "passkey", "passkey_provenance", "session", "user", "credentials", "value_versions", "requirements", "exposure_backfill"} {
+		if !slices.Contains(withData, want) {
+			t.Errorf("%s has no rows in the round trip", want)
+		}
+	}
+	if len(withData) < 45 {
+		t.Errorf("only %d tables with rows", len(withData))
+	}
 	dir := t.TempDir()
 	res, err := importInto(t, dir, src, s.rootKEK)
 	if err != nil {
@@ -284,9 +363,15 @@ func TestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var browserRevoked, cliRevoked sql.NullInt64
+	var browserRevoked, cliRevoked, expiredRevoked sql.NullInt64
 	_ = conn.QueryRow("SELECT revoked_at FROM credentials WHERE id = 'crd_migration_browser'").Scan(&browserRevoked)
 	_ = conn.QueryRow("SELECT revoked_at FROM credentials WHERE id = 'crd_migration_cli'").Scan(&cliRevoked)
+	_ = conn.QueryRow("SELECT revoked_at FROM credentials WHERE id = 'crd_migration_expired'").Scan(&expiredRevoked)
+	var revokedEvents int
+	_ = conn.QueryRow("SELECT count(*) FROM audit_events WHERE event_type = 'credential.revoked' AND credential_id LIKE 'crd_migration_%'").Scan(&revokedEvents)
+	if expiredRevoked.Valid || revokedEvents != 1 {
+		t.Fatalf("the expired browser credential: revoked %v; %d credential.revoked events, want 1", expiredRevoked, revokedEvents)
+	}
 	var sessions int
 	_ = conn.QueryRow("SELECT count(*) FROM auth_sessions").Scan(&sessions)
 	rows, err := conn.Query("SELECT event_type FROM audit_events ORDER BY event_order DESC LIMIT 2")
@@ -403,7 +488,7 @@ func TestImportRefusals(t *testing.T) {
 	cut := bytes.Join(lines[:len(lines)/2], nil)
 	var damaged, notCanonical []byte
 	for i, l := range lines {
-		if bytes.Contains(l, []byte("inst_")) && bytes.HasPrefix(l, []byte("[")) {
+		if i > 0 && bytes.HasPrefix(lines[i-1], []byte(`{"table":"installation",`)) {
 			d := slices.Clone(good)
 			off := len(bytes.Join(lines[:i], nil))
 			d[off+3] ^= 1
@@ -445,6 +530,8 @@ func TestImportRefusals(t *testing.T) {
 		{"a broken foreign key", empty(t), sourceBundle(t, s, map[string][][]any{"org_memberships": {orphan}}, false), s.rootKEK, "foreign keys do not hold: org_memberships"},
 		{"a sequence", empty(t), sourceBundle(t, s, nil, true), s.rootKEK, "sequences"},
 		{"a reverse bundle", empty(t), rev.Bytes(), s.rootKEK, "a reverse bundle"},
+		{"a session token carried", empty(t), withToken(t, s), s.rootKEK, "session.token holds a value"},
+		{"a leftover that is not an import's", leftover(t, ".migrate-import-x.db"), good, s.rootKEK, "not empty (.migrate-import-x.db)"},
 	} {
 		_, err := importInto(t, c.dir, c.bundle, c.kek)
 		if err == nil || !strings.Contains(err.Error(), c.why) {
@@ -453,6 +540,60 @@ func TestImportRefusals(t *testing.T) {
 		if c.dir != used {
 			nothingKept(t, c.dir, c.name)
 		}
+		if left, _ := filepath.Glob(filepath.Join(c.dir, importPrefix+"*")); len(left) != 0 && c.name != "a leftover that is not an import's" {
+			t.Errorf("%s: left %v", c.name, left)
+		}
+	}
+}
+
+// withToken is the source with its session's token carried.
+func withToken(t *testing.T, s source) []byte {
+	t.Helper()
+	carried := source{rootKEK: s.rootKEK, rows: map[string][]jsvalue.Object{}}
+	for k, v := range s.rows {
+		carried.rows[k] = v
+	}
+	row := slices.Clone(s.rows["session"][0])
+	for i, m := range row {
+		if m.Key == "token" {
+			row[i].Value = "a token the export never carries"
+		}
+	}
+	carried.rows["session"] = []jsvalue.Object{row}
+	return sourceBundle(t, carried, nil, false)
+}
+
+// leftover is a data directory holding a file named name.
+func leftover(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// An import that was killed leaves its database under the temporary name:
+// the next import removes it (that exact pattern only) and builds the
+// database, renamed into place; no temporary name is left.
+func TestAnInterruptedImportsLeftovers(t *testing.T) {
+	s := loadSource(t)
+	dir := t.TempDir()
+	for _, name := range []string{importPrefix + "0123456789ab.db", importPrefix + "0123456789ab.db-wal", importPrefix + "0123456789ab.db-shm"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("an import cut short"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.rootKEK); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if !slices.Equal(names, []string{config.DatabaseFile}) {
+		t.Fatalf("the data directory after the import: %q", names)
 	}
 }
 

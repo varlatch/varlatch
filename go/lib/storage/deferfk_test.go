@@ -8,14 +8,22 @@ import (
 	"testing"
 )
 
-// A job may turn defer_foreign_keys on (the migration's import, whose tables
-// refer to each other in a cycle): rows that refer to each other insert in
+// A job of a DB opened with DeferForeignKeys (the migration's import, whose
+// tables refer to each other in a cycle) may turn defer_foreign_keys on: rows that refer to each other insert in
 // either order, and every foreign key is still checked at the commit, so a
 // job that leaves one unresolved commits nothing. It lasts for that one
 // batch only. Every other assignment stays refused
 // (TestTransactionControlRefused).
 func TestAJobMayDeferForeignKeys(t *testing.T) {
-	db := open(t, Options{})
+	// A default DB refuses it, as every other assignment.
+	plain := open(t, Options{})
+	if err := plain.Write(context.Background(), func(tx *Tx) error {
+		_, err := tx.ExecContext(bg, `PRAGMA defer_foreign_keys = ON`)
+		return err
+	}); err == nil || !strings.Contains(err.Error(), "authoriz") {
+		t.Fatalf("a default job deferred foreign keys: %v", err)
+	}
+	db := open(t, Options{DeferForeignKeys: true})
 	mustWrite(t, db, func(tx *Tx) error {
 		_, err := tx.ExecContext(bg, `CREATE TABLE a (id TEXT PRIMARY KEY, b_id TEXT REFERENCES b (id)) STRICT;
 			CREATE TABLE b (id TEXT PRIMARY KEY, a_id TEXT REFERENCES a (id)) STRICT`)

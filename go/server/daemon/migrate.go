@@ -144,6 +144,10 @@ func runMigrate(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		if err == nil {
 			err = syncFile(a.out)
 		}
+		if err == nil {
+			// The bundle's name in its directory, durable too.
+			err = syncFile(filepath.Dir(a.out))
+		}
 		if err != nil {
 			_ = os.Remove(a.out)
 			return fail(ExitFailure, "%v; nothing was written", err)

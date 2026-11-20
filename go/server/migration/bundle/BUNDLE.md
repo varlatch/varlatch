@@ -48,7 +48,10 @@ A bundle is UTF-8 text, one JSON value per line, each line ending in `\n`
      PostgreSQL, `ORDER BY c COLLATE "C" ASC NULLS FIRST` for each column),
      so both sides write the same rows in the same order.
 
-   A table the manifest leaves out never appears. In a reverse bundle the
+   A column the manifest leaves out (`leftOut`, the session's token) is
+   written as `null` in every row: the 0.23.0 export never reads it, and a
+   reader refuses a row that carries a value there. A table the manifest
+   leaves out never appears. In a reverse bundle the
    `session` table has no rows: every Go browser session ends
    (transformation `browser-sessions-end`).
 

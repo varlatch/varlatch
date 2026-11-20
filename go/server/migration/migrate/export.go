@@ -72,12 +72,14 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 		if err := tx.QueryRowContext(actx, "SELECT count(*) FROM auth_sessions").Scan(&res.SessionsEnded); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(actx, "SELECT count(*) FROM credentials c WHERE c.kind = 'browser' AND c.revoked_at IS NULL AND c.auth_session_id IN (SELECT id FROM auth_sessions)").Scan(&res.CredentialsRevoked); err != nil {
+		revoked, err := revokedBy(actx, tx, func() error {
+			_, err := tx.ExecContext(actx, "DELETE FROM auth_sessions")
+			return err
+		})
+		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(actx, "DELETE FROM auth_sessions"); err != nil {
-			return err
-		}
+		res.CredentialsRevoked = revoked
 		if err := tx.QueryRowContext(actx, "SELECT coalesce(max(event_order), 0) FROM audit_events").Scan(&last); err != nil {
 			return err
 		}
