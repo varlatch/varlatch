@@ -4,6 +4,7 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -392,7 +393,11 @@ func (o *operations) UpdateSyncTarget(ctx context.Context, _ api.UpdateSyncTarge
 		if err != nil {
 			return nil, err
 		}
-		destination = jsvalue.JSOrder(v).(jsvalue.Object)
+		o, ok := jsvalue.JSOrder(v).(jsvalue.Object)
+		if !ok {
+			return nil, errors.New("the Sync Target's stored destination is not an object")
+		}
+		destination = o
 	}
 	dest, err := canonicalDestination(c.Platform, destination)
 	if err != nil {
