@@ -4418,7 +4418,7 @@
       "script": "scripts/test-backup-compose.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go container image and upgrade's recovery gate"
+        "none": "Its Go counterpart is go/image/check-image.mjs, not a runner check: the Go workflow (.github/workflows/go.yml) runs it in the job go-image, in the step 'The image as an operator runs it', against the single-container image built from the commit (go/image/Dockerfile): the user, entrypoint, volume and license label of the image; a key in the environment refused by varlatchd and by the CLI in the image (exit 78, the variable named, never its value); an installation on a new volume, owned by the image user alone and run as that user; no key in docker inspect or /proc/1/environ; the recovery gate (a maintenance lease) held in the volume across containers until it ends; and a backup restored into a new volume through the image alone, served and its canary opened. The job go-container runs the conformance suites against the image nightly (target go-container)."
       }
     },
     "backup-e2e": {
