@@ -21,6 +21,58 @@ import (
 // not match (TestGoTestAllPattern).
 var goTestAll = regexp.MustCompile(`go test (-count=1 )?\./\.\.\.[ \t]*(\n|$)`)
 
+// go.yml's timing tests (TIMING_TESTS): the step 'Test' may set them aside
+// with -skip "$TIMING_TESTS", but only when the step right after it,
+// 'Timing tests, alone', runs exactly those over the same packages, so
+// between the two every test under go/ still runs.
+var (
+	goTestAllSkipping = regexp.MustCompile(`go test (-count=1 )?-skip "\$TIMING_TESTS" \./\.\.\.[ \t]*(\n|$)`)
+	goTestTimingAlone = regexp.MustCompile(`go test -count=1 -p 1 -run "\$TIMING_TESTS" \./\.\.\.[ \t]*(\n|$)`)
+	timingTestsValue  = regexp.MustCompile(`(?m)^  TIMING_TESTS: "([^"]+)"$`)
+)
+
+// everyTestRuns checks that go.yml's step 'Test' runs every package's
+// tests: unfiltered (goTestAll), or skipping only the timing tests, which
+// the next step then runs alone. It returns the timing tests' pattern in
+// the second case, nil in the first.
+func everyTestRuns(workflow string) (*regexp.Regexp, error) {
+	at := strings.Index(workflow, "      - name: Test\n")
+	if at < 0 {
+		return nil, fmt.Errorf("go.yml has no step 'Test'")
+	}
+	rest := workflow[at:]
+	end := strings.Index(rest[1:], "\n      - ")
+	if end < 0 {
+		return nil, fmt.Errorf("go.yml's step 'Test' is its last")
+	}
+	test, after := rest[:end+1], rest[end+1:]
+	if !strings.Contains(test, "working-directory: go\n") {
+		return nil, fmt.Errorf("go.yml's step 'Test' does not run in go/")
+	}
+	if goTestAll.MatchString(test) {
+		return nil, nil
+	}
+	if !goTestAllSkipping.MatchString(test) {
+		return nil, fmt.Errorf("go.yml no longer runs go test ./...")
+	}
+	alone := strings.TrimPrefix(after, "\n")
+	if next := strings.Index(alone[1:], "\n      - "); next >= 0 {
+		alone = alone[:next+1]
+	}
+	if !strings.HasPrefix(alone, "      - name: Timing tests, alone\n") || !strings.Contains(alone, "working-directory: go\n") || !goTestTimingAlone.MatchString(alone) {
+		return nil, fmt.Errorf("go.yml's step 'Test' skips the timing tests, but the step after it does not run them alone over ./...")
+	}
+	m := timingTestsValue.FindStringSubmatch(workflow)
+	if m == nil {
+		return nil, fmt.Errorf("go.yml skips TIMING_TESTS but does not set it")
+	}
+	timing, err := regexp.Compile(m[1])
+	if err != nil {
+		return nil, fmt.Errorf("go.yml's TIMING_TESTS: %v", err)
+	}
+	return timing, nil
+}
+
 func TestGoTestAllPattern(t *testing.T) {
 	for line, want := range map[string]bool{
 		"go test ./...":                   true,
@@ -36,6 +88,40 @@ func TestGoTestAllPattern(t *testing.T) {
 	} {
 		if got := goTestAll.MatchString(line); got != want {
 			t.Errorf("goTestAll.MatchString(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+// TestEveryTestRunsPattern: everyTestRuns accepts the step 'Test' running
+// ./... unfiltered, or skipping only the timing tests when the next step
+// runs them alone, and nothing that would run fewer tests.
+func TestEveryTestRunsPattern(t *testing.T) {
+	const env = "env:\n  TIMING_TESTS: \"^(TestSlow)$\"\n"
+	step := func(run string) string {
+		return "      - name: Test\n        working-directory: go\n        run: " + run + "\n"
+	}
+	alone := func(run string) string {
+		return "\n      - name: Timing tests, alone\n        working-directory: go\n        run: " + run + "\n"
+	}
+	const next = "\n      - name: Next\n        run: true\n"
+	aloneOK := alone(`go test -count=1 -p 1 -run "$TIMING_TESTS" ./...`)
+	for _, c := range []struct {
+		name, workflow string
+		ok, timing     bool
+	}{
+		{"unfiltered", step("go test -count=1 ./...") + next, true, false},
+		{"skipping, then alone", env + step(`go test -count=1 -skip "$TIMING_TESTS" ./...`) + aloneOK + next, true, true},
+		{"skipping, then alone, as the last step", env + step(`go test -count=1 -skip "$TIMING_TESTS" ./...`) + aloneOK, true, true},
+		{"skipping, no step alone", env + step(`go test -count=1 -skip "$TIMING_TESTS" ./...`) + next, false, false},
+		{"skipping, alone over fewer packages", env + step(`go test -count=1 -skip "$TIMING_TESTS" ./...`) + alone(`go test -count=1 -p 1 -run "$TIMING_TESTS" ./server/...`) + next, false, false},
+		{"skipping, alone not in go/", env + step(`go test -count=1 -skip "$TIMING_TESTS" ./...`) + "\n      - name: Timing tests, alone\n        run: go test -count=1 -p 1 -run \"$TIMING_TESTS\" ./...\n" + next, false, false},
+		{"skipping, without TIMING_TESTS set", step(`go test -count=1 -skip "$TIMING_TESTS" ./...`) + aloneOK + next, false, false},
+		{"skipping something else", env + step(`go test -count=1 -skip "TestX" ./...`) + aloneOK + next, false, false},
+		{"run filtered", step("go test -count=1 -run X ./...") + next, false, false},
+	} {
+		timing, err := everyTestRuns(c.workflow)
+		if (err == nil) != c.ok || (timing != nil) != c.timing {
+			t.Errorf("%s: timing %v, %v", c.name, timing, err)
 		}
 	}
 }
@@ -140,8 +226,14 @@ func checkProof(t *testing.T, p g3Proof, workflow string) error {
 		if sub != "" && !strings.Contains(src, sub) {
 			return fmt.Errorf("%s: test %s has no subtest %q", p.Go, name, sub)
 		}
-		if !goTestAll.MatchString(workflow) {
-			return fmt.Errorf("go.yml no longer runs go test ./...")
+		timing, err := everyTestRuns(workflow)
+		if err != nil {
+			return err
+		}
+		// A G3 proof runs in the step 'Test', never set aside with the
+		// timing tests.
+		if timing != nil && timing.MatchString(name) {
+			return fmt.Errorf("%s is one of go.yml's TIMING_TESTS", name)
 		}
 	case p.Vitest != "":
 		src := readText(t, filepath.Join(repoRoot, p.Vitest))
