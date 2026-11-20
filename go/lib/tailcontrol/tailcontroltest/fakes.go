@@ -68,6 +68,9 @@ type Tailscale struct {
 	// EchoCredentials makes every error answer quote the request's
 	// credentials, to show that tailcontrol never repeats them.
 	EchoCredentials bool
+	// EchoScope makes a token exchange answer a scope that quotes the
+	// client secret and the token issued.
+	EchoScope bool
 	// LagRenames makes a rename show only from the second listing after
 	// it: a control plane that lists the old name for a moment.
 	LagRenames bool
@@ -133,7 +136,13 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 		tok := "tskey-api-" + random(16)
 		f.tokens[tok] = true
 		f.Exchanges++
-		writeJSON(w, http.StatusOK, map[string]any{"access_token": tok, "token_type": "Bearer", "expires_in": 3600, "scope": f.Scope})
+		scope := f.Scope
+		if f.EchoScope {
+			// A misbehaving control plane quoting the request in a field
+			// tailcontrol reports.
+			scope += " " + r.PostFormValue("client_secret") + " " + tok
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"access_token": tok, "token_type": "Bearer", "expires_in": 3600, "scope": scope})
 		return
 	}
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")

@@ -4,6 +4,7 @@ package tailcontrol_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -194,6 +195,16 @@ func TestTailscaleRefusals(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), wrongSecret) || !strings.Contains(err.Error(), "list devices") {
 		t.Errorf("a wrong secret: %v", err)
 	}
+	// A scope the control plane fills with the request's credentials: refused,
+	// and quoted scrubbed.
+	f.EchoScope = true
+	before := len(f.Used)
+	_, err = ts.Devices(ctx)
+	if err == nil || strings.Contains(err.Error(), f.ClientSecret) || strings.Contains(err.Error(), "tskey-api-") ||
+		!strings.Contains(err.Error(), "devices:core scope and no other") || !strings.Contains(err.Error(), "[redacted]") || len(f.Used) != before {
+		t.Errorf("an echoed scope: %v", err)
+	}
+	f.EchoScope = false
 	// A client with more than devices:core, or without it: refused before any use.
 	for _, scope := range []string{"devices:core auth_keys", "all", "devices:core:read", ""} {
 		f.Scope = scope
@@ -382,6 +393,26 @@ func TestPrintingHoldsNoCredential(t *testing.T) {
 			if strings.Contains(out, secret) || strings.Contains(out, key) {
 				t.Errorf("%s of %T: %s", verb, v, out)
 			}
+		}
+	}
+}
+
+// TestConfigsMarshalNoCredential: a configuration marshalled as JSON (logged,
+// journaled) holds no credential.
+func TestConfigsMarshalNoCredential(t *testing.T) {
+	const secret, key = "client-secret-for-json", "api-key-for-json"
+	for _, v := range []any{
+		tailcontrol.TailscaleConfig{BaseURL: "https://ts.example", ClientID: "id", ClientSecret: secret},
+		&tailcontrol.TailscaleConfig{ClientSecret: secret},
+		tailcontrol.HeadscaleAPIConfig{BaseURL: "https://hs.example", APIKey: key},
+		&tailcontrol.HeadscaleAPIConfig{APIKey: key},
+	} {
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("%T: %v", v, err)
+		}
+		if strings.Contains(string(b), secret) || strings.Contains(string(b), key) {
+			t.Errorf("%T: %s", v, b)
 		}
 	}
 }

@@ -55,9 +55,10 @@ func TestScrubBeforeTruncate(t *testing.T) {
 		if err == nil {
 			t.Fatal("no error")
 		}
-		for n := 6; n <= len(secret); n++ {
-			if strings.Contains(err.Error(), secret[:n]) {
-				t.Fatalf("offset %d: the error holds %d bytes of the secret: %v", offset, n, err)
+		// No 6-byte window of the secret, wherever in it, remains.
+		for i := 0; i+6 <= len(secret); i++ {
+			if strings.Contains(err.Error(), secret[i:i+6]) {
+				t.Fatalf("offset %d: the error holds the secret's bytes %d to %d: %v", offset, i, i+6, err)
 			}
 		}
 	}

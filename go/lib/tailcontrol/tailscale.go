@@ -33,11 +33,11 @@ type TailscaleConfig struct {
 	Tailnet string
 	// ClientID and ClientSecret are the OAuth client's.
 	ClientID     string
-	ClientSecret string
+	ClientSecret string `json:"-"`
 	// HTTP is the client requests go through; http.DefaultClient when nil.
-	HTTP *http.Client
+	HTTP *http.Client `json:"-"`
 	// Now is the clock that judges a device's key expiry; time.Now when nil.
-	Now func() time.Time
+	Now func() time.Time `json:"-"`
 }
 
 func (c TailscaleConfig) String() string {
@@ -125,7 +125,7 @@ func (t *Tailscale) token(ctx context.Context, op, device string) (string, error
 	}
 	scopes := strings.Fields(got.Scope)
 	if len(scopes) != 1 || scopes[0] != TailscaleScope {
-		return "", t.err(op, device, fmt.Errorf("the OAuth client must have the %s scope and no other (it has %q): create one with only that scope", TailscaleScope, got.Scope))
+		return "", t.err(op, device, fmt.Errorf("the OAuth client must have the %s scope and no other (it has %q): create one with only that scope", TailscaleScope, truncate(scrub(got.Scope, t.secret(), got.AccessToken), 200)))
 	}
 	return got.AccessToken, nil
 }

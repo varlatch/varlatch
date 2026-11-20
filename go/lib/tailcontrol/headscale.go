@@ -89,11 +89,11 @@ type HeadscaleAPIConfig struct {
 	BaseURL string
 	// APIKey is the key, as `headscale apikeys create --expiration 1h`
 	// printed it.
-	APIKey string
+	APIKey string `json:"-"`
 	// HTTP is the client requests go through; http.DefaultClient when nil.
-	HTTP *http.Client
+	HTTP *http.Client `json:"-"`
 	// Now is the clock that judges expiries; time.Now when nil.
-	Now func() time.Time
+	Now func() time.Time `json:"-"`
 }
 
 func (c HeadscaleAPIConfig) String() string {
@@ -360,7 +360,7 @@ func (h *HeadscaleCLI) Rename(ctx context.Context, deviceID, name string) error 
 	}
 	if _, err := h.run(ctx, "nodes", "rename", "--identifier", deviceID, "--", name); err != nil {
 		// The CLI has no status: its message is all there is to place it.
-		if m := strings.ToLower(err.Error()); strings.Contains(m, "already") || strings.Contains(m, "in use") {
+		if m := strings.ToLower(err.Error()); strings.Contains(m, "already") || strings.Contains(m, "in use") || strings.Contains(m, "taken") {
 			err = fmt.Errorf("%w (%q): %v", ErrNameTaken, name, err)
 		}
 		return h.err(op, deviceID, err)
