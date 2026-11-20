@@ -48,7 +48,7 @@ func schemaWith(t *testing.T, fixture string) string {
 // The checked-in declaration is this build's: G6 runs this first.
 func TestTheDeclarationMatchesThisBuild(t *testing.T) {
 	code, out, errs := runIt(t, "declaration", "--declaration", declaration)
-	if code != exitOK || !strings.Contains(out, "holds: schema 1, compatible from 1, rollback-safe false, previous no previous release") {
+	if code != exitOK || !strings.Contains(out, "holds: schema 1, compatible from 1, rollback-safe false, previous no previous release, reversible to 0.23.0") {
 		t.Fatalf("%d %q %q", code, out, errs)
 	}
 	// A declaration of another schema version does not match it.
@@ -64,11 +64,38 @@ func TestManifest(t *testing.T) {
 		t.Fatalf("%d %q", code, errs)
 	}
 	m, err := release.ParseManifest([]byte(out))
-	if err != nil || m.Version != "0.50.0-rc.1" || m.SchemaVersion != db.SchemaVersion || m.CompatibleFrom != db.CompatibleFrom || m.RollbackSafe || m.Previous != nil {
+	if err != nil || m.Version != "0.50.0-rc.1" || m.SchemaVersion != db.SchemaVersion || m.CompatibleFrom != db.CompatibleFrom || m.RollbackSafe || m.Previous != nil ||
+		m.ManifestVersion != release.ManifestVersion || m.ReversibleTo == nil || *m.ReversibleTo != release.LastTypeScriptRelease || m.EndsRollbackWindow() {
 		t.Fatalf("%+v, %v\n%s", m, err, out)
 	}
 	if code, _, errs := runIt(t, "manifest", "--version", "v0.50.0", "--declaration", declaration); code != exitFailed || !strings.Contains(errs, "is not a release version") {
 		t.Fatalf("%d %q", code, errs)
+	}
+}
+
+// TestADeclarationWithoutTheWindowFails: the release check refuses a
+// declaration that says nothing of the rollback window, and states one that
+// ends it (go-step7.md decision 17).
+func TestADeclarationWithoutTheWindowFails(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, text string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	neither := write("neither.json", `{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null, "reversibleTo": null, "endsRollbackWindow": false}`)
+	if code, _, errs := runIt(t, "declaration", "--declaration", neither); code != exitFailed || !strings.Contains(errs, "neither reversibleTo nor endsRollbackWindow") {
+		t.Fatalf("%d %q", code, errs)
+	}
+	missing := write("missing.json", `{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null}`)
+	if code, _, errs := runIt(t, "manifest", "--version", "0.50.0", "--declaration", missing); code != exitFailed || !strings.Contains(errs, `no "reversibleTo"`) {
+		t.Fatalf("%d %q", code, errs)
+	}
+	ends := write("ends.json", `{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null, "reversibleTo": null, "endsRollbackWindow": true}`)
+	if code, out, errs := runIt(t, "declaration", "--declaration", ends); code != exitOK || !strings.Contains(out, "ends the rollback window") {
+		t.Fatalf("%d %q %q", code, out, errs)
 	}
 }
 
@@ -90,7 +117,7 @@ func TestAnUndeclaredBreakFails(t *testing.T) {
 	}
 	// The same change declared not rollback-safe is a note, not a failure.
 	decl := filepath.Join(t.TempDir(), "release.json")
-	if err := os.WriteFile(decl, []byte(`{"schemaVersion": 2, "compatibleFrom": 2, "rollbackSafe": false, "previous": {"version": "0.0.0-g6.base", "schemaVersion": 1}}`), 0o600); err != nil {
+	if err := os.WriteFile(decl, []byte(`{"schemaVersion": 2, "compatibleFrom": 2, "rollbackSafe": false, "previous": {"version": "0.0.0-g6.base", "schemaVersion": 1}, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if code, out, errs := runIt(t, "schema", "--previous", schemaFile, "--current", schemaWith(t, "breaking.sql"), "--declaration", decl); code != exitOK || !strings.Contains(out, "note: breaking: trigger") {
