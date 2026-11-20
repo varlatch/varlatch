@@ -16,6 +16,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
@@ -85,10 +86,14 @@ type Options struct {
 
 // Client is VarlatchClient.
 type Client struct {
-	server              string
-	opts                Options
-	transport           *Transport
-	maintenanceBudget   time.Duration
+	server            string
+	opts              Options
+	transport         *Transport
+	maintenanceBudget time.Duration
+	// maintenanceDeadline is the SDK's one budget for the client, shared
+	// by requests in flight together (the MCP server's tool calls), so it
+	// is read and written under deadlineMu.
+	deadlineMu          sync.Mutex
 	maintenanceDeadline *time.Time
 }
 
@@ -214,17 +219,22 @@ func (c *Client) requestRiding(ctx context.Context, method, path string, body an
 			return nil, err
 		}
 		if res.Status != 503 {
+			c.deadlineMu.Lock()
 			c.maintenanceDeadline = nil
+			c.deadlineMu.Unlock()
 			return finish(res)
 		}
 		if !isMaintenance(res) {
 			return finish(res)
 		}
+		c.deadlineMu.Lock()
 		if c.maintenanceDeadline == nil {
 			d := c.opts.Now().Add(c.maintenanceBudget)
 			c.maintenanceDeadline = &d
 		}
-		remaining := ms(c.maintenanceDeadline.Sub(c.opts.Now()))
+		deadline := *c.maintenanceDeadline
+		c.deadlineMu.Unlock()
+		remaining := ms(deadline.Sub(c.opts.Now()))
 		if remaining <= 0 {
 			return finish(res)
 		}

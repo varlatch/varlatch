@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -22,7 +23,7 @@ import (
 // is covered by a recorded case or a vector. Missing coverage fails.
 
 type inventory struct {
-	Built    []string `json:"built"`
+	Built    []string `json:"-"` // from testdata/built (builtSlices)
 	Commands map[string]struct {
 		Slice string `json:"slice"`
 	} `json:"commands"`
@@ -61,8 +62,34 @@ func loadInventory(t *testing.T) *inventory {
 	if err := json.Unmarshal(data, &inv); err != nil {
 		t.Fatal(err)
 	}
+	inv.Built = builtSlices(t)
 	return &inv
 }
+
+// builtSlices reads testdata/built/: one empty file per built slice, named
+// for it ("5.2"), so pull requests that build different slices never edit
+// the same line. A file that is not empty or not a slice's name fails.
+func builtSlices(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir("testdata/built")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var built []string
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() || info.Size() != 0 || !builtName.MatchString(e.Name()) {
+			t.Fatalf("testdata/built/%s: want an empty file named for a slice (as 5.2 or 5.4a)", e.Name())
+		}
+		built = append(built, e.Name())
+	}
+	return built
+}
+
+var builtName = regexp.MustCompile(`^5\.[0-9]+[a-z]?$`)
 
 // recorded is one transcript case, with the command it runs after the
 // global options.
@@ -159,8 +186,10 @@ func TestInventoryCoverage(t *testing.T) {
 			continue // an option a later slice builds, of a command built already (status --probe)
 		}
 		if o.Of != "varlatch" {
-			if o.Slice != "" && built(o.Slice) {
-				t.Errorf("option %s (%s) of built slice %s: needs a vector; none is defined yet", option, o.Of, o.Slice)
+			// An option of a program whose command line the guardrail hook
+			// reads: a hook vector's command uses it.
+			if o.Slice != "" && built(o.Slice) && !(o.Of == "another program" && hookCommandsUse(t, option)) {
+				t.Errorf("option %s (%s) of built slice %s: no vector uses it", option, o.Of, o.Slice)
 			}
 			continue
 		}
@@ -245,4 +274,43 @@ func TestClientLacksNotStale(t *testing.T) {
 			t.Errorf("client-go.json says the Go CLI lacks %s, but slice %s is built: remove the entry", feature, entry.Slice)
 		}
 	}
+}
+
+// hookCommands are the shell commands of the hook vectors
+// (testdata/vectors/hook.json), read once.
+var hookCommands []string
+
+// hookCommandsUse is whether a hook vector's command has option as one of
+// its words.
+func hookCommandsUse(t *testing.T, option string) bool {
+	t.Helper()
+	if hookCommands == nil {
+		data, err := os.ReadFile("testdata/vectors/hook.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var file struct {
+			Cases []struct {
+				Stdin string `json:"stdin"`
+			} `json:"cases"`
+		}
+		if err := json.Unmarshal(data, &file); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range file.Cases {
+			var event struct {
+				ToolInput struct {
+					Command any `json:"command"`
+				} `json:"tool_input"`
+			}
+			if json.Unmarshal([]byte(c.Stdin), &event) == nil {
+				if s, ok := event.ToolInput.Command.(string); ok {
+					hookCommands = append(hookCommands, s)
+				}
+			}
+		}
+	}
+	return slices.ContainsFunc(hookCommands, func(command string) bool {
+		return slices.Contains(strings.Fields(command), option)
+	})
 }

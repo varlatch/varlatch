@@ -1,18 +1,6 @@
 {
   "schema": 1,
-  "comment": "The Go CLI's inventory (internal docs/design/go-cli.md, decision 16): every command, option and environment variable of the TypeScript CLI, kept equal to its source both ways by apps/cli/test/cli-inventory.test.ts, and what must be covered once its slice is built, checked by go/cmd/varlatch's TestInventoryCoverage. Edited by hand; the test says what is missing.",
-  "built": [
-    "5.1a",
-    "5.1b",
-    "5.1c",
-    "5.1d",
-    "5.1e",
-    "5.2",
-    "5.3a",
-    "5.3b",
-    "5.7a",
-    "5.7b"
-  ],
+  "comment": "The Go CLI's inventory (internal docs/design/go-cli.md, decision 16): every command, option and environment variable of the TypeScript CLI, kept equal to its source both ways by apps/cli/test/cli-inventory.test.ts, and what must be covered once its slice is built, checked by go/cmd/varlatch's TestInventoryCoverage. Edited by hand; the test says what is missing. Which slices are built is not here: testdata/built/ holds one empty file per built slice, so pull requests that build different slices never edit the same line.",
   "commands": {
     "login": {
       "slice": "5.1e"
@@ -218,7 +206,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.5b"
     },
     "--all": {
       "sources": [
@@ -1977,7 +1966,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.4c"
     },
     "--reenroll-hours": {
       "sources": [
@@ -2371,7 +2361,8 @@
       "of": "varlatch",
       "commands": [
         "run"
-      ]
+      ],
+      "slice": "5.4f"
     },
     "--tags": {
       "sources": [
@@ -3597,7 +3588,13 @@
         "refused inside an agent-safe run"
       ],
       "source": "packages/mcp-server/src/run.ts",
-      "cases": []
+      "cases": [
+        "transcripts/5.6b-mcp.json#tools.writes-flag",
+        "transcripts/5.6b-mcp.json#tools.writes-env",
+        "transcripts/5.6b-mcp.json#tools.writes-env-other",
+        "transcripts/5.6b-mcp.json#agent-run.writes",
+        "transcripts/5.6b-mcp.json#agent-run.writes-env"
+      ]
     }
   ],
   "exits": [

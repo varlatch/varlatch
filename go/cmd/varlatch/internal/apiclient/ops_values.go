@@ -55,6 +55,12 @@ func (c *Client) EffectiveConfiguration(ctx context.Context, org, project, envir
 	return c.Request(ctx, "GET", environmentPath(org, project, environment)+"/effective-configuration"+query, NoBody, nil)
 }
 
+// DiscloseSecrets is POST .../disclosures: the Secrets' values, with
+// {items: [...]} or {scope: "all-authorized-secrets"}.
+func (c *Client) DiscloseSecrets(ctx context.Context, org, project, environment string, body jsjson.Object) (any, error) {
+	return c.Request(ctx, "POST", environmentPath(org, project, environment)+"/disclosures", body, nil)
+}
+
 // ValidateEnvironment is POST .../validate with {}.
 func (c *Client) ValidateEnvironment(ctx context.Context, org, project, environment string) (any, error) {
 	return c.Request(ctx, "POST", environmentPath(org, project, environment)+"/validate", jsjson.Object{}, nil)
@@ -63,6 +69,12 @@ func (c *Client) ValidateEnvironment(ctx context.Context, org, project, environm
 // GetActiveContract is GET /v1/organizations/<org>/projects/<project>/contract.
 func (c *Client) GetActiveContract(ctx context.Context, org, project string) (any, error) {
 	return c.Request(ctx, "GET", projectPath(org, project)+"/contract", NoBody, nil)
+}
+
+// GetContractRevision is GET .../contract/revisions/<id>: one stored
+// revision by ID, active or not (capability contracts.revision-by-id).
+func (c *Client) GetContractRevision(ctx context.Context, org, project, revisionID string) (any, error) {
+	return c.Request(ctx, "GET", projectPath(org, project)+"/contract/revisions/"+EncodeURIComponent(revisionID), NoBody, nil)
 }
 
 // PushContractRevision is POST .../contract/revisions with {contract, provenance}.
