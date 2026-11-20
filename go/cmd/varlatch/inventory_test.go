@@ -31,6 +31,10 @@ type inventory struct {
 		Of       string   `json:"of"`
 		Commands []string `json:"commands"`
 		Slice    string   `json:"slice"`
+		// CommandSlices: the commands for which the option belongs to a
+		// later slice than the command's (--confirm of org and project is
+		// their delete subcommands', 5.7c).
+		CommandSlices map[string]string `json:"commandSlices"`
 	} `json:"options"`
 	Environment map[string]struct {
 		Slice     string   `json:"slice"`
@@ -192,6 +196,9 @@ func TestInventoryCoverage(t *testing.T) {
 		for _, command := range o.Commands {
 			global := command == "*"
 			if !global && !cli.Built(command) || global && !built("5.1a") {
+				continue
+			}
+			if later, ok := o.CommandSlices[command]; ok && !built(later) {
 				continue
 			}
 			used := slices.ContainsFunc(cases, func(c recorded) bool {

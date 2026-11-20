@@ -27,6 +27,9 @@ import (
 //   - outJSON, which writes a document printJSON redacted, called by
 //     anything but printJSON, and a redactedJSON made anywhere but
 //     redactJSON;
+//   - outShowing, the one writer that lets a token through, reached
+//     (called or taken as a method value) anywhere but inviteCommand, and
+//     redactOutputShowing reached anywhere but outShowing;
 //   - os.NewFile (a stream by its descriptor) outside newFileSites,
 //     syscall.Write and unix.Write;
 //   - a stream's Write, WriteString, WriteByte or WriteRune, called or
@@ -52,6 +55,9 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		"internal/cli/cli.go:ask":         true, // the hidden prompt's question (5.3a)
 		"internal/cli/cli.go:out":         true,
 		"internal/cli/cli.go:outJSON":     false,
+		// invite's enrollment link: the one token it prints on purpose
+		// (RedactOutputShowing keeps exactly that one, redacts the rest).
+		"internal/cli/cli.go:outShowing": true,
 		// The command `run` starts writes to the process's streams (directly,
 		// or through internal/matcher's redaction): its own bytes, never the
 		// CLI's text, so the fail-safe does not rewrite them (5.4b).
@@ -85,10 +91,8 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, c := range f.Comments {
-			if strings.Contains(c.Text(), "go:build ignore") || strings.HasPrefix(strings.TrimSpace(c.List[0].Text), "//go:build ignore") {
-				return nil // a generator, never part of the CLI
-			}
+		if hasBuildIgnore(f) {
+			return nil // a generator, never part of the CLI
 		}
 		path = rel
 		for _, imp := range f.Imports {
@@ -155,6 +159,9 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 						}
 					}
 				case *ast.Ident:
+					if msg := showingMisuse(site, x.Name); msg != "" && !(fn == x.Name && site == "internal/cli/cli.go:"+fn) {
+						t.Errorf("%s: %s", fset.Position(x.Pos()), msg)
+					}
 					if (x.Name == "stdout" || x.Name == "stderr") && !allowed {
 						t.Errorf("%s: %s used outside the fail-safe's writers", fset.Position(x.Pos()), x.Name)
 					}
@@ -173,6 +180,26 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 }
 
 func isStream(name string) bool { return name == "Stdout" || name == "Stderr" }
+
+// showingSites: where the token-showing writer and its redactor may be
+// reached. outShowing prints invite's enrollment token; nothing else may
+// print a token through it.
+var showingSites = map[string]string{
+	"outShowing":          "internal/cli/admin.go:inviteCommand",
+	"redactOutputShowing": "internal/cli/cli.go:outShowing",
+}
+
+// showingMisuse is the guard's complaint about the identifier name reached
+// at site, or "". A selector's name is an identifier too, so a call, a
+// method value (`f := r.outShowing`) and a function value count alike; the
+// declarations themselves are exempt.
+func showingMisuse(site, name string) string {
+	allowed, ok := showingSites[name]
+	if !ok || site == allowed {
+		return ""
+	}
+	return name + " reached outside " + allowed[strings.LastIndex(allowed, ":")+1:]
+}
 
 // writesStream is whether a call takes a stream as an argument.
 func writesStream(call *ast.CallExpr) bool {
@@ -204,7 +231,7 @@ func redacts(call *ast.CallExpr) bool {
 				case *ast.SelectorExpr:
 					name = f.Sel.Name
 				}
-				if name == "RedactDiagnostic" || name == "RedactOutput" {
+				if name == "RedactDiagnostic" || name == "RedactOutput" || name == "redactOutputShowing" {
 					found = true
 				}
 			}
@@ -266,5 +293,43 @@ func TestFailSafeGuardPathsOnWindows(t *testing.T) {
 	// An allow-listed site is named the same from a Windows path.
 	if site := slashed(`internal\cli\cli.go`, '\\') + ":finish"; site != "internal/cli/cli.go:finish" {
 		t.Errorf("site %q", site)
+	}
+}
+
+// hasBuildIgnore says whether f carries the real `//go:build ignore`
+// constraint: a line comment of exactly that text before the package
+// clause. A comment that merely mentions it does not count.
+func hasBuildIgnore(f *ast.File) bool {
+	for _, group := range f.Comments {
+		if group.Pos() >= f.Package {
+			break
+		}
+		for _, c := range group.List {
+			if strings.TrimSpace(c.Text) == "//go:build ignore" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestHasBuildIgnoreNeedsTheConstraint: only the constraint line before
+// the package clause exempts a file from the write guard.
+func TestHasBuildIgnoreNeedsTheConstraint(t *testing.T) {
+	for src, want := range map[string]bool{
+		"//go:build ignore\n\npackage main\n":                                           true,
+		"// SPDX-License-Identifier: Apache-2.0\n\n//go:build ignore\n\npackage main\n": true,
+		"// Not built: see go:build ignore files.\npackage main\n":                      false,
+		"/* //go:build ignore */\npackage main\n":                                       false,
+		"package main\n\n//go:build ignore\n":                                           false,
+		"//go:build ignore_other\n\npackage main\n":                                     false,
+	} {
+		f, err := parser.ParseFile(token.NewFileSet(), "x.go", src, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hasBuildIgnore(f); got != want {
+			t.Errorf("%q: %v, want %v", src, got, want)
+		}
 	}
 }
