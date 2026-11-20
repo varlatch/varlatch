@@ -3023,11 +3023,15 @@ migrations.
   (every check passes) and `admin backup run`, whose archive is placed at
   `--out` once its installation and key versions are the source's. Both
   containers and the scratch directory are removed, on an interrupt too
-  (SIGINT, SIGTERM, SIGHUP end it through its context). One conversion
-  runs at a time on a host (an flock in the temporary directory), and
+  (SIGINT, SIGTERM, SIGHUP end it through its context), and when a
+  removal fails it says the cleanup is incomplete. One conversion runs at
+  a time per host, whoever runs it (an flock on
+  /run/lock/varlatch-convert.lock, or /tmp's, whatever TMPDIR says), and
   each starts by sweeping what a killed one left: the converter's
-  labelled containers, by ID, and its working directories in the scratch
-  root (directories only, never a symbolic link). PostgreSQL's own
+  labelled containers, by ID, its working directories in the scratch
+  root and the copy it was placing beside `--out` (directories or regular
+  files of its own names, never a symbolic link; one it may not remove is
+  warned about). Linux and macOS only. PostgreSQL's own
   messages (psql, pg_restore) are not shown: they can quote the
   archive's data. Its tests: the
   refusals before any program runs and the conversion's sequence, with

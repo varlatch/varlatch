@@ -376,10 +376,10 @@ func TestArchiveInterruptCleansUp(t *testing.T) {
 		}
 		return Ran{}
 	}
-	_, err := ConvertArchive(ctx, ArchiveOptions{Archive: v.archive, Out: filepath.Join(dir, "out.vltbak"), KEKFile: v.kekFile, BEKFile: v.bekFile,
+	res, err := ConvertArchive(ctx, ArchiveOptions{Archive: v.archive, Out: filepath.Join(dir, "out.vltbak"), KEKFile: v.kekFile, BEKFile: v.bekFile,
 		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: dir, Run: run, LockDir: t.TempDir()})
-	if err == nil || ctx.Err() == nil || !dumpSeen {
-		t.Fatalf("err %v, ctx %v, the dump was in scratch %v", err, ctx.Err(), dumpSeen)
+	if err == nil || ctx.Err() == nil || !dumpSeen || res.CleanupIncomplete {
+		t.Fatalf("err %v, ctx %v, the dump was in scratch %v, cleanup incomplete %v", err, ctx.Err(), dumpSeen, res.CleanupIncomplete)
 	}
 	var started, removed []string
 	for _, c := range run.calls {
@@ -395,6 +395,29 @@ func TestArchiveInterruptCleansUp(t *testing.T) {
 	}
 	if left, _ := os.ReadDir(dir); len(left) != 0 {
 		t.Errorf("left after the interrupt: %v", left)
+	}
+
+	// When a container cannot be removed, the result says so: the CLI then
+	// says the cleanup is incomplete, never "cleaned up".
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	stuck := &fakeRunner{}
+	stuck.answer = func(c call) Ran {
+		switch {
+		case c.args[0] == "exec" && slices.Contains(c.args, "SELECT 1"):
+			return Ran{Answer: []byte("1\n")}
+		case c.args[0] == "run" && slices.Contains(c.args, "backfill"):
+			cancel2()
+			return Ran{Code: 1}
+		case c.args[0] == "rm" && len(c.args) > 3:
+			return Ran{Code: 1, Said: []byte("the daemon is gone")}
+		}
+		return Ran{}
+	}
+	res, err = ConvertArchive(ctx2, ArchiveOptions{Archive: v.archive, Out: filepath.Join(dir, "out.vltbak"), KEKFile: v.kekFile, BEKFile: v.bekFile,
+		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: dir, Run: stuck, LockDir: t.TempDir()})
+	if err == nil || !res.CleanupIncomplete {
+		t.Errorf("a failed removal: err %v, cleanup incomplete %v", err, res.CleanupIncomplete)
 	}
 }
 
@@ -416,6 +439,24 @@ func TestArchiveSweepsLeftovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(dir, "varlatch-convert-5555555"), []byte("a file of that name"))
+	// A copy a killed conversion was placing beside --out, and others there it leaves.
+	outDir := t.TempDir()
+	write(t, filepath.Join(outDir, ".varlatch-convert-424242.partial"), []byte("a half-placed archive"))
+	write(t, filepath.Join(outDir, ".varlatch-convert-x.partial"), []byte("not its name"))
+	if err := os.Symlink(elsewhere, filepath.Join(outDir, ".varlatch-convert-1.partial")); err != nil {
+		t.Fatal(err)
+	}
+	// One this user may not remove (another user's): warned about, the sweep goes on.
+	locked := filepath.Join(dir, "varlatch-convert-9999999")
+	if err := os.MkdirAll(filepath.Join(locked, "inner"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(locked, "inner", "f"), nil)
+	if err := os.Chmod(filepath.Join(locked, "inner"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(locked, "inner"), 0o700) })
+	var said []string
 	run := &fakeRunner{}
 	run.answer = func(c call) Ran {
 		switch {
@@ -426,10 +467,24 @@ func TestArchiveSweepsLeftovers(t *testing.T) {
 		}
 		return Ran{}
 	}
-	_, err := ConvertArchive(context.Background(), ArchiveOptions{Archive: v.archive, Out: filepath.Join(t.TempDir(), "out.vltbak"), KEKFile: v.kekFile, BEKFile: v.bekFile,
-		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: dir, Run: run, LockDir: t.TempDir()})
+	_, err := ConvertArchive(context.Background(), ArchiveOptions{Archive: v.archive, Out: filepath.Join(outDir, "out.vltbak"), KEKFile: v.kekFile, BEKFile: v.bekFile,
+		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: dir, Run: run, LockDir: t.TempDir(),
+		Say: func(s string) { said = append(said, s) }})
 	if err == nil || !strings.Contains(err.Error(), "stopped here for the test") {
 		t.Fatalf("%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(outDir, ".varlatch-convert-424242.partial")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the half-placed archive: %v", err)
+	}
+	for _, kept := range []string{".varlatch-convert-x.partial", ".varlatch-convert-1.partial"} {
+		if _, err := os.Lstat(filepath.Join(outDir, kept)); err != nil {
+			t.Errorf("%s: %v", kept, err)
+		}
+	}
+	if os.Geteuid() != 0 { // root may remove anything
+		if _, err := os.Lstat(locked); err != nil || !slices.ContainsFunc(said, func(s string) bool { return strings.Contains(s, "could not be removed") }) {
+			t.Errorf("the leftover it may not remove: %v, said %q", err, said)
+		}
 	}
 	if got := run.calls[0].args; !slices.Equal(got, []string{"ps", "-aq", "--filter", "label=varlatch.convert"}) {
 		t.Errorf("first %v", got)

@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -24,10 +27,15 @@ import (
 const migrateArchiveUsage = `Usage:
   varlatch migrate --from-archive <archive> --kek-file <file> --bek-file <file> --out <archive>
                    [--ts-image <name@sha256:digest>] [--out-bek-file <file>] [--scratch-dir <dir>] [--json]
-               (on a host with Docker: the TypeScript archive is restored in an isolated PostgreSQL with no
-                network, exported by the last TypeScript release's image, imported and checked by varlatchd,
-                and sealed as a format 3 archive at --out; --ts-image is required until this varlatch
-                carries that release's digest; --out-bek-file when --bek-file holds a passphrase)`
+               (on a Linux or macOS host with Docker, one conversion at a time per host: the TypeScript
+                archive is restored in an isolated PostgreSQL with no network, exported by the last
+                TypeScript release's image, imported and checked by varlatchd, and sealed as a format 3
+                archive at --out; --ts-image is required until this varlatch carries that release's digest;
+                --out-bek-file when --bek-file holds a passphrase)`
+
+// conversionSignals end a backup conversion with its cleanup (syscall
+// names them on every platform; the mode itself runs on Linux and macOS).
+var conversionSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP}
 
 // fromArchive reports whether a command line is the converter's.
 func fromArchive(args []string) bool {
@@ -95,6 +103,9 @@ func migrateArchiveCommand(r *Run) error {
 	if err != nil {
 		return err
 	}
+	if runtime.GOOS == "windows" {
+		return Fail("varlatch migrate --from-archive: the converter runs on a Linux or macOS host with Docker", ExitFailure)
+	}
 	varlatchd, err := r.locateVarlatchd("varlatch migrate --from-archive")
 	if err != nil {
 		return err
@@ -112,8 +123,19 @@ func migrateArchiveCommand(r *Run) error {
 		Run: migrate.ExecRunner{Env: environ(r)}, VarlatchdRun: migrate.ExecRunner{Env: varlatchdEnviron(r)},
 		Say: func(s string) { _ = r.warn(s) },
 	})
+	cleanup := "cleaned up (its containers and scratch files removed)"
+	if res.CleanupIncomplete {
+		cleanup = "cleanup incomplete: the next conversion sweeps what is left"
+	}
 	if err != nil && ctx.Err() != nil {
-		return Fail("varlatch migrate --from-archive: interrupted: cleaned up (its containers and scratch files removed); nothing was written", ExitFailure)
+		// What ended it is said too: a failure that came with the interrupt is not hidden behind it.
+		return Fail("varlatch migrate --from-archive: interrupted ("+err.Error()+"): "+cleanup+"; nothing was written", ExitFailure)
+	}
+	if err != nil && res.CleanupIncomplete {
+		return Fail("varlatch migrate --from-archive: "+err.Error()+"; "+cleanup, ExitFailure)
+	}
+	if res.CleanupIncomplete {
+		_ = r.warn("varlatch migrate --from-archive: " + cleanup)
 	}
 	if err != nil {
 		var refused *migrate.ErrArchive

@@ -62,6 +62,34 @@ var localImage = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // root: its working directory.
 var leftover = regexp.MustCompile(`^varlatch-convert-[0-9]+$`)
 
+// partialOut names the copy place writes beside --out before it links it.
+var partialOut = regexp.MustCompile(`^\.varlatch-convert-[0-9]+\.partial$`)
+
+// sweepFiles removes what a killed conversion left in dir: directories
+// (dirs) or regular files named by names, never a symbolic link. One it
+// may not remove (another user's) is left, with a warning.
+func sweepFiles(dir string, names *regexp.Regexp, dirs bool, say func(string)) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !names.MatchString(e.Name()) || (dirs && !e.Type().IsDir()) || (!dirs && !e.Type().IsRegular()) {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		var err error
+		if dirs {
+			err = os.RemoveAll(p)
+		} else {
+			err = os.Remove(p)
+		}
+		if err != nil {
+			say(fmt.Sprintf("Warning: %s, an interrupted conversion's leftover, could not be removed: %v", p, err))
+		}
+	}
+}
+
 // DefaultTSImage is the last TypeScript release's image, once its digest
 // is published (sides.go); "" until then, when --ts-image is required.
 func DefaultTSImage() string {
@@ -98,9 +126,10 @@ type ArchiveOptions struct {
 	// AllowLocalImage lets TSImage be a local image's ID (sha256:...), not
 	// only a registry digest: the tests' and the nightly run's own builds.
 	AllowLocalImage bool
-	// LockDir is where the conversion's host-wide lock is ("" for the
-	// system's temporary directory): one conversion at a time, so the sweep
-	// of an interrupted one's leftovers never touches a running one's.
+	// LockDir is where the conversion's host-wide lock is ("" for
+	// /run/lock when this user may write it, else /tmp, whatever TMPDIR
+	// says): one conversion at a time on a host, so the sweep of an
+	// interrupted one's leftovers never touches a running one's.
 	LockDir string
 	Say     func(string)
 }
@@ -121,6 +150,10 @@ type ArchiveResult struct {
 		Path      string `json:"path"`
 		Bytes     int64  `json:"bytes"`
 	} `json:"output"`
+	// CleanupIncomplete is set, with or without an error, when a container
+	// or the scratch directory could not be removed: the next conversion
+	// sweeps what is left.
+	CleanupIncomplete bool `json:"cleanupIncomplete,omitempty"`
 }
 
 // ErrArchive is a refusal before anything was written.
@@ -226,8 +259,7 @@ func releaseVersion(raw json.RawMessage) string {
 }
 
 // ConvertArchive converts o.Archive (see the comment at the top).
-func ConvertArchive(ctx context.Context, o ArchiveOptions) (ArchiveResult, error) {
-	var res ArchiveResult
+func ConvertArchive(ctx context.Context, o ArchiveOptions) (res ArchiveResult, _ error) {
 	say := o.Say
 	if say == nil {
 		say = func(string) {}
@@ -269,7 +301,7 @@ func ConvertArchive(ctx context.Context, o ArchiveOptions) (ArchiveResult, error
 	// opened: no program runs before that).
 	lockDir := o.LockDir
 	if lockDir == "" {
-		lockDir = os.TempDir()
+		lockDir = defaultLockDir()
 	}
 	unlock, err := lockConversion(lockDir)
 	if err != nil {
@@ -280,15 +312,19 @@ func ConvertArchive(ctx context.Context, o ArchiveOptions) (ArchiveResult, error
 	if scratchRoot == "" {
 		scratchRoot = os.TempDir()
 	}
-	if err := removeMatching(scratchRoot, leftover, true); err != nil {
-		return res, fmt.Errorf("an interrupted conversion's working directory in %s could not be removed: %w", scratchRoot, err)
-	}
+	sweepFiles(scratchRoot, leftover, true, say)
+	// A copy being placed beside --out when a conversion was killed.
+	sweepFiles(filepath.Dir(o.Out), partialOut, false, say)
 
 	work, err := os.MkdirTemp(o.Scratch, "varlatch-convert-")
 	if err != nil {
 		return res, err
 	}
-	defer os.RemoveAll(work)
+	defer func() {
+		if err := os.RemoveAll(work); err != nil {
+			res.CleanupIncomplete = true
+		}
+	}()
 
 	// 1. The archive, opened and its keys checked, before any container.
 	opened, err := backup.Open(o.Archive, keys.bek, work)
@@ -322,6 +358,11 @@ func ConvertArchive(ctx context.Context, o ArchiveOptions) (ArchiveResult, error
 	}
 	defer clear(runKey)
 	iso := &isolation{docker: o.Docker, run: o.Run, pgImage: pgImage, tsImage: tsImage, user: o.User, say: say}
+	defer func() {
+		if iso.cleanupFailed {
+			res.CleanupIncomplete = true
+		}
+	}()
 	if iso.docker == "" {
 		iso.docker = "docker"
 	}
@@ -463,6 +504,8 @@ type isolation struct {
 	docker, pgImage, tsImage, user string
 	run                            Runner
 	say                            func(string)
+	// cleanupFailed: a container it started could not be removed.
+	cleanupFailed bool
 }
 
 func (i *isolation) do(ctx context.Context, what string, args []string, stdin []byte) (Ran, error) {
@@ -583,7 +626,10 @@ func (i *isolation) removeAll(started []string) {
 	}
 	cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	_, _ = i.run.Run(cleanup, "", i.docker, append([]string{"rm", "-fv"}, started...), nil)
+	r, err := i.run.Run(cleanup, "", i.docker, append([]string{"rm", "-fv"}, started...), nil)
+	if err != nil || r.Code != 0 {
+		i.cleanupFailed = true
+	}
 }
 
 // export restores dump into a throwaway PostgreSQL and runs the last
