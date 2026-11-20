@@ -102,7 +102,7 @@ func TestChangesAreClassified(t *testing.T) {
 					found = true
 				}
 				if c.class != Breaking && ch.Class == Breaking {
-					t.Errorf("an additive change also gave %v", ch)
+					t.Errorf("a change that is not breaking also gave %v", ch)
 				}
 			}
 			if !found {

@@ -23,10 +23,6 @@ type Step struct {
 	SQL            string
 }
 
-// errBadVersion marks a schema_version row no varlatchd writes (schema.sql's
-// checks keep it out; a database changed by hand may hold one).
-var errBadVersion = errors.New("db")
-
 // ErrNoDatabase is returned by Upgrade for a database with no tables:
 // there is nothing to upgrade (serve or setup creates it).
 var ErrNoDatabase = errors.New("db: the database has no schema yet: nothing to upgrade")
@@ -84,7 +80,9 @@ func upgrade(ctx context.Context, s *storage.DB, release string, steps []Step, t
 		}
 		up = Upgraded{From: v.Version, To: v.Version, CompatibleFrom: v.CompatibleFrom}
 		if v.Version < 1 || v.CompatibleFrom < 1 || v.CompatibleFrom > v.Version {
-			return fmt.Errorf("%w: the recorded version %d (compatible from %d) is not a varlatch schema version", errBadVersion, v.Version, v.CompatibleFrom)
+			// A row no varlatchd writes (schema.sql's checks keep it out; a
+			// database changed by hand may hold one).
+			return fmt.Errorf("db: the recorded version %d (compatible from %d) is not a varlatch schema version", v.Version, v.CompatibleFrom)
 		}
 		if v.Version > target {
 			if v.CompatibleFrom <= target {

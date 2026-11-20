@@ -930,8 +930,14 @@ jobs:
             (cd go && go build -tags conformance,g6fixture,g6unsafe -o "$RUNNER_TEMP/varlatchd-g6unsafe" ./cmd/varlatchd)
             G6_ROLLBACK_SAFE=false G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe"
             status=0
-            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe-declared-safe" || status=$?
-            [ "$status" -eq 1 ] || { echo "::error::G6 did not fail a release declared rollback-safe whose database the previous release refuses (exit $status)"; exit 1; }
+            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe-declared-safe" \
+              2> "$RUNNER_TEMP/g6-unsafe-declared-safe.err" || status=$?
+            cat "$RUNNER_TEMP/g6-unsafe-declared-safe.err" >&2
+            # Exit 1 for this reason alone: a step that fails earlier also exits 1.
+            if [ "$status" -ne 1 ] || ! grep -q "declared rollback-safe, but the previous release cannot open" "$RUNNER_TEMP/g6-unsafe-declared-safe.err"; then
+              echo "::error::G6 did not fail a release declared rollback-safe whose database the previous release refuses, for that reason (exit $status)"
+              exit 1
+            fi
             echo "G6 failed the release declared rollback-safe whose database the previous release refuses, as it must."
           fi
       # G3 (ADR-0059 step 3.6), the direction the Go tests cannot take: the
