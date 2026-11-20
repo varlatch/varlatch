@@ -2377,6 +2377,9 @@
         "help",
         "setup"
       ],
+      "differences": [
+        "setup-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch setup [--dir <compose-directory>] [--ingress public|tailnet|external] [--public-url <url>]\n                 [--tailnet-machine <name>] [--tailscale-auth-key-file <f>] [--port <web-port>] [--no-wait]\n                 [--tailnet-endpoint | --no-tailnet-endpoint] [--serve-cli | --no-serve-cli]\n                 [--escrow passphrase|shamir|copy] [--escrow-passphrase-file <f>] [--attest]\n                                                       # install: one command, resumable; --tailnet-endpoint\n                                                       # lets approved devices read tailnet-protected values\n                                                       # in the dashboard (HTTPS on port 8688 of the node);\n                                                       # --serve-cli serves this installation's CLI and\n                                                       # install scripts at /install.sh (off unless chosen)\n",
@@ -2397,6 +2400,9 @@
         "setup",
         "--help"
       ],
+      "differences": [
+        "setup-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch setup [--dir <compose-directory>] [--ingress public|tailnet|external] [--public-url <url>]\n                 [--tailnet-machine <name>] [--tailscale-auth-key-file <f>] [--port <web-port>] [--no-wait]\n                 [--tailnet-endpoint | --no-tailnet-endpoint] [--serve-cli | --no-serve-cli]\n                 [--escrow passphrase|shamir|copy] [--escrow-passphrase-file <f>] [--attest]\n                                                       # install: one command, resumable; --tailnet-endpoint\n                                                       # lets approved devices read tailnet-protected values\n                                                       # in the dashboard (HTTPS on port 8688 of the node);\n                                                       # --serve-cli serves this installation's CLI and\n                                                       # install scripts at /install.sh (off unless chosen)\n",
@@ -2416,6 +2422,9 @@
       "args": [
         "setup",
         "-h"
+      ],
+      "differences": [
+        "setup-usage"
       ],
       "expect": {
         "status": 0,

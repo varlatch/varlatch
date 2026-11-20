@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//go:build linux
+
+package setup
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/varlatch/varlatch/go/lib/diskprobe"
+)
+
+// SystemHost is the real host: useradd, systemctl, varlatchd at
+// Varlatchd. Its environment is the run's, without any credential
+// (VARLATCH_TOKEN and the like): setup passes none on, and passes no key.
+type SystemHost struct {
+	// Varlatchd is varlatchd's path (the one beside varlatch).
+	Varlatchd string
+	// Env is the environment children run with.
+	Env []string
+}
+
+func (SystemHost) Path(p string) string { return p }
+
+func (SystemHost) LookupUser(name string) (int, int, bool, error) {
+	u, err := user.Lookup(name)
+	var unknown user.UnknownUserError
+	if errors.As(err, &unknown) {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, err
+	}
+	uid, err1 := strconv.Atoi(u.Uid)
+	gid, err2 := strconv.Atoi(u.Gid)
+	if err1 != nil || err2 != nil {
+		return 0, 0, false, fmt.Errorf("setup: the user %s has ids %s:%s", name, u.Uid, u.Gid)
+	}
+	return uid, gid, true, nil
+}
+
+func (h SystemHost) CreateUser(name string) error {
+	cmd := exec.Command("useradd", "--system", "--user-group", "--no-create-home", "--home-dir", "/nonexistent", "--shell", "/usr/sbin/nologin", name)
+	cmd.Env = h.Env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("setup: useradd %s: %v %s", name, err, oneLine(string(out)))
+	}
+	return nil
+}
+
+func (SystemHost) Chown(path string, uid, gid int) error { return os.Lchown(path, uid, gid) }
+
+func (h SystemHost) Systemctl(args ...string) (string, error) {
+	cmd := exec.Command("systemctl", args...)
+	cmd.Env = h.Env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (SystemHost) Probe(ctx context.Context, dir string) (diskprobe.Result, error) {
+	return diskprobe.Run(ctx, diskprobe.Options{Dir: dir, Unnamed: true})
+}
+
+// CheckConfig runs `varlatchd admin config-check --config path` with the
+// keys' directory as its credentials, as the unit hands them over.
+func (h SystemHost) CheckConfig(path string) (string, error) {
+	cmd := exec.Command(h.Varlatchd, "admin", "config-check", "--config", path)
+	cmd.Env = append(append([]string{}, h.Env...), "CREDENTIALS_DIRECTORY="+filepath.Dir(RootKEK))
+	out, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return oneLine(string(out)), nil
+	}
+	return "", err
+}
+
+func (SystemHost) Ready(ctx context.Context, listen string) error {
+	host := listen
+	if strings.HasPrefix(host, ":") || strings.HasPrefix(host, "0.0.0.0:") {
+		host = "127.0.0.1:" + host[strings.LastIndex(host, ":")+1:]
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	for {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+host+"/readyz", nil)
+		if res, err := client.Do(req); err == nil {
+			res.Body.Close()
+			if res.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}

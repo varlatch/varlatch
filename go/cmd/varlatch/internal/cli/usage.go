@@ -63,6 +63,8 @@ func commandHelp(command string) (string, bool) {
 		return adminUsage, true
 	case "doctor":
 		return doctorUsage, true
+	case "setup":
+		return setupUsage, true
 	}
 	return CommandHelp(command)
 }

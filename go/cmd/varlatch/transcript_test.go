@@ -167,6 +167,14 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = cli.DoctorHelp + "\n"
 		}
 	},
+	// `varlatch help setup` (and `setup --help`, `setup -h`) prints a Go
+	// installation's setup; the TypeScript usage is a Compose
+	// installation's (slice 6.4a).
+	"setup-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch setup ") {
+			o.Stdout = cli.SetupHelp + "\n"
+		}
+	},
 	// A --json document's fields the API defines as scalars: an object or
 	// array a server sent there is left out by the Go CLI (go/README.md,
 	// "--json documents hold only scalars where the API defines them"), so

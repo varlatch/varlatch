@@ -457,7 +457,7 @@ jobs:
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
       - name: install.sh, the G9a runner and the restore drill pass shellcheck
-        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/install/test-setup.sh
 
       # G13 (ADR-0059 step 4.14), and the Go replacement of
       # scripts/test-backup-s3.mjs: the S3 client against a local S3 server
@@ -608,6 +608,24 @@ jobs:
         run: |
           (cd go && go build -o "$RUNNER_TEMP/unitprobe" ./install/unitprobe)
           sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 go/install/test-unit.sh "$RUNNER_TEMP/unitprobe"
+
+      # `varlatch setup` end to end (ADR-0059 step 6, slice 6.4a; the setup
+      # suite's replacement) on this disposable runner's own systemd, as
+      # the unit's check above: no container (the unit's sandbox needs
+      # namespaces an unprivileged container cannot give). For each ingress
+      # mode (localhost, own proxy, public against Pebble) one command from
+      # an empty host to a ready installation, a rerun changing nothing,
+      # setup stopped after each step and resumed, and no key in its output,
+      # its journal, the configuration, the unit's journal or a backup.
+      - name: varlatch setup from an empty host, on this runner's systemd
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go build -o "$RUNNER_TEMP/setup-bin/varlatch" ./cmd/varlatch && go build -o "$RUNNER_TEMP/setup-bin/varlatchd" ./cmd/varlatchd)
+          eval "$(go/server/publictls/testdata/pebble.sh start "$RUNNER_TEMP/setup-pebble")"
+          trap 'go/server/publictls/testdata/pebble.sh stop' EXIT
+          sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_PEBBLE="$VARLATCH_TEST_PEBBLE" VARLATCH_TEST_PEBBLE_ROOT="$VARLATCH_TEST_PEBBLE_ROOT" \
+            go/install/test-setup.sh "$RUNNER_TEMP/setup-bin"
 
       # ADR-0059 Order step 3: envelopes cross between the servers in both
       # directions. The Go tests open what TypeScript releases sealed

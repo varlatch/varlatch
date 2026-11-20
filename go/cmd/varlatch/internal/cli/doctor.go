@@ -136,7 +136,7 @@ func (r *Run) varlatchdDoctor(config string) (doctorReport, error) {
 		args = append(args, "--config", config)
 	}
 	cmd := exec.Command(path, args...)
-	cmd.Env = varlatchdEnviron(r)
+	cmd.Env = hostCredentials(varlatchdEnviron(r), config)
 	answer, said, err := runChild(cmd)
 	code := 0
 	if err != nil {
