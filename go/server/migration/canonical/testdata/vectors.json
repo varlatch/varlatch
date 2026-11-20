@@ -1,5 +1,5 @@
 {
-  "comment": "canonical-v1 vectors (CANONICAL.md), shared by go/server/migration/canonical and the TypeScript server's encoder, which must reproduce every output byte for byte and refuse every refused input. Inputs are neutral: text as a string; timestamps (microseconds since the epoch, UTC), integers and bigints as decimal strings; booleans as true or false; jsonb as its JSON text; text[] as an array; bytea as hex; SQL NULL as null. A digest's plaintext is hex.",
+  "comment": "canonical-v1 vectors (CANONICAL.md), shared by go/server/migration/canonical and the TypeScript server's encoder, which must reproduce every output byte for byte and refuse every refused input. Inputs are neutral: text as a string; timestamps (microseconds since the epoch, UTC), integers and bigints as decimal strings; booleans as true or false; jsonb as its JSON text; text[] as an array; bytea as hex; SQL NULL as null. A digest's plaintext is hex. A jsonb number is accepted only when writing its ECMAScript double gives back its own spelling (CANONICAL.md).",
   "values": [
     {
       "name": "text, empty",
@@ -169,10 +169,16 @@
       "output": "\"{\\\"a\\\":2}\""
     },
     {
-      "name": "jsonb, numbers as ECMAScript writes them",
+      "name": "jsonb, numbers a double holds exactly",
       "type": "jsonb",
-      "input": "[1.0, 1e2, -0, 0.1, 1e21, 123456789012345678901, 1.5e-7]",
-      "output": "\"[1,100,0,0.1,1e+21,123456789012345680000,1.5e-7]\""
+      "input": "[1, 100, 0, 0.1, -2.5, 1e+21, 1.5e-7, 123456789, {\"n\": 5e-324}]",
+      "output": "\"[1,100,0,0.1,-2.5,1e+21,1.5e-7,123456789,{\\\"n\\\":5e-324}]\""
+    },
+    {
+      "name": "jsonb, a number spelt inside a string is text",
+      "type": "jsonb",
+      "input": "{\"s\": \"1.0\", \"t\": \"a\\\"-0\\\\\", \"u\": \"\\u0031.0\"}",
+      "output": "\"{\\\"s\\\":\\\"1.0\\\",\\\"t\\\":\\\"a\\\\\\\"-0\\\\\\\\\\\",\\\"u\\\":\\\"1.0\\\"}\""
     },
     {
       "name": "jsonb, the JSON null is not SQL NULL",
@@ -273,6 +279,60 @@
       "type": "smallint",
       "input": null,
       "why": "the type is checked before the value"
+    },
+    {
+      "name": "jsonb number 1.0",
+      "type": "jsonb",
+      "input": "[1.0]",
+      "why": "a double writes 1"
+    },
+    {
+      "name": "jsonb number 0.10",
+      "type": "jsonb",
+      "input": "{\"a\": 0.10}",
+      "why": "a double writes 0.1"
+    },
+    {
+      "name": "jsonb number 1e2",
+      "type": "jsonb",
+      "input": "[1e2]",
+      "why": "a double writes 100"
+    },
+    {
+      "name": "jsonb number -0",
+      "type": "jsonb",
+      "input": "[-0]",
+      "why": "a double writes 0"
+    },
+    {
+      "name": "jsonb number past a double's precision",
+      "type": "jsonb",
+      "input": "[123456789012345678901]",
+      "why": "a double writes 123456789012345680000"
+    },
+    {
+      "name": "jsonb number past a double's range",
+      "type": "jsonb",
+      "input": "[1e999]",
+      "why": "a double cannot hold it"
+    },
+    {
+      "name": "jsonb number 1E+21",
+      "type": "jsonb",
+      "input": "[1E+21]",
+      "why": "a double writes 1e+21"
+    },
+    {
+      "name": "jsonb number as PostgreSQL writes 1e21",
+      "type": "jsonb",
+      "input": "[1000000000000000000000]",
+      "why": "a double writes 1e+21"
+    },
+    {
+      "name": "jsonb number in a nested object",
+      "type": "jsonb",
+      "input": "{\"a\": {\"b\": [2.50]}}",
+      "why": "a double writes 2.5"
     }
   ],
   "rows": [
