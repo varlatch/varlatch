@@ -617,7 +617,11 @@ jobs:
       # an empty host to a ready installation, a rerun changing nothing,
       # setup stopped after each step and resumed, and no key in its output,
       # its journal, the configuration, the unit's journal or a backup.
+      # GitHub-hosted runners only: it changes the machine's systemd, users
+      # and /etc, so it is skipped, never run, on a self-hosted varlatch-ci
+      # VM (long-lived, its systemd ours), whatever runner this job lands on.
       - name: varlatch setup from an empty host, on this runner's systemd
+        if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
         env:
           CGO_ENABLED: "0"
         run: |

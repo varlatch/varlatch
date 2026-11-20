@@ -18,7 +18,8 @@
 #
 # It touches only a disposable machine: it refuses to start unless
 # VARLATCH_TEST_DISPOSABLE_ROOT=1, as root, with nothing of a Varlatch
-# installation present, and removes all it made.
+# installation present, and removes all it made. go.yml runs it on
+# GitHub-hosted runners only, never on a self-hosted varlatch-ci VM.
 set -eu
 
 [ "${VARLATCH_TEST_DISPOSABLE_ROOT:-}" = 1 ] || {
