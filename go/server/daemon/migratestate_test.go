@@ -483,3 +483,42 @@ func TestTheLiveOpen(t *testing.T) {
 		t.Fatal("the gate after an offline open")
 	}
 }
+
+// The switch is written beside the varlatchd serving under the transfer's
+// gate (the engine switches once the public URL answers from it); any
+// other write while it runs is refused, as before.
+func TestTheSwitchBesideARunningVarlatchd(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	for _, phase := range []string{"started", "transfer"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	r := start(t, in)
+	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "open"), "state", "--write"); code != ExitFailure || !strings.Contains(errOut, "varlatchd is running") {
+		t.Fatalf("an open beside the running varlatchd: %d %q", code, errOut)
+	}
+	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "switched"), "state", "--write"); code != ExitOK {
+		t.Fatalf("the switch beside the running varlatchd: %d %q", code, errOut)
+	}
+	if g, err := backup.ReadGate(in.data); err != nil || g == nil || g.Kind != "migration" {
+		t.Fatalf("the gate after the switch: %+v %v", g, err)
+	}
+	res, err := http.Get("http://" + r.addr + "/v1/whoami")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("not isolated after the switch: %d", res.StatusCode)
+	}
+	r.stop(t)
+	code, out, _ := migrateWith(t, in.conf, nil, "state")
+	if code != ExitOK || !strings.Contains(out, `"phase":"switched"`) {
+		t.Fatalf("the journal: %q", out)
+	}
+	// Stopped, it opens offline as before.
+	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "open"), "state", "--write"); code != ExitOK {
+		t.Fatal(errOut)
+	}
+}
