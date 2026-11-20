@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 2,
-  "compatibleFrom": 2,
+  "schemaVersion": 3,
+  "compatibleFrom": 3,
   "rollbackSafe": false,
   "previous": {
     "version": "0.0.0-g6.base",
-    "schemaVersion": 1
+    "schemaVersion": 2
   }
 }

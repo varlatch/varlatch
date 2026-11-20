@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,27 +49,32 @@ func schemaWith(t *testing.T, fixture string) string {
 // The checked-in declaration is this build's: G6 runs this first.
 func TestTheDeclarationMatchesThisBuild(t *testing.T) {
 	code, out, errs := runIt(t, "declaration", "--declaration", declaration)
-	if code != exitOK || !strings.Contains(out, "holds: schema 1, compatible from 1, rollback-safe false, previous no previous release") {
+	if code != exitOK || !strings.Contains(out, "holds: schema 2, compatible from 1, rollback-safe true, previous 0.50.0-rc.1 (schema 1)") {
 		t.Fatalf("%d %q %q", code, out, errs)
 	}
 	// A declaration of another schema version does not match it.
 	code, _, errs = runIt(t, "declaration", "--declaration", filepath.Join(g6, "fixture.json"))
-	if code != exitFailed || !strings.Contains(errs, "declares schemaVersion 2 and compatibleFrom 1; this varlatchd's schema is 1, compatible from 1") {
+	if code != exitFailed || !strings.Contains(errs, "declares schemaVersion 3 and compatibleFrom 1; this varlatchd's schema is 2, compatible from 1") {
 		t.Fatalf("%d %q", code, errs)
 	}
 }
 
 func TestManifest(t *testing.T) {
-	code, out, errs := runIt(t, "manifest", "--version", "0.50.0-rc.1", "--declaration", declaration)
+	code, out, errs := runIt(t, "manifest", "--version", "0.50.0-rc.2", "--declaration", declaration)
 	if code != exitOK {
 		t.Fatalf("%d %q", code, errs)
 	}
 	m, err := release.ParseManifest([]byte(out))
-	if err != nil || m.Version != "0.50.0-rc.1" || m.SchemaVersion != db.SchemaVersion || m.CompatibleFrom != db.CompatibleFrom || m.RollbackSafe || m.Previous != nil {
+	if err != nil || m.Version != "0.50.0-rc.2" || m.SchemaVersion != db.SchemaVersion || m.CompatibleFrom != db.CompatibleFrom || !m.RollbackSafe ||
+		m.Previous == nil || m.Previous.Version != "0.50.0-rc.1" || m.Previous.SchemaVersion != 1 {
 		t.Fatalf("%+v, %v\n%s", m, err, out)
 	}
 	if code, _, errs := runIt(t, "manifest", "--version", "v0.50.0", "--declaration", declaration); code != exitFailed || !strings.Contains(errs, "is not a release version") {
 		t.Fatalf("%d %q", code, errs)
+	}
+	// The previous release itself is not a manifest of this declaration.
+	if code, _, errs := runIt(t, "manifest", "--version", "0.50.0-rc.1", "--declaration", declaration); code != exitFailed || !strings.Contains(errs, "the previous release is this one") {
+		t.Fatalf("the previous release's version: %d %q", code, errs)
 	}
 }
 
@@ -105,8 +111,41 @@ func TestAChangedSchemaMustRaiseItsVersion(t *testing.T) {
 	}
 }
 
+// The checked-in declaration holds against 0.50.0-rc.1's schema (what
+// schema.sql held before version 2's section; CI's G6 job checks against
+// the tag's own file): an addition, declared rollback-safe.
+func TestTheDeclarationHoldsAgainstRC1(t *testing.T) {
+	current, err := os.ReadFile(schemaFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := strings.Index(string(current), "\n-- Certificate issuances for the public HTTPS name")
+	if i < 0 {
+		t.Fatal("schema.sql has no certificate_issuances section")
+	}
+	rc1 := filepath.Join(t.TempDir(), "rc1-schema.sql")
+	if err := os.WriteFile(rc1, current[:i+1], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runIt(t, "schema", "--previous", rc1, "--declaration", declaration, "--json")
+	var doc struct {
+		Previous string            `json:"previous"`
+		Changes  []json.RawMessage `json:"changes"`
+		Problems []string          `json:"problems"`
+	}
+	if code != exitOK || json.Unmarshal([]byte(out), &doc) != nil || doc.Previous != "0.50.0-rc.1 (schema 1)" || len(doc.Changes) != 2 || len(doc.Problems) != 0 {
+		t.Fatalf("%d %q %q", code, out, errs)
+	}
+}
+
 func TestSchemaJSONAndNoPrevious(t *testing.T) {
-	code, out, errs := runIt(t, "schema", "--previous", schemaFile, "--declaration", declaration, "--json")
+	// A declaration without a previous release (as before the first Go
+	// release): the schema is held against none.
+	decl := filepath.Join(t.TempDir(), "release.json")
+	if err := os.WriteFile(decl, []byte(fmt.Sprintf(`{"schemaVersion": %d, "compatibleFrom": %d, "rollbackSafe": false, "previous": null}`, db.SchemaVersion, db.CompatibleFrom)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runIt(t, "schema", "--previous", schemaFile, "--declaration", decl, "--json")
 	if code != exitOK {
 		t.Fatalf("%d %q", code, errs)
 	}

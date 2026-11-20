@@ -102,6 +102,11 @@ type Options struct {
 	// CheckInterval and Backoff: tests shorten them.
 	CheckInterval time.Duration
 	Backoff       []time.Duration
+	// Issuances keeps the issuance count (count.go); nil keeps none.
+	Issuances Issuances
+	// IssuanceLimit is the most attempts for the name in IssuanceWindow
+	// (LimitFor the CA); 0 is no limit.
+	IssuanceLimit int
 }
 
 // Manager keeps the public certificate.
@@ -290,13 +295,31 @@ func (m *Manager) attempt(ctx context.Context) {
 	// A certificate in the store (served, or expired and no longer) is
 	// renewed; certmagic's obtain would see it there and do nothing.
 	renewing := m.current.Load() != nil || m.cm.Storage.Exists(ctx, certmagic.StorageKeys.SiteCert(m.issuer.IssuerKey(), m.o.Host))
-	if renewing {
-		err = m.cm.RenewCertSync(ctx, m.o.Host, true)
-	} else {
-		err = m.cm.ObtainCertSync(ctx, m.o.Host)
+	// The issuance count: the attempt is recorded before the CA is asked,
+	// and refused, without asking, when it would pass the limit.
+	issuance, until, err := m.beginIssuance(ctx, now)
+	if err == nil && until.IsZero() {
+		if renewing {
+			err = m.cm.RenewCertSync(ctx, m.o.Host, true)
+		} else {
+			err = m.cm.ObtainCertSync(ctx, m.o.Host)
+		}
+		m.endIssuance(issuance, err)
+		if err == nil {
+			err = m.load(ctx)
+		}
 	}
-	if err == nil {
-		err = m.load(ctx)
+	if !until.IsZero() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.state.attempting = false
+		m.state.failures++
+		m.state.lastError = fmt.Sprintf("the issuance count: %d certificates for %s in %s, Let's Encrypt's limit; varlatchd asks again from %s",
+			m.o.IssuanceLimit, m.o.Host, "7 days", until.UTC().Format(time.RFC3339))
+		m.state.nextAttempt = until
+		m.o.Log.Warn("the public certificate is not asked for: the issuance count is at its limit", "host", m.o.Host,
+			"limit", m.o.IssuanceLimit, "until", until.UTC().Format(time.RFC3339))
+		return
 	}
 	if ctx.Err() != nil {
 		m.mu.Lock()
@@ -323,6 +346,48 @@ func (m *Manager) attempt(ctx context.Context) {
 		msg = "the public certificate was renewed"
 	}
 	m.o.Log.Info(msg, "host", m.o.Host, "notAfter", l.leaf.NotAfter.UTC().Format(time.RFC3339), "issuer", l.leaf.Issuer.CommonName)
+}
+
+// beginIssuance records an attempt; until is not zero when the count is at
+// its limit (the attempt is then not recorded, nor made): the time the
+// oldest counted attempt leaves the window.
+func (m *Manager) beginIssuance(ctx context.Context, now time.Time) (id int64, until time.Time, err error) {
+	if m.o.Issuances == nil {
+		return -1, time.Time{}, nil
+	}
+	n, oldest, err := m.o.Issuances.Count(ctx, strings.ToLower(m.o.Host), now.Add(-IssuanceWindow))
+	if err != nil {
+		return -1, time.Time{}, fmt.Errorf("the issuance count cannot be read: %w", err)
+	}
+	if m.o.IssuanceLimit > 0 && n >= m.o.IssuanceLimit {
+		return -1, oldest.Add(IssuanceWindow), nil
+	}
+	id, err = m.o.Issuances.Begin(ctx, strings.ToLower(m.o.Host), now)
+	if err != nil {
+		return -1, time.Time{}, fmt.Errorf("the issuance count cannot be recorded: %w", err)
+	}
+	return id, time.Time{}, nil
+}
+
+// endIssuance records how an attempt ended: issued, or refused when the CA
+// answered with a problem. Any other failure (a timeout, the network) is
+// left started, which counts as issued: the CA may have issued.
+func (m *Manager) endIssuance(id int64, err error) {
+	if id < 0 {
+		return
+	}
+	outcome := OutcomeIssued
+	if err != nil {
+		var problem acme.Problem
+		if !errors.As(err, &problem) {
+			return
+		}
+		outcome = OutcomeRefused
+	}
+	// Recorded even when the run is stopping: the attempt happened.
+	if err := m.o.Issuances.End(context.WithoutCancel(context.Background()), id, outcome, m.o.Now()); err != nil {
+		m.o.Log.Warn("the issuance count could not record an attempt's end; it counts as issued", "host", m.o.Host, "error", err)
+	}
 }
 
 // load reads the certificate and its key from the store and serves them

@@ -1,6 +1,9 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "compatibleFrom": 1,
-  "rollbackSafe": false,
-  "previous": null
+  "rollbackSafe": true,
+  "previous": {
+    "version": "0.50.0-rc.1",
+    "schemaVersion": 1
+  }
 }
