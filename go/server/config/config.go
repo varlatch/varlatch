@@ -95,6 +95,9 @@ type Config struct {
 	BackupDestination string
 	// Tailnet is the tailnet listener (ADR-0059 Decision 5); nil when off.
 	Tailnet *Tailnet
+	// ServeCLI is serve_cli (ADR-0058 Decision 3): the installation serves
+	// its release's CLI and installers at its public URL.
+	ServeCLI bool
 }
 
 // Tailnet is varlatchd's own tailnet node and its listener.
@@ -162,7 +165,7 @@ type Env func(string) string
 var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "outbound_allow", "access_log", "sync", "sync_adapters", "audit_export",
 	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination",
 	"tailnet", "tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file",
-	"tailnet_https_port", "tailnet_browser_origins"}
+	"tailnet_https_port", "tailnet_browser_origins", "serve_cli"}
 
 // Backup defaults: a day between backups, seven archives kept (the
 // TypeScript host backup's LOCAL_KEEP), the destination named offsite
@@ -296,6 +299,18 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		c.Sync = false
 	default:
 		return nil, at("sync", "%q must be on or off", v)
+	}
+	switch v := values["serve_cli"]; v {
+	case "", "off":
+	case "on":
+		// The installers name the public URL, and it is what people
+		// trust to run code on their machines (https, or this machine).
+		if c.PublicURL == nil {
+			return nil, at("serve_cli", "on needs public_url: the installers it serves download from that address")
+		}
+		c.ServeCLI = true
+	default:
+		return nil, at("serve_cli", "%q must be on or off", v)
 	}
 	switch v := values["audit_export"]; v {
 	case "", "on":

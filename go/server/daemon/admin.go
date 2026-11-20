@@ -24,6 +24,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -48,6 +49,9 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return adminUsage(stderr, "no command")
 	}
 	sub := args[0]
+	if sub == "conformance-sign-release" && conformanceSignRelease != nil {
+		return conformanceSignRelease(args[1:], stdout, stderr)
+	}
 	conformance := sub == "conformance-probe" && conformanceProbe != nil ||
 		sub == "conformance-fixture" && conformanceFixture != nil
 	operator := sub == "security" || sub == "unfreeze"
@@ -406,6 +410,16 @@ var conformanceProbe func(ctx context.Context, env *hostEnv, args []string, stdo
 // conformanceWarnings logs a conformance build's warnings at startup
 // (redirect_conformance.go); nil in a release.
 var conformanceWarnings func(log *slog.Logger)
+
+// conformanceCLIRelease, set only in a conformance build, points
+// serve_cli at a release the harness signed with a test Sigstore
+// (VARLATCH_CONFORMANCE_CLI_RELEASE) instead of github.com's.
+var conformanceCLIRelease func(o *servecli.Options, log *slog.Logger)
+
+// conformanceSignRelease is `varlatchd admin conformance-sign-release`,
+// in a conformance build only (servecli_conformance.go): it needs no
+// installation.
+var conformanceSignRelease func(args []string, stdout, stderr io.Writer) int
 
 // conformanceFixture is `varlatchd admin conformance-fixture`, in a build
 // with the conformance tag only (fixture_conformance.go); nil otherwise.

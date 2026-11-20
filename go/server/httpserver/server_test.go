@@ -445,6 +445,49 @@ func TestCLIDownloadOff(t *testing.T) {
 	}
 }
 
+// serve_cli on (step 6.8): the installers and every path under /cli/
+// reach the served release once it is ready, and /v1/meta then lists
+// cli.download; before, they answer as with serving off. Off, a /cli/ path
+// other than the TypeScript bundle's is the dashboard's, as on the
+// TypeScript deployment.
+func TestCLIDownloadOn(t *testing.T) {
+	var ready http.Handler
+	served := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("served " + r.URL.Path)) })
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.CLI = func() http.Handler { return ready } })
+	listed := func(srv http.Handler) bool {
+		return strings.Contains(do(srv, "GET", "/v1/meta", "", nil).Body.String(), `"cli.download"`)
+	}
+	paths := []string{"/install.sh", "/install.ps1", "/cli/v0.50.0/varlatch-0.50.0-linux-amd64", "/cli/v0.50.0/SHA256SUMS"}
+	for _, p := range paths {
+		if w := do(s, "GET", p, "", nil); w.Code != 404 || w.Body.String() != "Not found" {
+			t.Errorf("%s before a release is ready: %d %q", p, w.Code, w.Body.String())
+		}
+	}
+	if listed(s) {
+		t.Error("cli.download listed before a release is ready")
+	}
+	ready = served
+	for _, p := range paths {
+		if w := do(s, "GET", p, "", nil); w.Code != 200 || w.Body.String() != "served "+p {
+			t.Errorf("%s: %d %q", p, w.Code, w.Body.String())
+		}
+	}
+	if w := do(s, "HEAD", "/install.sh", "", nil); w.Code != 200 {
+		t.Errorf("HEAD /install.sh: %d", w.Code)
+	}
+	if w := do(s, "POST", "/install.sh", "", nil); w.Code == 200 && strings.HasPrefix(w.Body.String(), "served") {
+		t.Error("POST reached the served release")
+	}
+	if !listed(s) {
+		t.Error("cli.download not listed with a release ready")
+	}
+	// Off: the TypeScript deployment's paths.
+	off, _, _, _ := newTestServer(t, nil)
+	if w := do(off, "GET", "/cli/v0.50.0/SHA256SUMS", "", nil); w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("off, a /cli/ path: %d %v", w.Code, w.Header())
+	}
+}
+
 // With a tailnet browser endpoint, the dashboard's connect-src names it,
 // as the TypeScript installation's dashboard container writes it for
 // VARLATCH_TAILNET_ENDPOINT (less the Convex origins the Go server has

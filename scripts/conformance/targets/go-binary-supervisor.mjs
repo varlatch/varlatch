@@ -4,7 +4,7 @@
  * so that an abrupt end of the runner, which skips its `finally` blocks,
  * leaves no server and no installation directory behind.
  *
- *   node go-binary-supervisor.mjs <dir> <pid file> <log> <binary> <args...>
+ *   node go-binary-supervisor.mjs [--owner <pid>] <dir> <pid file> <log> <binary> <args...>
  *
  * It starts <binary> <args...> with its output in <log>, writes its PID to
  * <pid file>, and exits with its exit status when it ends. Its standard
@@ -17,6 +17,11 @@
  *     SIGTERM, SIGINT or SIGHUP: stop varlatchd if it still runs, then
  *     remove <dir>, which must be a conformance-go- directory under the
  *     temporary directory.
+ *
+ * With --owner <pid> (a supervisor started by a target operation run in a
+ * process of its own, which ends at once: a restart for serve-cli), the
+ * runner is that process instead, watched every second; its end is the
+ * pipe's closing. Its standard input is then not read.
  */
 import { spawn } from "node:child_process";
 import { appendFileSync, closeSync, openSync, rmSync, writeFileSync } from "node:fs";
@@ -24,7 +29,17 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
 const STOP_TIMEOUT_MS = 25_000;
-const [dir, pidFile, logFile, binary, ...args] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+let owner = null;
+if (argv[0] === "--owner") {
+  owner = Number(argv[1]);
+  argv.splice(0, 2);
+  if (!Number.isInteger(owner) || owner <= 1) {
+    console.error("go-binary-supervisor: --owner needs a process ID");
+    process.exit(2);
+  }
+}
+const [dir, pidFile, logFile, binary, ...args] = argv;
 if (!dir || !pidFile || !logFile || !binary) {
   console.error("usage: go-binary-supervisor.mjs <dir> <pid file> <log> <binary> <args...>");
   process.exit(2);
@@ -75,6 +90,17 @@ const orphaned = () => {
   }
   stopServer(); // already stopping: the exit handler removes the directory
 };
-process.stdin.on("end", orphaned);
-process.stdin.on("error", orphaned);
+if (owner === null) {
+  process.stdin.on("end", orphaned);
+  process.stdin.on("error", orphaned);
+} else {
+  process.stdin.destroy();
+  setInterval(() => {
+    try {
+      process.kill(owner, 0);
+    } catch (err) {
+      if (err.code === "ESRCH") orphaned();
+    }
+  }, 1000);
+}
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(signal, orphaned);

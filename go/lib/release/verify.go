@@ -89,6 +89,12 @@ func LiveTrustedRoot(ctx context.Context, cacheDir string) (*root.TrustedRoot, e
 	return liveTrustedRoot(ctx, cacheDir, "", http.DefaultClient)
 }
 
+// LiveTrustedRootWith is LiveTrustedRoot through client (varlatchd's
+// outbound policy).
+func LiveTrustedRootWith(ctx context.Context, cacheDir string, client *http.Client) (*root.TrustedRoot, error) {
+	return liveTrustedRoot(ctx, cacheDir, "", client)
+}
+
 // liveTrustedRoot lets tests point at their own repository.
 func liveTrustedRoot(ctx context.Context, cacheDir, repositoryURL string, client *http.Client) (*root.TrustedRoot, error) {
 	if err := ctx.Err(); err != nil {
