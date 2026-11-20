@@ -442,9 +442,13 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
 		return fmt.Errorf("%w; the reverse was undone, but Go's barrier could not be lifted: %v; varlatch migrate --resume lifts it", cause, err)
 	}
+	crashPoint("rollback undone released")
+	// The source's journal only: it is where the record is read, and Go's
+	// says open already (rewriting it open beside its running varlatchd
+	// is refused, rightly: open changes the gate).
 	j.Rollback.Undone.Released = true
-	if err := e.save(ctx, j); err != nil {
-		return fmt.Errorf("%w; the reverse was undone and Go's barrier lifted, but the journals could not record it: %v; varlatch migrate --resume records it", cause, err)
+	if err := writeJournal(e.Source.Dir(), j); err != nil {
+		return fmt.Errorf("%w; the reverse was undone and Go's barrier lifted, but the journal could not record it: %v; varlatch migrate --resume records it", cause, err)
 	}
 	return fmt.Errorf("%w; the reverse was undone: Go serves again, the TypeScript installation is as the migration left it", cause)
 }

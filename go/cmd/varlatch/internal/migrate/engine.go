@@ -864,8 +864,9 @@ func (e *Engine) finishOpen(ctx context.Context, j *Journal) error {
 	}
 	if st.Barrier == "" && j.Rollback != nil && j.Rollback.Undone != nil && !j.Rollback.Undone.Released {
 		// Lifted (now, or by a run killed before it journalled it).
+		// The source's journal only, as undoReverse writes it.
 		j.Rollback.Undone.Released = true
-		if err := e.save(ctx, j); err != nil {
+		if err := writeJournal(e.Source.Dir(), j); err != nil {
 			return err
 		}
 	}
