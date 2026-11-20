@@ -23,6 +23,14 @@ const HELP_TOPICS = [
   "validate", "values", "whoami",
 ];
 
+/**
+ * `admin`'s help is a Go installation's in the Go CLI (go/README.md, the
+ * accepted difference `admin-usage`); this recording is the TypeScript
+ * CLI's Compose usage.
+ */
+const helpDifferences = (topic: string): { differences?: string[] } =>
+  topic === "admin" ? { differences: ["admin-usage"] } : {};
+
 const framework: TranscriptCase[] = [
   { id: "usage.no-command", title: "no command prints the usage on stdout, status 0", args: [] },
   { id: "usage.help", title: "--help prints the usage", args: ["--help"] },
@@ -55,9 +63,9 @@ const framework: TranscriptCase[] = [
   { id: "approval.then-help", title: "--approval with an id, then --help", args: ["--approval", "apr_1", "--help"] },
   { id: "approval.after-separator", title: "--approval after -- belongs to the command, not the CLI", args: ["nosuch", "--", "--approval"] },
   ...HELP_TOPICS.flatMap((topic): TranscriptCase[] => [
-    { id: `help.${topic}`, title: `help ${topic}`, args: ["help", topic] },
-    { id: `help.${topic}.option`, title: `${topic} --help`, args: [topic, "--help"] },
-    { id: `help.${topic}.short`, title: `${topic} -h`, args: [topic, "-h"] },
+    { id: `help.${topic}`, title: `help ${topic}`, args: ["help", topic], ...helpDifferences(topic) },
+    { id: `help.${topic}.option`, title: `${topic} --help`, args: [topic, "--help"], ...helpDifferences(topic) },
+    { id: `help.${topic}.short`, title: `${topic} -h`, args: [topic, "-h"], ...helpDifferences(topic) },
   ]),
   { id: "help.after-separator", title: "--help after -- belongs to the command run starts", args: ["nosuch", "--", "--help"] },
   { id: "help.after-arguments", title: "--help anywhere before -- asks for the command's help", args: ["values", "set", "API_KEY", "--help"] },
@@ -1522,6 +1530,95 @@ const hook56a: TranscriptCase[] = [
   { id: "hook.assisted", title: "the same under --assisted", args: ["--assisted", ...HOOK("claude")], stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
 ];
 
+// varlatch run --strict (5.4f): one strict retrieval, the environment the
+// command would receive resolved and validated against its Contract
+// Revision, and 78 with every violation (names, classes and reasons, never a
+// value) before anything starts. The command prints what it received.
+const STRICT_PRINT =
+  "const o={};for(const k of ['API_KEY','PORT','LEVEL','REGION','NUM','EXTRA','VARLATCH_RUN_CONTEXT'])if(process.env[k]!==undefined)o[k]=process.env[k];console.log(JSON.stringify(o))";
+const strictChild = ["--", "node", "-e", STRICT_PRINT];
+const STRICT_SECRET = "s3cr3t-strict-api-key-value";
+const RETRIEVALS = `${ENV}/retrievals`;
+const STRICT_META = ok("/v1/meta", { serverVersion: "0.22.0", apiVersion: 1, capabilities: ["retrieval.strict"] });
+const ALWAYS = { required: { kind: "always" } };
+const STRICT_ITEMS = [
+  item("API_KEY", ALWAYS),
+  item("PORT", { ...ALWAYS, sensitive: false, type: "number" }),
+  item("LEVEL", { sensitive: false, type: "enum", enumValues: ["debug", "info", "warn"], defaultValue: "info" }),
+  item("REGION", { sensitive: false }),
+  item("NUM", { sensitive: false, type: "number" }),
+];
+const strictContract = (items: unknown[] = STRICT_ITEMS, semanticsVersion = 2) => ({ schemaVersion: 1, semanticsVersion, items });
+type Stored = { name: string; sensitive: boolean; value: string | null };
+const STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: STRICT_SECRET },
+  { name: "PORT", sensitive: false, value: "8080" },
+];
+const strictRetrieval = (o: { stored?: Stored[]; contract?: unknown; revision?: unknown; semanticsVersion?: number; withheld?: unknown[]; unexpanded?: unknown[] } = {}): Exchange => {
+  const stored = o.stored ?? STORED;
+  const semanticsVersion = o.semanticsVersion ?? 2;
+  return {
+    method: "POST",
+    path: RETRIEVALS,
+    status: 200,
+    answer: {
+      environmentId: "env_1",
+      manifest: {
+        manifestVersion: 1,
+        projectId: "prj_1",
+        environment: { id: "env_1", rootId: "env_root", parentId: null, tier: "development", expiresAt: null },
+        contract: o.revision === undefined ? { revisionId: RUN_REV, contentHash: RUN_HASH, semanticsVersion } : o.revision,
+        items: stored.map((i) => ({ name: i.name, source: "self", valueRowId: sid("val", i.name), versionId: sid("ver", i.name) })),
+      },
+      stateDigest: DIGEST_A,
+      contract: o.contract === undefined ? strictContract(STRICT_ITEMS, semanticsVersion) : o.contract,
+      items: stored.map((i) => ({ ...i, source: "self", versionId: sid("ver", i.name) })),
+      callerView: { withheld: o.withheld ?? [], unexpanded: o.unexpanded ?? [], contractWithheld: false },
+      validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [] },
+    },
+  };
+};
+const strictRun = (o: Parameters<typeof strictRetrieval>[0] = {}): Exchange[] => [STRICT_META, strictRetrieval(o)];
+const withheldKey = (reason = "permission", requires = "secret.reveal") => ({ stored: [{ name: "API_KEY", sensitive: true, value: null }, STORED[1] as Stored], withheld: [{ name: "API_KEY", reason, requires }] });
+const s = (c: Omit<TranscriptCase, "args"> & { args?: string[]; options?: string[] }): TranscriptCase =>
+  v({ ...c, args: c.args ?? ["run", "--strict", ...(c.options ?? []), ...strictChild] });
+const strict54f: TranscriptCase[] = [
+  // Starting
+  s({ id: "start.valid", title: "a valid configuration starts the command: delivered values, the Contract default, the run context", env: { VARLATCH_RUN_CONTEXT: "inherited-context" }, server: strictRun() }),
+  s({ id: "start.outside-contract", title: "a stored item outside the Contract is delivered as usual, and counted", server: strictRun({ stored: [...STORED, { name: "EXTRA", sensitive: false, value: "extra" }] }) }),
+  s({ id: "start.allow-inherited", title: "--allow-inherited accepts the parent's value, validated", options: ["--allow-inherited", "REGION"], env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "start.withheld-allowed", title: "an allowed inherited value stands in for a withheld one", options: ["--allow-inherited", "API_KEY"], env: { API_KEY: "parent-api-key-value" }, server: strictRun(withheldKey()) }),
+  s({ id: "start.omit-optional", title: "--omit of an item that is not required: absent, and the parent's copy removed", options: ["--omit", "REGION"], env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "start.capability-string", title: "capabilities given as a string: includes() finds a substring", server: [ok("/v1/meta", { serverVersion: "0.22.0", capabilities: "x retrieval.strict y" }), strictRetrieval()] }),
+  s({ id: "start.retry", title: "a server failure: the retrieval is made once more", server: [STRICT_META, { method: "POST", path: RETRIEVALS, status: 500, answer: apiError(500, "INTERNAL") }, strictRetrieval()] }),
+  s({ id: "start.assisted", title: "assisted mode masks the delivered Secret in the command's output", env: ASSISTED, server: strictRun() }),
+  // Each kind of violation: 78, nothing started
+  s({ id: "violation.no-contract", title: "contract: no active Contract", server: strictRun({ revision: null }) }),
+  s({ id: "violation.contract-unreadable", title: "contract: the Contract is not readable by this identity", server: strictRun({ contract: null }) }),
+  s({ id: "violation.semantics", title: "semantics: a version this CLI does not know", server: strictRun({ semanticsVersion: 9 }) }),
+  s({ id: "violation.reserved", title: "reserved: a stored item and a Contract item named VARLATCH_RUN_CONTEXT", server: strictRun({ stored: [...STORED, { name: "VARLATCH_RUN_CONTEXT", sensitive: false, value: "x" }], contract: strictContract([...STRICT_ITEMS, item("VARLATCH_RUN_CONTEXT", { sensitive: false })]) }) }),
+  s({ id: "violation.unresolved-reference", title: "unresolved-reference: a reference left literal for this identity", server: strictRun({ unexpanded: [{ name: "API_KEY", references: ["OTHER_KEY", "THIRD"] }] }) }),
+  s({ id: "violation.withheld", title: "withheld: a required Secret this identity cannot read; no default stands in", server: strictRun(withheldKey()) }),
+  s({ id: "violation.withheld-requirement", title: "withheld: a Requirement such as a Tailnet Constraint is not met", server: strictRun(withheldKey("requirement", "secret.reveal")) }),
+  s({ id: "violation.withheld-parent", title: "withheld: the parent sets it, which --allow-inherited would accept", env: { API_KEY: "parent-api-key-value" }, server: strictRun(withheldKey()) }),
+  s({ id: "violation.inherited", title: "inherited: an item set only in the parent environment", env: { REGION: "eu-west" }, server: strictRun() }),
+  s({ id: "violation.missing", title: "missing: a required item not stored", server: strictRun({ stored: [STORED[0] as Stored] }) }),
+  s({ id: "violation.invalid-delivered", title: "invalid: the delivered value, named, never shown", server: strictRun({ stored: [STORED[0] as Stored, { name: "PORT", sensitive: false, value: "eighty-eighty" }] }) }),
+  s({ id: "violation.invalid-inherited", title: "invalid: the allowed inherited value", options: ["--allow-inherited", "NUM"], env: { NUM: "not-a-number" }, server: strictRun() }),
+  s({ id: "violation.invalid-default", title: "invalid: the Contract default", server: strictRun({ contract: strictContract([...STRICT_ITEMS.filter((i) => i.name !== "LEVEL"), item("LEVEL", { sensitive: false, type: "enum", enumValues: ["debug", "info"], defaultValue: "loud" })]) }) }),
+  s({ id: "violation.omitted", title: "omitted: --omit of a required item", options: ["--omit", "API_KEY"], server: strictRun() }),
+  s({ id: "violation.context", title: "context: a run context over 64 KB is never truncated", server: strictRun({ contract: strictContract([...STRICT_ITEMS, ...Array.from({ length: 260 }, (_, i) => item(`N${String(i).padStart(3, "0")}_${"A".repeat(250)}`))]) }) }),
+  s({ id: "violation.many", title: "every violation at once, in Contract order", env: { REGION: "eu-west" }, server: strictRun({ stored: [{ name: "PORT", sensitive: false, value: "eighty" }], unexpanded: [] }) }),
+  s({ id: "violation.assisted", title: "assisted mode: the same violations, before any masking", env: ASSISTED, server: strictRun({ stored: [STORED[0] as Stored] }) }),
+  // Refusals before the command
+  s({ id: "refused.old-server", title: "a server without strict retrieval: 78, never a default run", server: [ok("/v1/meta", { serverVersion: "0.10.0", apiVersion: 1, capabilities: [] })] }),
+  s({ id: "refused.old-server-no-version", title: "no version given: an older release", server: [ok("/v1/meta", { capabilities: ["identity.whoami"] })] }),
+  s({ id: "refused.allow-inherited-unknown", title: "--allow-inherited names that are not Contract items: 64", options: ["--allow-inherited", "NOPE", "--allow-inherited", "ALSO_NOT", "--allow-inherited", "NOPE"], server: strictRun() }),
+  s({ id: "refused.omit-unknown", title: "--omit of a name neither stored nor in the Contract: 64", options: ["--omit", "NOPE"], server: strictRun() }),
+  s({ id: "refused.retrieval-denied", title: "the retrieval refused: the error's status", server: [STRICT_META, denied(RETRIEVALS, "POST")] }),
+  s({ id: "refused.short-assisted", title: "assisted mode: a Secret too short to mask still stops the run", env: ASSISTED, server: strictRun({ stored: [{ name: "API_KEY", sensitive: true, value: "1234" }, STORED[1] as Stored] }) }),
+];
+
 // ---- 5.6b: varlatch mcp ----------------------------------------------------------
 //
 // The server as an MCP host runs it: JSON-RPC lines on stdin, all sent at
@@ -1641,6 +1738,341 @@ const mcp56b: TranscriptCase[] = [
   mcp({ id: "write.expired", title: "a credential the server no longer takes", args: MCP("--org", "acme", "--project", "web", "-e", "dev", "--allow-writes"), stdin: lines(callTool(1, "varlatch_set_value", { item: "PORT", value: "1" })), server: [{ method: "GET", path: CONTRACT_PATH, status: 401, answer: apiError(401, "UNAUTHENTICATED", "credential expired") }] }),
 ];
 
+// ---------------------------------------------------------------------------
+// 5.7a: Organization administration, people, identities and resources
+// (org list/create, project create/list/rename, env-create, env-delete,
+// identity list/rename/retire/reactivate/reach, credential
+// list/revoke/issue, invite, member, tailnet, audit list).
+
+const ORG = "/v1/organizations/acme";
+const exch = (method: string, path: string, status: number, answer?: unknown): Exchange => ({ method, path, status, ...(answer === undefined ? { headers: {} } : { answer }) });
+const a = (c: Omit<TranscriptCase, "differences" | "files" | "cwd"> & { files?: Record<string, string>; cwd?: string; differences?: string[] }): TranscriptCase => v(c);
+const OUTSIDE = { files: storeAt({ "{{server}}": { token: VTOKEN, ...OK } }), cwd: "" };
+const ADA = sid("idn", "ada");
+const BOB = sid("idn", "bob");
+const OLD = sid("idn", "old");
+const SAM1 = sid("idn", "samone");
+const SAM2 = sid("idn", "samtwo");
+const SVC = sid("idn", "deployer");
+const TWIN1 = sid("idn", "twinone");
+const TWIN2 = sid("idn", "twintwo");
+const REQ1 = sid("req", "one");
+const REQ2 = sid("req", "two");
+const IDENTITIES = [
+  { id: ADA, name: "Ada", kind: "human", disabled: false, orgRole: "admin", removedAt: null, lastSeenAt: "2026-11-01T10:00:00.000Z" },
+  { id: BOB, name: "Bob", kind: "human", disabled: false, orgRole: "member", removedAt: null, lastSeenAt: null },
+  { id: OLD, name: "Old", kind: "human", disabled: false, orgRole: null, removedAt: "2026-10-01T10:00:00.000Z", lastSeenAt: null },
+  { id: SAM1, name: "Sam", kind: "human", disabled: false, orgRole: "member", removedAt: null, lastSeenAt: null },
+  { id: SAM2, name: "Sam", kind: "human", disabled: false, orgRole: "member", removedAt: null, lastSeenAt: null },
+  { id: SVC, name: "deployer", kind: "service", disabled: false, orgRole: null, lastSeenAt: "2026-11-02T10:00:00.000Z" },
+  { id: TWIN1, name: "twin", kind: "service", disabled: false, orgRole: null, lastSeenAt: null },
+  { id: TWIN2, name: "twin", kind: "workload", disabled: true, orgRole: null, lastSeenAt: null },
+];
+const LIST_IDENTITIES = ok(`${ORG}/identities`, { items: IDENTITIES, nextCursor: null });
+const ENVS_WEB = ok("/v1/organizations/acme/projects/web/environments", {
+  items: [
+    { id: "env_dev", name: "dev", tier: "development", kind: "shared", parentEnvironmentId: null },
+    { id: "env_prod", name: "prod", tier: "production", kind: "shared", parentEnvironmentId: null },
+    { id: "env_prodpr", name: "prod-pr-7", tier: "production", kind: "preview", parentEnvironmentId: "env_prod" },
+  ],
+  nextCursor: null,
+});
+const META_ADMIN = ok("/v1/meta", { serverVersion: "0.22.0", apiVersion: 1, capabilities: ["members.lifecycle", "identity.reach", "identity.credentials.issue"] });
+const META_OLD = ok("/v1/meta", { serverVersion: "0.19.0", apiVersion: 1, capabilities: [] });
+const REACH = {
+  identity: { id: SVC, name: "deployer", kind: "service", state: "live", disabledReason: null, liveCredentials: 1 },
+  organizationActions: [{ action: "audit.read", grants: [{ grantId: "grt_3", viaGroupId: null, roleId: null }], conditions: [] }],
+  projects: [
+    {
+      id: "prj_1",
+      slug: "api",
+      name: "API",
+      actions: [{ action: "contract.read", grants: [], conditions: [] }],
+      environments: [
+        { id: "env_dev", name: "development", tier: "development", kind: "shared", parentEnvironmentId: null, actions: [{ action: "config.value.read", grants: [], conditions: [] }] },
+        {
+          id: "env_prod",
+          name: "production",
+          tier: "production",
+          kind: "shared",
+          parentEnvironmentId: null,
+          actions: [
+            { action: "config.metadata.read", grants: [], conditions: [] },
+            { action: "secret.use", grants: [], conditions: [REQ1, REQ2] },
+          ],
+        },
+      ],
+    },
+  ],
+  requirements: [
+    { id: REQ1, version: 1, target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net", tags: ["tag:prod"] }, condition: "needs tailnet example.ts.net: tag:prod" },
+    { id: REQ2, version: 1, target: { kind: "environments", environmentIds: ["env_prod"] }, selector: { tailnet: "example.ts.net", nodes: ["nAbc"] }, condition: "needs tailnet example.ts.net: node:nAbc" },
+  ],
+  notes: ["Grants through a group are listed with the group's own."],
+};
+const REACH_DISABLED = {
+  identity: { id: TWIN2, name: "twin", kind: "workload", state: "disabled", disabledReason: "organization-deletion", liveCredentials: 0 },
+  organizationActions: [],
+  projects: [],
+  requirements: [],
+  notes: [],
+};
+const REVIEW = {
+  syncTargets: [{ id: "snt_1", projectId: "prj_1", environmentId: "env_dev", platform: "coolify", state: "active", changes: ["created", "destination_changed", "other_change"] }],
+  connections: [
+    { id: "pcn_1", name: "shared", platform: "coolify", credentialKind: "token", revoked: false, changes: ["credential_replaced"] },
+    { id: "pcn_2", name: "app", platform: "github", credentialKind: "github-app", revoked: true, changes: ["created"] },
+  ],
+  webhooks: [{ id: "whk_1", host: "sink.example", revoked: false }, { id: "whk_2", host: "", revoked: true }],
+  oidcBindings: [{ id: "oib_1", identityName: "ci", issuer: "https://token.actions.githubusercontent.com", revoked: false }],
+  credentials: [{ id: "crd_1", name: "deploy", identityId: SVC, identityName: "deployer", state: "valid" }, { id: "crd_2", name: null, identityId: SVC, identityName: "deployer", state: "revoked" }],
+  personalEnvironments: [{ id: "env_bob", name: "development/bob", projectId: "prj_1" }],
+};
+const EMPTY_REVIEW = { syncTargets: [], connections: [], webhooks: [], oidcBindings: [], credentials: [], personalEnvironments: [] };
+const REMOVAL = { left: false, grantsRevoked: 3, groupsLeft: 1, invitationsRevoked: 0, review: REVIEW };
+const EXPOSURE = {
+  member: { identityId: OLD, name: "Old", role: null, removedAt: "2026-10-01T10:00:00.000Z" },
+  coverage: { complete: false, from: "2026-01-01T00:00:00.000Z", to: "2026-10-30T00:00:00.000Z" },
+  received: [
+    {
+      itemName: "TOKEN",
+      versionId: "ver_1",
+      owningEnvironmentId: "env_dev",
+      projectId: "prj_1",
+      state: "served",
+      servedAs: "current",
+      retiringUntil: null,
+      notServedBecause: null,
+      served: true,
+      confirmation: null,
+      rotationHint: "Issue a new token in the provider console.",
+      receipts: [
+        { environmentId: "env_dev", way: "revealed", firstAt: "2026-09-01T10:00:00.000Z", lastAt: "2026-09-02T10:00:00.000Z" },
+        { environmentId: "env_gone", way: "delivered", firstAt: "2026-09-03T10:00:00.000Z", lastAt: "2026-09-03T10:00:00.000Z" },
+      ],
+    },
+    {
+      itemName: "OLD_KEY",
+      versionId: "ver_2",
+      owningEnvironmentId: "env_prod",
+      projectId: "prj_1",
+      state: "not-served",
+      servedAs: null,
+      retiringUntil: null,
+      notServedBecause: "replaced",
+      served: false,
+      confirmation: null,
+      rotationHint: null,
+      receipts: [{ environmentId: "env_prod", way: "export", firstAt: "2026-08-01T10:00:00.000Z", lastAt: "2026-08-01T10:00:00.000Z" }],
+    },
+    {
+      itemName: "ROTATED",
+      versionId: "ver_3",
+      owningEnvironmentId: "env_dev",
+      projectId: "prj_1",
+      state: "served",
+      servedAs: "retiring",
+      retiringUntil: "2026-12-01T00:00:00.000Z",
+      notServedBecause: null,
+      served: true,
+      confirmation: { confirmedAt: "2026-11-02T00:00:00.000Z" },
+      rotationHint: null,
+      receipts: [{ environmentId: "env_dev", way: "written", firstAt: "2026-07-01T10:00:00.000Z", lastAt: "2026-07-01T10:00:00.000Z" }],
+    },
+  ],
+  authorityAtRemoval: {
+    removalId: "mrm_1",
+    removedAt: "2026-10-01T10:00:00.000Z",
+    role: "member",
+    left: false,
+    environments: [
+      { environmentId: "env_prod", actions: [{ action: "secret.reveal", sources: [] }, { action: "config.metadata.read", sources: [] }], conditionalOn: [REQ1] },
+      { environmentId: "env_dev", actions: [{ action: "config.value.read", sources: [] }], conditionalOn: [] },
+    ],
+    requirements: [{ requirementId: REQ1, requirementVersion: 1, target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net", tags: ["tag:prod"], users: ["ada@example.com"] } }],
+  },
+  indirect: { ...EMPTY_REVIEW, webhooks: [{ id: "whk_1", host: "sink.example", revoked: false }] },
+};
+const EXPOSURE_ME = {
+  member: { identityId: ADA, name: "Ada", role: "admin", removedAt: null },
+  coverage: { complete: true, from: null, to: null },
+  received: [],
+  authorityAtRemoval: null,
+  indirect: EMPTY_REVIEW,
+};
+const NAMES = [ok(`${ORG}/projects`, { items: [{ slug: "web", name: "Web", contractAuthority: "git" }], nextCursor: null }), ENVS_WEB];
+const ISSUED = { id: sid("crd", "issued"), token: "vlt_svc_issuedTOKENcanary", name: "deploy", expiresAt: null, maxUses: null, kind: "service" };
+
+/** An invitation token in the servers' format: vlt_invite_ and 43 base64url characters. */
+const inviteToken = (tag: string) => `vlt_invite_${tag}${"0".repeat(43 - tag.length)}`;
+
+const admin57a: TranscriptCase[] = [
+  // invite
+  a({ id: "invite.member", title: "invite: a one-time enrollment link for a member", args: ["invite", "Alice"], server: [exch("POST", `${ORG}/invitations`, 201, { id: "inv_1", token: inviteToken("canaryTOKEN"), expiresAt: "2026-11-08T10:00:00.000Z" })] }),
+  a({ id: "invite.admin", title: "invite --role admin", args: ["invite", "Bob", "--role", "admin"], server: [exch("POST", `${ORG}/invitations`, 201, { token: inviteToken("canaryADMIN"), expiresAt: "2026-11-08T10:00:00.000Z" })] }),
+  a({ id: "invite.role-last", title: "--role with no value: a member", args: ["invite", "Carol", "--role"], server: [exch("POST", `${ORG}/invitations`, 201, { token: inviteToken("canaryCAROL"), expiresAt: "soon" })] }),
+  a({ id: "invite.usage", title: "invite without a name", args: ["invite"] }),
+  a({ id: "invite.refused", title: "invite refused by the server", args: ["invite", "Dan"], server: [exch("POST", `${ORG}/invitations`, 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "invite.not-signed-in", title: "invite without a credential", args: ["invite", "Eve"], files: NOT_SIGNED_IN }),
+  a({ id: "invite.outside", title: "invite outside a repository: the context error", args: ["invite", "Eve"], ...OUTSIDE }),
+
+  // tailnet
+  a({ id: "tailnet.require.tags", title: "tailnet require: production by default, tags", args: ["tailnet", "require", "--tailnet", "corp.ts.net", "--tags", "tag:ci,tag:prod"], server: [exch("POST", `${ORG}/requirements`, 201, { id: REQ1 })] }),
+  a({ id: "tailnet.require.all", title: "tailnet require: a tier, nodes, users and tags, empty parts dropped", args: ["tailnet", "require", "--tier", "staging", "--tailnet", "corp.ts.net", "--nodes", "n1,,n2", "--users", "ada@example.com", "--tags", "tag:a"], server: [exch("POST", `${ORG}/requirements`, 201, { id: REQ2 })] }),
+  a({ id: "tailnet.require.no-tailnet", title: "tailnet require without --tailnet", args: ["tailnet", "require", "--tags", "tag:a"] }),
+  a({ id: "tailnet.require.no-selector", title: "tailnet require with no tags, nodes or users", args: ["tailnet", "require", "--tailnet", "corp.ts.net", "--tags", ","] }),
+  a({ id: "tailnet.requirements", title: "tailnet requirements", args: ["tailnet", "requirements"], server: [ok(`${ORG}/requirements`, { items: [{ id: REQ1, kind: "tailnet", target: { kind: "tier", tier: "production" }, selector: { tailnet: "corp.ts.net", tags: ["tag:\u001b[31m"] } }], nextCursor: null })] }),
+  a({ id: "tailnet.requirements.json", title: "tailnet requirements --json", args: ["tailnet", "requirements", "--json"], server: [ok(`${ORG}/requirements`, { items: [{ id: REQ1, kind: "tailnet", target: { kind: "tier", tier: "production" }, selector: { tailnet: "corp.ts.net" } }], nextCursor: null })] }),
+  a({ id: "tailnet.requirements.none", title: "tailnet requirements with none", args: ["tailnet", "requirements"], server: [ok(`${ORG}/requirements`, { items: [], nextCursor: null })] }),
+  a({ id: "tailnet.remove", title: "tailnet remove", args: ["tailnet", "remove", REQ1], server: [exch("DELETE", `${ORG}/requirements/${REQ1}`, 204)] }),
+  a({ id: "tailnet.remove.usage", title: "tailnet remove without an id", args: ["tailnet", "remove"] }),
+  a({ id: "tailnet.unknown", title: "an unknown tailnet subcommand", args: ["tailnet", "list"] }),
+  a({ id: "tailnet.none", title: "tailnet without a subcommand", args: ["tailnet"] }),
+
+  // audit list
+  a({ id: "audit.list", title: "audit list: time, decision, type and actor", args: ["audit", "list"], server: [ok(`${ORG}/audit-events?limit=50`, { items: [
+    { id: "aud_1", occurredAt: "2026-11-01T10:00:00.000Z", decision: "allow", eventType: "secret.disclosed", actorIdentityId: ADA },
+    { id: "aud_2", occurredAt: "not a time", decision: "deny", eventType: "grant.created\u0007", actorIdentityId: null },
+  ], nextCursor: null })] }),
+  a({ id: "audit.list.json", title: "audit list --json", args: ["audit", "list", "--json"], server: [ok(`${ORG}/audit-events?limit=50`, { items: [{ id: "aud_1", occurredAt: "2026-11-01T10:00:00.000Z", decision: "allow", eventType: "secret.disclosed", actorIdentityId: ADA }], nextCursor: null })] }),
+  a({ id: "audit.list.server", title: "audit list --server: the server named, the repository's organization", args: ["audit", "list", "--server", "{{server}}"], server: [ok(`${ORG}/audit-events?limit=50`, { items: [], nextCursor: null })] }),
+  a({ id: "audit.unknown", title: "an unknown audit subcommand", args: ["audit", "show"] }),
+  a({ id: "audit.none", title: "audit without a subcommand", args: ["audit"] }),
+
+  // org
+  a({ id: "org.list", title: "org list", args: ["org", "list"], server: [ok("/v1/organizations", { items: [{ id: "org_1", slug: "acme", name: "Acme" }, { id: "org_2", slug: "beta", name: "Beta\u001b[0m" }], nextCursor: null })] }),
+  a({ id: "org.list.json", title: "org list --json", args: ["org", "list", "--json"], server: [ok("/v1/organizations", { items: [{ id: "org_1", slug: "acme", name: "Acme", createdAt: "2026-01-01T00:00:00.000Z" }], nextCursor: null })] }),
+  a({ id: "org.list.none", title: "org list with none", args: ["org", "list"], server: [ok("/v1/organizations", { items: [], nextCursor: null })] }),
+  a({ id: "org.list.server", title: "org list --server outside a repository", args: ["org", "list", "--server", "{{server}}"], ...OUTSIDE, server: [ok("/v1/organizations", { items: [{ id: "org_1", slug: "acme", name: "Acme" }], nextCursor: null })] }),
+  a({ id: "org.list.only-credential", title: "org list outside a repository: the only stored credential's server", args: ["org", "list"], ...OUTSIDE, server: [ok("/v1/organizations", { items: [], nextCursor: null })] }),
+  a({ id: "org.create", title: "org create with a name", args: ["org", "create", "beta", "Beta Co"], server: [exch("POST", "/v1/organizations", 201, { id: "org_2", slug: "beta", name: "Beta Co" })] }),
+  a({ id: "org.create.slug-name", title: "org create without a name: the slug is the name", args: ["org", "create", "beta"], server: [exch("POST", "/v1/organizations", 201, { id: "org_2", slug: "beta", name: "beta" })] }),
+  a({ id: "org.create.refused", title: "org create: the slug is taken", args: ["org", "create", "acme"], server: [exch("POST", "/v1/organizations", 409, apiError(409, "CONFLICT", "slug taken"))] }),
+  a({ id: "org.create.usage", title: "org create without a slug", args: ["org", "create"] }),
+  a({ id: "org.unknown", title: "an unknown org subcommand", args: ["org", "rename"] }),
+  a({ id: "org.none", title: "org without a subcommand", args: ["org"] }),
+  a({ id: "org.no-server", title: "outside a repository, no server and no credential", args: ["org", "list"], files: {}, cwd: "" }),
+  a({ id: "org.no-server.repo", title: "a repository without a server", args: ["org", "list"], files: { ...repoFiles(TOML_NO_SERVER), ...storeAt({ "{{server}}": { token: VTOKEN, ...OK } }) } }),
+  a({ id: "org.not-signed-in", title: "org list without a credential for the server", args: ["org", "list"], files: NOT_SIGNED_IN }),
+
+  // project
+  a({ id: "project.create", title: "project create --org", args: ["project", "create", "api", "--org", "acme"], server: [exch("POST", `${ORG}/projects`, 201, { id: "prj_2", slug: "api", name: "api", contractAuthority: "git" })] }),
+  a({ id: "project.create.managed", title: "project create with a name, --managed and --server", args: ["project", "create", "api", "API Service", "--org", "acme", "--managed", "--server", "{{server}}"], server: [exch("POST", `${ORG}/projects`, 201, { id: "prj_2", slug: "api", name: "API Service", contractAuthority: "managed" })] }),
+  a({ id: "project.create.no-org", title: "project create without --org", args: ["project", "create", "api"] }),
+  a({ id: "project.create.usage", title: "project create without a slug", args: ["project", "create"] }),
+  a({ id: "project.list", title: "project list", args: ["project", "list"], server: [ok(`${ORG}/projects`, { items: [{ slug: "web", name: "Web", contractAuthority: "git" }, { slug: "api", name: "API", contractAuthority: "managed" }], nextCursor: null })] }),
+  a({ id: "project.list.json", title: "project list --json", args: ["project", "list", "--json"], server: [ok(`${ORG}/projects`, { items: [{ id: "prj_1", slug: "web", name: "Web", contractAuthority: "git" }], nextCursor: null })] }),
+  a({ id: "project.rename", title: "project rename", args: ["project", "rename", "web", "Web App"], server: [exch("PATCH", `${ORG}/projects/web`, 200, { slug: "web", name: "Web App", contractAuthority: "git" })] }),
+  a({ id: "project.rename.no-name", title: "project rename without the new name", args: ["project", "rename", "web"] }),
+  a({ id: "project.rename.usage", title: "project rename without a slug", args: ["project", "rename"] }),
+  a({ id: "project.unknown", title: "an unknown project subcommand", args: ["project", "show"] }),
+
+  // env-create
+  a({ id: "env-create.root", title: "env-create a root environment with --tier", args: ["env-create", "qa", "--tier", "staging"], server: [exch("POST", "/v1/organizations/acme/projects/web/environments", 201, { id: "env_qa", name: "qa", tier: "staging", kind: "shared" })] }),
+  a({ id: "env-create.parent", title: "env-create a personal child of dev", args: ["env-create", "alice-dev", "--parent", "dev", "--kind", "personal"], server: [ENVS_WEB, exch("POST", "/v1/organizations/acme/projects/web/environments", 201, { id: "env_ad", name: "alice-dev", tier: "development", kind: "personal" })] }),
+  a({ id: "env-create.parent-id", title: "env-create with the parent named by its id, no --kind", args: ["env-create", "pr-8", "--parent", "env_prod"], server: [ENVS_WEB, exch("POST", "/v1/organizations/acme/projects/web/environments", 201, { id: "env_pr8", name: "pr-8", tier: "production", kind: "preview" })] }),
+  a({ id: "env-create.no-parent", title: "env-create with a parent that does not exist", args: ["env-create", "x", "--parent", "nope"], server: [ENVS_WEB] }),
+  a({ id: "env-create.no-tier", title: "env-create a root without --tier", args: ["env-create", "qa"] }),
+  a({ id: "env-create.usage", title: "env-create without a name", args: ["env-create"] }),
+
+  // env-delete
+  a({ id: "env-delete.dev", title: "env-delete a development environment", args: ["env-delete", "dev"], server: [ENVS_WEB, exch("DELETE", "/v1/organizations/acme/projects/web/environments/dev", 204)] }),
+  a({ id: "env-delete.prod-refused", title: "env-delete a production root without --confirm", args: ["env-delete", "prod"], server: [ENVS_WEB] }),
+  a({ id: "env-delete.prod-wrong", title: "env-delete a production root with --confirm naming another", args: ["env-delete", "prod", "--confirm", "dev"], server: [ENVS_WEB] }),
+  a({ id: "env-delete.prod", title: "env-delete a production root with --confirm", args: ["env-delete", "prod", "--confirm", "prod"], server: [ENVS_WEB, exch("DELETE", "/v1/organizations/acme/projects/web/environments/prod", 204)] }),
+  a({ id: "env-delete.prod-child", title: "a production child needs no --confirm", args: ["env-delete", "prod-pr-7"], server: [ENVS_WEB, exch("DELETE", "/v1/organizations/acme/projects/web/environments/prod-pr-7", 204)] }),
+  a({ id: "env-delete.missing", title: "env-delete an environment that does not exist", args: ["env-delete", "nope"], server: [ENVS_WEB] }),
+  a({ id: "env-delete.usage", title: "env-delete without a name", args: ["env-delete"] }),
+
+  // identity
+  a({ id: "identity.list", title: "identity list: active and retired, last seen", args: ["identity", "list"], server: [LIST_IDENTITIES] }),
+  a({ id: "identity.list.json", title: "identity list --json", args: ["identity", "list", "--json"], server: [LIST_IDENTITIES] }),
+  a({ id: "identity.list.none", title: "identity list with none", args: ["identity", "list"], server: [ok(`${ORG}/identities`, { items: [], nextCursor: null })] }),
+  a({ id: "identity.rename", title: "identity rename", args: ["identity", "rename", SVC, "deployer-2"], server: [exch("PATCH", `${ORG}/identities/${SVC}`, 200, { id: SVC, name: "deployer-2" })] }),
+  a({ id: "identity.rename.no-name", title: "identity rename without the new name", args: ["identity", "rename", SVC] }),
+  a({ id: "identity.rename.usage", title: "identity rename without an id", args: ["identity", "rename"] }),
+  a({ id: "identity.retire.refused", title: "identity retire without --confirm", args: ["identity", "retire", SVC], server: [LIST_IDENTITIES] }),
+  a({ id: "identity.retire.wrong", title: "identity retire with --confirm naming another", args: ["identity", "retire", SVC, "--confirm", "twin"], server: [LIST_IDENTITIES] }),
+  a({ id: "identity.retire", title: "identity retire with --confirm", args: ["identity", "retire", SVC, "--confirm", "deployer"], server: [LIST_IDENTITIES, exch("POST", `${ORG}/identities/${SVC}/retire`, 200, { id: SVC, disabled: true })] }),
+  a({ id: "identity.retire.unknown", title: "identity retire an identity that does not exist", args: ["identity", "retire", "idn_nope"], server: [LIST_IDENTITIES] }),
+  a({ id: "identity.retire.usage", title: "identity retire without an id", args: ["identity", "retire"] }),
+  a({ id: "identity.reactivate", title: "identity reactivate", args: ["identity", "reactivate", TWIN2], server: [exch("POST", `${ORG}/identities/${TWIN2}/reactivate`, 200, { id: TWIN2, disabled: false })] }),
+  a({ id: "identity.reactivate.usage", title: "identity reactivate without an id", args: ["identity", "reactivate"] }),
+  a({ id: "identity.unknown", title: "an unknown identity subcommand", args: ["identity", "show"] }),
+  a({ id: "identity.reach", title: "identity reach by id: projects, environments, conditions, notes", args: ["identity", "reach", SVC], server: [META_ADMIN, ok(`${ORG}/identities/${SVC}/reach`, REACH)] }),
+  a({ id: "identity.reach.json", title: "identity reach --json", args: ["identity", "reach", SVC, "--json"], server: [META_ADMIN, ok(`${ORG}/identities/${SVC}/reach`, REACH)] }),
+  a({ id: "identity.reach.name", title: "identity reach by name: resolved through the listing", args: ["identity", "reach", "deployer", "--server", "{{server}}"], server: [META_ADMIN, LIST_IDENTITIES, ok(`${ORG}/identities/${SVC}/reach`, REACH)] }),
+  a({ id: "identity.reach.disabled", title: "identity reach of a machine disabled by the organization's deletion", args: ["identity", "reach", TWIN2], server: [META_ADMIN, ok(`${ORG}/identities/${TWIN2}/reach`, REACH_DISABLED)] }),
+  a({ id: "identity.reach.ambiguous", title: "identity reach by a name two machines have", args: ["identity", "reach", "twin"], server: [META_ADMIN, LIST_IDENTITIES] }),
+  a({ id: "identity.reach.unknown", title: "identity reach by a name no machine has (a person's)", args: ["identity", "reach", "Ada"], server: [META_ADMIN, LIST_IDENTITIES] }),
+  a({ id: "identity.reach.old-server", title: "identity reach on a server without the capability", args: ["identity", "reach", SVC], server: [META_OLD] }),
+  a({ id: "identity.reach.usage", title: "identity reach without a target", args: ["identity", "reach"] }),
+  a({ id: "identity.reach.unknown-option", title: "identity reach is parsed strictly", args: ["identity", "reach", SVC, "--jsn"] }),
+
+  // credential
+  a({ id: "credential.list", title: "credential list", args: ["credential", "list", SVC], server: [ok(`${ORG}/identities/${SVC}/credentials`, { items: [
+    { id: "crd_1", kind: "service", name: "deploy", createdAt: "2026-10-01T10:00:00.000Z", expiresAt: "2027-10-01T10:00:00.000Z", revokedAt: null, lastUsedAt: "2026-11-01T10:00:00.000Z" },
+    { id: "crd_2", kind: "service", name: null, createdAt: "2026-09-01T10:00:00.000Z", expiresAt: null, revokedAt: "2026-09-02T10:00:00.000Z", lastUsedAt: null },
+  ], nextCursor: null })] }),
+  a({ id: "credential.list.json", title: "credential list --json", args: ["credential", "list", SVC, "--json"], server: [ok(`${ORG}/identities/${SVC}/credentials`, { items: [{ id: "crd_1", kind: "service", createdAt: "2026-10-01T10:00:00.000Z" }], nextCursor: null })] }),
+  a({ id: "credential.list.none", title: "credential list with none", args: ["credential", "list", SVC], server: [ok(`${ORG}/identities/${SVC}/credentials`, { items: [], nextCursor: null })] }),
+  a({ id: "credential.list.usage", title: "credential list without an id", args: ["credential", "list"] }),
+  a({ id: "credential.revoke", title: "credential revoke", args: ["credential", "revoke", SVC, "crd_1"], server: [exch("DELETE", `${ORG}/identities/${SVC}/credentials/crd_1`, 204)] }),
+  a({ id: "credential.revoke.no-id", title: "credential revoke without the credential id", args: ["credential", "revoke", SVC] }),
+  a({ id: "credential.unknown", title: "an unknown credential subcommand", args: ["credential", "show"] }),
+  a({ id: "credential.issue", title: "credential issue: the token only in the --out file, 0600", args: ["credential", "issue", SVC, "--name", "deploy", "--out", "token.txt"], server: [META_ADMIN, exch("POST", `${ORG}/identities/${SVC}/credentials`, 201, ISSUED)] }),
+  a({ id: "credential.issue.json", title: "credential issue --json with --ttl and --max-uses", args: ["credential", "issue", SVC, "--name", "ci", "--ttl", "600", "--max-uses", "3", "--out", "token.txt", "--json"], server: [META_ADMIN, exch("POST", `${ORG}/identities/${SVC}/credentials`, 201, { ...ISSUED, name: "ci", expiresAt: "2026-11-01T10:10:00.000Z", maxUses: 3 })] }),
+  a({ id: "credential.issue.default-lifetime", title: "credential issue without --ttl, an expiry: the organization's default", args: ["credential", "issue", SVC, "--name", "deploy", "--max-uses", "1", "--out", "token.txt"], server: [META_ADMIN, exch("POST", `${ORG}/identities/${SVC}/credentials`, 201, { ...ISSUED, expiresAt: "2026-12-01T10:00:00.000Z", maxUses: 1 })] }),
+  a({ id: "credential.issue.assisted", title: "credential issue in assisted mode: said not to read the file", args: ["--assisted", "credential", "issue", SVC, "--name", "deploy", "--out", "token.txt"], server: [META_ADMIN, exch("POST", `${ORG}/identities/${SVC}/credentials`, 201, ISSUED)] }),
+  a({ id: "credential.issue.exists", title: "credential issue never replaces a file", args: ["credential", "issue", SVC, "--name", "deploy", "--out", "token.txt"], files: { ...SIGNED_IN, "repo/token.txt": "old\n" } }),
+  a({ id: "credential.issue.no-dir", title: "credential issue never creates the directory", args: ["credential", "issue", SVC, "--name", "deploy", "--out", "missing/token.txt"] }),
+  a({ id: "credential.issue.not-found", title: "credential issue for an identity that cannot hold one: the file removed", args: ["credential", "issue", SVC, "--name", "deploy", "--out", "token.txt"], server: [META_ADMIN, exch("POST", `${ORG}/identities/${SVC}/credentials`, 404, apiError(404, "RESOURCE_NOT_FOUND"))] }),
+  a({ id: "credential.issue.lifetime", title: "credential issue above the organization's maximum lifetime", args: ["credential", "issue", SVC, "--name", "deploy", "--ttl", "999999", "--out", "token.txt"], server: [META_ADMIN, exch("POST", `${ORG}/identities/${SVC}/credentials`, 422, { error: { code: "CREDENTIAL_LIFETIME_EXCEEDED", message: "too long", requestId: "req_00000000-0000-4000-8000-000000000000", details: { maxTtlSeconds: 86400 } } })] }),
+  a({ id: "credential.issue.old-server", title: "credential issue on a server without the capability", args: ["credential", "issue", SVC, "--name", "deploy", "--out", "token.txt"], server: [META_OLD] }),
+  a({ id: "credential.issue.no-name", title: "credential issue without --name", args: ["credential", "issue", SVC, "--out", "token.txt"] }),
+  a({ id: "credential.issue.no-out", title: "credential issue without --out", args: ["credential", "issue", SVC, "--name", "deploy"] }),
+  a({ id: "credential.issue.bad-ttl", title: "credential issue with a --ttl that is not a whole number", args: ["credential", "issue", SVC, "--name", "deploy", "--ttl", "1.5", "--out", "token.txt"] }),
+  a({ id: "credential.issue.bad-uses", title: "credential issue with --max-uses out of range", args: ["credential", "issue", SVC, "--name", "deploy", "--max-uses", "0", "--out", "token.txt"] }),
+  a({ id: "credential.issue.long-name", title: "credential issue with a --name over 200 characters", args: ["credential", "issue", SVC, "--name", "x".repeat(201), "--out", "token.txt"] }),
+  a({ id: "credential.issue.usage", title: "credential issue without an identity", args: ["credential", "issue", "--name", "deploy", "--out", "token.txt"] }),
+
+  // member
+  a({ id: "member.list", title: "member list: people only, former members marked", args: ["member", "list"], server: [LIST_IDENTITIES] }),
+  a({ id: "member.list.json", title: "member list --json", args: ["member", "list", "--json"], server: [LIST_IDENTITIES] }),
+  a({ id: "member.list.none", title: "member list with no people", args: ["member", "list"], server: [ok(`${ORG}/identities`, { items: [IDENTITIES[5]], nextCursor: null })] }),
+  a({ id: "member.remove.no-confirm", title: "member remove without --confirm: the command to confirm it", args: ["member", "remove", "Bob"] }),
+  a({ id: "member.remove.no-confirm.assisted", title: "in assisted mode, the human's decision (78)", args: ["--assisted", "member", "remove", "Bob"] }),
+  a({ id: "member.remove.no-confirm.server", title: "with --server, the command names it", args: ["member", "remove", "Bob Smith", "--server", "{{server}}"] }),
+  a({ id: "member.remove.wrong", title: "member remove with --confirm naming another", args: ["member", "remove", "Bob", "--confirm", "Ada"] }),
+  a({ id: "member.remove", title: "member remove: what it did and what to review", args: ["member", "remove", "Bob", "--confirm", "Bob"], server: [META_ADMIN, LIST_IDENTITIES, exch("DELETE", `${ORG}/members/${BOB}`, 200, REMOVAL)] }),
+  a({ id: "member.remove.id", title: "member remove by identity id, nothing to review", args: ["member", "remove", BOB, "--confirm", BOB], server: [META_ADMIN, LIST_IDENTITIES, exch("DELETE", `${ORG}/members/${BOB}`, 200, { left: false, grantsRevoked: 1, groupsLeft: 0, invitationsRevoked: 2, review: EMPTY_REVIEW })] }),
+  a({ id: "member.remove.former", title: "member remove of a former member's id", args: ["member", "remove", OLD, "--confirm", OLD], server: [META_ADMIN, LIST_IDENTITIES] }),
+  a({ id: "member.remove.machine", title: "member remove of a machine's id", args: ["member", "remove", SVC, "--confirm", SVC], server: [META_ADMIN, LIST_IDENTITIES] }),
+  a({ id: "member.remove.ambiguous", title: "member remove of a name two members have", args: ["member", "remove", "Sam", "--confirm", "Sam"], server: [META_ADMIN, LIST_IDENTITIES] }),
+  a({ id: "member.remove.unknown", title: "member remove of a name no member has", args: ["member", "remove", "Zed", "--confirm", "Zed"], server: [META_ADMIN, LIST_IDENTITIES] }),
+  a({ id: "member.remove.old-server", title: "member remove on a server without the capability", args: ["member", "remove", "Bob", "--confirm", "Bob"], server: [META_OLD] }),
+  a({ id: "member.leave", title: "member leave --confirm the organization", args: ["member", "leave", "--confirm", "acme"], server: [META_ADMIN, exch("DELETE", `${ORG}/members/me`, 200, { ...REMOVAL, left: true, review: EMPTY_REVIEW })] }),
+  a({ id: "member.leave.no-confirm", title: "member leave without --confirm", args: ["member", "leave"] }),
+  a({ id: "member.leave.no-confirm.assisted", title: "member leave in assisted mode without --confirm", args: ["--assisted", "member", "leave"] }),
+  a({ id: "member.leave.wrong", title: "member leave --confirm naming another organization", args: ["member", "leave", "--confirm", "beta"] }),
+  a({ id: "member.role.admin", title: "member role admin", args: ["member", "role", "Bob", "admin"], server: [META_ADMIN, LIST_IDENTITIES, exch("PATCH", `${ORG}/members/${BOB}`, 200, { identityId: BOB, role: "admin", previousRole: "member" })] }),
+  a({ id: "member.role.member", title: "member role member: grants stay", args: ["member", "role", "Ada", "member"], server: [META_ADMIN, LIST_IDENTITIES, exch("PATCH", `${ORG}/members/${ADA}`, 200, { identityId: ADA, role: "member", previousRole: "admin" })] }),
+  a({ id: "member.role.same", title: "member role to the role they have", args: ["member", "role", "Ada", "admin"], server: [META_ADMIN, LIST_IDENTITIES, exch("PATCH", `${ORG}/members/${ADA}`, 200, { identityId: ADA, role: "admin", previousRole: "admin" })] }),
+  a({ id: "member.role.confirm", title: "member role takes no --confirm", args: ["member", "role", "Bob", "admin", "--confirm", "Bob"] }),
+  a({ id: "member.role.bad", title: "member role with a role that is not one", args: ["member", "role", "Bob", "owner"] }),
+  a({ id: "member.json-misuse", title: "--json is for member list and member exposure", args: ["member", "remove", "Bob", "--json"] }),
+  a({ id: "member.exposure", title: "member exposure: received, reach at removal, indirect paths, environments named", args: ["member", "exposure", "Old"], server: [META_ADMIN, LIST_IDENTITIES, ok(`${ORG}/members/${OLD}/exposure`, EXPOSURE), ...NAMES] }),
+  a({ id: "member.exposure.json", title: "member exposure --json: NDJSON, the member and coverage first", args: ["member", "exposure", OLD, "--json"], server: [META_ADMIN, ok(`${ORG}/members/${OLD}/exposure`, EXPOSURE)] }),
+  a({ id: "member.exposure.me", title: "member exposure me: the caller's own", args: ["member", "exposure", "me"], server: [META_ADMIN, ok(`${ORG}/members/me/exposure`, EXPOSURE_ME), ...NAMES] }),
+  a({ id: "member.exposure.no-projects", title: "member exposure when the projects cannot be listed: ids stay", args: ["member", "exposure", OLD], server: [META_ADMIN, ok(`${ORG}/members/${OLD}/exposure`, EXPOSURE), exch("GET", `${ORG}/projects`, 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "member.exposure.machine", title: "member exposure of a machine's id is refused by the listing's rule", args: ["member", "exposure", "deployer"], server: [META_ADMIN, LIST_IDENTITIES] }),
+  a({ id: "member.exposure.confirm", title: "member exposure takes no --confirm", args: ["member", "exposure", "Old", "--confirm", "Old"] }),
+  a({ id: "member.exposure.old-server", title: "member exposure on a server without the capability", args: ["member", "exposure", "Old"], server: [META_OLD] }),
+  a({ id: "member.unknown", title: "an unknown member subcommand", args: ["member", "invite"] }),
+  a({ id: "member.none", title: "member without a subcommand", args: ["member"] }),
+  a({ id: "member.unknown-option", title: "member is parsed strictly", args: ["member", "list", "--all"] }),
+];
+
 // ---- 5.8a: guided init, and what it never does off a terminal ---------------
 //
 // Guided `init` runs only with a terminal on both ends, outside assisted
@@ -1671,7 +2103,9 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.4b-run": run54b,
   "5.4c-redact": redact54c,
   "5.4e-find-files": findFiles54e,
+  "5.4f-strict": strict54f,
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,
+  "5.7a-admin": admin57a,
   "5.8a-guided-init": guided58a,
 };

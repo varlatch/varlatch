@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/matcher"
@@ -142,12 +143,19 @@ func envValue(env []string, name string) string {
 // spawnError is Node's error for a command that could not be started:
 // `spawn <command> <code>`.
 func spawnError(command string, err error) error {
-	var code string
+	var errno syscall.Errno
+	code := ""
 	switch {
-	case errors.Is(err, errNotFound), errors.Is(err, os.ErrNotExist):
+	case errors.Is(err, errNotFound):
 		code = "ENOENT"
 	case errors.Is(err, errBatchFile):
 		code = "EINVAL"
+	case errors.As(err, &errno) && spawnErrnoName(errno) != "":
+		// The system's own errno, named as Node names it (an exec format
+		// error is ENOEXEC, not Go's "fork/exec ...: exec format error").
+		code = spawnErrnoName(errno)
+	case errors.Is(err, os.ErrNotExist):
+		code = "ENOENT"
 	case errors.Is(err, os.ErrPermission):
 		code = "EACCES"
 	default:
