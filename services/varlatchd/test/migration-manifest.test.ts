@@ -19,7 +19,7 @@ interface ManifestColumn {
 }
 interface Manifest {
   source: { release: string; schema: string; migrations: string[] };
-  tables: { source: string; action: string; columns: ManifestColumn[] }[];
+  tables: { source: string; action: string; orderBy?: string[]; physicalOrder?: boolean; columns: ManifestColumn[] }[];
 }
 
 const manifest = JSON.parse(readFileSync(new URL("../src/migration/manifest-v1.json", import.meta.url), "utf8")) as Manifest;
@@ -80,6 +80,26 @@ describe("the migration manifest", () => {
 
   it("holds every table and column of the schema, in order, with its type", async () => {
     expect(differences(manifest, await readSchema(db))).toEqual([]);
+  });
+
+  it("orders each copied or transformed table's rows by its primary key", async () => {
+    const res = await db.query(
+      `SELECT c.relname AS table, array_agg(a.attname ORDER BY k.ord)::text[] AS columns
+         FROM pg_index i
+         JOIN pg_class c ON c.oid = i.indrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+        WHERE n.nspname = 'public' AND i.indisprimary
+        GROUP BY c.relname`,
+    );
+    const pk = new Map((res.rows as { table: string; columns: string[] }[]).map((r) => [r.table, r.columns]));
+    for (const t of manifest.tables) {
+      // A table left out has no order; audit_events goes by event_order and
+      // requirements by its physical order (the manifest's notes).
+      if (t.action === "leftOut" || t.physicalOrder || t.source === "audit_events") continue;
+      expect([t.source, t.orderBy]).toEqual([t.source, pk.get(t.source)]);
+    }
   });
 
   it("fails on a column or a table a migration adds", async () => {

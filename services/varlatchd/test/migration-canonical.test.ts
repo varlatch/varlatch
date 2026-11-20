@@ -90,4 +90,10 @@ describe("canonical-v1, what only JavaScript can hold", () => {
   it("refuses a row with more values than types", () => {
     expect(() => encodeRow(["text"], ["a", "b"])).toThrow();
   });
+
+  it("refuses a hole or undefined in a row, never reading it as NULL", () => {
+    expect(() => encodeRow(["text", "text"], ["a", ,] as unknown as Value[])).toThrow();
+    expect(() => encodeRow(["text"], [undefined] as unknown as Value[])).toThrow();
+    expect(encodeRow(["text"], [null])).toBe("[null]");
+  });
 });

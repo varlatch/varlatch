@@ -98,7 +98,8 @@ export function encodeRow(types: readonly ColumnType[], values: readonly Value[]
   return `[${types
     .map((t, i) => {
       try {
-        return encodeValue(t, values[i] ?? null);
+        // Indexed as it is: a hole or undefined is refused, never read as NULL.
+        return encodeValue(t, values[i] as Value);
       } catch (err) {
         throw new CanonicalError(`column ${i + 1}: ${(err as Error).message}`);
       }
@@ -110,7 +111,9 @@ export function encodeRow(types: readonly ColumnType[], values: readonly Value[]
  * A jsonb value's canonical text: parsed as JSON.parse parses it, every
  * object's members in jsonb's order (shorter keys first, keys of one length
  * by their bytes, both in UTF-8), written as JSON.stringify writes it. Text
- * jsonb would refuse (a lone surrogate, U+0000) is refused.
+ * jsonb would refuse (a lone surrogate, U+0000) is refused, and so is a
+ * number a double does not hold exactly (checkNumbers): a migration never
+ * changes a value silently.
  */
 export function jsonbText(text: string): string {
   let parsed: unknown;
@@ -119,7 +122,38 @@ export function jsonbText(text: string): string {
   } catch (err) {
     throw new CanonicalError(`canonical: jsonb: ${(err as Error).message}`);
   }
+  checkNumbers(text);
   return writeJsonb(parsed);
+}
+
+/**
+ * Refuses JSON text (already parsed, so well formed) holding a number whose
+ * spelling is not the one ECMAScript writes for its double: parsing it and
+ * writing it back must give the same text. "1.0", "0.10", "1e2", "-0",
+ * "123456789012345678901" and "1e999" are refused; PostgreSQL's jsonb keeps
+ * them as written (as numeric), and a double would change them.
+ */
+function checkNumbers(text: string): void {
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (inString) {
+      if (c === "\\") i++; // the escaped character; a \u escape's hex digits hold no quote
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+    } else if (c === "-" || (c >= "0" && c <= "9")) {
+      let j = i;
+      while (j < text.length && "+-0123456789.eE".includes(text[j]!)) j++;
+      const token = text.slice(i, j);
+      if (String(Number(token)) !== token) {
+        throw new CanonicalError(`canonical: jsonb number ${token.slice(0, 40)} is not exactly a double; the migration would change it`);
+      }
+      i = j - 1;
+    }
+  }
 }
 
 /**
