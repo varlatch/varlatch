@@ -469,15 +469,18 @@ async function startApp(ws) {
   return { ...r, report };
 }
 
-{
+if (kit.supports("types-typescript")) {
   const wrote = await admin.cli(["types", "--out", OUT]);
   check("client-runtime.types-module-generated-active-revision", "types: the module is generated from the active revision", wrote.code === 0 && /^Wrote /.test(wrote.stdout), wrote.out);
   const source = existsSync(outPath) ? readFileSync(outPath, "utf8") : "";
   check("client-runtime.types-header-records-active-revision-content", "types: the header records the active revision and its content hash", source.includes(active.id) && source.includes(active.contentHash));
   check("client-runtime.types-module-holds-no-value", "types: the module holds no value", source.length > 0 && noValueIn(source) && !source.includes("8080"));
-  const mtime = statSync(outPath).mtimeMs;
+  // A module that was never written is reported by the checks, never thrown:
+  // a suite that stops early leaves its later checks unreported.
+  const mtimeOf = () => (existsSync(outPath) ? statSync(outPath).mtimeMs : null);
+  const mtime = mtimeOf();
   const again = await admin.cli(["types", "--out", OUT]);
-  check("client-runtime.types-regenerating-unchanged-revision-leaves", "types: regenerating an unchanged revision leaves the file untouched", again.code === 0 && /left unchanged/.test(again.stdout) && statSync(outPath).mtimeMs === mtime, again.out);
+  check("client-runtime.types-regenerating-unchanged-revision-leaves", "types: regenerating an unchanged revision leaves the file untouched", again.code === 0 && /left unchanged/.test(again.stdout) && mtime !== null && mtimeOf() === mtime, again.out);
   const current = await admin.cli(["types", "--out", OUT, "--check"]);
   check("client-runtime.types-check-passes-module-matches-active", "types --check passes while the module matches the active revision", current.code === 0 && /is current with/.test(current.stdout), current.out);
 
@@ -529,7 +532,7 @@ print(json.dumps({
     "generatedFrom": dict(generated.GENERATED_FROM),
 }))
 `;
-{
+if (kit.supports("types-python")) {
   mkdirSync(join(admin.dir, "app"), { recursive: true });
   writeFileSync(join(admin.dir, "app", "main.py"), PY_APP);
   const wrote = await admin.cli(["types", "--out", PY_OUT]);
@@ -566,7 +569,7 @@ print(json.dumps({
 
 // A changed Contract: --check fails, and the old module reports stale types at runtime.
 active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Added after the module was generated" })]);
-{
+if (kit.supports("types-typescript")) {
   const stale = await admin.cli(["types", "--out", OUT, "--check"]);
   check("client-runtime.types-check-fails-once-changed-contract", "types --check fails once a changed Contract is active", stale.code === 1 && /is stale/.test(stale.stderr), `exit ${stale.code}: ${stale.out}`);
   const r = await startApp(admin);
@@ -595,7 +598,7 @@ active = await activate([...BASE_CONTRACT, item("RT_ADDED", { description: "Adde
 }
 
 // A withheld required Secret, read through the real server's run context.
-if (identities) {
+if (identities && kit.supports("types-typescript")) {
   const r = await startApp(readerWs);
   const issues = r.report?.issues ?? [];
   check(
@@ -610,7 +613,7 @@ if (identities) {
 await setValue("PORT", BAD.PORT);
 await setValue("DEBUG", BAD.DEBUG);
 await setValue("LEVEL", BAD.LEVEL);
-{
+if (kit.supports("types-typescript")) {
   const r = await startApp(admin);
   const names = (r.report?.issues ?? []).map((i) => i.name).sort();
   check(

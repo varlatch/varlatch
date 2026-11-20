@@ -8,10 +8,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cliCommand, goLacks } from "./cliUnderTest.js";
 
 /**
  * `varlatch run --redact` end to end: the CLI, bundled from this checkout's
- * source, runs against a local fake server and starts real child processes
+ * source (or the Go CLI that VARLATCH_TEST_CLI names, cliUnderTest.ts), runs against a local fake server and starts real child processes
  * whose stdout and stderr are pipes. Covers the piped output, stdin, the exit
  * code, forwarded signals, and interruption.
  */
@@ -122,7 +123,8 @@ interface Run {
 function start(flags: string[], script: string): Run {
   const file = join(dir, `child-${Math.random().toString(36).slice(2)}.cjs`);
   writeFileSync(file, script);
-  const child = spawn(process.execPath, [bundle, "run", ...flags, "--", process.execPath, file], {
+  const [command, argv] = cliCommand(bundle, ["run", ...flags, "--", process.execPath, file]);
+  const child = spawn(command, argv, {
     cwd: repo,
     env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", MARKER: join(dir, "started") },
     stdio: ["pipe", "pipe", "pipe"],
@@ -257,7 +259,7 @@ process.stdout.on("error", (e) => { require("fs").writeSync(2, "child saw " + e.
     expect(code).toBe(3);
   });
 
-  it("works with --strict: the Secrets delivered by the strict retrieval are masked", async () => {
+  it.skipIf(goLacks("5.4f"))("works with --strict: the Secrets delivered by the strict retrieval are masked", async () => {
     const run = start(["--strict", "--redact"], `${PRELUDE}(async () => { await out("t=" + process.env.API_TOKEN + " port=" + process.env.PORT + "\\n"); })();`);
     const { code } = await run.done;
     expect(code).toBe(0);
@@ -308,7 +310,8 @@ describe.skipIf(!hasScript)("varlatch run --redact on a terminal", () => {
   function underTerminal(redirect: string) {
     const child = join(dir, "tty-child.cjs");
     writeFileSync(child, `require("fs").writeFileSync(process.env.MARKER, "started");`);
-    const command = [process.execPath, bundle, "run", "--redact", "--", process.execPath, child].map(shellQuote).join(" ");
+    const [cli, argv] = cliCommand(bundle, ["run", "--redact", "--", process.execPath, child]);
+    const command = [cli, ...argv].map(shellQuote).join(" ");
     const result = spawnSync("script", ["-qec", `${command} ${redirect}`, "/dev/null"], {
       cwd: repo,
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", MARKER: join(dir, "started"), SHELL: "/bin/sh" },
