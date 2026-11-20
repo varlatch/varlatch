@@ -20,11 +20,15 @@ import (
 // tnSource is a source with a Tailscale sidecar.
 type tnSource struct {
 	*fakeSource
-	info    TailnetInfo
-	mu      sync.Mutex
-	running bool // the sidecar
-	stops   int
-	starts  int
+	info TailnetInfo
+	// expiry is the sidecar's certificate's end (zero: none); renewErr
+	// what a renewal answers.
+	expiry   time.Time
+	renewErr error
+	mu       sync.Mutex
+	running  bool // the sidecar
+	stops    int
+	starts   int
 }
 
 func (s *tnSource) Tailnet(context.Context) (TailnetInfo, error) { return s.info, nil }
@@ -46,9 +50,9 @@ func (s *tnSource) isRunning() bool {
 	return s.running
 }
 func (s *tnSource) TailnetCertExpiry(context.Context, string) (time.Time, bool, error) {
-	return time.Time{}, false, nil
+	return s.expiry, !s.expiry.IsZero(), nil
 }
-func (s *tnSource) RenewTailnetCert(context.Context, string, time.Duration) error { return nil }
+func (s *tnSource) RenewTailnetCert(context.Context, string, time.Duration) error { return s.renewErr }
 
 // tnTarget is a target whose node enrolls in the fake control plane.
 type tnTarget struct {
@@ -65,6 +69,15 @@ type tnTarget struct {
 func (t *tnTarget) TailnetEnroll(ctx context.Context, hostname string, _ bool) (EnrolledNode, error) {
 	if err := t.call("enroll " + hostname); err != nil {
 		return EnrolledNode{}, err
+	}
+	// Enrolled already: held again only while the control plane names it
+	// exactly that (varlatchd's enroll).
+	if t.enrolled == hostname {
+		for _, d := range t.cp.Nodes() {
+			if d.ID == t.newID && d.Name != hostname {
+				return EnrolledNode{}, errors.New("varlatchd admin tailnet enroll: the node is enrolled as " + d.Name + " and not held for a handoff")
+			}
+		}
 	}
 	// The node joins under its temporary name.
 	if t.enrolled != hostname {
@@ -255,6 +268,57 @@ func TestTheCombinedCheckFailureGivesTheNameBack(t *testing.T) {
 	}
 	if !w.src.running || w.tgt.running || w.src.ingressDown {
 		t.Fatalf("sidecar running %v, target running %v, the source's ingress down %v", w.src.running, w.tgt.running, w.src.ingressDown)
+	}
+	// The undo held the target's node again under its temporary name: a
+	// new migration to the same target goes on with it.
+	temp, _ := tailcontrol.TempName("vault", j.Tailnet.Operation, tailcontrol.RoleNew)
+	if w.tgt.info.Tailnet.HeldAs != temp || w.names()["new"] != temp {
+		t.Fatalf("not held again: %q, names %v", w.tgt.info.Tailnet.HeldAs, w.names())
+	}
+	w.eng.Prober = w.prober
+	j2, err := w.eng.Run(context.Background(), false)
+	if err != nil || j2.Phase != Open || j2.Tailnet.Operation != j.Tailnet.Operation || w.names()["new"] != "vault" {
+		t.Fatalf("the next migration: %v %+v %v", err, j2, w.names())
+	}
+}
+
+// Every handoff needs the tailnet's authority: a run resumed without it
+// is refused, never a crash, whichever step asks.
+func TestAResumeWithoutTheAuthorityIsRefused(t *testing.T) {
+	w := newTailnetWorld(t)
+	j, err := w.eng.Run(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.eng.Tailnet = nil
+	j.Tailnet.Handoff.Phase = tailhandoff.Prepared
+	if err := w.eng.switchTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) || !strings.Contains(err.Error(), "--resume --tailscale-oauth-client-file") {
+		t.Fatalf("switch: %v", err)
+	}
+	j.Tailnet.Handoff.Phase = tailhandoff.Switching
+	if err := w.eng.unwindTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) {
+		t.Fatalf("unwind: %v", err)
+	}
+	if _, err := w.eng.handoffEngine(j, slotRollback); !errors.Is(err, ErrNoTailnetAuthority) {
+		t.Fatalf("handoffEngine: %v", err)
+	}
+}
+
+// The old node's certificate cannot be renewed to last the rollback
+// window: the preflight refuses, naming the flag; accepted, it goes on and
+// the journal says a rollback needs a new certificate.
+func TestTheRollbackCertificateIsAcceptedOnlyByTheFlag(t *testing.T) {
+	w := newTailnetWorld(t)
+	w.src.info.HTTPS = true
+	w.tgt.info.Tailnet.HTTPSPort = 8443
+	w.src.expiry, w.src.renewErr = time.Now().Add(48*time.Hour), errors.New("the CA refused")
+	if _, err := w.eng.Run(context.Background(), true); err == nil || !strings.Contains(err.Error(), "--accept-rollback-certificate") {
+		t.Fatalf("without the flag: %v", err)
+	}
+	w.eng.Tailnet.AcceptRollbackCertificate = true
+	j, err := w.eng.Resume(context.Background())
+	if err != nil || j.Tailnet == nil || j.Tailnet.Handoff.Phase != tailhandoff.Prepared || !j.Tailnet.Handoff.RollbackNeedsCertificate {
+		t.Fatalf("with the flag: %v %+v", err, j)
 	}
 }
 

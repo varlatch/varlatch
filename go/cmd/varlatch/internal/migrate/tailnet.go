@@ -285,6 +285,14 @@ func (r handoffResolver) Reaches(ctx context.Context, name, nodeID string) (bool
 
 // handoffEngine is tailhandoff's engine for this migration.
 func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engine, error) {
+	// Every handoff needs the tailnet's authority: a run resumed without
+	// it is refused here, whoever asks, before anything is touched.
+	if e.Tailnet == nil || e.Tailnet.Control == nil {
+		return nil, fmt.Errorf("%w: the migration's tailnet handoff goes on with them (varlatch migrate --resume --tailscale-oauth-client-file <file> --tailnet-auth-key-file <file>)", ErrNoTailnetAuthority)
+	}
+	if j.Tailnet == nil {
+		return nil, errors.New("the journal records no tailnet handoff")
+	}
 	reverse := slot != slotForward
 	ts, tt, err := e.tailnetSides()
 	if err != nil {
@@ -367,8 +375,8 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 	case info.HTTPS && tn.HTTPSPort == 0:
 		return errors.New("preflight: the source serves the tailnet browser endpoint over HTTPS (Tailscale certificates), and the target's configuration has no tailnet_https_port: set it; nothing was done")
 	case tn.Enrolled && tn.HeldAs == "" && (j.Tailnet == nil || j.Tailnet.Operation == ""):
-		// (One this migration enrolled and gave its name back by an undo is
-		// held again under its temporary name: enroll checks the name.)
+		// (A node this migration enrolled is held again by the undo that
+		// gives its name back (reholdTarget), so it never comes here.)
 		return errors.New("preflight: the target's tailnet node is enrolled and not held for a handoff: a migration's target node joins under a temporary name; remove its state (the tailnet directory and pin in its data directory) and its device in the tailnet; nothing was done")
 	case !tn.AuthKey && !tn.Enrolled:
 		return fmt.Errorf("preflight: the target has no tailnet auth key: %w; nothing was done", ErrNoTailnetAuthority)
@@ -545,7 +553,7 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 	}
 	// Done: the reverse, the target's node giving the name back.
 	if rec.Reverse != nil && rec.Reverse.Phase == tailhandoff.Done {
-		return nil
+		return e.reholdTarget(ctx, rec)
 	}
 	he, err := e.handoffEngine(j, slotUndo)
 	if err != nil {
@@ -584,6 +592,26 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 	}
 	if err != nil || st == nil || st.Phase != tailhandoff.Done {
 		return fmt.Errorf("giving the tailnet name back: %v", errors.Join(err, errors.New("the reverse handoff did not finish")))
+	}
+	return e.reholdTarget(ctx, rec)
+}
+
+// reholdTarget holds the target's node again once the reverse gave the
+// name back: the open had removed its hold, and its node is named its
+// temporary name again, which enroll checks (it holds again only a node the
+// control plane names exactly that). A new migration to the same target
+// then goes on with it.
+func (e *Engine) reholdTarget(ctx context.Context, rec *TailnetRecord) error {
+	_, tt, err := e.tailnetSides()
+	if err != nil {
+		return err
+	}
+	temp, err := tailcontrol.TempName(rec.Name, rec.Operation, tailcontrol.RoleNew)
+	if err != nil {
+		return err
+	}
+	if _, err := tt.TailnetEnroll(ctx, temp, false); err != nil {
+		return fmt.Errorf("holding the target's node again under %s: %w", temp, err)
 	}
 	return nil
 }

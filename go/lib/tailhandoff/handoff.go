@@ -440,7 +440,7 @@ func (e *Engine) checkServingCertificate(ctx context.Context, s *State) error {
 		}
 	}
 	if !p.AcceptRollbackCertificate {
-		return fmt.Errorf("the serving node's certificate for %s will not last through the rollback window and could not be renewed (%v): a rollback after it ends needs a new certificate, about 40 s of downtime and one issuance; accept that to go on", p.Name, renewErr)
+		return fmt.Errorf("the serving node's certificate for %s will not last through the rollback window and could not be renewed (%v): a rollback after it ends needs a new certificate, about 40 s of downtime and one issuance; accept that to go on (varlatch migrate --accept-rollback-certificate)", p.Name, renewErr)
 	}
 	s.ServingCertExpiry = expiry
 	s.RollbackNeedsCertificate = true

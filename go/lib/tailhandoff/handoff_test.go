@@ -651,7 +651,7 @@ func TestTheServingCertificateAndTheRollbackWindow(t *testing.T) {
 		return nil
 	}
 	p := r2.forward(t)
-	if _, err := r2.engine.Prepare(ctx, p); err == nil || !strings.Contains(err.Error(), "accept that to go on") {
+	if _, err := r2.engine.Prepare(ctx, p); err == nil || !strings.Contains(err.Error(), "accept that to go on (varlatch migrate --accept-rollback-certificate)") {
 		t.Fatalf("without acceptance: %v", err)
 	}
 	p.AcceptRollbackCertificate = true

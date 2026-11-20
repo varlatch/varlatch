@@ -31,10 +31,12 @@ const migrateUsage = `Usage:
                    --backup-destination <name> --read-credentials-file <file> [--from <compose directory>]
                    [--dry-run] [--max-downtime <duration>] [--drain <duration>] [--transfer-timeout <duration>]
                    [--unit <systemd unit>] [--kek-file <file>] [--destinations-file <file>] [--ts-cli <program>] [--json]
-                   [--tailscale-oauth-client-file <file> --tailnet-auth-key-file <file>]
+                   [--tailscale-oauth-client-file <file> --tailnet-auth-key-file <file> [--accept-rollback-certificate]]
                (a source serving a tailnet address: the name moves to the target's node; the OAuth client has the
                 devices:core scope only, the file {"clientId": ..., "clientSecret": ...}; the auth key is reusable,
-                with the node's tags; both from files, never an argument)
+                with the node's tags; both from files, never an argument; --accept-rollback-certificate goes on
+                when the old node's certificate cannot be renewed to last the rollback window: a rollback after
+                it ends then needs a new one, about 40 s of downtime)
   varlatch migrate ... --to-data <dir> --to-keys <dir> --to-config <file> --to-image <ref:tag@sha256:...> --to-service <name>
                    (instead of --config and --unit: the Go image's service, created in setup mode with nothing listening,
                     its bind paths on this host; you start and stop it when migrate asks)
@@ -67,6 +69,7 @@ type migrateOptions struct {
 	toData, toKeys, toConfig, toImage, toService                                                         string
 	maxDowntime, drain, transferTimeout                                                                  time.Duration
 	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData                               bool
+	acceptRollbackCertificate                                                                            bool
 }
 
 func parseMigrateOptions(args []string) (migrateOptions, error) {
@@ -77,7 +80,7 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		"--to-image": &o.toImage, "--to-service": &o.toService,
 		"--tailscale-oauth-client-file": &o.oauthClientFile, "--tailnet-auth-key-file": &o.tailnetAuthKeyFile}
 	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
-	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback,
+	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback, "--accept-rollback-certificate": &o.acceptRollbackCertificate,
 		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData}
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch migrate: "+msg, "\n"+migrateUsage) }
 	for i := 0; i < len(args); i++ {
@@ -125,6 +128,8 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--resume does what the interrupted run was asked, --abort undoes it; neither takes --dry-run")
 	case o.resume && o.abort:
 		return o, usage("--resume or --abort, not both")
+	case o.acceptRollbackCertificate && o.oauthClientFile == "":
+		return o, usage("--accept-rollback-certificate goes with --tailscale-oauth-client-file: it is the tailnet handoff's")
 	case (o.status || o.finish) && (o.oauthClientFile != "" || o.tailnetAuthKeyFile != ""):
 		return o, usage("--tailscale-oauth-client-file and --tailnet-auth-key-file go with a migration, its --resume and --abort, and --rollback")
 	case o.deleteOldData && !o.finish:
@@ -211,7 +216,7 @@ func migrateCommand(r *Run) error {
 			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
 		}
 		defer func() { _ = cp.Close(context.Background()) }()
-		tailnetOptions = &migrate.TailnetOptions{Control: cp}
+		tailnetOptions = &migrate.TailnetOptions{Control: cp, AcceptRollbackCertificate: o.acceptRollbackCertificate}
 	}
 	var tailnetAuthKey []byte
 	if o.tailnetAuthKeyFile != "" {
