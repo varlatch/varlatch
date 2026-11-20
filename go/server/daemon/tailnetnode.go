@@ -114,7 +114,7 @@ func nodeArgs(rest []string) (nodeCmd, string) {
 			var v string
 			if v, ok = value(i); ok {
 				d, err := time.ParseDuration(v)
-				ok = err == nil && d >= 0 && d <= 10*time.Minute
+				ok = err == nil && d >= 0 && d <= reachMaxWait
 				if a == "--wait" {
 					c.wait = d
 				} else {
@@ -282,14 +282,10 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	if err := node.Up(ctx); err != nil {
 		return fail("the node did not join its tailnet: %v", err)
 	}
-	m, err := tailnet.NewManager(node, controlURL, cfg.DataDir, t.Port, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
-	if err != nil {
-		return fail("%v", err)
-	}
-	// While held, the read-back is of the hold's name, never the
-	// configured one, which another node holds (no name-suffixed latch).
-	m.SetHostname(c.hostname)
-	m.Check(ctx)
+	// The name first, before the pin's check: a node the control plane
+	// named otherwise (its temporary name another node's: temp-1) is
+	// refused before anything is recorded of it, so no name-suffixed
+	// closure outlives the collision.
 	st, err := node.Status(ctx)
 	if err != nil {
 		return fail("the node's status: %v", err)
@@ -307,6 +303,14 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 		return fail("the node joined as %s, not %s: the control plane gave it another name (one held by another node?). "+
 			"Delete the node in the tailnet's admin console, then enrol again", st.DNSName, c.hostname)
 	}
+	m, err := tailnet.NewManager(node, controlURL, cfg.DataDir, t.Port, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err != nil {
+		return fail("%v", err)
+	}
+	// While held, the read-back is of the hold's name, never the
+	// configured one, which another node holds (no name-suffixed latch).
+	m.SetHeldName(c.hostname)
+	m.Check(ctx)
 	suffix, open := m.Pinned()
 	res := enrollResult{Hostname: c.hostname, DNSName: st.DNSName, StableID: st.SelfID, Suffix: st.Suffix, TailnetID: st.TailnetID,
 		ControlURL: controlURL, Pinned: suffix, Open: open, Held: true}
@@ -491,6 +495,15 @@ func nodeFor(ctx context.Context, env *hostEnv) (*tailnet.TSNode, func(), error)
 // temporary directory.
 const reachDirPrefix = "varlatchd-reach-"
 
+// A probe lives at most its --wait (reachMaxWait at most) and its slack
+// (the join, at most a minute, and the logout): a directory older than
+// that and a margin is a killed probe's, never a running one's.
+const (
+	reachMaxWait    = 10 * time.Minute
+	reachSlack      = 2 * time.Minute
+	reachSweepAfter = reachMaxWait + reachSlack + 3*time.Minute
+)
+
 // sweepReachDirs removes the reach probes' state directories a killed
 // probe left before cutoff: this user's own, directories only, never a
 // link.
@@ -542,7 +555,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	clear(raw)
 	// A probe stopped by a signal logs out and removes its state, as one
 	// that ends; what a killed one left (its node key) is swept here.
-	sweepReachDirs(os.TempDir(), time.Now().Add(-10*time.Minute))
+	sweepReachDirs(os.TempDir(), time.Now().Add(-reachSweepAfter))
 	dir, err := os.MkdirTemp("", reachDirPrefix)
 	if err != nil {
 		return fail("%v", err)
@@ -550,7 +563,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	defer os.RemoveAll(dir)
 	sctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithTimeout(sctx, c.wait+2*time.Minute)
+	ctx, cancel := context.WithTimeout(sctx, c.wait+reachSlack)
 	defer cancel()
 	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(cfg), AuthKey: key, Tags: t.Tags}, c.name, c.stableID, c.wait)
 	if err != nil {
