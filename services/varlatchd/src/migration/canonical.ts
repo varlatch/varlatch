@@ -108,6 +108,69 @@ export function encodeRow(types: readonly ColumnType[], values: readonly Value[]
 }
 
 /**
+ * Reads a canonical row back into the values {@link encodeRow} takes, in
+ * the manifest's column order (the import of a reverse bundle, slice 7.2c).
+ * Strict: a row that is not exactly what encodeRow writes for the values it
+ * holds is refused, so there is one spelling of every row. A refusal names
+ * the column, never its value.
+ */
+export function decodeRow(types: readonly ColumnType[], line: string): Value[] {
+  let raw: unknown;
+  try {
+    // Numbers are kept as written: a bigint or a timestamp a double cannot hold.
+    raw = JSON.parse(line, (_key, value: unknown, context?: { source?: string }) =>
+      typeof value === "number" ? { digits: context?.source ?? String(value) } : value,
+    );
+  } catch {
+    throw new CanonicalError("canonical: a row that is not JSON");
+  }
+  if (!Array.isArray(raw)) throw new CanonicalError("canonical: a row that is not an array");
+  if (raw.length !== types.length) throw new CanonicalError(`canonical: a row of ${raw.length} values, not ${types.length}`);
+  const values = types.map((type, i) => {
+    try {
+      return decodeValue(type, raw[i]);
+    } catch (err) {
+      throw new CanonicalError(`column ${i + 1}: ${(err as Error).message}`);
+    }
+  });
+  let again: string;
+  try {
+    again = encodeRow(types, values);
+  } catch {
+    throw new CanonicalError("canonical: a row canonical-v1 refuses");
+  }
+  if (again !== line) throw new CanonicalError("canonical: a row not in canonical form");
+  return values;
+}
+
+const INTEGER = /^-?(0|[1-9][0-9]*)$/;
+
+function decodeValue(type: ColumnType, v: unknown): Value {
+  if (v === null) return null;
+  const digits = (v as { digits?: unknown } | null)?.digits;
+  switch (type) {
+    case "text":
+    case "jsonb":
+      if (typeof v !== "string") throw new CanonicalError(`canonical: a ${type} that is not a string`);
+      return v;
+    case "timestamp with time zone":
+    case "integer":
+    case "bigint":
+      if (typeof digits !== "string" || !INTEGER.test(digits)) throw new CanonicalError(`canonical: a ${type} that is not an integer`);
+      return BigInt(digits);
+    case "boolean":
+      if (digits !== "0" && digits !== "1") throw new CanonicalError("canonical: a boolean that is not 0 or 1");
+      return digits === "1";
+    case "text[]":
+      if (!Array.isArray(v) || v.some((e) => e !== null && typeof e !== "string")) throw new CanonicalError("canonical: a text[] that is not an array of strings and nulls");
+      return v as (string | null)[];
+    case "bytea":
+      if (typeof v !== "string") throw new CanonicalError("canonical: a bytea that is not base64 text");
+      return Buffer.from(v, "base64");
+  }
+}
+
+/**
  * A jsonb value's canonical text: parsed as JSON.parse parses it, every
  * object's members in jsonb's order (shorter keys first, keys of one length
  * by their bytes, both in UTF-8), written as JSON.stringify writes it. Text

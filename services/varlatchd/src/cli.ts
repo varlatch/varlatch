@@ -360,7 +360,56 @@ async function readPassphrase(prompt: string, opts: { confirm?: boolean } = {}):
 const MIGRATION_USAGE =
   "Usage: varlatchd admin migration barrier [--drain-seconds <n>] | varlatchd admin migration status | " +
   "varlatchd admin migration release --id <gate> | varlatchd admin migration mark-migrated-out --id <gate> | " +
-  "varlatchd admin migration export --out <bundle> [--digests] [--dry-run]";
+  "varlatchd admin migration export --out <bundle> [--digests] [--dry-run] | " +
+  "varlatchd admin migration import --in <reverse bundle>";
+
+/**
+ * `admin migration import` (go-step7 slice 7.2c, decision 16,
+ * migration/import.ts): starts this release on a fresh database rebuilt
+ * from varlatchd's reverse bundle. With varlatchd stopped, under the
+ * database role that owns the schema (the migrate job's) and with the Root
+ * KEK. Behind the migrated-out gate, or with none; the import that commits
+ * lifts the migrated-out gate, as only a completed reverse migration does
+ * (decision 15). Nothing secret is printed: refusals name lines, tables and
+ * columns.
+ */
+async function migrationImport(args: string[]): Promise<void> {
+  if (args.length !== 2 || args[0] !== "--in" || !args[1]) fail(MIGRATION_USAGE);
+  const path = args[1]!;
+  try {
+    await control({ command: "migration-status" });
+    fail("varlatchd admin migration import: varlatchd is running; stop it first: the import builds the database it starts on");
+  } catch (err) {
+    if (!(err instanceof Error && err.message === "Backup supervisor is not running")) {
+      fail(`varlatchd admin migration import: ${err instanceof Error ? err.message : "the daemon's state could not be read"}`);
+    }
+  }
+  const gate = activeGate(stateDir());
+  if (gate && gate.kind !== "migrated-out") {
+    fail(`varlatchd admin migration import: a ${gate.kind} gate is open; the import runs on an installation that migrated out, or a new one`);
+  }
+  const { importReverse, ImportRefused } = await import("./migration/import.js");
+  const config = loadConfig(process.env, { requireKek: true, listeners: false });
+  const rootKek = config.loadRootKek();
+  const db = createPgQuerier(config.databaseUrl);
+  try {
+    const result = await importReverse(db, { path, rootKek });
+    if (gate) new Maintenance(stateDir()).completeReverseMigration(gate.id);
+    const b = result.bundle;
+    console.log(JSON.stringify({
+      installationId: b.installationId, release: b.release, auditPosition: b.auditPosition, tables: b.tables, rows: b.rows,
+      perTable: b.perTable, sha256: b.sha256, alreadyImported: result.alreadyImported, migratedOutGate: gate ? "lifted" : "none",
+      next: "start varlatchd; reset the Application Plane (Convex) and deploy its functions as after a restore: the mirror publisher publishes every read model from this database",
+    }));
+  } catch (err) {
+    if (!(err instanceof ImportRefused)) throw err;
+    console.error(`varlatchd admin migration import: ${err.message}`);
+    process.exitCode = 1;
+  } finally {
+    rootKek.fill(0);
+    await db.end();
+  }
+}
 
 /**
  * `admin migration export` (go-step7 slice 7.2b, migration/export.ts): the
@@ -473,6 +522,9 @@ async function migrationCommand(args: string[]): Promise<void> {
     }
     case "export":
       await migrationExport(rest);
+      return;
+    case "import":
+      await migrationImport(rest);
       return;
     case "status": {
       if (rest.length > 0) fail(MIGRATION_USAGE);

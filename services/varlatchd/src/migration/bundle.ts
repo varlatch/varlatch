@@ -145,7 +145,8 @@ export function compareDigests(a: Digest, b: Digest): number {
     Buffer.compare(Buffer.from(idsText(a.ids), "utf8"), Buffer.from(idsText(b.ids), "utf8"));
 }
 
-function digestLine(d: Digest): string {
+/** A digest's line, exactly as BUNDLE.md writes it; refuses one the format does not allow. */
+export function digestLine(d: Digest): string {
   if (!d.class) throw new BundleError("bundle: a digest without its class");
   const keys = Object.keys(d.ids);
   if (keys.length === 0) throw new BundleError(`bundle: a ${d.class} digest without its ids`);
@@ -154,7 +155,8 @@ function digestLine(d: Digest): string {
   return `{"class":${JSON.stringify(d.class)},"ids":${idsText(d.ids)},"hmac":${JSON.stringify(d.hmac)}}`;
 }
 
-function decisionLine(d: Decision): string {
+/** A decision's line, exactly as BUNDLE.md writes it; refuses one the format does not allow. */
+export function decisionLine(d: Decision): string {
   if (!d.credential || !d.organization || !d.action) throw new BundleError("bundle: a decision without its credential, organization or action");
   if (!STATES.includes(d.state)) throw new BundleError("bundle: a decision in a state other than active, expired or revoked");
   if (d.project === "" || d.environment === "") throw new BundleError("bundle: a decision naming an empty project or environment");

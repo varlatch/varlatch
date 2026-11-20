@@ -61,7 +61,8 @@ describe.skipIf(!url)("the migration's export", () => {
     await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
     await admin.end();
     rmSync(dir, { recursive: true, force: true });
-  });
+    // Dropping databases WITH (FORCE) can take a while on a busy server.
+  }, 120_000);
 
   const run = async (opts: { dryRun?: boolean; runKey?: Buffer | null } = {}) => {
     const out = new PassThrough();

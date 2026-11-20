@@ -673,9 +673,12 @@ const inConcatenation = (n: ts.Node): boolean => {
  * enclosing route or function ("file name"), with that function's symbol
  * (null for a route, a root's own body, or a fail-closed entry). A text
  * with a write of an unnamed table fails closed: "?? file:line a write
- * whose table is not a literal".
+ * whose table is not a literal", unless its enclosing function is one of
+ * `runtimeTables` (by "file name"): a function the caller names as writing
+ * a table chosen at run time, entered as "file name (a table named at run
+ * time)" with its symbol, so its roots are found as any writer's are.
  */
-export function writers(g: Graph, write: RegExp): { label: string; symbol: ts.Symbol | null }[] {
+export function writers(g: Graph, write: RegExp, runtimeTables: ReadonlySet<string> = new Set()): { label: string; symbol: ts.Symbol | null }[] {
   const out = new Map<string, ts.Symbol | null>();
   for (const sf of srcFiles(g.program, g.srcDir)) {
     const visit = (n: ts.Node) => {
@@ -686,7 +689,9 @@ export function writers(g: Graph, write: RegExp): { label: string; symbol: ts.Sy
         return;
       }
       if (text !== null && UNNAMED_WRITE.test(text)) {
-        out.set(`?? ${rel(g, sf)}:${line(sf, n)} a write whose table is not a literal`, null);
+        const ctx = enclosingOf(g, sf, n);
+        if (ctx.kind === "function" && runtimeTables.has(ctx.label)) out.set(`${ctx.label} (a table named at run time)`, ctx.symbol);
+        else out.set(`?? ${rel(g, sf)}:${line(sf, n)} a write whose table is not a literal`, null);
         return;
       }
       ts.forEachChild(n, visit);
