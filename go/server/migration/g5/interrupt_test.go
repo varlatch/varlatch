@@ -301,9 +301,21 @@ func okOr(err error) int {
 // fakeTSCLI is the TypeScript host CLI's backup create and verify.
 func fakeTSCLI(args []string) int {
 	j := strings.Join(args, " ")
+	if f, err := os.OpenFile(state("ts-calls"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+		fmt.Fprintln(f, j)
+		f.Close()
+	}
 	const archive = "0f0e0d0c-0b0a-4908-8706-050403020100"
 	switch {
 	case strings.HasPrefix(j, "admin backup create "):
+		// The real CLI's backup reads the running varlatchd, Postgres and
+		// Convex (docker compose exec).
+		for _, svc := range []string{"varlatchd", "postgres", "convex-backend"} {
+			if stopped(svc) {
+				fmt.Fprintf(os.Stderr, "service %q is not running\n", svc)
+				return 1
+			}
+		}
 		fmt.Printf("Archive created: backups/%s.vltbak (%s)\nUpload completed to offsite; remote retrieval has not been verified.\n", archive, archive)
 	case strings.HasPrefix(j, "admin backup verify ") && strings.Contains(j, "--archive "+archive):
 		fmt.Printf(`{"archiveId":"%s","integrity":true,"compatibility":true,"keyMatch":true,"message":"checks passed"}`+"\n", archive)
@@ -542,7 +554,7 @@ func newWorld(t *testing.T, image bool) *world {
 	w.origin = proxy.URL
 	_, port, _ := net.SplitHostPort(w.listen)
 	files := map[string]string{
-		"docker-compose.yml":    "services: {}\n",
+		"docker-compose.yml":    "name: g5-installation\nservices: {}\n", // a project named apart from its directory, as the release's is
 		".env":                  "VARLATCH_PUBLIC_URL=" + w.origin + "\nBIND_ADDRESS=127.0.0.1\nVARLATCH_WEB_PORT=" + port + "\n",
 		"secrets/varlatch-kek":  hex.EncodeToString(shared.source.RootKEK) + "\n",
 		"bek":                   hex.EncodeToString(randomBytes(32)) + "\n",
@@ -560,7 +572,11 @@ func newWorld(t *testing.T, image bool) *world {
 			t.Fatal(err)
 		}
 	}
-	host := fmt.Sprintf("listen = %s\npublic_url = %s\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\n",
+	// sync = off: the seed's rows are the TypeScript server's fixtures,
+	// some of whose Sync Targets hold a mapping its API never writes ({}),
+	// on which the sync loop's first pass panics (#366 fixes that) once a
+	// test leaves the target serving unisolated.
+	host := fmt.Sprintf("listen = %s\npublic_url = %s\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\nsync = off\n",
 		w.listen, w.origin, w.data, filepath.Join(w.keys, "root-kek"), filepath.Join(w.keys, "backup-key"))
 	w.conf = filepath.Join(target, "varlatchd.conf")
 	if err := os.WriteFile(w.conf, []byte(host), 0o600); err != nil {
@@ -573,7 +589,7 @@ func newWorld(t *testing.T, image bool) *world {
 	}
 	if image {
 		w.serviceConf = filepath.Join(target, "service-varlatchd.conf")
-		svc := fmt.Sprintf("listen = %s\npublic_url = %s\ndata_dir = /var/lib/varlatch\nroot_kek_file = /keys/root-kek\nbackup_key_file = /keys/backup-key\nbackup_interval = off\n", w.listen, w.origin)
+		svc := fmt.Sprintf("listen = %s\npublic_url = %s\ndata_dir = /var/lib/varlatch\nroot_kek_file = /keys/root-kek\nbackup_key_file = /keys/backup-key\nbackup_interval = off\nsync = off\n", w.listen, w.origin)
 		if err := os.WriteFile(w.serviceConf, []byte(svc), 0o600); err != nil {
 			t.Fatal(err)
 		}

@@ -115,6 +115,13 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 	if !st.Running {
 		return j, errors.New("the Go installation does not run: a reverse migration starts from the installation that serves (start it; it stays running until the address moves)")
 	}
+	// What a killed run left on this host (the bundles in the
+	// installation's backups directory, the export's directories), under
+	// the lock.
+	if err := e.Source.CleanLeftovers(); err != nil {
+		return j, fmt.Errorf("removing what an interrupted run left: %w", err)
+	}
+	e.cleanReverseScratch()
 	j.Rollback = &RollbackRecord{StartedAt: e.now().UTC().Format(time.RFC3339Nano)}
 	if err := e.enter(ctx, j, Rollback); err != nil {
 		return j, err
@@ -361,6 +368,8 @@ func (e *Engine) rolledBack(ctx context.Context, j *Journal) error {
 	if err := e.enter(ctx, j, RolledBack); err != nil {
 		return fmt.Errorf("the TypeScript release serves, but a journal could not say rolled back: %w; varlatch migrate --resume finishes it", err)
 	}
+	_ = e.Source.CleanLeftovers()
+	e.cleanReverseScratch()
 	e.say("Rolled back: the TypeScript release serves %s again, on a fresh database rebuilt from Go's. The volumes it ran on before the migration are kept until varlatch migrate --finish.", originOf(j))
 	if n := len(j.Rollback.Archives); n > 0 {
 		e.say("%d Go archives were made since the switch; the TypeScript release cannot read them, so they restore through a Go varlatchd (setup --restore) or a later forward migration's installation only. They are not deleted:", n)
@@ -425,6 +434,7 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	if err := e.enter(ctx, j, Open); err != nil {
 		return fmt.Errorf("%w; the TypeScript side is back as it was, but a journal could not say open: %v; varlatch migrate --resume finishes it", cause, err)
 	}
+	crashPoint("rollback undone open")
 	if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
 		return fmt.Errorf("%w; the reverse was undone, but Go's barrier could not be lifted: %v; varlatch migrate --resume lifts it", cause, err)
 	}
@@ -473,6 +483,8 @@ func (e *Engine) finishRolledBack(ctx context.Context, j *Journal) error {
 		return err
 	}
 	if st.Journal != nil && st.Journal.ID == j.ID && st.Journal.Phase == RolledBack && !st.Running {
+		_ = e.Source.CleanLeftovers()
+		e.cleanReverseScratch()
 		return nil
 	}
 	if st.Running {
@@ -480,5 +492,10 @@ func (e *Engine) finishRolledBack(ctx context.Context, j *Journal) error {
 			return e.waitForHuman(err, "Then run varlatch migrate --resume again.")
 		}
 	}
-	return e.Target.WriteJournal(ctx, j)
+	if err := e.Target.WriteJournal(ctx, j); err != nil {
+		return err
+	}
+	_ = e.Source.CleanLeftovers()
+	e.cleanReverseScratch()
+	return nil
 }

@@ -840,8 +840,10 @@ func (e *Engine) finishOpen(ctx context.Context, j *Journal) error {
 		return err
 	}
 	if st.Barrier != "" && j.Rollback != nil && j.Rollback.Undone != nil {
-		// A reverse undone, interrupted before Go's barrier was lifted.
-		if rt, ok := e.Target.(ReverseTarget); ok && st.Running {
+		// A reverse undone, interrupted before Go's barrier was lifted:
+		// lifted now, through the running varlatchd or, stopped, on its
+		// data directory (varlatchd's release works offline too).
+		if rt, ok := e.Target.(ReverseTarget); ok {
 			e.say("The reverse of the migration %s was undone, but Go's barrier stands: it is lifted.", j.ID)
 			if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
 				return err
