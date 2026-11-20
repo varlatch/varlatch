@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/varlatch/varlatch/go/server/authz"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
@@ -174,6 +175,27 @@ func TestPrivateNetworkPreflight(t *testing.T) {
 	for name, s := range map[string]http.Handler{"the plain tailnet listener": plainTailnet, "the ordinary listener": ordinary} {
 		if w := do(s, "OPTIONS", url, "", preflight(allowed)); w.Header().Get("Access-Control-Allow-Private-Network") != "" {
 			t.Errorf("%s: %d %v", name, w.Code, w.Header())
+		}
+	}
+}
+
+// TestListenersReportsPublicHTTPSOnlyWhenOn: GET
+// /v1/installation/listeners has a public member only with public HTTPS
+// (PublicListener), after tailnet; without it the answer is as before.
+func TestListenersReportsPublicHTTPSOnlyWhenOn(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		s, _, _, _, ta := newTestServerAuth(t, func(o *Options) {
+			if on {
+				o.PublicListener = func() any { return jsvalue.Object{{Key: "status", Value: "pending"}} }
+			}
+		})
+		w := do(s, "GET", "/v1/installation/listeners", "", map[string]string{"Authorization": "Bearer " + ta.tokens["valid"]})
+		want := `{"tailnet":null}`
+		if on {
+			want = `{"tailnet":null,"public":{"status":"pending"}}`
+		}
+		if w.Code != 200 || strings.TrimSpace(w.Body.String()) != want {
+			t.Errorf("public HTTPS %v: %d %s", on, w.Code, w.Body.String())
 		}
 	}
 }
