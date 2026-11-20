@@ -201,6 +201,9 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   shares that.
 - `lib/diskprobe/`: the fsync probe (Decision 2's disk requirement, p99
   under 10 ms) that setup, `varlatch doctor` and the G9a harness run.
+- `lib/keyenv/`: the refusal of a key in the environment, shared by
+  `varlatchd serve` and the CLI in the single-container image (slice
+  6.10a; see "The single-container image").
 - `lib/envelope/`: the encryption envelope (ADR-0011, unchanged by
   Decision 2): AES-256-GCM, canonical-JSON associated data, the purposes
   in use (`context.go`, including ADR-0056's audit export credential and
@@ -302,7 +305,14 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   `SHA256SUMS`, verifies the signature with the release's own `varlatch`,
   and publishes (a prerelease for `-rc.N`); `go.yml`'s conformance job
   runs both on every pull request it selects, signing and publishing
-  nothing.
+  nothing. `.github/workflows/published-release.yml` (step 6.1b) checks a
+  published release of the Go line as people install it, on Linux, macOS
+  and Windows (`install/published_test.go`, G8's published-asset half):
+  after the Release workflow publishes a prerelease, or by hand for any.
+- `image/` (step 6, slice 6.10a): the single-container image, varlatchd
+  and the CLI in one distroless image for linux/amd64 and arm64, built by
+  `image/build.sh` from the release's own Linux binaries. See "The
+  single-container image" below; `image/README.md` is how to run it.
 - `bench/g9a/`: the G9a storage benchmark harness (`run.sh`, the k6
   script, the `g9a` command): G9a's load profile, every checkpoint and the
   WAL size logged, paced backups, converge runs, the disk record, and a
@@ -797,20 +807,75 @@ comes. `verify-release`, which the installers run, is Go's own.
     `testdata/transcripts/5.4c-redact.json` records every combination, the
     terminal refusals under a pseudo-terminal (`terminal` cases), and
     `redact-run.test.ts` runs against Go.
-  - **Not built yet.** `--strict` (5.4f), `--agent-safe` and a run inside
-    an agent-safe run (5.5b) refuse with the CLI's not-built message (64).
+  - **`--strict` (slice 5.4f, `strictRun.ts`).** One strict retrieval
+    (`POST .../retrievals`, retried once after a server failure or a lost
+    connection) gives the values, the manifest and the Contract Revision.
+    The environment the command would receive is resolved and validated
+    against that revision (`lib/contract`'s semantics); `--allow-inherited`
+    accepts a parent's value, validated, and must name Contract items;
+    `--omit` of a required item is a violation. Every violation is printed
+    at once, names, classes and reasons, never a value, and the run ends
+    with 78 before the command starts (`5.4f-strict.json`, one case per
+    kind). A server without strict retrieval gets 78, never a default run.
+    The checks come after the strict retrieval, whose one answer holds the
+    Contract and the values: an `--allow-inherited` or `--omit` name that
+    is refused, or a violation, ends a run whose values were already
+    disclosed to the CLI process (and recorded as a disclosure); nothing
+    reaches the command before every check.
+  - **Not built yet.** `--agent-safe` (with `--strict` too) and a run
+    inside an agent-safe run (5.5b) refuse with the CLI's not-built message
+    (64).
 - `testdata/vectors/values.json` (`apps/cli/test/go-vectors-values.test.ts`):
   what `parseDotenv` makes of 68 files, `secretInput.ts`'s checks (the
   generators, the value sources, input bytes, well-formed text, the hidden
   prompt's keys) and 2,022 texts split into grapheme clusters, `validate`'s
   outcome and `--json` document for 17 reports, and import's type
   inference (every semantics version), name checks and strict decoding.
+- Scan (slice 5.4d; ADR-0038 Decision 14): `scan (--staged | <path>...)
+  [-e <env>] [--json] [--baseline <file>] [--write-baseline]
+  [--max-file-size <size>] [--max-total-size <size>]` and `scan
+  --install-hook [-e <env>]` are `internal/scan` (`engine.go`,
+  `baseline.go`, `sources.go`: scan.ts and scanSources.ts) and
+  `internal/cli`'s `scancmd.go` (scanCommand.ts and main.ts's case, with
+  `--find-files`). Listing comes first and reads no content: `--staged`
+  takes the blobs the index records for every path the next commit adds or
+  changes (`git diff --cached --raw -z`, sizes from `git cat-file
+  --batch-check`, content from one `git cat-file --batch`, never the
+  working tree; inside a hook, Git's own environment as it is), and paths
+  are walked without following a symbolic link, in byte order of their
+  names. A file over `--max-file-size` (64 MiB) or past `--max-total-size`
+  (1 GiB) is refused by its listed size before it is opened, and every file
+  is read in chunks of 64 KiB, so memory stays bounded. Only when a file
+  will be read is there one disclosure, `scope: "all-authorized-secrets"`
+  with `purpose: "scan"` (a server without `secrets.disclosure-purpose` is
+  named), and the values (current and retiring) go to `internal/matcher`'s
+  `StreamScanner`, binary files as bytes; each value long enough to mask
+  is a value in flight, so no output or diagnostic shows one. A finding
+  names the path, line, byte column, item, version and form, never the
+  value or the line; a file ending with a value's start is counted, never
+  a finding; `varlatch:allow NAME` on a line the occurrence touches and a
+  baseline entry (path, item, version: nothing else is accepted) allow
+  one; past 1,000 findings a file's occurrences are counted by item and
+  version. `--install-hook` writes `.git/hooks/pre-commit` (Git's
+  `--git-path`) to run `varlatch scan --staged` from the project directory,
+  and never replaces a hook it did not write (it names the line to add
+  instead). Statuses: 1 for findings, 2 when nothing is found but a file
+  was not scanned, 0 otherwise, and 1 for every failure (usage, a refused
+  credential, a server that cannot be reached).
+  `testdata/vectors/scan.json` (`apps/cli/test/go-vectors-scan.test.ts`)
+  holds 33 engine cases (locations, forms, markers, bounds, baselines,
+  listing limits, incomplete starts; `internal/scan`'s `TestEngineVectors`
+  also feeds each in every chunk size up to 97 bytes), 26 trees scanned as
+  `--staged` or paths with real Git (`TestSourceVectors`), and
+  `parseSize`, `formatBytes`, the baseline's reading and writing, the
+  option parser and the hook's text; the transcripts (`5.4d-scan`, 38
+  cases) hold the command end to end against the fake server, a transcript
+  per failure class included. `scan-cli.test.ts` runs against Go (the
+  hook blocks real commits), and `TestScanIsLinear` holds every
+  adversarial shape to the shared growth rule.
 - Find files (slice 5.4e): `scan --find-files [<dir>] [--json]` is
-  `internal/findfiles`, run from `internal/cli`'s `findfilescmd.go`; the
-  rest of `scan` is slice 5.4d, so `scan` answers only the command lines
-  that name `--find-files` before `--` (read by `scan`'s whole option
-  parser, so its usage errors are scan's) and says the others are not
-  built. It lists the files whose names look like copies of secrets
+  `internal/findfiles`, run from `internal/cli`'s `scancmd.go`. It lists
+  the files whose names look like copies of secrets
   (`.env`, `.env.*` but the two templates, `*.pem`, `*.key`) by names and
   `lstat` alone: it never reads a candidate, never follows a symbolic link
   (one is listed by its own name), skips `.git`, `.hg`, `.svn` and
@@ -862,7 +927,7 @@ it to the recording.
 | --- | --- | --- | --- |
 | `version` | `varlatch --version` prints `varlatch <version> (migration <n>)` | `varlatch <version>` | Decision 6: the migration number is the TypeScript release manifest's; every consumer (installers, menu bar app, tray, omarchy plugin, tap) reads the first two words |
 | `uncaught`: an error no command handles (for example a `credentials.json` entry or a `.varlatch/local.json` holding `null`, or a `varlatch.toml` that is a directory) | escapes `main()`; Node.js prints the source line, its stack trace and its version, and exits 1 (the recorder keeps `{{uncaught <name>: <message>}}`) | `varlatch: <error>`, one line on stderr, exit 1 | A stack trace is not output anyone parses; the status and stdout are compared as recorded |
-| Diagnostics never print credential values | not compared | Every write goes through one fail-safe, so every path is covered by construction. On stdout (`Run.out`: every line, `verify-release`'s results), every text in Varlatch's token format is `[redacted]` (`cli.RedactOutput`), and so is the bearer the run sends, whatever its shape: every API client is made by `Run.newClient`, which holds its bearer first (`Run.holdCredential`; `TestEveryClientHoldsItsBearer` fails on any other `apiclient.New`, and on the package imported under another name), so a server that echoes a bearer in an answer `whoami`, `env list`, `env use` or an MCP tool prints never gets it shown, and `env use` keeps the tier it caches in `.varlatch/local.json` masked, while `status` and `context` mask a cached tier again as they read it (one an older CLI stored included) with every credential the run knows, stored ones too (`TestPoisonedTierNeverShown`), so a later run, offline, cannot print it either. A bearer the person gave (`--token`, `--token-stdin`, or `VARLATCH_TOKEN`, held from the start of every run) is held whatever its length; any other from 8 characters on, since a shorter one would match ordinary words, and every string value of a `--json` document has every URL's user name and password masked and every token redacted (`printJSON` through `cli.RedactValue`, then straight to stdout); keys are left alone, never redacted, since they come from the API's schema and the CLI's own documents, so the document stays valid JSON with the keys it had. On stderr (`cli.RedactDiagnostic`: every failure in `Run.finish`, every other line through `Run.warn`, `verify-release`'s failures), every token is `[redacted]` too, and `clientctx.MaskUserinfoInText`, one linear pass over the whole message (at-signs `@`, `\u0040`, `\x40`, `\U00000040`, `%40`; tab, CR and LF ignored in finding them), masks the union of two kinds of span as `[redacted]@`: for each at-sign whose run (a run ends at whitespace or a quote) holds any colon before it, from just after the nearest preceding `//`, or the run's start when there is none, up to the at-sign; and from just after the first colon of the text, whatever precedes it, to its last at-sign. No character class decides what precedes a colon; an email or `@AGENTS.md` (no colon before the at-sign) keeps its bytes, and text may be over-masked, never under-masked. On top of it, a precise layer per value (every server URL shown is its display form instead: `server-display`, below): every value a failure echoes (an argument, a command, a topic, an approval id, a path) and every value human output takes from a server's answer, the tier cache, stored metadata, the repository's files or the environment (an Environment name, the Organization and Project, an agent run id) is masked with `clientctx.MaskURLInValue`: which composes both maskers on the original value, never one on the other's output: the precise authority span (`clientctx.MaskUserinfo`'s, by the authority `lib/whatwg` parses, when the value, its leading and trailing whitespace trimmed, parses as a URL or is scheme-relative) and the whole-text fail-safe's span, their union replaced once with `[redacted]`, so a credentialed URL in a query, a fragment or surrounding text is masked whatever the other masker removed; an API client's refusal names the refused URL by its display form; already-masked text may read `https:[redacted]@h` (cosmetic, never a leak), and a value without a user name and password keeps its bytes. The option parser never shows the value of an option it refuses with the value attached (`--name=value`, `-Xvalue`), whatever the option: `--name=[redacted]`, `-X[redacted]`. A header value that cannot be sent is refused before anything is sent, with a message that names the header (`the credential contains a character that is not allowed in an HTTP header`). A failure that echoes a value holding an at-sign puts the value first and its explanation after it, so the fail-safe keeps the explanation: `varlatch server: https://[redacted]@h: unexpected argument`; a message naming a server shows its display form, which holds no at-sign, in the wording the recordings hold; the usage text of a usage error, alone or after a message, is printed after the fail-safe, never masked, byte for byte as TypeScript prints it (`UsageErrorWithUsage`, `UsageOnly`) | Output is printed, logged and pasted into issues: in error text never leaking comes before byte parity, while the precise layer keeps ordinary output, and every value without a user name and password, byte for byte (every recorded transcript replays, the cases showing a server Go displays differently through `server-display` and one through `option-value`); the exit status is the same. Pinned by `internal/cli`'s `TestServerURLsNeverShowUserinfo`, `TestClientMessagesNeverShowUserinfo`, `TestNotAuthenticatedReadsAfterTheFailSafe`, `TestFailuresNeverEchoUserinfo`, `TestFailuresKeepTextWithoutCredentials`, `TestFailureExplanationsSurvive`, `TestSessionExplanationsSurvive`, `TestRedactDiagnostic`, `TestParserEchoesNoOptionValue`, `internal/clientctx`'s `TestMaskUserinfo`, `TestMaskURLInValueNeverShowsUserinfo`, `TestMaskURLInValueTrustsNoContent`, `TestMaskURLInValueComposes`, `TestMaskURLInValueUnionOfSpans`, `TestNoPasswordEverShows` (a property test: thousands of generated secrets, a token as the user name with no colon included, in every context, percent-encoded and nested, through `DisplayServer` and the free-text maskers), `TestDisplayServer`, `TestMaskUserinfoAgreesWithWHATWG` (both ways, over 8,800 texts on which `lib/whatwg` and Node agree), `TestFailSafeMasksEveryReproducer` (every leak found in review, through the fail-safe alone), `TestFailSafeRule`, `TestFailSafeMultiLinePasswords`, `TestFailSafeAgreesWithWHATWG`, `TestHasAtSignIsTheFailSafesDetection`, `TestMaskingIsLinear`, `TestMaskingIsLinearOnLargeMessages` and `FuzzMaskUserinfoInText`, `internal/apiclient`'s `TestRefusalsNeverShowCredentials` and `TestRefusalsReadAfterTheFailSafe`, the process tests `TestDiagnosticsNeverPrintCredentials`, `TestSessionCommandsNeverShowUserinfo` (login, logout and whoami, every WHATWG authority form), `TestLoginNeverShowsTheCredential` (a credential given to `login` never appears in its output, accepted or refused), `TestUsageErrorsNeverEchoACredential`, `TestLoginServerTokenIsNeverEchoed`, `TestStatusProbeMasksNestedCredentials`, `TestNestedCredentialsBehindOuterOnes`, `TestOutputNeverShowsAToken` (tokens and URLs in `--json` documents and human output, from the server, the environment and the store), `TestEchoedBearerNeverReachesStdout`, `TestEveryClientHoldsItsBearer` and `internal/cli`'s `TestMcpNeverShowsTheCredential` (a bearer that is not in Varlatch's format, echoed in answers) and `TestEveryWriteGoesThroughTheFailSafe` (a `go/ast` check across `go/cmd/varlatch`: no reference to a stream, no `fmt.Print*`, no `log`, no `json.NewEncoder` outside the fail-safe's writers), `TestJSONKeysAreLeftAlone`, `TestNoPasswordInOutput`, `TestUsageTextIsNeverMasked` (every usage error's usage text, after a message echoing a credentialed URL too), `TestHelpIsTheUsageText`, `TestNoUsageTextThroughTheFailSafe` (a `go/ast` check: no usage text in a message the fail-safe masks), `TestOutJSONTakesOnlyARedactedDocument`, `TestEchoedNamesAreMasked`, and `TestVerifyReleaseNeverEchoesUserinfo` |
+| Diagnostics never print credential values | not compared | Every write goes through one fail-safe, so every path is covered by construction. On stdout (`Run.out`: every line, `verify-release`'s results), every text in Varlatch's token format is `[redacted]` (`cli.RedactOutput`), and so is the bearer the run sends, whatever its shape: every API client is made by `Run.newClient`, which holds its bearer first (`Run.holdCredential`; `TestEveryClientHoldsItsBearer` fails on any other `apiclient.New`, and on the package imported under another name), so a server that echoes a bearer in an answer `whoami`, `env list`, `env use` or an MCP tool prints never gets it shown, and `env use` keeps the tier it caches in `.varlatch/local.json` masked, while `status` and `context` mask a cached tier again as they read it (one an older CLI stored included) with every credential the run knows, stored ones too (`TestPoisonedTierNeverShown`), so a later run, offline, cannot print it either. A bearer the person gave (`--token`, `--token-stdin`, or `VARLATCH_TOKEN`, held from the start of every run) is held whatever its length; any other from 8 characters on, since a shorter one would match ordinary words, and every string value of a `--json` document has every URL's user name and password masked and every token redacted (`printJSON` through `cli.RedactValue`, then straight to stdout); keys are left alone, never redacted, since they come from the API's schema and the CLI's own documents, so the document stays valid JSON with the keys it had. On stderr (`cli.RedactDiagnostic`: every failure in `Run.finish`, every other line through `Run.warn`, `verify-release`'s failures), every token is `[redacted]` too, and `clientctx.MaskUserinfoInText`, one linear pass over the whole message (at-signs `@`, `\u0040`, `\x40`, `\U00000040`, `%40`; tab, CR and LF ignored in finding them), masks the union of two kinds of span as `[redacted]@`: for each at-sign whose run (a run ends at whitespace or a quote) holds any colon before it, from just after the nearest preceding `//`, or the run's start when there is none, up to the at-sign; and from just after the first colon of the text, whatever precedes it, to its last at-sign. An at-sign in a URL's path, query or fragment is not a credential's and is passed over by both (a release workflow's identity, `.../release.yml@refs/tags/v<version>`, reads as it is), but only when nothing is ambiguous: a literal `@`, after a "//" and an authority that is not empty (slashes after "//" skipped) and has ended at `/`, `?` or `#`, whose host part after its last at-sign is a host, a numeric `host:port` or a bracketed address, with no colon, `%3A` or `%2F` between the authority's end and the at-sign; anything else may end a credential, as before (`alice:fake/x@h`, a percent-encoded URL in a query or fragment, `https:///u@h`). The TypeScript CLI's fail-safe passes over such an at-sign as well: the two CLIs read a release workflow's identity the same way, and Go still masks every ambiguous shape that TypeScript's masker would show; neither shows a credential. No character class decides what precedes a colon; an email or `@AGENTS.md` (no colon before the at-sign) keeps its bytes, and text may be over-masked, never under-masked. On top of it, a precise layer per value (every server URL shown is its display form instead: `server-display`, below): every value a failure echoes (an argument, a command, a topic, an approval id, a path) and every value human output takes from a server's answer, the tier cache, stored metadata, the repository's files or the environment (an Environment name, the Organization and Project, an agent run id) is masked with `clientctx.MaskURLInValue`: which composes both maskers on the original value, never one on the other's output: the precise authority span (`clientctx.MaskUserinfo`'s, by the authority `lib/whatwg` parses, when the value, its leading and trailing whitespace trimmed, parses as a URL or is scheme-relative) and the whole-text fail-safe's span, their union replaced once with `[redacted]`, so a credentialed URL in a query, a fragment or surrounding text is masked whatever the other masker removed; an API client's refusal names the refused URL by its display form; already-masked text may read `https:[redacted]@h` (cosmetic, never a leak), and a value without a user name and password keeps its bytes. The option parser never shows the value of an option it refuses with the value attached (`--name=value`, `-Xvalue`), whatever the option: `--name=[redacted]`, `-X[redacted]`. A header value that cannot be sent is refused before anything is sent, with a message that names the header (`the credential contains a character that is not allowed in an HTTP header`). A failure that echoes a value holding an at-sign puts the value first and its explanation after it, so the fail-safe keeps the explanation: `varlatch server: https://[redacted]@h: unexpected argument`; a message naming a server shows its display form, which holds no at-sign, in the wording the recordings hold; the usage text of a usage error, alone or after a message, is printed after the fail-safe, never masked, byte for byte as TypeScript prints it (`UsageErrorWithUsage`, `UsageOnly`) | Output is printed, logged and pasted into issues: in error text never leaking comes before byte parity, while the precise layer keeps ordinary output, and every value without a user name and password, byte for byte (every recorded transcript replays, the cases showing a server Go displays differently through `server-display` and one through `option-value`); the exit status is the same. Pinned by `internal/cli`'s `TestServerURLsNeverShowUserinfo`, `TestClientMessagesNeverShowUserinfo`, `TestNotAuthenticatedReadsAfterTheFailSafe`, `TestFailuresNeverEchoUserinfo`, `TestFailuresKeepTextWithoutCredentials`, `TestFailureExplanationsSurvive`, `TestSessionExplanationsSurvive`, `TestRedactDiagnostic`, `TestParserEchoesNoOptionValue`, `internal/clientctx`'s `TestMaskUserinfo`, `TestMaskURLInValueNeverShowsUserinfo`, `TestMaskURLInValueTrustsNoContent`, `TestMaskURLInValueComposes`, `TestMaskURLInValueUnionOfSpans`, `TestNoPasswordEverShows` (a property test: thousands of generated secrets, a token as the user name with no colon included, in every context, percent-encoded and nested, through `DisplayServer` and the free-text maskers), `TestDisplayServer`, `TestMaskUserinfoAgreesWithWHATWG` (both ways, over 8,800 texts on which `lib/whatwg` and Node agree), `TestFailSafeMasksEveryReproducer` (every leak found in review, through the fail-safe alone), `TestFailSafeRule`, `TestFailSafeAtSignsInAPath`, `TestFailSafeMultiLinePasswords`, `TestFailSafeAgreesWithWHATWG`, `TestHasAtSignIsTheFailSafesDetection`, `TestMaskingIsLinear`, `TestMaskingIsLinearOnLargeMessages` and `FuzzMaskUserinfoInText`, `internal/apiclient`'s `TestRefusalsNeverShowCredentials` and `TestRefusalsReadAfterTheFailSafe`, the process tests `TestDiagnosticsNeverPrintCredentials`, `TestSessionCommandsNeverShowUserinfo` (login, logout and whoami, every WHATWG authority form), `TestLoginNeverShowsTheCredential` (a credential given to `login` never appears in its output, accepted or refused), `TestUsageErrorsNeverEchoACredential`, `TestLoginServerTokenIsNeverEchoed`, `TestStatusProbeMasksNestedCredentials`, `TestNestedCredentialsBehindOuterOnes`, `TestOutputNeverShowsAToken` (tokens and URLs in `--json` documents and human output, from the server, the environment and the store), `TestEchoedBearerNeverReachesStdout`, `TestEveryClientHoldsItsBearer` and `internal/cli`'s `TestMcpNeverShowsTheCredential` (a bearer that is not in Varlatch's format, echoed in answers) and `TestEveryWriteGoesThroughTheFailSafe` (a `go/ast` check across `go/cmd/varlatch`: no reference to a stream, no `fmt.Print*`, no `log`, no `json.NewEncoder` outside the fail-safe's writers), `TestJSONKeysAreLeftAlone`, `TestNoPasswordInOutput`, `TestUsageTextIsNeverMasked` (every usage error's usage text, after a message echoing a credentialed URL too), `TestHelpIsTheUsageText`, `TestNoUsageTextThroughTheFailSafe` (a `go/ast` check: no usage text in a message the fail-safe masks), `TestOutJSONTakesOnlyARedactedDocument`, `TestEchoedNamesAreMasked`, and `TestVerifyReleaseNeverEchoesUserinfo` |
 | `server-display`: every server URL the CLI shows (a stored server, a `--server` or `VARLATCH_SERVER` value, a local override, the remembered default, a refused URL), in `context`, `status`, `server`, `whoami`, `login` (every method, device sign-in's messages included), `logout`, `init` and `mcp`, their `--json` documents and their messages | as recorded | its display form (`clientctx.DisplayServer`), an allow-list of its parts, each keeping its bytes: the scheme and the slashes or backslashes after it (`//` for a scheme-relative URL), the host and port, and the path when it holds only RFC 3986's unreserved characters and `/` (ASCII letters and digits and `/-._~`; otherwise its leading segments that do, then `/[redacted]`: `/api/v1;token=x` reads `/api/[redacted]`), so an ordinary URL (`http://127.0.0.1:1234`, `https://h.example/varlatch/`) is shown as it is. A user name and password are never shown; a query is shown as `?[redacted]`, a fragment as `#[redacted]`, a path outside the allow-list as `/[redacted]`; leading and trailing spaces are left out. A value that does not parse as a URL (`lib/whatwg`, against `https:` for a scheme-relative one), holds a space or a control character, has no authority, has a host and port outside their allow-list (letters, digits and marks of any script, `.-_~[]:`), or whose authority ends at a backslash with an at-sign of any form after it, is shown as `[unrecognised server URL]`. A message that would name the server in a command to run says `this server's URL` where the display form differs from the value, and names it as one POSIX shell word otherwise (`'http://[::1]:8080'`, single-quoted when it holds a character a shell would read). An address the server gives for the person to open (a device sign-in's verification address, an approval's address, a redirect's target) is free text, shown with the masking above | A server URL is a value of known shape, so it is shown by what is allowed rather than by what a masker detects: no user name, password, token, nested or percent-encoded URL in a query, fragment or path can reach output, whatever its form (Sol, #278 rounds 1 to 6). Free text (a server's answer, an echoed argument) keeps the masking above. Every recorded transcript replays; a case showing a server differently is accepted only where Go's output is the recording with each fixture server shown through `DisplayServer` (`TestServerDisplayDifferenceIsExact`). Pinned by `internal/clientctx`'s `TestDisplayServer` and `TestNoPasswordEverShows`, and the process tests `TestNestedCredentialsBehindOuterOnes` (Sol's round-6 canaries through `server`, `context`, `status --probe` and `logout --all`), `TestStatusProbeMasksNestedCredentials`, `TestDiagnosticsNeverPrintCredentials` and `TestSessionCommandsNeverShowUserinfo` |
 | `option-value` (how transcripts and vectors compare, not a behaviour) | not compared | a recorded "unknown option" message is compared with an attached option value shown as `[redacted]` (`cli.OptionValueDifference`) | The Go CLI never shows an option value in a usage error ("Diagnostics never print credential values"); the rest of the message, the status and stdout are compared as recorded |
 | `--json` documents hold only scalars where the API defines them | not compared | `env list --json`'s `name`, `tier` and `kind`, `whoami --json`'s documented fields (`tags` a list of scalars), and `status --probe --json`'s identity and organization fields: an object or array a server sends where the API defines a scalar is left out | A document scripts read never passes a server's nested value through. Pinned by `TestJSONScalarsOnly` |
@@ -881,7 +946,9 @@ it to the recording.
 | `host-admin`: `varlatch admin backup`, `security reset`, `unfreeze`, `outbound check` and `maintenance` (slice 6.2a of internal docs/design/go-step6.md) | a Compose installation's: `docker compose exec -T varlatchd node dist/cli.js admin ...` in the `--dir` directory (or the working directory); `backup create\|verify\|restore\|status` through Compose and pg_dump; no `maintenance` | a Go installation's: runs `varlatchd admin <the same words and options> [--config <file>]` as a separate process (decision 2), the `varlatchd` beside this `varlatch` (a symbolic link to `varlatch` followed; an executable file) or else the first on `PATH` (69 when there is none); (Unix) as root, one on `PATH` is run only when root alone can change it, the directory it is in and the `PATH` entry (not writable by group or others, owned by root), else 78 naming the path; `VARLATCH_*` variables holding a credential (`VARLATCH_TOKEN`, `VARLATCH_OIDC_TOKEN`, `VARLATCH_KEK_PASSPHRASE`, any named for a token, passphrase, password, secret, credential or key) are left out of its environment, as no fronted form reads one; the forms are `varlatchd`'s (`backup run\|status\|test-bucket\|restore --in`, `maintenance begin\|end\|status`); `--config` names the installation's `varlatchd.conf` (default `/etc/varlatch/varlatchd.conf`); a JSON answer is printed again as `JSON.stringify(doc, null, 2)` after the fail-safe, any other answer and every line on stderr through the fail-safe; the exit status is `varlatchd`'s (78 adds a line saying to run it as root when not root; Unix only). `--dir` names a Compose installation and is refused (64), naming `varlatch-ts` (decision 11); `backup create` and `backup verify` are refused (64) naming `backup run`; `admin reenroll` is slice 6.9 | The Go installation has no Compose stack, and every database or key operation is `varlatchd`'s, routed through its control socket or run offline under its lock (step 4's decision 11). Pinned by `internal/cli`'s `TestAdminFrontsRunVarlatchd` and `TestAdminRefusals` (a fake `varlatchd` on `PATH`) and `TestAdminWithTheRealVarlatchd` (the real one, built from this checkout, in a temporary installation), `TestFindVarlatchdBesideFirst`, `TestFindVarlatchdAsRoot` and `TestAdminLeavesCredentialsOut` |
 | `admin-usage` | `varlatch help admin`, `admin --help` and `admin -h` print a Compose installation's `admin` forms (`backup create\|verify\|restore\|status`, `reenroll`, `security reset`, `unfreeze`, `outbound check`, each with `--dir`) | a Go installation's: `backup run\|status\|test-bucket\|restore`, `security reset`, `unfreeze`, `outbound check`, `maintenance begin\|end\|status`, each also taking `--config` (the text a usage error adds); `varlatch --help` keeps the full TypeScript usage | The Go CLI runs a Go installation's host commands (`host-admin`); a Compose installation's stay the TypeScript CLI's (decision 11). Transcript cases `help.admin`, `help.admin.option` and `help.admin.short` name it; pinned by `TestHelpAdminIsTheGoUsage` |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
-| `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
+| `tailnet-repin`: `varlatch tailnet repin [--yes] [--adopt] [--json] [--config <file>]` (slice 6.2b) | no such command (`tailnet` has `require`, `requirements` and `remove`); the TypeScript server keeps no tailnet pin | runs `varlatchd admin tailnet repin --json [--yes [--adopt]] [--config <file>]` (as `host-admin`) and shows `varlatchd`'s text from its answer: the pinned and the observed tailnet, then what it did or offers, on stderr with `varlatchd`'s status when it refuses. On a terminal, without `--yes`, an offered re-pin (or, with `--adopt`, an adoption) is asked for (`[y/N]`), then done with `--yes --offer <the offer shown>`: `varlatchd` acts only while the pin and the observed tailnet are still what was shown, and otherwise changes nothing and answers `offer-changed` (status 1) with the new view, which is shown and asked about once more (a second change stops, nothing re-pinned). `varlatch tailnet repin --yes` (scripted use) passes no offer and acts on the observation at that moment. `--json` prints `varlatchd`'s answer. `varlatchd admin tailnet repin --json` gives stable names (the view's `pinned`, `observed`, `reason`, `closed`, `missing`, `offered`, `offer` (a value-free token: 128 bits of a SHA-256 over what is offered, the pin and the observation; empty when nothing is offered), and `pinnedText`, `observedText`, `outcome`, `message`, `pin`) with or without `--yes`; `varlatchd`'s 78 adds a line saying to run it as root (`sudo varlatch tailnet repin`; Unix), as `host-admin`'s; its text is unchanged | The tailnet pin is the Go server's (step 4.13); a re-pin changes what the tailnet listener trusts, so it is the host's and is confirmed. Pinned by `internal/cli`'s `TestTailnetRepinFront` and `daemon`'s `TestTailnetListener` |
+| `tailnet.repinned` (an audit event only Go records) | not recorded | each re-pin, reopening or adoption by `varlatchd admin tailnet repin --yes`: no Organization and no actor identity (the host operator: the control socket's peer is the data directory's owner or root), metadata `action` (`repinned`, `reopened`, `adopted`), `fromSuffix`, `toSuffix`, `tailnetId`, `reason` (what the re-pin's own check found), `operator: true`, never the control server's URL. Committed before the pin changes: a re-pin whose event cannot be recorded does not happen (`audit.GoOnlyEventTypes`) | The TypeScript server's event list is frozen; ADR-0059 step 6's G10 asks for the re-pin to be audited. Pinned by `daemon`'s `TestTailnetListener` (both events, read from the database) and `audit`'s `TestGoOnlyEventTypes` |
+| `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, a request for another `Host` is 421, no `X-Forwarded-For` is believed on it, and `listen` must then be a loopback address, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
 | `agents install` never writes or removes through a symbolic link | not compared | a directory below the project root (or the home directory, for `--scope user`) that is a symbolic link or a Windows junction, on the way to a file the run reads, writes, removes or prunes, refuses the run before anything is touched, `--check` included: `<path> is a symbolic link, so the CLI does not read, write or remove anything through it; nothing was changed. Replace it with a directory, then run this again`, 78; a refused `--remove` also lists the skill files it would have removed, for removing by hand | Installing agent files never changes anything outside the project or the home directory; `internal/agents` `TestNothingThroughALinkBelowTheRoot` |
 | The guardrail hook reads every command alike | not compared | `agents hook` reads each word of a command line the same way: a command named like a property every JavaScript object has (`toString`, `constructor`, `valueOf`) and a glob whose class is no regular expression (`[z-a]`) are words like any other, and the rest of the line is checked: `toString x; cat .env` is denied | The hook reads a whole command line, and no word ends the reading early. Pinned by `internal/agents`' `TestHookReadsEveryCommandAlike` |
@@ -901,7 +968,9 @@ it to the recording.
 | `types` names a revision only by an id of the server's shape (`unrecognized-id`) | the id as the server or `--revision` gave it | a revision id that is not the server's shape (`rev_` and 26 characters of lower-case base32), from the answer or from `--revision`, is `an unrecognized id` in every message (`Wrote <file> from Contract Revision an unrecognized id (...)`, a 404 for `--revision`, every refusal of the revision), and `--check`'s hint gives `--revision <revision-id>` for such an argument; the module itself always holds the server's id, byte for byte | A mistyped argument or a server's free text never reaches the terminal (as `contract activate`); real revision ids keep their bytes |
 | `types` shows the server's text safely (`types-printable`) | not compared | a refusal of the revision has its control characters and bidirectional overrides escaped as `\uXXXX` (a Contract's unrecognized key, quoted in the validation issue, included), and the semantics version is shown only as a whole number from 1 to 999, else as `an unrecognized version` | A server's answer never drives the terminal (`TestTypesShowsTheServersVersionSafely`) |
 | `release` (a pattern of the transcripts, not a behaviour) | a module `types` writes names `varlatch 0.22.0` (its Generator lines, `generatedFrom` and the accessor schema) | this build's release | Each CLI names itself, and a module is current for another release when only those lines differ; a case that lists the `release` pattern has `varlatch <the CLI's release>` written `varlatch {{release}}` in the recording and the replay alike, and `{{release}}` in its files is the running CLI's release (`goKit.ts` `releasePattern`, `transcript.ReleaseFill`); another release a case names (`0.13.0`) is compared as it is |
-| `spawn-error`: a command `run` cannot start | Node's error escapes: its stack trace, exit 1 | `varlatch: spawn <command> ENOENT` (or `EINVAL` for a Windows `.bat` or `.cmd` file, `EACCES`), exit 1 | Node's own message without the stack (`run.no-command`) |
+| `spawn-error`: a command `run` cannot start | Node's error escapes: its stack trace, exit 1 | `varlatch: spawn <command> <errno>`, exit 1: `ENOENT` when PATH has no such file, `EACCES` when a file there may not be executed and no later one may (libuv's execvp), `ENOEXEC` for one the system cannot execute, `EINVAL` for a Windows `.bat` or `.cmd` file | Node's own message without the stack (`run.no-command`, `TestLookCommandRemembersEACCES`, `TestSpawnExecFormatError`) |
+| `run --strict` and an item type outside the Contract's eight | a value of an item whose `type` the CLI does not know passes, and the command starts | an `invalid` violation, `has a type this Contract Semantics version does not define`, and 78: nothing starts | A conforming server sends only the Contract's types; a type the CLI cannot validate is never taken as valid |
+| `run --strict`'s refusals of `--allow-inherited` and `--omit` names | the names echoed as given | the names escaped as `Printable` escapes server and user text (controls and bidirectional overrides as `\uXXXX`), as `run`'s other refusals do | A name the person typed never drives the terminal |
 | The order of the command's environment (`run`) | the parent's variables in the order the process got them, then the delivered ones | the parent's variables sorted by name, then the delivered ones (a variable set again keeps its place) | No program reads its environment's order; the values are the same (`5.4b-run` transcripts) |
 | `validate` and `import` show only documented fields | not compared | `validate` refuses a report whose lists are not the protocol's shape (each an array of names, or of objects whose documented members are strings; `valid` and `complete` booleans; a present `null` for any of them is not that shape, while an omitted `complete` or list, from a server before it, keeps its fallback) before judging or printing anything: `varlatch validate: the server's answer is not a validation report (<where> has an unexpected shape); nothing was judged.`, status 1; of a report of that shape it shows the documented members only, a requirement or reason outside the protocol's enumerations as `an unrecognized requirement` or `an unrecognized reason`; `import` shows a Contract item's type outside the Contract's types as `an unrecognized type` and its sensitivity as a boolean, in `--json`, human text and `--dry-run` alike | A server never puts an extra field, or a value, into what the CLI prints; a report or Contract of the protocol's shape gives the same bytes (`TestServerFieldsNeverPassThrough`, `TestValidateRefusesAReportOfAnotherShape`) |
 | `init-delete-link`: guided `init` and a `.env` that is a symbolic link | not compared | asked to delete it, guided `init` keeps a link and says so (`<file> is a symbolic link, so it was not deleted: deleting the link would leave the values in the file it points to.`), and deletes a regular file only if it still holds what was read and the path still names it (`TestGuidedDeleteNeverRemovesALink`) | Deleting the plaintext copy must not leave it in the file the link points to |
@@ -916,6 +985,11 @@ it to the recording.
 | `pending-sign-ins.json` and runs at the same time | not compared | not locked across processes, as in TypeScript: each run reads the file, changes its entry and replaces the file atomically, so of two runs that change it at once the later write wins (a `--start` replacing an entry another run's `--wait` is keeping, for example) | Parity: both CLIs share the file (decision 11), and a lock one of them does not take would not hold. A lost update costs at most a sign-in to start again |
 | Secrets in flight never show | not compared | a credential given or issued, a device code, a sign-in hand-off bearer, an OIDC ID token and the GitHub Actions request token are held for the run (`Run.holdValue`): every exact occurrence, and its escaped form, is `[redacted]` on stdout, in every `--json` document and on stderr, whatever their length or format, as well as in a server's free text | A server's answer or an error could echo one, and only Varlatch's own token formats are caught by shape. Pinned by `internal/cli`'s `TestInFlightSecretsNeverShow` and every 5.2 transcript, whose canaries appear in no output |
 | `now` (how transcripts compare, not a behaviour) | `login` and `env use` write the time of the run (`issuedAt`, `tierCachedAt`) | the same, at another time | A case that lists the `now` pattern has each ISO 8601 timestamp between its run's start and end written `{{now}}`, in the recording and the replay alike (`goKit.ts` `nowPattern`, `transcript.NowPattern`); a timestamp outside the run is compared as it is |
+| `scan-staged-total`: `--max-total-size` with `--staged` | not compared | each staged file is admitted with the sizes of the files admitted before it counted, as a path scan admits each file just before it reads it, so the staged content read in all stays within the bound; a file past it is named `over the total size bound of <size>` and not read | The bound limits how much one scan reads; the scan vectors' `staged.total-bound` case is compared through this difference (`internal/scan`'s `TestSourceVectors`, `TestStagedTotalBound`) |
+| `scan-values-in-flight`: a value `scan` holds | not compared | each disclosed value long enough to mask (8 characters or more) is a value in flight: a path, an item name or any other text that holds one is shown with it `[redacted]`, on stdout and stderr alike; the baseline file keeps paths as they are, since it must match them again (`TestScanNeverShowsAValue`) | A scan never puts a value on the terminal, whatever a file is named |
+| `scan-hook-link`: `scan --install-hook` where the pre-commit hook (its `git rev-parse --git-path hooks/pre-commit`, `core.hooksPath` honoured) is a symbolic link | not compared (TypeScript writes through the link, wherever it points) | refused, 1: `<hook> is a symbolic link; it was left unchanged, since varlatch does not write a hook through a link. Replace it with a file, or add "varlatch scan --staged \|\| exit 1" to the hook it points to yourself.`, the link and what it points to unchanged, a dangling link's target not created, and the target never named. The check is `Lstat` before anything is read, and the write itself never follows a link (`O_NOFOLLOW`; on Windows the reparse point is opened and seen) | A hook location that is a link can point anywhere outside `.git/hooks`, so writing through it could change a file the person never meant to give the hook. Pinned by `internal/cli`'s `TestInstallHookRefusesALink` and `TestWriteHookNeverFollowsALink` |
+| `scan-disclosure-shape`: a disclosure answer of another shape | not compared | an item whose `name`, `versionId` or `value` (or its retiring version's) is not a string, an item that is not an object, or `items` that cannot be iterated ends the scan with 1 before any file is read, the reason in Go's words and nothing of the answer shown (`TestScanRefusesADisclosureOfAnotherShape`) | A scan looks only for values it can name |
+| `baseline-json-syntax`: a baseline that is not JSON | `invalid baseline <path>: not valid JSON (<V8's message>)` | `invalid baseline <path>: not valid JSON (Unexpected end of JSON input)` for an empty file, `(Unexpected token in JSON)` otherwise | V8's wording quotes the text it stopped at; the scan vectors compare such a baseline by the start of the message |
 
 ## varlatchd
 
@@ -1703,6 +1777,47 @@ the drains and `admin audit-export discard-plan`.
   worker writes and the host command's refusals on every target (the
   `host-admin` capability).
 
+### The single-container image (step 6, slice 6.10a)
+
+`image/Dockerfile` is one image with `varlatchd` and `varlatch`
+(`/opt/varlatch/`, where the host backup job finds the CLI), distroless
+static, run as uid and gid 65532, the data directory `/var/lib/varlatch`
+a volume (a new one starts the image user's, mode 0700), the
+configuration at `/etc/varlatch/varlatchd.conf`, the keys mounted as files
+under `/keys`. `image/build.sh` builds it with buildx from a directory of
+release assets (the named build context `assets`), for both platforms,
+and never pushes: `release.yml` publishes it, from the same assets.
+
+Keys reach varlatchd only as files. `varlatchd serve` refuses to start
+(exit 78) when its environment holds the Root KEK or the Backup
+Encryption Key, as hex in either case or base64 with or without padding,
+standard or URL-safe, anywhere in a value; or has a key or passphrase
+variable name, whatever its value: `VARLATCH_KEK`,
+`VARLATCH_KEK_PASSPHRASE`, `VARLATCH_ROOT_KEK`, `VARLATCH_BEK`,
+`VARLATCH_BEK_PASSPHRASE` and `VARLATCH_BACKUP_KEY` (in any case; the
+TypeScript line used the first two). It checks names and the configured
+keys' own values only, never a guess at what looks like a key; when
+`backup_key_file` cannot be read at the check, only the Root KEK's value
+and the names are checked. The refusal names the variable and never its
+value. In the image (`VARLATCH_IMAGE`), `varlatchd admin` and the CLI
+refuse to run the same way, against the keys the image's configuration
+names that they can read. `lib/keyenv` is the check; `keyenv_test.go`,
+`daemon.TestServeRefusesAKeyInItsEnvironment`,
+`daemon.TestAdminRefusesAKeyInTheImage` and the CLI's
+`TestImageRefusesAKeyInTheEnvironment` test it, each checking the value is
+never in the message.
+
+`image/check-image.mjs` runs the image as an operator would (the
+replacement of `test-backup-compose.mjs`): its configuration, the refusal
+by both commands, a new installation on a new volume as the image user
+with a read-only root filesystem,
+no key in `docker inspect` or `/proc/1/environ`, the recovery gate held in
+the volume across containers, and a backup restored into a new volume
+through the image alone. go.yml's `go-image` job builds the image for
+both platforms and runs it on every pull request that touches it;
+`go-container` runs the conformance suites against it nightly (target
+`go-container:<image>`, which runs as go-binary with its expectations).
+
 ### Public HTTPS (step 6, slice 6.3a)
 
 `server/publictls` is `varlatchd`'s own public HTTPS (ADR-0059 Decision 5;
@@ -1743,9 +1858,37 @@ reports is what it does:
   127.0.0.1, 45-second certificates); go.yml's `go` job runs the Pebble
   tests with `VARLATCH_REQUIRE_PEBBLE=1`. Let's Encrypt's staging is run
   only by hand, with the owner; Let's Encrypt itself never from CI.
-- **Still to come (6.3b).** The ingress modes side by side, each with its
-  origin and RP ID rules (Decision 6): today the HTTPS listener serves the
-  plain listener's handler, `trusted_proxies` included.
+### The ingress modes side by side (step 6, slice 6.3b)
+
+An installation has one relying party, its public URL's (ADR-0059
+Decision 6): the RP ID is `public_url`'s host, and a passkey ceremony
+(registration and sign-in), like every state-changing browser request,
+is accepted only from `public_url`'s exact origin, scheme and port
+included. The Origin header is checked before the body is read, and the
+origin the authenticator signed (`clientDataJSON`) and the RP ID hash
+are checked again by go-webauthn. The listeners serve that one origin in
+their own ways:
+
+| Ingress | Listener | `public_url` | Ceremonies | Client address |
+| --- | --- | --- | --- | --- |
+| This machine | `listen` (loopback) | `http://localhost:<port>` | from `http://localhost:<port>` | the connection |
+| Own reverse proxy | `listen`, behind the proxy | `https://<name>` | from `https://<name>`, through the proxy | `X-Forwarded-For` from `trusted_proxies` |
+| Public HTTPS | `listen_https` (and `listen_http_redirect`) | `https://<name>[:port]` | from `https://<name>[:port]` | the connection: no `X-Forwarded-For` is believed, whatever `trusted_proxies` says |
+| Tailnet | `tailnet_port`, and the browser endpoint on `tailnet_https_port` | (any) | none: no `/auth`, no dashboard, no enrollment page; the browser endpoint reads cross-origin for the listed dashboard origins, with a bearer | the node's WhoIs |
+
+Side by side: with public HTTPS on, the plain listener stays on a
+loopback address (`listen` elsewhere is refused at start), so nothing is
+served in plain text beyond the machine; it still serves the API to the
+host (and to a proxy there, with `trusted_proxies`), but a ceremony from
+its own origin is refused, as is one from any origin but `public_url`'s.
+The HTTPS listener answers 421 to a `Host` other than `public_url`'s host, logged in the access log (and, on the API, charged to the request window) like any other request.
+A `public_url` naming an IP address starts with a warning: browsers refuse
+an IP address as an RP ID, so the dashboard cannot sign in there (use
+`http://localhost` on one machine). Pinned by `httpserver`'s
+`TestIngressOriginsAndRPID` (each mode against every other ingress's
+origin, by Origin header, by signed origin and by RP ID) and
+`TestTailnetListenerRunsNoCeremony`, and `daemon`'s
+`TestIngressModesSideBySide` (against Pebble).
 
 ### The tailnet listeners (step 4.13a)
 
@@ -1874,13 +2017,16 @@ serves the tailnet listener on the node's own addresses
   ended. Closing access waits for any write between that check and its
   release, so each write of the period is either released before access
   closes or refused. Requests on the ordinary listener carry no guard.
-- **Re-pin.** `varlatchd admin tailnet repin [--yes [--adopt]] [--json]`
+- **Re-pin.** `varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json]`
   (host authority, through the running daemon only) runs a fresh check,
   which must succeed, and shows the pin, the observation and the latched
   closure. With `--yes` it pins the observed suffix when the suffix is the
   only change, or reopens access when the tailnet matches the pin again;
   with `--yes --adopt` it pins the tailnet an enrolled node without a pin
-  is on. A different StableID or control URL is refused: that means
+  is on. With `--offer`, the token of the view a confirmation was given
+  for, it acts only while the view's offer is still that one, decided
+  under the same locks as the re-pin; otherwise nothing changes
+  (`offer-changed`). A different StableID or control URL is refused: that means
   enrolling the node again (remove `<data_dir>/tailnet` and the pin, give
   an auth key). Each re-pin is kept in the pin's `history`, with the
   closure it ended, and logged. An audit event for it waits for step 6's
@@ -2795,11 +2941,57 @@ migrations.
   `testdata/pgschema.mjs` on PGlite (MAPPING.md says how to regenerate it),
   and against a database `Init` created. The migration manifest (step 7)
   is built from the mapping.
+- The migration manifest and its encoding (step 7, slice 7.1):
+  - `server/migration/manifest/v1.json` lists every PostgreSQL table
+    and column, in the source's column order with its type: copied (to
+    its SQLite table and column), transformed (`session`: browser
+    sessions end), or left out with the reason (`account`, `verification`,
+    `audit_position`, `varlatch_migrations`). It also lists the two
+    transformations and what lives outside the database (Convex, the
+    keys, the tailnet node).
+  - `manifest_test.go` holds the manifest to `testdata/pg-v0.22.0.json`,
+    `mapping.json` and the schema `Init` creates. A column or table added
+    on either side fails until the manifest accounts for it.
+  - `server/migration/canonical` is the canonical encoding
+    (`CANONICAL.md`) of values, rows and decision 7's digest input.
+    `testdata/vectors.json` holds the cases, and the TypeScript server's
+    encoder reproduces them on the 0.22 line.
+  - **Accepted difference:** after a migration, Requirements are read in
+    rowid order, the order the migration inserts them in (the source's
+    physical order). That order is now defined. The TypeScript server's
+    heap order depended on PostgreSQL's planner.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the
   recorded version, accepting a newer one only when its `compatible_from`
   allows (rollback-safe releases, G6).
+- `version.go` and `upgrade.go` (step 6, slice 6.6a): `SchemaVersion`,
+  `CompatibleFrom` (the oldest schema whose varlatchd may open a database
+  of this one) and the upgrade steps, one per released schema version.
+  `Upgrade` runs every step from the database's version on in one write
+  job and records the last step's `compatibleFrom`; a step never lowers
+  it. `varlatchd admin schema status|upgrade [--json]` fronts it: status
+  reads the database read-only, beside a running varlatchd too; upgrade
+  runs offline under the data directory's lock and is refused while
+  varlatchd runs or a restore is unfinished (`varlatch upgrade` runs it on
+  a copy first). Until the first Go release `schema.sql` still changes in
+  place under version 1; from it on, every change raises `SchemaVersion`
+  with its step.
+- The release's rollback-safety declaration (ADR-0059 Decision 8, G6):
+  `go/release/release.json` says the schema version, `compatibleFrom`,
+  whether the release is rollback-safe and the previous release it was
+  checked against; `build-assets.sh` attaches it as `release.json` with
+  the version (`go/lib/release` `Manifest`, format 1).
+  `server/db/schemadiff` classifies every change from the previous
+  release's schema as additive, review (an enumeration that only gains
+  values) or breaking, and `server/db/releasecheck` fails CI when the
+  declaration does not hold: a breaking change in a release declared
+  rollback-safe, or a changed schema that keeps its version. G6's run
+  (`go/release/g6.sh`, go-binary shard 1) serves the previous release on
+  a database the new one upgraded, with the conformance suites, then the
+  new release on what the previous one wrote. What the schema does not
+  show (a value the previous release misreads, an envelope format, a
+  restriction kept in code) is G6's run and the release checklist.
 - `query/`: typed queries generated by sqlc from `schema.sql` and
   `queries/*.sql` with `sqlc.json` (boolean columns as `bool`). sqlc is
   pinned by the `tool` directive in `go.mod` (v1.31.1, `go tool sqlc`);
@@ -2858,6 +3050,7 @@ Not reproduced:
 | `apps/cli/src/options.ts` `parseOptions`, a positional argument named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, `hasOwnProperty`) for a command whose options have aliases (step 5 defect 11, not a security defect) | `spec.aliases[arg]` reads the prototype, so `arg` becomes a function and `arg.startsWith` throws a `TypeError`: Node.js prints the stack and exits 1 | an ordinary argument | `internal/cli` `TestPrototypeNamesAreOrdinaryArguments` | none |
 | `apps/cli/src/agents/install.ts` `AGENTS`, `skill.ts` `GUIDE_TOPICS` and `mcpConfig.ts` `MCP_FILES_BY_AGENT`, a coding agent or guide topic named like a property of `Object.prototype` (`constructor`, `toString`, `__proto__`, ...) (step 5 defect 15, not a security defect) | the lookups read the prototype, so the name passes as known: `agents install --agent constructor` installs and prints `constructor reads undefined` (in `--json`, an agent without `reads`), with `--mcp` it throws a `TypeError` before writing; `agents guide constructor` throws a `TypeError`: Node.js prints the stack and exits 1 | an unknown coding agent or topic: the usage error every other unknown name gets (64), nothing written | `internal/agents` `TestPrototypeNamesAreUnknown` | none |
 | `apps/cli/src/validation.ts` `REQUIRES_HINT`, a requirement named like a property of `Object.prototype` (`constructor`, `toString`, ...) in `validate`'s report (step 5 defect 23, not a security defect) | the lookup reads the prototype, so `validate` prints a function's source as the requirement: `not evaluated: A (function Object() { [native code] })` | a requirement the protocol does not define: `not evaluated: A (an unrecognized requirement)` | `internal/cli` `TestValidationRequiresHintReadsOwnNames` | none |
+| `apps/cli/src/securityReport.ts` `KIND_WORDS` and `OUTBOUND_REFUSAL_LABELS`, `auditExport.ts` `LOCK_WORDS`, a refused destination's `kind` or `reason`, or an audit export's `objectLock`, named like a property of `Object.prototype` (`constructor`, `__proto__`, ...) (step 5 defect 32, not a security defect) | the lookup reads the prototype, so `security report` and `security status` print a function's source or `[object Object]` as the word: `function Object() { [native code] } (whk_1)` | a word the table does not hold reads as `undefined`, as TypeScript reads a word it lacks | `internal/cli` `TestSecurityWordsReadOwnNames` | none |
 | `packages/matcher` `matcher.ts` `StreamMatcher.push`, a chunk of output holding many matches (step 5 defect 29, not a security defect) | each match is merged by walking every pending segment, and a chunk's matches all stay pending until it is merged, so masking a chunk takes time quadratic in its matches: a 64 KB chunk of a repeated Secret in 170 ms, 1 MB in 45 s; `run --redact` slows down, and still masks correctly | the merge looks only at the segments that end after the match's start, with the same result; linear | `internal/matcher` `TestMatcherIsLinear` and the vectors | none |
 | `packages/sync` `coolifyCompose.ts` `classifyComposeUsage`, a Compose file with an alias inside its own anchor (step 4 defect 6, not a security defect) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack, so the Coolify adapter's `inspectUsage` throws a `RangeError` though it never should: varlatchd's engine catches it (its `usage-unchecked` note says "the destination could not be read"), the CLI's `sync check` fails | `lib/sync` reads the file as unreadable: usage unchecked, every verdict unknown, the note's reason "the service's compose file is too large or could not be read" | `lib/sync` `TestTypeScriptExchanges`, the case "divergence: an alias inside its own anchor" | none |
 
@@ -2868,6 +3061,17 @@ blocked`, but that error reaches its generic handler, which prints
 (exit 1 either way). varlatchd prints the refusal itself.
 
 ## Before the first Go release
+
+- G6 has no previous Go release to check against yet
+  (`go/release/release.json` names none): until `0.50.0-rc.2` is checked
+  against `rc.1`, CI proves the machinery with the `g6fixture` build (this
+  commit's schema plus one rollback-safe step, `server/db/version_g6fixture.go`)
+  as the new release and this commit's build as the previous one. The
+  same step declared not rollback-safe (`g6fixture,g6unsafe`:
+  `compatibleFrom` 2) checks the other path without the conformance runs:
+  it passes declared so, since the previous release refuses its database,
+  and fails declared rollback-safe. The first release's declaration is not
+  rollback-safe: there is nothing to go back to.
 
 - G3 at the database level: `go test ./server/values -run TestG3Gate
   -args -g3-gate` passes, so every encryption class in

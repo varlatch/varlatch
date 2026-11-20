@@ -358,7 +358,7 @@ func TestARepinFetchesTheNewHostsCertificate(t *testing.T) {
 	waitFor("varlatch.corp.ts.net")
 	status.set(running("Tabc123", "corp-new.ts.net"), nil)
 	m.Check(ctx)
-	if _, _, err := m.Repin(ctx, false); err != nil {
+	if _, _, err := m.Repin(ctx, false, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	waitFor("varlatch.corp-new.ts.net")

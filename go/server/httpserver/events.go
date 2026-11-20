@@ -55,6 +55,22 @@ func ConnContext(ctx context.Context, c net.Conn) context.Context {
 	return context.WithValue(ctx, connKey{}, c)
 }
 
+type directKey struct{}
+
+// DirectConnContext is ConnContext for a listener clients reach directly,
+// with no proxy in front of it (public HTTPS, listen_https): there, an
+// X-Forwarded-For header is the client's own and never believed, whatever
+// trusted_proxies says (it is still logged as received).
+func DirectConnContext(ctx context.Context, c net.Conn) context.Context {
+	return context.WithValue(ConnContext(ctx, c), directKey{}, true)
+}
+
+// direct is whether r came over a direct listener (DirectConnContext).
+func direct(r *http.Request) bool {
+	d, _ := r.Context().Value(directKey{}).(bool)
+	return d
+}
+
 // eventsReply answers GET /auth/events: its visit writes the response,
 // the whole stream included.
 type eventsReply struct {

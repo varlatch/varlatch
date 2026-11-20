@@ -276,18 +276,18 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | filippo.io/edwards25519 | v1.2.0 | BSD-3-Clause | varlatchd |
 | github.com/apapsch/go-jsonmerge/v2 | v2.0.0 | MIT | varlatchd |
 | github.com/asaskevich/govalidator | v0.0.0-20230301143203-a9d515a09cc2 | MIT | varlatch |
-| github.com/aws/aws-sdk-go-v2 | v1.48.0 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream | v1.7.27 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/credentials | v1.21.0 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/internal/configsources | v1.5.12 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 | v2.8.12 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/internal/v4a | v1.5.12 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding | v1.13.25 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/service/internal/checksum | v1.11.13 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/service/internal/presigned-url | v1.14.12 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/service/internal/s3shared | v1.20.12 | Apache-2.0 | varlatchd |
-| github.com/aws/aws-sdk-go-v2/service/s3 | v1.114.10 | Apache-2.0 | varlatchd |
-| github.com/aws/smithy-go | v1.28.9 | Apache-2.0 | varlatchd |
+| github.com/aws/aws-sdk-go-v2 | v1.48.0 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream | v1.7.27 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/credentials | v1.21.0 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/internal/configsources | v1.5.12 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 | v2.8.12 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/internal/v4a | v1.5.12 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding | v1.13.25 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/service/internal/checksum | v1.11.13 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/service/internal/presigned-url | v1.14.12 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/service/internal/s3shared | v1.20.12 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/aws-sdk-go-v2/service/s3 | v1.114.10 | Apache-2.0 | varlatch, varlatchd |
+| github.com/aws/smithy-go | v1.28.9 | Apache-2.0 | varlatch, varlatchd |
 | github.com/caddyserver/certmagic | v0.25.6 | Apache-2.0 | varlatchd |
 | github.com/caddyserver/zerossl | v0.1.6 | MIT | varlatchd |
 | github.com/cenkalti/backoff/v5 | v5.0.3 | MIT | varlatch |

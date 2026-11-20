@@ -38,3 +38,22 @@ func TestLookCommandAsLibuv(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// TestParentLookupFollowsTheProcessOrder: two variables whose names differ
+// only in case are found as process.env finds them on Windows, the first
+// in the process's order, whatever a map's order is.
+func TestParentLookupFollowsTheProcessOrder(t *testing.T) {
+	values := map[string]string{"Path": "first", "PATH": "second"}
+	for range 20 {
+		if v, ok := (parentVars{names: []string{"Path", "PATH"}, values: values}).lookup("path"); !ok || v != "first" {
+			t.Fatalf("%q, %v", v, ok)
+		}
+		if v, ok := (parentVars{names: []string{"PATH", "Path"}, values: values}).lookup("pAtH"); !ok || v != "second" {
+			t.Fatalf("%q, %v", v, ok)
+		}
+	}
+	// An exact name wins.
+	if v, _ := (parentVars{names: []string{"Path", "PATH"}, values: values}).lookup("PATH"); v != "second" {
+		t.Fatalf("%q", v)
+	}
+}
