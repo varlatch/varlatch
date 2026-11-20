@@ -302,6 +302,14 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 	return e.rolledBack(ctx, j)
 }
 
+// tailnetReturn is the reverse's tailnet handoff (nil for none).
+func tailnetReturn(j *Journal) *tailhandoff.State {
+	if j.Tailnet == nil {
+		return nil
+	}
+	return j.Tailnet.Rollback
+}
+
 func originOf(j *Journal) string {
 	if j.Transfer != nil && j.Transfer.Origin != "" {
 		return j.Transfer.Origin
@@ -398,6 +406,12 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		return errors.Join(cause, err)
 	}
 	from := j.Phase
+	// Once the name's return has opened, the TypeScript release holds the
+	// name: the reverse goes forward only. Refused before anything is
+	// marked, so --resume still finishes it.
+	if rb := tailnetReturn(j); rb != nil && (rb.Phase == tailhandoff.Done || rb.IncomingOpened) {
+		return fmt.Errorf("%w; the tailnet name is the TypeScript release's again: the reverse cannot be undone now; varlatch migrate --resume finishes it", cause)
+	}
 	e.say("Undoing the reverse: %v.", cause)
 	if !j.Rollback.Undoing {
 		j.Rollback.Undoing = true
@@ -413,13 +427,6 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		}
 		if err := rs.StopServing(ctx, j.Ingress); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release: %w", err))
-		}
-		// Its sidecar too, which starting it started: the tailnet name is
-		// Go's node's, the old node stays stopped (not logged out).
-		if ts, ok := e.Source.(TailnetSource); ok && j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.Phase == tailhandoff.Done {
-			if err := ts.StopTailnet(ctx); err != nil {
-				problems = append(problems, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", err))
-			}
 		}
 		if j.Ingress == Coolify {
 			e.say("The address goes back by hand: in Coolify, move the domain of %s back to the Go application.", originOf(j))
@@ -437,6 +444,15 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	if j.Rollback.Rebuild != nil {
 		if err := rs.UndoRebuild(ctx, *j.Rollback.Rebuild); err != nil {
 			problems = append(problems, fmt.Errorf("putting the TypeScript installation back: %w", err))
+		}
+	}
+	// The TypeScript side as the forward migration left it: starting its
+	// varlatchd started its tailnet sidecar (they share its network); the
+	// name is Go's node's, so the old node is stopped again (not logged
+	// out), its state kept for the window.
+	if ts, ok := e.Source.(TailnetSource); ok && j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.Phase == tailhandoff.Done {
+		if err := ts.StopTailnet(ctx); err != nil {
+			problems = append(problems, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", err))
 		}
 	}
 	if len(problems) > 0 {
