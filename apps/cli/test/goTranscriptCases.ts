@@ -1417,6 +1417,52 @@ const run54b: TranscriptCase[] = [
   v({ id: "override.short-other", title: "another short Secret still stops the run", args: ["run", "--allow-unmasked", "PIN", ...runChildArgs()], server: [effectiveAt(ENV, runItems([PIN_ITEM, { name: "PIN2", sensitive: true, source: "self", value: null }])), disclosed([{ name: "API_KEY", value: RUN_SECRET }, { name: "PIN", value: RUN_PIN }, { name: "PIN2", value: "5678" }]), CONTRACT_NONE] }),
 ];
 
+// ---- 5.4e: scan --find-files --------------------------------------------------
+//
+// Files that look like copies of secrets, by name, each with whether Git
+// ignores it: 1 when one is found, 2 when none is but the search was
+// incomplete, 0 otherwise; every failure is 1, as for all of scan. The
+// repositories are written file by file (a transcript makes no links and
+// runs no git init); trees with links, modes and unusual repositories are in
+// the find-files vectors (go/cmd/varlatch/testdata/vectors/findfiles.json).
+
+const FF = (...rest: string[]) => ["scan", "--find-files", ...rest];
+const gitRepo = (at: string, ignore?: string): Record<string, string> => ({
+  [`${at}/.git/HEAD`]: "ref: refs/heads/main\n",
+  [`${at}/.git/config`]: "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+  [`${at}/.git/objects/.keep`]: "",
+  [`${at}/.git/refs/.keep`]: "",
+  ...(ignore === undefined ? {} : { [`${at}/.gitignore`]: ignore }),
+});
+const COPIES = { ...gitRepo("repo", ".env\n"), "repo/.env": "A=1\n", "repo/.env.local": "B=2\n", "repo/keys/id.key": "k\n", "repo/.env.example": "A=\n", "loose/server.pem": "p\n" };
+const DEEP = { [`deep/${"d/".repeat(21)}notes.md`]: "x\n" };
+
+const findFiles54e: TranscriptCase[] = [
+  { id: "found", title: "copies found: each with its Git state, and what to do; 1", args: FF("."), files: COPIES },
+  { id: "found.json", title: "the same with --json", args: FF(".", "--json"), files: COPIES },
+  { id: "found.repo", title: "searching the repository alone", args: FF("repo"), files: COPIES },
+  { id: "found.cwd", title: "no directory: the working directory", args: FF(), files: COPIES, cwd: "repo" },
+  { id: "clean", title: "nothing that looks like a copy: 0", args: FF("."), files: { "src/app.ts": "x\n", ".env.example": "A=\n" } },
+  { id: "clean.json", title: "the same with --json", args: ["scan", "--json", "--find-files", "."], files: { "src/app.ts": "x\n" } },
+  { id: "incomplete", title: "nothing found, but a directory was below the depth bound: 2", args: FF("deep"), files: DEEP },
+  { id: "incomplete.json", title: "the same with --json", args: FF("deep", "--json"), files: DEEP },
+  { id: "found-and-incomplete", title: "a copy found and a directory not searched: 1", args: FF("."), files: { ...DEEP, ".env": "A=1\n" } },
+  { id: "global-config", title: "GIT_CONFIG_GLOBAL names the global configuration, and its core.excludesFile", args: FF("repo"), files: { ...COPIES, "g/config": "[core]\n\texcludesFile = ~/my-ignore\n", "home/my-ignore": "*.key\n" }, env: { GIT_CONFIG_GLOBAL: "{{dir}}/g/config" } },
+  { id: "global-config.include", title: "a global configuration that includes another: every state unknown", args: FF("repo"), files: { ...COPIES, "g/config": "[include]\n\tpath = other\n" }, env: { GIT_CONFIG_GLOBAL: "{{dir}}/g/config" } },
+  { id: "xdg", title: "XDG_CONFIG_HOME: git/ignore there is the default excludes file", args: FF("repo"), files: { ...COPIES, "xdg/git/ignore": "*.key\n" }, env: { XDG_CONFIG_HOME: "{{dir}}/xdg" } },
+  { id: "home-gitconfig", title: "~/.gitconfig's core.excludesFile", args: FF("repo"), files: { ...COPIES, "home/.gitconfig": "[core]\n\texcludesFile = ~/ign\n", "home/ign": ".env.local\n" } },
+  { id: "unusual", title: "an include in the repository's configuration: unknown, with why", args: FF("repo"), files: { ...COPIES, "repo/.git/config": "[include]\n\tpath = x\n" } },
+  { id: "missing", title: "a directory that does not exist: 1", args: FF("nope") },
+  { id: "not-a-directory", title: "a file, not a directory: 1", args: FF("notes.md"), files: { "notes.md": "x\n" } },
+  { id: "usage.two", title: "two directories: 1, with the usage", args: FF("a", "b") },
+  { id: "usage.staged", title: "--find-files with --staged", args: FF("--staged") },
+  { id: "usage.environment", title: "--find-files with -e", args: FF("-e", "dev") },
+  { id: "usage.unknown", title: "an unknown option", args: FF("--bogus") },
+  { id: "usage.needs-value", title: "-e without its value", args: ["scan", "-e", "--find-files"] },
+  { id: "usage.size", title: "a size that is no size, before the find-files rule", args: FF("--max-file-size", "lots") },
+  { id: "after-dashes", title: "after --, a directory named --find-files... is a path", args: ["scan", "--find-files", "--", "-odd"], files: { "-odd/.env": "A=1\n" } },
+];
+
 // ---- 5.6a: the guardrail hook ---------------------------------------------------
 //
 // `agents hook --format <agent>` as a coding agent runs it: one pre-tool-use
@@ -1446,6 +1492,142 @@ const hook56a: TranscriptCase[] = [
   { id: "hook.assisted", title: "the same under --assisted", args: ["--assisted", ...HOOK("claude")], stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
 ];
 
+// ---- 5.6b: varlatch mcp ----------------------------------------------------------
+//
+// The server as an MCP host runs it: JSON-RPC lines on stdin, all sent at
+// once and stdin then closed, so each case also shows that the server
+// answers what it holds before it exits. One call that reaches the server
+// per case, since concurrent calls reach the fake server in any order. The
+// protocol itself (every message, every tool's checks) is in the MCP
+// vectors (go/cmd/varlatch/testdata/vectors/mcp.json).
+
+const MCP_TOKEN = "vlt_cli_mcpAAAA";
+const MCP = (...rest: string[]) => ["mcp", "--server", "{{server}}", ...rest];
+const MCP_ENV = { VARLATCH_TOKEN: MCP_TOKEN };
+const MCP_DIFFERENCES = ["user-agent", "mcp-version"];
+const rpc = (id: unknown, method: string, params?: unknown) => JSON.stringify({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) });
+const INITIALIZE = rpc(0, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "host", version: "1" } });
+const INITIALIZED = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
+const lines = (...l: string[]) => `${l.join("\n")}\n`;
+const callTool = (id: number, name: string, args: Record<string, unknown> = {}) => rpc(id, "tools/call", { name, arguments: args });
+const mcpSession = (...calls: string[]) => lines(INITIALIZE, INITIALIZED, ...calls);
+const mcp = (c: TranscriptCase): TranscriptCase => ({ env: MCP_ENV, ...c, differences: [...(c.differences ?? []), ...MCP_DIFFERENCES] });
+const ORG_PATH = "/v1/organizations/acme";
+const MCP_META = { serverVersion: "0.22.0", apiMajor: 1, capabilities: [] as string[] };
+const MCP_META_WHOAMI = { ...MCP_META, capabilities: ["identity.whoami"] };
+const VALUE_PATH = `${ENV}/values`;
+const CONTRACT_ITEMS = (items: unknown[]) => contractAnswer({ ...ACTIVE, contract: { ...ACTIVE.contract, items } });
+const PLAIN = item("PORT", { sensitive: false });
+const mcpPut = (name: string, body: Record<string, unknown> = { versionId: sid("ver", name) }): Exchange => ({ method: "PUT", path: `${VALUE_PATH}/${name}`, status: 200, answer: body });
+const IN_MCP_REPO = repoFiles('server = "{{server}}"\norganization = "acme"\nproject = "web"\ndefault_environment = "dev"\n');
+
+const mcp56b: TranscriptCase[] = [
+  // Startup: the options, the variables, and each refusal.
+  { id: "help", title: "--help prints the usage", args: ["mcp", "--help"] },
+  { id: "help.short", title: "-h too", args: ["mcp", "-h"] },
+  { id: "help.then-unknown", title: "every argument is read before --help is acted on", args: ["mcp", "--help", "--nope"] },
+  { id: "unknown-option", title: "an unknown option: 64 and the usage", args: ["mcp", "--json"] },
+  { id: "equals-form", title: "--server=<url> is not a form mcp reads", args: ["mcp", "--server={{server}}"] },
+  { id: "needs-value", title: "--server needs a value", args: ["mcp", "--server"] },
+  { id: "needs-value.org", title: "--org needs a value", args: ["mcp", "--org"] },
+  { id: "allow-disclose", title: "--allow-disclose is refused, not ignored", args: MCP("--allow-disclose"), env: MCP_ENV },
+  { id: "allow-disclose.env", title: "VARLATCH_MCP_ALLOW_DISCLOSE=1 is refused", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "1" } },
+  { id: "allow-disclose.env-any", title: "any value but empty or 0 is refused", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "false" } },
+  mcp({ id: "allow-disclose.env-zero", title: "VARLATCH_MCP_ALLOW_DISCLOSE=0 starts the server", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "0" }, stdin: lines(rpc(1, "ping")) }),
+  mcp({ id: "allow-disclose.env-empty", title: "an empty VARLATCH_MCP_ALLOW_DISCLOSE starts the server", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_DISCLOSE: "" }, stdin: lines(rpc(1, "ping")) }),
+  { id: "no-server", title: "outside a repository with no server: 64", args: ["mcp"], env: MCP_ENV },
+  { id: "no-server.empty-variable", title: "an empty VARLATCH_SERVER is no server", args: ["mcp"], env: { ...MCP_ENV, VARLATCH_SERVER: "" } },
+  { id: "not-signed-in", title: "no credential for the server: 77", args: MCP() },
+  { id: "not-signed-in.userinfo", title: "the server's user name and password are never shown", args: ["mcp", "--server", "http://user:pw-canary@127.0.0.1:9"], differences: ["server-display"] },
+  { id: "agent-run.writes", title: "inside an agent-safe run --allow-writes is refused", args: MCP("--allow-writes"), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1" } },
+  { id: "agent-run.writes-env", title: "and so is VARLATCH_MCP_ALLOW_WRITES=1", args: MCP(), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1", VARLATCH_MCP_ALLOW_WRITES: "1" } },
+  { id: "agent-run.no-credential", title: "inside an agent-safe run without the run's credential: 77 with the --agent-metadata hint", args: MCP(), env: { VARLATCH_AGENT_RUN: "run_1" } },
+  mcp({ id: "agent-run.read-only", title: "inside an agent-safe run with its credential: the read tools", args: MCP(), env: { ...MCP_ENV, VARLATCH_AGENT_RUN: "run_1" }, stdin: lines(rpc(1, "tools/list")) }),
+
+  // The protocol: what the host sees without the server.
+  mcp({ id: "session.basics", title: "initialize, initialized, tools/list and ping", args: MCP(), stdin: mcpSession(rpc(1, "tools/list"), rpc(2, "ping")) }),
+  mcp({ id: "session.versions", title: "each supported version is echoed, any other gets the latest", args: MCP(), stdin: lines(
+    rpc(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "h", version: "1" } }),
+    rpc(2, "initialize", { protocolVersion: "1999-01-01", capabilities: {}, clientInfo: { name: "h", version: "1" } })) }),
+  mcp({ id: "session.malformed", title: "lines that are not JSON-RPC are dropped without a word; a method it lacks is -32601", args: MCP(), stdin: lines("garbage", "{}", '{"jsonrpc":"2.0","id":1,"result":{}}', rpc(1.5, "ping"), rpc(1, "resources/list"), JSON.stringify({ jsonrpc: "2.0", method: "notifications/unknown" }), rpc(2, "ping")) }),
+  mcp({ id: "session.invalid-params", title: "a request its method's schema refuses: -32603 with zod's issues", args: MCP(), stdin: lines(rpc(1, "initialize", {}), rpc(2, "tools/call", { arguments: [] })) }),
+  mcp({ id: "session.task", title: "task creation is refused", args: MCP(), stdin: lines(rpc(1, "tools/call", { name: "varlatch_whoami", task: {} })) }),
+  mcp({ id: "session.no-trailing-newline", title: "a last line without a line break is never read", args: MCP(), stdin: `${rpc(1, "ping")}\n${rpc(2, "ping")}` }),
+  mcp({ id: "session.empty", title: "nothing on stdin: exits 0", args: MCP() }),
+  mcp({ id: "tools.writes-flag", title: "--allow-writes adds the two write tools", args: MCP("--allow-writes"), stdin: lines(rpc(1, "tools/list")) }),
+  mcp({ id: "tools.writes-env", title: "so does VARLATCH_MCP_ALLOW_WRITES=1", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_WRITES: "1" }, stdin: lines(rpc(1, "tools/list")) }),
+  mcp({ id: "tools.writes-env-other", title: "VARLATCH_MCP_ALLOW_WRITES=true does not", args: MCP(), env: { ...MCP_ENV, VARLATCH_MCP_ALLOW_WRITES: "true" }, stdin: lines(rpc(1, "tools/list"), callTool(2, "varlatch_set_value", { item: "A", value: "1" })) }),
+  mcp({ id: "tools.unknown", title: "an unknown tool, and a name every JavaScript object has", args: MCP(), stdin: lines(callTool(1, "varlatch_reveal_value"), callTool(2, "toString")) }),
+
+  // whoami and the defaults.
+  mcp({ id: "whoami.no-capability", title: "whoami on a server that cannot say who a credential belongs to", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.caller", title: "whoami with the caller", args: MCP("--organization", "acme", "--project", "web", "--environment", "dev"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META_WHOAMI), ok("/v1/me", ME_FULL)] }),
+  mcp({ id: "whoami.caller-refused", title: "whoami when /v1/me refuses the credential", args: MCP("-e", "prod"), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META_WHOAMI), { method: "GET", path: "/v1/me", status: 401, answer: apiError(401, "UNAUTHENTICATED", "credential expired") }] }),
+  mcp({ id: "whoami.repo", title: "in a repository: the defaults from its context, and --env over them", args: ["mcp", "--env", "staging"], files: IN_MCP_REPO, cwd: "repo", stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.empty-flag", title: "--org \"\" is a default, an empty one", args: MCP("--org", ""), stdin: lines(callTool(1, "varlatch_whoami"), callTool(2, "varlatch_list_projects")), server: [ok("/v1/meta", MCP_META)] }),
+  mcp({ id: "whoami.meta-malformed", title: "a meta answer without a capability list: the TypeError's message", args: MCP(), stdin: lines(callTool(1, "varlatch_whoami")), server: [ok("/v1/meta", { serverVersion: "0.22.0", capabilities: 5 })] }),
+  mcp({ id: "whoami.unreachable", title: "a server that cannot be reached", args: ["mcp", "--server", "http://127.0.0.1:9"], stdin: lines(callTool(1, "varlatch_whoami")) }),
+
+  // The read tools.
+  mcp({ id: "read.organizations", title: "list organizations", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [ok("/v1/organizations", { items: [{ id: "org_1", slug: "acme", name: "Acme" }], nextCursor: null })] }),
+  mcp({ id: "read.projects", title: "list projects, the organization from the arguments", args: MCP(), stdin: lines(callTool(1, "varlatch_list_projects", { organization: "a c/me" })), server: [ok("/v1/organizations/a%20c%2Fme/projects", { items: [], nextCursor: null })] }),
+  mcp({ id: "read.projects.none", title: "no organization anywhere: the tool says so, no request", args: MCP(), stdin: lines(callTool(1, "varlatch_list_projects")) }),
+  mcp({ id: "read.environments", title: "list environments", args: MCP("--org", "acme", "--project", "web"), stdin: lines(callTool(1, "varlatch_list_environments")), server: [ok(ENVS_PATH, { items: ALL_ENVS.slice(0, 2), nextCursor: null })] }),
+  mcp({ id: "read.effective", title: "effective configuration with includeValues", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_effective_configuration", { includeValues: true })), server: [effective([{ name: "PORT", sensitive: false, source: "self", value: "8080" }], "?include=values")] }),
+  mcp({ id: "read.effective.metadata", title: "and without", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_effective_configuration")), server: [effective([{ name: "API_KEY", sensitive: true, source: "self" }])] }),
+  mcp({ id: "read.validate", title: "validate an environment (POST with an empty body)", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_validate_environment")), server: [{ method: "POST", path: `${ENV}/validate`, status: 200, answer: { valid: true, issues: [], notEvaluated: [] } }] }),
+  mcp({ id: "read.contract", title: "the active contract", args: MCP("--org", "acme", "--project", "web"), stdin: lines(callTool(1, "varlatch_get_active_contract")), server: [contractAnswer()] }),
+  mcp({ id: "read.audit", title: "audit events with a limit and a cursor (form-encoded)", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_list_audit_events", { limit: 5, cursor: "a b/c+é" })), server: [ok(`${ORG_PATH}/audit-events?limit=5&cursor=a+b%2Fc%2B%C3%A9`, { items: [], nextCursor: null })] }),
+  mcp({ id: "read.audit.invalid", title: "a limit out of range: the input's error, no request", args: MCP("--org", "acme"), stdin: lines(callTool(1, "varlatch_list_audit_events", { limit: 500 })) }),
+  mcp({ id: "read.refused", title: "an API error as the tool's error", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [denied("/v1/organizations")] }),
+  mcp({ id: "read.empty-answer", title: "an answer with no body: the SDK refuses the result", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations")), server: [{ method: "GET", path: "/v1/organizations", status: 200, headers: {} }] }),
+  mcp({ id: "read.cancelled", title: "a call cancelled while its request is out gets no answer", args: MCP(), stdin: lines(callTool(1, "varlatch_list_organizations"), JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1, reason: "host" } }), rpc(2, "ping")), server: [ok("/v1/organizations", { items: [], nextCursor: null })] }),
+  mcp({ id: "read.cancelled-before", title: "a cancellation before the call changes nothing", args: MCP(), stdin: lines(JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } }), callTool(1, "varlatch_list_organizations")), server: [ok("/v1/organizations", { items: [], nextCursor: null })] }),
+
+  // The writes.
+  ...((): TranscriptCase[] => {
+    const w = (id: string, title: string, args: Record<string, unknown>, server: Exchange[]): TranscriptCase =>
+      mcp({ id: `write.${id}`, title, args: MCP("--org", "acme", "--project", "web", "-e", "dev", "--allow-writes"), stdin: lines(callTool(1, `varlatch_${id.startsWith("delete") ? "delete" : "set"}_value`, args)), server });
+    return [
+      w("set.secret", "a Secret's value is refused, after reading only the contract", { item: "API_KEY", value: "s3cr3t-canary" }, [CONTRACT_ITEMS([item("API_KEY")])]),
+      w("set.uncontracted", "an item outside the contract counts as a Secret", { item: "OTHER", value: "x" }, [CONTRACT_ITEMS([PLAIN])]),
+      w("set.no-contract", "no active contract (404): a Secret", { item: "PORT", value: "1" }, [denied(CONTRACT_PATH, "GET", 404, "RESOURCE_NOT_FOUND")]),
+      w("set.contract-error", "a contract read that fails otherwise: the API error", { item: "PORT", value: "1" }, [denied(CONTRACT_PATH, "GET", 500, "INTERNAL")]),
+      w("set.present", "replacing a value the environment has needs replace", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), effective([{ name: "PORT", sensitive: false, source: "self" }])]),
+      w("set.inherited", "and so does overriding an inherited one", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), effective([{ name: "PORT", sensitive: false, source: "parent" }])]),
+      w("set.unknown", "presence that cannot be checked counts as existing", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), denied(`${ENV}/effective-configuration`)]),
+      w("set.absent", "a new value is stored, with expectedVersionId", { item: "PORT", value: "1", expectedVersionId: "ver_x" }, [CONTRACT_ITEMS([PLAIN]), effective([]), mcpPut("PORT")]),
+      w("set.replace", "replace naming the item skips the presence check", { item: "PORT", value: "2", replace: "PORT" }, [CONTRACT_ITEMS([PLAIN]), mcpPut("PORT")]),
+      w("set.replace-other", "replace naming another item: refused before any request", { item: "PORT", value: "2", replace: "HOST" }, []),
+      w("set.malformed-contract", "a contract whose items are not a list: the TypeError's message", { item: "PORT", value: "1" }, [contractAnswer({ ...ACTIVE, contract: { items: "x" } })]),
+      w("set.malformed-effective", "an effective configuration whose items are not a list", { item: "PORT", value: "1" }, [CONTRACT_ITEMS([PLAIN]), ok(`${ENV}/effective-configuration`, { items: 5 })]),
+      w("set.conflict", "a version conflict from the server", { item: "PORT", value: "1", replace: "PORT", expectedVersionId: "ver_old" }, [CONTRACT_ITEMS([PLAIN]), { method: "PUT", path: `${VALUE_PATH}/PORT`, status: 409, answer: apiError(409, "VERSION_CONFLICT", "the value changed") }]),
+      w("delete", "a deletion with confirm", { item: "PORT", confirm: "PORT" }, [{ method: "DELETE", path: `${VALUE_PATH}/PORT`, status: 204, headers: {} }]),
+      w("delete.no-confirm", "a deletion without confirm: refused, no request", { item: "PORT" }, []),
+      w("delete.refused", "a deletion the server refuses", { item: "PORT", confirm: "PORT" }, [denied(`${VALUE_PATH}/PORT`, "DELETE")]),
+    ];
+  })(),
+  mcp({ id: "write.without-flag", title: "without --allow-writes the write tools do not exist", args: MCP("--org", "acme", "--project", "web", "-e", "dev"), stdin: lines(callTool(1, "varlatch_delete_value", { item: "PORT", confirm: "PORT" })) }),
+  mcp({ id: "write.expired", title: "a credential the server no longer takes", args: MCP("--org", "acme", "--project", "web", "-e", "dev", "--allow-writes"), stdin: lines(callTool(1, "varlatch_set_value", { item: "PORT", value: "1" })), server: [{ method: "GET", path: CONTRACT_PATH, status: 401, answer: apiError(401, "UNAUTHENTICATED", "credential expired") }] }),
+];
+
+// ---- 5.8a: guided init, and what it never does off a terminal ---------------
+//
+// Guided `init` runs only with a terminal on both ends, outside assisted
+// mode; a transcript has none, so these cases show the flags path taking
+// over: a usage error (64), nothing written, nothing asked. The guided run
+// itself is in the guided-init vectors (go/cmd/varlatch/testdata/vectors/
+// guided-init.json) and the Go pseudo-terminal tests.
+
+const guided58a: TranscriptCase[] = [
+  { id: "init.no-flags", title: "off a terminal, init without --org and --project is a usage error; nothing is asked or written", args: ["init"] },
+  { id: "init.no-project", title: "--org alone: --project is needed", args: ["init", "--org", "acme"] },
+  { id: "init.no-org", title: "--project alone: the usage", args: ["init", "--project", "web"] },
+  { id: "init.server-only", title: "--server alone: the usage", args: ["init", "--server", "https://varlatch.example.com"] },
+  { id: "init.assisted", title: "assisted mode: the same, a terminal or not", args: ["--assisted", "init"] },
+  { id: "init.marker", title: "a coding agent's marker: the same", args: ["init", "--org", "acme"], env: { CLAUDECODE: "1" } },
+];
+
 export const AREAS: Record<string, TranscriptCase[]> = {
   "5.1a-framework": framework,
   "5.1b-context": context51b,
@@ -1457,5 +1639,8 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.3b-contracts": contracts53b,
   "5.3c-types": types53c,
   "5.4b-run": run54b,
+  "5.4e-find-files": findFiles54e,
   "5.6a-hook": hook56a,
+  "5.6b-mcp": mcp56b,
+  "5.8a-guided-init": guided58a,
 };

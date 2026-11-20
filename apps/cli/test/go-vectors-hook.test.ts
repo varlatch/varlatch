@@ -275,6 +275,11 @@ for (const path of ["\\\\srv\\share\\cfg\\varlatch\\credentials.json", "\\\\srv\
   call("unc", "Read", { file_path: path }, UNC_ENV);
 }
 
+// Lone surrogates: Node.js's file system reads each as U+FFFD; a pair is one character.
+inProject("surrogate", { ".env\uFFFD": "A=1\n" }, "Bash", { command: "cat .env\uD800" });
+inProject("surrogate", { ".env\uFFFD": "A=1\n" }, "Read", { file_path: ".env\uDC00" });
+inProject("surrogate", { ".env\u{1F600}": "A=1\n" }, "Bash", { command: "cat .env\u{1F600}" });
+
 // Deep nesting: JSON.parse reads any depth, so a padded event still gets its decision.
 for (const nest of [10_001, 100_000]) {
   for (const command of ["cat .env", "npm test"]) {

@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
@@ -71,24 +72,94 @@ func isGlob(name string) bool { return strings.ContainsAny(name, "*?[") }
 // not.
 var globCache = struct {
 	sync.Mutex
-	m map[string]*regexp.Regexp
-}{m: map[string]*regexp.Regexp{}}
+	m map[string]*globMatcher
+}{m: map[string]*globMatcher{}}
 
-// globRegex is a shell glob as a regular expression for one name, or nil
-// for a glob with an unclosed class (or one that is no regular expression).
-// The regular expression is RE2's (Go's regexp), not JavaScript's.
-func globRegex(glob string) *regexp.Regexp {
+// globMatcher is a shell glob for one name, matching exactly as the
+// regular expression compileGlob writes for it (RE2's, Go's regexp, not
+// JavaScript's: `*` is `.*` and `?` is `.`, so neither matches a line
+// feed). A glob of literals, `*` and `?` is matched directly over its
+// runes, decoded once: compiling a long glob into a regular expression
+// allocates hundreds of bytes per byte of it, which a walk of a search
+// with a megabyte-long --exclude made a gigabyte. A glob with a class
+// ([...]), or a name with a line feed, goes through RE2, compiled when
+// first needed.
+type globMatcher struct {
+	glob  string
+	runes []rune // the glob, for the direct match; nil when it needs RE2
+	once  sync.Once
+	re    *regexp.Regexp
+}
+
+// globRegex is a shell glob's matcher for one name, or nil for a glob with
+// an unclosed class (or one that is no regular expression, such as one
+// that is not UTF-8).
+func globRegex(glob string) *globMatcher {
 	globCache.Lock()
 	defer globCache.Unlock()
-	if re, ok := globCache.m[glob]; ok {
-		return re
+	if m, ok := globCache.m[glob]; ok {
+		return m
 	}
 	if len(globCache.m) >= 256 {
 		clear(globCache.m)
 	}
-	re := compileGlob(glob)
-	globCache.m[glob] = re
-	return re
+	m := &globMatcher{glob: glob}
+	switch {
+	case !utf8.ValidString(glob):
+		m = nil // regexp.Compile refuses it
+	case strings.ContainsAny(glob, "[\n"):
+		if m.regex() == nil {
+			m = nil
+		}
+	default:
+		m.runes = []rune(glob)
+	}
+	globCache.m[glob] = m
+	return m
+}
+
+// regex is the glob's regular expression, compiled once.
+func (m *globMatcher) regex() *regexp.Regexp {
+	m.once.Do(func() { m.re = compileGlob(m.glob) })
+	return m.re
+}
+
+// MatchString is whether the glob matches the whole of name.
+func (m *globMatcher) MatchString(name string) bool {
+	if m.runes == nil || strings.Contains(name, "\n") {
+		re := m.regex()
+		return re != nil && re.MatchString(name)
+	}
+	return wildMatch(m.runes, []rune(name))
+}
+
+// wildMatch is the glob's match without a line feed on either side: `*`
+// any runes, `?` one rune, anything else itself; each byte that is not
+// UTF-8 is one U+FFFD rune, as RE2 reads it. Linear in the glob for each
+// name it rejects at its start; at most the glob's length times the
+// name's otherwise.
+func wildMatch(p, s []rune) bool {
+	pi, si, star, mark := 0, 0, -1, 0
+	for si < len(s) {
+		switch {
+		case pi < len(p) && p[pi] == '*':
+			star, mark = pi, si
+			pi++
+		case pi < len(p) && (p[pi] == '?' || p[pi] == s[si]):
+			pi++
+			si++
+		case star >= 0:
+			pi = star + 1
+			mark++
+			si = mark
+		default:
+			return false
+		}
+	}
+	for pi < len(p) && p[pi] == '*' {
+		pi++
+	}
+	return pi == len(p)
 }
 
 func compileGlob(glob string) *regexp.Regexp {
@@ -138,17 +209,27 @@ func globMatches(glob, name string) bool {
 	if strings.HasPrefix(name, ".") && !strings.HasPrefix(glob, ".") {
 		return false
 	}
-	re := globRegex(glob)
-	return re != nil && re.MatchString(name)
+	m := globRegex(glob)
+	return m != nil && m.MatchString(name)
 }
 
 var envDotted = regexp.MustCompile(`^\.env\..+`)
+
+// envName is a name as the file system compares it, for the .env checks:
+// on Windows, whose file names are compared without regard to case, in
+// lower case (`.ENV` is `.env` there); elsewhere as it is.
+func envName(name string) string {
+	if onWindows {
+		return strings.ToLower(name)
+	}
+	return name
+}
 
 // IsProtectedEnvFile is whether a name is a .env file by its name alone:
 // `.env`, `.envrc`, or `.env.<anything>`, other than the two templates; or
 // a glob that matches one.
 func IsProtectedEnvFile(path string) bool {
-	name := nameOf(path)
+	name := envName(nameOf(path))
 	if envTemplates[name] {
 		return false
 	}
@@ -169,7 +250,7 @@ func statOf(path string) os.FileInfo {
 // isEnvLikeFile is an existing file, other than a template, whose name
 // starts with `.env`.
 func isEnvLikeFile(path string) bool {
-	name := nameOf(path)
+	name := envName(nameOf(path))
 	info := statOf(path)
 	return strings.HasPrefix(name, ".env") && !envTemplates[name] && info != nil && info.Mode().IsRegular()
 }
@@ -184,13 +265,6 @@ func cleanPath(p string) string {
 		return win32Normalize(p)
 	}
 	return filepath.Clean(p)
-}
-
-func pathSeparator() string {
-	if onWindows {
-		return `\`
-	}
-	return "/"
 }
 
 // resolvePath is Node.js's path.resolve(cwd, path).
@@ -214,7 +288,7 @@ func resolvePath(cwd, path string) string {
 func isProtectedEnvPath(path string, ctx hookContext) bool {
 	full := resolvePath(ctx.cwd, expandPath(path, ctx))
 	name := nameOf(path)
-	if envTemplates[name] {
+	if envTemplates[envName(name)] {
 		return false
 	}
 	if isGlob(name) {
@@ -330,21 +404,43 @@ func windowsLocal(p string) string {
 	return p
 }
 
-// inDir is whether path is dir or below it. On Windows names are compared
-// without regard to case, and a `\\?\` or `\\.\` prefix is left out, so that
-// `c:\Cfg\Varlatch\credentials.json` and `\\?\C:\cfg\varlatch\...` are in
-// `C:\cfg\varlatch`; elsewhere byte for byte.
+// inDir is whether path is dir or below it. On Windows a path is compared
+// as Windows names its file: without regard to case, without a `\\?\` or
+// `\\.\` prefix, and, for a path without one, with each component's trailing
+// dots and spaces left out, as Win32 leaves them out (`c:\Cfg\Varlatch\`,
+// `C:\cfg\varlatch.\` and `\\?\C:\cfg\varlatch\` are in `C:\cfg\varlatch`; a
+// `\\?\` path is taken as written, so `\\?\C:\cfg\varlatch.\` is not).
+// Elsewhere byte for byte.
 func inDir(path, dir string) bool {
-	sep := pathSeparator()
-	prefix := dir
-	if !strings.HasSuffix(prefix, sep) {
-		prefix += sep
-	}
 	if !onWindows {
+		prefix := dir
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
 		return path == dir || strings.HasPrefix(path, prefix)
 	}
-	path, dir, prefix = windowsLocal(path), windowsLocal(dir), windowsLocal(prefix)
+	path, dir = windowsComparable(path), windowsComparable(dir)
+	prefix := dir
+	if !strings.HasSuffix(prefix, `\`) {
+		prefix += `\`
+	}
 	return strings.EqualFold(path, dir) || len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+}
+
+// windowsComparable is a Windows path as the file it names: without a
+// `\\?\` or `\\.\` prefix; a path without one with each component's trailing
+// run of dots and spaces left out (a component of nothing else is kept).
+func windowsComparable(p string) string {
+	if local := windowsLocal(p); local != p {
+		return local
+	}
+	parts := strings.Split(p, `\`)
+	for i, part := range parts {
+		if trimmed := strings.TrimRight(part, ". "); trimmed != "" {
+			parts[i] = trimmed
+		}
+	}
+	return strings.Join(parts, `\`)
 }
 
 // isInStore is whether a path is in the credential store.
@@ -821,11 +917,19 @@ func inlineCode(name string, words []string) (string, bool) {
 	return "", false
 }
 
-var envFileInCode = regexp.MustCompile(`(?:^|[^\w.-])(\.env[\w.-]*)`)
+var (
+	envFileInCode = regexp.MustCompile(`(?:^|[^\w.-])(\.env[\w.-]*)`)
+	// envFileInCodeFold is the same on Windows, where `.ENV` is `.env`.
+	envFileInCodeFold = regexp.MustCompile(`(?i)(?:^|[^\w.-])(\.env[\w.-]*)`)
+)
 
 // codeNamesEnvFile is whether a piece of code names a protected .env file.
 func codeNamesEnvFile(code string) bool {
-	for _, m := range envFileInCode.FindAllStringSubmatch(code, -1) {
+	pattern := envFileInCode
+	if onWindows {
+		pattern = envFileInCodeFold
+	}
+	for _, m := range pattern.FindAllStringSubmatch(code, -1) {
 		if IsProtectedEnvFile(m[1]) {
 			return true
 		}
@@ -1241,7 +1345,7 @@ func searchReadsEnvUnder(root string, s *search) bool {
 				}) {
 					queue = append(queue, item{path, cur.level + 1})
 				}
-			case mode.IsRegular() && strings.HasPrefix(entry.Name(), ".env") && !envTemplates[entry.Name()]:
+			case mode.IsRegular() && strings.HasPrefix(envName(entry.Name()), ".env") && !envTemplates[envName(entry.Name())]:
 				if searchReads(s, path, path[len(root)+1:]) {
 					return true
 				}
@@ -1275,6 +1379,14 @@ var shellCodeFlag = regexp.MustCompile(`^-[a-zA-Z]*c[a-zA-Z]*$`)
 
 var findRuns = []string{"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf"}
 
+// checkSegment is the first denial for one simple command, or "".
+//
+// Three shapes of command take time quadratic in their length in hook.ts:
+// a reader with many distinct words (cat a b c ...), a search with many
+// roots (rg a b c ..., each root walked on its own, up to the walk's
+// bound), and a long chain of `varlatch run --` (each link checks the rest
+// of the line again). The first is linear here (a set of the arguments);
+// the other two are quadratic here too.
 func (h *hook) checkSegment(seg segment, ctx hookContext, underRun bool, depth int) (string, error) {
 	for _, input := range seg.inputs {
 		if isProtectedEnvPath(input, ctx) {
@@ -1398,10 +1510,16 @@ func (h *hook) checkSegment(seg segment, ctx hookContext, underRun bool, depth i
 			args = append(slices.Clone(args[:last]), args[last+1:]...)
 		}
 	}
+	// The arguments as a set: `args.includes(w)` for every word would take
+	// time quadratic in a long `cat a b c ...`.
+	isArg := make(map[string]bool, len(args))
+	for _, a := range args {
+		isArg[a] = true
+	}
 	for _, w := range words[1:] {
 		// --env-file=.env, and git's rev:path form (HEAD:.env).
 		for _, candidate := range []string{w, w[strings.LastIndexByte(w, '=')+1:], w[strings.LastIndexByte(w, ':')+1:]} {
-			if reads && slices.Contains(args, w) && isProtectedEnvPath(candidate, ctx) {
+			if reads && isArg[w] && isProtectedEnvPath(candidate, ctx) {
 				return denyEnvFile, nil
 			}
 			if in, err := isInStore(candidate, ctx); err != nil || in {
@@ -1494,6 +1612,7 @@ func (h *hook) checkToolCall(toolName string, toolInput any, ctx hookContext) (s
 	if !ok {
 		return "", nil
 	}
+	input = asReceived(input)
 	command, _ := input.Get("command")
 	var paths []string
 	switch c := command.(type) {
@@ -1538,6 +1657,34 @@ func (h *hook) checkToolCall(toolName string, toolInput any, ctx hookContext) (s
 		return checkSearch(grepToolSearch(input), ctx), nil
 	}
 	return "", nil
+}
+
+// asReceived is a tool call's strings as the command or the file system
+// receives them: a lone UTF-16 surrogate, which JSON can carry and Node.js
+// writes as U+FFFD, is U+FFFD (jsval.NodeText). The strings the hook reads
+// are the input's own and those of its arrays. A surrogate pair a shell
+// quote splits (`.en'v\ud83d'\ude00`) is then two U+FFFD, as a shell
+// given that command line reads it (go/README.md, "A surrogate pair split
+// by a quote").
+func asReceived(input jsjson.Object) jsjson.Object {
+	out := make(jsjson.Object, len(input))
+	for i, m := range input {
+		switch v := m.Value.(type) {
+		case string:
+			m.Value = jsval.NodeText(v)
+		case []any:
+			list := make([]any, len(v))
+			for j, e := range v {
+				if s, isString := e.(string); isString {
+					e = jsval.NodeText(s)
+				}
+				list[j] = e
+			}
+			m.Value = list
+		}
+		out[i] = m
+	}
+	return out
 }
 
 // grepToolSearch is Claude Code's Grep tool as a search: its path (the
@@ -1591,7 +1738,7 @@ func RunHook(format, stdin string, env clientctx.Env, processCwd string) (string
 	}
 	ctx := hookContext{cwd: processCwd, env: env}
 	if cwd, ok := event.Value("cwd").(string); ok {
-		ctx.cwd = cwd
+		ctx.cwd = jsval.NodeText(cwd)
 	}
 	if home, _ := env.LookupEnv("HOME"); home != "" {
 		ctx.home = home
