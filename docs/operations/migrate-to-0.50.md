@@ -476,6 +476,12 @@ the rollback rebuilt the database, are removed.
 On Coolify, the removals are yours: `--finish` names each resource to
 delete in Coolify, and does not reach Coolify itself.
 
+In the tailnet shape (varlatchd with `network_mode: service:tailscale`),
+run `--finish --delete-old-data` straight away rather than a plain
+`--finish` first. After a plain `--finish`, `--delete-old-data` is
+refused, because its final archive would need the old Tailscale node
+running beside Go's; the data volumes are then removed by hand.
+
 Until `--finish`, after a migration the old installation stays as it is:
 marked migrated out, refusing every request, its data untouched. After a
 rollback, the 0.50 server's copy and the volumes from before the
