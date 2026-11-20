@@ -222,6 +222,12 @@ func (t *fakeTarget) WriteJournal(_ context.Context, j *Journal) error {
 	if err := t.call("journal " + string(j.Phase)); err != nil {
 		return err
 	}
+	// As varlatchd: beside a running varlatchd, only the switch, or the
+	// same migration's journal in the phase it holds already.
+	same := t.journal != nil && t.journal.ID == j.ID && t.journal.Phase == j.Phase && j.Phase != Open && j.Phase != Released
+	if t.running && j.Phase != Switched && !same {
+		return errors.New("varlatchd is running: stop it first; nothing was written")
+	}
 	b, _ := j.Encode()
 	t.journals = append(t.journals, b)
 	t.journal = &JournalHead{ID: j.ID, Phase: j.Phase}

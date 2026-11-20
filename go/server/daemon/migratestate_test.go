@@ -484,9 +484,10 @@ func TestTheLiveOpen(t *testing.T) {
 	}
 }
 
-// The switch is written beside the varlatchd serving under the transfer's
-// gate (the engine switches once the public URL answers from it); any
-// other write while it runs is refused, as before.
+// Beside the varlatchd serving under the transfer's gate: the switch is
+// written (the engine switches once the public URL answers from it), and
+// the transfer's journal again (its check recorded, an undo begun); open,
+// released, going back and another migration's are refused, as before.
 func TestTheSwitchBesideARunningVarlatchd(t *testing.T) {
 	in := newInstall(t, "backup_interval = off\n")
 	for _, phase := range []string{"started", "transfer"} {
@@ -497,6 +498,20 @@ func TestTheSwitchBesideARunningVarlatchd(t *testing.T) {
 	r := start(t, in)
 	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "open"), "state", "--write"); code != ExitFailure || !strings.Contains(errOut, "varlatchd is running") {
 		t.Fatalf("an open beside the running varlatchd: %d %q", code, errOut)
+	}
+	// The same phase again, with what it records (the transfer's check),
+	// is written beside it; going back, or another migration, is not.
+	verified := []byte(`{"format":1,"id":"` + migA + `","phase":"transfer","transfer":{"origin":"http://x","asked":true,"verifiedAt":"2026-11-20T17:00:00Z"},"undoing":true,"history":[]}`)
+	if code, _, errOut := migrateWith(t, in.conf, verified, "state", "--write"); code != ExitOK {
+		t.Fatalf("the same phase beside the running varlatchd: %d %q", code, errOut)
+	}
+	if code, out, _ := migrateWith(t, in.conf, nil, "state"); code != ExitOK || !strings.Contains(out, `"verifiedAt":"2026-11-20T17:00:00Z"`) {
+		t.Fatalf("the rewritten journal: %q", out)
+	}
+	for _, j := range [][]byte{journalText(migA, "checked"), journalText(migA, "released"), journalText(migB, "transfer")} {
+		if code, _, errOut := migrateWith(t, in.conf, j, "state", "--write"); code != ExitFailure {
+			t.Fatalf("%s beside the running varlatchd: %d %q", j, code, errOut)
+		}
 	}
 	if code, _, errOut := migrateWith(t, in.conf, journalText(migA, "switched"), "state", "--write"); code != ExitOK {
 		t.Fatalf("the switch beside the running varlatchd: %d %q", code, errOut)

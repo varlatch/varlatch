@@ -139,16 +139,21 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 		}
 		journalIn = b
 	}
-	// A switch is the journal's word alone (the gate and the database
-	// stay as they are): it is written beside the varlatchd that serves
-	// under the transfer's gate, which reads its journal only at start.
-	switched := false
+	// Beside the varlatchd that serves under the transfer's gate (which
+	// reads its journal only at start), a journal is written when the
+	// write is the journal's word alone: the switch (the gate and the
+	// database stay as they are), or the same migration's journal in the
+	// phase it is in already (what it records of that phase: the
+	// transfer's check, an undo begun). Open and released change the
+	// gate, and a journal never goes back: those wait for it to stop.
+	inert := false
 	if journalIn != nil {
-		if h, err := parseJournal(journalIn); err == nil && h.Phase == "switched" {
-			switched = true
+		if h, err := parseJournal(journalIn); err == nil && h.Phase != "open" && h.Phase != "released" {
+			old, ok, oerr := readJournal(cfg.DataDir)
+			inert = h.Phase == "switched" || (oerr == nil && ok && old.ID == h.ID && old.Phase == h.Phase)
 		}
 	}
-	if a.sub == "state" && (!a.write || switched) {
+	if a.sub == "state" && (!a.write || inert) {
 		if _, err := os.Stat(cfg.DataDir); err == nil {
 			if _, _, err := checkClientDir(cfg.DataDir, os.Getuid()); err != nil {
 				return fail(ExitConfig, "%v", err)
