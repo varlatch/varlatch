@@ -99,6 +99,51 @@ same() {
   [ -f "$2" ] && [ "$(sha256 "$1")" = "$(sha256 "$2")" ]
 }
 
+# typescript <file>: the file is the TypeScript CLI's single-file build
+# (varlatch-cli-<version>.cjs), whose first lines carry its banner.
+typescript() {
+  [ -f "$1" ] && dd if="$1" bs=512 count=1 2>/dev/null | LC_ALL=C grep -q 'Varlatch CLI\. Copyright'
+}
+
+# compose: this host has a Compose installation (decision 11): its install
+# marker or its Compose file in /srv/varlatch (compose_dir), the directory
+# the operations guides use. Its host commands stay the TypeScript CLI's,
+# as varlatch-ts.
+compose() {
+  [ -f "$compose_dir/varlatch-install.json" ] || [ -f "$compose_dir/docker-compose.yml" ]
+}
+
+# put_cli <file> <target>: puts the checked varlatch at target. A
+# TypeScript CLI there is kept until the new varlatch runs from target
+# (decision 11): then it is removed, both sharing one store of sign-ins
+# and settings until then, or, on a host with a Compose installation, kept
+# beside it as varlatch-ts. If the new one does not run, the TypeScript
+# CLI is put back.
+put_cli() {
+  if ! typescript "$2"; then
+    place "$1" "$2" 755
+    return
+  fi
+  into=$(dirname "$2")
+  if compose && [ -e "$into/varlatch-ts" ] && ! typescript "$into/varlatch-ts"; then
+    stop "$into/varlatch-ts exists and is not the TypeScript CLI; move it away, then run this again (nothing was installed)"
+  fi
+  old=$into/.varlatch-install.$$.typescript
+  cp -p "$2" "$old" || stop "could not keep a copy of the TypeScript CLI at $2; nothing was installed"
+  place "$1" "$2" 755
+  if ! "$2" --version >/dev/null 2>&1; then
+    mv -f "$old" "$2"
+    stop "the new varlatch does not run at $2; the TypeScript CLI was put back"
+  fi
+  if compose; then
+    mv -f "$old" "$into/varlatch-ts"
+    say "Kept the TypeScript CLI as $into/varlatch-ts: the Compose installation in $compose_dir needs it for its host commands (setup, upgrade, doctor, admin, move) until varlatch migrate moves it."
+  else
+    rm -f "$old"
+    say "Replaced the TypeScript CLI at $2. Your sign-ins and settings carry over: both CLIs use the same store."
+  fi
+}
+
 # A Homebrew copy is Homebrew's to update.
 homebrew() {
   [ -e "$1" ] || return 0
@@ -150,6 +195,7 @@ main() {
 
   # The tests run a copy of this script with a directory here instead of /.
   root=''
+  compose_dir=$root/srv/varlatch
   if [ "$server" = yes ]; then
     [ "$os" = linux ] || stop "a server needs Linux (with systemd)"
     [ "$(id -u)" = 0 ] || stop "a server install needs root: sudo sh install.sh --server"
@@ -218,14 +264,18 @@ install_cli() {
   if same "$tmp/$cli" "$target"; then
     say "varlatch $version is already installed at $target."
   else
-    place "$tmp/$cli" "$target" 755
+    put_cli "$tmp/$cli" "$target"
     say "Installed varlatch $version at $target."
   fi
   case ":$PATH:" in
     *":$dir:"*)
       first=$(command -v varlatch 2>/dev/null || true)
       if [ -n "$first" ] && [ "$first" != "$target" ]; then
-        say "Another varlatch comes first on your PATH: $first. Remove it, or put $dir before it."
+        if typescript "$first" && compose; then
+          say "The TypeScript CLI comes first on your PATH: $first. The Compose installation in $compose_dir needs it for its host commands: rename it to varlatch-ts, for example: sudo mv $first $(dirname "$first")/varlatch-ts"
+        else
+          say "Another varlatch comes first on your PATH: $first. Remove it, or put $dir before it."
+        fi
       fi ;;
     *) say "$dir is not on your PATH. Add it, for example: echo 'export PATH=\"$dir:\$PATH\"' >> ~/.profile" ;;
   esac
@@ -241,7 +291,11 @@ install_server() {
     target=${rest%:*}
     mode=${rest##*:}
     if ! same "$tmp/$name" "$target"; then
-      place "$tmp/$name" "$target" "$mode"
+      if [ "$name" = "$cli" ]; then
+        put_cli "$tmp/$name" "$target"
+      else
+        place "$tmp/$name" "$target" "$mode"
+      fi
       changed=yes
     fi
   done
