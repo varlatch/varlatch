@@ -357,6 +357,13 @@ sudo varlatch migrate --ingress coolify \
   **Deploy** or **Stop**; with Docker Compose, `docker compose up -d
   <service>` or `docker compose stop <service>`. Then run it again with
   `--resume`.
+- With a tailnet address, an undo after the tailnet name moved first asks
+  you to stop the 0.50 service (exit status 75): the name stays with the
+  new node until you do. Then `--resume` (or `--abort`) gives the name
+  back to the old node, then the address.
+
+  <!-- pending: the handoff's wiring into varlatch migrate (not opened
+       yet). -->
 
 <!-- pending #361: --to-data, --to-keys, --to-config, --to-image,
      --to-service, the ownership checks and the human steps. -->
