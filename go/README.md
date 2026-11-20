@@ -3074,6 +3074,23 @@ migrations.
     with Coolify, the domain move; `--resume` checks both through the
     public URL. An undo waits for the service to be stopped, and resumes
     as an undo.
+- G5's interrupted half (step 7, slice 7.4c; decision 14;
+  `server/migration/g5/interrupt_test.go`, in the G5 gate's step): the
+  real `varlatch migrate`, built with the `crashpoint` tag
+  (`cmd/varlatch/internal/migrate/crashpoint.go`: it pauses at a named
+  point for the gate to SIGKILL it there), killed at every phase boundary
+  (each phase entered, the barrier held, the transfer started, the
+  source's journal open before the live open), against a real target
+  varlatchd, host install and image, and a stand-in for the last
+  TypeScript release (`docker`, `varlatch-ts` and `systemctl` answered by
+  the test binary, the export from `migrationtest`'s seed; 0.23.0 is not
+  published). After each kill: the source's data hashed unchanged, both
+  journals in the stated state, which side the public URL answers from
+  (the source, its barrier's 503, the target under the transfer's gate,
+  the target open), then `--resume` (and `--abort` before the switch) to
+  the stated end, a second `--resume` changing nothing; the Coolify shape
+  and the image's operator steps too. Every output, journal and log is
+  scanned for the keys and the run keys.
 - The live open: `varlatchd admin migrate open --id <migration>` ends the
   transfer's gate in the running varlatchd, through its control socket
   (offline, on the data directory), then writes its journal open (the gate

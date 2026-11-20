@@ -8,6 +8,10 @@
 // failing at its stage and its check, named, with nothing secret printed.
 // The gate is g5_test.go, built with the g5 tag; CI's go job runs it as
 // its own step (.github/workflows/go.yml, "G5, the migration's damage
-// gate"). The interrupted half of G5 beyond a killed import is slice
-// 7.4c's, the reverse half 7.6a's.
+// gate"). interrupt_test.go is G5's interrupted half (slice 7.4c): the
+// real `varlatch migrate` (built with the crashpoint tag) killed at every
+// phase boundary and held to decision 14's stated states, against a real
+// target varlatchd and a stand-in for the last TypeScript release (its
+// header says what is real and what stands in). The reverse half is
+// 7.6a's.
 package g5

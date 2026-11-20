@@ -24,7 +24,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
@@ -33,6 +32,15 @@ import (
 	"github.com/varlatch/varlatch/go/server/migration/canonical"
 	"github.com/varlatch/varlatch/go/server/migration/manifest"
 )
+
+// TB is what the seed needs of a test: testing.TB has it, and so has a
+// stand-in that is not a test (the G5 gate's stand-in source, a re-run of
+// the test binary).
+type TB interface {
+	Helper()
+	Fatal(args ...any)
+	Fatalf(format string, args ...any)
+}
 
 // Source is the seeded installation: its Root KEK, its rows by PostgreSQL
 // table (as node-postgres gives them), and its last audit position.
@@ -71,7 +79,7 @@ func get(o jsvalue.Object, k string) any {
 // class: a person with a live browser session, a browser credential minted
 // from it, an expired one and a CLI hand-off credential from the same
 // session, a signing key, and the finished exposure backfill.
-func Load(t testing.TB) Source {
+func Load(t TB) Source {
 	t.Helper()
 	fixture := func(name string) jsvalue.Object {
 		t.Helper()
@@ -150,7 +158,7 @@ func Load(t testing.TB) Source {
 	return s
 }
 
-func envelopeOf(t testing.TB, v any) envelope.Envelope {
+func envelopeOf(t TB, v any) envelope.Envelope {
 	t.Helper()
 	var e envelope.Envelope
 	if err := json.Unmarshal(jsvalue.Stringify(v), &e); err != nil {
@@ -160,7 +168,7 @@ func envelopeOf(t testing.TB, v any) envelope.Envelope {
 }
 
 // seal is plaintext sealed under key, as a jsonb value of a row.
-func seal(t testing.TB, key, plaintext []byte, ctx envelope.Context) any {
+func seal(t TB, key, plaintext []byte, ctx envelope.Context) any {
 	t.Helper()
 	e, err := envelope.Seal(key, plaintext, ctx)
 	if err != nil {
@@ -178,7 +186,7 @@ func seal(t testing.TB, key, plaintext []byte, ctx envelope.Context) any {
 }
 
 // add puts in what the fixtures lack.
-func add(t testing.TB, s *Source) {
+func add(t TB, s *Source) {
 	t.Helper()
 	admin := ""
 	for _, id := range s.Rows["identities"] {
@@ -240,7 +248,7 @@ func add(t testing.TB, s *Source) {
 
 // Value is a PostgreSQL value as node-postgres gives it, in the form the
 // canonical encoder takes.
-func Value(t testing.TB, ty canonical.Type, v any) any {
+func Value(t TB, ty canonical.Type, v any) any {
 	t.Helper()
 	if v == nil {
 		return nil
@@ -329,7 +337,7 @@ type Sections struct {
 }
 
 // Bundle is the source's forward bundle.
-func Bundle(t testing.TB, s Source, o Options) []byte {
+func Bundle(t TB, s Source, o Options) []byte {
 	t.Helper()
 	m, err := manifest.Load()
 	if err != nil {
@@ -417,7 +425,7 @@ func Bundle(t testing.TB, s Source, o Options) []byte {
 }
 
 // Reseal writes a bundle's end line again for its changed bytes.
-func Reseal(t testing.TB, b []byte) []byte {
+func Reseal(t TB, b []byte) []byte {
 	t.Helper()
 	body := b[:bytes.LastIndex(b[:len(b)-1], []byte("\n"))+1]
 	end := b[len(body):]
@@ -445,7 +453,7 @@ type Item struct {
 // export does for its digests (decision 7), reading its rows, not a
 // database: the classes of server/migration/check/CHECKS.md. An item under
 // an Organization KEK that was destroyed is not opened (no key opens it).
-func Items(t testing.TB, s Source) []Item {
+func Items(t TB, s Source) []Item {
 	t.Helper()
 	str := func(o jsvalue.Object, k string) string {
 		v, _ := get(o, k).(string)
@@ -528,7 +536,7 @@ func Items(t testing.TB, s Source) []Item {
 
 // Digests are the source's digest section under runKey: each item's
 // HMAC-SHA256 over canonical.DigestInput, in the bundle's order.
-func Digests(t testing.TB, s Source, runKey []byte) []bundle.Digest {
+func Digests(t TB, s Source, runKey []byte) []bundle.Digest {
 	t.Helper()
 	var out []bundle.Digest
 	for _, it := range Items(t, s) {
@@ -547,7 +555,7 @@ func Digests(t testing.TB, s Source, runKey []byte) []bundle.Digest {
 // realize seals a random secret in place of each envelope that does not
 // open: the fixtures hold placeholders ({"fixture": ...}) where a server
 // test needed no real ciphertext, and the checks need every item real.
-func realize(t testing.TB, s *Source) {
+func realize(t TB, s *Source) {
 	t.Helper()
 	str := func(o jsvalue.Object, k string) string {
 		v, _ := get(o, k).(string)
@@ -629,7 +637,7 @@ func realize(t testing.TB, s *Source) {
 }
 
 // Manifest is the manifest, loaded.
-func Manifest(t testing.TB) *manifest.Manifest {
+func Manifest(t TB) *manifest.Manifest {
 	t.Helper()
 	m, err := manifest.Load()
 	if err != nil {
@@ -639,7 +647,7 @@ func Manifest(t testing.TB) *manifest.Manifest {
 }
 
 // ManifestTable is the manifest's table of the PostgreSQL table source.
-func ManifestTable(t testing.TB, source string) manifest.Table {
+func ManifestTable(t TB, source string) manifest.Table {
 	t.Helper()
 	tb, ok := Manifest(t).Table(source)
 	if !ok {

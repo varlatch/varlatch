@@ -245,9 +245,20 @@ func (img *Image) Start(ctx context.Context) error {
 	if err != nil || running {
 		return err
 	}
-	return &HumanStep{Instruction: fmt.Sprintf("Start the Go service %s (image %s, with %s mounted at %s, %s at %s and %s at %s/varlatchd.conf): "+
+	return &HumanStep{Instruction: fmt.Sprintf("Start the Go service %s (%s, with %s mounted at %s, %s at %s and %s at %s/varlatchd.conf): "+
 		"in Coolify, Deploy it; with Docker Compose, docker compose up -d %s. It starts isolated by the migration's gate.",
-		img.Service, img.Ref, img.DataDir, imageData, img.KeysDir, imageKeys, img.ServiceConfig, imageConfig, img.Service)}
+		img.Service, img.refText(), img.DataDir, imageData, img.KeysDir, imageKeys, img.ServiceConfig, imageConfig, img.Service)}
+}
+
+// refText is the image reference for the operator, in its parts: written
+// whole (repository:tag@sha256:...) it has the shape of a URL with a user
+// and a password, which the CLI's fail-safe masks.
+func (img *Image) refText() string {
+	m := imageRef.FindStringSubmatch(img.Ref)
+	if m == nil {
+		return "the image the service runs"
+	}
+	return fmt.Sprintf("image %s, tag %s, digest %s", m[1], m[2], m[3])
 }
 
 // Stop is the operator's: the service stopped (a HumanStep) unless it is.

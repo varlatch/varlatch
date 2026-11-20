@@ -141,6 +141,9 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 		}
 	}
 	startErr := e.Target.Start(ctx)
+	if startErr == nil {
+		crashPoint("transfer started")
+	}
 	var human *HumanStep
 	if startErr != nil && !errors.As(startErr, &human) {
 		return e.undo(ctx, j, fmt.Errorf("starting the target: %w", startErr))

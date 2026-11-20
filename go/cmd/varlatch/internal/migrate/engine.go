@@ -155,7 +155,11 @@ func (e *Engine) save(ctx context.Context, j *Journal) error {
 
 func (e *Engine) enter(ctx context.Context, j *Journal, p Phase) error {
 	j.enter(p, e.now())
-	return e.save(ctx, j)
+	if err := e.save(ctx, j); err != nil {
+		return err
+	}
+	crashPoint("entered " + string(p))
+	return nil
 }
 
 // Status is the source directory's journal (nil when none).
@@ -271,6 +275,9 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 // source is refused.
 func (e *Engine) pinned(src SourceInfo) error {
 	pin := imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
+	if testPin != nil {
+		pin = *testPin
+	}
 	if e.pin != nil {
 		pin = *e.pin
 	}
@@ -550,6 +557,7 @@ func (e *Engine) cutover(ctx context.Context, j *Journal) (*Journal, error) {
 	if err := e.save(ctx, j); err != nil {
 		return j, e.undo(ctx, j, err)
 	}
+	crashPoint("barrier held")
 	if err := e.finalCopy(ctx, j); err != nil {
 		return j, e.undo(ctx, j, err)
 	}
@@ -633,6 +641,7 @@ func (e *Engine) open(ctx context.Context, j *Journal) error {
 		if err := writeJournal(e.Source.Dir(), j); err != nil {
 			return fmt.Errorf("the journal in %s: %w", e.Source.Dir(), err)
 		}
+		crashPoint("open source")
 		if err := e.Target.OpenLive(ctx, j.ID); err != nil {
 			return fmt.Errorf("opening the target: %w; varlatch migrate --resume finishes it", err)
 		}

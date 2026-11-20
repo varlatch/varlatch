@@ -400,7 +400,7 @@ jobs:
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 -tags g5 -run '^TestG5$' -v ./server/migration/g5/
+        run: go test -count=1 -tags g5 -run '^TestG5' -v ./server/migration/g5/
 
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's

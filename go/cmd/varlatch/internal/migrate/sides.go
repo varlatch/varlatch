@@ -27,6 +27,10 @@ type imagePin struct {
 	Repository, Digest string
 }
 
+// testPin replaces the constants in a crashpoint build only (G5's
+// interruption gate, crashpoint.go); nil in a release.
+var testPin *imagePin
+
 // Source is the old installation, driven as processes (go-step7 decision
 // 2): its CLI's commands inside its containers, and its host CLI. A
 // Source never opens a database itself.
