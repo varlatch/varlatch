@@ -26,6 +26,7 @@
     "sdk": 1,
     "security": 1,
     "admin-cli": 6,
+    "security-cli": 5,
     "deletion": 391,
     "webhooks": 181,
     "audit-export": 62,
