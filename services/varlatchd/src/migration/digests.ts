@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { createHmac } from "node:crypto";
+import { decrypt, type Envelope } from "../crypto/aead.js";
+import type { Querier } from "../db/migrate.js";
+import { digestInput } from "./canonical.js";
+
+/**
+ * Decision 7's keyed digests (ADR-0059 step 7, go-step7): every item of
+ * every encryption class decrypted, and HMAC-SHA256 under the migration's
+ * run key over the canonical JSON of {class, ids, plaintext}
+ * (canonical.ts digestInput). Only the digests leave: never a plaintext,
+ * never the run key, which the caller reads from a pipe and clears.
+ *
+ * An item's class is its envelope's purpose and its ids are the rest of
+ * its envelope's associated data (the AAD context both servers already
+ * share), so varlatchd derives the same ids for the same item:
+ *
+ *   kek-canary               installationId              (Root KEK)
+ *   org-kek                  organizationId              (Root KEK)
+ *   dek                      organizationId, secretId, versionId (Organization KEK)
+ *   value                    organizationId, secretId, versionId (the DEK)
+ *   webhook-secret           organizationId, webhookId   (Organization KEK)
+ *   platform-credential      organizationId, connectionId (Organization KEK)
+ *   github-app-key           organizationId, githubAppId (Organization KEK;
+ *                            an app's key, and a registration's pending key under its id)
+ *   audit-export-credential  organizationId, exportId    (Organization KEK; active)
+ *   audit-export-drain       organizationId, exportId    (Root KEK; draining)
+ *   jwt-signing-key          keyId                       (Root KEK)
+ *
+ * Items are read in a fixed order (by their ids), within the export's
+ * snapshot. An Organization whose KEK was destroyed (deleted) has no
+ * item under it; an erased value version has none.
+ */
+
+export interface Digest {
+  class: string;
+  ids: Record<string, string>;
+  hmac: string;
+}
+
+const envelopeOf = (v: unknown): Envelope => (typeof v === "string" ? (JSON.parse(v) as Envelope) : (v as Envelope));
+
+/** The digests of every item, class by class, streamed. */
+export async function* digests(client: Querier, rootKek: Buffer, runKey: Buffer): AsyncIterable<Digest> {
+  if (runKey.length !== 32) throw new Error("export: the run key is not 256 bits");
+  const item = (cls: string, ids: Record<string, string>, key: Buffer, envelope: unknown): Digest & { plaintext: Buffer } => {
+    const plaintext = decrypt(key, envelopeOf(envelope), { purpose: cls, ...ids });
+    const hmac = createHmac("sha256", runKey).update(digestInput(cls, ids, plaintext)).digest("hex");
+    return { class: cls, ids, hmac, plaintext };
+  };
+  const emit = (d: Digest & { plaintext: Buffer }): Digest => {
+    d.plaintext.fill(0);
+    return { class: d.class, ids: d.ids, hmac: d.hmac };
+  };
+  const rows = async (sql: string) => (await client.query(sql)).rows as Record<string, unknown>[];
+
+  for (const r of await rows(`SELECT id, kek_canary FROM installation ORDER BY id COLLATE "C"`)) {
+    yield emit(item("kek-canary", { installationId: String(r.id) }, rootKek, r.kek_canary));
+  }
+  // The Organization KEKs, held only while their Organization's items are digested.
+  const orgs = await rows(`SELECT id, wrapped_org_kek FROM organizations WHERE wrapped_org_kek IS NOT NULL ORDER BY id COLLATE "C"`);
+  const orgKeks = new Map<string, Buffer>();
+  try {
+    for (const o of orgs) {
+      const d = item("org-kek", { organizationId: String(o.id) }, rootKek, o.wrapped_org_kek);
+      orgKeks.set(String(o.id), Buffer.from(d.plaintext));
+      yield emit(d);
+    }
+    const keyOf = (orgId: unknown) => {
+      const k = orgKeks.get(String(orgId));
+      if (!k) throw new Error("export: an item under an Organization without a key");
+      return k;
+    };
+    for (const v of await rows(
+      `SELECT vv.id, vv.value_id, vv.payload, vv.wrapped_dek, p.organization_id
+         FROM value_versions vv JOIN env_values ev ON ev.id = vv.value_id
+         JOIN environments e ON e.id = ev.environment_id JOIN projects p ON p.id = e.project_id
+        WHERE vv.erased_at IS NULL AND vv.wrapped_dek IS NOT NULL AND vv.payload IS NOT NULL
+        ORDER BY p.organization_id COLLATE "C", vv.value_id COLLATE "C", vv.id COLLATE "C"`,
+    )) {
+      const ids = { organizationId: String(v.organization_id), secretId: String(v.value_id), versionId: String(v.id) };
+      const dek = item("dek", ids, keyOf(v.organization_id), v.wrapped_dek);
+      const value = item("value", ids, dek.plaintext, v.payload);
+      yield emit(dek);
+      yield emit(value);
+    }
+    const perOrg = async (cls: string, idName: string, sql: string, keyFor: (r: Record<string, unknown>) => Buffer = (r) => keyOf(r.organization_id)) => {
+      const out: Digest[] = [];
+      for (const r of await rows(sql)) {
+        out.push(emit(item(cls, { organizationId: String(r.organization_id), [idName]: String(r.id) }, keyFor(r), r.envelope)));
+      }
+      return out;
+    };
+    yield* await perOrg("webhook-secret", "webhookId",
+      `SELECT id, organization_id, secret_envelope AS envelope FROM webhooks WHERE secret_envelope IS NOT NULL ORDER BY organization_id COLLATE "C", id COLLATE "C"`);
+    yield* await perOrg("platform-credential", "connectionId",
+      `SELECT id, organization_id, credential_envelope AS envelope FROM platform_connections WHERE credential_envelope IS NOT NULL ORDER BY organization_id COLLATE "C", id COLLATE "C"`);
+    yield* await perOrg("github-app-key", "githubAppId",
+      `SELECT id, organization_id, key_envelope AS envelope FROM github_apps WHERE key_envelope IS NOT NULL ORDER BY organization_id COLLATE "C", id COLLATE "C"`);
+    yield* await perOrg("github-app-key", "githubAppId",
+      `SELECT id, organization_id, pending_key_envelope AS envelope FROM github_app_registrations WHERE pending_key_envelope IS NOT NULL ORDER BY organization_id COLLATE "C", id COLLATE "C"`);
+    yield* await perOrg("audit-export-credential", "exportId",
+      `SELECT id, organization_id, credential_envelope AS envelope FROM audit_exports WHERE credential_envelope IS NOT NULL AND state <> 'draining' ORDER BY organization_id COLLATE "C", id COLLATE "C"`);
+    yield* await perOrg("audit-export-drain", "exportId",
+      `SELECT id, organization_id, credential_envelope AS envelope FROM audit_exports WHERE credential_envelope IS NOT NULL AND state = 'draining' ORDER BY organization_id COLLATE "C", id COLLATE "C"`,
+      () => rootKek);
+  } finally {
+    for (const k of orgKeks.values()) k.fill(0);
+  }
+  for (const r of await rows(`SELECT id, private_key_wrapped FROM signing_keys ORDER BY id COLLATE "C"`)) {
+    yield emit(item("jwt-signing-key", { keyId: String(r.id) }, rootKek, r.private_key_wrapped));
+  }
+}
