@@ -7,14 +7,14 @@ fixes.
 
 ## 0.23.0 (2026-11-20)
 
-The last release of the TypeScript server. Varlatch's server is being
-rewritten in Go, with SQLite in place of PostgreSQL; this release adds the
-commands that move an installation to it. An installation that never runs
-them behaves as on 0.22.4.
+The last release of the current server line: the 0.50 line replaces it.
+An installation moves to it with `varlatch migrate`, which runs the
+commands this release adds. An installation that never runs them behaves
+as on 0.22.4.
 
 ### Server
 
-- **`varlatchd admin migration`.** The commands the Go line's `varlatch
+- **`varlatchd admin migration`.** The commands the 0.50 line's `varlatch
   migrate` runs on a 0.23.0 installation:
   - `barrier` stops the installation at a fixed point: it drains the
     requests in flight, then pauses every request and background loop
@@ -26,12 +26,12 @@ them behaves as on 0.22.4.
   - `mark-migrated-out` marks an installation that moved: from then on it
     answers no request, reads included.
   - `import` rebuilds the database of a stopped installation from a
-    bundle the Go line wrote, which moves an installation back; once it
+    bundle the 0.50 line wrote, which moves an installation back; once it
     commits, the installation answers requests again.
   - `backfill` finishes, in one run and with varlatchd stopped, the audit
     backfill an export needs, for a database brought forward from a
     release before 0.20.0.
-- **A new audit event, `installation.migrated`.** The Go line records it
+- **A new audit event, `installation.migrated`.** The 0.50 line records it
   when an installation moves to it, and an installation moved back keeps
   it. The dashboard shows it as "Installation migrated"; audit exports and
   webhooks deliver it like any other event.
