@@ -376,6 +376,7 @@ jobs:
           go vet -tags conformance ./...
           go vet -tags crashpoint ./...
           go vet -tags g9a ./...
+          go vet -tags g5 ./server/migration/g5/
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -387,6 +388,19 @@ jobs:
           CGO_ENABLED: "0"
           VARLATCH_REQUIRE_DASHBOARD: "1"
         run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test -count=1 ./...
+
+      # G5's damage gate (ADR-0059 G5; internal docs/design/go-step7.md
+      # slice 7.3c; go/server/migration/g5): the migration's Go path through
+      # the varlatchd binary on a seeded installation, every damage of the
+      # bundle stream, its check sections and the imported database failing
+      # at its stage and check, named, a killed import cleared by the next,
+      # and nothing secret printed. Its own step, so the gate's evidence is
+      # its own line in the run.
+      - name: G5, the migration's damage gate
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags g5 -run '^TestG5$' -v ./server/migration/g5/
 
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's

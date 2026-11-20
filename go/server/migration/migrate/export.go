@@ -43,7 +43,7 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 	}
 	snap := filepath.Join(o.DataDir, ".migrate-export-"+hex.EncodeToString(suffix)+".db")
 	defer func() {
-		for _, s := range []string{"", "-wal", "-shm"} {
+		for _, s := range []string{"", "-wal", "-shm", "-journal"} {
 			_ = os.Remove(snap + s)
 		}
 	}()

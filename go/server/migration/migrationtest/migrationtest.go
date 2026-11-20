@@ -627,3 +627,23 @@ func realize(t testing.TB, s *Source) {
 		r.Set("payload", seal(t, dek, secret(), envelope.ValueContext(org, secretID, version)))
 	}
 }
+
+// Manifest is the manifest, loaded.
+func Manifest(t testing.TB) *manifest.Manifest {
+	t.Helper()
+	m, err := manifest.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// ManifestTable is the manifest's table of the PostgreSQL table source.
+func ManifestTable(t testing.TB, source string) manifest.Table {
+	t.Helper()
+	tb, ok := Manifest(t).Table(source)
+	if !ok {
+		t.Fatalf("the manifest has no table %s", source)
+	}
+	return tb
+}

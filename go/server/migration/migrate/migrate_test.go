@@ -327,7 +327,10 @@ func leftover(t *testing.T, name string) string {
 func TestAnInterruptedImportsLeftovers(t *testing.T) {
 	s := loadSource(t)
 	dir := t.TempDir()
-	for _, name := range []string{importPrefix + "0123456789ab.db", importPrefix + "0123456789ab.db-wal", importPrefix + "0123456789ab.db-shm"} {
+	// The -journal: killed while the database was being created, before
+	// it was in WAL mode (the G5 gate's killed import found it).
+	for _, name := range []string{importPrefix + "0123456789ab.db", importPrefix + "0123456789ab.db-wal", importPrefix + "0123456789ab.db-shm",
+		importPrefix + "ba9876543210.db", importPrefix + "ba9876543210.db-journal"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("an import cut short"), 0o600); err != nil {
 			t.Fatal(err)
 		}

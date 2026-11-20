@@ -2938,6 +2938,23 @@ migrations.
     table or class named (`TestAChangedCiphertextByteFailsItsClass`,
     `TestEachDamageFailsAtItsCheck`); the reports are scanned for every
     seeded plaintext, the Root KEK, the run key and every digest.
+- G5's damage gate (step 7, slice 7.3c; `server/migration/g5`, build tag
+  `g5`, its own step in the go job): the migration's Go path through the
+  varlatchd binary, on the seeded installation. The seeded bundle imports
+  and passes every check. Each damage of the bundle stream (a changed
+  byte, cut short, no end line, the end line's digest or counts, digests
+  out of order, a section line not canonical, a session token, a
+  sequence) is refused by the import, named, with nothing kept. Each
+  damage of the check sections (a digest not the source's, a digest
+  missing, a decision answered otherwise) imports and fails at its check.
+  Each damage of the imported database, `migrationtest`'s catalog shared
+  with the checks' unit tests, fails at its own check with its table or
+  class named. Another run key or Root KEK fails the class check, and the
+  import refuses the wrong Root KEK. An import killed while it writes
+  leaves no `varlatch.db`, and the next import clears what it left
+  (`-journal` included) and passes the checks. Every output of the binary
+  is scanned for each seeded secret. G5's interrupted phases are 7.4c's,
+  its reverse half 7.6a's.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the
