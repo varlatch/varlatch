@@ -157,6 +157,12 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runCustodyStatus(cfg, stdout, stderr)
 	case sub == "tailnet" && rest[0] == "probe-name":
 		return runTailnetProbe(cfg, rest, stdout, stderr)
+	case sub == "tailnet" && (rest[0] == "enroll" || rest[0] == "reaches"):
+		c, _ := nodeArgs(rest)
+		if c.op == "enroll" {
+			return runTailnetEnroll(cfg, c, stdout, stderr)
+		}
+		return runTailnetReaches(cfg, c, stdout, stderr)
 	case sub == "bootstrap-status":
 		return runBootstrapStatus(cfg, stdout, stderr)
 	case sub == "config-check":
@@ -336,7 +342,9 @@ func writes(sub string) bool { return sub != "backup" && sub != "maintenance" &&
 // refused, as the TypeScript admin CLI refuses it.
 func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int {
 	sub, rest := args[0], args[1:]
-	if writes(sub) && env.admission != nil {
+	// The node's handoff commands write no installation data, and run under
+	// the migration's gate, which they are part of.
+	if writes(sub) && !isNodeCmd(rest) && env.admission != nil {
 		leave, ok := env.admission.Enter()
 		if !ok {
 			fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, MaintenanceRefusal)
@@ -357,6 +365,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runCustodyAttest(ctx, env, rest, stdout, stderr)
 	case sub == "audit-export":
 		return runAuditExport(ctx, env, rest, stdout, stderr)
+	case sub == "tailnet" && isNodeCmd(rest):
+		return runTailnetNode(ctx, env, rest, stdout, stderr)
 	case sub == "tailnet":
 		return runTailnetRepin(ctx, env, rest, stdout, stderr)
 	case sub == "doctor":
