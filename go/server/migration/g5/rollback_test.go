@@ -617,6 +617,14 @@ func TestG5RollbackWhole(t *testing.T) {
 		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse checks failed") {
 			t.Fatalf("--rollback with a faulty import: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
+		// The undo completed beside the running varlatchd, and journalled
+		// the barrier lifted (the source's journal; Go's says open).
+		if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "the reverse was undone: Go serves again") || strings.Contains(out, "could not record it") {
+			t.Errorf("the undo's end:\n%s", out)
+		}
+		if released, ok := w.undoneReleased(); !ok || !released {
+			t.Errorf("the journal: undone %v, barrier released %v", ok, released)
+		}
 		w.expectReverse("undone", undoneState)
 		w.noSecrets()
 	})
