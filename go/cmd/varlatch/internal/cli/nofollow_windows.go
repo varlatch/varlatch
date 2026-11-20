@@ -30,6 +30,16 @@ func openNoFollow(path string) (*os.File, error) {
 	return os.NewFile(uintptr(h), path), nil
 }
 
+// openNoFollowWrite opens a file for writing, creating it when it is
+// missing, as O_NOFOLLOW does elsewhere: a symbolic link or other reparse
+// point at the path is opened itself, not followed
+// (FILE_FLAG_OPEN_REPARSE_POINT, which os.OpenFile passes to CreateFile in
+// the flag's high bits, with the long-path prefix it adds itself), so the
+// caller's Stat of what was opened sees it and refuses it before writing.
+func openNoFollowWrite(path string, perm os.FileMode) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|syscall.FILE_FLAG_OPEN_REPARSE_POINT, perm)
+}
+
 // createNoFollow is 0 on Windows: O_EXCL (CREATE_NEW) already fails on any
 // existing name, a symbolic link or other reparse point included.
 const createNoFollow = 0
