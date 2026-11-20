@@ -169,7 +169,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 			topic = r.Args[0]
 		}
 		if topic != "" {
-			help, ok := CommandHelp(topic)
+			help, ok := commandHelp(topic)
 			if !ok {
 				return UsageErrorWithUsage("varlatch: no help for "+shownArgument(topic)+": not a command", "\n\n"+Usage)
 			}
@@ -187,7 +187,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 		}
 		for _, a := range own {
 			if a == "--help" || a == "-h" {
-				if help, ok := CommandHelp(r.Command); ok {
+				if help, ok := commandHelp(r.Command); ok {
 					return r.println(help)
 				}
 				break
