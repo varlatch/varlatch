@@ -195,8 +195,10 @@ func TestFailSafeMasksEveryReproducer(t *testing.T) {
 // (from just after the nearest "//", or the run's start).
 func TestFailSafeRule(t *testing.T) {
 	for in, want := range map[string]string{
-		"https://u:p@h":                     "https:[redacted]@h",
-		"error: see https://u:p@h/x@y here": "error:[redacted]@y here",
+		"https://u:p@h": "https:[redacted]@h",
+		// The last at-sign that may end a credential ends the whole-text
+		// span; one in a path does not.
+		"error: see https://u:p@h/x@y here": "error:[redacted]@h/x@y here",
 		"varlatch server: unexpected argument https://alice:pw@example.com\nUsage: varlatch server [--json]": "varlatch server:[redacted]@example.com\nUsage: varlatch server [--json]",
 		"https://alice:fake%40h":        "https:[redacted]@h",
 		`https://alice:fake\x40h`:       "https:[redacted]@h",
@@ -222,6 +224,50 @@ func TestFailSafeRule(t *testing.T) {
 		// Kept: no colon before an at-sign, or no at-sign.
 		"me@example.com and then: more":      "me@example.com and then: more",
 		"3:  server = \"https://h.example\"": "3:  server = \"https://h.example\"",
+	} {
+		if got := MaskUserinfoInText(in); got != want {
+			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
+		}
+	}
+}
+
+// TestFailSafeAtSignsInAPath: an at-sign after a URL's authority, in its
+// path, query or fragment, is not a credential's, so a release workflow's
+// identity reads as it is; userinfo in the authority, a scheme-less
+// user:password@host, and anything ambiguous are masked as before.
+func TestFailSafeAtSignsInAPath(t *testing.T) {
+	const identity = "https://github.com/varlatch/varlatch/.github/workflows/release.yml@refs/tags/v0.50.0-rc.1"
+	for in, want := range map[string]string{
+		// Shown.
+		"https://host/a@b":       "https://host/a@b",
+		"https://host/x?y=a@b":   "https://host/x?y=a@b",
+		"https://host/x#a@b":     "https://host/x#a@b",
+		"https://host:8443/a@b":  "https://host:8443/a@b",
+		"https://[::1]:8443/a@b": "https://[::1]:8443/a@b",
+		"https://host/x@y/z@w":   "https://host/x@y/z@w",
+		identity:                 identity,
+		"varlatch verify-release: release: SHA256SUMS of 0.50.0-rc.2 is not signed by varlatch/varlatch's release workflow: expected " + identity + ", got " + identity: "varlatch verify-release: release: SHA256SUMS of 0.50.0-rc.2 is not signed by varlatch/varlatch's release workflow: expected " + identity + ", got " + identity,
+		// Masked as before: userinfo in the authority, a token alone, a
+		// scheme-less user:password@host.
+		"https://user:pass@host/x":    "https:[redacted]@host/x",
+		"https://tok@host":            "https:[redacted]@host",
+		"see https://tok@host/a@b":    "see https:[redacted]@host/a@b",
+		"user:pass@host":              "[redacted]@host",
+		"login user:pass@host failed": "login [redacted]@host failed",
+		"https://u:p@h/x@y":           "https:[redacted]@h/x@y",
+		// Masked: ambiguous. A colon after the authority's end that is no
+		// port, a colon or encoded colon or slash in the path before the
+		// at-sign, an encoded at-sign, an empty authority, extra slashes.
+		"https://alice:fake/x@h":                "https:[redacted]@h",
+		"https://host/u:pw@x":                   "https:[redacted]@x",
+		"https://h/?r=https%3A%2F%2Fu%3Apw%40e": "https:[redacted]@e",
+		"https://h/?r=https%3A%2F%2Fu%3Apw@e":   "https:[redacted]@e",
+		"https://h/#%2F%2Ftok%40e":              "https:[redacted]@e",
+		"https://h/?r=//tok@e":                  "https:[redacted]@e",
+		"https:///u:p@h":                        "https:[redacted]@h",
+		"https:///tok@h/a@b":                    "https:[redacted]@h/a@b",
+		"https://h:pw/x@y":                      "https:[redacted]@y",
+		"https://[::1]:pw/x@y":                  "https:[redacted]@y",
 	} {
 		if got := MaskUserinfoInText(in); got != want {
 			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
