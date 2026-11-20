@@ -153,8 +153,8 @@ type Recorded struct {
 }
 
 var known = func() map[string]bool {
-	m := make(map[string]bool, len(EventTypes))
-	for _, t := range EventTypes {
+	m := make(map[string]bool, len(EventTypes)+len(GoOnlyEventTypes))
+	for _, t := range append(slices.Clone(EventTypes), GoOnlyEventTypes...) {
 		m[t] = true
 	}
 	return m

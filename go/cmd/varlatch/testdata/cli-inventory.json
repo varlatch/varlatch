@@ -413,7 +413,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--batch-check": {
       "sources": [
@@ -421,7 +424,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--before": {
       "sources": [
@@ -503,7 +509,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--cancel": {
       "sources": [
@@ -1088,7 +1097,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "transcripts/5.4d-scan.json#hook.install"
+      ]
     },
     "--glob": {
       "sources": [
@@ -1352,7 +1364,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/findfiles.json#cases"
+      ]
     },
     "--managed": {
       "sources": [
@@ -1489,7 +1504,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--no-agent-files": {
       "sources": [
@@ -1506,7 +1524,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--no-deps": {
       "sources": [
@@ -1525,7 +1546,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--no-ignore": {
       "sources": [
@@ -1549,7 +1573,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/findfiles.json#cases"
+      ]
     },
     "--no-index": {
       "sources": [
@@ -1558,7 +1585,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/findfiles.json#cases"
+      ]
     },
     "--no-owner": {
       "sources": [
@@ -1602,7 +1632,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--no-retention": {
       "sources": [
@@ -1910,7 +1943,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--rawfile": {
       "sources": [
@@ -2257,7 +2293,10 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/scan.json#sources"
+      ]
     },
     "--silent": {
       "sources": [
@@ -3078,7 +3117,11 @@
       ],
       "of": "another program",
       "note": "an argument scan passes to git (or the guardrail hook reads)",
-      "slice": "5.4d"
+      "slice": "5.4d",
+      "coveredBy": [
+        "vectors/findfiles.json#cases",
+        "vectors/scan.json#sources"
+      ]
     }
   },
   "environment": {

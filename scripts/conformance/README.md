@@ -600,9 +600,12 @@ a feature, everything it needs:
 
 `client-runtime`'s two whole-suite checks, "the audit export holds no
 value" and "varlatchd logs hold no value", need no CLI feature of their
-own. On the Go CLI before slices 5.4b and 5.4d they cover only what the
-suite's setup and `types` did: no run or scan has disclosed anything yet,
-so they prove the server side only until those slices land.
+own. On the Go CLI before slice 5.4b they cover only what the suite's
+setup, `types` and `scan` did: no run has disclosed anything yet, so they
+prove the server side, the generated modules and the scans only until that
+slice lands. The suite gates each of its sections with `kit.supports()`,
+which is false for a feature the client lacks (`CONFORMANCE_CLIENT_LACKING`),
+so a section whose CLI feature is missing never runs.
 
 `go/cmd/varlatch`'s `TestClientLacksNotStale` also fails while an entry
 names a slice the Go CLI marks built (`go/cmd/varlatch/testdata/built/`).
@@ -627,8 +630,12 @@ release's section says it) and is one of:
   CLI older than the feature, that call reports each of the group's checks
   `PREDATES-CLI` and the suite skips the group; the rest of the suite runs.
   The runner accepts the result only after comparing the CLI's verified
-  version with the inventory itself. `pnpm test:conformance` checks that
-  every version-gated feature is gated in each suite that has its checks.
+  version with the inventory itself. `kit.supports()` is false, too, when
+  every check of the feature lacks something (a feature the Go CLI lacks,
+  `CONFORMANCE_CLIENT_LACKING`, or an operation the target lacks), so a
+  suite may gate a core feature with it as well. `pnpm test:conformance`
+  checks that every version-gated feature is gated in each suite that has
+  its checks, and that a suite gates only features its checks have.
 
 An old CLI failing a check whose feature it already had is a finding, not a
 reason to gate the check.

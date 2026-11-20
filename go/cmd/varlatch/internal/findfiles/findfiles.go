@@ -241,6 +241,13 @@ func jsonPath(o jsjson.Object, b, key string) jsjson.Object {
 // directory, the same on every platform.
 var errNotDirectory = errors.New("not a directory")
 
+// ErrnoName is libuv's name for a system error a file operation meets
+// (EACCES, ENOENT, ...), or the error's text for one without.
+func ErrnoName(err error) string { return errnoName(err) }
+
+// ReasonOf is reasonOf: "does not exist", or "unreadable (<code>)".
+func ReasonOf(err error) string { return reasonOf(err) }
+
 // errnoName is libuv's name for a system error a file operation meets.
 func errnoName(err error) string {
 	if errors.Is(err, errNotDirectory) {
