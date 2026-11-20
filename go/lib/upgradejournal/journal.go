@@ -89,10 +89,21 @@ const (
 	Failed State = "failed"
 )
 
+// Kind is what the journal records: an upgrade, or a rollback of the last
+// one (`varlatch upgrade --rollback`, slice 6.6c), whose From is the
+// release it leaves and To the one it returns to.
+type Kind string
+
+const (
+	Upgrade  Kind = ""
+	Rollback Kind = "rollback"
+)
+
 // Journal is the file.
 type Journal struct {
 	Format int    `json:"format"`
 	ID     string `json:"id"`
+	Kind   Kind   `json:"kind,omitempty"`
 	// From and To are the releases; FromSchema and ToSchema their schema
 	// versions; RollbackSafe whether the previous release may open the
 	// upgraded database (the manifest's compatibleFrom at or below
@@ -102,6 +113,14 @@ type Journal struct {
 	FromSchema   int64  `json:"fromSchema"`
 	ToSchema     int64  `json:"toSchema"`
 	RollbackSafe bool   `json:"rollbackSafe"`
+	// DeclaredRollbackSafe (an upgrade): To's verified release.json
+	// declares itself rollback-safe for From (its previous release is
+	// From). A rollback keeps the database only with this declaration and
+	// From's varlatchd opening the database as it is.
+	DeclaredRollbackSafe bool `json:"declaredRollbackSafe"`
+	// RollbackRule (a rollback): which rule chose keeping the database or
+	// restoring the snapshot, in words.
+	RollbackRule string `json:"rollbackRule,omitempty"`
 	State        State  `json:"state"`
 	// Step is the last step completed.
 	Step      Step   `json:"step"`
@@ -116,8 +135,11 @@ type Journal struct {
 	Releases string `json:"releases"`
 	DataDir  string `json:"dataDir"`
 	Work     string `json:"work"`
-	// Snapshot is the pre-upgrade archive, "" before it is taken.
-	Snapshot string `json:"snapshot"`
+	// Snapshot is the pre-upgrade archive, "" before it is taken;
+	// SnapshotAt when the archive was made (RFC 3339), what a rollback to
+	// it loses everything after.
+	Snapshot   string `json:"snapshot"`
+	SnapshotAt string `json:"snapshotAt,omitempty"`
 	// Reason says why the upgrade was undone, or what an undo left.
 	Reason string `json:"reason,omitempty"`
 }
@@ -161,6 +183,9 @@ func (j *Journal) check() error {
 	}
 	if j.ID == "" || !release.ValidVersion(j.From) || !release.ValidVersion(j.To) {
 		return errors.New("upgrade journal: no upgrade id, or a release that is no release version")
+	}
+	if j.Kind != Upgrade && j.Kind != Rollback {
+		return fmt.Errorf("upgrade journal: kind %q", j.Kind)
 	}
 	if !slices.Contains([]State{InProgress, Done, Undone, Failed}, j.State) || j.Step != None && !slices.Contains(Steps, j.Step) {
 		return fmt.Errorf("upgrade journal: state %q, step %q", j.State, j.Step)

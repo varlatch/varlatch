@@ -66,6 +66,23 @@ import (
 // server's config.DatabaseFile and SQLite's write-ahead log and index).
 var databaseFiles = []string{"varlatch.db", "varlatch.db-wal", "varlatch.db-shm"}
 
+// gateFile is the maintenance gate in the data directory (go/lib/backup
+// GateFile), which an unfinished `admin backup restore` leaves open with
+// kind "restore".
+const gateFile = "maintenance.json"
+
+// restoreGateOpen is whether a restore's gate is open in dataDir.
+func restoreGateOpen(dataDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dataDir, gateFile))
+	if err != nil {
+		return false
+	}
+	var g struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(raw, &g) == nil && g.Kind == "restore"
+}
+
 // keepSnapshots is how long an upgrade's directory (its snapshot) is kept.
 const keepSnapshots = 30 * 24 * time.Hour
 
@@ -105,10 +122,19 @@ type Installed struct {
 	DataDir string
 }
 
-// RollbackSafe is whether the installed release's varlatchd may open a
-// database the release upgraded: its manifest lets that schema version in.
+// DeclaredRollbackSafe is whether the release's manifest declares itself
+// rollback-safe for the installed release: rollbackSafe, checked against
+// exactly that release (its previous). A release checked against another
+// one (an upgrade that skips releases) declares nothing about this one.
+func DeclaredRollbackSafe(m release.Manifest, installed Installed) bool {
+	return m.RollbackSafe && m.Previous != nil && m.Previous.Version == installed.Version
+}
+
+// RollbackSafe is whether going back to the installed release would keep
+// the database: the release declares itself rollback-safe for it, and its
+// manifest lets the installed schema version open the upgraded database.
 func RollbackSafe(m release.Manifest, installed Installed) bool {
-	return m.CompatibleFrom <= installed.Schema
+	return DeclaredRollbackSafe(m, installed) && m.CompatibleFrom <= installed.Schema
 }
 
 // Error is an upgrade that did not happen, or did not end as asked:
@@ -293,7 +319,7 @@ func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journ
 	start := u.now().UTC().Format(time.RFC3339)
 	j := &journal.Journal{
 		ID: hex.EncodeToString(id), From: inst.Version, To: rel.Version, FromSchema: inst.Schema, ToSchema: m.SchemaVersion,
-		RollbackSafe: RollbackSafe(m, inst), State: journal.InProgress, StartedAt: start,
+		RollbackSafe: RollbackSafe(m, inst), DeclaredRollbackSafe: DeclaredRollbackSafe(m, inst), State: journal.InProgress, StartedAt: start,
 		BinDir: u.BinDir, Releases: u.Releases(), DataDir: inst.DataDir,
 	}
 	j.Work = filepath.Join(inst.DataDir, "upgrades", j.ID)
@@ -421,7 +447,8 @@ func (u *Upgrader) snapshot(ctx context.Context, j *journal.Journal) error {
 		return err
 	}
 	var res struct {
-		Path string `json:"path"`
+		Path      string `json:"path"`
+		CreatedAt string `json:"createdAt"`
 	}
 	if err := json.Unmarshal(out, &res); err != nil || res.Path == "" {
 		return errors.New("varlatchd admin backup run named no archive")
@@ -437,7 +464,7 @@ func (u *Upgrader) snapshot(ctx context.Context, j *journal.Journal) error {
 	// says the snapshot is taken.
 	syncDir(j.Work)
 	syncDir(filepath.Dir(j.Work))
-	j.Snapshot = kept
+	j.Snapshot, j.SnapshotAt = kept, res.CreatedAt
 	return nil
 }
 
@@ -582,7 +609,13 @@ func (u *Upgrader) check(ctx context.Context, version string, schema int64) erro
 // promote ends a checked upgrade: the copy's and the original's leftovers
 // go, the snapshot and the kept binaries stay.
 func (u *Upgrader) promote(j *journal.Journal) error {
-	for _, dir := range []string{filepath.Join(j.Work, "db"), filepath.Join(j.Work, "original")} {
+	leftovers := []string{filepath.Join(j.Work, "db"), filepath.Join(j.Work, "original")}
+	if j.Kind == journal.Rollback {
+		// The database a rollback replaced holds the changes made since the
+		// snapshot: it stays with the rollback, 30 days.
+		leftovers = leftovers[:1]
+	}
+	for _, dir := range leftovers {
 		if err := os.RemoveAll(dir); err != nil {
 			u.logf("Could not remove %s: %v", dir, err)
 		}
@@ -592,6 +625,9 @@ func (u *Upgrader) promote(j *journal.Journal) error {
 		return err
 	}
 	u.logf("varlatchd %s serves, after its health checks.", j.To)
+	if j.Kind == journal.Rollback && !j.RollbackSafe {
+		u.logf("The database the rollback replaced is kept in %s (30 days).", filepath.Join(j.Work, "original"))
+	}
 	return nil
 }
 
@@ -613,6 +649,18 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 			return err
 		}
 		original := filepath.Join(j.Work, "original")
+		if j.Kind == journal.Rollback {
+			// A restore the rollback began and did not finish left its
+			// gate; the database it was writing goes, the original comes
+			// back.
+			if _, err := os.Stat(filepath.Join(original, databaseFiles[0])); err == nil {
+				if restoreGateOpen(j.DataDir) {
+					if err := os.Remove(filepath.Join(j.DataDir, gateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+						left = append(left, err.Error())
+					}
+				}
+			}
+		}
 		for _, name := range databaseFiles {
 			from := filepath.Join(original, name)
 			if _, err := os.Stat(from); err != nil {
@@ -642,9 +690,12 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 			return err
 		}
 	} else {
-		// The service was never stopped: the staged release goes, the
-		// snapshot stays with the upgrade.
-		os.RemoveAll(filepath.Join(j.Releases, j.To))
+		// The service was never stopped: an upgrade's staged release goes
+		// (a rollback's To is a kept release, which stays), the snapshot
+		// stays with the upgrade.
+		if j.Kind == journal.Upgrade {
+			os.RemoveAll(filepath.Join(j.Releases, j.To))
+		}
 	}
 	if len(left) == 0 {
 		if err := u.Service.Start(ctx); err != nil {

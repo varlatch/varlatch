@@ -62,6 +62,9 @@ func TestUpgradeUsageAndPrivilege(t *testing.T) {
 		{[]string{"--check", "--yes"}, "--check upgrades nothing"},
 		{[]string{"--repo", "someone/fork"}, "releases come from varlatch/varlatch only"},
 		{[]string{"a", "b"}, "Usage:\n  varlatch upgrade"},
+		{[]string{"--rollback", "--check"}, "--rollback returns to the last upgrade's previous release"},
+		{[]string{"--rollback", "0.50.0"}, "--rollback returns to the last upgrade's previous release"},
+		{[]string{"--accept-data-loss"}, "--accept-data-loss goes with --rollback"},
 	} {
 		if code, _, errs := runUpgrade(t, nil, c.args...); code != ExitUsage || !strings.Contains(errs, c.want) {
 			t.Errorf("%v: %d %q", c.args, code, errs)
@@ -118,6 +121,19 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	}
 	h.serves(t, "0.50.0-rc.2")
 
+	// Its rollback restores the snapshot: what is lost is listed first, and
+	// nothing happens without --accept-data-loss (--yes is not enough).
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--config", h.conf)
+	if code != ExitFailure || !strings.Contains(out, "the pre-upgrade snapshot is restored") || !strings.Contains(out, "LOST:") || !strings.Contains(errs, "pass --accept-data-loss") {
+		t.Fatalf("a rollback that loses changes, not accepted: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.2")
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--accept-data-loss", "--config", h.conf)
+	if code != ExitOK || !strings.Contains(out, "Rolled back to 0.50.0-rc.1") {
+		t.Fatalf("accepted: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.1")
+
 	// Rollback-safe: --check records it, upgrade --yes upgrades.
 	h = newCLIHost(t, from)
 	publish(to, release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: prev})
@@ -140,6 +156,12 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	if code, out, _ = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf); code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.2 is up to date") {
 		t.Fatalf("again: %d %q", code, out)
 	}
+	// A rollback-safe rollback keeps the database: --yes is enough.
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--config", h.conf)
+	if code != ExitOK || !strings.Contains(out, "database:  kept as it is") || strings.Contains(out, "LOST:") || !strings.Contains(out, "Rolled back to 0.50.0-rc.1") {
+		t.Fatalf("a rollback-safe rollback: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.1")
 }
 
 var (

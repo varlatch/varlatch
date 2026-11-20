@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/release"
@@ -123,4 +124,37 @@ func TestAdminSchemaUpgradeOfACopy(t *testing.T) {
 	if code, _, errOut = runAdmin(t, "schema", "status", "--database", copyPath, "--config", in.conf); code != 64 {
 		t.Fatalf("--database with status: %d %q", code, errOut)
 	}
+}
+
+// admin changes lists the audit events since a time, read-only, beside a
+// running varlatchd: by type, the newest first, never a value.
+func TestAdminChanges(t *testing.T) {
+	in := newInstall(t, "")
+	before := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	r := start(t, in)
+	if code, _, errOut := runAdmin(t, "bootstrap", "--cli-credential", "--config", in.conf); code != ExitOK {
+		t.Fatalf("bootstrap: %d %q", code, errOut)
+	}
+	code, out, errOut := runAdmin(t, "changes", "--since", before, "--json", "--config", in.conf)
+	var doc changesJSON
+	if code != ExitOK || json.Unmarshal([]byte(out), &doc) != nil || doc.Total == 0 || len(doc.Latest) == 0 || doc.Total != sum(doc.ByType) {
+		t.Fatalf("changes: %d %q %q", code, out, errOut)
+	}
+	r.stop(t)
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if code, out, _ = runAdmin(t, "changes", "--since", future, "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, "0 audit events since") {
+		t.Fatalf("none since: %d %q", code, out)
+	}
+	for _, args := range [][]string{{"changes"}, {"changes", "--since", "yesterday"}, {"changes", "--since", before, "--json", "--json"}} {
+		if code, _, errOut := runAdmin(t, append(args, "--config", in.conf)...); code != 64 || !strings.Contains(errOut, changesUsage) {
+			t.Errorf("%v: %d %q", args, code, errOut)
+		}
+	}
+}
+
+func sum(m map[string]int64) (n int64) {
+	for _, v := range m {
+		n += v
+	}
+	return n
 }
