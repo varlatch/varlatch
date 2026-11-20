@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { EMBEDDED_RELEASE, Maintenance, describeComponents, sealArchive, type Bek, type Manifest } from "@varlatch/backup";
+import { EMBEDDED_RELEASE, Maintenance, describeComponents, manifestSchema, sealArchive, type Bek, type Manifest } from "@varlatch/backup";
 import { archiveMetadata } from "../src/backup/metadata.js";
 import { generateKey } from "../src/crypto/aead.js";
 import { createPgQuerier } from "../src/db/pg.js";
@@ -28,8 +28,11 @@ import { seedInstallation } from "./helpers/migration-seed.js";
  *   - format 1 of a 0.7.0 installation, the oldest restore source this
  *     release lists: its database made by the published 0.7.0 image (by
  *     digest), bootstrapped and given data through its own /v1, then
- *     dumped. 0.7.0's own CLI wrote format 1 with the same seal; here this
- *     release's packages/backup seals it, with 0.7.0's release record.
+ *     dumped. 0.7.0 itself had no backup: its archives come from the
+ *     offline bridge 0.8.0 onwards shipped (apps/cli/src/legacyBackup.ts),
+ *     whose manifest this one is, field for field (0.7.0's release record
+ *     with migrationVersion 16 and no restore source, key version 1),
+ *     sealed with the same packages/backup.
  *
  * Every key is made here; every container has a name of its own and is
  * removed with docker rm -fv.
@@ -70,8 +73,9 @@ describe.skipIf(!out || !url)("the backup converter's archives", () => {
       writeFileSync(envFile, `PGHOST=${u.hostname}\nPGPORT=${u.port || "5432"}\nPGUSER=${decodeURIComponent(u.username)}\nPGPASSWORD=${decodeURIComponent(u.password)}\nPGDATABASE=${name}\n`, { mode: 0o600 });
       return envFile;
     };
+    // Each dump is the database's plaintext: 0600, as the bridge's scratch is.
     const dump = (name: string, file: string) => {
-      writeFileSync(file, docker(["run", "--rm", "--name", containerName("dump"), "--network", "host", "--env-file", credentials(name), POSTGRES, "pg_dump", "-Fc"]));
+      writeFileSync(file, docker(["run", "--rm", "--name", containerName("dump"), "--network", "host", "--env-file", credentials(name), POSTGRES, "pg_dump", "-Fc"]), { mode: 0o600 });
     };
     const started: string[] = [];
     const write = (name: string, text: string | Buffer) => writeFileSync(join(out!, name), text, { mode: 0o600 });
@@ -108,7 +112,8 @@ describe.skipIf(!out || !url)("the backup converter's archives", () => {
       mkdirSync(seeded);
       dump(databases[0]!, join(seeded, "secret-plane.dump"));
       const seal = async (dir: string, format: 1 | 2, meta: Omit<Manifest, "formatVersion" | "archiveId" | "createdAt" | "components">, bek: Bek, name: string) => {
-        const manifest = { ...meta, formatVersion: format, archiveId: randomUUID(), createdAt: new Date().toISOString(), components: await describeComponents(dir, format) } as Manifest;
+        // Parsed first, as the bridge and this release's capture seal it: the schema's member order.
+        const manifest = manifestSchema.parse({ ...meta, formatVersion: format, archiveId: randomUUID(), createdAt: new Date().toISOString(), components: await describeComponents(dir, format) });
         await sealArchive(dir, manifest, bek, join(out!, name));
         return manifest;
       };
@@ -116,7 +121,7 @@ describe.skipIf(!out || !url)("the backup converter's archives", () => {
       cases.push({ name: "seeded installation, format 2", archive: "seeded-format2.vltbak", kekFile: "root-kek", bekFile: "bek-key", format: 2, release: EMBEDDED_RELEASE.version, installationId: metadata.installationId });
       // Format 1: both planes, the Application Plane's components an empty database's dump and an empty tar.
       dump(databases[1]!, join(seeded, "application-plane.dump"));
-      writeFileSync(join(seeded, "convex-storage.tar"), Buffer.alloc(1024));
+      writeFileSync(join(seeded, "convex-storage.tar"), Buffer.alloc(1024), { mode: 0o600 });
       await seal(seeded, 1, metadata, bekPassphrase, "seeded-format1.vltbak");
       cases.push({ name: "seeded installation, format 1, passphrase BEK", archive: "seeded-format1.vltbak", kekFile: "root-kek", bekFile: "bek-passphrase", outBekFile: "out-bek", format: 1, release: EMBEDDED_RELEASE.version, installationId: metadata.installationId });
 
@@ -172,15 +177,15 @@ describe.skipIf(!out || !url)("the backup converter's archives", () => {
       mkdirSync(oldDir);
       dump(databases[2]!, join(oldDir, "secret-plane.dump"));
       dump(databases[1]!, join(oldDir, "application-plane.dump"));
-      writeFileSync(join(oldDir, "convex-storage.tar"), Buffer.alloc(1024));
-      const version = inst.root_kek_version ?? 1;
+      writeFileSync(join(oldDir, "convex-storage.tar"), Buffer.alloc(1024), { mode: 0o600 });
+      expect(migrationVersion).toBe(16);
+      // The bridge's manifest (apps/cli/src/legacyBackup.ts): 0.7.0's release record, key version 1.
       await seal(oldDir, 1, {
         installationId: inst.id,
-        release: { schemaVersion: 1, version: "0.7.0", apiMajor: 1, migrationVersion, supportedPostgresMajor: 17 },
-        requiredKeyVersions: [version],
-        canaries: [{ version, envelope: typeof inst.kek_canary === "string" ? JSON.parse(inst.kek_canary) : inst.kek_canary }],
+        release: { schemaVersion: 1, version: "0.7.0", apiMajor: 1, migrationVersion: 16, supportedPostgresMajor: 17, supportedRestoreSources: [] },
+        requiredKeyVersions: [1],
+        canaries: [{ version: 1, envelope: typeof inst.kek_canary === "string" ? JSON.parse(inst.kek_canary) : inst.kek_canary }],
       } as Omit<Manifest, "formatVersion" | "archiveId" | "createdAt" | "components">, bekKey, "v070-format1.vltbak");
-      expect(migrationVersion).toBe(16);
       cases.push({ name: "0.7.0 installation, format 1", archive: "v070-format1.vltbak", kekFile: "root-kek", bekFile: "bek-key", format: 1, release: "0.7.0", installationId: inst.id });
 
       write("cases.json", JSON.stringify(cases, null, 2) + "\n");

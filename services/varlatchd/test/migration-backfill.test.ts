@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { prepareRestore } from "@varlatch/backup";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 
@@ -65,6 +66,15 @@ describe.skipIf(!url || !existsSync(cli))("admin migration backfill", () => {
     const second = backfill();
     expect(second.status, second.stderr).toBe(0);
     expect(JSON.parse(second.stdout)).toEqual({ finished: true, batches: 0, events: 0 });
+  }, 120_000);
+
+  it("refuses under a maintenance gate (a restore loading the database), writing nothing", async () => {
+    await db.query("UPDATE exposure_backfill SET finished_at = NULL");
+    prepareRestore(dir, "00000000-0000-4000-8000-000000000042");
+    const r = backfill();
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/a restore gate is open/);
+    expect((await state()).finished).toBe(false);
   }, 120_000);
 
   it("takes no argument", () => {

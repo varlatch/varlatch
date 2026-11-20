@@ -384,6 +384,10 @@ async function migrationBackfill(args: string[]): Promise<void> {
       fail(`varlatchd admin migration backfill: ${err instanceof Error ? err.message : "the daemon's state could not be read"}`);
     }
   }
+  // Under a maintenance gate (a restore loading the database, the
+  // migration's barrier) the audit may be half there: no backfill over it.
+  const gate = activeGate(stateDir());
+  if (gate) fail(`varlatchd admin migration backfill: a ${gate.kind} gate is open (installation maintenance); the backfill runs on an installation at rest`);
   const { backfillExposureOnce } = await import("./domain/exposure.js");
   const config = loadConfig(process.env, { requireKek: false, listeners: false });
   const db = createPgQuerier(config.databaseUrl);
