@@ -1637,8 +1637,11 @@ jobs:
     name: go-ok
     # On a draft it runs too, and fails: every other job is skipped then, and
     # a skipped required check would read as passed.
+    # go-container runs only at night and by hand (skipped on a pull request
+    # and in the merge queue, which go-ok accepts): listed so that a failed
+    # nightly run's go-ok is red too, not green beside a red job.
     if: always()
-    needs: [changes, go, go-race, go-platforms, go-binary, go-image, openapi, windows, go-cli-platforms, go-binary-go-cli]
+    needs: [changes, go, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

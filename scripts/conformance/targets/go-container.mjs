@@ -24,6 +24,15 @@
  *             container of its own, removed when it ends
  *   <wrapper> admin conformance-probe ...   (up's check, no installation)
  *             a container of its own, removed when it ends
+ *   <wrapper> admin conformance-sign-release <dir> <version>
+ *             (serve-cli's release, go-binary's prepareCliRelease) a
+ *             container of its own with <dir>'s parent, the installation
+ *             directory, mounted at its own path: it reads and signs the
+ *             files in <dir> and writes the trusted root beside them
+ *
+ * `serve` and every admin container also take VARLATCH_CONFORMANCE_CLI_RELEASE
+ * from the environment: go-binary hands serve-cli's release to varlatchd
+ * through it, a directory inside the installation's, so mounted with it.
  *
  * `down` is go-binary's, then the installation's container removed by its
  * name, and the wrapper. The fingerprint is the image's ID.
@@ -62,22 +71,29 @@ if [ -n "$conf" ]; then
   dir=$(dirname "$conf")
   name="vl-conformance-$(basename "$dir" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_.-')"
   mount="-v $dir:$dir"
+elif [ "\${1:-}" = admin ] && [ "\${2:-}" = conformance-sign-release ] && [ -n "\${3:-}" ]; then
+  # The release's directory is the installation's: its parent, mounted
+  # at its own path, so the paths the harness passes mean the same inside.
+  dir=$(dirname "$3")
+  name="vl-conformance-$(basename "$dir" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_.-')-sign"
+  mount="-v $dir:$dir"
 else
   name="vl-conformance-probe-$$"
   mount=''
 fi
+env="-e SSL_CERT_FILE -e VARLATCH_CONFORMANCE_OUTBOUND_HOSTS -e VARLATCH_CONFORMANCE_CLI_RELEASE"
 if [ "\${1:-}" = serve ]; then
   # This installation's container, by its exact name: one that ended and
   # is not yet removed would hold the name.
   docker rm -fv "$name" >/dev/null 2>&1 || true
   exec docker run --rm --name "$name" --network host --user "$user" $mount \\
-    -e SSL_CERT_FILE -e VARLATCH_CONFORMANCE_OUTBOUND_HOSTS --entrypoint ${VARLATCHD} "$image" "$@"
+    $env --entrypoint ${VARLATCHD} "$image" "$@"
 fi
 if [ -n "$conf" ] && [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = true ]; then
   exec docker exec "$name" ${VARLATCHD} "$@"
 fi
 exec docker run --rm --name "$name-admin-$$" --network host --user "$user" $mount \\
-  -e SSL_CERT_FILE -e VARLATCH_CONFORMANCE_OUTBOUND_HOSTS --entrypoint ${VARLATCHD} "$image" "$@"
+  $env --entrypoint ${VARLATCHD} "$image" "$@"
 `;
 }
 
