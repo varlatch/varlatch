@@ -60,7 +60,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && sub != "migrate" && !conformance && !operator && !backup && !keys {
+	move := isMoveCommand(sub) || sub == "config"
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && sub != "migrate" && !conformance && !operator && !backup && !keys && !move {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -134,6 +135,17 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
+	case sub == "config":
+		if len(rest) != 1 || rest[0] != "check" {
+			fmt.Fprintln(stderr, configCheckUsage)
+			return 64
+		}
+	case move:
+		// Checked here, so a usage error never reaches the daemon.
+		if msg := moveUsage(sub, rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case operator:
 		// Checked here, so a usage error never reaches the daemon.
 		if msg := operatorUsage(sub, rest); msg != "" {
@@ -156,6 +168,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return ExitFailure
 	}
 	switch {
+	case sub == "config":
+		return runConfigCheck(cfg, stdout, stderr)
 	case sub == "outbound":
 		return runOutboundCheck(cfg, rest, stdout, stderr)
 	case sub == "kek":
@@ -183,7 +197,9 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] | varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release  (each with [--config <file>])\n", msg)
+		"varlatchd admin schema status|upgrade [--json] | varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
+		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
+		"varlatchd admin move-facts | varlatchd admin config check  (each with [--config <file>])\n", msg)
 	return 64
 }
 
@@ -329,8 +345,11 @@ const MaintenanceRefusal = "Installation is in maintenance; ordinary admin opera
 // writes reports whether a host command may write the installation: all
 // but the backup and maintenance commands, which take the admission their
 // own way (backup run enters it; maintenance manages it; backup status
-// only reads).
-func writes(sub string) bool { return sub != "backup" && sub != "maintenance" && sub != "migrate" }
+// only reads), migrate (which manages its own gate), and move-facts,
+// which only reads.
+func writes(sub string) bool {
+	return sub != "backup" && sub != "maintenance" && sub != "migrate" && sub != "move-facts"
+}
 
 // runHost runs one host command, in the daemon or offline, with env. A
 // command that writes enters the maintenance admission first, before any
@@ -367,6 +386,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runMigrateRelease(env, rest, stdout, stderr)
 	case sub == "migrate":
 		return runMigrateOpen(env, rest, stdout, stderr)
+	case isMoveCommand(sub):
+		return runMoveCommand(ctx, env, sub, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":
 		return adminUsage(stderr, "unknown command "+sub)
 	}
