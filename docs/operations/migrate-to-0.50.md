@@ -68,11 +68,12 @@ state.
      backfill and a key rotation in progress (0.23.0). -->
 
 <!-- pending: 0.23.0 published and its digest pinned in varlatch migrate
-     (LastTypeScriptDigest, #357); until then every source is refused. -->
+     (LastTypeScriptDigest, #371); until then every source is refused. -->
 
 ### What you need
 
-On the installation's host, as root:
+On the installation's Linux host, as root (`varlatch migrate` runs on
+Linux only; every other OS refuses at once):
 
 - **The Go CLI**, `varlatch` 0.50 or later, and `varlatchd` of the release
   you migrate to. `varlatch migrate` drives both installations as
@@ -148,8 +149,8 @@ A dry run does not move the address, so its transfer time is the
 ingress's estimate, and the report says so in the parenthesis. A
 migration that measured its transfer reports the time alone.
 
-<!-- pending #359: the transfer's estimate and its parenthesis in the
-     report, as #359 prints them. -->
+<!-- pending #371: the transfer's estimate and its parenthesis in the
+     report, as #371 prints them. -->
 
 - **Checks passed** must be `true`. The checks compare both sides without
   showing any secret: every row, every encrypted item (by keyed digests,
@@ -173,6 +174,12 @@ migration that measured its transfer reports the time alone.
 
 `varlatch migrate --status` shows where a migration stands, from the
 Compose directory (or with `--from`). Add `--json` for the full report.
+
+A failed dry run currently leaves a journal (`migration.json`) behind, so
+run `varlatch migrate --abort` before the next run.
+
+<!-- pending (streams PR, not opened yet): a failed dry run clearing its
+     journal without needing --abort. -->
 
 ## The migration
 
@@ -226,8 +233,9 @@ stay closed until `--resume` finishes it. `varlatch
 migrate --abort` undoes a migration that has not switched yet, the address
 first.
 
-<!-- pending #364: the interrupted states, as its tests pin them (the
-     migration killed at every phase, then resumed or aborted). -->
+<!-- pending #371: the interrupted states, as its tests pin them (the
+     migration killed at every phase, then resumed or aborted), and
+     refusing off Linux. -->
 
 ## The address transfer
 
@@ -250,7 +258,7 @@ If it does not, the address goes back and the migration is undone.
 - **`coolify`**: Coolify routes the domain by application, so you move it.
   See below.
 
-<!-- pending #359: --ingress public|proxy|coolify, the preflight's
+<!-- pending #371: --ingress public|proxy|coolify, the preflight's
      refusals, --transfer-timeout, --abort. -->
 
 ### On Coolify
@@ -275,7 +283,7 @@ If the check fails, `--resume` checks again once you have fixed the
 domain. `--abort` undoes the migration: it tells you to move the domain
 back to the TypeScript application first.
 
-<!-- pending #361: the image target's operator steps on Coolify (Deploy,
+<!-- pending #371: the image target's operator steps on Coolify (Deploy,
      Stop) and the exit-75 stops; the Coolify rehearsal confirms them. -->
 
 ### The tailnet
@@ -284,24 +292,29 @@ When the installation serves its tailnet address, the migration hands the
 tailnet name over to a new node, by rename, in the same transfer:
 
 - Before the barrier, the new server's node joins under a temporary name
-  (`<name>-vl-<id>-n`, where `<id>` is the migration's id) and gets a
-  certificate for it, which proves
-  issuance works now. The old node's certificate is renewed first if it
-  would expire within the rollback window and seven days.
-- Under the barrier, the old node is renamed to `<name>-vl-<id>-o` and the
-  new node to `<name>`, back to back, within one 180-second deadline. The
-  old sidecar stops without logging out: its state is kept for the
-  rollback window.
+  (`<name>-vl-<op>-n`, where `<op>` is the handoff's 10-character
+  operation id) and, on Tailscale, gets a certificate for it, which proves
+  issuance works now. The handoff checks the issuance count against Let's
+  Encrypt's limit of five per exact name per week, and renews the old
+  node's certificate first if it would expire within the rollback window
+  and seven days.
+- Under the barrier, the old sidecar stops without logging out (its state
+  is kept for the rollback window), then the old node is renamed to
+  `<name>-vl-<op>-o` and the new node to `<name>`, back to back, each read
+  back from the control plane. On Tailscale, the new node then obtains the
+  certificate for `<name>`. Everything from stopping the old sidecar to
+  the final check runs within one 180-second deadline.
 - The transfer counts only once `<name>`, resolved from a client node,
-  reaches the new node. Any failure renames both nodes back.
+  reaches the new node. Any failure before the new node opens renames both
+  nodes back (each read back) and reopens the old node.
 
 With both a public (or Coolify) address and the tailnet address, the order
 is fixed: the domain first, checked through the public URL; then the
 tailnet name, checked from a client node; then both together. A failure
 undoes them in reverse order.
 
-<!-- pending: the handoff's engine (#365, open) and its wiring into
-     varlatch migrate (not opened yet), and the combined order. -->
+<!-- pending #379: the handoff's wiring into varlatch migrate, and the
+     combined order. -->
 
 #### The tailnet authority
 
@@ -345,11 +358,11 @@ or take an API key that expires within the hour (`headscale apikeys
 create --expiration 1h`), refusing a longer-lived one since a Headscale
 API key is a full administrator.
 
-<!-- pending: the handoff's wiring into varlatch migrate and the 0.50
-     server's handoff commands (both not opened yet): the options above,
+<!-- pending #379: the handoff's wiring into varlatch migrate (and #378
+     for the 0.50 server's handoff commands): the options above,
      --accept-rollback-certificate, the refusal without the authority, the
-     probe's reusable key and access rule. Headscale support (slice 7.5c,
-     not opened yet). -->
+     probe's reusable key and access rule. pending (not opened yet):
+     Headscale authority wiring (slice 7.5c-2). -->
 
 ## The image target
 
@@ -385,10 +398,9 @@ sudo varlatch migrate --ingress coolify \
   new node until you do. Then `--resume` (or `--abort`) gives the name
   back to the old node, then the address.
 
-  <!-- pending: the handoff's wiring into varlatch migrate (not opened
-       yet). -->
+  <!-- pending #379: the handoff's wiring into varlatch migrate. -->
 
-<!-- pending #361: --to-data, --to-keys, --to-config, --to-image,
+<!-- pending #371: --to-data, --to-keys, --to-config, --to-image,
      --to-service, the ownership checks and the human steps. -->
 
 ## The rollback window
@@ -443,7 +455,7 @@ undoes the rollback, and the new server goes on serving. During the
 transfer, `--resume` checks again and `--abort` gives the address back to
 the new server first. People sign in again after a rollback too.
 
-<!-- pending #370: the --rollback phases and their undo. -->
+<!-- pending #371: the --rollback phases and their undo. -->
 
 ### Archives made during the window
 
@@ -469,8 +481,7 @@ sudo varlatch setup --restore <archive> \
 
 or by the installation a later forward migration makes.
 
-<!-- pending #371: the report's wording, as #371 prints it (#370 says
-     "They are not deleted:" in its place). -->
+<!-- pending #371: the report's wording, as #371 prints it. -->
 
 <!-- pending #341: setup --restore. -->
 
@@ -538,10 +549,8 @@ marked migrated out, refusing every request, its data untouched. After a
 rollback, the 0.50 server's copy and the volumes from before the
 migration stay.
 
-<!-- pending #371: --finish and --delete-old-data. It is being reworked
-     (a two-step flow, the volume names read from compose config, the
-     rollback's archive verified remotely): match this section to its
-     final behaviour when it lands. -->
+<!-- pending #371: --finish and --delete-old-data; check this section
+     against its final behaviour when #371 lands. -->
 
 ## Old archives: the converter
 
