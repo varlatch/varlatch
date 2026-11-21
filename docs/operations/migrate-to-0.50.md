@@ -68,7 +68,7 @@ state.
      backfill and a key rotation in progress (0.23.0). -->
 
 <!-- pending: 0.23.0 published and its digest pinned in varlatch migrate
-     (LastTypeScriptDigest, #371); until then every source is refused. -->
+     (LastTypeScriptDigest); until then every source is refused. -->
 
 ### What you need
 
@@ -149,9 +149,6 @@ A dry run does not move the address, so its transfer time is the
 ingress's estimate, and the report says so in the parenthesis. A
 migration that measured its transfer reports the time alone.
 
-<!-- pending #371: the transfer's estimate and its parenthesis in the
-     report, as #371 prints them. -->
-
 - **Checks passed** must be `true`. The checks compare both sides without
   showing any secret: every row, every encrypted item (by keyed digests,
   under a key made for the run and then discarded), every access decision
@@ -175,11 +172,10 @@ migration that measured its transfer reports the time alone.
 `varlatch migrate --status` shows where a migration stands, from the
 Compose directory (or with `--from`). Add `--json` for the full report.
 
-A failed dry run currently leaves a journal (`migration.json`) behind, so
-run `varlatch migrate --abort` before the next run.
-
-<!-- pending (streams PR, not opened yet): a failed dry run clearing its
-     journal without needing --abort. -->
+A dry run that fails before the barrier records itself as stopped in
+`migration.json`, so once you fix the problem, running `varlatch migrate`
+starts it again without needing `--abort`. (A run killed mid-dry-run stays
+interrupted; use `--resume` or `--abort`.)
 
 ## The migration
 
@@ -213,6 +209,16 @@ The journal holds no key and no value. The new server does not start on a
 data directory whose journal is not open, and the old one refuses to start
 writable once its journal says switched.
 
+> **Do not recreate or redeploy the old TypeScript application after the
+> switch.** Do not run `docker compose up -d`, recreate containers on
+> reboot, or click **Redeploy** in Coolify on the old TypeScript
+> installation: Compose re-runs its one-off `varlatch-migrate` service,
+> which refuses behind the migrated-out gate, so the old `varlatchd` does
+> not start and stops answering its migrated-out `503`. A plain
+> `docker compose restart` is fine (it restarts existing containers without
+> re-running `varlatch-migrate`), and `varlatch migrate` uses `--no-deps`
+> for its own restarts.
+
 ### Interrupted
 
 A migration can be interrupted anywhere: a lost connection, a reboot, a
@@ -232,10 +238,6 @@ plane of the tailnet cannot be reached during an undo, both installations
 stay closed until `--resume` finishes it. `varlatch
 migrate --abort` undoes a migration that has not switched yet, the address
 first.
-
-<!-- pending #371: the interrupted states, as its tests pin them (the
-     migration killed at every phase, then resumed or aborted), and
-     refusing off Linux. -->
 
 ## The address transfer
 
@@ -258,24 +260,32 @@ If it does not, the address goes back and the migration is undone.
 - **`coolify`**: Coolify routes the domain by application, so you move it.
   See below.
 
-<!-- pending #371: --ingress public|proxy|coolify, the preflight's
-     refusals, --transfer-timeout, --abort. -->
-
 ### On Coolify
 
 `varlatch migrate` does not change anything in Coolify: you make each step
 it asks for, then run it again with `--resume`.
 
-1. Create the 0.50 application in Coolify in setup mode, from the image,
-   with nothing listening (see [The image target](#the-image-target)).
+1. Create the 0.50 application in Coolify as a **Docker Compose** resource
+   pointing at `infra/coolify/varlatchd.compose.yml` (see
+   `infra/coolify/README.md` and [The image target](#the-image-target)),
+   with `VARLATCH_VARLATCHD_DIGEST` set to the release's verified digest,
+   in setup mode with nothing listening (do not click **Deploy** yet):
+   - create the host configuration file (`/srv/varlatch/varlatchd.conf`, or
+     `VARLATCH_CONFIG_FILE`) as a regular file before clicking **Deploy**,
+     otherwise Docker creates an empty directory there and `varlatchd`
+     fails with `EISDIR`;
+   - set `listen = 0.0.0.0:8686` and `trusted_proxies = coolify-proxy` in
+     `varlatchd.conf`, and leave `listen_https` unset (Coolify's proxy
+     terminates TLS; setting `listen_https` with `listen = 0.0.0.0:8686`
+     makes `varlatchd` refuse to start with exit `78` and crash-loop).
 2. Run the migration with `--ingress coolify` and the image target's
    options. After the final copy it stops (exit status 75) and says, step
    by step, what to do:
    - start the 0.50 service: in Coolify, **Deploy** it (it starts isolated
      behind the migration's gate);
    - move the domain: in Coolify, move the installation's domain from the
-     TypeScript application to the 0.50 one (its domain setting), and
-     redeploy the proxy if Coolify asks.
+     TypeScript application to the 0.50 `varlatchd` service on port `8686`,
+     and redeploy the proxy if Coolify asks.
 3. Run `varlatch migrate --resume` with the same options. It checks
    `/v1/meta` through the public URL, then switches and opens.
 
@@ -283,8 +293,8 @@ If the check fails, `--resume` checks again once you have fixed the
 domain. `--abort` undoes the migration: it tells you to move the domain
 back to the TypeScript application first.
 
-<!-- pending #371: the image target's operator steps on Coolify (Deploy,
-     Stop) and the exit-75 stops; the Coolify rehearsal confirms them. -->
+<!-- pending #390: infra/coolify/varlatchd.compose.yml and its Coolify
+     setup documentation in infra/coolify/README.md. -->
 
 ### The tailnet
 
@@ -383,7 +393,14 @@ sudo varlatch migrate --ingress coolify \
   Its data directory, keys directory and configuration are bind paths on
   this host, owned by the image's user (`65532:65532`) and not writable by
   others. The migration says the `chown` and `chmod` to run when they are
-  not.
+  not. On Coolify, `infra/coolify/varlatchd.compose.yml`'s default bind
+  paths and service name match `--to-data /srv/varlatch/data`,
+  `--to-keys /srv/varlatch/keys`, `--to-config /srv/varlatch/varlatchd.conf`
+  and `--to-service varlatchd`, and its `VARLATCH_VARLATCHD_DIGEST`
+  variable pins the digest matching `--to-image`.
+
+  <!-- pending #390: infra/coolify/varlatchd.compose.yml defaults matching
+       --to-data/--to-keys/--to-config/--to-service. -->
 - `--to-image` is pinned by its digest, and its tag is the release of the
   `varlatchd` on this host, which fills the bind paths as the image's user.
   The migration does not run Docker against the service: that it runs this
@@ -399,9 +416,6 @@ sudo varlatch migrate --ingress coolify \
   back to the old node, then the address.
 
   <!-- pending #379: the handoff's wiring into varlatch migrate. -->
-
-<!-- pending #371: --to-data, --to-keys, --to-config, --to-image,
-     --to-service, the ownership checks and the human steps. -->
 
 ## The rollback window
 
@@ -420,8 +434,7 @@ release that ends the window:
 > TypeScript release (0.23.0). Its data stays; only the way back goes.
 
 <!-- pending (not built yet): the release job's test of each release
-     against 0.23.0's image; varlatch upgrade (#330) saying the notice
-     and asking. -->
+     against 0.23.0's image. -->
 
 ### Roll back
 
@@ -455,7 +468,13 @@ undoes the rollback, and the new server goes on serving. During the
 transfer, `--resume` checks again and `--abort` gives the address back to
 the new server first. People sign in again after a rollback too.
 
-<!-- pending #371: the --rollback phases and their undo. -->
+On a Tailscale topology (`varlatchd` with `network_mode: service:tailscale`),
+`--rollback` refuses up front if the old `tailscale` sidecar is stopped and
+names the step to take (`docker compose up -d --no-deps tailscale`, then
+`varlatch migrate --rollback` again): `varlatch migrate` never starts the
+old Tailscale node itself.
+
+<!-- pending #389: rollback refusing a stopped tailscale sidecar up front. -->
 
 ### Archives made during the window
 
@@ -480,10 +499,6 @@ sudo varlatch setup --restore <archive> \
 ```
 
 or by the installation a later forward migration makes.
-
-<!-- pending #371: the report's wording, as #371 prints it. -->
-
-<!-- pending #341: setup --restore. -->
 
 ### Finish
 
@@ -548,9 +563,6 @@ Until `--finish`, after a migration the old installation stays as it is:
 marked migrated out, refusing every request, its data untouched. After a
 rollback, the 0.50 server's copy and the volumes from before the
 migration stay.
-
-<!-- pending #371: --finish and --delete-old-data; check this section
-     against its final behaviour when #371 lands. -->
 
 ## Old archives: the converter
 
