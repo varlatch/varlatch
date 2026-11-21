@@ -66,13 +66,13 @@ func measure(name, value string) {
 	if report.Measurements == nil {
 		report.Measurements = map[string]string{}
 	}
-	report.Measurements[name] = value
+	report.Measurements[name] = redact(value)
 }
 
 func differs(item int, standIn, real, bearing string) {
 	report.Lock()
 	defer report.Unlock()
-	report.Differences = append(report.Differences, difference{Item: item, StandIn: standIn, Real: redact(real), Bearing: bearing})
+	report.Differences = append(report.Differences, difference{Item: item, StandIn: redact(standIn), Real: redact(real), Bearing: redact(bearing)})
 }
 
 // secrets is every value of the run's that must never reach the report:
@@ -89,7 +89,7 @@ func secret(v string) string {
 	return v
 }
 
-var tokenShaped = regexp.MustCompile(`\b(vlt_[A-Za-z0-9_]{8,}|[0-9a-f]{40,})\b`)
+var tokenShaped = regexp.MustCompile(`\bvlt_[A-Za-z0-9_-]{8,}|\b[0-9a-f]{40,}\b`)
 
 // redact removes every registered secret and anything token-shaped (a
 // Varlatch token, a long hex string: keys, run keys, digests of secrets).

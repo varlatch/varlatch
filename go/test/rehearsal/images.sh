@@ -11,13 +11,26 @@
 #
 # Writes <out-dir>/images.json ({"registry": <port>, "images": {name: ref}})
 # and the release's files (build-release-artifacts.mjs). The registry runs
-# as the container vl-rh-<run>-registry; remove it with
-# `docker rm -fv vl-rh-<run>-registry`.
+# as the container vl-rh-<run>-registry; run.sh removes that container and
+# its three images by exact name/tag on teardown (and this script cleans
+# them up on error). If run standalone, remove vl-rh-<run>-registry and
+# the three image refs listed in <out-dir>/images.json by exact name.
 set -euo pipefail
+[ $# -ge 3 ] || { echo "usage: images.sh <typescript-checkout> <run> <out-dir>" >&2; exit 64; }
 ts=$(cd "$1" && pwd) run=$2 out=$3
 [[ $run =~ ^[a-z0-9-]+$ ]] || { echo "run is lowercase letters, digits and dashes" >&2; exit 64; }
 mkdir -p "$out" && out=$(cd "$out" && pwd)
 registry=vl-rh-$run-registry
+built_tags=()
+built_digests=()
+cleanup_on_err() {
+  docker rm -fv "$registry" >/dev/null 2>&1 || true
+  local ref
+  for ref in "${built_tags[@]}" "${built_digests[@]}"; do
+    docker image rm "$ref" >/dev/null 2>&1 || true
+  done
+}
+trap cleanup_on_err ERR
 version=$(node -p "require('$ts/packages/backup/src/release.json').version")
 # registry:2, by digest.
 docker run -d --name "$registry" -p 127.0.0.1::5000 \
@@ -30,9 +43,11 @@ for pair in varlatchd=services/varlatchd/Dockerfile varlatch-web=apps/web/Docker
   repo=127.0.0.1:$port/vl-rh/$name
   [ "$name" != convex-deploy ] || repo=127.0.0.1:$port/vl-rh/varlatch-convex-deploy
   docker build -q --label "org.opencontainers.image.version=$version" -f "$ts/$file" -t "$repo:$version" "$ts" >/dev/null
+  built_tags+=("$repo:$version")
   docker push -q "$repo:$version" >/dev/null
   digest=$(docker image inspect "$repo:$version" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -m1 "^$repo@" | cut -d@ -f2)
   [ -n "$digest" ] || { echo "no registry digest for $repo" >&2; exit 1; }
+  built_digests+=("$repo@$digest")
   refs+=("$name=$repo:$version@$digest")
   echo "built $name $digest" >&2
 done

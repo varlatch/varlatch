@@ -195,7 +195,7 @@ type ran struct {
 }
 
 func (r ran) String() string {
-	return fmt.Sprintf("exit %d after %s; stderr: %s", r.code, r.took.Round(time.Millisecond), lastLines(r.stderr, 4))
+	return fmt.Sprintf("exit %d after %s; stderr: %s", r.code, r.took.Round(time.Millisecond), redact(lastLines(r.stderr, 4)))
 }
 
 func lastLines(s string, n int) string {
@@ -231,10 +231,14 @@ func exitCode(err error) int {
 	return 0
 }
 
+func formatFailure(what string, r ran) string {
+	return fmt.Sprintf("%s: %s\nstdout: %s", what, r, redact(lastLines(r.stdout, 6)))
+}
+
 func must(t *testing.T, r ran, what string) ran {
 	t.Helper()
 	if r.code != 0 {
-		t.Fatalf("%s: %s\nstdout: %s", what, r, lastLines(r.stdout, 6))
+		t.Fatal(formatFailure(what, r))
 	}
 	return r
 }
@@ -295,6 +299,9 @@ type installation struct {
 	t                  *testing.T
 	name, project, dir string
 	state              string
+	bucket             string
+	targetRoot         string
+	targetDir          string
 	webPort, proxyPort string
 	publicURL          string
 	conf, data, keys   string
@@ -318,8 +325,10 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	// replace on its way, as on a real host's /var/lib/varlatch).
 	target := filepath.Join(base, "target")
 	if root := os.Getenv("VL_RH_TARGET_ROOT"); root != "" {
+		in.targetRoot = root
 		target = filepath.Join(root, runID, name)
 	}
+	in.targetDir = target
 	for _, d := range []string{in.dir, in.state, filepath.Join(target, "data"), filepath.Join(target, "keys"), filepath.Join(base, "operator")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
@@ -368,10 +377,10 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	if err := os.WriteFile(in.bek, []byte(hexBytes(32)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bucket := "vl-rh-" + name
-	s3.createBucket(t, bucket)
+	in.bucket = "vl-rh-" + name
+	s3.createBucket(t, in.bucket)
 	in.destinations = filepath.Join(op, "backup-destinations.json")
-	s3.writeDestination(t, in.destinations, bucket, "write.json")
+	s3.writeDestination(t, in.destinations, in.bucket, "write.json")
 	in.readCreds = filepath.Join(op, "read.json")
 	s3.writeCredentials(t, in.readCreds)
 	// The public URL: the operator's proxy to the dashboard's port, which
@@ -439,7 +448,7 @@ func (in *installation) up() {
 	_ = json.Unmarshal([]byte(body), &meta)
 	in.installationID = meta.InstallationID
 	if meta.ServerVersion != "0.23.0" || meta.InstallationID == "" {
-		t.Fatalf("/v1/meta: %s", body)
+		t.Fatalf("/v1/meta: %s", redact(body))
 	}
 }
 
@@ -466,16 +475,6 @@ func (in *installation) get(path string) (int, string) {
 	return resp.StatusCode, b.String()
 }
 
-// migrate runs varlatch migrate (the rehearsal build) with the
-// installation's options, then extra.
-func (in *installation) migrate(rel release, extra ...string) ran {
-	args := []string{"migrate", "--ingress", "proxy", "--from", in.dir, "--config", in.conf,
-		"--bek-file", in.bek, "--backup-destination", "offsite", "--destinations-file", in.destinations,
-		"--read-credentials-file", in.readCreds, "--ts-cli", "varlatch-ts", "--transfer-timeout", "90s", "--drain", "20s"}
-	env := []string{"PATH=" + in.fakebin + ":" + os.Getenv("PATH"), "VL_RH_STATE=" + in.state, "VARLATCH_MIGRATE_PIN=" + rel.pin(), "TMPDIR=" + in.state}
-	return run(in.dir, env, nil, filepath.Join(binDir, "varlatch"), append(args, extra...)...)
-}
-
 // journal is the migration's journal in the Compose directory.
 func (in *installation) journal() map[string]any {
 	b, err := os.ReadFile(filepath.Join(in.dir, "migration.json"))
@@ -489,7 +488,8 @@ func (in *installation) journal() map[string]any {
 
 // remove removes everything of the installation's, by its exact names:
 // the target varlatchd and any squatter, the Compose project (its
-// containers, network and volumes), the proxy.
+// containers, network and volumes), the proxy, and its target directory
+// under VL_RH_TARGET_ROOT.
 func (in *installation) remove() {
 	_ = os.Setenv("VL_RH_STATE", in.state)
 	_ = stopService()
@@ -507,4 +507,8 @@ func (in *installation) remove() {
 		return
 	}
 	run(in.dir, nil, nil, "docker", "compose", "-p", in.project, "--profile", "deploy", "down", "-v", "--remove-orphans", "--timeout", "20")
+	if in.targetRoot != "" && in.targetDir != "" {
+		_ = os.RemoveAll(in.targetDir)
+		_ = os.Remove(filepath.Join(in.targetRoot, runID))
+	}
 }

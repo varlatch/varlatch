@@ -14,14 +14,86 @@
 # container, network and volume is named vl-rh-<run>-... and removed by
 # that name when the run ends (VL_RH_KEEP=1 keeps the installations).
 set -euo pipefail
+[ $# -ge 2 ] || { echo "usage: run.sh <typescript-checkout> <run> [<release-dir>]" >&2; exit 64; }
 here=$(cd "$(dirname "$0")" && pwd) gomod=$(cd "$here/../.." && pwd)
 ts=$(cd "$1" && pwd) run=$2
+[[ $run =~ ^[a-z0-9-]+$ ]] || { echo "run is lowercase letters, digits and dashes" >&2; exit 64; }
 root=${VL_RH_ROOT:-$PWD/rehearsal-runs}/$run
+target_root=${VL_RH_TARGET_ROOT:-/var/lib/vl-rh}
+check_capacity() {
+  local min_mem_mib=${VL_RH_MIN_MEM_MIB:-2048}
+  local min_disk_mib=${VL_RH_MIN_DISK_MIB:-6144}
+  local mem_avail_mib=""
+  if [ -r /proc/meminfo ]; then
+    mem_avail_mib=$(awk '/^MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo)
+  elif command -v free >/dev/null 2>&1; then
+    mem_avail_mib=$(free -m | awk '/^Mem:/ { print $7 }')
+  fi
+  if [ -n "$mem_avail_mib" ] && [ "$mem_avail_mib" -lt "$min_mem_mib" ]; then
+    echo "preflight: only ${mem_avail_mib} MiB memory available (need at least ${min_mem_mib} MiB; set VL_RH_MIN_MEM_MIB to override)" >&2
+    exit 1
+  fi
+  local path check_path avail_mib
+  for path in "$root" /var/lib/docker /var/lib; do
+    check_path=$path
+    while [ ! -e "$check_path" ] && [ "$check_path" != / ]; do
+      check_path=$(dirname "$check_path")
+    done
+    [ -r "$check_path" ] || continue
+    avail_mib=$(df -Pm "$check_path" | awk 'NR==2 { print $4 }')
+    if [ -n "$avail_mib" ] && [ "$avail_mib" -lt "$min_disk_mib" ]; then
+      echo "preflight: only ${avail_mib} MiB free on $path (need at least ${min_disk_mib} MiB; set VL_RH_MIN_DISK_MIB to override)" >&2
+      exit 1
+    fi
+  done
+}
+check_capacity
 mkdir -p "$root"/{bin,work,report}
 release=${3:-$root/release}
-[ -f "$release/images.json" ] || "$here/images.sh" "$ts" "$run" "$release"
+runner=vl-rh-$run-runner
+created_release=0
+runner_built=0
+cleanup_release() {
+  docker rm -fv "vl-rh-$run-registry" >/dev/null 2>&1 || true
+  if [ -f "$release/images.json" ]; then
+    local ref tag_ref digest_ref
+    while IFS= read -r ref; do
+      [ -n "$ref" ] || continue
+      tag_ref=${ref%%@*}
+      digest_ref="${tag_ref%:*}@${ref#*@}"
+      docker image rm "$tag_ref" >/dev/null 2>&1 || true
+      docker image rm "$digest_ref" >/dev/null 2>&1 || true
+    done < <(node -e 'const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); for (const r of Object.values(d.images || {})) console.log(r);' "$release/images.json" 2>/dev/null || true)
+  fi
+}
+cleanup() {
+  if [ "$runner_built" = 1 ]; then
+    docker run --rm --name "vl-rh-$run-chown" -u 0 -v "$root:$root" "$runner" chown -R "$(id -u):$(id -g)" "$root" || true
+    docker image rm "$runner" >/dev/null 2>&1 || true
+  fi
+  if [ "${VL_RH_KEEP:-}" != 1 ]; then
+    if [ "$created_release" = 1 ]; then
+      cleanup_release
+    fi
+    if [ -d "$target_root/$run" ]; then
+      rm -rf "$target_root/$run" 2>/dev/null || true
+    fi
+  fi
+}
+trap cleanup EXIT
+if [ ! -f "$release/images.json" ]; then
+  created_release=1
+  "$here/images.sh" "$ts" "$run" "$release"
+fi
+if [ -d "$HOME/.cache/varlatch-gomod" ]; then
+  mkdir -p "$HOME/.cache/varlatch-go-nr"
+  gocache=$HOME/.cache/varlatch-go-nr gomodcache=$HOME/.cache/varlatch-gomod:/gomod:ro
+else
+  mkdir -p "$root/cache/go" "$root/cache/mod"
+  gocache=$root/cache/go gomodcache=$root/cache/mod:/gomod
+fi
 docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e CGO_ENABLED=0 \
-  -e GOCACHE=/gocache -e GOMODCACHE=/gomod -v "$HOME/.cache/varlatch-go-nr:/gocache" -v "$HOME/.cache/varlatch-gomod:/gomod:ro" \
+  -e GOCACHE=/gocache -e GOMODCACHE=/gomod -v "$gocache:/gocache" -v "$gomodcache" \
   -v "$gomod/..:/src" -v "$root/bin:/out" -w /src/go golang:1.27.4 sh -c '
     go build -tags rehearsal -o /out/varlatch ./cmd/varlatch &&
     go build -o /out/varlatchd ./cmd/varlatchd &&
@@ -32,16 +104,11 @@ release=$(cd "$release" && pwd)
 # 999): in a runner of this run's own, on the host's network (the
 # installations' ports are on loopback), driving the host's Docker through
 # its socket, every path mounted where it is on the host.
-runner=vl-rh-$run-runner
 docker build -q -t "$runner" -f "$here/runner.Dockerfile" "$here" >/dev/null
-cleanup() {
-  docker run --rm --name "vl-rh-$run-chown" -u 0 -v "$root:$root" "$runner" chown -R "$(id -u):$(id -g)" "$root" || true
-  docker image rm "$runner" >/dev/null || true
-}
-trap cleanup EXIT
+runner_built=1
 docker run --rm --name "vl-rh-$run-test" --network host -u 0 -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" -w "$root/work" \
   -e VL_RH_RUN="$run" -e VL_RH_RELEASE_DIR="$release" -e VL_RH_BIN="$root/bin" -e VL_RH_WORK="$root/work" \
   -e VL_RH_REPORT="$root/report" -e VL_RH_TS="$ts" -e VL_RH_BACKUPS_WORKAROUND -e VL_RH_KEEP -e VL_RH_ONLY \
-  -e VL_RH_TARGET_ROOT=/var/lib/vl-rh \
+  -e VL_RH_TARGET_ROOT="$target_root" \
   "$runner" "$root/bin/rehearsal.test" -test.v -test.timeout 90m -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"

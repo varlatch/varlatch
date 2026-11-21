@@ -173,7 +173,7 @@ func backups(t *testing.T, in *installation, rel release, s3 *s3Server) {
 	record(t, item, "verify with wrong read credentials: fails", r.code != 0, r.String())
 	// The object corrupted in the bucket.
 	key := "rehearsal/" + archive + ".vltbak"
-	must(t, s3.s3(t, "flip-byte", "vl-rh-main", key), "corrupt the object")
+	must(t, s3.s3(t, "flip-byte", in.bucket, key), "corrupt the object")
 	r = verify(in.readCreds)
 	record(t, item, "verify a corrupted object: fails", r.code != 0 || !strings.Contains(r.stdout, `"integrity":true`), r.String())
 	// The migration's preflight with wrong read credentials refuses.
@@ -283,9 +283,14 @@ func killMidExport(t *testing.T, in *installation, key string) outcome {
 		select {
 		case r := <-done:
 			_ = os.Remove(filepath.Join(backups, "killed.bundle"))
-			return outcome{true, fmt.Sprintf("not reached: the export finished in %s before a .partial was seen (%s); needs PR3's seed size", r.took.Round(time.Millisecond), r.String())}
+			return outcome{false, fmt.Sprintf("not reached: the export finished in %s before a .partial was seen (%s); increase VL_RH_SEED_VALUES", r.took.Round(time.Millisecond), r.String())}
 		default:
 		}
+	}
+	if killedAt == 0 {
+		r := <-done
+		_ = os.Remove(filepath.Join(backups, "killed.bundle"))
+		return outcome{false, fmt.Sprintf("not reached: no .partial was seen within 60s (%s)", r.String())}
 	}
 	r := <-done
 	partials, _ := filepath.Glob(filepath.Join(backups, "*.partial"))
@@ -459,9 +464,15 @@ func migration(t *testing.T, in *installation, rel release, s3 *s3Server) {
 	record(t, 5, "the source's /readyz says migrated-out", strings.Contains(ready.stdout, "migrated-out"), trim(ready.stdout))
 	meta := in.inside(`fetch("http://127.0.0.1:8686/v1/meta").then(async r => console.log(r.status, await r.text())).catch(e => console.log("error", e.message))`)
 	record(t, 5, "the source refuses reads (503)", strings.HasPrefix(strings.TrimSpace(meta.stdout), "503"), trim(meta.stdout))
-	// Item 2: switched, a restart of the source stays refusing.
+	// Item 2 and Item 5: switched, a restart of the source stays refusing and reports migrated-out.
 	must(t, in.compose("restart", "varlatchd"), "restart the source's varlatchd")
-	time.Sleep(5 * time.Second)
+	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(500 * time.Millisecond) {
+		ready = in.inside(`fetch("http://127.0.0.1:8686/readyz").then(async r => console.log(r.status, await r.text())).catch(e => console.log("error", e.message))`)
+		if ready.code == 0 && !strings.HasPrefix(strings.TrimSpace(ready.stdout), "error") {
+			break
+		}
+	}
+	record(t, 5, "after a restart, the source's /readyz still says migrated-out", strings.Contains(ready.stdout, "migrated-out"), trim(ready.stdout))
 	meta = in.inside(`fetch("http://127.0.0.1:8686/v1/meta").then(async r => console.log(r.status, await r.text())).catch(e => console.log("error", e.message))`)
 	record(t, 2, "after a restart, the switched source still refuses", strings.HasPrefix(strings.TrimSpace(meta.stdout), "503"), trim(meta.stdout))
 	// Item 7: a TypeScript backup behind the migrated-out gate.
@@ -479,7 +490,7 @@ func migration(t *testing.T, in *installation, rel release, s3 *s3Server) {
 	record(t, 7, "finish with --delete-old-data", f.code == 0, f.String()+" "+lastLines(f.stdout, 4))
 	vols := run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "label=com.docker.compose.project="+in.project)
 	measure("item 7: the source's volumes after finish", strings.Join(strings.Fields(vols.stdout), ", "))
-	measure("item 7: objects in the bucket after finish", strings.Join(s3.objects(t, "vl-rh-main"), ", "))
+	measure("item 7: objects in the bucket after finish", strings.Join(s3.objects(t, in.bucket), ", "))
 }
 
 func (in *installation) migrateFinish(rel release) ran {

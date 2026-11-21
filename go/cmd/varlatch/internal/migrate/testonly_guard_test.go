@@ -117,6 +117,21 @@ var testTags = regexp.MustCompile(`(-tags[= ]|GOFLAGS)[^\n]*\b(crashpoint|rehear
 // (a rename must update the guard, not drop out of it).
 var releasePaths = []string{".github/workflows/release.yml", "go/release/build-assets.sh", "go/release/check-assets.sh", "go/image/build.sh", "go/image/Dockerfile"}
 
+// isGuardedScript reports whether relSlash (forward-slash path relative to
+// repo root) is a builder or helper script that must never build with a test
+// tag: .sh and .mjs scripts at repo root, or under go/, infra/, or scripts/.
+func isGuardedScript(relSlash string) bool {
+	if !strings.HasSuffix(relSlash, ".sh") && !strings.HasSuffix(relSlash, ".mjs") {
+		return false
+	}
+	if !strings.Contains(relSlash, "/") {
+		return true
+	}
+	return strings.HasPrefix(relSlash, "go/") ||
+		strings.HasPrefix(relSlash, "infra/") ||
+		strings.HasPrefix(relSlash, "scripts/")
+}
+
 func TestNoReleasePathBuildsWithATestTag(t *testing.T) {
 	root := repoRoot(t)
 	for _, p := range releasePaths {
@@ -124,26 +139,28 @@ func TestNoReleasePathBuildsWithATestTag(t *testing.T) {
 			t.Errorf("the release path %s: %v (renamed? update releasePaths)", p, err)
 		}
 	}
-	// Every Dockerfile, workflow (go.yml apart, below) and shell script
-	// under go/, but the rehearsal harness's own (go/test/rehearsal, which
-	// builds with the tag on purpose and ships nothing).
+	// Every Dockerfile, workflow (go.yml apart, below) and builder script at
+	// repo root or under go/, infra/, or scripts/, except the rehearsal
+	// harness's own (go/test/rehearsal, which builds with the tag on purpose
+	// and ships nothing).
 	paths := slices.Clone(releasePaths)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(root, path)
-		if d.IsDir() && (d.Name() == "node_modules" || d.Name() == ".git" || rel == filepath.Join("go", "test", "rehearsal")) {
+		relSlash := filepath.ToSlash(rel)
+		if d.IsDir() && (d.Name() == "node_modules" || d.Name() == ".git" || relSlash == "go/test/rehearsal") {
 			return filepath.SkipDir
 		}
 		if d.IsDir() {
 			return nil
 		}
 		dockerfile := d.Name() == "Dockerfile" || strings.HasSuffix(d.Name(), ".Dockerfile")
-		workflow := filepath.Dir(rel) == filepath.Join(".github", "workflows") && strings.HasSuffix(d.Name(), ".yml") && d.Name() != "go.yml"
-		script := strings.HasPrefix(rel, "go"+string(filepath.Separator)) && strings.HasSuffix(d.Name(), ".sh")
-		if (dockerfile || workflow || script) && !slices.Contains(paths, rel) {
-			paths = append(paths, rel)
+		workflow := filepath.ToSlash(filepath.Dir(rel)) == ".github/workflows" && strings.HasSuffix(d.Name(), ".yml") && d.Name() != "go.yml"
+		script := isGuardedScript(relSlash)
+		if (dockerfile || workflow || script) && !slices.Contains(paths, relSlash) {
+			paths = append(paths, relSlash)
 		}
 		return nil
 	})
@@ -151,7 +168,7 @@ func TestNoReleasePathBuildsWithATestTag(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range paths {
-		src, err := os.ReadFile(filepath.Join(root, p))
+		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
 		if err != nil {
 			t.Errorf("%s: %v", p, err)
 			continue
@@ -169,6 +186,28 @@ func TestNoReleasePathBuildsWithATestTag(t *testing.T) {
 	for _, line := range strings.Split(string(src), "\n") {
 		if strings.Contains(line, "rehearsal") && strings.Contains(line, "-tags") && !strings.Contains(line, "go vet -tags rehearsal ") {
 			t.Errorf("go.yml uses the rehearsal tag beyond vet: %s", strings.TrimSpace(line))
+		}
+	}
+}
+
+func TestGuardScriptDiscoveryScope(t *testing.T) {
+	cases := []struct {
+		rel  string
+		want bool
+	}{
+		{"build.sh", true},
+		{"release.mjs", true},
+		{"go/release/build-assets.sh", true},
+		{"infra/release/build-release-artifacts.mjs", true},
+		{"infra/host-backup/run.sh", true},
+		{"scripts/verify.sh", true},
+		{"scripts/conformance/run.mjs", true},
+		{"apps/web/build.sh", false},
+		{"README.md", false},
+	}
+	for _, tc := range cases {
+		if got := isGuardedScript(tc.rel); got != tc.want {
+			t.Errorf("isGuardedScript(%q) = %v, want %v", tc.rel, got, tc.want)
 		}
 	}
 }
