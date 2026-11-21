@@ -631,6 +631,12 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(http.StatusBadGateway)
 		return
 	}
+	// A container a failed start left without a network (web-netless): its
+	// nginx cannot resolve varlatchd, 502 until it is recreated.
+	if _, err := os.Stat(filepath.Join(w.stateDir, "web-netless")); err == nil {
+		rw.WriteHeader(http.StatusBadGateway)
+		return
+	}
 	// Started, not yet listening (G5_WEB_LATE): 502, a request fewer each time.
 	if b, err := os.ReadFile(filepath.Join(w.stateDir, "web-late")); err == nil {
 		if n, _ := strconv.Atoi(strings.TrimSpace(string(b))); n > 0 {
@@ -972,6 +978,26 @@ func TestG5AnAbortWaitsForTheDashboard(t *testing.T) {
 	if after := w.sourceHash(); after != before {
 		t.Error("the source's data changed")
 	}
+	w.noSecrets()
+}
+
+// An abort in the transfer after the dashboard's start failed (its port
+// held, 7.8b rehearsal run r13): Docker leaves that container without a
+// network, so starting it again serves nothing; migrate recreates it, and
+// the old installation answers.
+func TestG5AnAbortRecreatesANetworklessDashboard(t *testing.T) {
+	w := newWorld(t, false)
+	w.useState()
+	if code := w.run("transfer started"); code != -1 {
+		t.Fatalf("not killed: %d", code)
+	}
+	if err := os.WriteFile(filepath.Join(w.stateDir, "web-netless"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.run("", "--abort"); code != 0 {
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expect("aborted", "released", "released", "source", "")
 	w.noSecrets()
 }
 

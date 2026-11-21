@@ -436,7 +436,8 @@ func TestComposeIngress(t *testing.T) {
 	for _, c2 := range []struct {
 		kind Ingress
 		want []string
-	}{{Public, []string{"docker compose stop caddy", "docker compose start caddy"}}, {Proxy, []string{"docker compose stop varlatch-web", "docker compose start varlatch-web"}}} {
+	}{{Public, []string{"docker compose stop caddy", "docker compose up -d --no-deps --force-recreate caddy"}},
+		{Proxy, []string{"docker compose stop varlatch-web", "docker compose up -d --no-deps --force-recreate varlatch-web"}}} {
 		run.ran = nil
 		if err := c.StopIngress(ctx, c2.kind); err != nil {
 			t.Fatal(err)

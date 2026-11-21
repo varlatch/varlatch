@@ -187,6 +187,15 @@ func volumeThere(name string) bool {
 		slices.Contains([]string{"postgres-data", "convex-data", "varlatch-state", "tailscale-state", "tailscale-socket", "caddy-data", "caddy-config"}, base)
 }
 
+// webLate: as a real dashboard, started it listens a little later
+// (G5_WEB_LATE requests answered 502 first).
+func webLate() error {
+	if late := os.Getenv("G5_WEB_LATE"); late != "" {
+		return os.WriteFile(state("web-late"), []byte(late), 0o600)
+	}
+	return nil
+}
+
 // migrateRunsAgain reports whether `docker compose start|up` of these
 // services runs the one-off varlatch-migrate again: each of varlatchd,
 // the dashboard (on varlatchd) and Caddy (on the dashboard) depends on it
@@ -239,10 +248,10 @@ func fakeDockerReverse(args []string) (int, bool) {
 			if err := setStopped(svc, args[1] == "stop"); err != nil {
 				return fail("%v", err)
 			}
-			// As a real dashboard: started, it listens a little later
-			// (G5_WEB_LATE requests answered 502 first).
-			if late := os.Getenv("G5_WEB_LATE"); svc == "varlatch-web" && args[1] == "start" && late != "" {
-				if err := os.WriteFile(state("web-late"), []byte(late), 0o600); err != nil {
+			// `start` reuses the stopped container: one a failed start
+			// left without a network (web-netless) stays so.
+			if svc == "varlatch-web" && args[1] == "start" {
+				if err := webLate(); err != nil {
 					return fail("%v", err)
 				}
 			}
@@ -269,6 +278,17 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 			if err := setStopped(svc, false); err != nil {
 				return fail("%v", err)
+			}
+			if svc == "varlatch-web" {
+				if slices.Contains(args, "--force-recreate") {
+					// A new container: its network attached again.
+					if err := os.Remove(state("web-netless")); err != nil && !errors.Is(err, os.ErrNotExist) {
+						return fail("%v", err)
+					}
+				}
+				if err := webLate(); err != nil {
+					return fail("%v", err)
+				}
 			}
 		}
 		return 0, true

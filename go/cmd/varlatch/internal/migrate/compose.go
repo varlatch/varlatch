@@ -258,25 +258,35 @@ func ingressService(kind Ingress) (string, error) {
 // StopIngress is `docker compose stop` of the service that serves the
 // address (idempotent).
 func (c *Compose) StopIngress(ctx context.Context, kind Ingress) error {
-	return c.ingress(ctx, "stop", kind)
+	return c.ingress(ctx, []string{"stop"}, kind)
 }
 
-// StartIngress is `docker compose start` of it.
+// StartIngress is `docker compose up -d --no-deps --force-recreate` of it:
+// a new container, never the stopped one. A start that failed (its port
+// held, 7.8b rehearsal run r13) leaves the container with no network,
+// which `docker compose start` reuses: the dashboard then cannot resolve
+// varlatchd and never answers. Both services are stateless (the dashboard
+// is nginx in front of varlatchd; Caddy keeps its certificates in its
+// volumes), and the new container comes from the same Compose project, so
+// recreating changes nothing of the installation. --no-deps: the services
+// they depend on run already, and varlatch-migrate's one-off is not run
+// again.
 func (c *Compose) StartIngress(ctx context.Context, kind Ingress) error {
-	return c.ingress(ctx, "start", kind)
+	return c.ingress(ctx, []string{"up", "-d", "--no-deps", "--force-recreate"}, kind)
 }
 
-func (c *Compose) ingress(ctx context.Context, verb string, kind Ingress) error {
+func (c *Compose) ingress(ctx context.Context, verb []string, kind Ingress) error {
 	svc, err := ingressService(kind)
 	if err != nil {
 		return err
 	}
-	r, err := c.docker(ctx, []string{"compose", verb, svc}, nil)
+	args := append(append([]string{"compose"}, verb...), svc)
+	r, err := c.docker(ctx, args, nil)
 	if err != nil {
 		return err
 	}
 	if r.Code != 0 {
-		return failure("docker compose "+verb+" "+svc, r)
+		return failure("docker "+strings.Join(args, " "), r)
 	}
 	return nil
 }

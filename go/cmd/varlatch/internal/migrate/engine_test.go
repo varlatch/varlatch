@@ -54,16 +54,13 @@ func (s *fakeSource) StopIngress(_ context.Context, kind Ingress) error {
 	return nil
 }
 
-// StartIngress fails behind a gate, as the real one does: Compose starts
-// the ingress's one-off dependency (varlatch-migrate) again with it, and
-// the TypeScript migrate refuses during maintenance (run r8 of the 7.8b
-// rehearsal).
+// StartIngress recreates the ingress without its dependencies, as the
+// real one does (up -d --no-deps --force-recreate): it comes up behind a
+// gate too, and answers with the gate's 503 (the prober) until the
+// barrier is lifted.
 func (s *fakeSource) StartIngress(_ context.Context, kind Ingress) error {
 	if err := s.call("start " + string(kind)); err != nil {
 		return err
-	}
-	if s.gate != nil {
-		return errors.New(`docker compose start failed (exit 1): service "varlatch-migrate" didn't complete successfully: exit 1`)
 	}
 	s.ingressDown = false
 	return nil
@@ -227,6 +224,10 @@ func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, er
 		if p.sourceLate > 0 {
 			p.sourceLate--
 			return "", "", errors.New("GET /v1/meta answered 502")
+		}
+		if p.w.src.gate != nil {
+			// Behind a gate the old installation answers 503.
+			return "", "", errors.New("GET /v1/meta answered 503")
 		}
 		return "inst_fake", p.w.src.info.Release, nil
 	}
