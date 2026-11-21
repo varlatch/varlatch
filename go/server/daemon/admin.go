@@ -55,7 +55,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
 	move := isMoveCommand(sub) || sub == "config"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && !conformance && !operator && !backup && !keys && !move {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && sub != "migrate" && !conformance && !operator && !backup && !keys && !move {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -114,6 +114,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
+	case sub == "migrate":
+		if _, msg := parseMigrate(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case sub == "custody":
 		if _, _, msg := custodyArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
@@ -169,6 +174,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
+	case sub == "migrate":
+		return runMigrate(cfg, rest, stdout, stderr)
 	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
@@ -179,7 +186,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] | "+
+		"varlatchd admin schema status|upgrade [--json] | varlatchd admin migrate import|export --reverse | "+
 		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
 		"varlatchd admin move-facts | varlatchd admin config check  (each with [--config <file>])\n", msg)
 	return 64
