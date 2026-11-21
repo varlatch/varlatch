@@ -755,6 +755,47 @@ func Load(path string) (*Config, error) {
 	return Parse(f, os.Getenv)
 }
 
+// LoadHost is Load for a host command run outside the unit (varlatchd
+// admin, by an operator as root): the unit hands varlatchd its keys as
+// credentials from beside the configuration (LoadCredential=root-kek:
+// /etc/varlatch/root-kek), so when the run sets no CREDENTIALS_DIRECTORY
+// and the Root KEK is there, the configuration's directory stands for it.
+// The keys are read where they are, under their own modes (root's, 0600),
+// never copied, and nothing goes into the environment. A person who may
+// not look there gets no such directory, and the error says what is
+// lacking, as Load's does. The varlatch CLI's host front applies the same
+// rule (hostCredentials).
+func LoadHost(path string) (*Config, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return Parse(f, HostEnv(os.Getenv, path))
+}
+
+// HostEnv is env with CREDENTIALS_DIRECTORY defaulting to the
+// configuration's directory when the Root KEK is there (LoadHost).
+func HostEnv(env Env, path string) Env {
+	if env("CREDENTIALS_DIRECTORY") != "" {
+		return env
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return env
+	}
+	dir := filepath.Dir(abs)
+	if !fileExists(filepath.Join(dir, "root-kek")) {
+		return env
+	}
+	return func(name string) string {
+		if name == "CREDENTIALS_DIRECTORY" {
+			return dir
+		}
+		return env(name)
+	}
+}
+
 // fileExists is whether path names something (a credential's file).
 func fileExists(path string) bool {
 	_, err := os.Stat(path)

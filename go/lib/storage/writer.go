@@ -8,6 +8,8 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -435,11 +437,14 @@ func (db *DB) runBatch(batch []*job) {
 }
 
 // runJob runs fn and turns a panic into the job's own error: the savepoint
-// rollback then undoes whatever it did.
+// rollback then undoes whatever it did. The error names the panic's type,
+// never its value (which can hold a row's data, and the error can reach a
+// stored result and the logs); its stack goes to the log.
 func runJob(fn func(*Tx) error, tx *Tx) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("storage: job panicked: %v", r)
+			slog.Error("storage: a write job panicked; the job fails and is rolled back", "panic", fmt.Sprintf("%T", r), "stack", string(debug.Stack()))
+			err = fmt.Errorf("storage: job panicked (%T)", r)
 		}
 	}()
 	return fn(tx)

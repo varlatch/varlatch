@@ -4,7 +4,9 @@ package syncs_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -247,4 +249,74 @@ func targetsServer(t *testing.T, f paritytest.Fixture, syncOn bool) (http.Handle
 		_ = store.Close()
 	})
 	return h, store, vs, now, &sent, &mu
+}
+
+// A Target whose stored mapping or destination this server cannot read
+// (imported or migrated data) answers its PATCH with an error, never a
+// panic; and a PATCH that gives a whole mapping repairs the mapping: the
+// previous one unknown, the disclosure gate run as for a widening, the
+// change audited as widening.
+func TestPatchRepairsAnUnreadableMapping(t *testing.T) {
+	f, err := paritytest.Read(paritytest.Path("targets-v0.22.0.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, store, _, _, _, _ := targetsServer(t, f, true)
+	path := targetsPath(t, f)
+	env := "/v1/organizations/acme/projects/api/environments/production/sync-targets"
+	exec := func(q string, args ...any) {
+		if err := store.Write(context.Background(), func(tx *storage.Tx) error {
+			_, err := tx.ExecContext(context.Background(), q, args...)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	version := func(id string) int64 {
+		var v int64
+		if err := store.Reader().QueryRowContext(context.Background(), `SELECT version FROM sync_targets WHERE id = ?`, id).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	do := func(method, p, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path(p), strings.NewReader(path(body)))
+		req.Header.Set("Authorization", "Bearer "+f.Tokens["alice"])
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	api := path("{tApi}")
+	exec(`UPDATE sync_targets SET mapping = '{}' WHERE id = ?`, api)
+	// Without a mapping in the patch, the Target is refused as it is.
+	if rec := do("PATCH", env+"/{tApi}", fmt.Sprintf(`{"expectedVersion":%d,"removeOrphans":true}`, version(api))); rec.Code < 500 {
+		t.Fatalf("a patch without a mapping: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do("GET", env+"/{tApi}", ""); rec.Code != http.StatusOK {
+		t.Fatalf("the server after it: %d", rec.Code)
+	}
+	// With a whole mapping, the Target is repaired.
+	rec := do("PATCH", env+"/{tApi}", fmt.Sprintf(`{"expectedVersion":%d,"mapping":{"kind":"wildcard"}}`, version(api)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"kind":"wildcard"`) {
+		t.Fatalf("the repair: %d %s", rec.Code, rec.Body.String())
+	}
+	var metadata string
+	var authz sql.NullString
+	if err := store.Reader().QueryRowContext(context.Background(),
+		`SELECT metadata, authz FROM audit_events WHERE event_type = 'sync.target_updated' ORDER BY event_order DESC LIMIT 1`).Scan(&metadata, &authz); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(metadata, `"widened":true`) || !authz.Valid {
+		t.Errorf("audited %s, decisions %v", metadata, authz)
+	}
+	// A stored destination it cannot read: an error, not a panic.
+	budget := path("{tBudget}")
+	exec(`UPDATE sync_targets SET destination = '[]' WHERE id = ?`, budget)
+	if rec := do("PATCH", env+"/{tBudget}", fmt.Sprintf(`{"expectedVersion":%d,"removeOrphans":true}`, version(budget))); rec.Code < 500 {
+		t.Fatalf("a patch over an unreadable destination: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do("GET", env+"/{tApi}", ""); rec.Code != http.StatusOK {
+		t.Fatalf("the server after it: %d", rec.Code)
+	}
 }

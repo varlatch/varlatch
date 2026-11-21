@@ -703,3 +703,40 @@ func TestTheRecordIsJournalled(t *testing.T) {
 		t.Fatalf("written again: %d writes", w.tgt.recorded)
 	}
 }
+
+// A migration finished while its certificate attempts could not be
+// written into Go's count (the switch's write failed, and so did
+// finishRemove's): `--finish` on the finished migration writes them and
+// journals it, and a further `--finish` writes nothing again.
+func TestFinishOnAFinishedMigrationRecords(t *testing.T) {
+	ctx := context.Background()
+	w := newTailnetWorld(t)
+	w.src.info.HTTPS, w.src.expiry = true, time.Now().Add(80*24*time.Hour)
+	w.tgt.info.Tailnet.HTTPSPort = 8443
+	w.tgt.recordErr = errors.New("varlatchd does not answer")
+	j, err := w.eng.Run(ctx, false)
+	if err != nil || j.Phase != Open || j.Tailnet.Recorded || w.tgt.recorded != 0 {
+		t.Fatalf("the migration: %v %+v", err, j)
+	}
+	// Finished with the record still missing, both journals saying so.
+	j.Phase = Finished
+	j.Finish = &FinishRecord{After: Open, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), DoneAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	w.tgt.journal = &JournalHead{ID: j.ID, Phase: Finished}
+	w.tgt.recordErr = nil
+	if _, err := w.eng.Finish(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := readJournal(w.src.dir)
+	if err != nil || saved == nil || !saved.Tailnet.Recorded || w.tgt.recorded != 1 || len(w.tgt.count) == 0 {
+		t.Fatalf("after --finish: journal %+v %v, %d writes, count %d", saved, err, w.tgt.recorded, len(w.tgt.count))
+	}
+	if _, err := w.eng.Finish(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if w.tgt.recorded != 1 {
+		t.Fatalf("a second --finish wrote again: %d writes", w.tgt.recorded)
+	}
+}

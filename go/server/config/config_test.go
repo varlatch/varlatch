@@ -263,6 +263,51 @@ func TestLoadReadError(t *testing.T) {
 	}
 }
 
+// A host command outside the unit (LoadHost) finds the keys beside the
+// configuration, as the unit hands them: only when the Root KEK is there,
+// and never over a CREDENTIALS_DIRECTORY or a root_kek_file given.
+func TestLoadHost(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "varlatchd.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	var cerr *Error
+	if _, err := LoadHost(conf); !errors.As(err, &cerr) || !strings.Contains(err.Error(), "no Root KEK") {
+		t.Fatalf("no root-kek beside the configuration: %v", err)
+	}
+	for _, k := range []string{"root-kek", "backup-key"} {
+		if err := os.WriteFile(filepath.Join(dir, k), []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := LoadHost(conf)
+	if err != nil || c.RootKEKFile != filepath.Join(dir, "root-kek") || c.BackupKeyFile != filepath.Join(dir, "backup-key") {
+		t.Fatalf("the keys beside the configuration: %+v %v", c, err)
+	}
+	if _, err := Load(conf); !errors.As(err, &cerr) {
+		t.Fatalf("Load (serve) must not look beside the configuration: %v", err)
+	}
+	// A relative path: the directory is made absolute.
+	t.Chdir(dir)
+	if c, err := LoadHost("varlatchd.conf"); err != nil || c.RootKEKFile != filepath.Join(dir, "root-kek") {
+		t.Fatalf("a relative --config: %+v %v", c, err)
+	}
+	other := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", other)
+	if c, err := LoadHost(conf); err != nil || c.RootKEKFile != filepath.Join(other, "root-kek") || c.BackupKeyFile != "" {
+		t.Fatalf("CREDENTIALS_DIRECTORY wins: %+v %v", c, err)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	if err := os.WriteFile(conf, []byte("root_kek_file = /etc/kek\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := LoadHost(conf); err != nil || c.RootKEKFile != "/etc/kek" {
+		t.Fatalf("root_kek_file wins: %+v %v", c, err)
+	}
+}
+
 // The example the installer and setup follow parses.
 func TestExampleParses(t *testing.T) {
 	f, err := os.Open("../../install/varlatchd.conf.example")

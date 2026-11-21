@@ -179,7 +179,14 @@ func DisclosureGate(p *auth.Principal, organizationID, requestID, refusal string
 			}
 			return true
 		}
+		// A stored mapping this server cannot read may disclose anything:
+		// it is gated as a wildcard, so the replacement goes ahead only for
+		// a requester who may disclose every item, and the Target is never
+		// re-authorized unchecked.
 		mapping, err := ParseMapping(t.Mapping)
+		if errors.Is(err, ErrStoredMapping) {
+			mapping, err = Mapping{Wildcard: true}, nil
+		}
 		if err != nil {
 			return nil, err
 		}
