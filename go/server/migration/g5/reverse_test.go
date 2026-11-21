@@ -305,14 +305,6 @@ func (rt roundTrip) stayRevoked(t *testing.T, mustBe ...string) {
 func TestG5Reverse(t *testing.T) {
 	g := setUp(t)
 	in := withDatabase(t, g.source.RootKEK, g.clean)
-	// The seed's rows are the TypeScript server's test fixtures: its Sync
-	// Targets and webhooks name hosts no test reaches.
-	f, err := os.OpenFile(in.conf, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = f.WriteString("sync = off\n")
-	f.Close()
 	g.journalOpen(t, in.conf)
 	rt := g.reverseAndBack(t, in, g.source.RootKEK)
 	rt.reproduces(t)
