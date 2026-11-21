@@ -975,6 +975,7 @@ it to the recording.
 | `upgrade-usage` | `varlatch help upgrade`, `upgrade --help` and `upgrade -h` print a Compose installation's `upgrade` form | a Go installation's: `[<version>] [--prerelease] [--accept-not-rollback-safe] [--yes]` and `--check [--prerelease] [--json]`, each with `--config` | The Go CLI upgrades a Go installation; a Compose installation's upgrade is `varlatch-ts upgrade` |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
 | `tailnet-repin`: `varlatch tailnet repin [--yes] [--adopt] [--json] [--config <file>]` (slice 6.2b) | no such command (`tailnet` has `require`, `requirements` and `remove`); the TypeScript server keeps no tailnet pin | runs `varlatchd admin tailnet repin --json [--yes [--adopt]] [--config <file>]` (as `host-admin`) and shows `varlatchd`'s text from its answer: the pinned and the observed tailnet, then what it did or offers, on stderr with `varlatchd`'s status when it refuses. On a terminal, without `--yes`, an offered re-pin (or, with `--adopt`, an adoption) is asked for (`[y/N]`), then done with `--yes --offer <the offer shown>`: `varlatchd` acts only while the pin and the observed tailnet are still what was shown, and otherwise changes nothing and answers `offer-changed` (status 1) with the new view, which is shown and asked about once more (a second change stops, nothing re-pinned). `varlatch tailnet repin --yes` (scripted use) passes no offer and acts on the observation at that moment. `--json` prints `varlatchd`'s answer. `varlatchd admin tailnet repin --json` gives stable names (the view's `pinned`, `observed`, `reason`, `closed`, `missing`, `offered`, `offer` (a value-free token: 128 bits of a SHA-256 over what is offered, the pin and the observation; empty when nothing is offered), and `pinnedText`, `observedText`, `outcome`, `message`, `pin`) with or without `--yes`; `varlatchd`'s 78 adds a line saying to run it as root (`sudo varlatch tailnet repin`; Unix), as `host-admin`'s; its text is unchanged | The tailnet pin is the Go server's (step 4.13); a re-pin changes what the tailnet listener trusts, so it is the host's and is confirmed. Pinned by `internal/cli`'s `TestTailnetRepinFront` and `daemon`'s `TestTailnetListener` |
+| `installation.migrated` (an audit event only Go records, until the last TypeScript release) | not recorded by v0.22 | appended by `varlatchd admin migrate import` and `export --reverse` (step 7.3a) after the source's events and the revocations of the sessions the migration ended: no Organization and no actor identity, metadata `direction`, `sourceRelease`, `manifestVersion`, `frozenPoint` (`auditPosition`, and `snapshot` for a forward import), `sessionsEnded`, `credentialsRevoked` | Decision 9's audit-append transformation (internal docs/design/go-step7.md decision 5); the last TypeScript release (0.23.0) records and lists it too (slice 7.2a). Pinned by `server/migration/migrate`'s `TestRoundTrip` |
 | `tailnet.repinned` (an audit event only Go records) | not recorded | each re-pin, reopening or adoption by `varlatchd admin tailnet repin --yes`: no Organization and no actor identity (the host operator: the control socket's peer is the data directory's owner or root), metadata `action` (`repinned`, `reopened`, `adopted`), `fromSuffix`, `toSuffix`, `tailnetId`, `reason` (what the re-pin's own check found), `operator: true`, never the control server's URL. Committed before the pin changes: a re-pin whose event cannot be recorded does not happen (`audit.GoOnlyEventTypes`) | The TypeScript server's event list is frozen; ADR-0059 step 6's G10 asks for the re-pin to be audited. Pinned by `daemon`'s `TestTailnetListener` (both events, read from the database) and `audit`'s `TestGoOnlyEventTypes` |
 | `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, a request for another `Host` is 421, no `X-Forwarded-For` is believed on it, and `listen` must then be a loopback address, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
@@ -3003,6 +3004,313 @@ migrations.
     rowid order, the order the migration inserts them in (the source's
     physical order). That order is now defined. The TypeScript server's
     heap order depended on PostgreSQL's planner.
+- The import and the reverse export (step 7, slice 7.3a; internal
+  docs/design/go-step7.md decisions 2 to 5 and 16):
+  - `server/migration/bundle` is the bundle (`BUNDLE.md`, bundle-v1): one
+    JSON Lines stream, a header (format, manifest, encoding, direction,
+    release, frozen point, an empty `sequences` list), each table the
+    manifest copies or transforms in its order with its canonical rows,
+    and an end line with the counts and the stream's SHA-256, so a stream
+    cut short or damaged is refused whole. `testdata/small.jsonl` and
+    `testdata/refused.json` are the shared vectors the TypeScript export
+    reproduces. Rows sort as SQLite does: NULL first, text by its bytes.
+  - `canonical.DecodeRow` reads a canonical row back into the forms
+    varlatchd writes, and accepts it only when writing it again gives the
+    same bytes: a value written any other way is refused, never
+    normalized.
+  - `varlatchd admin migrate import --in <bundle> [--json]` (offline, the
+    data directory held and empty, `server/migration/migrate`): the bundle
+    is read whole first (counts and SHA-256), then into a fresh database
+    under a temporary name in the data directory (`.migrate-import-*`,
+    renamed to `varlatch.db` once committed, synced; what an import or a
+    reverse export that was killed left under its temporary name is
+    removed by the next import, a look-alike refused) in one write job, foreign keys
+    deferred to the commit (`PRAGMA defer_foreign_keys`, ON only, the one
+    assignment a job may make, and only on a database opened with
+    `storage.Options.DeferForeignKeys`, as the import's is: the schema's
+    tables refer to each other in a cycle), every copied row inserted as it is (ciphertexts byte for
+    byte; a left-out column, the session's token, must be null: the
+    export never reads it), and before the commit every foreign key checked
+    (`foreign_key_check`, the broken ones named), no sequence present, and
+    the Root KEK checked against the installation's canary. Anything that
+    fails keeps nothing.
+  - The transformations: each source session is inserted and deleted at
+    once, so `session_end_revokes_browser_credentials` revokes its browser
+    credentials and writes their `credential.revoked` events exactly as a
+    sign-out does (CLI hand-off credentials stay); the session itself is
+    never kept. Then `installation.migrated` is appended, carrying the
+    direction, the source release, the manifest version, the frozen point
+    and how many sessions ended and credentials the trigger revoked
+    (counted from the `credential.revoked` events it wrote, so an expired
+    browser credential, which it leaves as it is, is not counted), which
+    attributes those revocations to the migration.
+  - `varlatchd admin migrate export --reverse --out <bundle> [--json]`
+    writes the reverse bundle for the last TypeScript release's import
+    from a snapshot copy of the database: every Go browser session ended
+    and `installation.migrated` appended on the copy only, the database
+    itself unchanged. The bundle is a new file, mode 0600.
+  - Round trip (`TestRoundTrip`): twelve v0.22.0 parity fixtures' TypeScript
+    rows (47 tables with rows, among them the audit log, audit export plans'
+    `bytea`, webhooks, platform connections, the sync cursor, passkeys and a
+    signing key) imported and exported back are the same rows, byte for
+    byte, but for the documented transformations.
+  - **Accepted difference:** `installation.migrated` is an audit event of
+    the Go server (`GoOnlyEventTypes`); the last TypeScript release
+    (0.23.0, slice 7.2a) knows it too.
+- The migration's checks (step 7, slice 7.3b; ADR-0059 Decision 9 phase 4;
+  internal docs/design/go-step7.md decisions 7 and 8;
+  `server/migration/check/CHECKS.md`):
+  - The bundle gains two sections after the tables: the writer's keyed
+    digest of every encrypted item (HMAC-SHA256 under the migration's run
+    key over `canonical.DigestInput`; the key itself never in the bundle)
+    and its decision table (credential, credential state, resource,
+    action, Tailnet Context, answer). The end line counts both. An import
+    reads them past; a reverse bundle carries them empty until slice 7.6.
+  - `varlatchd admin migrate check --in <bundle> [--json]` (offline, the
+    data directory held, the database opened read-only; the run key, 64 hex
+    digits on one line, on standard input) holds the imported database
+    against the bundle in five checks, each run whatever another found:
+    rows (every copied row's canonical bytes, matched by key, or by
+    position for `requirements`; no extra row, no unaccounted table),
+    encryption classes (every item of the ten classes opened with the Root
+    KEK and digested, held against the bundle's digests), audit (the
+    source's log a prefix of the target's by position, then only the
+    migration's revocations and one `installation.migrated` carrying the
+    header; every cursor where the source left it), authorization
+    (every decision evaluated again with `authz.Decide`) and
+    authentication (identities, passkeys, credentials, OIDC bindings,
+    setup grants and device sign-ins by key; no session kept; every live
+    browser credential of an ended session revoked). Exit 0 when all
+    pass, 1 when one fails; the report names checks, tables, classes,
+    positions, ids and counts, never a value, a plaintext, a digest or a
+    key.
+  - The read side is its own: `server/migration/check` queries SQLite
+    directly through the manifest and imports nothing of
+    `server/migration/migrate` (`TestTheChecksDoNotImportTheImport` walks
+    its import graph).
+  - Seeded run (`TestASeededImportPasses`, on `migrationtest`'s twelve
+    parity fixtures under one Root KEK, every class real): every check
+    passes; each damage of the design's list fails at its own check, its
+    table or class named (`TestAChangedCiphertextByteFailsItsClass`,
+    `TestEachDamageFailsAtItsCheck`); the reports are scanned for every
+    seeded plaintext, the Root KEK, the run key and every digest.
+- G5's damage gate (step 7, slice 7.3c; `server/migration/g5`, build tag
+  `g5`, its own step in the go job): the migration's Go path through the
+  varlatchd binary, on the seeded installation. The seeded bundle imports
+  and passes every check. Each damage of the bundle stream (a changed
+  byte, cut short, no end line, the end line's digest or counts, digests
+  out of order, a section line not canonical, a session token, a
+  sequence) is refused by the import, named, with nothing kept. Each
+  damage of the check sections (a digest not the source's, a digest
+  missing, a decision answered otherwise) imports and fails at its check.
+  Each damage of the imported database, `migrationtest`'s catalog shared
+  with the checks' unit tests, fails at its own check with its table or
+  class named. Another run key or Root KEK fails the class check, and the
+  import refuses the wrong Root KEK. An import killed while it writes
+  leaves no `varlatch.db`, and the next import clears what it left
+  (`-journal` included) and passes the checks. Every output of the binary
+  is scanned for each seeded secret. G5's interrupted phases are 7.4c's,
+  its reverse half 7.6a's.
+- `varlatch migrate`, the phases (step 7, slice 7.4a; ADR-0059 Decision 9;
+  internal docs/design/go-step7.md decisions 2, 9, 14, 19 and 20;
+  `cmd/varlatch/internal/migrate`): a Go-only host command (outside the
+  parity table), from the last TypeScript release's Compose installation
+  (`--from`, the current directory by default) to a host install of
+  varlatchd (`--config`). The CLI drives both sides as processes and
+  opens no database: the source through `docker compose exec` into its
+  varlatchd container (`admin migration status|barrier|export|release|
+  mark-migrated-out`) and the TypeScript host CLI (`--ts-cli`, default
+  `varlatch-ts`) for the preflight's backup; the target through
+  `varlatchd admin migrate`.
+  - The phases: preflight (the source is 0.23.0 by its image's version,
+    and its image is the published one by its registry digest of
+    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, filled in when
+    0.23.0 is published: until then `migrate` refuses every source; it is
+    behind no gate; what an interrupted run left, its scratch directories
+    and bundles by their exact names, is removed; a fresh backup made, uploaded,
+    downloaded and verified; the target's key files given the source's
+    Root KEK and BEK, `admin migrate keys`, absent or the same); the dry
+    run (a full copy from a snapshot of the running source, imported into
+    a scratch directory, `--scratch`, and checked, timed; the projected
+    downtime, drain bound plus copy and checks, held against
+    `--max-downtime`, 10 minutes by default, O7; `--dry-run` stops there);
+    the barrier; the final copy, imported and checked; the switch (the
+    source marked migrated out); open.
+  - The journal, `migration.json` (0600, never a key, the run key, a value
+    or a bundle), is written before each phase in the source's directory
+    and, through `admin migrate state --write`, in the target's data
+    directory. varlatchd does not start on a data directory whose journal
+    is not open. `--status` prints it; `--resume` redoes a migration
+    interrupted before the barrier from its preflight (on its own target
+    only), undoes one between
+    the barrier and the switch (the barrier lifted, the old installation
+    reopened unchanged, the target's database discarded, `admin migrate
+    discard`, before the switch only), and opens a switched one (unless
+    its barrier was lifted by hand meanwhile: then a person decides). Any
+    failure after the barrier undoes the same way.
+  - The run key is made per copy and handed to the export and the checks
+    on their stdin; the keys go to `admin migrate keys` on its stdin, as
+    base64 JSON. None is in an argument, the environment, the journal or
+    the output.
+  - Not yet: the image target shape (`--to-data`, decision 20's second
+    shape), the interruptions' CI cases (7.4c) and the run against a
+    Compose installation of 0.23.0.
+- The address transfer (step 7, slice 7.4b; decision 12, O3):
+  `varlatch migrate --ingress public|proxy|coolify`. The preflight
+  refuses a target whose `public_url` origin (scheme, host, port; so the
+  passkeys' RP ID) is not the source's `VARLATCH_PUBLIC_URL`, public
+  ingress without the source's Caddy overlay or the target's
+  `listen_https`, and an own proxy whose target `listen` is not the
+  dashboard's `BIND_ADDRESS:VARLATCH_WEB_PORT`.
+  - The phases after the checks are transfer, switched, open: the address
+    moves before the switch, so an undo still reopens the source. Entering
+    transfer, `admin migrate state --write` writes the migration's gate
+    (`maintenance.json`, kind `migration`, phase `transfer`, no expiry);
+    varlatchd starts on a journal in transfer only under it, isolated,
+    answering `GET /v1/meta` and nothing else (`httpserver.MetaAdmission`).
+  - Public ingress: the source's Caddy stops (`docker compose stop
+    caddy`), the target starts (`systemctl start`, `--unit`) and takes its
+    certificate over ACME. Own proxy: the source's dashboard stops,
+    freeing its port, and the target starts on it. Coolify: the target
+    starts, and `migrate` stops (exit 75) with the exact domain move to
+    make; `--resume` checks it.
+  - The check: `<origin>/v1/meta` must answer with the migrated
+    installation's id and the target's release, within
+    `--transfer-timeout` (3 minutes). Then the source is marked migrated
+    out, and the target restarted out of its gate (the journal open removes
+    it). If the public URL does not answer, the address goes back (the
+    target stopped, the source's Caddy or dashboard started; Coolify: the
+    instruction to move the domain back) and the migration is undone.
+    `--abort` undoes any migration before its switch. The gate is
+    removed before the target's journal says open or released, so a gate
+    that cannot be removed leaves the journal where it was (the message
+    names the file to remove by hand); `--resume` finishes an open (the
+    target's journal open, its service started) or an undo (its journal
+    released) that the source's journal records but the target does not.
+    `admin migrate state` (reading, not `--write`) answers beside a
+    running varlatchd and says whether one runs and whether the gate
+    stands.
+  - The dry run's projection includes the transfer, estimated by shape
+    (a minute for an ACME issuance or a domain move, seconds for a port,
+    and the target's restart): nothing is transferred before the barrier,
+    so it is not measured.
+  - **Accepted difference:** Go's maintenance gate has a kind of its own,
+    `migration` with phase `transfer`; a gate the TypeScript server wrote
+    with another phase is unreadable to Go, which fails closed.
+  - Not yet: an end-to-end transfer with Pebble (7.4c, 7.8).
+- The image target (step 7, slice 7.4d; decision 20's second shape, O2):
+  `varlatch migrate ... --to-data <dir> --to-keys <dir> --to-config <file>
+  --to-image <repository:tag@sha256:...> --to-service <name>`, instead of
+  `--config` and `--unit`. The Go image's service (6.10a) is created
+  beforehand in setup mode with nothing listening; its data directory,
+  keys directory and configuration are bind paths on this host.
+  - `migrate` runs no Docker command against it. It fills the bind paths
+    with this host's varlatchd, the image's release (the tag must be
+    `varlatchd`'s release), run as the image's user (uid and gid 65532)
+    so every file is the image's, against a configuration derived from
+    the service's (`/var/lib/varlatch`, `/keys` and `/etc/varlatch`
+    mapped to the bind paths; a file setting elsewhere, or a path whose
+    `..` leads out of its bind path, refused). Each bundle, the dry run's
+    scratch database and the derived configuration are staged in a
+    directory the image's user owns, in this source's own directory under
+    the system's temporary directory (`varlatch-migrate-<hash>`, mode
+    0711); a killed run's leftovers there are removed under the lock.
+  - The preflight refuses a reference not pinned by its digest (checked
+    by its shape only: without Docker, `migrate` does not resolve it, so
+    that the service runs that digest is the operator's, and 7.8's
+    Coolify rehearsal checks it), a tag
+    that is not this varlatchd's release, bind paths not owned by
+    65532:65532 or writable by others (the `chown` and `chmod` to run are
+    said), and a service already serving on the bind path.
+  - Starting and stopping the service are the operator's: `migrate` says
+    each exactly (Coolify's Deploy or Stop, or `docker compose up -d` or
+    `stop`) and checks it after (varlatchd's control socket in the bind
+    path answers while the service serves). The transfer stops once
+    (exit 75) for every step the operator takes, the service's start and,
+    with Coolify, the domain move; `--resume` checks both through the
+    public URL. An undo waits for the service to be stopped, and resumes
+    as an undo.
+- G5's interrupted half (step 7, slice 7.4c; decision 14;
+  `server/migration/g5/interrupt_test.go`, in the G5 gate's step): the
+  real `varlatch migrate`, built with the `crashpoint` tag
+  (`cmd/varlatch/internal/migrate/crashpoint.go`: it pauses at a named
+  point for the gate to SIGKILL it there), killed at every phase boundary
+  (each phase entered, the barrier held, the transfer started, the
+  source's journal open before the live open), against a real target
+  varlatchd, host install and image, and a stand-in for the last
+  TypeScript release (`docker`, `varlatch-ts` and `systemctl` answered by
+  the test binary, the export from `migrationtest`'s seed; 0.23.0 is not
+  published). After each kill: the source's data hashed unchanged, both
+  journals in the stated state, which side the public URL answers from
+  (the source, its barrier's 503, the target under the transfer's gate,
+  the target open), then `--resume` (and `--abort` before the switch) to
+  the stated end, a second `--resume` changing nothing; the Coolify shape
+  and the image's operator steps too. Every output, journal and log is
+  scanned for the keys and the run keys.
+- `varlatch migrate --rollback` (step 7, slice 7.6a; decisions 16 and
+  17): the reverse migration, within 30 days of the switch, back to the
+  last TypeScript release. Its phases are journalled in both places, as
+  the forward migration's:
+  - `rollback`: Go's migration barrier, through its control socket (Go
+    keeps running, isolated, its frozen copy made);
+  - `rollback-exported`: the reverse bundle from the frozen copy, the
+    transformed copy kept;
+  - `rollback-imported`: the TypeScript release on a fresh database. A
+    Compose file of migrate's (`docker-compose.varlatch-rollback.yml`,
+    named in `.env`'s `COMPOSE_FILE`) renames the Postgres and Convex
+    volumes to fresh ones, the retained ones left as they are, and defines
+    the import's one-off service (the release's pinned image, the migrate
+    role and the Root KEK as the installation's own secrets and variables,
+    never an argument). Its `admin migration import` lifts the migrated-out
+    marker; Convex is reset;
+  - `rollback-checked`: the reverse checks;
+  - `rollback-transfer`: the address back (Go stops serving it, the
+    TypeScript release and its ingress start; in Coolify the operator moves
+    the domain back, then Go stops);
+  - `rolled-back`: Go's journal says so, and varlatchd never starts on that
+    data directory again.
+
+  An interruption, a failed check or `--abort` before the transfer undoes
+  it: the TypeScript side as the forward migration left it (its fresh
+  volumes removed, its marker made again), Go's journal open again, then its
+  barrier lifted. Go runs throughout. In the transfer, `--resume` checks
+  again; `--abort` gives the address back to Go first.
+
+  Its report lists the Go archives made since the switch, which the
+  TypeScript release cannot read (never deleted).
+- `varlatch migrate --finish [--delete-old-data]` (slice 7.6a; decision
+  17): the operator ends the rollback window.
+  - **After a forward migration:**
+    - `finished` in both journals (Go's beside it: it serves as before);
+      `--rollback` then refuses, and `migrate.RollbackWindowOpen(dataDir)`
+      (false once finished) is what `varlatch upgrade` asks before a
+      release with `endsRollbackWindow`;
+    - the TypeScript installation's containers are removed (`docker
+      compose down`, its volumes kept), and its old node's state and
+      certificates (its Tailscale and Caddy volumes);
+    - with `--delete-old-data` only, which nothing implies: a final
+      archive of it (format 2, its own backup, uploaded, then downloaded
+      and verified) is journalled first, then its Postgres and Convex
+      volumes are removed.
+  - **After a reverse:**
+    - the source's journal says `finished`, and Go's stays `rolled-back`;
+    - with `--delete-old-data`: a final archive of Go's copy (format 3,
+      verified), then the copy is discarded and the pre-migration volumes
+      the rebuild left unused are removed. Never the ones in use.
+  - In Coolify's shape, the removals are said as the operator's.
+  - Interrupted after `finished`, `--resume` finishes it (each removal is
+    done again harmlessly); before, `--finish` runs again. G5's
+    `server/migration/g5/finish_test.go` kills it at each step.
+- G5's interrupted reverse (`server/migration/g5/rollback_test.go`) kills
+  it at every phase boundary and holds the stated state there, with Go
+  running until the address moves.
+- The live open: `varlatchd admin migrate open --id <migration>` ends the
+  transfer's gate in the running varlatchd, through its control socket
+  (offline, on the data directory), then writes its journal open (the gate
+  first); `migrate` opens a running target this way, with no restart, a
+  stopped one by writing its journal and starting it. A switch is the
+  journal's word alone, written beside the varlatchd serving under the
+  transfer's gate.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

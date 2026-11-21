@@ -452,6 +452,15 @@ type Admission interface {
 	Enter() (leave func(), ok bool)
 }
 
+// MetaAdmission is an Admission that, under a migration's gate, still
+// answers GET /v1/meta (go-step7 decision 12): `varlatch migrate` checks
+// the public URL answers with the migrated installation's id while the
+// installation admits nothing else. /v1/meta reads no data but the
+// installation's id and writes nothing.
+type MetaAdmission interface {
+	AdmitsMeta() bool
+}
+
 // BackupStatus is the backup status (server/backups), as JSON.
 type BackupStatus interface {
 	StatusJSON() ([]byte, error)
@@ -549,7 +558,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// maintenance screen.
 		if s.opts.Maintenance != nil && p != "/healthz" {
 			leave, ok := s.opts.Maintenance.Enter()
-			if !ok {
+			metaOnly := false
+			if m, isMeta := s.opts.Maintenance.(MetaAdmission); !ok && isMeta && p == "/v1/meta" && isGet(r) && m.AdmitsMeta() {
+				metaOnly = true
+			}
+			if !ok && !metaOnly {
 				if p == "/readyz" {
 					writeJS(rec, http.StatusServiceUnavailable, jsvalue.Object{
 						{Key: "ready", Value: false}, {Key: "checks", Value: jsvalue.Object{{Key: "maintenance", Value: false}}},
@@ -560,7 +573,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				writeError(rec, r, http.StatusServiceUnavailable, "MAINTENANCE", MaintenanceMessage)
 				return
 			}
-			defer leave()
+			if ok {
+				defer leave()
+			}
 		}
 		// Hono's bodyLimit, on every route, before the request window,
 		// authentication and any handler: a declared length is judged by

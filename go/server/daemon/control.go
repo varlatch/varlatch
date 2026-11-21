@@ -79,6 +79,9 @@ type hostEnv struct {
 	serving *atomic.Bool
 	// ready is the /readyz checks of a running varlatchd; nil offline.
 	ready func(context.Context) (schema, kek, inst bool)
+	// barrier serializes the reverse's barrier and release commands: one
+	// at a time makes, or removes, the frozen copy and its temporary name.
+	barrier sync.Mutex
 }
 
 type controlRequest struct {
@@ -177,6 +180,18 @@ func (c *controlServer) handle(ctx context.Context, conn *net.UnixConn) {
 	_ = json.NewEncoder(conn).Encode(controlResponse{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), Status: status})
 }
 
+// controlAnswers is whether a varlatchd answers on the data directory dir's
+// control socket (its own Unix socket, never a destination): the probe a
+// command that must not run beside a running varlatchd makes first.
+func controlAnswers(dir string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("unix", filepath.Join(dir, ControlSocket), timeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 // route runs a host command: through the daemon's socket, else offline
 // under the lock, else not at all. args[0] is the command.
 func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
@@ -263,9 +278,11 @@ func daemonConn(cfg *config.Config, owner int, what string, stderr io.Writer) (*
 
 // fileOnly reports whether a host command reads and writes only the data
 // directory's files, never the database: the maintenance commands and
-// backup status.
+// backup status, and the migration's commands but the barrier (whose frozen
+// copy is the database's).
 func fileOnly(args []string) bool {
-	return args[0] == "maintenance" || args[0] == "backup" && len(args) > 1 && args[1] == "status"
+	return args[0] == "maintenance" || args[0] == "migrate" && !(len(args) > 1 && args[1] == "barrier") ||
+		args[0] == "backup" && len(args) > 1 && args[1] == "status"
 }
 
 func viaSocket(conn *net.UnixConn, what string, args []string, stdout, stderr io.Writer) int {
