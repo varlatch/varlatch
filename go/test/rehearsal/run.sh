@@ -5,7 +5,8 @@
 #
 #   run.sh <typescript-checkout> <run> [<release-dir>]
 #
-# Builds varlatch (-tags rehearsal), varlatchd and this package's test
+# Builds varlatch (-tags rehearsal,crashpoint; the crash points do nothing
+# unless VL_RH_KILL asks), varlatchd and this package's test
 # binary in golang:1.27.4 (Go caches under ~/.cache), the TypeScript images
 # with images.sh unless <release-dir> holds them already, then runs the
 # test binary as root in a runner container (runner.Dockerfile), with the
@@ -13,8 +14,20 @@
 # $VL_RH_ROOT/<run> (default: ./rehearsal-runs). One run at a time; every
 # container, network and volume is named vl-rh-<run>-... and removed by
 # that name when the run ends (VL_RH_KEEP=1 keeps the installations).
+#
+# VL_RH_PROFILE=box (the experiments server; internal
+# docs/design/go-step8-rehearsals.md): run by the owner as root on the
+# host (sudo -i first), the test binary directly on the host, with real
+# systemd and the box's cases (VL_RH_INGRESS=public|coolify, ...). It never
+# stops, removes or rebinds anything that is not this run's; the run's
+# files are handed back to the user who ran sudo.
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: run.sh <typescript-checkout> <run> [<release-dir>]" >&2; exit 64; }
+profile=${VL_RH_PROFILE:-workstation}
+if [ "$profile" = box ] && [ "$(id -u)" != 0 ]; then
+  echo "the box profile runs as root: sudo -i, then run this again" >&2
+  exit 64
+fi
 here=$(cd "$(dirname "$0")" && pwd) gomod=$(cd "$here/../.." && pwd)
 ts=$(cd "$1" && pwd) run=$2
 [[ $run =~ ^[a-z0-9-]+$ ]] || { echo "run is lowercase letters, digits and dashes" >&2; exit 64; }
@@ -78,6 +91,12 @@ cleanup() {
     if [ -d "$target_root/$run" ]; then
       rm -rf "$target_root/$run" 2>/dev/null || true
     fi
+    if [ "$profile" = box ] && [ -d "/srv/vl-rh/$run" ]; then
+      rm -rf "/srv/vl-rh/$run" 2>/dev/null || true
+    fi
+  fi
+  if [ "$profile" = box ] && [ -n "${SUDO_UID:-}" ]; then
+    chown -R "$SUDO_UID:$SUDO_GID" "$root" || true
   fi
 }
 trap cleanup EXIT
@@ -85,30 +104,45 @@ if [ ! -f "$release/images.json" ]; then
   created_release=1
   "$here/images.sh" "$ts" "$run" "$release"
 fi
-if [ -d "$HOME/.cache/varlatch-gomod" ]; then
-  mkdir -p "$HOME/.cache/varlatch-go-nr"
-  gocache=$HOME/.cache/varlatch-go-nr gomodcache=$HOME/.cache/varlatch-gomod:/gomod:ro
-else
+# The Go caches: the workstation's (the module cache read-only, as the
+# repository's other builds use it), or on the box (or when absent), the
+# run's own writable cache.
+if [ "$profile" = box ] || [ ! -d "$HOME/.cache/varlatch-gomod" ]; then
   mkdir -p "$root/cache/go" "$root/cache/mod"
   gocache=$root/cache/go gomodcache=$root/cache/mod:/gomod
+else
+  mkdir -p "$HOME/.cache/varlatch-go-nr"
+  gocache=$HOME/.cache/varlatch-go-nr gomodcache=$HOME/.cache/varlatch-gomod:/gomod:ro
 fi
 docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e CGO_ENABLED=0 \
   -e GOCACHE=/gocache -e GOMODCACHE=/gomod -v "$gocache:/gocache" -v "$gomodcache" \
   -v "$gomod/..:/src" -v "$root/bin:/out" -w /src/go golang:1.27.4 sh -c '
-    go build -tags rehearsal -o /out/varlatch ./cmd/varlatch &&
+    go build -tags rehearsal,crashpoint -o /out/varlatch ./cmd/varlatch &&
     go build -o /out/varlatchd ./cmd/varlatchd &&
     go test -c -tags rehearsal -o /out/rehearsal.test ./test/rehearsal/'
 release=$(cd "$release" && pwd)
-# The test binary runs as root, as varlatch migrate does on a real host
-# (it reads the bundle the TypeScript container writes, mode 0600, as uid
-# 999): in a runner of this run's own, on the host's network (the
-# installations' ports are on loopback), driving the host's Docker through
-# its socket, every path mounted where it is on the host.
+pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
+  VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
+  VL_RH_BACKUPS_WORKAROUND VL_RH_KEEP VL_RH_ONLY)
+if [ "$profile" = box ]; then
+  # On the box: as root on the host, real systemd, the target under a
+  # root-owned path; the run's files handed back to the sudo user after.
+  cd "$root/work"
+  VL_RH_RUN=$run VL_RH_RELEASE_DIR=$release VL_RH_BIN=$root/bin VL_RH_WORK=$root/work VL_RH_REPORT=$root/report VL_RH_TS=$ts \
+    VL_RH_TARGET_ROOT="$target_root" "$root/bin/rehearsal.test" -test.v -test.timeout 6h -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"
+  exit "${PIPESTATUS[0]}"
+fi
+# On a workstation the test binary runs as root, as varlatch migrate does
+# on a real host (it reads the bundle the TypeScript container writes, mode
+# 0600, as uid 999): in a runner of this run's own, on the host's network
+# (the installations' ports are on loopback), driving the host's Docker
+# through its socket, every path mounted where it is on the host.
 docker build -q -t "$runner" -f "$here/runner.Dockerfile" "$here" >/dev/null
 runner_built=1
+envs=()
+for v in "${pass[@]}"; do envs+=(-e "$v"); done
 docker run --rm --name "vl-rh-$run-test" --network host -u 0 -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" -w "$root/work" \
   -e VL_RH_RUN="$run" -e VL_RH_RELEASE_DIR="$release" -e VL_RH_BIN="$root/bin" -e VL_RH_WORK="$root/work" \
-  -e VL_RH_REPORT="$root/report" -e VL_RH_TS="$ts" -e VL_RH_BACKUPS_WORKAROUND -e VL_RH_KEEP -e VL_RH_ONLY \
-  -e VL_RH_TARGET_ROOT="$target_root" \
+  -e VL_RH_REPORT="$root/report" -e VL_RH_TS="$ts" -e VL_RH_TARGET_ROOT="$target_root" "${envs[@]}" \
   "$runner" "$root/bin/rehearsal.test" -test.v -test.timeout 90m -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"

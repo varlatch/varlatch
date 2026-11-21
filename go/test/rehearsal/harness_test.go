@@ -310,6 +310,9 @@ type installation struct {
 	fakebin            string
 	proxy              *http.Server
 	installationID     string
+	ingress            string       // proxy or public
+	acme               *acmeStack   // public ingress: the run's Pebble
+	client             *http.Client // the public URL's client (TLS for public ingress)
 }
 
 // newInstallation is a fresh installation of the release, up and serving,
@@ -317,7 +320,7 @@ type installation struct {
 // target's host-install configuration, and its backup destination.
 func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *installation {
 	t.Helper()
-	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name}
+	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: prof.ingress}
 	base := filepath.Join(workDir, name)
 	in.dir, in.state = filepath.Join(base, "compose"), filepath.Join(base, "state")
 	// The target host install: under a root-owned path when the harness runs
@@ -352,6 +355,14 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	}
 	in.webPort, in.proxyPort = freePort(t), freePort(t)
 	in.publicURL = "http://127.0.0.1:" + in.proxyPort
+	if in.ingress == "public" {
+		in.acme = startACME(t, in.state)
+		in.publicURL = "https://" + prof.publicName
+		in.client = tlsClient(t, in.acme)
+		if err := os.WriteFile(filepath.Join(in.dir, "docker-compose.rehearsal.yml"), []byte(composeOverride(in.acme)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	pg := hexBytes(12)
 	env := map[string]string{
 		"COMPOSE_PROJECT_NAME":        in.project,
@@ -363,6 +374,13 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 		"VARLATCH_PUBLIC_URL":    in.publicURL,
 		"CONVEX_CLOUD_ORIGIN":    in.publicURL + "/convex", "CONVEX_SITE_ORIGIN": in.publicURL + "/convex",
 		"VARLATCH_JWKS_URL": "http://varlatchd:8686/.well-known/jwks.json", "VARLATCH_CONVEX_URL": "http://convex-backend:3210",
+	}
+	if in.ingress == "public" {
+		env["COMPOSE_FILE"] = "docker-compose.yml:docker-compose.caddy.yml:docker-compose.rehearsal.yml"
+		env["VARLATCH_PUBLIC_HOST"] = prof.publicName
+		env["VARLATCH_HTTP_PORT"] = net.JoinHostPort(prof.publicBind, "80")
+		env["VARLATCH_HTTPS_PORT"] = net.JoinHostPort(prof.publicBind, "443")
+		env["VARLATCH_ACME_CA"] = "https://pebble:14000/dir"
 	}
 	var text strings.Builder
 	for k, v := range env {
@@ -383,13 +401,21 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	s3.writeDestination(t, in.destinations, in.bucket, "write.json")
 	in.readCreds = filepath.Join(op, "read.json")
 	s3.writeCredentials(t, in.readCreds)
-	// The public URL: the operator's proxy to the dashboard's port, which
-	// the target varlatchd binds once the dashboard stops.
-	in.startProxy()
+	// The public URL: with an own proxy, the operator's proxy to the
+	// dashboard's port, which the target varlatchd binds once the dashboard
+	// stops; with public ingress, Caddy on the run's address.
+	if in.ingress == "proxy" {
+		in.startProxy()
+	}
 	// The target: a host install the migration fills.
 	in.data, in.keys = filepath.Join(target, "data"), filepath.Join(target, "keys")
 	host := fmt.Sprintf("listen = 127.0.0.1:%s\npublic_url = %s\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\n",
 		in.webPort, in.publicURL, in.data, filepath.Join(in.keys, "root-kek"), filepath.Join(in.keys, "backup-key"))
+	if in.ingress == "public" {
+		host = fmt.Sprintf("listen = 127.0.0.1:%s\nlisten_https = %s\nlisten_http_redirect = %s\nacme_ca = %s\nacme_ca_root = %s\npublic_url = %s\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\n",
+			freePort(t), net.JoinHostPort(prof.publicBind, "443"), net.JoinHostPort(prof.publicBind, "80"), in.acme.hostDirectory, in.acme.apiRoot,
+			in.publicURL, in.data, filepath.Join(in.keys, "root-kek"), filepath.Join(in.keys, "backup-key"))
+	}
 	in.conf = filepath.Join(target, "varlatchd.conf")
 	for _, p := range []string{in.conf, filepath.Join(in.state, "service.conf")} {
 		if err := os.WriteFile(p, []byte(host), 0o600); err != nil {
@@ -402,9 +428,14 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	// systemctl and varlatch-ts on PATH.
 	in.fakebin = filepath.Join(base, "bin")
 	_ = os.MkdirAll(in.fakebin, 0o755)
-	self, _ := os.Executable()
-	if err := os.Symlink(self, filepath.Join(in.fakebin, "systemctl")); err != nil {
-		t.Fatal(err)
+	// systemd: stood in for on a workstation; on the box, the run's own unit.
+	if prof.box {
+		in.installUnit(t)
+	} else {
+		self, _ := os.Executable()
+		if err := os.Symlink(self, filepath.Join(in.fakebin, "systemctl")); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cli := filepath.Join(releaseDir, "varlatch-cli-0.23.0.cjs")
 	if err := os.WriteFile(filepath.Join(in.fakebin, "varlatch-ts"), []byte("#!/bin/sh\nexec node "+cli+" \"$@\"\n"), 0o755); err != nil {
@@ -464,7 +495,10 @@ func (in *installation) inside(script string) ran {
 }
 
 func (in *installation) get(path string) (int, string) {
-	c := &http.Client{Timeout: 10 * time.Second}
+	c := in.client
+	if c == nil {
+		c = &http.Client{Timeout: 10 * time.Second}
+	}
 	resp, err := c.Get(in.publicURL + path)
 	if err != nil {
 		return 0, err.Error()
@@ -493,6 +527,9 @@ func (in *installation) journal() map[string]any {
 func (in *installation) remove() {
 	_ = os.Setenv("VL_RH_STATE", in.state)
 	_ = stopService()
+	if prof.box {
+		in.removeUnit()
+	}
 	if b, err := os.ReadFile(filepath.Join(in.state, "squatter.pid")); err == nil {
 		if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); pid > 0 {
 			_ = syscall.Kill(pid, syscall.SIGKILL)

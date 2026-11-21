@@ -35,6 +35,7 @@ type apiClient struct {
 	t      *testing.T
 	base   string
 	token  string
+	http   *http.Client
 	waited int // 429s waited out
 }
 
@@ -53,7 +54,11 @@ func (c *apiClient) do(method, path string, body any) (int, map[string]any) {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	hc := c.http
+	if hc == nil {
+		hc = &http.Client{Timeout: 60 * time.Second}
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		c.t.Fatalf("%s %s: %v", method, path, err)
 	}
@@ -108,7 +113,11 @@ func seed(t *testing.T, in *installation) seeded {
 		t.Fatal("bootstrap printed no CLI credential")
 	}
 	secret(token)
-	c := &apiClient{t: t, base: in.publicURL, token: token}
+	hc := &http.Client{Timeout: 60 * time.Second}
+	if in.client != nil {
+		hc.Transport = in.client.Transport
+	}
+	c := &apiClient{t: t, base: in.publicURL, token: token, http: hc}
 	n := 400
 	if v, err := strconv.Atoi(os.Getenv("VL_RH_SEED_VALUES")); err == nil && v > 0 {
 		n = v

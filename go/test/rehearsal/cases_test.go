@@ -26,15 +26,28 @@ import (
 // installation, then the port-collision case of item 6 on a second.
 func TestRehearsal(t *testing.T) {
 	rel := loadRelease(t)
+	loadProfile(t)
 	report.Run, report.Started, report.Images = runID, time.Now().UTC(), rel.Images
 	defer writeReport(t)
+	guardOthers(t)
 	s3 := startS3(t)
 	secret(s3.secret)
-	t.Run("main", func(t *testing.T) { mainCases(t, rel, s3) })
-	if os.Getenv("VL_RH_ONLY") == "setup" {
+	switch prof.ingress {
+	case "coolify":
+		t.Run("coolify", func(t *testing.T) { coolifyCase(t, rel, s3) })
 		return
+	case "public":
+		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
+	default:
+		t.Run("main", func(t *testing.T) { mainCases(t, rel, s3) })
+		if os.Getenv("VL_RH_ONLY") == "setup" {
+			return
+		}
+		t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
 	}
-	t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
+	if prof.kill != "" {
+		t.Run("kill", func(t *testing.T) { killCase(t, rel, s3) })
+	}
 }
 
 func mainCases(t *testing.T, rel release, s3 *s3Server) {
@@ -121,16 +134,31 @@ func (in *installation) swapImage(t *testing.T, image string) {
 	must(t, in.compose("up", "-d", "--wait", "varlatchd"), "recreate varlatchd on "+image)
 }
 
-// migrateEnv is migrate with the pin override set to pin (or unset).
-func (in *installation) migrateEnv(rel release, withPin bool, pin string, extra ...string) ran {
-	args := []string{"migrate", "--ingress", "proxy", "--from", in.dir, "--config", in.conf,
+// migrateArgs are migrate's options for the installation: its ingress,
+// the target host install (and, on the box, its unit) and the backup's.
+func (in *installation) migrateArgs(extra ...string) []string {
+	args := []string{"migrate", "--ingress", in.ingress, "--from", in.dir, "--config", in.conf,
 		"--bek-file", in.bek, "--backup-destination", "offsite", "--destinations-file", in.destinations,
 		"--read-credentials-file", in.readCreds, "--ts-cli", "varlatch-ts", "--transfer-timeout", "90s", "--drain", "20s"}
+	if prof.box {
+		args = append(args, "--unit", in.unitName())
+	}
+	return append(args, extra...)
+}
+
+// migrateEnvVars are its environment: the run's PATH (varlatch-ts, and
+// systemctl's stand-in on a workstation) and the pin override (or none).
+func (in *installation) migrateEnvVars(rel release, withPin bool, pin string) []string {
 	env := []string{"PATH=" + in.fakebin + ":" + os.Getenv("PATH"), "VL_RH_STATE=" + in.state, "TMPDIR=" + in.state}
 	if withPin {
 		env = append(env, "VARLATCH_MIGRATE_PIN="+pin)
 	}
-	return run(in.dir, env, nil, filepath.Join(binDir, "varlatch"), append(args, extra...)...)
+	return env
+}
+
+// migrateEnv is migrate with the pin override set to pin (or unset).
+func (in *installation) migrateEnv(rel release, withPin bool, pin string, extra ...string) ran {
+	return run(in.dir, in.migrateEnvVars(rel, withPin, pin), nil, filepath.Join(binDir, "varlatch"), in.migrateArgs(extra...)...)
 }
 
 // --- item 7: the TypeScript CLI's backups ---
@@ -426,7 +454,7 @@ func migration(t *testing.T, in *installation, rel release, s3 *s3Server) {
 	var gaps []string
 	var mu sync.Mutex
 	var longest time.Duration
-	go probe(in.publicURL+"/v1/meta", stop, func(gap time.Duration, from, to string) {
+	go probe(in.publicURL+"/v1/meta", in.client, stop, func(gap time.Duration, from, to string) {
 		mu.Lock()
 		defer mu.Unlock()
 		gaps = append(gaps, fmt.Sprintf("%s (%s -> %s)", gap.Round(time.Millisecond), from, to))
@@ -496,14 +524,19 @@ func migration(t *testing.T, in *installation, rel release, s3 *s3Server) {
 func (in *installation) migrateFinish(rel release) ran {
 	args := []string{"migrate", "--finish", "--delete-old-data", "--from", in.dir, "--config", in.conf, "--bek-file", in.bek,
 		"--backup-destination", "offsite", "--destinations-file", in.destinations, "--read-credentials-file", in.readCreds, "--ts-cli", "varlatch-ts"}
-	env := []string{"PATH=" + in.fakebin + ":" + os.Getenv("PATH"), "VL_RH_STATE=" + in.state, "TMPDIR=" + in.state, "VARLATCH_MIGRATE_PIN=" + rel.pin()}
-	return run(in.dir, env, nil, filepath.Join(binDir, "varlatch"), args...)
+	if prof.box {
+		args = append(args, "--unit", in.unitName())
+	}
+	return run(in.dir, in.migrateEnvVars(rel, true, rel.pin()), nil, filepath.Join(binDir, "varlatch"), args...)
 }
 
 // probe polls u every 250 ms until stop, reporting each stretch without a
 // 200 (its length, and the answers either side of it).
-func probe(u string, stop <-chan struct{}, gap func(time.Duration, string, string)) {
+func probe(u string, client *http.Client, stop <-chan struct{}, gap func(time.Duration, string, string)) {
 	c := &http.Client{Timeout: 2 * time.Second}
+	if client != nil {
+		c = &http.Client{Timeout: 2 * time.Second, Transport: client.Transport}
+	}
 	var downSince time.Time
 	last := "200"
 	for {
