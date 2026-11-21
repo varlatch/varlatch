@@ -120,8 +120,10 @@ type ArchiveOptions struct {
 	// Varlatchd's commands (VarlatchdRun, when set, runs varlatchd).
 	Docker            string
 	Run, VarlatchdRun Runner
-	// User is the user the export runs as in its container ("uid:gid", so
-	// it can write the scratch directory); "" for this process's.
+	// User is the uid:gid the last TypeScript release's tools run as in
+	// their containers ("" for this process's). It needs no host
+	// directory: the export writes only its tmpfs /tmp, and the bundle
+	// comes on its standard output.
 	User string
 	// AllowLocalImage lets TSImage be a local image's ID (sha256:...), not
 	// only a registry digest: the tests' and the nightly run's own builds.
