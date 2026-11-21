@@ -27,7 +27,7 @@
 
 services:
   varlatchd:
-    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatchd@${VARLATCH_VARLATCHD_DIGEST:?set VARLATCH_VARLATCHD_DIGEST to the release's varlatchd digest}
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatchd@${VARLATCH_VARLATCHD_DIGEST:?set VARLATCH_VARLATCHD_DIGEST to the release's varlatchd digest (coolify-image-digests.env)}
     user: "65532:65532"
     read_only: true
     security_opt:

@@ -340,6 +340,11 @@ pins the published image by digest using Coolify environment variables.
    until `varlatch migrate` stops (exit `75`) and asks you to **Deploy** it and
    move the domain over.
 
+   Ensure `/srv/varlatch/varlatchd.conf` (or `VARLATCH_CONFIG_FILE`) already
+   exists on the host as a regular file before clicking **Deploy**: if a
+   bind-mounted file path is missing, Docker creates an empty directory there
+   instead, and `varlatchd` fails with `EISDIR` when reading its configuration.
+
 3. Set the Coolify environment variables:
 
    ```sh
@@ -363,7 +368,10 @@ pins the published image by digest using Coolify environment variables.
 4. Routing and readiness:
    - Assign the public domain in Coolify to the `varlatchd` service on port
      `8686`. The Compose file publishes no host ports; Coolify's Traefik proxy
-     reaches `varlatchd:8686` over the Docker network.
+     terminates TLS and reaches `varlatchd:8686` over the Docker network.
+     Leave `listen_https` (public HTTPS + ACME) unset in `varlatchd.conf`:
+     setting `listen_https` together with `listen = 0.0.0.0:8686` makes
+     `varlatchd` refuse to start (exit `78`) and crash-loop.
    - `varlatchd.compose.yml` omits a Docker `healthcheck` because the image is
      distroless (`gcr.io/distroless/static-debian12`) and contains no shell,
      `curl`, or HTTP probe subcommand. Verify readiness externally at

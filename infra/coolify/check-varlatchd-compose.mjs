@@ -26,13 +26,12 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const FILE = "infra/coolify/varlatchd.compose.yml";
 const DIGEST = `sha256:${"1".repeat(64)}`;
+const REQUIRED_MSG = "set VARLATCH_VARLATCHD_DIGEST to the release's varlatchd digest (coolify-image-digests.env)";
+const PINNED_IMAGE_RE = /^[a-z0-9._-]+(?::\d+)?(?:\/[a-z0-9._-]+)+\/varlatchd@sha256:[0-9a-f]{64}$/;
 const problems = [];
 
-const BASE_ENV = {
-  PATH: process.env.PATH ?? "",
-  HOME: process.env.HOME ?? "",
-  DOCKER_HOST: process.env.DOCKER_HOST ?? "",
-};
+const PASSTHROUGH_ENV = ["PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "DOCKER_CONFIG"];
+const BASE_ENV = Object.fromEntries(PASSTHROUGH_ENV.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]]));
 
 function render(env) {
   return spawnSync("docker", ["compose", "-f", join(ROOT, FILE), "config", "--format", "json"], {
@@ -63,6 +62,7 @@ for (const registry of [undefined, "registry.pins.test/fork"]) {
   const svc = cfg.services.varlatchd;
   const wantImage = `${registry ?? "ghcr.io/varlatch"}/varlatchd@${DIGEST}`;
   if (svc.image !== wantImage) problems.push(`${FILE}: image is ${svc.image}, expected ${wantImage}`);
+  if (!PINNED_IMAGE_RE.test(svc.image ?? "")) problems.push(`${FILE}: rendered image ${svc.image} is not a valid digest-pinned reference`);
   if (svc.build) problems.push(`${FILE}: varlatchd must not build from source`);
   if (svc.user !== "65532:65532") problems.push(`${FILE}: user is ${svc.user}, expected 65532:65532`);
   if (svc.read_only !== true) problems.push(`${FILE}: read_only must be true`);
@@ -116,7 +116,7 @@ for (const registry of [undefined, "registry.pins.test/fork"]) {
   }
 }
 
-// 3. Unset or empty digest must fail and name VARLATCH_VARLATCHD_DIGEST.
+// 3. Unset or empty digest must fail with the exact required message.
 for (const [label, env] of [
   ["unset", { ...BASE_ENV }],
   ["empty", { ...BASE_ENV, VARLATCH_VARLATCHD_DIGEST: "" }],
@@ -124,12 +124,23 @@ for (const [label, env] of [
   const r = render(env);
   if (r.status === 0) {
     problems.push(`${FILE}: rendered with VARLATCH_VARLATCHD_DIGEST ${label}`);
-  } else if (!r.stderr.includes("VARLATCH_VARLATCHD_DIGEST")) {
-    problems.push(`${FILE}: refused ${label} digest without naming VARLATCH_VARLATCHD_DIGEST: ${r.stderr.trim()}`);
+  } else if (!r.stderr.includes(REQUIRED_MSG)) {
+    problems.push(`${FILE}: refused ${label} digest without expected message (${REQUIRED_MSG}): ${r.stderr.trim()}`);
   }
 }
 
-// 4. Documentation names the file and every variable it interpolates.
+// 4. Malformed digests (Compose itself interpolates any non-empty string) must be caught by image-ref validation.
+for (const bad of ["latest", "sha256:not-hex", `sha256:${"A".repeat(64)}`, `sha256:${"1".repeat(63)}`]) {
+  const r = render({ ...BASE_ENV, VARLATCH_VARLATCHD_DIGEST: bad });
+  if (r.status === 0) {
+    const rendered = JSON.parse(r.stdout).services?.varlatchd?.image ?? "";
+    if (PINNED_IMAGE_RE.test(rendered)) {
+      problems.push(`${FILE}: malformed digest ${bad} unexpectedly passed image-ref validation (${rendered})`);
+    }
+  }
+}
+
+// 5. Documentation names the file and every variable it interpolates.
 const readme = readFileSync(join(ROOT, "infra/coolify/README.md"), "utf8");
 for (const token of [
   "varlatchd.compose.yml",
