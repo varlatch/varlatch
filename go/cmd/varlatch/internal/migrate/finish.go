@@ -110,16 +110,55 @@ type FinishTarget interface {
 }
 
 // RollbackWindowOpen is whether the Go installation whose data directory
-// is dir is in a migration's rollback window: its journal open (or a
-// reverse begun). An installation never migrated, or whose window
-// --finish ended (finished), is not. varlatch upgrade asks before a release
-// that ends the window only while it is open.
-func RollbackWindowOpen(dir string) (bool, error) {
+// is dir is in a migration's rollback window at now: its journal open,
+// switched no more than RollbackWindow ago, and its window not ended by an
+// upgrade (WindowEnded); or a reverse begun. An installation never
+// migrated, or whose window --finish ended (finished), is not. varlatch
+// upgrade asks before a release that ends the window only while it is
+// open.
+func RollbackWindowOpen(dir string, now time.Time) (bool, error) {
 	j, err := readJournal(dir)
 	if err != nil || j == nil {
 		return false, err
 	}
-	return j.Phase == Open || slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer, nil
+	if slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer {
+		return true, nil
+	}
+	if j.Phase != Open || j.WindowEnded != nil {
+		return false, nil
+	}
+	at, ok := switchedAt(j)
+	return ok && now.Sub(at) <= RollbackWindow, nil
+}
+
+// ReverseUnderWay is whether dir's journal (Go's) says a reverse migration
+// is under way: its phase, or "" when none is.
+func ReverseUnderWay(dir string) (Phase, error) {
+	j, err := readJournal(dir)
+	if err != nil || j == nil {
+		return "", err
+	}
+	if slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer {
+		return j.Phase, nil
+	}
+	return "", nil
+}
+
+// EndRollbackWindow records in Go's journal (dataDir's, written through
+// h, beside its running varlatchd) that upgrading to release ends the
+// migration's rollback window, before the upgrade runs: from then
+// --rollback refuses. Done already, or with no window open, it writes
+// nothing.
+func EndRollbackWindow(ctx context.Context, h *Host, dataDir, release string, now time.Time) error {
+	j, err := readJournal(dataDir)
+	if err != nil {
+		return fmt.Errorf("the migration journal in %s: %w", dataDir, err)
+	}
+	if j == nil || j.Phase != Open || j.WindowEnded != nil {
+		return nil
+	}
+	j.WindowEnded = &WindowEndedRecord{Release: release, At: now.UTC().Format(time.RFC3339Nano)}
+	return h.WriteJournal(ctx, j)
 }
 
 // Finish is `varlatch migrate --finish`.

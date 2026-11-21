@@ -235,18 +235,27 @@ func (e *Engine) waitForTarget(ctx context.Context, j *Journal) error {
 	}
 }
 
-// returnAddress gives the address back during an undo: the target stops,
-// the source's ingress starts again; the Coolify shape says how to move
-// the domain back. What it could not do is returned.
-func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
-	var problems []error
+// stopTargetForUndo is an undo's first step in the transfer: the target
+// stops serving the address. What it could not do is returned.
+func (e *Engine) stopTargetForUndo(ctx context.Context) []error {
 	if err := e.Target.Stop(ctx); err != nil {
 		var human *HumanStep
 		if errors.As(err, &human) {
 			e.say("To undo, by hand: %s Then run varlatch migrate --abort (or --resume) again.", human.Instruction)
 		}
-		problems = append(problems, fmt.Errorf("stopping the target: %w", err))
+		return []error{fmt.Errorf("stopping the target: %w", err)}
 	}
+	return nil
+}
+
+// returnAddress gives the address back during an undo, once the source's
+// barrier is lifted: its ingress starts again; the Coolify shape says how
+// to move the domain back. Started behind the barrier, the ingress would
+// not come up: Compose starts the dashboard's one-off dependency
+// (varlatch-migrate, service_completed_successfully) again with it, and
+// that refuses while the source is behind a gate (run r8 of the 7.8b
+// rehearsal). What it could not do is returned.
+func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
 	switch j.Ingress {
 	case Coolify:
 		origin := "the installation's address"
@@ -256,10 +265,10 @@ func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
 		e.say("The address goes back by hand: in Coolify, move the domain of %s back to the TypeScript application.", origin)
 	default:
 		if err := e.Source.StartIngress(ctx, j.Ingress); err != nil {
-			problems = append(problems, fmt.Errorf("starting the source's %s again: %w", ingressPart(j.Ingress), err))
+			return []error{fmt.Errorf("starting the source's %s again: %w", ingressPart(j.Ingress), err)}
 		}
 	}
-	return problems
+	return nil
 }
 
 // HTTPProber asks over HTTP(S), certificates verified as any client

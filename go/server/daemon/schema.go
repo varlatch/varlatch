@@ -23,20 +23,31 @@ import (
 	"github.com/varlatch/varlatch/go/server/db"
 )
 
-const schemaUsage = "Usage: varlatchd admin schema status|upgrade [--json] [--config <file>]"
+const schemaUsage = "Usage: varlatchd admin schema status [--json] [--config <file>] | varlatchd admin schema upgrade [--json] [--database <file>] [--config <file>]"
 
-// schemaArgs checks `admin schema ...`'s arguments (--config taken out).
+// schemaArgs checks `admin schema ...`'s arguments (--config taken out):
+// --json, and for upgrade --database <file>.
 func schemaArgs(rest []string) (cmd string, asJSON bool, msg string) {
+	cmd, asJSON, _, msg = schemaArguments(rest)
+	return cmd, asJSON, msg
+}
+
+func schemaArguments(rest []string) (cmd string, asJSON bool, database, msg string) {
 	if len(rest) == 0 || rest[0] != "status" && rest[0] != "upgrade" {
-		return "", false, schemaUsage
+		return "", false, "", schemaUsage
 	}
-	for _, a := range rest[1:] {
-		if a != "--json" || asJSON {
-			return "", false, schemaUsage
+	for i := 1; i < len(rest); i++ {
+		switch a := rest[i]; {
+		case a == "--json" && !asJSON:
+			asJSON = true
+		case a == "--database" && rest[0] == "upgrade" && database == "" && i+1 < len(rest) && rest[i+1] != "":
+			database = rest[i+1]
+			i++
+		default:
+			return "", false, "", schemaUsage
 		}
-		asJSON = true
 	}
-	return rest[0], asJSON, ""
+	return rest[0], asJSON, database, ""
 }
 
 // schemaJSON is a schema version as `admin schema` prints it.
@@ -66,7 +77,7 @@ type databaseJSON struct {
 //	          write job; nothing to do for the same schema, or a newer one
 //	          this varlatchd may open
 func runSchema(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
-	cmd, asJSON, _ := schemaArgs(rest)
+	cmd, asJSON, database, _ := schemaArguments(rest)
 	what := "varlatchd admin schema " + cmd
 	fail := func(status int, format string, args ...any) int {
 		fmt.Fprintf(stderr, what+": "+format+"\n", args...)
@@ -74,18 +85,23 @@ func runSchema(cfg *config.Config, rest []string, stdout, stderr io.Writer) int 
 	}
 	binary := schemaJSON{db.SchemaVersion, db.CompatibleFrom}
 	path := cfg.DatabasePath()
-	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) && database == "" {
 		if cmd == "upgrade" {
 			return fail(ExitFailure, "there is no database at %s: nothing to upgrade (varlatchd creates it when it first starts)", path)
 		}
-		return printSchemaStatus(stdout, asJSON, binary, nil)
+		return printSchemaStatus(stdout, asJSON, cfg.DataDir, binary, nil)
 	}
 	if cmd == "status" {
 		d, err := readSchema(path)
 		if err != nil {
 			return fail(ExitFailure, "%v", err)
 		}
-		return printSchemaStatus(stdout, asJSON, binary, d)
+		return printSchemaStatus(stdout, asJSON, cfg.DataDir, binary, d)
+	}
+	if database != "" {
+		if copied, done := upgradeCopy(cfg, database, asJSON, binary, stdout, stderr); done {
+			return copied
+		}
 	}
 
 	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
@@ -169,7 +185,7 @@ func readSchema(path string) (*databaseJSON, error) {
 	return &d, nil
 }
 
-func printSchemaStatus(stdout io.Writer, asJSON bool, binary schemaJSON, d *databaseJSON) int {
+func printSchemaStatus(stdout io.Writer, asJSON bool, dataDir string, binary schemaJSON, d *databaseJSON) int {
 	opens := d == nil || d.SchemaVersion == binary.SchemaVersion || d.SchemaVersion > binary.SchemaVersion && d.CompatibleFrom <= binary.SchemaVersion
 	needsUpgrade := d != nil && d.SchemaVersion < binary.SchemaVersion
 	if asJSON {
@@ -178,7 +194,8 @@ func printSchemaStatus(stdout io.Writer, asJSON bool, binary schemaJSON, d *data
 			Database     *databaseJSON `json:"database"`
 			Opens        bool          `json:"opens"`
 			NeedsUpgrade bool          `json:"needsUpgrade"`
-		}{binary, d, opens, needsUpgrade})
+			DataDir      string        `json:"dataDir"`
+		}{binary, d, opens, needsUpgrade, dataDir})
 	}
 	fmt.Fprintf(stdout, "This varlatchd: schema version %d; a database it writes opens in varlatchd of schema %d and later.\n", binary.SchemaVersion, binary.CompatibleFrom)
 	switch {
@@ -207,4 +224,52 @@ func printJSON(stdout, stderr io.Writer, what string, v any) int {
 	}
 	fmt.Fprintln(stdout, string(b))
 	return ExitOK
+}
+
+// upgradeCopy is `admin schema upgrade --database <file>`: the schema of a
+// copy of the database, which `varlatch upgrade` runs with the new release
+// before that copy takes the database's place (ADR-0059 Decision 8: the
+// schema update runs on a copy first). No varlatchd uses a copy, so it is
+// neither locked nor checked against a running one; a file that is the
+// configured database itself (by any name) is not a copy, and takes the
+// ordinary path (done false).
+func upgradeCopy(cfg *config.Config, database string, asJSON bool, binary schemaJSON, stdout, stderr io.Writer) (int, bool) {
+	const what = "varlatchd admin schema upgrade"
+	fail := func(status int, format string, args ...any) (int, bool) {
+		fmt.Fprintf(stderr, what+": "+format+"\n", args...)
+		return status, true
+	}
+	info, err := os.Stat(database)
+	if err != nil {
+		return fail(ExitFailure, "the database copy %s: %v", database, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fail(ExitFailure, "the database copy %s is not a file", database)
+	}
+	if live, err := os.Stat(cfg.DatabasePath()); err == nil && os.SameFile(info, live) {
+		return 0, false
+	}
+	ctx := context.Background()
+	store, err := storage.Open(ctx, storage.Options{Path: database})
+	if err != nil {
+		return fail(ExitFailure, "cannot open the database copy: %v", err)
+	}
+	up, err := db.Upgrade(ctx, store, buildinfo.Version)
+	if cerr := store.Close(); err == nil && cerr != nil {
+		err = cerr
+	}
+	if err != nil {
+		return fail(ExitFailure, "%v; nothing was changed", err)
+	}
+	if asJSON {
+		return printJSON(stdout, stderr, what, struct {
+			Binary         schemaJSON `json:"binary"`
+			From           int64      `json:"from"`
+			To             int64      `json:"to"`
+			CompatibleFrom int64      `json:"compatibleFrom"`
+			Changed        bool       `json:"changed"`
+		}{binary, up.From, up.To, up.CompatibleFrom, up.Changed}), true
+	}
+	fmt.Fprintf(stdout, "Upgraded the database copy's schema from version %d to %d.\n", up.From, up.To)
+	return ExitOK, true
 }

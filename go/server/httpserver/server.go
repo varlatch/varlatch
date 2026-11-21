@@ -34,6 +34,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -78,6 +79,10 @@ type Options struct {
 	Outbound *outbound.Policy
 	// Version is the server version /v1/meta reports.
 	Version string
+	// ReleaseCheckDir holds the host's release check (release-check.json,
+	// ADR-0049), which `varlatch upgrade --check` records and
+	// getInstallationRelease reads; "" when there is none to read.
+	ReleaseCheckDir string
 	// PublicURL is the configured public URL; nil when not set.
 	PublicURL *url.URL
 	// Sync is the outbound sync installation switch; SyncAdapters narrows
@@ -518,7 +523,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if v == http.ErrAbortHandler {
 				panic(v)
 			}
-			s.opts.Log.Error("a request handler panicked", "method", r.Method, "path", p, "requestId", id, "panic", fmt.Sprint(v))
+			// The panic's type and where it was, never its value: it can hold a request's or a row's data.
+			s.opts.Log.Error("a request handler panicked", "method", r.Method, "path", p, "requestId", id, "panic", fmt.Sprintf("%T", v), "stack", string(debug.Stack()))
 			if rec.status == 0 {
 				writeError(rec, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
 			}

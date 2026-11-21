@@ -100,24 +100,25 @@ mode_of() { stat -c '%a %U:%G' "$1"; }
 # that stops for the passkey (75, the link in $work/<name>-link) is
 # followed by enrollpasskey and another run; one stopped by
 # VARLATCH_SETUP_STOP_AFTER ends it. Every run attests (--attest): the
-# copies are this test's.
+# copies are this test's. It keeps <name> in run, not name: sh has no
+# locals, and check_installation's name is its caller's.
 setup_once() {
-  name=$1
+  run=$1
   shift
-  : >"$work/$name.out"
+  : >"$work/$run.out"
   rounds=0
   while :; do
     rounds=$((rounds + 1))
     set +e
     /usr/local/bin/varlatch setup "$@" --backups host --accept-slow-disk --attest --admin-wait 0s \
-      --admin-link-out "$work/$name-link" --root-kek-out "$work/$name-root-kek" --backup-key-out "$work/$name-backup-key" \
-      </dev/null >>"$work/$name.out" 2>&1
+      --admin-link-out "$work/$run-link" --root-kek-out "$work/$run-root-kek" --backup-key-out "$work/$run-backup-key" \
+      </dev/null >>"$work/$run.out" 2>&1
     status=$?
     set -e
-    if [ "$status" != 75 ] || grep -q 'VARLATCH_SETUP_STOP_AFTER' "$work/$name.out" || [ "$rounds" -ge 3 ]; then
+    if [ "$status" != 75 ] || grep -q 'VARLATCH_SETUP_STOP_AFTER' "$work/$run.out" || [ "$rounds" -ge 3 ]; then
       return
     fi
-    enroll "$name"
+    enroll "$run"
   done
 }
 
@@ -165,7 +166,7 @@ check_installation() {
   else
     fail "$name: custody status $custody"
   fi
-  if grep -q '"firstBackup": "bak_' /etc/varlatch/setup.json && grep -q 'is made and verified' "$work/$name.out"; then pass "$name: the first backup is verified"; else fail "$name: no verified first backup"; fi
+  if grep -q '"firstBackup": "[0-9a-f]' /etc/varlatch/setup.json && grep -q 'is made and verified' "$work/$name.out"; then pass "$name: the first backup is verified"; else fail "$name: no verified first backup"; fi
   if grep -q 'varlatch doctor:' "$work/$name.out"; then pass "$name: setup ran doctor"; else fail "$name: setup ran no doctor"; fi
   if ! [ "$(mode_of /etc/varlatch/varlatchd.conf)" = "640 root:varlatch" ]; then fail "$name: varlatchd.conf is $(mode_of /etc/varlatch/varlatchd.conf)"; fi
   if ! [ "$(mode_of /etc/varlatch)" = "750 root:varlatch" ]; then fail "$name: /etc/varlatch is $(mode_of /etc/varlatch)"; fi
@@ -243,7 +244,7 @@ if [ -e "$work/g13-link" ] || grep -q 'enrollment link' "$work/g13.out"; then fa
 for k in root-kek backup-key; do
   if cmp -s "$work/g13/$k" /etc/varlatch/$k && [ "$(mode_of /etc/varlatch/$k)" = "600 root:root" ]; then pass "g13: /etc/varlatch/$k is your key, 600 root"; else fail "g13: /etc/varlatch/$k"; fi
 done
-if grep -q '"firstBackup": "bak_' /etc/varlatch/setup.json && grep -q 'is made and verified' "$work/g13.out"; then pass "g13: a backup of the restored installation is verified"; else fail "g13: no verified backup after the restore"; fi
+if grep -q '"firstBackup": "[0-9a-f]' /etc/varlatch/setup.json && grep -q 'is made and verified' "$work/g13.out"; then pass "g13: a backup of the restored installation is verified"; else fail "g13: no verified backup after the restore"; fi
 journalctl -u varlatchd.service --no-pager >"$work/g13.journal" 2>&1 || true
 if keys_leak_into "$work/g13.out" /etc/varlatch/setup.json /etc/varlatch/varlatchd.conf "$work/g13.journal"; then fail "g13: a key in setup's output, its journal, the configuration or the unit's journal"; else pass "g13: no key in setup's output or any journal"; fi
 teardown
