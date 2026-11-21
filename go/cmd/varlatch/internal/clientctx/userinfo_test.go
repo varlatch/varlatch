@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -190,12 +192,15 @@ func TestFailSafeMasksEveryReproducer(t *testing.T) {
 
 // TestFailSafeRule: what the fail-safe does, exactly: the whole-text span
 // (from just after the first colon, whatever precedes it, tab, CR and LF
-// passed over, to the last at-sign) and, per at-sign, the span of its run
-// (from just after the nearest "//", or the run's start).
+// passed over, to the last at-sign that may end a credential) and, per such
+// at-sign, the span of its run (from just after the nearest "//", or the
+// run's start). An at-sign in a URL's path is TestFailSafeAtSignsInAPath's.
 func TestFailSafeRule(t *testing.T) {
 	for in, want := range map[string]string{
-		"https://u:p@h":                     "https:[redacted]@h",
-		"error: see https://u:p@h/x@y here": "error:[redacted]@y here",
+		"https://u:p@h": "https:[redacted]@h",
+		// The last at-sign that may end a credential ends the whole-text
+		// span; one in a path does not.
+		"error: see https://u:p@h/x@y here": "error:[redacted]@h/x@y here",
 		"varlatch server: unexpected argument https://alice:pw@example.com\nUsage: varlatch server [--json]": "varlatch server:[redacted]@example.com\nUsage: varlatch server [--json]",
 		"https://alice:fake%40h":        "https:[redacted]@h",
 		`https://alice:fake\x40h`:       "https:[redacted]@h",
@@ -221,6 +226,50 @@ func TestFailSafeRule(t *testing.T) {
 		// Kept: no colon before an at-sign, or no at-sign.
 		"me@example.com and then: more":      "me@example.com and then: more",
 		"3:  server = \"https://h.example\"": "3:  server = \"https://h.example\"",
+	} {
+		if got := MaskUserinfoInText(in); got != want {
+			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
+		}
+	}
+}
+
+// TestFailSafeAtSignsInAPath: an at-sign after a URL's authority, in its
+// path, query or fragment, is not a credential's, so a release workflow's
+// identity reads as it is; userinfo in the authority, a scheme-less
+// user:password@host, and anything ambiguous are masked as before.
+func TestFailSafeAtSignsInAPath(t *testing.T) {
+	const identity = "https://github.com/varlatch/varlatch/.github/workflows/release.yml@refs/tags/v0.50.0-rc.1"
+	for in, want := range map[string]string{
+		// Shown.
+		"https://host/a@b":       "https://host/a@b",
+		"https://host/x?y=a@b":   "https://host/x?y=a@b",
+		"https://host/x#a@b":     "https://host/x#a@b",
+		"https://host:8443/a@b":  "https://host:8443/a@b",
+		"https://[::1]:8443/a@b": "https://[::1]:8443/a@b",
+		"https://host/x@y/z@w":   "https://host/x@y/z@w",
+		identity:                 identity,
+		"varlatch verify-release: release: SHA256SUMS of 0.50.0-rc.2 is not signed by varlatch/varlatch's release workflow: expected " + identity + ", got " + identity: "varlatch verify-release: release: SHA256SUMS of 0.50.0-rc.2 is not signed by varlatch/varlatch's release workflow: expected " + identity + ", got " + identity,
+		// Masked as before: userinfo in the authority, a token alone, a
+		// scheme-less user:password@host.
+		"https://user:pass@host/x":    "https:[redacted]@host/x",
+		"https://tok@host":            "https:[redacted]@host",
+		"see https://tok@host/a@b":    "see https:[redacted]@host/a@b",
+		"user:pass@host":              "[redacted]@host",
+		"login user:pass@host failed": "login [redacted]@host failed",
+		"https://u:p@h/x@y":           "https:[redacted]@h/x@y",
+		// Masked: ambiguous. A colon after the authority's end that is no
+		// port, a colon or encoded colon or slash in the path before the
+		// at-sign, an encoded at-sign, an empty authority, extra slashes.
+		"https://alice:fake/x@h":                "https:[redacted]@h",
+		"https://host/u:pw@x":                   "https:[redacted]@x",
+		"https://h/?r=https%3A%2F%2Fu%3Apw%40e": "https:[redacted]@e",
+		"https://h/?r=https%3A%2F%2Fu%3Apw@e":   "https:[redacted]@e",
+		"https://h/#%2F%2Ftok%40e":              "https:[redacted]@e",
+		"https://h/?r=//tok@e":                  "https:[redacted]@e",
+		"https:///u:p@h":                        "https:[redacted]@h",
+		"https:///tok@h/a@b":                    "https:[redacted]@h/a@b",
+		"https://h:pw/x@y":                      "https:[redacted]@y",
+		"https://[::1]:pw/x@y":                  "https:[redacted]@y",
 	} {
 		if got := MaskUserinfoInText(in); got != want {
 			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
@@ -379,35 +428,86 @@ var maskRegressions = []string{
 	"//gateway.example/?next=%2F%2Fci-bot%3ARoundSixPassword%40upstream.example",
 }
 
+// growsLinearly is the timing tests' criterion (as internal/agents'
+// hook tests judge it): for an input eight times as large, the time may
+// grow at most 24-fold. Linear work grows about eightfold and quadratic
+// about 64-fold, and 24 sits near their geometric middle, so the limit
+// separates them with room for noise on either side; it judges growth
+// only, never a machine's speed. 20 ms of slack keeps a short run from
+// failing on jitter.
+func growsLinearly(small, large time.Duration) bool {
+	return large <= 24*small+20*time.Millisecond
+}
+
+// timed is one run of f, after a garbage collection and with the
+// collector off while it runs: a collection's pause is the noise that
+// made a run of under a millisecond look 78 times slower once.
+func timed(f func()) time.Duration {
+	runtime.GC()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	began := time.Now()
+	f()
+	return time.Since(began)
+}
+
+// interleaved times small and large five times each, alternately, and
+// gives the fastest of each, after one untimed run of small: noise only
+// ever adds time, and a CPU still cold or clocking up slows the first
+// runs, so neither size's runs all come first.
+func interleaved(small, large func()) (time.Duration, time.Duration) {
+	small() // warm up
+	var s, l time.Duration
+	for i := range 5 {
+		ts, tl := timed(small), timed(large)
+		if i == 0 || ts < s {
+			s = ts
+		}
+		if i == 0 || tl < l {
+			l = tl
+		}
+	}
+	return s, l
+}
+
+// The timing tests' sizes: large enough that the smaller run takes a
+// millisecond or more (about 10 ms for the slowest inputs), so a pause of
+// the machine is small beside it; smaller under the race detector, which
+// slows the work about tenfold.
+const (
+	timedSmall = 400_000 / raceSlowdown
+	timedLarge = 8 * timedSmall
+)
+
 // TestMaskingIsLinear: inputs that made the earlier scanners rescan (a tab
 // after every letter, a URL every ten bytes, quotes, escapes, "@"s, and
-// "http:u:p@h\" repeated) take time linear in their length: 200 KB in well
-// under a second each (Sol, #265 rounds 2 and 3).
+// "http:u:p@h\" repeated) take time linear in their length: eight times
+// the input in at most 24 times the time (Sol, #265 rounds 2 and 3).
 func TestMaskingIsLinear(t *testing.T) {
-	const size = 200_000
 	for _, unit := range []string{
 		"a\t", "https://h/", "https://u:p@", "https:", "@", "ht\ttps:", "--", `"https://h" `, `"x" `, `"\u0040" `,
 		`https:"x"`, `'''a`, `a\"`, ", https:", "a:", "https://[", "http:/u:p@h, ", `"https://a:b" @`, "x\n", `"https://a:b`,
 		`http:u:p@h\`, "a:\n@b\n", "%40", `\U00000040`, "a:\n", "[redacted]@", "\n@", "x: [redacted]@h, ",
 	} {
-		in := strings.Repeat(unit, size/len(unit)+1)[:size]
-		start := time.Now()
-		MaskUserinfoInText(in)
-		MaskUserinfo(in)
-		if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
-			t.Errorf("%q repeated to %d bytes: %v", unit, size, elapsed)
+		repeat := func(size int) string { return strings.Repeat(unit, size/len(unit)+1)[:size] }
+		smallIn, largeIn := repeat(timedSmall), repeat(timedLarge)
+		mask := func(in string) func() { return func() { MaskUserinfoInText(in); MaskUserinfo(in) } }
+		small, large := interleaved(mask(smallIn), mask(largeIn))
+		if !growsLinearly(small, large) {
+			t.Errorf("%q: %d KB in %v, %d KB in %v (%.0f times; linear is about 8)", unit, timedSmall/1000, small, timedLarge/1000, large, float64(large)/float64(max(small, time.Microsecond)))
 		}
 	}
 }
 
-// TestMaskingIsLinearOnLargeMessages: a 2 MB message of URLs, colons and
-// at-signs is masked in well under a second.
+// TestMaskingIsLinearOnLargeMessages: a message of URLs, colons and
+// at-signs eight times as large is masked in at most 24 times the time,
+// up to 3.2 MB.
 func TestMaskingIsLinearOnLargeMessages(t *testing.T) {
-	in := strings.Repeat("open https://u:p@h/x: denied\n", 2_000_000/29)
-	start := time.Now()
-	out := MaskUserinfoInText(in)
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Errorf("2 MB: %v", elapsed)
+	line := "open https://u:p@h/x: denied\n"
+	smallIn, largeIn := strings.Repeat(line, timedSmall/len(line)), strings.Repeat(line, timedLarge/len(line))
+	var out string
+	small, large := interleaved(func() { MaskUserinfoInText(smallIn) }, func() { out = MaskUserinfoInText(largeIn) })
+	if !growsLinearly(small, large) {
+		t.Errorf("%d KB in %v, %d KB in %v (%.0f times; linear is about 8)", timedSmall/1000, small, timedLarge/1000, large, float64(large)/float64(max(small, time.Microsecond)))
 	}
 	if strings.Contains(out, "u:p") {
 		t.Error("a password survived")

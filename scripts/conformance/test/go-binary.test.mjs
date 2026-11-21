@@ -252,6 +252,39 @@ test("up, restart and down keep the directory until down, then leave nothing", l
   }
 });
 
+// VARLATCH_GO_BINARY_KEEP (G6, go/release/g6.sh): down copies the stopped
+// installation's data directory and Root KEK out before removing it, and
+// never writes into a directory that exists.
+test("down keeps the stopped installation where VARLATCH_GO_BINARY_KEEP says", linuxOnly, async () => {
+  const fake = fakeBinary();
+  const parent = mkdtempSync(join(tmpdir(), "go-binary-keep-"));
+  const keepDir = join(parent, "kept");
+  const before = process.env.VARLATCH_GO_BINARY_KEEP;
+  let state;
+  try {
+    process.env.VARLATCH_GO_BINARY_KEEP = keepDir;
+    state = await goBinary.up({ argument: fake.path, onState: (s) => (state = s) });
+    writeFileSync(join(state.dataDir, "varlatch.db"), "the database");
+    const kek = readFileSync(state.kekFile, "utf8");
+    await goBinary.down(state);
+    assert.ok(!existsSync(state.dir), "the installation is removed");
+    assert.equal(readFileSync(join(keepDir, "data", "varlatch.db"), "utf8"), "the database");
+    assert.equal(readFileSync(join(keepDir, "root-kek"), "utf8"), kek);
+
+    // A second run into the same directory leaves it as it is.
+    state = await goBinary.up({ argument: fake.path, onState: (s) => (state = s) });
+    writeFileSync(join(state.dataDir, "varlatch.db"), "another database");
+    await goBinary.down(state);
+    assert.equal(readFileSync(join(keepDir, "data", "varlatch.db"), "utf8"), "the database");
+  } finally {
+    if (before === undefined) delete process.env.VARLATCH_GO_BINARY_KEEP;
+    else process.env.VARLATCH_GO_BINARY_KEEP = before;
+    if (state) await goBinary.down(state);
+    rmSync(parent, { recursive: true, force: true });
+    fake.cleanup();
+  }
+});
+
 test("a /readyz that never answers is abandoned and asked again", linuxOnly, async () => {
   const fake = fakeBinary();
   const saved = process.env.FAKE_HANG_FIRST;

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -80,7 +81,9 @@ func TestSealOpen(t *testing.T) {
 			if err := Seal(out, manifest, paths, tc.bek, SealOptions{Pace: func(n int64) error { paced = n; return nil }}); err != nil {
 				t.Fatal(err)
 			}
-			if st, _ := os.Stat(out); st.Mode().Perm() != 0o600 {
+			// Windows has no POSIX modes: os.Stat reports every writable
+			// file as -rw-rw-rw-, so the mode is checked on the others.
+			if st, _ := os.Stat(out); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 				t.Errorf("mode %v", st.Mode())
 			}
 			if leftovers, _ := filepath.Glob(out + ".*.partial"); len(leftovers) != 0 {

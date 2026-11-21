@@ -128,7 +128,9 @@ tailnet = off
 # obtains its certificate again. Off (unset) keeps the installation as it
 # is: the plain listener above, behind your own proxy or on this machine.
 # No Strict-Transport-Security header is sent; add one at your own proxy or
-# CDN if you want browsers to remember HTTPS for this name.
+# CDN if you want browsers to remember HTTPS for this name. With it on,
+# listen must be a loopback address, and its clients connect directly: no
+# X-Forwarded-For is believed on it (trusted_proxies is listen's).
 #listen_https = :443
 # The plain HTTP listener: ACME HTTP-01 challenges and a redirect of
 # everything else to public_url, never a page. Default: port 80 on

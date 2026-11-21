@@ -263,8 +263,10 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // group and the oidc suite. (4.12a) the deletion suite, on Project
   // deletion; (4.12b) on Organization deletion and the tombstone too, and
   // the webhooks suite's deletion group. (4.9d) the sync suite, with
-  // (4.10) its GitHub App checks. (6.8) the cli-download-on suite, on
-  // serving the CLI.
+  // (4.10) its GitHub App checks. The admin-cli suite (go-cli 5.7a), on
+  // the administration operations, all built, (5.7b) the
+  // security-cli suite and (5.7c) the audit-cli suite. (6.8) the
+  // cli-download-on suite, on serving the CLI.
   // Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
@@ -280,12 +282,12 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   };
   const ownLacking = [];
   const expected = Object.entries(inventory.checks).filter(([id, c]) =>
-    /^(passkey|cli-login|device|proxy-probe|cli-download-off|cli-download-on|realtime-degraded|mcp|server-logs|sdk|security|maintenance|audit-export|oidc|deletion|sync)\./.test(id) ||
+    /^(passkey|cli-login|device|proxy-probe|cli-download-off|cli-download-on|realtime-degraded|mcp|server-logs|sdk|security|maintenance|audit-export|oidc|deletion|sync|admin-cli|security-cli|audit-cli)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 482);
+  assert.equal(runs.length, 532);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {

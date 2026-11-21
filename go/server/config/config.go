@@ -438,6 +438,12 @@ func listenAddress(name, v string, zero bool, at func(string, string, ...any) er
 	return nil
 }
 
+// loopbackIP is whether host is a loopback IP address (127.0.0.0/8, ::1).
+func loopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // publicDNSName is a host name a public certificate can name: two labels
 // at least, letters, digits and hyphens.
 var publicDNSName = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -489,6 +495,12 @@ func parsePublicHTTPS(values map[string]string, at func(string, string, ...any) 
 	}
 	if v == c.Listen || p.RedirectListen != "" && p.RedirectListen == c.Listen {
 		return nil, at("listen_https", "and listen_http_redirect must differ from listen, the plain listener")
+	}
+	// The plain listener stays on this machine: with public HTTPS, the
+	// API and the dashboard are never served in plain text beyond it (a
+	// proxy in front of the plain listener runs on this host).
+	if lh, _, _ := net.SplitHostPort(c.Listen); !loopbackIP(lh) {
+		return nil, at("listen", "%q: with listen_https, the plain listener must be on a loopback address (such as 127.0.0.1:8686), so nothing is served in plain text beyond this machine", c.Listen)
 	}
 	if e := values["acme_email"]; e != "" {
 		if !emailAddress.MatchString(e) {

@@ -124,6 +124,16 @@ func FromUTF16(u []uint16) string {
 	return string(b)
 }
 
+// IsWhitespace is whether String.prototype.trim removes c: JavaScript's
+// WhiteSpace and LineTerminator.
+func IsWhitespace(c rune) bool {
+	switch c {
+	case '\t', '\n', '\v', '\f', '\r', ' ', 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
+		return true
+	}
+	return c >= 0x2000 && c <= 0x200a
+}
+
 // CompareUTF16 orders two strings as Array.prototype.sort does by default:
 // by UTF-16 code units.
 func CompareUTF16(a, b string) int {

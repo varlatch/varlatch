@@ -26,9 +26,15 @@ func TestCaseDirHoldsNoValue(t *testing.T) {
 		if strings.ContainsAny(name, "0123456789") {
 			t.Fatalf("%s holds a digit", name)
 		}
+		// Only what CaseDir adds below the base: the base is the test's
+		// own temporary directory, whose random digits may hold 8080.
+		rel, err := filepath.Rel(base, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, v := range values {
-			if strings.Contains(dir, v) {
-				t.Fatalf("%s holds %q", dir, v)
+			if strings.Contains(rel, v) {
+				t.Fatalf("%s holds %q", rel, v)
 			}
 		}
 	}
