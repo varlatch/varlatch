@@ -166,8 +166,10 @@ func DisplayServerValue(v any) any {
 // to the at-sign. The at-sign is kept, and nothing about what precedes the
 // colon matters. On top of these per-at-sign spans, the whole-text span:
 // from just after the first colon of the text, whatever precedes it, to
-// its last at-sign (so a password holding "//", whitespace, quotes or line
-// breaks is covered too). The union is replaced once, each span with
+// its last at-sign that may end a credential (so a password holding "//",
+// whitespace, quotes or line breaks is covered too). An at-sign in a
+// URL's path, query or fragment, when nothing about it is ambiguous, ends
+// no span (failSafeSpans). The union is replaced once, each span with
 // "[redacted]@". Error text may be over-masked, never under-masked. A
 // stretch without a colon (an email, `@AGENTS.md`) keeps its bytes;
 // `mailto:a@b` reads `[redacted]@b`, an accepted over-mask.
@@ -177,65 +179,143 @@ func MaskUserinfoInText(text string) string {
 
 // failSafeSpans is what the fail-safe masks, in text's own bytes, each
 // span ending just after an at-sign, possibly overlapping.
+//
+// An at-sign in a URL's path, query or fragment is never a credential
+// (userinfo exists only in the authority, between "//" and the first "/",
+// "?" or "#" after it), so it neither has a span of its own nor ends the
+// whole-text span: a release workflow's identity
+// (".../release.yml@refs/tags/v1.2.3") reads as it is. Only when nothing
+// is ambiguous, otherwise the at-sign is treated as before, one that may
+// end a credential:
+//   - what follows the authority's last at-sign is a host, host:port with
+//     a numeric port, or a bracketed address with an optional port
+//     (alice:fake/x@h: the "/" may be a password's);
+//   - no colon, literal or percent-encoded, and no percent-encoded slash
+//     comes between the authority's end and the at-sign (a URL inside the
+//     query or fragment, ?r=https%3A%2F%2Fu%3Apw@h);
+//   - the at-sign is a literal "@" (an encoded one may be a URL's inside a
+//     query or fragment, #%2F%2Ftok%40h);
+//   - the authority is not empty; slashes after "//" are skipped, as a
+//     special scheme's parser does (https:///u@h names the user u).
+//
+// A backslash does not end the authority: it does only in some schemes.
 func failSafeSpans(text string) [][2]int {
 	kept, at := forAtSigns(text)
 	if kept == nil {
 		return nil // no at-sign of any form
 	}
 	var spans [][2]int
-	runStart := 0     // where the current run starts, in kept
-	lastSlashes := -1 // the latest "//" of the run (its first byte)
-	lastColon := -1   // the latest colon of the run
+	var credentialAts [][2]int // at-signs that may end a credential: start, length
+	runStart := 0              // where the current run starts, in kept
+	lastSlashes := -1          // the latest "//" of the run (its first byte)
+	lastColon := -1            // the latest colon of the run
+	authEnd := -1              // where the authority after lastSlashes ends, once it has
+	hostStart := -1            // where its host starts: after the authority's last at-sign
+	lastEncColon := -1         // the latest "%3A" or "%2F" of the run
 	for i := 0; i < len(kept); {
 		c := kept[i]
 		if c == '"' || c == '\'' || c == '`' {
-			runStart, lastSlashes, lastColon = i+1, -1, -1
+			runStart, lastSlashes, lastColon, authEnd, lastEncColon = i+1, -1, -1, -1, -1
 			i++
 			continue
 		}
 		if r, size := utf8.DecodeRune(kept[i:]); unicode.IsSpace(r) {
-			runStart, lastSlashes, lastColon = i+size, -1, -1
+			runStart, lastSlashes, lastColon, authEnd, lastEncColon = i+size, -1, -1, -1, -1
 			i += size
 			continue
 		}
 		if n := atSignAt(kept, i); n > 0 {
-			from := -1
-			if lastColon >= runStart { // any colon before it in the run
-				from = runStart
-				if lastSlashes >= runStart {
-					from = lastSlashes + 2 // just after the nearest "//"
+			inPath := n == 1 && kept[i] == '@' && lastSlashes >= runStart && authEnd > hostStart &&
+				plainHost(kept[hostStart:authEnd]) && lastColon < authEnd && lastEncColon < authEnd
+			if !inPath {
+				credentialAts = append(credentialAts, [2]int{i, n})
+				if lastSlashes >= runStart && authEnd < 0 {
+					hostStart = i + n
 				}
-			}
-			if from >= 0 && from < i {
-				spans = append(spans, [2]int{at[from], at[i+n-1] + 1})
+				from := -1
+				if lastColon >= runStart { // any colon before it in the run
+					from = runStart
+					if lastSlashes >= runStart {
+						from = lastSlashes + 2 // just after the nearest "//"
+					}
+				}
+				if from >= 0 && from < i {
+					spans = append(spans, [2]int{at[from], at[i+n-1] + 1})
+				}
 			}
 			i += n
 			continue
 		}
 		switch {
 		case c == '/' && i+1 < len(kept) && kept[i+1] == '/':
-			lastSlashes = i
+			lastSlashes, authEnd = i, -1
 			i += 2
+			for i < len(kept) && kept[i] == '/' { // https:///u@h: the user u
+				i++
+			}
+			hostStart = i
 			continue
 		case c == ':':
 			lastColon = i
+		case c == '%' && i+2 < len(kept) && (kept[i+1] == '3' && (kept[i+2] == 'A' || kept[i+2] == 'a') ||
+			kept[i+1] == '2' && (kept[i+2] == 'F' || kept[i+2] == 'f')):
+			lastEncColon = i
+		}
+		if (c == '/' || c == '?' || c == '#') && lastSlashes >= runStart && authEnd < 0 {
+			authEnd = i
 		}
 		i++
 	}
 	// And the whole-text span: from just after the first colon of the text,
-	// whatever precedes it, to the last at-sign after it, so a password
-	// holding whitespace, quotes or line breaks is masked too.
+	// whatever precedes it, to the last at-sign after it that may end a
+	// credential, so a password holding whitespace, quotes or line breaks
+	// is masked too.
 	colon := bytes.IndexByte(kept, ':')
 	if colon >= 0 {
-		last, size := -1, 0
-		for i, n := nextAtSign(kept, colon+1); i >= 0; i, n = nextAtSign(kept, i+n) {
-			last, size = i, n
-		}
-		if last >= 0 {
-			spans = append(spans, [2]int{at[colon] + 1, at[last+size-1] + 1})
+		for j := len(credentialAts) - 1; j >= 0; j-- {
+			if a := credentialAts[j]; a[0] > colon {
+				spans = append(spans, [2]int{at[colon] + 1, at[a[0]+a[1]-1] + 1})
+				break
+			}
 		}
 	}
 	return spans
+}
+
+// plainHost is whether an authority's host part, after its last at-sign,
+// is unambiguously a host: no colon, one colon before a numeric port, or a
+// bracketed address with an optional numeric port. A colon followed by
+// anything else may be a password's, cut short by a "/" it held.
+func plainHost(h []byte) bool {
+	if len(h) > 0 && h[0] == '[' {
+		end := bytes.IndexByte(h, ']')
+		if end < 0 {
+			return false
+		}
+		h = h[end+1:]
+		if len(h) == 0 {
+			return true
+		}
+		return h[0] == ':' && port(h[1:])
+	}
+	colon := bytes.IndexByte(h, ':')
+	if colon < 0 {
+		return true
+	}
+	return port(h[colon+1:])
+}
+
+// port is whether p is a port number: one to five digits.
+func port(p []byte) bool {
+	if len(p) == 0 || len(p) > 5 {
+		return false
+	}
+	for _, c := range p {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // replaceSpans is text with the union of spans (byte offsets, in any order,
@@ -267,9 +347,13 @@ func replaceSpans(text string, spans [][2]int) string {
 // the fail-safe's own detection (forAtSigns, nextAtSign): tab, CR and LF
 // ignored, and "@", "\u0040", "\x40", "\U00000040" and "%40" counted. A
 // message whose echoed value holds one puts its explanation after the
-// value, since the fail-safe keeps only what follows the last at-sign (the
-// explanation follows the URL); a varlatch.toml that holds one has its
-// parse errors shown without the file's lines (LoadRepoConfig).
+// value, since the fail-safe keeps only what follows the last at-sign
+// that may end a credential (the explanation follows the URL); a
+// varlatch.toml that holds one has its parse errors shown without the
+// file's lines (LoadRepoConfig). It counts every at-sign, also one in a
+// URL's path that the fail-safe passes over, so "masks iff HasAtSign"
+// has such counterexamples: harmless, since the value-first order only
+// keeps more of the explanation visible.
 func HasAtSign(s string) bool {
 	kept, _ := forAtSigns(s)
 	i, _ := nextAtSign(kept, 0)

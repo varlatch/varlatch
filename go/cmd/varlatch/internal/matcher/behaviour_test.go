@@ -239,10 +239,12 @@ func timed(f func()) time.Duration {
 // eightfold and quadratic about 64-fold (on CI runners, where caches and
 // load flatten the curve, nearer 38-fold), so 24 sits near the geometric
 // middle, with room for noise on either side. It judges growth only, never
-// a machine's absolute speed; 20 ms of slack keeps a shape that takes a
-// few milliseconds from failing on jitter.
+// a machine's absolute speed. A little slack keeps a shape that takes a few
+// milliseconds from failing on jitter: 20 ms, but never more than twice the
+// small run, so it cannot hide growth where the runs are short (the race
+// detector's smaller inputs).
 func growsLinearly(small, large time.Duration) bool {
-	return large <= 24*small+20*time.Millisecond
+	return large <= 24*small+min(20*time.Millisecond, 2*small)
 }
 
 // TestTheLinearityCriterion: growth an eighth of the input to all of it
@@ -262,6 +264,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 		{100 * ms, 4000 * ms, false}, // 40 times
 		{50 * ms, 1900 * ms, false},  // 38 times
 		{100 * ms, 6400 * ms, false}, // 64 times
+		{2 * ms, 60 * ms, false},     // 30 times, at a few milliseconds: the slack is at most twice the small run
 	} {
 		if growsLinearly(c.small, c.large) != c.linear {
 			t.Errorf("%v then %v: judged linear %v", c.small, c.large, !c.linear)
@@ -393,7 +396,11 @@ func FuzzStreamEqualsWhole(f *testing.F) {
 			if !bytes.Equal(got, want) {
 				t.Fatalf("got %q, want %q", got, want)
 			}
-			noFormSurvives(t, got, entries)
+			// The oracle finds the markers in the output by their text, so an
+			// input that holds marker text itself would confuse it.
+			if !bytes.Contains(input, []byte("[REDACTED:")) {
+				noFormSurvives(t, got, entries)
+			}
 		}
 		st, _, _ := scan(entries, input, randomCuts(r, len(input), r.IntN(12)))
 		var found []Occurrence

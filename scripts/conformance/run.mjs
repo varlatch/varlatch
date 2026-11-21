@@ -13,7 +13,8 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *
  *   --target   the server under test (targets/index.mjs): ts-source,
  *              ts-release:<version> (a signed release, verified and pulled
- *              by digest), go-binary:<path> (the Go varlatchd at <path>)
+ *              by digest), go-binary:<path> (the Go varlatchd at <path>),
+ *              go-container:<image> (the Go varlatchd in the image <image>)
  *   --cli      the CLI under test: `source` is apps/cli/dist/varlatch.cjs; a
  *              version is a released CLI pinned in clients.json, downloaded
  *              and verified before anything starts (clients.mjs). The sdk
@@ -72,7 +73,7 @@ import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacki
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, declared429, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
-import { endProblem, parseSuiteOutput, resultLine } from "./lib/results.mjs";
+import { endProblem, lastError, parseSuiteOutput, resultLine } from "./lib/results.mjs";
 import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
 import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
@@ -86,7 +87,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function usage(message) {
   console.error(
-    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
+    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path>|go-container:<image> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
       " [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]",
   );
   process.exit(64);
@@ -230,8 +231,8 @@ async function main() {
   } catch (err) {
     usage(err.message);
   }
-  const { name: targetName, argument: targetArgument, target, capabilities, expectKey } = loaded;
-  const expectations = loadExpectations(targetName, inventory, openapi);
+  const { name: targetName, argument: targetArgument, target, capabilities, expectKey, as: expectName } = loaded;
+  const expectations = loadExpectations(expectName, inventory, openapi);
   // The target's declared gaps, and the checks that need one.
   const lacks = lacksFor(expectations, expectKey);
   const lacking = lackingChecks(inventory, lacks.keys());
@@ -384,7 +385,12 @@ async function main() {
         // whenever the target can recover, seed or not (a target that lacks
         // the seed's writes still signs in with it; cli-core's token sign-in).
         if (!setupLacks(inventory, "admin-recover", lacks)) {
-          if (!ctx.adminId) throw new Error("the passkey suite named no identity: nothing after it can run");
+          if (!ctx.adminId) {
+            // The passkey suite's own failure (it did not finish: a browser
+            // that would not launch, a crash) is why; say it here too.
+            const why = errors.find((e) => e.suite === "passkey")?.message;
+            throw new Error(`the passkey suite named no identity${why ? ` (passkey: ${why})` : ""}: nothing after it can run`);
+          }
           ctx.token = await ctx.cliCredential();
         }
         if (setupLacks(inventory, "seed", lacks)) {
@@ -536,7 +542,11 @@ async function main() {
       const unfinished = out.timedOut ? "timed out" : endProblem(out.endChannel, { suite: entry.suite, nonce: out.nonce, code: out.code, signal: out.signal });
       const ended = unfinished === null;
       if (!ended && !out.timedOut) {
-        errors.push({ suite: entry.suite, message: `did not finish: ${unfinished}; the checks it did not report fail` });
+        // Its exit and the error it last wrote say why: a suite that
+        // crashed is named with its cause, not only by what it left out.
+        const crash = lastError(out.stderr);
+        const exit = out.signal ? `killed by ${out.signal}` : `exit ${out.code}`;
+        errors.push({ suite: entry.suite, message: `did not finish: ${unfinished}; ${exit}${crash ? `; its last error: ${crash}` : ""}; the checks it did not report fail` });
       }
       const reportedIds = new Set(parsed.results.map((r) => r.id));
       const unreported = ended ? new Set() : new Set([...clientLacked].filter((id) => !reportedIds.has(id) && !observedNotBuilt.has(id)));
@@ -568,7 +578,7 @@ async function main() {
     report.lacks.stale = await probeLacks({ inventory, openapi, lacks: [...lacks.keys()], origin, target, state });
     for (const { operation, why } of report.lacks.stale) {
       console.log(`STALE-LACKS  ${operation}: ${why}`);
-      errors.push({ suite: "runner", message: `expect/${targetName}.json lacks ${operation}, but ${why}` });
+      errors.push({ suite: "runner", message: `expect/${expectName}.json lacks ${operation}, but ${why}` });
     }
     if (report.lacks.stale.length === 0) console.log(`--- every one answered ${NOT_IMPLEMENTED_YET}`);
   }
