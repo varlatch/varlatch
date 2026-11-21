@@ -5,5 +5,7 @@
   "previous": {
     "version": "0.0.0-g6.base",
     "schemaVersion": 2
-  }
+  },
+  "reversibleTo": "0.23.0",
+  "endsRollbackWindow": false
 }
