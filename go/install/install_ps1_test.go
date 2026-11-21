@@ -23,6 +23,27 @@ import (
 	"testing"
 )
 
+// ps1Trusting is a copy of install.ps1 that downloads from base (in
+// place of github.com's releases) and trusts the certificate with the
+// thumbprint thumb only, pinned on each request (a compiled callback: a
+// script block would run on a thread without a runspace).
+func ps1Trusting(t *testing.T, src []byte, base string, thumb [20]byte) []byte {
+	t.Helper()
+	src = edit(t, src, ps1BaseLine, "  $Base = '"+base+"'")
+	trust := "  $ErrorActionPreference = 'Stop'\n" +
+		"Add-Type -TypeDefinition @'\n" +
+		"public static class VarlatchTestTrust {\n" +
+		"  public static string Thumbprint;\n" +
+		"  public static System.Net.Security.RemoteCertificateValidationCallback Callback =\n" +
+		"    (s, c, chain, e) => c != null && c.GetCertHashString() == Thumbprint;\n" +
+		"}\n" +
+		"'@\n" +
+		"  [VarlatchTestTrust]::Thumbprint = '" + strings.ToUpper(hex.EncodeToString(thumb[:])) + "'\n"
+	src = edit(t, src, "  $ErrorActionPreference = 'Stop'\n", trust)
+	return edit(t, src, "      $Request.AllowAutoRedirect = $false\n",
+		"      $Request.AllowAutoRedirect = $false\n      $Request.ServerCertificateValidationCallback = [VarlatchTestTrust]::Callback\n")
+}
+
 func ps1Script(t *testing.T) []byte {
 	t.Helper()
 	b, err := os.ReadFile("install.ps1")
@@ -300,12 +321,13 @@ type psRelease struct {
 	hits     atomic.Int32
 	requests []string
 
-	absolute     bool   // redirect with an absolute https: Location
-	hops         int    // redirects in a row before the file (default 1)
-	cutOff       string // served without its last bytes and without a length
-	cutLength    string // served with a Content-Length larger than what follows
-	redirectHTTP string // redirected to http:
-	noLocation   string // a 302 without a Location
+	absolute       bool   // redirect with an absolute https: Location
+	hops           int    // redirects in a row before the file (default 1)
+	cutOff         string // served without its last bytes and without a length
+	cutLength      string // served with a Content-Length larger than what follows
+	redirectHTTP   string // redirected to http:
+	noLocation     string // a 302 without a Location
+	servedRedirect string // from a serving installation's path, redirected
 }
 
 func (r *psRelease) body(name string) ([]byte, bool) {
@@ -323,6 +345,19 @@ func (r *psRelease) serve(t *testing.T) *httptest.Server {
 		r.hits.Add(1)
 		r.requests = append(r.requests, req.URL.Path)
 		path := req.URL.Path
+		// A serving installation's layout: the file itself, no redirect.
+		if name, ok := strings.CutPrefix(path, "/cli/v"+version+"/"); ok {
+			data, exists := r.body(name)
+			switch {
+			case !exists:
+				http.NotFound(w, req)
+			case name == r.servedRedirect:
+				http.Redirect(w, req, "/dl/"+name, http.StatusFound)
+			default:
+				_, _ = w.Write(data)
+			}
+			return
+		}
 		if name, ok := strings.CutPrefix(path, "/v"+version+"/"); ok {
 			if _, exists := r.body(name); !exists {
 				http.NotFound(w, req)
@@ -490,22 +525,17 @@ func TestPS1EndToEnd(t *testing.T) {
 		if stamped {
 			src = edit(t, src, "'@VARLATCH_VERSION@'", "'"+version+"'")
 		}
-		src = edit(t, src, ps1BaseLine, "  $Base = '"+srv.URL+"/v'")
-		// The test server's certificate, pinned by thumbprint, on each
-		// request (a compiled callback: a script block would run on a
-		// thread without a runspace).
-		trust := "  $ErrorActionPreference = 'Stop'\n" +
-			"Add-Type -TypeDefinition @'\n" +
-			"public static class VarlatchTestTrust {\n" +
-			"  public static string Thumbprint;\n" +
-			"  public static System.Net.Security.RemoteCertificateValidationCallback Callback =\n" +
-			"    (s, c, chain, e) => c != null && c.GetCertHashString() == Thumbprint;\n" +
-			"}\n" +
-			"'@\n" +
-			"  [VarlatchTestTrust]::Thumbprint = '" + strings.ToUpper(hex.EncodeToString(thumb[:])) + "'\n"
-		src = edit(t, src, "  $ErrorActionPreference = 'Stop'\n", trust)
-		src = edit(t, src, "      $Request.AllowAutoRedirect = $false\n",
-			"      $Request.AllowAutoRedirect = $false\n      $Request.ServerCertificateValidationCallback = [VarlatchTestTrust]::Callback\n")
+		src = ps1Trusting(t, src, srv.URL+"/v", thumb)
+		// ORIGIN=server: stamped as a serving installation stamps it.
+		var rest []string
+		for _, e := range env {
+			if e == "ORIGIN=server" {
+				src = edit(t, src, "  $Origin = ''\n", "  $Origin = '"+srv.URL+"'\n")
+				continue
+			}
+			rest = append(rest, e)
+		}
+		env = rest
 		file := filepath.Join(spaced(t), "install.ps1")
 		if err := os.WriteFile(file, src, 0o644); err != nil {
 			t.Fatal(err)
@@ -650,6 +680,104 @@ func TestPS1EndToEnd(t *testing.T) {
 				}
 				only(t, dir, []byte("older varlatch"))
 				emptyDir(t, res.tmp)
+			})
+
+			// The TypeScript CLI in the same folder (decision 11): its
+			// varlatch.cmd and varlatch.cjs go once the new varlatch runs
+			// from its place; a varlatch.cmd of the user's own stays; when
+			// the new one does not run there, the TypeScript CLI stays and
+			// the new one goes.
+			const tsShim = "@node \"%~dp0varlatch.cjs\" %*\r\n"
+			const tsScript = "#!/usr/bin/env node\n/*! Varlatch CLI. Copyright 2026 Robotsson. */\nconsole.log('varlatch 0.22.4');\n"
+			seedTS := func(t *testing.T, shim string) (string, string) {
+				t.Helper()
+				local := spaced(t)
+				dir := filepath.Join(local, "Programs", "Varlatch")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				for name, content := range map[string]string{"varlatch.cmd": shim, "varlatch.cjs": tsScript} {
+					if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return local, dir
+			}
+			t.Run("replaces the TypeScript CLI", func(t *testing.T) {
+				local, dir := seedTS(t, tsShim)
+				res := install(t, host, newRelease(), true, false, nil, "LOCALAPPDATA="+local)
+				if res.code != 0 || !strings.Contains(res.out, "Removed the TypeScript CLI") {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				only(t, dir, stubBytes)
+				emptyDir(t, res.tmp)
+			})
+			t.Run("keeps a varlatch.cmd of the user's own", func(t *testing.T) {
+				local, dir := seedTS(t, "@echo mine\r\n")
+				res := install(t, host, newRelease(), true, false, nil, "LOCALAPPDATA="+local)
+				if res.code != 0 {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				if got, _ := os.ReadFile(filepath.Join(dir, "varlatch.cmd")); string(got) != "@echo mine\r\n" {
+					t.Fatalf("varlatch.cmd holds %q", got)
+				}
+				if _, err := os.Stat(filepath.Join(dir, "varlatch.cjs")); err == nil {
+					t.Fatal("varlatch.cjs is still there")
+				}
+			})
+			t.Run("names a TypeScript file it cannot remove", func(t *testing.T) {
+				local, dir := seedTS(t, tsShim)
+				lockFile(t, filepath.Join(dir, "varlatch.cmd"))
+				res := install(t, host, newRelease(), true, false, nil, "LOCALAPPDATA="+local)
+				if res.code != 0 || !strings.Contains(res.out, "varlatch.exe is installed") || !strings.Contains(res.out, `varlatch.cmd could not be removed`) || strings.Contains(res.out, "nothing was installed") {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				if got, _ := os.ReadFile(filepath.Join(dir, "varlatch.exe")); !bytes.Equal(got, stubBytes) {
+					t.Fatal("varlatch.exe is not the new one")
+				}
+				if _, err := os.Stat(filepath.Join(dir, "varlatch.cjs")); err == nil {
+					t.Fatal("varlatch.cjs is still there")
+				}
+				emptyDir(t, res.tmp)
+			})
+			t.Run("keeps the TypeScript CLI when the new one does not run", func(t *testing.T) {
+				local, dir := seedTS(t, tsShim)
+				res := install(t, host, newRelease(), true, false, nil, "LOCALAPPDATA="+local, "STUB_FAIL_UNDER="+dir)
+				if res.code == 0 || !strings.Contains(res.out, "was left in place") {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				for name, want := range map[string]string{"varlatch.cmd": tsShim, "varlatch.cjs": tsScript} {
+					if got, _ := os.ReadFile(filepath.Join(dir, name)); string(got) != want {
+						t.Fatalf("%s holds %q", name, got)
+					}
+				}
+				if _, err := os.Stat(filepath.Join(dir, "varlatch.exe")); err == nil {
+					t.Fatal("varlatch.exe is still there")
+				}
+				emptyDir(t, res.tmp)
+			})
+
+			// From a serving installation (decision 12): the files from
+			// its /cli/v<version>/, no redirect followed, the signature
+			// still checked, the next step naming it.
+			t.Run("from an installation", func(t *testing.T) {
+				res := install(t, host, newRelease(), true, false, nil, "ORIGIN=server")
+				if res.code != 0 || !strings.Contains(res.out, "Installed varlatch "+version) || !regexp.MustCompile(`Next: varlatch login --server https://127\.0\.0\.1:[0-9]+`).MatchString(res.out) {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				verifiedStaged(t, res)
+				emptyDir(t, res.tmp)
+			})
+			t.Run("a redirect from an installation", func(t *testing.T) {
+				r := newRelease()
+				r.servedRedirect = exe
+				res := install(t, host, r, true, false, nil, "ORIGIN=server")
+				if res.code == 0 || !strings.Contains(res.out, "a redirect is never followed") {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				if _, err := os.Stat(target(res)); err == nil {
+					t.Fatal("something was installed")
+				}
 			})
 
 			// Successes other than the default.

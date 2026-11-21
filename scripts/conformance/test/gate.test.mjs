@@ -158,9 +158,10 @@ test("today no target can pass the gate: the doctor and lifecycle replacements a
   }
   assert.ok(open.some((r) => r.of.startsWith("doctor.") && /step 6/.test(r.replacement.open)));
   // An external suite is open until its Go counterpart lands; the backup
-  // suites' run in the Go workflow, so they name none.
+  // suites', the Compose recovery gate's (the image test, step 6.10a) and
+  // the move's (step 6.9) run in the Go workflow, so they name none.
   for (const [name, suite] of Object.entries(inventory.externalSuites)) {
-    if (["backup-e2e", "backup-s3"].includes(name)) assert.match(suite.replacement.none, /go\.yml/, name);
+    if (["backup-e2e", "backup-s3", "backup-compose", "move"].includes(name)) assert.match(suite.replacement.none, /go\.yml/, name);
     // The Coolify live checks' Go counterparts are manual too (step 4.9e:
     // build tag coolifylive, run by hand on the lab, with their evidence).
     else if (["coolify-live", "coolify-live-expands"].includes(name)) assert.match(suite.replacement.none, /TestCoolifyLive\w+ \(build tag coolifylive/, name);
@@ -172,7 +173,7 @@ test("today no target can pass the gate: the doctor and lifecycle replacements a
   // go-server check where it is not the Go server), with a recent CLI, no
   // expected failure and the walkthrough named. Only the open replacements
   // stop it.
-  for (const [target, tsStack, goServer] of [["ts-source", "pass", "not-applicable"], ["ts-release:0.22.0", "pass", "not-applicable"], ["go-binary:/opt/varlatchd", "not-applicable", "pass"]]) {
+  for (const [target, tsStack, goServer] of [["ts-source", "pass", "not-applicable"], ["ts-release:0.22.0", "pass", "not-applicable"], ["go-binary:/opt/varlatchd", "not-applicable", "pass"], ["go-container:varlatchd:test", "not-applicable", "pass"]]) {
     const outcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" ? tsStack : c.kind === "go-server" ? goServer : "pass"]));
     const verdict = judgeGate({ inventory, run: run(outcomes, { target }), walkthrough });
     assert.equal(verdict.passed, false, target);

@@ -619,6 +619,9 @@
         "help",
         "admin"
       ],
+      "differences": [
+        "admin-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch admin backup create|verify|restore|status [--dir <compose-directory>]\n  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]\n                                                       # one-time links: a new passkey on an existing identity\n  varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]\n               (the host operator's way back: sets the named security controls to off and closes their open\n                approvals; never touches deletion, passkeys or grants)\n  varlatch admin unfreeze --org <slug> --confirm <slug> [--json] [--dir <compose-directory>]\n               (the host operator's lift of an incident freeze, when nobody can approve it)\n  varlatch admin outbound check [--allow <value>] [--org <organization>] [--json] [--dir <compose-directory>]\n               (every configured webhook, Coolify and Convex Connection and OIDC issuer against the outbound policy,\n                with the VARLATCH_OUTBOUND_ALLOW value that would allow the refused ones; DNS lookups only;\n                exit 0 all allowed, 1 something refused, 2 something not resolved)\n",
@@ -639,6 +642,9 @@
         "admin",
         "--help"
       ],
+      "differences": [
+        "admin-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch admin backup create|verify|restore|status [--dir <compose-directory>]\n  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]\n                                                       # one-time links: a new passkey on an existing identity\n  varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]\n               (the host operator's way back: sets the named security controls to off and closes their open\n                approvals; never touches deletion, passkeys or grants)\n  varlatch admin unfreeze --org <slug> --confirm <slug> [--json] [--dir <compose-directory>]\n               (the host operator's lift of an incident freeze, when nobody can approve it)\n  varlatch admin outbound check [--allow <value>] [--org <organization>] [--json] [--dir <compose-directory>]\n               (every configured webhook, Coolify and Convex Connection and OIDC issuer against the outbound policy,\n                with the VARLATCH_OUTBOUND_ALLOW value that would allow the refused ones; DNS lookups only;\n                exit 0 all allowed, 1 something refused, 2 something not resolved)\n",
@@ -658,6 +664,9 @@
       "args": [
         "admin",
         "-h"
+      ],
+      "differences": [
+        "admin-usage"
       ],
       "expect": {
         "status": 0,
@@ -1819,6 +1828,9 @@
         "help",
         "move"
       ],
+      "differences": [
+        "move-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]\n                [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--reenroll-hours <1-168>]\n                [--yes] [--no-wait]                    # another public URL: archive, move, re-enrollment links\n  varlatch move --abandon [--dir <compose-directory>]  # give up an open move: back to the old address\n",
@@ -1839,6 +1851,9 @@
         "move",
         "--help"
       ],
+      "differences": [
+        "move-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]\n                [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--reenroll-hours <1-168>]\n                [--yes] [--no-wait]                    # another public URL: archive, move, re-enrollment links\n  varlatch move --abandon [--dir <compose-directory>]  # give up an open move: back to the old address\n",
@@ -1858,6 +1873,9 @@
       "args": [
         "move",
         "-h"
+      ],
+      "differences": [
+        "move-usage"
       ],
       "expect": {
         "status": 0,
@@ -2239,6 +2257,9 @@
         "help",
         "self-update"
       ],
+      "differences": [
+        "self-update-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]\n                                                       # replace this CLI with a release build (checksum, signature)\n",
@@ -2259,6 +2280,9 @@
         "self-update",
         "--help"
       ],
+      "differences": [
+        "self-update-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]\n                                                       # replace this CLI with a release build (checksum, signature)\n",
@@ -2278,6 +2302,9 @@
       "args": [
         "self-update",
         "-h"
+      ],
+      "differences": [
+        "self-update-usage"
       ],
       "expect": {
         "status": 0,

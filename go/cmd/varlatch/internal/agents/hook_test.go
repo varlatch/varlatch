@@ -4,9 +4,11 @@ package agents
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -88,23 +90,27 @@ const minSmall = 50 * time.Millisecond
 // smaller run keeps the larger one to a fraction of a second.
 const minControl = 7 * time.Millisecond
 
-// timed is one run of f, after a garbage collection.
+// timed is one run of f, after a garbage collection and with the
+// collector off while it runs: a collection's pause landing in one run and
+// not the other is the noise that made a linear shape look 26 times slower
+// at eight times the size once (macOS CI, 2026-11-20).
 func timed(f func()) time.Duration {
 	runtime.GC()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
 	began := time.Now()
 	f()
 	return time.Since(began)
 }
 
-// interleaved times small and large three times each, alternately (small,
-// large, small, large, ...), each after a garbage collection, and gives the
-// fastest of each, after one untimed run of small: noise only ever adds
-// time, and a runner's CPU that is still cold or clocking up slows the
-// first runs, so neither size's runs all come before the other's.
+// interleaved times small and large five times each, alternately (small,
+// large, small, large, ...), each by timed, and gives the fastest of each,
+// after one untimed run of small: noise only ever adds time, and a
+// runner's CPU that is still cold or clocking up slows the first runs, so
+// neither size's runs all come before the other's.
 func interleaved(small, large func()) (time.Duration, time.Duration) {
 	small() // warm up
 	var s, l time.Duration
-	for i := range 3 {
+	for i := range 5 {
 		ts := timed(small)
 		tl := timed(large)
 		if i == 0 || ts < s {
@@ -128,7 +134,9 @@ func interleaved(small, large func()) (time.Duration, time.Duration) {
 // shows a bias in the measurement.
 func growth(t *testing.T, name string, floor time.Duration, startLarge, limitLarge int, ops func(n int) float64, run func(n int) func()) (small, large time.Duration) {
 	t.Helper()
-	n := max(startLarge/8, 1)
+	// Under the race detector the work is about raceSlowdown times slower,
+	// so the sizing starts that much smaller and reaches the floor sooner.
+	n := max(startLarge/8/raceSlowdown, 1)
 	capped := false
 	for {
 		next := n + max(n/2, 1)
@@ -136,7 +144,9 @@ func growth(t *testing.T, name string, floor time.Duration, startLarge, limitLar
 		if !capped {
 			f := run(n)
 			f() // warm up
-			if timed(f) < floor {
+			// The faster of two probes: one stalled probe never stops the
+			// sizing early.
+			if min(timed(f), timed(f)) < floor {
 				n = next
 				continue
 			}
@@ -150,13 +160,30 @@ func growth(t *testing.T, name string, floor time.Duration, startLarge, limitLar
 		n = next
 	}
 	note := ""
-	if capped && small < floor {
-		note = " (at its size limit)"
+	reps := 1
+	if capped {
+		note = fmt.Sprintf(" (the larger run at its size limit, %d)", limitLarge)
+		// At its limit, a smaller run under the floor is repeated, and the
+		// larger as many times, until the smaller takes the floor: the
+		// ratio is the same work's, and the criterion's 20 ms of slack stays
+		// small beside it.
+		if small < floor {
+			reps = int((floor + small - 1) / max(small, time.Microsecond))
+			repeat := func(f func()) func() {
+				return func() {
+					for range reps {
+						f()
+					}
+				}
+			}
+			small, large = interleaved(repeat(run(n)), repeat(run(8*n)))
+			note += fmt.Sprintf(", each run %d times since the smaller one was under %v", reps, floor)
+		}
 	}
 	if ops == nil {
 		ops = func(n int) float64 { return float64(n) }
 	}
-	perOp := func(d time.Duration, n int) float64 { return float64(d.Nanoseconds()) / ops(n) }
+	perOp := func(d time.Duration, n int) float64 { return float64(d.Nanoseconds()) / ops(n) / float64(reps) }
 	t.Logf("%s: n=%d %v (%.3g ns/op), n=%d %v (%.3g ns/op): %.1fx%s",
 		name, n, small, perOp(small, n), 8*n, large, perOp(large, 8*n), float64(large)/float64(small), note)
 	return small, large
@@ -217,7 +244,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 // TestHookLinearTime: the hook reads a long word in every shape, an
 // object with many keys, a deeply nested event and a search past a long
 // filter in time linear in the input, by growsLinearly: each size timed as
-// the fastest of three, interleaved with the other size's after a warm-up
+// the fastest of five, interleaved with the other size's after a warm-up
 // run (growth), the smaller sized until it takes minSmall, the larger
 // eight times its size. No absolute time bound: a slow runner is not a
 // failure. Every run still decides: `cat .env` after a long word is
@@ -253,6 +280,17 @@ func TestHookLinearTime(t *testing.T) {
 		return `{"cwd":` + quote(dir) + `,"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":` + quote("grep -r "+options+" KEY .") + `}}`
 	}
 	a := func(n int) string { return strings.Repeat("a", n) }
+	// Every shape is linear. A search's filters were compiled into RE2
+	// programs, which allocate hundreds of bytes per byte of a glob, so a
+	// walk past a megabyte-long --exclude made a gigabyte and a CI
+	// runner's GC, not the hook, set its time; globMatcher now matches a
+	// glob of literals, `*` and `?` directly. Parsing millions of keys
+	// keeps a map entry per key, as JSON.parse does. The larger runs of
+	// these shapes stop at a size no agent's event reaches (keysLimit,
+	// walkLimit); a smaller run then under the floor is repeated, both
+	// sizes alike (growth). The rule and the quadratic control are
+	// unchanged.
+	const keysLimit, walkLimit = 1 << 18, 4 << 20
 	cases := []struct {
 		name       string
 		event      func(n int) string // an event whose size grows with n
@@ -266,14 +304,14 @@ func TestHookLinearTime(t *testing.T) {
 		{"option cluster", func(n int) string { return event("grep -"+a(n)+" x .env", "") }, 1600 * 1024, 32 << 20},
 		{"glob", func(n int) string { return event("cat "+a(n)+"* .env", "") }, 1600 * 1024, 32 << 20},
 		{"dot-leading glob", func(n int) string { return event("cat ."+a(n)+"* .env", "") }, 1600 * 1024, 32 << 20},
-		{"keys", func(n int) string { return event("cat .env", keys(n)) }, 200_000, 4 << 20},
-		{"keys at the top", func(n int) string { return `{` + keys(n) + event("cat .env", "")[1:] }, 200_000, 4 << 20},
+		{"keys", func(n int) string { return event("cat .env", keys(n)) }, 200_000, keysLimit},
+		{"keys at the top", func(n int) string { return `{` + keys(n) + event("cat .env", "")[1:] }, 200_000, keysLimit},
 		{"nesting", func(n int) string {
 			return event("cat .env", `"p":`+strings.Repeat("[", n)+strings.Repeat("]", n)+`,`)
 		}, 100_000, 4 << 20},
-		{"walk, long --exclude-dir", func(n int) string { return walk("--exclude-dir=." + a(n) + "*") }, 1600 * 1024, 32 << 20},
-		{"walk, long --exclude", func(n int) string { return walk("--exclude=." + a(n) + "*") }, 1600 * 1024, 32 << 20},
-		{"walk, long --include", func(n int) string { return walk("--include=." + a(n) + "* --include=.env*") }, 1600 * 1024, 32 << 20},
+		{"walk, long --exclude-dir", func(n int) string { return walk("--exclude-dir=." + a(n) + "*") }, 1600 * 1024, walkLimit},
+		{"walk, long --exclude", func(n int) string { return walk("--exclude=." + a(n) + "*") }, 1600 * 1024, walkLimit},
+		{"walk, long --include", func(n int) string { return walk("--include=." + a(n) + "* --include=.env*") }, 1600 * 1024, walkLimit},
 	}
 	for _, c := range cases {
 		run := func(n int) func() {
@@ -321,5 +359,111 @@ func TestHookStricterReadings(t *testing.T) {
 		if err != nil || !strings.Contains(got, ".env files are off limits") {
 			t.Errorf("%q: %q, %v; want the .env denial", command, got, err)
 		}
+	}
+}
+
+// TestHookSplitSurrogatePair: a surrogate pair a shell quote splits
+// (`.en'v\ud83d'\ude00`) is two U+FFFD, as a shell given that command line
+// reads it: the hook checks `.env` + U+FFFD U+FFFD, not `.env😀`
+// (go/README.md, "A surrogate pair split by a quote"). A lone surrogate in
+// a path is U+FFFD too, as the file system receives it.
+func TestHookSplitSurrogatePair(t *testing.T) {
+	env := envMap{"HOME": "/home/dev"}
+	for _, c := range []struct {
+		file, command string
+		denied        bool
+	}{
+		{".env��", `cat .en'v\ud83d'\ude00`, true},
+		{".env\U0001F600", `cat .en'v\ud83d'\ude00`, false},
+		{".env\U0001F600", `cat .env😀`, true},
+		{".env�", `cat .env\ud800`, true},
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, c.file), []byte("A=1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		event := `{"cwd":` + string(jsjson.Stringify(dir)) + `,"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"` + c.command + `"}}`
+		got, err := RunHook("claude", event, env, "/")
+		if err != nil || strings.Contains(got, ".env files are off limits") != c.denied {
+			t.Errorf("file %q, %s: %q, %v; denied %v", c.file, c.command, got, err, c.denied)
+		}
+	}
+	// The Read tool's path, the same way.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env�"), []byte("A=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	event := `{"cwd":` + string(jsjson.Stringify(dir)) + `,"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":".env\ud800"}}`
+	if got, _ := RunHook("claude", event, env, "/"); !strings.Contains(got, ".env files are off limits") {
+		t.Errorf("Read: %q", got)
+	}
+}
+
+// TestHookLongReaderIsLinear: a reader with many distinct words checks each
+// once (a set of its arguments), in time linear in the words, by
+// growsLinearly and timed by growth (checked against the argument list
+// word by word, 50,000 words took 14 seconds); every run still denies the
+// `.env` at its end.
+func TestHookLongReaderIsLinear(t *testing.T) {
+	env := envMap{"HOME": "/home/dev"}
+	run := func(n int) func() {
+		var b strings.Builder
+		b.WriteString("cat")
+		for i := range n {
+			fmt.Fprintf(&b, " f%d", i)
+		}
+		b.WriteString(" .env")
+		e := `{"cwd":"/work/app","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":` + quote(b.String()) + `}}`
+		return func() {
+			got, err := RunHook("claude", e, env, "/")
+			if err != nil || !strings.Contains(got, ".env files are off limits") {
+				t.Fatalf("%q, %v", got, err)
+			}
+		}
+	}
+	small, large := growth(t, "a long reader", minSmall, 100_000, 1<<21, nil, run)
+	if !growsLinearly(small, large) {
+		t.Errorf("a long reader: %v, then %v at eight times the words: not linear", small, large)
+	}
+}
+
+// TestGlobMatcherAgreesWithRE2: a glob matches a name exactly as the
+// regular expression compileGlob writes for it, the direct match
+// included: random globs and names over an alphabet with every case the
+// direct match decides (stars, question marks, multibyte runes, U+FFFD,
+// bytes that are not UTF-8, line feeds, regular expressions' own
+// characters, classes).
+func TestGlobMatcherAgreesWithRE2(t *testing.T) {
+	globParts := []string{"a", "b", ".", "*", "**", "?", "é", "�", "\xff", "\n", `\`, "+", "(", "$", "[ab]", "[!a]", "[", "]"}
+	nameParts := []string{"a", "b", ".", "é", "�", "\xff", "\n", `\`, "+", "(", "$", "*", "?", "[", "]", "ab"}
+	rng := rand.New(rand.NewPCG(1, 2))
+	pick := func(parts []string, n int) string {
+		var b strings.Builder
+		for range rng.IntN(n) {
+			b.WriteString(parts[rng.IntN(len(parts))])
+		}
+		return b.String()
+	}
+	checked := 0
+	for range 40_000 {
+		glob, name := pick(globParts, 6), pick(nameParts, 7)
+		globCache.Lock()
+		clear(globCache.m)
+		globCache.Unlock()
+		re := compileGlob(glob)
+		m := globRegex(glob)
+		if (re == nil) != (m == nil) {
+			t.Fatalf("glob %q: compiled %v, matcher %v", glob, re != nil, m != nil)
+		}
+		if re == nil {
+			continue
+		}
+		if got, want := m.MatchString(name), re.MatchString(name); got != want {
+			t.Fatalf("glob %q, name %q: matcher %v, RE2 %v", glob, name, got, want)
+		}
+		checked++
+	}
+	if checked < 20_000 {
+		t.Fatalf("only %d comparisons", checked)
 	}
 }

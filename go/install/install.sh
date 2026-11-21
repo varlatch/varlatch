@@ -15,6 +15,12 @@
 # signature, which only means something when the download itself is
 # trusted, so no option or variable changes where they come from.
 #
+# An installation that serves this script (varlatchd's serve_cli; ADR-0058
+# Decision 3) stamps its own address in ORIGIN below: the CLI then comes
+# from it, and is checked the same way. Installing from an installation
+# trusts it, and whoever controls its host or its address, to run code on
+# this machine.
+#
 # What this trusts: HTTPS to github.com for the release files, which are
 # checked against the release's SHA256SUMS; then, before anything is put in
 # place, the downloaded varlatch checks that SHA256SUMS is signed by the
@@ -34,6 +40,9 @@ set -eu
 # --version.
 VARLATCH_RELEASE='@VARLATCH_VERSION@'
 REPOSITORY='varlatch/varlatch'
+# The serving installation's address, stamped when it serves this script;
+# empty in a release, which installs from github.com.
+ORIGIN=''
 
 say() { printf '%s\n' "$*"; }
 stop() { printf 'varlatch install: %s\n' "$*" >&2; exit 1; }
@@ -44,8 +53,19 @@ usage() {
 }
 
 # curl without ~/.curlrc (-q), HTTPS only, also after redirects (GitHub
-# serves release files from another host), failing on any HTTP error.
+# serves release files from another host), failing on any HTTP error. From
+# an installation: its own scheme (https, or http on this machine), and no
+# redirect is followed.
 fetch() {
+  if [ -n "$ORIGIN" ]; then
+    if [ "$scheme" = http ]; then
+      status=$(curl -q -sS --proto '=http' -w '%{http_code}' -o "$2" "$1") || stop "could not download $1"
+    else
+      status=$(curl -q -sS --proto '=https' --tlsv1.2 -w '%{http_code}' -o "$2" "$1") || stop "could not download $1"
+    fi
+    [ "$status" = 200 ] || stop "could not download $1 (HTTP $status; a redirect is never followed from an installation)"
+    return
+  fi
   curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 2 -o "$2" "$1" \
     || stop "could not download $1"
 }
@@ -99,6 +119,51 @@ same() {
   [ -f "$2" ] && [ "$(sha256 "$1")" = "$(sha256 "$2")" ]
 }
 
+# typescript <file>: the file is the TypeScript CLI's single-file build
+# (varlatch-cli-<version>.cjs), whose first lines carry its banner.
+typescript() {
+  [ -f "$1" ] && dd if="$1" bs=512 count=1 2>/dev/null | LC_ALL=C grep -q 'Varlatch CLI\. Copyright'
+}
+
+# compose: this host has a Compose installation (decision 11): its install
+# marker or its Compose file in /srv/varlatch (compose_dir), the directory
+# the operations guides use. Its host commands stay the TypeScript CLI's,
+# as varlatch-ts.
+compose() {
+  [ -f "$compose_dir/varlatch-install.json" ] || [ -f "$compose_dir/docker-compose.yml" ]
+}
+
+# put_cli <file> <target>: puts the checked varlatch at target. A
+# TypeScript CLI there is kept until the new varlatch runs from target
+# (decision 11): then it is removed, both sharing one store of sign-ins
+# and settings until then, or, on a host with a Compose installation, kept
+# beside it as varlatch-ts. If the new one does not run, the TypeScript
+# CLI is put back.
+put_cli() {
+  if ! typescript "$2"; then
+    place "$1" "$2" 755
+    return
+  fi
+  into=$(dirname "$2")
+  if compose && [ -e "$into/varlatch-ts" ] && ! typescript "$into/varlatch-ts"; then
+    stop "$into/varlatch-ts exists and is not the TypeScript CLI; move it away, then run this again (nothing was installed)"
+  fi
+  old=$into/.varlatch-install.$$.typescript
+  cp -p "$2" "$old" || stop "could not keep a copy of the TypeScript CLI at $2; nothing was installed"
+  place "$1" "$2" 755
+  if ! "$2" --version >/dev/null 2>&1; then
+    mv -f "$old" "$2"
+    stop "the new varlatch does not run at $2; the TypeScript CLI was put back"
+  fi
+  if compose; then
+    mv -f "$old" "$into/varlatch-ts"
+    say "Kept the TypeScript CLI as $into/varlatch-ts: the Compose installation in $compose_dir needs it for its host commands (setup, upgrade, doctor, admin, move) until varlatch migrate moves it."
+  else
+    rm -f "$old"
+    say "Replaced the TypeScript CLI at $2. Your sign-ins and settings carry over: both CLIs use the same store."
+  fi
+}
+
 # A Homebrew copy is Homebrew's to update.
 homebrew() {
   [ -e "$1" ] || return 0
@@ -125,6 +190,7 @@ main() {
     esac
   done
   [ "$server" = yes ] || [ $# -eq 0 ] || stop "setup flags after -- are for --server"
+  [ -z "$ORIGIN" ] || [ "$server" = no ] || stop "a server installs from github.com: use the release's install.sh (https://github.com/$REPOSITORY/releases)"
   case "$version" in
     @*) stop "this copy of install.sh is not from a release; pass --version <version>" ;;
   esac
@@ -150,6 +216,7 @@ main() {
 
   # The tests run a copy of this script with a directory here instead of /.
   root=''
+  compose_dir=$root/srv/varlatch
   if [ "$server" = yes ]; then
     [ "$os" = linux ] || stop "a server needs Linux (with systemd)"
     [ "$(id -u)" = 0 ] || stop "a server install needs root: sudo sh install.sh --server"
@@ -165,6 +232,16 @@ main() {
   fi
 
   base=https://github.com/$REPOSITORY/releases/download/v$version
+  scheme=https
+  if [ -n "$ORIGIN" ]; then
+    case "$ORIGIN" in
+      *[!A-Za-z0-9.:/\[\]-]*) stop "$ORIGIN is not an address to install from" ;;
+      https://?*) ;;
+      http://localhost|http://localhost:[0-9]*|http://127.0.0.1|http://127.0.0.1:[0-9]*|'http://[::1]'|'http://[::1]:'[0-9]*) scheme=http ;;
+      *) stop "$ORIGIN is neither https: nor http: on this machine" ;;
+    esac
+    base=$ORIGIN/cli/v$version
+  fi
   cli=varlatch-$version-$os-$arch
   daemon=varlatchd-$version-linux-$arch
 
@@ -218,18 +295,26 @@ install_cli() {
   if same "$tmp/$cli" "$target"; then
     say "varlatch $version is already installed at $target."
   else
-    place "$tmp/$cli" "$target" 755
+    put_cli "$tmp/$cli" "$target"
     say "Installed varlatch $version at $target."
   fi
   case ":$PATH:" in
     *":$dir:"*)
       first=$(command -v varlatch 2>/dev/null || true)
       if [ -n "$first" ] && [ "$first" != "$target" ]; then
-        say "Another varlatch comes first on your PATH: $first. Remove it, or put $dir before it."
+        if typescript "$first" && compose; then
+          say "The TypeScript CLI comes first on your PATH: $first. The Compose installation in $compose_dir needs it for its host commands: rename it to varlatch-ts, for example: sudo mv $first $(dirname "$first")/varlatch-ts"
+        else
+          say "Another varlatch comes first on your PATH: $first. Remove it, or put $dir before it."
+        fi
       fi ;;
     *) say "$dir is not on your PATH. Add it, for example: echo 'export PATH=\"$dir:\$PATH\"' >> ~/.profile" ;;
   esac
-  say "Next: varlatch login --server <your Varlatch address>"
+  if [ -n "$ORIGIN" ]; then
+    say "Next: varlatch login --server $ORIGIN"
+  else
+    say "Next: varlatch login --server <your Varlatch address>"
+  fi
 }
 
 install_server() {
@@ -241,7 +326,11 @@ install_server() {
     target=${rest%:*}
     mode=${rest##*:}
     if ! same "$tmp/$name" "$target"; then
-      place "$tmp/$name" "$target" "$mode"
+      if [ "$name" = "$cli" ]; then
+        put_cli "$tmp/$name" "$target"
+      else
+        place "$tmp/$name" "$target" "$mode"
+      fi
       changed=yes
     fi
   done

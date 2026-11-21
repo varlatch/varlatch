@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
@@ -42,6 +43,12 @@ func (m MapEnv) Environ() map[string]string { return m }
 // Lister is an Env that can list its variables (process.env's keys).
 type Lister interface {
 	Environ() map[string]string
+}
+
+// OrderedLister is a Lister that also gives its variables' names in the
+// order the process got them (the first of names that repeat).
+type OrderedLister interface {
+	EnvironNames() []string
 }
 
 // IO is where a run reads and writes.
@@ -88,6 +95,21 @@ func (r *Run) Environ() map[string]string {
 		return l.Environ()
 	}
 	return map[string]string{}
+}
+
+// parentVars is the run's environment with its names in order: the
+// process's own (OrderedLister), else sorted.
+func (r *Run) parentVars() parentVars {
+	values := r.Environ()
+	if o, ok := r.Env.(OrderedLister); ok {
+		return parentVars{names: o.EnvironNames(), values: values}
+	}
+	names := make([]string, 0, len(values))
+	for n := range values {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return parentVars{names: names, values: values}
 }
 
 // Getenv is the variable's value, "" when unset.
@@ -141,6 +163,10 @@ func Main(args []string, env Env, streams IO) int {
 	taken, given := TakeAssistedOption(args)
 	run := &Run{IO: streams, Env: env, Assisted: ResolveAssisted(given, env)}
 	run.Secrets = &Secrets{Token: run.Getenv("VARLATCH_TOKEN"), Stored: func() []string { return storedTokens(env) }}
+	// VARLATCH_TOKEN is a bearer the person gave: held from the start,
+	// whatever its length, also by commands that never send it (an offline
+	// status printing a tier a server once answered).
+	run.holdCredential(run.Getenv("VARLATCH_TOKEN"), true)
 	resumed, approval, problem := TakeApprovalOption(taken)
 	if problem != "" {
 		return run.finish(UsageError("varlatch: " + problem))
@@ -164,7 +190,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 			topic = r.Args[0]
 		}
 		if topic != "" {
-			help, ok := CommandHelp(topic)
+			help, ok := commandHelp(topic)
 			if !ok {
 				return UsageErrorWithUsage("varlatch: no help for "+shownArgument(topic)+": not a command", "\n\n"+Usage)
 			}
@@ -182,7 +208,7 @@ func (r *Run) dispatch(hasCommand bool) error {
 		}
 		for _, a := range own {
 			if a == "--help" || a == "-h" {
-				if help, ok := CommandHelp(r.Command); ok {
+				if help, ok := commandHelp(r.Command); ok {
 					return r.println(help)
 				}
 				break
@@ -202,6 +228,11 @@ func (r *Run) dispatch(hasCommand bool) error {
 		return UsageErrorWithUsage("varlatch: unknown command "+shown, "\n\n"+Usage)
 	}
 	if c.run == nil {
+		if c.partial != nil {
+			if handled, err := c.partial(r); handled {
+				return err
+			}
+		}
 		return notBuilt(c)
 	}
 	return c.run(r)
@@ -233,7 +264,10 @@ func (r *Run) finish(err error) int {
 	if !e.silent {
 		fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(e.message, r.inFlight...)+e.usage))
 	}
-	if r.everyFailureIsOne {
+	// A failure of scan is 1 (main.ts's fail()); a status scan sets itself
+	// (process.exitCode: ExitWith, silent), such as --find-files' 2, is
+	// kept.
+	if r.everyFailureIsOne && !e.silent {
 		return ExitFailure
 	}
 	return e.code
@@ -280,6 +314,22 @@ func (r *Run) ask(text string) error {
 // RedactValue), so ordinary output keeps its bytes.
 func RedactOutput(text string, values ...string) string {
 	return redactSpans(text, append(tokenSpans(text), valueSpans(text, values)...))
+}
+
+// redactOutputShowing is RedactOutput with one text left as it is: shown,
+// which this command prints on purpose (invite's enrollment token, in the
+// link it exists to print). Only its exact occurrences in Varlatch's token
+// format are kept; every other token, and each value in flight, is
+// redacted as RedactOutput redacts it. An empty shown keeps nothing.
+func redactOutputShowing(text, shown string, values ...string) string {
+	var spans []span
+	for _, s := range tokenSpans(text) {
+		if shown != "" && text[s.a:s.b] == shown {
+			continue
+		}
+		spans = append(spans, s)
+	}
+	return redactSpans(text, append(spans, valueSpans(text, values)...))
 }
 
 // RedactValue is a JSON value with the fail-safe applied to every string
@@ -456,6 +506,33 @@ func redactSpans(text string, spans []span) string {
 	return b.String()
 }
 
+// holdCredential registers a bearer this run sends: masked in a server's
+// free text (Secrets.Remember) and, whatever its shape (not only
+// Varlatch's vlt_ format), in everything the run writes on stdout and
+// stderr (holdValue), so a server that echoes it back in an answer the run
+// prints never gets it shown. A bearer the person gave (given: --token or
+// --token-stdin; or VARLATCH_TOKEN's value) is held whatever its length;
+// any other only from MinMaskedLength on, since a shorter one would match
+// ordinary words.
+func (r *Run) holdCredential(token string, given bool) {
+	if token == "" {
+		return
+	}
+	r.Secrets.Remember(token)
+	if given || token == r.Getenv("VARLATCH_TOKEN") || utf16Len(token) >= MinMaskedLength {
+		r.holdValue(token)
+	}
+}
+
+// newClient is the one way the CLI makes an API client: the bearer it
+// sends is held first (holdCredential), so no command that prints a
+// server's answer can show it, whichever it is.
+// TestEveryClientHoldsItsBearer fails on any other apiclient.New.
+func (r *Run) newClient(opts apiclient.Options) *apiclient.Client {
+	r.holdCredential(opts.Token, false)
+	return apiclient.New(opts)
+}
+
 // holdValue registers a secret value this run handles, so no output or
 // diagnostic shows it (RedactDiagnostic, RedactOutput, RedactValue).
 func (r *Run) holdValue(value string) {
@@ -495,6 +572,14 @@ func (r *Run) println(text string) error {
 // (RedactOutput). TestEveryWriteGoesThroughTheFailSafe fails on any other.
 func (r *Run) out(text string) error {
 	_, err := io.WriteString(r.Stdout, jsval.NodeText(RedactOutput(text, r.inFlight...)))
+	return err
+}
+
+// outShowing writes stdout through the fail-safe with one token shown
+// (redactOutputShowing): the only writer that lets a token through, for
+// `invite`'s enrollment link. A value in flight is still redacted.
+func (r *Run) outShowing(text, shown string) error {
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(redactOutputShowing(text, shown, r.inFlight...)))
 	return err
 }
 

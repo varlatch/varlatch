@@ -62,8 +62,9 @@ type exception struct {
 // serverExceptions are go/server's and go/cmd/varlatchd's (paths relative
 // to go/).
 var serverExceptions = []exception{
-	{"server/daemon/control.go", "net.DialTimeout", 1, "the daemon's own Unix control socket in the data directory (decision 11)"},
+	{"server/daemon/control.go", "net.DialTimeout", 2, "the daemon's own Unix control socket in the data directory (decision 11): route's client, and controlAnswers, the probe of commands that must not run beside a running varlatchd (the migration's)"},
 	{"server/daemon/backup.go", "net.DialTimeout", 1, "restore checks that no varlatchd answers on the data directory's control socket"},
+	{"server/daemon/schema.go", "net.DialTimeout", 1, "a schema upgrade checks that no varlatchd answers on the data directory's control socket, as restore does"},
 	{"server/clientaddr/clientaddr.go", "net.DefaultResolver", 1, "the names in the host's trusted_proxies, looked up every 30 seconds (the host's configuration, never an Organization's)"},
 	{"server/auditexport/probe.go", "backup.NewClient", 1, "the audit export's destination, on the outbound policy's audit_export client (ADR-0057 Decision 9: the S3 client takes the policy's transport)"},
 	{"server/backups/backups.go", "backup.NewClient", 1, "the host's backup destination, for uploads and the bucket test (ADR-0057 Decision 1: 4.14's uploads are an exception by name)"},
@@ -75,6 +76,7 @@ var libExceptions = []exception{
 	{"lib/backup/s3.go", "http.Client", 1, "the backup destination's client when none is passed in (the CLI's admin backup; varlatchd passes none today: its destination is the host's)"},
 	{"lib/backup/s3.go", "s3.New", 1, "the backup destination's S3 client, on the http.Client passed in or the one above"},
 	{"lib/release/verify.go", "http.DefaultClient", 1, "Sigstore's TUF repository (fixed, not chosen by an Organization), for the release verifier of the installer and upgrade"},
+	{"lib/release/download.go", "http.Client", 1, "release files from github.com and its storage hosts only (fixed, not chosen by an Organization), every redirect checked, on the Transport passed in: varlatchd's serve_cli passes the outbound policy's"},
 }
 
 type rule struct {

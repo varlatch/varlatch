@@ -232,3 +232,136 @@ func TestRequestBoundsTheResponseHead(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentSafeStrict(t *testing.T) {
+	const baseRetrieval = `{"manifest":{"manifestVersion":1,"projectId":"prj_1","environment":{"id":"env_1","rootId":"env_root","tier":"development"},"items":[{"name":"API_KEY","sensitive":true},{"name":"PORT","sensitive":false}],"contract":{"revisionId":"rev_runaaaaaaaaaaaaaaaaaaaaaaa","contentHash":"sha256:abababababababababababababababababababababababababababababababab","semanticsVersion":2}},"contract":{"items":[{"name":"API_KEY","sensitive":true,"type":"string","required":{"kind":"always"}},{"name":"PORT","sensitive":false,"type":"string","required":{"kind":"always"}}]},"items":[{"name":"API_KEY","sensitive":true,"value":null},{"name":"PORT","sensitive":false,"value":"8080"}],"callerView":{"withheld":[],"unexpanded":[]},"stateDigest":"dig_1","validation":{"invalid":[],"unresolved":[],"notEvaluated":[]}}`
+
+	runStrictCase := func(t *testing.T, handler http.HandlerFunc, extraEnv MapEnv, flags ...string) (int, string) {
+		t.Helper()
+		srv := httptest.NewServer(handler)
+		t.Cleanup(srv.Close)
+		dir := t.TempDir()
+		for path, content := range map[string]string{
+			"repo/varlatch.toml":      "server = \"" + srv.URL + "\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+			"config/credentials.json": `{"servers": {"` + srv.URL + `": {"token": "vlt_cli_agentTestAAAA"}}}` + "\n",
+		} {
+			full := filepath.Join(dir, path)
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Chdir(filepath.Join(dir, "repo"))
+		env := MapEnv{"HOME": filepath.Join(dir, "home"), "VARLATCH_CONFIG_DIR": filepath.Join(dir, "config"), "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER"}
+		for k, v := range extraEnv {
+			env[k] = v
+		}
+		args := append([]string{"run", "--strict", "--agent-safe", "--agent", "coder", "--allow-host", "api.example.com"}, flags...)
+		args = append(args, "--", "varlatch-test-never-started")
+		var stdout, stderr bytes.Buffer
+		code := Main(args, env, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
+		return code, stdout.String() + stderr.String()
+	}
+
+	t.Run("server without retrieval.preflight exits 78", func(t *testing.T) {
+		code, out := runStrictCase(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"serverVersion":"0.10.0","capabilities":["capabilities.targets"]}`)
+		}, nil, "--target", "API_KEY=header:authorization")
+		if code != 78 || !strings.Contains(out, "--agent-safe --strict needs the agent-safe preflight and substitution targets") {
+			t.Fatalf("status %d, output %q", code, out)
+		}
+	})
+
+	t.Run("allow-inherited naming a Secret is refused", func(t *testing.T) {
+		code, out := runStrictCase(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.URL.Path {
+			case "/v1/meta":
+				_, _ = io.WriteString(w, `{"serverVersion":"0.22.0","capabilities":["retrieval.preflight","capabilities.targets"]}`)
+			case "/v1/organizations/acme/identities":
+				_, _ = io.WriteString(w, `{"items":[{"id":"idn_agent","kind":"agent","name":"coder"}]}`)
+			case agentEnvPath + "/retrievals":
+				_, _ = io.WriteString(w, baseRetrieval)
+			}
+		}, nil, "--target", "API_KEY=header:authorization", "--allow-inherited", "API_KEY")
+		if code != 64 || !strings.Contains(out, "--allow-inherited cannot name a Secret in an agent-safe run") {
+			t.Fatalf("status %d, output %q", code, out)
+		}
+	})
+
+	t.Run("agent unauthorized revokes capability and exits 78", func(t *testing.T) {
+		revoked := false
+		code, out := runStrictCase(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.URL.Path == "/v1/meta":
+				_, _ = io.WriteString(w, `{"serverVersion":"0.22.0","capabilities":["retrieval.preflight","capabilities.targets"]}`)
+			case r.URL.Path == "/v1/organizations/acme/identities":
+				_, _ = io.WriteString(w, `{"items":[{"id":"idn_agent","kind":"agent","name":"coder"}]}`)
+			case r.URL.Path == agentEnvPath+"/retrievals":
+				_, _ = io.WriteString(w, baseRetrieval)
+			case r.Method == "POST" && r.URL.Path == agentEnvPath+"/capabilities":
+				w.WriteHeader(201)
+				_, _ = io.WriteString(w, `{"id":"cap_1","secret":"capsecret","destinations":["api.example.com:443"],"targets":{"API_KEY":["header:authorization"]},"preflightItems":[{"name":"API_KEY","present":true,"authorized":false,"reason":"permission"}]}`)
+			case r.Method == "DELETE" && r.URL.Path == agentEnvPath+"/capabilities/cap_1":
+				revoked = true
+				w.WriteHeader(204)
+			}
+		}, nil, "--target", "API_KEY=header:authorization")
+		if code != 78 || !strings.Contains(out, "API_KEY: agent-unauthorized: the Agent lacks secret.use here") || !revoked {
+			t.Fatalf("status %d, revoked %v, output %q", code, revoked, out)
+		}
+	})
+
+	t.Run("STATE_CHANGED retries once then exits 78 on second change", func(t *testing.T) {
+		attempts := 0
+		code, out := runStrictCase(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.URL.Path == "/v1/meta":
+				_, _ = io.WriteString(w, `{"serverVersion":"0.22.0","capabilities":["retrieval.preflight","capabilities.targets"]}`)
+			case r.URL.Path == "/v1/organizations/acme/identities":
+				_, _ = io.WriteString(w, `{"items":[{"id":"idn_agent","kind":"agent","name":"coder"}]}`)
+			case r.URL.Path == agentEnvPath+"/retrievals":
+				_, _ = io.WriteString(w, baseRetrieval)
+			case r.Method == "POST" && r.URL.Path == agentEnvPath+"/capabilities":
+				attempts++
+				w.WriteHeader(409)
+				_, _ = io.WriteString(w, `{"error":{"code":"STATE_CHANGED","message":"changed","details":{"categories":["values","contract"]}}}`)
+			}
+		}, nil, "--target", "API_KEY=header:authorization")
+		if code != 78 || attempts != 2 || !strings.Contains(out, "the configuration changed during the preflight twice (values, contract)") {
+			t.Fatalf("status %d, attempts %d, output %q", code, attempts, out)
+		}
+	})
+
+	t.Run("clean preflight issues capability and starts mediated run", func(t *testing.T) {
+		revoked := false
+		var gotPrecondition string
+		code, out := runStrictCase(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case r.URL.Path == "/v1/meta":
+				_, _ = io.WriteString(w, `{"serverVersion":"0.22.0","capabilities":["retrieval.preflight","capabilities.targets"]}`)
+			case r.URL.Path == "/v1/organizations/acme/identities":
+				_, _ = io.WriteString(w, `{"items":[{"id":"idn_agent","kind":"agent","name":"coder"}]}`)
+			case r.URL.Path == agentEnvPath+"/retrievals":
+				_, _ = io.WriteString(w, baseRetrieval)
+			case r.Method == "POST" && r.URL.Path == agentEnvPath+"/capabilities":
+				b, _ := io.ReadAll(r.Body)
+				gotPrecondition = string(b)
+				w.WriteHeader(201)
+				_, _ = io.WriteString(w, `{"id":"cap_1","secret":"capsecret","destinations":["api.example.com:443"],"targets":{"API_KEY":["header:authorization"]},"preflightItems":[{"name":"API_KEY","present":true,"authorized":true}]}`)
+			case r.Method == "DELETE" && r.URL.Path == agentEnvPath+"/capabilities/cap_1":
+				revoked = true
+				w.WriteHeader(204)
+			}
+		}, nil, "--target", "API_KEY=header:authorization")
+		if code != 1 || !strings.Contains(out, "spawn varlatch-test-never-started") || !strings.Contains(gotPrecondition, `"stateDigest":"dig_1"`) || !revoked {
+			t.Fatalf("status %d, revoked %v, precondition %q, output %q", code, revoked, gotPrecondition, out)
+		}
+	})
+}

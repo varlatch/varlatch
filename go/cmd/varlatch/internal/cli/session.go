@@ -170,8 +170,9 @@ func loginCommand(r *Run) error {
 		}
 	}
 	// A server echoing the credential back in an error message gets it
-	// masked (issue #119), and no output or diagnostic shows it.
-	r.holdSecret(token)
+	// masked (issue #119), and no output or diagnostic shows it, whatever
+	// its length: the person gave it (--token or --token-stdin).
+	r.holdCredential(token, true)
 	// Issuance metadata (ADR-0032): stored so expiry is knowable offline.
 	// An explicit --token has none: its entry stays metadata-free.
 	var issued any
@@ -291,13 +292,7 @@ func (r *Run) readTokenStdin() (string, error) {
 
 // isJSWhitespace is a character JavaScript's \s matches: the white space
 // and line terminators of ECMA-262.
-func isJSWhitespace(c rune) bool {
-	switch c {
-	case '\t', '\n', '\v', '\f', '\r', ' ', 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
-		return true
-	}
-	return c >= 0x2000 && c <= 0x200a
-}
+func isJSWhitespace(c rune) bool { return jsval.IsWhitespace(c) }
 
 // loginWithToken verifies the credential (GET /v1/meta, then GET
 // /v1/organizations), stores it with the time of the sign-in, says so, makes
@@ -959,6 +954,15 @@ func (r *Run) envUse() error {
 	state = kept
 	note := ""
 	if hasTier && jsjson.Truthy(tier) {
+		// The server's word, with the bearer and every other value the run
+		// holds (and any Varlatch token) taken out before it is kept, so no
+		// later command, offline, can print one; what is shown is masked
+		// again when it is printed.
+		if text, ok := tier.(string); ok {
+			tier = RedactOutput(text, r.inFlight...)
+		} else if tier, err = RedactValue(tier, r.inFlight...); err != nil {
+			return err
+		}
 		state = state.Set("selectedTier", tier).Set("tierCachedAt", isoString(time.Now().UTC()))
 		note = " (tier " + Printable(shownValue(jsjson.String(tier))) + ")"
 	}
@@ -984,7 +988,7 @@ func (r *Run) selectedTier(cwd, name string) (any, bool) {
 	if err != nil || token == "" {
 		return nil, false
 	}
-	api := apiclient.New(apiclient.Options{
+	api := r.newClient(apiclient.Options{
 		Server:              server,
 		Token:               token,
 		UserAgent:           r.UserAgent(),

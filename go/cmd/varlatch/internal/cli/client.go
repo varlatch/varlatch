@@ -139,7 +139,7 @@ func (r *Run) credentialExpiryNotice(server, token string) func(string) {
 // server, token, userAgent: cliUserAgent() })`, the client of login,
 // logout and status --probe.
 func (r *Run) plainClient(server, token string) *apiclient.Client {
-	return apiclient.New(apiclient.Options{
+	return r.newClient(apiclient.Options{
 		Server:        server,
 		Token:         token,
 		UserAgent:     r.UserAgent(),
@@ -202,8 +202,9 @@ func (r *Run) connectClient(server string) (*apiclient.Client, error) {
 	if err := r.warnIfExpiring(server); err != nil {
 		return nil, err
 	}
-	// A server echoing the bearer back in an error message gets it masked (issue #119).
-	r.Secrets.Remember(token)
+	// A server echoing the bearer back gets it masked (issue #119), in an
+	// answer printed on stdout as in an error message, whatever its shape
+	// (newClient, plainClient).
 	// Polls and cancels approvals: the same credential, without the step-up
 	// handling or the resumed approval of the command's own client.
 	var poller *apiclient.Client
@@ -226,7 +227,7 @@ func (r *Run) connectClient(server string) (*apiclient.Client, error) {
 		options.Approval = r.Approval
 		options.Ready = r.resumeReady(r.Approval, polling)
 	}
-	return apiclient.New(options), nil
+	return r.newClient(options), nil
 }
 
 // apiErrorLine is safeText.ts's apiErrorLine: the checked code, the masked

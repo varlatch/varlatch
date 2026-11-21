@@ -52,6 +52,7 @@ on:
       - "packages/contract/src/**"
       - "packages/contract/test/vectors/**"
       - "scripts/check-licenses.mjs"
+      - "scripts/check-timing-tests.sh"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"
       - "scripts/conformance/inventory.json"
@@ -113,6 +114,10 @@ on:
       - "scripts/ci-shell.sh"
       - "scripts/redact-output.mjs"
       - "scripts/redact-tokens.mjs"
+      # IMAGE_PATTERNS: what the image's build copies in.
+      - "LICENSE"
+      - "THIRD-PARTY-NOTICES.md"
+      - "LICENSES/**"
   workflow_dispatch:
   # Nightly on main: every Go job, and the cache every pull request restores.
   schedule:
@@ -125,6 +130,16 @@ concurrency:
   group: go-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # The timing tests: each judges how a run's time grows with its input
+  # (growsLinearly), so a CPU shared with other test binaries reads as
+  # nonlinear work. The test steps skip them (-skip), and a step of their
+  # own runs them alone right after (-p 1). scripts/check-timing-tests.sh
+  # (go job) fails when a test calls growsLinearly and this list misses it.
+  # Keep it a flat list of test names, ^(TestA|TestB|...)$: the check reads
+  # the names back from that shape and refuses any other.
+  TIMING_TESTS: "^(TestTheLinearityCriterion|TestHookLinearTime|TestHookLongReaderIsLinear|TestMaskingIsLinear|TestMaskingIsLinearOnLargeMessages|TestFindIsLinear|TestMatcherIsLinear|TestScanIsLinear|TestManyKeys)$"
+
 jobs:
   # Whether this run's change touches anything the Go jobs check. A push
   # is filtered by the trigger's paths instead, and runs every job.
@@ -136,6 +151,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       cli: ${{ steps.filter.outputs.cli }}
       conformance: ${{ steps.filter.outputs.conformance }}
+      image: ${{ steps.filter.outputs.image }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -157,6 +173,7 @@ jobs:
             packages/contract/src/*
             packages/contract/test/vectors/*
             scripts/check-licenses.mjs
+            scripts/check-timing-tests.sh
             packages/protocol/openapi.yaml
             scripts/conformance/run.mjs
             scripts/conformance/inventory.json
@@ -225,6 +242,28 @@ jobs:
           # go-binary-go-cli); scripts/conformance/test/routing.test.mjs
           # checks that every file the suites and the G3 steps import or
           # load is selected.
+          # The single-container image (go-image): its Dockerfile, build
+          # script and check, and what its build copies in (the licenses
+          # and notices); varlatchd's entrypoint, serve and admin (the
+          # daemon), the configuration they parse; and the key-environment
+          # refusal varlatchd and the CLI share (lib/keyenv, with the key
+          # parsers it uses) and the CLI's entrypoint, which applies it in
+          # the image. scripts/conformance/test/routing.test.mjs checks
+          # that these select every file the image's build and check read
+          # and the refusal's Go sources.
+          IMAGE_PATTERNS: |
+            go/image/*
+            go/cmd/varlatchd/*
+            go/server/daemon/*
+            go/server/config/*
+            go/lib/keyenv/*
+            go/lib/backup/*
+            go/lib/envelope/*
+            go/cmd/varlatch/main.go
+            LICENSE
+            THIRD-PARTY-NOTICES.md
+            LICENSES/*
+            .github/workflows/go.yml
           CONFORMANCE_PATTERNS: |
             pnpm-lock.yaml
             pnpm-workspace.yaml
@@ -250,7 +289,7 @@ jobs:
             scripts/redact-tokens.mjs
         run: |
           if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
-            printf '%s\n' go=true cli=true conformance=true >> "$GITHUB_OUTPUT"
+            printf '%s\n' go=true cli=true conformance=true image=true >> "$GITHUB_OUTPUT"
             exit 0
           fi
           changed=$(git diff --no-renames --name-only "$BASE" HEAD)
@@ -281,6 +320,7 @@ jobs:
           cli=$(matching "$CLI_PATTERNS")
           select_jobs go "The Go jobs" "$go"
           select_jobs cli "The Go CLI's platform runs" "$cli"
+          select_jobs image "The image's build and check (go-image)" "$(matching "$IMAGE_PATTERNS")"
           select_jobs conformance "The conformance cells (go-binary x source, go-binary x go)" \
             "$(printf '%s\n%s\n%s\n' "$go" "$cli" "$(matching "$CONFORMANCE_PATTERNS")" | sed '/^$/d' | sort -u)"
 
@@ -376,6 +416,7 @@ jobs:
           go vet -tags conformance ./...
           go vet -tags crashpoint ./...
           go vet -tags g9a ./...
+          go vet -tags headscale ./server/tailnet/...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -386,7 +427,59 @@ jobs:
         env:
           CGO_ENABLED: "0"
           VARLATCH_REQUIRE_DASHBOARD: "1"
-        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test -count=1 ./...
+        run: VARLATCH_DASHBOARD_COMMIT=$(git rev-parse HEAD) go test -count=1 -skip "$TIMING_TESTS" ./...
+
+      # The timing tests the step above skipped, alone: one test binary at a
+      # time (TIMING_TESTS says why).
+      - name: Timing tests, alone
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -p 1 -run "$TIMING_TESTS" ./...
+
+      - name: Every timing test runs alone
+        run: scripts/check-timing-tests.sh
+
+      # G6's static half (ADR-0059 Decision 8; internal docs/design/
+      # go-step6.md decision 5): go/release/release.json, the release's
+      # rollback-safety declaration, matches this build's schema version,
+      # and the schema's changes since the previous Go release are ones the
+      # declaration allows (go/server/db/schemadiff). Before the first Go
+      # release there is no previous one: the g6fixture build (a synthetic
+      # rollback-safe step on this commit's schema) is checked against this
+      # commit's schema instead, to prove the machinery. Either way, the
+      # negative fixture (a breaking change in a release declared
+      # rollback-safe) must fail the check. G6's run is go-binary's, shard 1.
+      - name: G6, the release's declaration and its schema check
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go run ./server/db/releasecheck declaration
+          # previous must be the last Go release reachable from HEAD (a
+          # release tagged since without updating it would be skipped):
+          # the history and tags fetched without trees, compared as
+          # semantic versions (rc.10 after rc.9, 0.50.0 after its rcs).
+          git fetch --quiet --filter=tree:0 --unshallow --tags origin 2>/dev/null || git fetch --quiet --filter=tree:0 --tags origin
+          git tag --merged HEAD -l 'v*' > "$RUNNER_TEMP/release-tags"
+          go run ./server/db/releasecheck previous --tags "$RUNNER_TEMP/release-tags"
+          previous=$(jq -r '.previous.version // empty' release/release.json)
+          if [ -n "$previous" ]; then
+            git fetch --no-tags --depth=1 origin "refs/tags/v$previous:refs/tags/v$previous"
+            git show "v$previous:go/server/db/schema.sql" > "$RUNNER_TEMP/previous-schema.sql"
+            go run ./server/db/releasecheck schema --previous "$RUNNER_TEMP/previous-schema.sql"
+          else
+            go test -count=1 -tags g6fixture -run '^TestTheG6FixtureUpgradesToItsSchema$' ./server/db/
+            go run -tags g6fixture ./server/db/releasecheck declaration --declaration release/testdata/g6/fixture.json
+            go run -tags g6fixture ./server/db/releasecheck schema --previous server/db/schema.sql --declaration release/testdata/g6/fixture.json
+            go run -tags g6fixture,g6unsafe ./server/db/releasecheck declaration --declaration release/testdata/g6/fixture-unsafe.json
+          fi
+          cat server/db/schema.sql release/testdata/g6/breaking.sql > "$RUNNER_TEMP/breaking-schema.sql"
+          status=0
+          go run ./server/db/releasecheck schema --previous server/db/schema.sql --current "$RUNNER_TEMP/breaking-schema.sql" \
+            --declaration release/testdata/g6/fixture.json || status=$?
+          [ "$status" -eq 1 ] || { echo "::error::G6's schema check did not fail a release declared rollback-safe that breaks the schema (exit $status)"; exit 1; }
+          echo "The negative fixture failed the check, as it must."
 
       # The conformance build's own tests: its host override, which the
       # sync suite's fake platforms rely on, is still decided by the
@@ -396,6 +489,19 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -tags conformance ./server/outbound
+
+      # A self-hosted control server (ADR-0059 Decision 5 as amended for
+      # step 7.5c; go/server/tailnet/headscaletest): varlatchd's node joins
+      # Headscale 0.29.7 (by digest, in a container named for the run,
+      # unprivileged, its embedded DERP only) on https at an IP address,
+      # tagged by its pre-auth key, and is pinned to it; while Headscale is
+      # unreachable, no bootstrap DNS query. Its own build tag: it needs
+      # Docker.
+      - name: Headscale, a self-hosted control server
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags headscale -run '^TestHeadscale' -v ./server/tailnet/
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a
@@ -456,8 +562,11 @@ jobs:
 
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
-      - name: install.sh, the G9a runner and the restore drill pass shellcheck
-        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh
+      - name: install.sh, the G9a runner, the restore drill and G6 pass shellcheck
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh
+
+      - name: The release's asset scripts pass shellcheck
+        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh
 
       # G13 (ADR-0059 step 4.14), and the Go replacement of
       # scripts/test-backup-s3.mjs: the S3 client against a local S3 server
@@ -484,6 +593,29 @@ jobs:
           for _ in $(seq 1 100); do curl -fsS "$endpoint/minio/health/ready" > /dev/null 2>&1 && break; sleep 0.2; done
           VARLATCH_TEST_S3_ENDPOINT="$endpoint" VARLATCH_TEST_S3_ACCESS_KEY=vlts3test VARLATCH_TEST_S3_SECRET_KEY="$secret" VARLATCH_REQUIRE_S3=1 \
             go test -count=1 -v -run '^(TestS3UploadDownload|TestS3MultipartAbortAndRetry|TestBucketTest)$' ./lib/backup
+
+      # Public HTTPS (ADR-0059 step 6, slice 6.3a) against Pebble, Let's
+      # Encrypt's test CA, in containers on the runner's network, pinned by
+      # digest: issuance over HTTP-01 and over TLS-ALPN-01, renewal before
+      # expiry (45-second certificates), a failed challenge reported and
+      # retried with backoff, the store's modes, a restart serving the
+      # stored certificate, and varlatchd serving HTTPS with nothing before
+      # a certificate and only a redirect on its plain listener; and a move
+      # to another name (slice 6.9, TestPublicHTTPSMoveAgainstPebble):
+      # `varlatch move` built from this commit, the new name's certificate,
+      # the old passkeys removed, a re-enrollment over HTTPS. No outside
+      # network: every name resolves to 127.0.0.1. Never Let's Encrypt from
+      # CI (its staging only by hand, with the owner).
+      - name: Public HTTPS against Pebble
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          eval "$(server/publictls/testdata/pebble.sh start "$RUNNER_TEMP/pebble")"
+          trap 'server/publictls/testdata/pebble.sh stop' EXIT
+          # One package at a time: both listen on Pebble's ports, 5001 and 5002.
+          VARLATCH_REQUIRE_PEBBLE=1 go test -count=1 -v -run '^TestPebble' ./server/publictls
+          VARLATCH_REQUIRE_PEBBLE=1 go test -count=1 -v -run '^TestPublicHTTPS' ./server/daemon
 
       # G9a at smoke scale (ADR-0059 step 3.6): 5 % of the profile's
       # length against varlatchd built with the g9a tag (the production
@@ -685,7 +817,17 @@ jobs:
         # inside the job's 40.
         run: |
           # shellcheck disable=SC2046 # one argument per package
-          go test -count=1 -race -timeout 20m $(go list ./... | grep -v '/go/install$')
+          go test -count=1 -race -timeout 20m -skip "$TIMING_TESTS" $(go list ./... | grep -v '/go/install$')
+
+      # The timing tests the step above skipped, alone, with the race
+      # detector (TIMING_TESTS says why).
+      - name: Timing tests, alone, with the race detector
+        working-directory: go
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          # shellcheck disable=SC2046 # one argument per package
+          go test -count=1 -race -p 1 -timeout 20m -run "$TIMING_TESTS" $(go list ./... | grep -v '/go/install$')
 
       - name: Save Go's caches
         if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -787,7 +929,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.conformance == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # The nightly (and a dispatched) run's G6 takes every suite it names in
+    # shard 1 (about 35 minutes more); pull requests and merge groups keep
+    # the 40 minutes.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 80 || 40 }}
     strategy:
       fail-fast: false
       matrix:
@@ -834,6 +979,21 @@ jobs:
           cd go
           go generate ./server/web
           go build -tags conformance -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+      # The Go release assets (internal docs/design/go-step6.md, slice
+      # 6.1a), built from this commit exactly as release.yml builds them for
+      # a tag of 0.50.0 or later: the dashboard just generated, which must
+      # be clean and from this commit, every binary, the stamped installers,
+      # the unit, the manifest (release.json) and SHA256SUMS; then checked
+      # as release.yml checks them before signing. A version no release
+      # uses; nothing is signed, uploaded or published.
+      - name: The release's Go assets build and check
+        if: matrix.shard == 1
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          version="0.0.0-check.${GITHUB_RUN_NUMBER}"
+          go/release/build-assets.sh --version "$version" --out "$RUNNER_TEMP/release-assets"
+          go/release/check-assets.sh "$RUNNER_TEMP/release-assets" "$version"
       # G3 (ADR-0059 step 3.6), the direction the Go tests cannot take: the
       # TypeScript server's own read path (its effective-configuration and
       # disclosure routes, in PGlite) opens a database fixture whose
@@ -936,6 +1096,59 @@ jobs:
         run: VARLATCH_GO_BINARY="$RUNNER_TEMP/varlatchd" node --test scripts/conformance/test/go-binary.test.mjs
       - name: Install Chromium
         run: scripts/ci-install-chromium.sh
+      # G6's run (ADR-0059 Decision 8; go/release/g6.sh), in shard 1: the
+      # previous release's varlatchd on a database the new release
+      # upgraded, with the conformance suites below, then the new release on
+      # what the previous one wrote. The previous release is the one
+      # go/release/release.json names, built from its tag; before the first
+      # Go release, this commit's varlatchd is the previous release and its
+      # g6fixture build (one rollback-safe schema step) the new one. It runs
+      # after Chromium is installed: every conformance run starts with the
+      # passkey bootstrap, which drives a browser. Pull
+      # requests and merge groups take the suites that write each kind
+      # quickly (about 100 seconds a phase, shard-weights.json); the nightly
+      # run and a dispatched one add sync, deletion and webhooks (about 990
+      # seconds a phase).
+      - name: G6, the upgrade gate
+        if: matrix.shard == 1
+        env:
+          CGO_ENABLED: "0"
+          EVENT: ${{ github.event_name }}
+        run: |
+          previous=$(jq -r '.previous.version // empty' go/release/release.json)
+          if [ -n "$previous" ]; then
+            git fetch --no-tags --depth=1 origin "refs/tags/v$previous:refs/tags/v$previous"
+            git worktree add --detach "$RUNNER_TEMP/previous-release" "v$previous"
+            (cd "$RUNNER_TEMP/previous-release/go" && go build -tags conformance -o "$RUNNER_TEMP/varlatchd-previous" ./cmd/varlatchd)
+            old="$RUNNER_TEMP/varlatchd-previous" new="$RUNNER_TEMP/varlatchd"
+            safe=$(jq -r '.rollbackSafe' go/release/release.json)
+          else
+            (cd go && go build -tags conformance,g6fixture -o "$RUNNER_TEMP/varlatchd-g6fixture" ./cmd/varlatchd)
+            old="$RUNNER_TEMP/varlatchd" new="$RUNNER_TEMP/varlatchd-g6fixture"
+            safe=$(jq -r '.rollbackSafe' go/release/testdata/g6/fixture.json)
+          fi
+          suites="cli-core security oidc broker client-runtime audit-export realtime-events"
+          case "$EVENT" in schedule | workflow_dispatch) suites="$suites sync deletion webhooks" ;; esac
+          # shellcheck disable=SC2086 # one argument per suite
+          G6_ROLLBACK_SAFE=$safe sh go/release/g6.sh "$old" "$new" "$RUNNER_TEMP/g6" $suites
+          if [ -z "$previous" ]; then
+            # The not-rollback-safe path, cheaply (no conformance runs): the
+            # same fixture step declared not rollback-safe (g6unsafe:
+            # compatibleFrom 2) passes declared so, since the previous
+            # release refuses its database, and fails declared rollback-safe.
+            (cd go && go build -tags conformance,g6fixture,g6unsafe -o "$RUNNER_TEMP/varlatchd-g6unsafe" ./cmd/varlatchd)
+            G6_ROLLBACK_SAFE=false G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe"
+            status=0
+            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$old" "$RUNNER_TEMP/varlatchd-g6unsafe" "$RUNNER_TEMP/g6-unsafe-declared-safe" \
+              2> "$RUNNER_TEMP/g6-unsafe-declared-safe.err" || status=$?
+            cat "$RUNNER_TEMP/g6-unsafe-declared-safe.err" >&2
+            # Exit 1 for this reason alone: a step that fails earlier also exits 1.
+            if [ "$status" -ne 1 ] || ! grep -q "declared rollback-safe, but the previous release cannot open" "$RUNNER_TEMP/g6-unsafe-declared-safe.err"; then
+              echo "::error::G6 did not fail a release declared rollback-safe whose database the previous release refuses, for that reason (exit $status)"
+              exit 1
+            fi
+            echo "G6 failed the release declared rollback-safe whose database the previous release refuses, as it must."
+          fi
       # G13's restore drill (ADR-0059 step 4.14): a Go archive restored into
       # a fresh container that holds only the archive and the two keys (a
       # scratch image with varlatchd alone, no network), and the source's
@@ -953,6 +1166,146 @@ jobs:
         if: always()
         with:
           name: conformance-report-go-binary-cli-source-shard-${{ matrix.shard }}
+          path: conformance-report.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  # The single-container image (ADR-0059 Decision 8; internal
+  # docs/design/go-step6.md, decision 9, slice 6.10a), on every pull
+  # request that touches it (the changes job's IMAGE_PATTERNS), and kept
+  # fast: go/image/Dockerfile built by go/image/build.sh for linux/amd64 and
+  # linux/arm64 from this commit's Linux binaries, built as
+  # go/release/build-assets.sh builds them but without the dashboard (the
+  # image only copies them); nothing is pushed, signed or published. Then
+  # go/image/check-image.mjs, the replacement of test-backup-compose.mjs, as
+  # an operator runs the image: its user, volume and label, a key in the
+  # environment refused by varlatchd and the CLI, no key in docker inspect
+  # or /proc/1/environ, the recovery gate held in the volume across
+  # containers, and a backup restored into a new volume. The conformance
+  # suites against the image run nightly (go-container).
+  go-image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      # The conformance binaries' caches, restored only (go-binary-go-cli
+      # saves them): the same CGO_ENABLED=0 builds.
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-conformance-
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+      # BuildKit in a container: the docker driver here builds one platform.
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build the image's Linux binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          version="0.0.0-check.${GITHUB_RUN_NUMBER}"
+          mkdir "$RUNNER_TEMP/image-assets"
+          for arch in amd64 arm64; do
+            for cmd in varlatchd varlatch; do
+              (cd go && GOOS=linux GOARCH=$arch go build -trimpath -buildvcs=false \
+                -ldflags "-s -w -buildid= -X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$version" \
+                -o "$RUNNER_TEMP/image-assets/$cmd-$version-linux-$arch" "./cmd/$cmd")
+            done
+          done
+      - name: Build the image for linux/amd64 and linux/arm64
+        run: go/image/build.sh --version "0.0.0-check.${GITHUB_RUN_NUMBER}" --assets "$RUNNER_TEMP/image-assets" --tag varlatchd-image:check --platforms linux/amd64,linux/arm64 --check
+      - name: Build the image for this runner
+        run: go/image/build.sh --version "0.0.0-check.${GITHUB_RUN_NUMBER}" --assets "$RUNNER_TEMP/image-assets" --tag varlatchd-image:check --platforms linux/amd64 --load
+      - name: The image as an operator runs it
+        run: node go/image/check-image.mjs varlatchd-image:check
+
+  # The conformance suites against the single-container image (target
+  # go-container:<image>, go-binary's expectations), nightly and on a
+  # manual run only: one unsharded run of about 45 minutes, too long for
+  # every pull request. The image is built from this commit's release
+  # assets (build-assets.sh, the dashboard generated) with varlatchd's
+  # conformance build (its probes and fixtures). Not one of go-ok's jobs.
+  go-container:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-conformance-
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Build the release's Go assets
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go generate ./server/web)
+          go/release/build-assets.sh --version "0.0.0-check.${GITHUB_RUN_NUMBER}" --out "$RUNNER_TEMP/release-assets"
+      # The image with varlatchd's conformance build beside the release's
+      # CLI, which the conformance target needs.
+      - name: Build the image with the conformance binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          version="0.0.0-check.${GITHUB_RUN_NUMBER}"
+          mkdir "$RUNNER_TEMP/conformance-assets"
+          (cd go && go build -trimpath -buildvcs=false -tags conformance \
+            -ldflags "-s -w -buildid= -X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$version" \
+            -o "$RUNNER_TEMP/conformance-assets/varlatchd-$version-linux-amd64" ./cmd/varlatchd)
+          cp "$RUNNER_TEMP/release-assets/varlatch-$version-linux-amd64" "$RUNNER_TEMP/conformance-assets/"
+          go/image/build.sh --version "$version" --assets "$RUNNER_TEMP/conformance-assets" --tag varlatchd-image:conformance --platforms linux/amd64 --load
+      - name: Install Chromium
+        run: scripts/ci-install-chromium.sh
+      - name: Run the conformance suites against the image
+        run: node scripts/conformance/run.mjs --target go-container:varlatchd-image:conformance --cli source --report conformance-report.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: conformance-report-go-container-cli-source
           path: conformance-report.json
           retention-days: 30
           if-no-files-found: warn
@@ -1043,8 +1396,9 @@ jobs:
   # merge group runs them when it touches the CLI's code or a file its tests
   # read (the changes job's CLI_PATTERNS); the nightly run always does. On
   # Windows the recorded cases that name a path below their directory are
-  # skipped until step 5.9 records Windows outcomes; the step lists every
-  # skipped test, and the job summary counts them.
+  # compared with the TypeScript CLI's Windows recordings (testdata/*/windows,
+  # the windows-expectations workflow); the step lists every skipped test,
+  # and the job summary counts them.
   go-cli-platforms:
     needs: changes
     if: needs.changes.outputs.cli == 'true'
@@ -1097,11 +1451,23 @@ jobs:
           printf "The CLI's libraries:\n%s\n" "$libs"
           # shellcheck disable=SC2086 # one argument per package
           go vet ./cmd/varlatch/... $libs
-          # Verbose, so every skipped test is listed with its reason (on
-          # Windows: the recorded cases that name a path, until step 5.9);
-          # the log leaves out the lines of tests that ran and passed.
+          # Verbose, so every skipped test is listed with its reason (cases a
+          # platform cannot hold: POSIX modes and signals, names Windows does
+          # not allow); the log leaves out the lines of tests that ran and
+          # passed.
           # shellcheck disable=SC2086 # one argument per package
-          go test -count=1 -v ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
+          go test -count=1 -v -skip "$TIMING_TESTS" ./cmd/varlatch/... $libs 2>&1 | tee "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
+
+      # The timing tests the step above skipped, alone (TIMING_TESTS says
+      # why); their skips join the same log for the summary below.
+      - name: Timing tests, alone
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          libs=$(go list -deps ./cmd/varlatch/... | grep '^github.com/varlatch/varlatch/go/lib/')
+          # shellcheck disable=SC2086 # one argument per package
+          go test -count=1 -v -p 1 -run "$TIMING_TESTS" ./cmd/varlatch/... $libs 2>&1 | tee -a "$RUNNER_TEMP/go-test.log" | grep -vE '^[[:space:]]*(=== (RUN|PAUSE|CONT|NAME)|--- PASS)'
 
       - name: Skipped tests
         if: always()
@@ -1226,7 +1592,7 @@ jobs:
     # On a draft it runs too, and fails: every other job is skipped then, and
     # a skipped required check would read as passed.
     if: always()
-    needs: [changes, go, go-race, go-platforms, go-binary, openapi, windows, go-cli-platforms, go-binary-go-cli]
+    needs: [changes, go, go-race, go-platforms, go-binary, go-image, openapi, windows, go-cli-platforms, go-binary-go-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

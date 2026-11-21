@@ -535,11 +535,12 @@ func revokeQuietly(brokerAPI *apiclient.Client, ctx *clientctx.Context, capabili
 
 // issuedCapability is the issued Capability as the run uses it.
 type issuedCapability struct {
-	id           any
-	secret       string
-	destinations []string
-	targets      map[string][]string
-	preflight    any
+	id             any
+	secret         string
+	destinations   []string
+	targets        map[string][]string
+	preflight      any
+	preflightItems []any
 }
 
 // stringList is a JSON list of strings, each String()ed.
@@ -607,11 +608,12 @@ func issueWithTargets(brokerAPI *apiclient.Client, ctx *clientctx.Context, items
 		return nil, err
 	}
 	cap := &issuedCapability{
-		id:           fieldOf(answer, "id"),
-		secret:       jsjson.String(fieldOf(answer, "secret")),
-		destinations: stringList(fieldOf(answer, "destinations")),
-		targets:      targetMap(fieldOf(answer, "targets")),
-		preflight:    fieldOf(answer, "preflight"),
+		id:             fieldOf(answer, "id"),
+		secret:         jsjson.String(fieldOf(answer, "secret")),
+		destinations:   stringList(fieldOf(answer, "destinations")),
+		targets:        targetMap(fieldOf(answer, "targets")),
+		preflight:      fieldOf(answer, "preflight"),
+		preflightItems: listOf(answer, "preflightItems"),
 	}
 	recorded := fieldOf(answer, "targets")
 	if !jsjson.Truthy(recorded) {
@@ -752,6 +754,212 @@ func (r *Run) runAgentSafe(ctx *clientctx.Context, api *lazyClient, opts agentRu
 	})
 }
 
+// agentEnvFrom is agentEnvFrom: the Agent's environment from a strict plan:
+// the plan's values, defaults, allowed inherited values and run context;
+// Placeholders for Secrets; the proxy; and no Broker credential or operator
+// bearer.
+func agentEnvFrom(base *orderedEnv, placeholders map[string]string, proxyURL string, credential *mintedCredential) (*orderedEnv, []string) {
+	env := base
+	env.Delete(brokerCredentialEnv)
+	env.Delete("VARLATCH_TOKEN")
+	if credential != nil {
+		env.Set("VARLATCH_SERVER", credential.server)
+		env.Set("VARLATCH_TOKEN", credential.token)
+	}
+	for name, placeholder := range placeholders {
+		env.Set(name, placeholder)
+	}
+	var removed []string
+	if proxyURL != "" {
+		removed = setProxy(env, proxyURL)
+	}
+	return env, removed
+}
+
+// runAgentSafeStrict is runAgentSafeStrict (ADR-0038 Decision 7): the
+// operator's preflight retrieval (non-sensitive values, a verdict per
+// Secret when the operator holds secret.reveal, never a Secret value), then
+// the Broker's issuance bound to that state by a precondition. A changed
+// state retries both once. The Agent starts only if the strict plan has no
+// violation.
+func (r *Run) runAgentSafeStrict(ctx *clientctx.Context, api *lazyClient, opts agentRunOptions, allowInherited []string, command string, commandArgs []string) error {
+	c, err := api.get()
+	if err != nil {
+		return err
+	}
+	meta, err := c.Meta(context.Background())
+	if err != nil {
+		return err
+	}
+	preflightOK, err := includesCapability(meta, "retrieval.preflight")
+	if err != nil {
+		return err
+	}
+	targetsOK, err := includesCapability(meta, "capabilities.targets")
+	if err != nil {
+		return err
+	}
+	if !preflightOK || !targetsOK {
+		r.eprintln("varlatch: --agent-safe --strict needs the agent-safe preflight and substitution targets, which this server (" + r.serverVersionText(meta) + ") does not offer; it needs Varlatch " + targetsServer + " or later. Nothing was started.")
+		return ExitWith(strictExit)
+	}
+	agent, err := findAgent(c, ctx, opts.agent)
+	if err != nil {
+		return err
+	}
+	agentID := fieldOf(agent, "id")
+	runID := newRunID()
+	server, err := serverString(ctx.Server)
+	if err != nil {
+		return err
+	}
+	allow := map[string]bool{}
+	for _, n := range allowInherited {
+		allow[n] = true
+	}
+	omitted := map[string]bool{}
+	for _, n := range opts.omit {
+		omitted[n] = true
+	}
+	token, err := r.loadBrokerCredential(opts)
+	if err != nil {
+		return err
+	}
+	brokerAPI := r.plainClient(server, token)
+	var mint func() (*mintedCredential, error)
+	if opts.metadataCredential {
+		mint = func() (*mintedCredential, error) {
+			return mintFor(brokerAPI, ctx, server, agentID, runID, opts.ttlSeconds)
+		}
+	}
+	refuse := func(violations []violation) error {
+		for _, line := range formatViolations(violations) {
+			r.eprintln(line)
+		}
+		return ExitWith(strictExit)
+	}
+
+	environment := environmentOf(ctx)
+	for attempt := 0; ; attempt++ {
+		retrieval, err := retryOnce(func() (any, error) {
+			return c.StrictRetrieval(context.Background(), ctx.Organization, ctx.Project, environment, "preflight")
+		})
+		if err != nil {
+			return err
+		}
+		if contractDoc := fieldOf(retrieval, "contract"); jsjson.Truthy(contractDoc) {
+			if err := checkAllowances(contractDoc, allowInherited, true); err != nil {
+				return err
+			}
+		}
+		storedSecrets := storedSecretNames(retrieval)
+		if _, err := checkTargetFlags(storedSecrets, opts); err != nil {
+			return err
+		}
+		parent := r.parentVars()
+		preliminary := planStrictRun(retrieval, r.parentEnv(), parent, allow, omitted, &agentSafeFacts{agent: nil})
+		global := slices.ContainsFunc(preliminary.violations, func(v violation) bool {
+			return v.kind == "contract" || v.kind == "semantics"
+		})
+		if global {
+			return refuse(preliminary.violations)
+		}
+		if len(preliminary.mediated) == 0 {
+			// Nothing to mediate: no broker, no Capability.
+			if len(preliminary.violations) > 0 {
+				return refuse(preliminary.violations)
+			}
+			var minted *mintedCredential
+			if mint != nil {
+				if minted, err = mint(); err != nil {
+					return err
+				}
+			}
+			env, _ := agentEnvFrom(preliminary.env, nil, "", minted)
+			code, runErr := r.startAgent(runID, command, commandArgs, env)
+			if minted != nil {
+				if err := minted.revoke(); err != nil {
+					return err
+				}
+			}
+			if runErr != nil {
+				return runErr
+			}
+			return ExitWith(code)
+		}
+		if len(opts.allowHosts) == 0 {
+			return errors.New("This environment has " + strconv.Itoa(len(preliminary.mediated)) + " Secret(s); agent-safe runs need at least one --allow-host <host[:port]> destination")
+		}
+
+		requested := map[string][]string{}
+		targetsBody := jsjson.Object{}
+		for _, n := range preliminary.mediated {
+			requested[n] = opts.targets[n]
+			targetsBody = append(targetsBody, jsjson.Member{Key: n, Value: anyStrings(opts.targets[n])})
+		}
+		manifest := fieldOf(retrieval, "manifest")
+		precondition := jsjson.Object{
+			{Key: "projectId", Value: fieldOf(manifest, "projectId")},
+			{Key: "environmentId", Value: fieldOf(fieldOf(manifest, "environment"), "id")},
+			{Key: "stateDigest", Value: fieldOf(retrieval, "stateDigest")},
+		}
+		if sd, ok := jsval.Get(retrieval, "stateDigests"); ok {
+			precondition = append(precondition, jsjson.Member{Key: "stateDigests", Value: sd})
+		}
+		body := jsjson.Object{
+			{Key: "agentIdentityId", Value: agentID},
+			{Key: "items", Value: anyStrings(preliminary.mediated)},
+			{Key: "destinations", Value: anyStrings(opts.allowHosts)},
+			{Key: "targets", Value: targetsBody},
+			{Key: "ttlSeconds", Value: agentTTL(opts.ttlSeconds)},
+			{Key: "runId", Value: runID},
+			{Key: "precondition", Value: precondition},
+		}
+		cap, err := issueWithTargets(brokerAPI, ctx, preliminary.mediated, body, requested)
+		if err != nil {
+			var apiErr *apiclient.APIError
+			if errors.As(err, &apiErr) && apiErr.CodeIs("STATE_CHANGED") {
+				if attempt == 0 {
+					continue
+				}
+				categories := stringList(fieldOf(apiErr.Details, "categories"))
+				r.eprintln("varlatch: the configuration changed during the preflight twice (" + strings.Join(categories, ", ") + "); the command was not started")
+				return ExitWith(strictExit)
+			}
+			return err
+		}
+
+		agentFacts := map[string]agentFact{}
+		for _, item := range cap.preflightItems {
+			if name, ok := stringField(item, "name"); ok {
+				agentFacts[name] = agentFact{
+					present:    jsjson.Truthy(fieldOf(item, "present")),
+					authorized: jsjson.Truthy(fieldOf(item, "authorized")),
+					reason:     jsjson.String(fieldOf(item, "reason")),
+				}
+			}
+		}
+		plan := planStrictRun(retrieval, r.parentEnv(), parent, allow, omitted, &agentSafeFacts{agent: agentFacts})
+		if len(plan.violations) > 0 {
+			if err := revokeQuietly(brokerAPI, ctx, cap.id); err != nil {
+				return err
+			}
+			return refuse(plan.violations)
+		}
+		if plan.outsideContract > 0 {
+			r.eprintln("varlatch: " + strconv.Itoa(plan.outsideContract) + " delivered item(s) are not in the Contract; delivered as usual")
+		}
+		r.reportStripped(storedSecrets, plan.mediated)
+		return r.runMediated(mediatedRun{
+			ctx: ctx, server: server, token: token, opts: opts, brokerAPI: brokerAPI, cap: cap, secretItems: plan.mediated,
+			runID: runID, command: command, commandArgs: commandArgs, mint: mint,
+			childEnv: func(placeholders map[string]string, proxyURL string, credential *mintedCredential) (*orderedEnv, []string) {
+				return agentEnvFrom(plan.env, placeholders, proxyURL, credential)
+			},
+		})
+	}
+}
+
 // anyStrings is a list of strings as a JSON value.
 func anyStrings(list []string) []any {
 	out := make([]any, len(list))
@@ -801,7 +1009,7 @@ func (r *Run) runMediated(run mediatedRun) error {
 	// Broker exercises concurrently, and the client's one maintenance
 	// budget is shared by the requests in flight together.
 	retry := exerciseMaintenance
-	exerciseAPI := apiclient.New(apiclient.Options{Server: run.server, Token: run.token, UserAgent: r.UserAgent(), MaintenanceRetry: &retry, Env: r.Env})
+	exerciseAPI := r.newClient(apiclient.Options{Server: run.server, Token: run.token, UserAgent: r.UserAgent(), MaintenanceRetry: &retry, Env: r.Env})
 	capabilityID := jsjson.String(run.cap.id)
 	diagnostics := r.newBrokerDiagnostics()
 	exercise := func(_ context.Context, host string, port int, placements []broker.Placement) (broker.Exercised, error) {

@@ -364,6 +364,11 @@ type release struct {
 	cutOff string
 	// redirectHTTP names a file whose request is redirected to plain HTTP.
 	redirectHTTP string
+	// servedOnly answers only a serving installation's paths.
+	servedOnly bool
+	// redirect names a file whose request is redirected to the same file
+	// at the server's root.
+	redirect string
 }
 
 func goArch() string { return runtime.GOARCH }
@@ -401,7 +406,12 @@ func (r *release) serve(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		r.hits.Add(1)
-		name := strings.TrimPrefix(req.URL.Path, "/")
+		// A serving installation's layout (/cli/v<version>/<file>) too.
+		name := strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, "/cli/v"+version), "/")
+		if r.servedOnly && !strings.HasPrefix(req.URL.Path, "/cli/v"+version+"/") {
+			http.NotFound(w, req)
+			return
+		}
 		if name == "SHA256SUMS" {
 			_, _ = w.Write([]byte(r.sha256sums()))
 			return
@@ -409,6 +419,10 @@ func (r *release) serve(t *testing.T) (*httptest.Server, string) {
 		data, ok := r.files[name]
 		if !ok {
 			http.NotFound(w, req)
+			return
+		}
+		if name == r.redirect && strings.HasPrefix(req.URL.Path, "/cli/") {
+			http.Redirect(w, req, "/"+name, http.StatusFound)
 			return
 		}
 		if name == r.redirectHTTP {
@@ -487,6 +501,13 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 			base = strings.TrimPrefix(e, "BASE_URL=")
 		case strings.HasPrefix(e, "ROOT="):
 			src = edit(t, src, rootLine, "root='"+strings.TrimPrefix(e, "ROOT=")+"'")
+		case strings.HasPrefix(e, "ORIGIN="):
+			// As a serving installation stamps it; "server" is the test's.
+			origin := strings.TrimPrefix(e, "ORIGIN=")
+			if origin == "server" {
+				origin = srv.URL
+			}
+			src = edit(t, src, "ORIGIN=''", "ORIGIN='"+origin+"'")
 		default:
 			extra = append(extra, e)
 		}
@@ -726,4 +747,225 @@ func TestInstallServerProductionPath(t *testing.T) {
 		}
 	}
 	emptyTmp(t, res)
+}
+
+// --- the TypeScript CLI already on PATH (decision 11) ---
+
+// tsCLI stands in for the TypeScript CLI's single-file build, with its
+// banner as esbuild writes it.
+const tsCLI = "#!/usr/bin/env node\n/*! Varlatch CLI. Copyright 2026 Robotsson. SPDX-License-Identifier: Apache-2.0. */\nconsole.log('varlatch 0.22.4');\n"
+
+// overTypeScript puts tsCLI at dir/varlatch, and a stand-in for the store
+// both CLIs share under home, then installs into dir.
+func overTypeScript(t *testing.T, r *release, env ...string) (res run, dir, home string) {
+	t.Helper()
+	dir = filepath.Join(t.TempDir(), "bin")
+	home = t.TempDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "varlatch"), []byte(tsCLI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := filepath.Join(home, ".config", "varlatch")
+	if err := os.MkdirAll(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "config.json"), []byte(`{"server":"https://vault.example.invalid"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res = install(t, r, true, []string{"--dir", dir}, append([]string{"HOME=" + home}, env...)...)
+	return res, dir, home
+}
+
+// files lists dir's entries with their content.
+func files(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		b, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+		got[e.Name()] = string(b)
+	}
+	return got
+}
+
+func storeUnchanged(t *testing.T, home string) {
+	t.Helper()
+	if b, _ := os.ReadFile(filepath.Join(home, ".config", "varlatch", "config.json")); string(b) != `{"server":"https://vault.example.invalid"}`+"\n" {
+		t.Fatalf("the store changed: %q", b)
+	}
+}
+
+func TestInstallReplacesTheTypeScriptCLI(t *testing.T) {
+	res, dir, home := overTypeScript(t, newRelease())
+	if res.code != 0 || !strings.Contains(res.out, "Replaced the TypeScript CLI at "+filepath.Join(dir, "varlatch")) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if got := files(t, dir); len(got) != 1 || got["varlatch"] != stubCLI {
+		t.Fatalf("left %q", got)
+	}
+	storeUnchanged(t, home)
+	emptyTmp(t, res)
+}
+
+// On a host with a Compose installation the TypeScript CLI stays, as
+// varlatch-ts, for that installation's host commands.
+func TestInstallKeepsTheTypeScriptCLIForCompose(t *testing.T) {
+	for _, marker := range []string{"varlatch-install.json", "docker-compose.yml"} {
+		t.Run(marker, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "srv", "varlatch"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "srv", "varlatch", marker), []byte("{}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			res, dir, home := overTypeScript(t, newRelease(), "ROOT="+root)
+			if res.code != 0 || !strings.Contains(res.out, "Kept the TypeScript CLI as "+filepath.Join(dir, "varlatch-ts")) {
+				t.Fatalf("exit %d: %s", res.code, res.out)
+			}
+			if got := files(t, dir); len(got) != 2 || got["varlatch"] != stubCLI || got["varlatch-ts"] != tsCLI {
+				t.Fatalf("left %q", got)
+			}
+			if fi, _ := os.Stat(filepath.Join(dir, "varlatch-ts")); fi.Mode().Perm() != 0o755 {
+				t.Fatalf("varlatch-ts mode %v", fi.Mode())
+			}
+			storeUnchanged(t, home)
+			emptyTmp(t, res)
+		})
+	}
+}
+
+// Nothing changes when the TypeScript CLI cannot be kept, or when the new
+// varlatch does not run where it was put.
+func TestInstallLeavesTheTypeScriptCLI(t *testing.T) {
+	t.Run("another varlatch-ts", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "srv", "varlatch"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "srv", "varlatch", "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r := newRelease()
+		dir := filepath.Join(t.TempDir(), "bin")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, content := range map[string]string{"varlatch": tsCLI, "varlatch-ts": "#!/bin/sh\necho mine\n"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := install(t, r, true, []string{"--dir", dir}, "ROOT="+root)
+		if res.code == 0 || !strings.Contains(res.out, "varlatch-ts exists and is not the TypeScript CLI") {
+			t.Fatalf("exit %d: %s", res.code, res.out)
+		}
+		if got := files(t, dir); len(got) != 2 || got["varlatch"] != tsCLI || got["varlatch-ts"] != "#!/bin/sh\necho mine\n" {
+			t.Fatalf("left %q", got)
+		}
+	})
+	t.Run("the new varlatch does not run there", func(t *testing.T) {
+		r := newRelease()
+		// Runs from the staging directory, fails from the target's.
+		r.files["varlatch-"+version+"-linux-"+goArch()] = []byte("#!/bin/sh\ncase \"$0\" in */bin/varlatch) exit 1 ;; esac\n" + strings.TrimPrefix(stubCLI, "#!/bin/sh\n"))
+		res, dir, home := overTypeScript(t, r)
+		if res.code == 0 || !strings.Contains(res.out, "the TypeScript CLI was put back") {
+			t.Fatalf("exit %d: %s", res.code, res.out)
+		}
+		if got := files(t, dir); len(got) != 1 || got["varlatch"] != tsCLI {
+			t.Fatalf("left %q", got)
+		}
+		storeUnchanged(t, home)
+		emptyTmp(t, res)
+	})
+}
+
+// --- from a serving installation (varlatchd's serve_cli; decision 12) ---
+
+func TestInstallFromAnInstallation(t *testing.T) {
+	r := newRelease()
+	r.servedOnly = true
+	res := install(t, r, true, nil, "ORIGIN=server")
+	target := filepath.Join(res.dir, "varlatch")
+	if res.code != 0 || !bytes.Equal(installed(t, target), []byte(stubCLI)) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if !regexp.MustCompile(`Next: varlatch login --server https://127\.0\.0\.1:[0-9]+\n`).MatchString(res.out) {
+		t.Fatalf("no next step naming the installation in:\n%s", res.out)
+	}
+	// The downloaded CLI still checks the signature, as from github.com.
+	log, _ := os.ReadFile(res.stubLog)
+	if !regexp.MustCompile(`verify-release --version 0\.50\.0 --sums \S+/SHA256SUMS --bundle \S+/SHA256SUMS\.sigstore\.json --file \S+=varlatch-0\.50\.0-linux-`).Match(log) {
+		t.Fatalf("verify-release was not called as expected:\n%s", log)
+	}
+	emptyTmp(t, res)
+}
+
+// Plain http only to this machine, as the installation serves it there.
+func TestInstallFromALoopbackInstallation(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the end-to-end runs serve Linux binaries")
+	}
+	r := newRelease()
+	r.servedOnly = true
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		name := strings.TrimPrefix(req.URL.Path, "/cli/v"+version+"/")
+		if name == "SHA256SUMS" {
+			_, _ = w.Write([]byte(r.sha256sums()))
+			return
+		}
+		if b, ok := r.files[name]; ok && strings.HasPrefix(req.URL.Path, "/cli/") {
+			_, _ = w.Write(b)
+			return
+		}
+		http.NotFound(w, req)
+	}))
+	defer plain.Close()
+	res := install(t, r, true, nil, "ORIGIN="+plain.URL)
+	if res.code != 0 || !strings.Contains(res.out, "Next: varlatch login --server "+plain.URL+"\n") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+}
+
+func TestInstallFromAnInstallationRefuses(t *testing.T) {
+	for name, c := range map[string]struct {
+		origin, want string
+		args         []string
+		edit         func(*release)
+		noDownload   bool
+	}{
+		"plain http elsewhere":   {origin: "http://vault.example.invalid", want: "neither https: nor http: on this machine", noDownload: true},
+		"an address with a user": {origin: "https://user@vault.example.invalid", want: "not an address to install from", noDownload: true},
+		"a server":               {origin: "server", args: []string{"--server"}, want: "a server installs from github.com", noDownload: true},
+		"a redirect":             {origin: "server", edit: func(r *release) { r.redirect = "varlatch-" + version + "-linux-" + goArch() }, want: "a redirect is never followed"},
+		"a signature that fails": {origin: "server", want: "release signature does not verify"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRelease()
+			r.servedOnly = true
+			if c.edit != nil {
+				c.edit(r)
+			}
+			env := []string{"ORIGIN=" + c.origin}
+			if name == "a signature that fails" {
+				env = append(env, "STUB_VERIFY=fail")
+			}
+			res := install(t, r, true, c.args, env...)
+			if res.code == 0 || !strings.Contains(res.out, c.want) {
+				t.Fatalf("exit %d, want %q in:\n%s", res.code, c.want, res.out)
+			}
+			if installed(t, filepath.Join(res.dir, "varlatch")) != nil {
+				t.Fatal("something was installed")
+			}
+			if c.noDownload && r.hits.Load() != 0 {
+				t.Fatalf("%d requests before refusing", r.hits.Load())
+			}
+			emptyTmp(t, res)
+		})
+	}
 }

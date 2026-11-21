@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -112,23 +113,27 @@ const minSmall = 50 * time.Millisecond
 // smaller run keeps the larger one to a fraction of a second.
 const minControl = 7 * time.Millisecond
 
-// timed is one run of f, after a garbage collection.
+// timed is one run of f, after a garbage collection and with the
+// collector off while it runs: a collection's pause landing in one run and
+// not the other is the noise that made a linear shape look 26 times slower
+// at eight times the size once (macOS CI, 2026-11-20).
 func timed(f func()) time.Duration {
 	runtime.GC()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
 	began := time.Now()
 	f()
 	return time.Since(began)
 }
 
-// interleaved times small and large three times each, alternately (small,
-// large, small, large, ...), each after a garbage collection, and gives the
-// fastest of each, after one untimed run of small: noise only ever adds
-// time, and a runner's CPU that is still cold or clocking up slows the
-// first runs, so neither size's runs all come before the other's.
+// interleaved times small and large five times each, alternately (small,
+// large, small, large, ...), each by timed, and gives the fastest of each,
+// after one untimed run of small: noise only ever adds time, and a
+// runner's CPU that is still cold or clocking up slows the first runs, so
+// neither size's runs all come before the other's.
 func interleaved(small, large func()) (time.Duration, time.Duration) {
 	small() // warm up
 	var s, l time.Duration
-	for i := range 3 {
+	for i := range 5 {
 		ts := timed(small)
 		tl := timed(large)
 		if i == 0 || ts < s {
@@ -152,7 +157,9 @@ func interleaved(small, large func()) (time.Duration, time.Duration) {
 // shows a bias in the measurement.
 func growth(t *testing.T, name string, floor time.Duration, startLarge, limitLarge int, ops func(n int) float64, run func(n int) func()) (small, large time.Duration) {
 	t.Helper()
-	n := max(startLarge/8, 1)
+	// Under the race detector the work is about raceSlowdown times slower,
+	// so the sizing starts that much smaller and reaches the floor sooner.
+	n := max(startLarge/8/raceSlowdown, 1)
 	capped := false
 	for {
 		next := n + max(n/2, 1)
@@ -160,7 +167,9 @@ func growth(t *testing.T, name string, floor time.Duration, startLarge, limitLar
 		if !capped {
 			f := run(n)
 			f() // warm up
-			if timed(f) < floor {
+			// The faster of two probes: one stalled probe never stops the
+			// sizing early.
+			if min(timed(f), timed(f)) < floor {
 				n = next
 				continue
 			}
@@ -199,7 +208,7 @@ func manyKeys(n int) []byte {
 // TestManyKeys: reading an object with many keys keeps JavaScript's order
 // (array indexes first, a repeated key in its first place with its last
 // value), and takes time linear in the keys (growsLinearly, timed by
-// growth: a warm-up, then three runs of each size, interleaved; no
+// growth: a warm-up, then five runs of each size, interleaved; no
 // absolute time bound); the criterion fails a deliberately quadratic merge.
 func TestManyKeys(t *testing.T) {
 	v, err := Parse(manyKeys(200_000))

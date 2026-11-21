@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "compatibleFrom": 1,
+  "rollbackSafe": true,
+  "previous": {
+    "version": "0.0.0-g6.base",
+    "schemaVersion": 1
+  },
+  "reversibleTo": "0.23.0",
+  "endsRollbackWindow": false
+}

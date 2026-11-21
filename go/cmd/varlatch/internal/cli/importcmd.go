@@ -335,7 +335,17 @@ func readPresent(api *lazyClient, ctx *clientctx.Context) (map[string]presentVal
 	if err != nil {
 		return nil, 0, err
 	}
-	effective, err := c.EffectiveConfiguration(context.Background(), ctx.Organization, ctx.Project, environmentOf(ctx), true)
+	return presentOf(c, ctx.Organization, ctx.Project, environmentOf(ctx))
+}
+
+// effectiveReader is the call readPresent makes.
+type effectiveReader interface {
+	EffectiveConfiguration(ctx context.Context, org, project, environment string, includeValues bool) (any, error)
+}
+
+// presentOf is readPresent with a client already made.
+func presentOf(c effectiveReader, org, project, environment string) (map[string]presentValue, int, error) {
+	effective, err := c.EffectiveConfiguration(context.Background(), org, project, environment, true)
 	if err != nil {
 		var a *apiclient.APIError
 		if errors.As(err, &a) && (a.Status == 403 || a.Status == 404) {
@@ -375,7 +385,17 @@ func activeContract(api *lazyClient, ctx *clientctx.Context) (c any, forbidden b
 	if err != nil {
 		return nil, false, err
 	}
-	revision, err := client.GetActiveContract(context.Background(), ctx.Organization, ctx.Project)
+	return activeContractOf(client, ctx.Organization, ctx.Project)
+}
+
+// contractReader is the call activeContract makes.
+type contractReader interface {
+	GetActiveContract(ctx context.Context, org, project string) (any, error)
+}
+
+// activeContractOf is activeContract with a client already made.
+func activeContractOf(client contractReader, org, project string) (c any, forbidden bool, err error) {
+	revision, err := client.GetActiveContract(context.Background(), org, project)
 	if err != nil {
 		var a *apiclient.APIError
 		if errors.As(err, &a) && a.Status == 404 {
@@ -476,6 +496,16 @@ type storeFailure struct {
 // storeValues is importCommand.ts's storeValues: the entries stored in
 // order, stopping at the first failure.
 func (r *Run) storeValues(api *apiclient.Client, ctx *clientctx.Context, entries []dotenv.Entry) ([]string, *storeFailure) {
+	return storeEntries(api, ctx, entries)
+}
+
+// valueSetter is the call storeValues makes.
+type valueSetter interface {
+	SetValue(ctx context.Context, org, project, environment, item, value string) (any, error)
+}
+
+// storeEntries is storeValues with any client.
+func storeEntries(api valueSetter, ctx *clientctx.Context, entries []dotenv.Entry) ([]string, *storeFailure) {
 	stored := []string{}
 	for index, e := range entries {
 		if _, err := api.SetValue(context.Background(), ctx.Organization, ctx.Project, environmentOf(ctx), e.Name, e.Value); err != nil {
@@ -554,6 +584,57 @@ func sortedUnique(list []string) []string {
 	}
 	slices.SortStableFunc(out, jsval.CompareUTF16)
 	return out
+}
+
+// planRows is importCommand.ts's planRows for a connected run: one row per
+// entry, its type, sensitivity, whether the Contract has it, and whether
+// it replaces a present value (nil present: unknown).
+func planRows(entries []dotenv.Entry, contracted map[string]any, present map[string]presentValue, semanticsVersion any, contractFlag bool, plain []string) ([]importRow, error) {
+	rows := make([]importRow, len(entries))
+	for i, e := range entries {
+		item, isContracted := contracted[e.Name]
+		row := importRow{entry: e, contracted: isContracted}
+		switch {
+		case isContracted:
+			v, _ := jsval.Get(item, "sensitive")
+			// Plain only on the active Contract's explicit false; a missing or
+			// malformed field counts as a Secret, the safe classification.
+			row.sensitive = v != false
+		case contractFlag:
+			row.sensitive = !slices.Contains(plain, e.Name)
+		default:
+			row.sensitive = true
+		}
+		if present != nil {
+			there, ok := present[e.Name]
+			row.existing = ok && (jsjson.Truthy(there.sensitive) || there.value == nil || there.value != any(e.Value))
+		}
+		if t, ok := jsval.Get(item, "type"); isContracted && ok && t != nil {
+			row.typ = itemType(t)
+		} else {
+			inferred, err := InferType(e.Value, semanticsVersion)
+			if err != nil {
+				return nil, err
+			}
+			row.typ = inferred
+		}
+		rows[i] = row
+	}
+	return rows, nil
+}
+
+// offlineRows is planRows without a connection: no sensitivity, no
+// Contract, nothing known present.
+func offlineRows(entries []dotenv.Entry, semanticsVersion any) ([]importRow, error) {
+	rows := make([]importRow, len(entries))
+	for i, e := range entries {
+		inferred, err := InferType(e.Value, semanticsVersion)
+		if err != nil {
+			return nil, err
+		}
+		rows[i] = importRow{entry: e, typ: inferred}
+	}
+	return rows, nil
 }
 
 // runImport is importCommand.ts's runImport.
@@ -685,37 +766,14 @@ func (r *Run) runImport(opts importOptions, target importTarget) (int, error) {
 		return 0, importFail("Nothing was imported.", ExitFailure)
 	}
 
-	rows := make([]importRow, len(entries))
-	for i, e := range entries {
-		item, isContracted := contracted[e.Name]
-		row := importRow{entry: e, contracted: isContracted}
-		switch {
-		case !online:
-			row.sensitive = nil
-		case isContracted:
-			v, _ := jsval.Get(item, "sensitive")
-			// Plain only on the active Contract's explicit false; a missing or
-			// malformed field counts as a Secret, the safe classification.
-			row.sensitive = v != false
-		case opts.contract:
-			row.sensitive = !slices.Contains(plain, e.Name)
-		default:
-			row.sensitive = true
-		}
-		if present != nil {
-			there, ok := present[e.Name]
-			row.existing = ok && (jsjson.Truthy(there.sensitive) || there.value == nil || there.value != any(e.Value))
-		}
-		if t, ok := jsval.Get(item, "type"); isContracted && ok && t != nil {
-			row.typ = itemType(t)
-		} else {
-			inferred, err := InferType(e.Value, semanticsVersion)
-			if err != nil {
-				return 0, err
-			}
-			row.typ = inferred
-		}
-		rows[i] = row
+	var rows []importRow
+	if online {
+		rows, err = planRows(entries, contracted, present, semanticsVersion, opts.contract, plain)
+	} else {
+		rows, err = offlineRows(entries, semanticsVersion)
+	}
+	if err != nil {
+		return 0, err
 	}
 	// The Secrets, and the values of unknown sensitivity, are in flight from
 	// here on: no output or diagnostic shows one, whatever its length.

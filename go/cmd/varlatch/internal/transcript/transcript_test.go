@@ -3,12 +3,18 @@
 package transcript
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/curve25519"
+
+	"github.com/varlatch/varlatch/go/lib/jsjson"
+	vsync "github.com/varlatch/varlatch/go/lib/sync"
 )
 
 // The comparison must fail on each kind of mismatch, never pass one over
@@ -101,6 +107,25 @@ func TestReplayReportsAnUnsentRequest(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("%q", problems)
+	}
+}
+
+// TestUnfillDir: the directory is {{dir}} as printed and inside a JSON
+// string, its separators kept (a path below it stays a Windows path).
+func TestUnfillDir(t *testing.T) {
+	dir := `C:\Users\RUNNER~1\AppData\Local\Temp\varlatch-transcript-x`
+	for in, want := range map[string]string{
+		`No varlatch.toml found from ` + dir + ` upward.`:                                              `No varlatch.toml found from {{dir}} upward.`,
+		`{"offline": "No varlatch.toml found from ` + strings.ReplaceAll(dir, `\`, `\\`) + ` upward"}`: `{"offline": "No varlatch.toml found from {{dir}} upward"}`,
+		`{"root": "` + strings.ReplaceAll(dir, `\`, `\\`) + `\\repo"}`:                                 `{"root": "{{dir}}\\repo"}`,
+		dir + `\repo`: `{{dir}}\repo`,
+	} {
+		if got := UnfillDir(in, dir); got != want {
+			t.Errorf("UnfillDir(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := UnfillDir("/tmp/x/repo and /tmp/x", "/tmp/x"); got != "{{dir}}/repo and {{dir}}" {
+		t.Errorf("POSIX: %q", got)
 	}
 }
 
@@ -224,5 +249,28 @@ func TestAgentRunPattern(t *testing.T) {
 		if got := AgentRunPattern(in); got != want {
 			t.Errorf("AgentRunPattern(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestPlatformKeyPair: the fake GitHub's public key is its secret key's, as
+// goKit.ts gives it, and a value sealed to it opens as {{sealed <value>}}.
+func TestPlatformKeyPair(t *testing.T) {
+	public, err := curve25519.X25519(PlatformSecretKey, curve25519.Basepoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base64.StdEncoding.EncodeToString(public); got != PlatformPublicKey {
+		t.Fatalf("public key %s, want %s", got, PlatformPublicKey)
+	}
+	sealed, err := vsync.SealedBox([]byte("s3cr3t"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := jsjson.Object{{Key: "encrypted_value", Value: base64.StdEncoding.EncodeToString(sealed)}, {Key: "key_id", Value: "k1"}}
+	if got := string(jsjson.Stringify(openSealed(body))); got != `{"encrypted_value":"{{sealed s3cr3t}}","key_id":"k1"}` {
+		t.Errorf("opened %s", got)
+	}
+	if got := string(jsjson.Stringify(openSealed(jsjson.Object{{Key: "encrypted_value", Value: "AAAA"}}))); got != `{"encrypted_value":"{{sealed, not opened}}"}` {
+		t.Errorf("not a box: %s", got)
 	}
 }

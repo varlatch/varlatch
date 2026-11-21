@@ -29,6 +29,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -45,6 +46,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/pgtime"
 	"github.com/varlatch/varlatch/go/server/realtime"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -135,6 +137,11 @@ type Options struct {
 	// tailnet.browser-reads. A function: the URL names the pinned tailnet,
 	// known once the node is enrolled.
 	BrowserEndpoint func() string
+	// PublicListener is public HTTPS's state (listen_https: its
+	// configuration, the certificate served and the last ACME attempt);
+	// nil when public HTTPS is off, and the listeners report then has no
+	// public member, as before.
+	PublicListener func() any
 	// TailnetListeners is what varlatchd last observed of its tailnet
 	// listeners (GET /v1/installation/listeners); nil without one.
 	TailnetListeners func() any
@@ -143,6 +150,10 @@ type Options struct {
 	// served by the generated strict handler: a pattern whose operation
 	// this package does not implement answers 500 if it is ever reached.
 	Built []string
+	// CLI, when set, is serve_cli (ADR-0058 Decision 3; go/server/
+	// servecli): the handler of the release being served, nil until one is
+	// ready. Unset, serve_cli is off.
+	CLI func() http.Handler
 	// Stubbed takes operations, by route pattern, out of the ones this
 	// build has, for tests of the stub itself now that every /v1 operation
 	// is built: each answers the shared stub. Built wins over it.
@@ -466,7 +477,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target := requestTarget(r)
 	normalized := normalizeTarget(target)
 	front := nginxPath(target)
-	isAPI := apiPrefix.MatchString(front) || cliPaths[front]
+	isAPI := apiPrefix.MatchString(front) || cliPaths[front] || s.opts.CLI != nil && servecli.IsPath(front)
 	p := front
 	if s.opts.Tailnet != nil {
 		// A tailnet listener is the API alone: no nginx in front of it.
@@ -486,7 +497,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Every X-Forwarded-For line, joined as Node joins them: a proxy that
 	// adds a line of its own instead of appending to the caller's is read
 	// from the right like any other (the caller's forged line stays left).
-	client := clientaddr.Of(r.RemoteAddr, headerValue(r, "X-Forwarded-For"), s.opts.TrustedProxies)
+	trusts := s.opts.TrustedProxies
+	if direct(r) {
+		trusts = nil // the public HTTPS listener: no proxy is in front of it
+	}
+	client := clientaddr.Of(r.RemoteAddr, headerValue(r, "X-Forwarded-For"), trusts)
 	r = r.WithContext(context.WithValue(r.Context(), clientKey{}, client))
 	windowKey := client
 	defer func() {
@@ -586,11 +601,36 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The public HTTPS listener serves the public URL's host only: a
+	// request for another name gets 421, logged (and, on the API,
+	// charged to the request window) like any other.
+	if s.misdirected(r) {
+		rec.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		rec.Header().Set("Cache-Control", "no-store")
+		rec.WriteHeader(http.StatusMisdirectedRequest)
+		_, _ = io.WriteString(rec, "Misdirected request: this listener serves "+s.opts.PublicURL.Hostname()+" only.\n")
+		return
+	}
 	if !isAPI {
 		s.serveWeb(rec, r)
 		return
 	}
 	s.serveAPI(rec, r)
+}
+
+// misdirected is whether r came over the public HTTPS listener (a direct
+// connection, DirectConnContext) for a host other than the public URL's,
+// its port aside: the handshake was for that name, and a request for
+// another one is never served under its certificate.
+func (s *Server) misdirected(r *http.Request) bool {
+	if !direct(r) || s.opts.PublicURL == nil {
+		return false
+	}
+	name := r.Host
+	if h, _, err := net.SplitHostPort(name); err == nil {
+		name = h
+	}
+	return !strings.EqualFold(name, s.opts.PublicURL.Hostname())
 }
 
 // bodyless reports whether the Node adapter passes a request of this
@@ -632,9 +672,17 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case p == "/readyz" && isGet(r):
 		s.readyz(w, r)
-	case cliPaths[p] && isGet(r):
-		// ADR-0058 Decision 3, off (VARLATCH_SERVE_CLI's default): the same
-		// answer as a path that does not exist, as the TypeScript server's.
+	case (cliPaths[p] || s.opts.CLI != nil && servecli.IsPath(p)) && isGet(r):
+		// ADR-0058 Decision 3: the release being served, on the public
+		// listener only.
+		if s.opts.CLI != nil && s.opts.Tailnet == nil {
+			if h := s.opts.CLI(); h != nil {
+				h.ServeHTTP(w, r)
+				return
+			}
+		}
+		// Off (serve_cli's default), or not ready yet: the same answer as
+		// a path that does not exist, as the TypeScript server's.
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "text/plain; charset=UTF-8")

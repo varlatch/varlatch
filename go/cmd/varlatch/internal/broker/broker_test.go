@@ -45,9 +45,7 @@ import (
 //   - at the Agent, the status, reason phrase, headers as a set but those
 //     that frame the connection, body (an aborted one up to where either
 //     stopped), and whether it ended as framed;
-//   - the events, an abort reported once where TypeScript reports it twice
-//     (step 5 defect 42); for a destination that resets its connection after
-//     the headers, the Go Broker's abort as go/README.md describes it.
+//   - the events, exactly.
 
 func testCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
@@ -297,20 +295,11 @@ func eventsOf(events []Event) []string {
 	return out
 }
 
-// recordedEvents are the recorded events as the Go Broker gives them: an
-// abort reported twice is reported once (defect 42), and a destination's
-// reset after the headers is the abort go/README.md describes.
-func recordedEvents(name string, v []any) []string {
-	var out []string
+// recordedEvents are the recorded events, as JSON text.
+func recordedEvents(v []any) []string {
+	out := make([]string, 0, len(v))
 	for _, e := range v {
-		s := string(jsjson.Stringify(e))
-		if len(out) > 0 && out[len(out)-1] == s && str(e, "kind") == "aborted" {
-			continue
-		}
-		out = append(out, s)
-	}
-	if name == "abort.reset-mid-stream" {
-		return []string{`{"kind":"aborted","reason":"the destination's response failed mid-stream"}`}
+		out = append(out, string(jsjson.Stringify(e)))
 	}
 	return out
 }
@@ -537,7 +526,7 @@ func TestBrokerScenarios(t *testing.T) {
 			gotEvents := eventsOf(events)
 			gotExercises := exercises
 			mu.Unlock()
-			if wantEvents := recordedEvents(name, list(want, "events")); !slices.Equal(gotEvents, wantEvents) {
+			if wantEvents := recordedEvents(list(want, "events")); !slices.Equal(gotEvents, wantEvents) {
 				t.Fatalf("events\n%q\nwant\n%q", gotEvents, wantEvents)
 			}
 			if float64(gotExercises) != field(want, "exercises") {

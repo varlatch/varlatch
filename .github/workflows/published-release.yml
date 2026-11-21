@@ -1,0 +1,109 @@
+# The Go line's published releases, checked as people install them
+# (ADR-0059 G8, the published-asset half; internal docs/design/go-step6.md,
+# slice 6.1b): on Linux, macOS and Windows, the installers install the
+# release from github.com and a rerun changes nothing; they fail closed on
+# a bad signature, a cut-off asset and a wrong platform with the release's
+# real files (tampered copies served locally); and the release's own
+# binary refuses its signature as another version's
+# (go/install/published_test.go). Every check uses Sigstore's live trusted
+# root. Nothing is signed, uploaded or published here.
+#
+# It runs after the Release workflow publishes a prerelease of the Go line
+# (0.50.0 and later), and by hand for any published release of the Go line
+# (Actions, "Run workflow", its tag). Not on `release: published`: the
+# Release workflow publishes with GITHUB_TOKEN, whose events start no other
+# workflow. The tests come from the default branch, so a release tagged
+# before them is checked too.
+name: Published release
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release's tag, as v0.50.0-rc.1"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published-release-${{ github.event.workflow_run.head_branch || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  # The release's version from its tag, and whether it is the Go line's.
+  version:
+    # A Release run that published something, or a run by hand.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      go: ${{ steps.v.outputs.go }}
+    steps:
+      - id: v
+        env:
+          # A tag's run of the Release workflow names the tag as its branch.
+          TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          version=${TAG#v}
+          # A release version (lib/release's pattern): nothing else may
+          # reach a command line or a URL.
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$' || [ "v$version" != "$TAG" ]; then
+            echo "::error::$TAG is not a release tag"
+            exit 1
+          fi
+          # The Go line: 0.50.0 and its prereleases, and later.
+          major=${version%%.*}
+          rest=${version#*.}
+          minor=${rest%%.*}
+          go=false
+          if [ "$major" -gt 0 ] || [ "$minor" -ge 50 ]; then go=true; fi
+          # The release must be published; after the Release workflow,
+          # only a prerelease is checked (a final release by hand).
+          if ! prerelease=$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease); then
+            echo "::error::$TAG is not a published release"
+            exit 1
+          fi
+          if [ "$EVENT" = workflow_run ] && [ "$prerelease" != true ]; then go=false; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "$TAG: version $version, checked: $go"
+
+  installers:
+    needs: version
+    if: needs.version.outputs.go == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      - name: The installers against the published release
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          VARLATCH_TEST_PUBLISHED: ${{ needs.version.outputs.version }}
+          # The runner is thrown away: install.ps1 may change its user PATH.
+          VARLATCH_TEST_DISPOSABLE: "1"
+        run: go test -count=1 -v -timeout 25m -run '^TestPublished' ./install/

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -95,7 +96,37 @@ type Config struct {
 	BackupDestination string
 	// Tailnet is the tailnet listener (ADR-0059 Decision 5); nil when off.
 	Tailnet *Tailnet
+	// PublicHTTPS is the public HTTPS listener with its ACME certificate
+	// (ADR-0059 Decision 5, step 6's decision 4); nil when off, which
+	// leaves every other listener exactly as it is.
+	PublicHTTPS *PublicHTTPS
+	// ServeCLI is serve_cli (ADR-0058 Decision 3): the installation serves
+	// its release's CLI and installers at its public URL.
+	ServeCLI bool
 }
+
+// PublicHTTPS is varlatchd's own public HTTPS: a certificate for the
+// public URL's host, obtained and renewed over ACME, served on Listen.
+type PublicHTTPS struct {
+	// Host is the certificate's name: public_url's host.
+	Host string
+	// Listen is the HTTPS listener's address (listen_https).
+	Listen string
+	// RedirectListen is the plain HTTP listener's (listen_http_redirect):
+	// ACME HTTP-01 challenges and a redirect to HTTPS, nothing else; ""
+	// when off (TLS-ALPN-01 only).
+	RedirectListen string
+	// Email is the ACME account's contact (acme_email); "" for none.
+	Email string
+	// CA is the ACME directory URL (acme_ca); Let's Encrypt by default.
+	CA string
+	// CARootFile is a PEM file of roots trusted for the CA's own API
+	// (acme_ca_root): a private CA's; "" for the system's.
+	CARootFile string
+}
+
+// LetsEncryptDirectory is acme_ca's default.
+const LetsEncryptDirectory = "https://acme-v02.api.letsencrypt.org/directory"
 
 // Tailnet is varlatchd's own tailnet node and its listener.
 type Tailnet struct {
@@ -162,7 +193,8 @@ type Env func(string) string
 var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "trusted_proxies", "outbound_allow", "access_log", "sync", "sync_adapters", "audit_export",
 	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination",
 	"tailnet", "tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file",
-	"tailnet_https_port", "tailnet_browser_origins"}
+	"tailnet_https_port", "tailnet_browser_origins",
+	"listen_https", "listen_http_redirect", "acme_email", "acme_ca", "acme_ca_root", "serve_cli"}
 
 // Backup defaults: a day between backups, seven archives kept (the
 // TypeScript host backup's LOCAL_KEEP), the destination named offsite
@@ -297,6 +329,23 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 	default:
 		return nil, at("sync", "%q must be on or off", v)
 	}
+	switch v := values["serve_cli"]; v {
+	case "", "off":
+	case "on":
+		// The installers name the public URL, and it is what people
+		// trust to run code on their machines (https, or this machine).
+		if c.PublicURL == nil {
+			return nil, at("serve_cli", "on needs public_url: the installers it serves download from that address")
+		}
+		// The installers download from the origin; a path would be dropped,
+		// so the address they name would not be the one configured.
+		if p := c.PublicURL.EscapedPath(); p != "" && p != "/" {
+			return nil, at("serve_cli", "on needs a public_url without a path (%q has %q): the installers it serves name the origin alone", c.PublicURL.String(), p)
+		}
+		c.ServeCLI = true
+	default:
+		return nil, at("serve_cli", "%q must be on or off", v)
+	}
 	switch v := values["audit_export"]; v {
 	case "", "on":
 	case "off":
@@ -360,7 +409,121 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		return nil, err
 	}
 	c.Tailnet = t
+	p, err := parsePublicHTTPS(values, at, c)
+	if err != nil {
+		return nil, err
+	}
+	c.PublicHTTPS = p
 	return c, nil
+}
+
+// listenAddress checks a host:port listener setting: an IP address or
+// nothing (every address), and a port from 1 (from 0 when zero is true:
+// any free port). Public HTTPS's listeners need a real port: the ACME
+// challenges are answered on the ports the CA connects to.
+func listenAddress(name, v string, zero bool, at func(string, string, ...any) error) error {
+	host, port, err := net.SplitHostPort(v)
+	if err != nil {
+		return at(name, "%q is not host:port (%v)", v, err)
+	}
+	low := 1
+	if zero {
+		low = 0
+	}
+	if p, err := strconv.Atoi(port); err != nil || p < low || p > 65535 {
+		return at(name, "%q: the port must be %d to 65535", v, low)
+	}
+	if host != "" && net.ParseIP(host) == nil {
+		return at(name, "%q: the host must be an IP address (or empty for every address)", v)
+	}
+	return nil
+}
+
+// loopbackIP is whether host is a loopback IP address (127.0.0.0/8, ::1).
+func loopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// publicDNSName is a host name a public certificate can name: two labels
+// at least, letters, digits and hyphens.
+var publicDNSName = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// emailAddress is an ACME contact's address, loosely.
+var emailAddress = regexp.MustCompile(`^[^\s@:/]+@[^\s@:/]+\.[^\s@:/]+$`)
+
+// parsePublicHTTPS reads listen_https and the settings that only apply
+// with it. Without listen_https, none of them may be set, and nothing
+// changes: the plain listener, own-proxy and tailnet ingress are as they
+// were.
+func parsePublicHTTPS(values map[string]string, at func(string, string, ...any) error, c *Config) (*PublicHTTPS, error) {
+	v := values["listen_https"]
+	if v == "" || v == "off" {
+		for _, name := range []string{"listen_http_redirect", "acme_email", "acme_ca", "acme_ca_root"} {
+			if values[name] != "" {
+				return nil, at(name, "is set, but listen_https is not; set listen_https (such as :443) to serve public HTTPS")
+			}
+		}
+		return nil, nil
+	}
+	if err := listenAddress("listen_https", v, false, at); err != nil {
+		return nil, err
+	}
+	p := &PublicHTTPS{Listen: v, CA: LetsEncryptDirectory}
+	u := c.PublicURL
+	if u == nil || u.Scheme != "https" {
+		return nil, at("listen_https", "needs an https public_url: its host name is the certificate's")
+	}
+	host := strings.ToLower(u.Hostname())
+	if LoopbackHost(host) || net.ParseIP(host) != nil || !publicDNSName.MatchString(host) {
+		return nil, at("listen_https", "needs public_url to name a DNS name a public certificate can hold, such as varlatch.example.com (not %q)", host)
+	}
+	p.Host = host
+	switch r := values["listen_http_redirect"]; r {
+	case "":
+		// Port 80 on the HTTPS listener's address.
+		h, _, _ := net.SplitHostPort(v)
+		p.RedirectListen = net.JoinHostPort(h, "80")
+	case "off":
+	default:
+		if err := listenAddress("listen_http_redirect", r, false, at); err != nil {
+			return nil, err
+		}
+		if r == v {
+			return nil, at("listen_http_redirect", "must differ from listen_https")
+		}
+		p.RedirectListen = r
+	}
+	if v == c.Listen || p.RedirectListen != "" && p.RedirectListen == c.Listen {
+		return nil, at("listen_https", "and listen_http_redirect must differ from listen, the plain listener")
+	}
+	// The plain listener stays on this machine: with public HTTPS, the
+	// API and the dashboard are never served in plain text beyond it (a
+	// proxy in front of the plain listener runs on this host).
+	if lh, _, _ := net.SplitHostPort(c.Listen); !loopbackIP(lh) {
+		return nil, at("listen", "%q: with listen_https, the plain listener must be on a loopback address (such as 127.0.0.1:8686), so nothing is served in plain text beyond this machine", c.Listen)
+	}
+	if e := values["acme_email"]; e != "" {
+		if !emailAddress.MatchString(e) {
+			return nil, at("acme_email", "%q is not an email address", e)
+		}
+		p.Email = e
+	}
+	if ca := values["acme_ca"]; ca != "" {
+		cu, err := url.Parse(ca)
+		if err != nil || cu.Scheme != "https" || cu.Host == "" || cu.User != nil || cu.Fragment != "" {
+			// The value is not repeated: it may hold a user name and password.
+			return nil, at("acme_ca", "is not an https ACME directory URL without a user name or password, such as %s", LetsEncryptDirectory)
+		}
+		p.CA = ca
+	}
+	if r := values["acme_ca_root"]; r != "" {
+		if !filepath.IsAbs(r) {
+			return nil, at("acme_ca_root", "%q is not an absolute path", r)
+		}
+		p.CARootFile = filepath.Clean(r)
+	}
+	return p, nil
 }
 
 // parseTailnet reads the tailnet_* settings: with tailnet = on, a hostname,
@@ -408,12 +571,11 @@ func parseTailnet(values map[string]string, at func(string, string, ...any) erro
 	case "", TailscaleControlURL:
 		// Tailscale's, given or not: the pin records it as "".
 	default:
-		// ADR-0059 Decision 5: a self-hosted control server (Headscale)
-		// needs https and tsnet's bootstrap DNS fallback off, so that its
-		// host name never goes to Tailscale while it is down; the tsnet
-		// release in use has no way to turn that fallback off.
-		return nil, at("tailnet_control_url", "%q: this release joins Tailscale's coordination server only; a self-hosted one "+
-			"(Headscale) is not supported yet. Leave tailnet_control_url unset.", v)
+		u, msg := selfHostedControlURL(v)
+		if msg != "" {
+			return nil, at("tailnet_control_url", "%q: %s", v, msg)
+		}
+		t.ControlURL = u
 	}
 	switch v := values["tailnet_auth_key_file"]; {
 	case v != "":
@@ -427,12 +589,64 @@ func parseTailnet(values map[string]string, at func(string, string, ...any) erro
 	return t, parseBrowserEndpoint(values, at, c, t)
 }
 
+// selfHostedControlURL is a self-hosted control server's URL (Headscale),
+// as the node is given it and the pin records it: https, and an IP
+// address for its host (ADR-0059 Decision 5, as amended for step 7.5c).
+// tsnet resolves a control server's host name through Tailscale's DERP
+// servers whenever the ordinary lookup fails (its bootstrap DNS fallback,
+// which no tailscale.com release can turn off), so a self-hosted server's
+// name would go to Tailscale while that server or its DNS is down; an IP
+// address is never looked up. msg says why v is refused, "" when it is
+// not.
+func selfHostedControlURL(v string) (string, string) {
+	const why = "a self-hosted control server (Headscale) is given as https://<its IP address>[:port], such as https://192.0.2.10 or https://[2001:db8::10]:8443: " +
+		"tsnet looks a control server's host name up through Tailscale's DERP servers when the ordinary lookup fails, so a name would go to Tailscale; " +
+		"an IP address is never looked up. Leave tailnet_control_url unset for Tailscale's"
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme != "https" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", why
+	}
+	addr, err := netip.ParseAddr(u.Hostname())
+	if err != nil {
+		return "", why
+	}
+	// Judged as it is written back: an IPv4-mapped address is its IPv4
+	// one, so ::ffff:0.0.0.0 is the unspecified address it unmaps to.
+	if addr.Zone() != "" {
+		return "", "a zoned address is not a control server's; " + why
+	}
+	addr = addr.Unmap()
+	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
+		return "", "not an address a control server listens on (an unspecified, multicast, link-local or broadcast address); " + why
+	}
+	host := addr.String()
+	if addr.Is6() {
+		host = "[" + host + "]"
+	}
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return "", "its port is not 1 to 65535; " + why
+		}
+		if n != 443 {
+			host += ":" + strconv.Itoa(n)
+		}
+	}
+	return "https://" + host, ""
+}
+
 // parseBrowserEndpoint reads tailnet_https_port and tailnet_browser_origins
 // (config.ts's tailnetBrowser): the browser endpoint is off unless the
 // port is set, and then needs a port of its own and at least one origin.
 // Its host is tailnet_hostname in the pinned tailnet, known at enrolment.
 func parseBrowserEndpoint(values map[string]string, at func(string, string, ...any) error, c *Config, t *Tailnet) error {
 	raw := values["tailnet_https_port"]
+	if raw != "" && t.ControlURL != "" {
+		// The browser endpoint serves the node's Tailscale certificate,
+		// which only Tailscale's coordination server issues.
+		return at("tailnet_https_port", "the browser endpoint serves a Tailscale certificate, which a self-hosted control server (tailnet_control_url) does not issue: "+
+			"leave tailnet_https_port unset with a self-hosted control server")
+	}
 	if raw == "" {
 		if values["tailnet_browser_origins"] != "" {
 			return at("tailnet_browser_origins", "is set, but the browser endpoint is off; set tailnet_https_port to serve it")

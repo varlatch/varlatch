@@ -1,0 +1,60 @@
+{
+  "schema": 2,
+  "comment": "Windows expectations, recorded from the TypeScript CLI on Windows by the windows-expectations workflow (apps/cli/test/goWindows.ts); do not edit. Only the cases whose Linux recording names a path below their directory are here.",
+  "area": "5.1c-api-client",
+  "platform": "windows",
+  "cases": [
+    {
+      "id": "probe.in-repo",
+      "expect": {
+        "status": 0,
+        "stdout": "{\n  \"version\": 1,\n  \"servers\": [\n    {\n      \"server\": \"{{server}}\",\n      \"name\": \"laptop\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"expired\": false,\n      \"expiring\": false,\n      \"probe\": {\n        \"state\": \"valid\",\n        \"detail\": null\n      }\n    }\n  ],\n  \"repo\": {\n    \"server\": \"{{server}}\",\n    \"organization\": \"acme\",\n    \"project\": \"web\",\n    \"environment\": \"dev\",\n    \"environmentSource\": \"committed-default\",\n    \"repoRoot\": \"{{dir}}\\\\repo\",\n    \"tier\": null,\n    \"tierCachedAt\": null,\n    \"serverSource\": \"repository\"\n  }\n}\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (win32; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/me/credentials",
+            "headers": {
+              "authorization": "Bearer vlt_cli_probeAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (win32; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0666",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_probeAAAA\",\n      \"issuedAt\": \"2026-11-01T10:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\",\n      \"credentialId\": \"cred_a\",\n      \"name\": \"laptop\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    }
+  ]
+}

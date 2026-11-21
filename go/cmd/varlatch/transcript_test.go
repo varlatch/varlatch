@@ -3,9 +3,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/envschema"
@@ -46,10 +49,83 @@ func TestMain(m *testing.M) {
 				}
 			}
 		}
+		// The platform client never reaches the network here (5.8b).
+		apiclient.PlatformDial = replayPlatformDial(os.Getenv(transcript.PlatformEnv))
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	setTranscriptUmask()
 	os.Exit(m.Run())
+}
+
+// replayPlatformDial is the platform client's dialer while a CLI under
+// test runs: a fake platform's host name at port 443 reaches the replay's
+// server at fake, when the case has one; every other platform host, a fake
+// platform when the case has none, and any address that is not loopback
+// is refused, so no case can ever reach a real platform (api.github.com).
+func replayPlatformDial(fake string) func(ctx context.Context, network, address string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case slices.Contains(transcript.PlatformHosts, host):
+			if fake == "" || port != "443" {
+				return nil, fmt.Errorf("transcript replay: %s has no fake platform in this case", address)
+			}
+			address = fake
+		case host != "localhost" && !isLoopbackIP(host):
+			return nil, fmt.Errorf("transcript replay: %s is not a fake platform, and a replay never dials the network", address)
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
+}
+
+func isLoopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// TestReplayNeverDialsAPlatform: the replay's dialer sends a fake
+// platform's host to the fake, refuses it when the case has none, and
+// refuses every address that is not loopback.
+func TestReplayNeverDialsAPlatform(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	fake := ln.Addr().String()
+	for _, c := range []struct {
+		fake, address string
+		dials         bool
+	}{
+		{fake, "api.github.com:443", true},
+		{"", "api.github.com:443", false},
+		{fake, "api.github.com:80", false},
+		{"", "coolify.conformance.test:443", false},
+		{fake, "github.com:443", false},
+		{fake, "203.0.113.7:443", false},
+		{fake, fake, true},
+	} {
+		conn, err := replayPlatformDial(c.fake)(context.Background(), "tcp", c.address)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if (err == nil) != c.dials {
+			t.Errorf("fake %q, %s: dialed %v (%v), want %v", c.fake, c.address, err == nil, err, c.dials)
+		}
+	}
 }
 
 // versionLine is the TypeScript CLI's --version: `varlatch <version>
@@ -59,6 +135,18 @@ var versionLine = regexp.MustCompile(`^varlatch \S+ \(migration \d+\)\n$`)
 // differences are the Go CLI's accepted differences (go/README.md), by the
 // name a recorded case gives.
 var differences = map[string]transcript.Difference{
+	// On Windows both CLIs walk the skill directories in NTFS's order, not
+	// the sorted order a Linux recording holds. For a case replayed on
+	// Windows against its Linux recording (no Windows expectation), Go's
+	// stdout is accepted where the two are the same with each run of
+	// skill-file entries sorted (transcript.SkillOrderFree): nothing added
+	// or dropped, everything else in place. A Windows-recorded case is
+	// compared exactly.
+	"skill-order": func(want *transcript.Outcome, got transcript.Outcome) {
+		if transcript.SkillOrderFree(want.Stdout) == transcript.SkillOrderFree(got.Stdout) {
+			want.Stdout = got.Stdout
+		}
+	},
 	// Decision 6: `varlatch <version>`, without the migration number.
 	"version": func(o *transcript.Outcome, _ transcript.Outcome) {
 		if versionLine.MatchString(o.Stdout) {
@@ -84,9 +172,19 @@ var differences = map[string]transcript.Difference{
 			for k, v := range o.Requests[i].Headers {
 				headers[k] = v
 			}
-			headers["user-agent"] = cli.FormatUserAgent(buildinfo.Version, m[1] != "", cli.NodePlatform(), cli.NodeArch())
+			headers["user-agent"] = cli.FormatUserAgent(buildinfo.Version, m[2] != "", cli.NodePlatform(), cli.NodeArch())
+			if m[1] == "mcp" {
+				// `varlatch mcp`'s own (run.ts's mcpUserAgent), which has no assisted token.
+				headers["user-agent"] = cli.FormatMCPUserAgent(buildinfo.Version, cli.NodePlatform(), cli.NodeArch())
+			}
 			o.Requests[i].Headers = headers
 		}
+	},
+	// `varlatch mcp` reports its own version to the MCP host (initialize's
+	// serverInfo): the recording's TypeScript version becomes this build's,
+	// as the User-Agent's does.
+	"mcp-version": func(o *transcript.Outcome, _ transcript.Outcome) {
+		o.Stdout = mcpServerInfo.ReplaceAllString(o.Stdout, `${1}"`+buildinfo.Version+`"`)
 	},
 	// The skill files `agents install` writes name the CLI that wrote them
 	// (SKILL.md's metadata, each reference's first line): the recording's
@@ -127,6 +225,32 @@ var differences = map[string]transcript.Difference{
 	// recorded.
 	"option-value": func(o *transcript.Outcome, _ transcript.Outcome) {
 		o.Stderr = cli.OptionValueDifference(o.Stderr)
+	},
+	// `varlatch help admin` (and `admin --help`, `admin -h`) prints the
+	// admin forms of a Go installation, which the Go CLI runs through
+	// varlatchd; the TypeScript usage is a Compose installation's (slice
+	// 6.2a). The recording's usage becomes the Go one.
+	"admin-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch admin ") {
+			o.Stdout = cli.AdminHelp + "\n"
+		}
+	},
+	// `varlatch help move` (and `move --help`, `move -h`) prints a Go
+	// installation's move (slice 6.9); the TypeScript usage is a Compose
+	// installation's. The recording's usage becomes the Go one.
+	"move-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch move ") {
+			o.Stdout = cli.MoveHelp + "\n"
+		}
+	},
+	// `varlatch help self-update` (and `self-update --help`, `-h`) prints
+	// the Go CLI's forms: it replaces a native binary, always checks the
+	// signature, and takes --prerelease and --allow-downgrade (slice 6.7a).
+	// The recording's usage becomes the Go one.
+	"self-update-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch self-update ") {
+			o.Stdout = cli.SelfUpdateHelp + "\n"
+		}
 	},
 	// A --json document's fields the API defines as scalars: an object or
 	// array a server sent there is left out by the Go CLI (go/README.md,
@@ -339,6 +463,33 @@ var differences = map[string]transcript.Difference{
 			o.Stderr = accepted
 		}
 	},
+	// A Coolify service's compose file with an alias inside its own anchor
+	// (step 4 defect 6; go/README.md, "compose-usage-unchecked"): the
+	// TypeScript adapter overflows its stack and sync check dies; lib/sync
+	// reads the file as unreadable, so Go reports the service's usage
+	// unchecked and finishes the comparison, disclosing the Secrets it
+	// compares as any check does. Accepted only where the recording is that
+	// RangeError, Go's stderr says usage was not checked for that reason,
+	// Go's stdout ends with a verdict, and Go's requests are the recorded
+	// ones and one disclosure.
+	"compose-usage-unchecked": func(o *transcript.Outcome, got transcript.Outcome) {
+		if o.Status != 1 || o.Stdout != "" || o.Stderr != "{{uncaught RangeError: Maximum call stack size exceeded}}\n" {
+			return
+		}
+		if !strings.Contains(got.Stderr, "varlatch: usage: usage not checked: the service's compose file is too large or could not be read\n") ||
+			!composeVerdict.MatchString(got.Stdout) || len(got.Requests) != len(o.Requests)+1 {
+			return
+		}
+		for i, r := range o.Requests {
+			if got.Requests[i].Method != r.Method || got.Requests[i].Path != r.Path {
+				return
+			}
+		}
+		if extra := got.Requests[len(o.Requests)]; extra.Method != "POST" || !strings.HasSuffix(extra.Path, "/disclosures") {
+			return
+		}
+		o.Status, o.Stdout, o.Stderr, o.Requests = got.Status, got.Stdout, got.Stderr, got.Requests
+	},
 	// `contract show` shows a sensitive item's default as [redacted]
 	// (go/README.md, "No message holds a value"). Accepted only where Go's
 	// stdout is the recorded document with exactly those defaults replaced.
@@ -356,6 +507,9 @@ var differences = map[string]transcript.Difference{
 // schemaFragment is a packages/env-schema error that quotes the file: the
 // message and the quoted fragment.
 var schemaFragment = regexp.MustCompile(`(?s)^(\.env\.schema line [0-9]+: (?:Unrecognized line|Unexpected text after the value|Malformed decorator|Unsupported @required form|Unsupported @sensitive form|Unsupported @type)): (.*)\n$`)
+
+// composeVerdict is sync check's last line: its verdict and tally.
+var composeVerdict = regexp.MustCompile(`\n(in sync|DRIFT|INCOMPLETE): [0-9]+ match, [0-9]+ differ, [0-9]+ missing on the platform, [0-9]+ extra on the platform, [0-9]+ not compared\n$`)
 
 // recordedActivation is a recorded `contract activate` success.
 var recordedActivation = regexp.MustCompile(`^Activated .+\.\n$`)
@@ -456,14 +610,18 @@ var serverDisplayFixtures = []struct {
 	{`"server": "not a url",`, `"server": "%[1]s",`, []string{"not a url"}},
 	{`"detail": "Failed to parse URL from not a url/v1/meta"`, `"detail": "Failed to parse URL from %[1]s"`, []string{"not a url/v1/meta"}},
 	{"for https://x.example/p q. Commit", "for %[1]s. Commit", []string{"https://x.example/p q"}},
+	{"not authenticated to http://[redacted]@127.0.0.1:9;", "not authenticated to %[1]s;", []string{"http://user:pw-canary@127.0.0.1:9"}},
 	{"login: varlatch.example.com is not a URL", "login: %[1]s is not a URL", []string{"varlatch.example.com"}},
 }
 
 // verbatimTOMLLine is a line init writes, `key = "<value as given>"`.
 var verbatimTOMLLine = regexp.MustCompile(`^([a-z_]+) = "(.*)"$`)
 
+// mcpServerInfo is the serverInfo an MCP initialize answer names.
+var mcpServerInfo = regexp.MustCompile(`("serverInfo":\{"name":"varlatch","version":)"[^"]*"`)
+
 // recordedUserAgent is the TypeScript CLI's User-Agent in a recording.
-var recordedUserAgent = regexp.MustCompile(`^varlatch-cli/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
+var recordedUserAgent = regexp.MustCompile(`^varlatch-(cli|mcp)/[0-9A-Za-z.+-]+ \([a-z0-9]+; [a-z0-9]+(; assisted)?\)$`)
 
 // loopbackNonce is the Go callback's random path in a printed sign-in
 // address, the port already a pattern.
@@ -493,6 +651,10 @@ func TestTranscripts(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := func(args []string) *exec.Cmd { return exec.Command(exe, args...) }
+	var windows map[string]map[string]transcript.Outcome
+	if runtime.GOOS == "windows" {
+		windows = windowsExpectations(t)
+	}
 	slots := make(chan struct{}, transcriptParallelism)
 	for _, path := range files {
 		f, err := transcript.Load(path)
@@ -501,15 +663,21 @@ func TestTranscripts(t *testing.T) {
 		}
 		for _, c := range f.Cases {
 			t.Run(f.Area+"/"+c.ID, func(t *testing.T) {
-				// Skipped before it joins the parallel cases or takes a
-				// slot: on Windows, a case whose outcome names a path below
-				// its directory is not compared until step 5.9.
+				// On Windows, a case whose outcome names a path below its
+				// directory is compared with TypeScript's Windows recording
+				// (testdata/transcripts/windows), since both CLIs join such
+				// paths with backslashes there. Every other case replays
+				// against its Linux recording, the directory inside a JSON
+				// string included (transcript.UnfillDir).
 				if runtime.GOOS == "windows" {
 					if expectsPath(t, c) {
-						t.Skip(windowsPathSkip)
-					}
-					if expectsDirInJSON(c) {
-						t.Skip(windowsJSONDirSkip)
+						w, ok := windows[f.Area][c.ID]
+						if !ok {
+							t.Fatal("no Windows expectation: record one (apps/cli/test/goWindows.ts)")
+						}
+						c.Expect = w
+					} else {
+						c.Differences = append(slices.Clone(c.Differences), "skill-order")
 					}
 				}
 				t.Parallel()
@@ -538,16 +706,13 @@ func TestTranscripts(t *testing.T) {
 	}
 }
 
-// windowsPathSkip is why a case that expects a path is skipped on Windows
-// (internal docs/design/go-cli.md, step 5.9).
-const windowsPathSkip = "path separators: Windows expectations not recorded yet (step 5.9)"
-
 // expectsPath reports whether a case's recorded outcome names a path below
 // its directory: the directory's placeholder followed by a separator
 // (pathBelowDir). TypeScript recorded it on Linux; on Windows both CLIs
-// join such a path with backslashes, so until Windows outcomes are recorded
-// (step 5.9) such a case is not compared there. Every other case, the
-// directory itself named alone included, still replays byte for byte.
+// join such a path with backslashes, so such a case has a Windows
+// recording too (apps/cli/test/goWindows.ts). Every other case, the
+// directory itself named alone included, replays its Linux recording on
+// every platform.
 func expectsPath(t *testing.T, c transcript.Case) bool {
 	t.Helper()
 	b, err := json.Marshal(c.Expect)
@@ -562,32 +727,86 @@ func expectsPath(t *testing.T, c transcript.Case) bool {
 // recorder that adds it is covered.
 var pathBelowDir = regexp.MustCompile(`\{\{(dir|home)\}\}[/\\]`)
 
-// windowsJSONDirSkip is why a case that names its directory inside a JSON
-// string is skipped on Windows (step 5.9).
-const windowsJSONDirSkip = "a directory inside a JSON string: Windows expectations not recorded yet (step 5.9)"
+// windowsFile is the Windows expectations of an area (goWindows.ts):
+// each case that names a path below its directory, as TypeScript did it on
+// Windows.
+type windowsFile struct {
+	Schema   int    `json:"schema"`
+	Area     string `json:"area"`
+	Platform string `json:"platform"`
+	Cases    []struct {
+		ID     string             `json:"id"`
+		Expect transcript.Outcome `json:"expect"`
+	} `json:"cases"`
+}
 
-// dirInJSONString matches a placeholder directory inside a JSON string.
-var dirInJSONString = regexp.MustCompile(`"[^"\n]*\{\{(dir|home)\}\}[^"\n]*"`)
-
-// expectsDirInJSON reports whether a case's recorded outcome names its
-// directory inside a JSON string (stdout, stderr, a file it writes, or a
-// request body). The replayer gives the directory back as {{dir}} as it is
-// printed; on Windows JSON escapes its backslashes, so until Windows
-// outcomes are recorded (step 5.9) such a case is not compared there.
-func expectsDirInJSON(c transcript.Case) bool {
-	texts := []string{c.Expect.Stdout, c.Expect.Stderr}
-	for _, f := range c.Expect.Files {
-		texts = append(texts, f.Content)
+// windowsExpectations is every area's Windows expectations, by area and
+// case id.
+func windowsExpectations(t *testing.T) map[string]map[string]transcript.Outcome {
+	t.Helper()
+	files, err := filepath.Glob("testdata/transcripts/windows/*.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, r := range c.Expect.Requests {
-		texts = append(texts, string(r.Body))
-	}
-	for _, text := range texts {
-		if dirInJSONString.MatchString(text) {
-			return true
+	out := map[string]map[string]transcript.Outcome{}
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var w windowsFile
+		if err := json.Unmarshal(data, &w); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if w.Platform != "windows" || w.Schema != transcript.Schema || filepath.Base(path) != w.Area+".json" {
+			t.Fatalf("%s: platform %q, schema %d, area %q", path, w.Platform, w.Schema, w.Area)
+		}
+		out[w.Area] = map[string]transcript.Outcome{}
+		for _, c := range w.Cases {
+			out[w.Area][c.ID] = c.Expect
 		}
 	}
-	return false
+	return out
+}
+
+// TestWindowsExpectationsComplete: each area's Windows recording holds
+// exactly the cases whose Linux recording names a path below their
+// directory (the same set of ids), and no area without one has a file.
+// Checked on every platform, so a case that needs a Windows expectation and
+// has none fails before Windows runs it.
+func TestWindowsExpectationsComplete(t *testing.T) {
+	files, err := filepath.Glob("testdata/transcripts/*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	windows := windowsExpectations(t)
+	for _, path := range files {
+		f, err := transcript.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var needed []string
+		for _, c := range f.Cases {
+			if expectsPath(t, c) {
+				needed = append(needed, c.ID)
+			}
+		}
+		have := windows[f.Area]
+		delete(windows, f.Area)
+		for _, id := range needed {
+			if _, ok := have[id]; !ok {
+				t.Errorf("%s/%s names a path and has no Windows expectation: record one (apps/cli/test/goWindows.ts)", f.Area, id)
+			}
+		}
+		for id := range have {
+			if !slices.Contains(needed, id) {
+				t.Errorf("windows/%s.json holds %s, which names no path below its directory: record again (apps/cli/test/goWindows.ts)", f.Area, id)
+			}
+		}
+	}
+	for area := range windows {
+		t.Errorf("windows/%s.json is for an area with no recording", area)
+	}
 }
 
 func withMarker(env map[string]string) map[string]string {
@@ -624,33 +843,22 @@ func TestServerDisplayDifferenceIsExact(t *testing.T) {
 	}
 }
 
-// TestWindowsPathSkipIsNarrow: on Windows only a recorded outcome that names
-// a path below the case's directory is skipped; the directory alone, or any
-// other placeholder, is still compared.
-func TestWindowsPathSkipIsNarrow(t *testing.T) {
-	for text, skipped := range map[string]bool{
-		`"repoRoot": "{{dir}}/repo"`:  true,
-		`"root": "{{dir}}\\project"`:  true,
-		`"home": "{{home}}/.config"`:  true,
-		`outside {{dir}}, so nothing`: false,
-		`"root": "{{dir}}"`:           false,
-		`{{server}}/v1/whoami`:        false,
-		`{{skill}}/SKILL.md`:          false,
+// TestWindowsExpectationsAreNarrow: only a recorded outcome that names a
+// path below the case's directory has a Windows expectation; the directory
+// alone, or any other placeholder, replays its Linux recording.
+func TestWindowsExpectationsAreNarrow(t *testing.T) {
+	for text, needed := range map[string]bool{
+		`"repoRoot": "{{dir}}/repo"`:                                true,
+		`"root": "{{dir}}\\project"`:                                true,
+		`"home": "{{home}}/.config"`:                                true,
+		`outside {{dir}}, so nothing`:                               false,
+		`"root": "{{dir}}"`:                                         false,
+		`{"offline": "No varlatch.toml found from {{dir}} upward"}`: false,
+		`{{server}}/v1/whoami`:                                      false,
+		`{{skill}}/SKILL.md`:                                        false,
 	} {
-		if got := pathBelowDir.MatchString(text); got != skipped {
-			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
-		}
-	}
-	// A directory inside a JSON string is skipped too; outside one, alone,
-	// it is compared.
-	for text, skipped := range map[string]bool{
-		`{"offline": "No varlatch.toml found from {{dir}} upward"}`: true,
-		`{"root": "{{dir}}"}`:                         true,
-		`No varlatch.toml found from {{dir}} upward.`: false,
-		`{"server": "{{server}}"}`:                    false,
-	} {
-		if got := expectsDirInJSON(transcript.Case{Expect: transcript.Outcome{Stdout: text}}); got != skipped {
-			t.Errorf("%s: skipped %v, want %v", text, got, skipped)
+		if got := pathBelowDir.MatchString(text); got != needed {
+			t.Errorf("%s: needs a Windows expectation %v, want %v", text, got, needed)
 		}
 	}
 }
@@ -691,5 +899,39 @@ func TestBrokerReplyOnceIsExact(t *testing.T) {
 		if (want.Stderr == got) != accepted {
 			t.Errorf("%q: accepted %v, want %v", got, want.Stderr == got, accepted)
 		}
+	}
+}
+
+// TestComposeUsageUncheckedIsExact: compose-usage-unchecked accepts only
+// Go's finished check with usage unchecked for its fixed reason, a verdict
+// and one more request, the disclosure; never against another recording.
+func TestComposeUsageUncheckedIsExact(t *testing.T) {
+	read := transcript.Request{Method: "GET", Path: "/v1/organizations/acme/projects/web/environments/dev/effective-configuration?include=values"}
+	disclose := transcript.Request{Method: "POST", Path: "/v1/organizations/acme/projects/web/environments/dev/disclosures"}
+	recorded := transcript.Outcome{Status: 1, Stderr: "{{uncaught RangeError: Maximum call stack size exceeded}}\n", Requests: []transcript.Request{read}}
+	stderr := "varlatch: no active Contract: x\nvarlatch: usage: usage not checked: the service's compose file is too large or could not be read\n"
+	stdout := "coolify https://coolify.conformance.test svc-uuid-0001 against dev:\n  match  API_TOKEN\nin sync: 1 match, 0 differ, 0 missing on the platform, 0 extra on the platform, 0 not compared\n"
+	good := transcript.Outcome{Status: 0, Stdout: stdout, Stderr: stderr, Requests: []transcript.Request{read, disclose}}
+	for _, c := range []struct {
+		name     string
+		got      transcript.Outcome
+		accepted bool
+	}{
+		{"usage unchecked, a verdict, the disclosure", good, true},
+		{"usage checked", transcript.Outcome{Status: 0, Stdout: stdout, Stderr: "varlatch: no active Contract: x\n", Requests: good.Requests}, false},
+		{"no verdict", transcript.Outcome{Status: 1, Stdout: "", Stderr: stderr, Requests: good.Requests}, false},
+		{"another request", transcript.Outcome{Status: 0, Stdout: stdout, Stderr: stderr, Requests: []transcript.Request{read, {Method: "POST", Path: "/v1/other"}}}, false},
+		{"two more requests", transcript.Outcome{Status: 0, Stdout: stdout, Stderr: stderr, Requests: []transcript.Request{read, disclose, disclose}}, false},
+	} {
+		want := recorded
+		differences["compose-usage-unchecked"](&want, c.got)
+		if accepted := want.Stdout == c.got.Stdout && want.Stderr == c.got.Stderr && len(want.Requests) == len(c.got.Requests); accepted != c.accepted {
+			t.Errorf("%s: accepted %v, want %v", c.name, accepted, c.accepted)
+		}
+	}
+	other := transcript.Outcome{Status: 1, Stderr: "{{uncaught TypeError: x}}\n", Requests: []transcript.Request{read}}
+	differences["compose-usage-unchecked"](&other, good)
+	if other.Stdout == good.Stdout {
+		t.Error("accepted against a recording of another error")
 	}
 }

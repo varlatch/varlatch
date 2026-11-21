@@ -11,6 +11,7 @@ import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { checkExitCode, compareKeys, type CheckedKey } from "../src/syncCheck.js";
 import { contractItem, revision } from "./fixtures.js";
+import { cliCommand, goLacksCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch sync check` (ADR-0044): the CLI, bundled from this checkout's
@@ -341,7 +342,7 @@ function cli(args: string[], extra: Record<string, string> = {}): Promise<Result
       CONVEX_KEY: CONVEX_CREDENTIAL,
       ...extra,
     };
-    const child = spawn(process.execPath, [bundle, ...args], { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(...cliCommand(bundle, args), { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
@@ -579,10 +580,13 @@ describe("sync check in assisted mode, with a Secret too short to mask", () => {
     ["--assisted", ["--assisted"], {}],
     ["a coding agent's marker", [], { CLAUDECODE: "1" }],
   ] as const)("%s: the check runs and prints no value, where run refuses (the control)", async (_name, global, env) => {
-    // Control, same Environment: PIN cannot be masked, so an assisted run refuses to start.
-    const run = await cli([...global, "run", "-e", "production", "--", process.execPath, "-e", "console.log('started')"], env);
-    expect(run.code).toBe(78);
-    expect(run.stderr).toMatch(/cannot be masked in the command's output: PIN/);
+    // Control, same Environment: PIN cannot be masked, so an assisted run refuses to start
+    // (against a Go CLI without varlatch run, only the check is tested).
+    if (!goLacksCommand("run")) {
+      const run = await cli([...global, "run", "-e", "production", "--", process.execPath, "-e", "console.log('started')"], env);
+      expect(run.code).toBe(78);
+      expect(run.stderr).toMatch(/cannot be masked in the command's output: PIN/);
+    }
     for (const flags of [[], ["--json"]]) {
       const r = await cli([...global, ...coolify(...flags)], env);
       expect(r.code, r.stderr).toBe(1);

@@ -11,7 +11,7 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { probeLacks } from "../lacks-probe.mjs";
 import { lacksFor } from "../lib/expect.mjs";
-import { NOT_IMPLEMENTED_YET, openapiOperations } from "../lib/operations.mjs";
+import { openapiOperations } from "../lib/operations.mjs";
 import { assess } from "../lib/request-log.mjs";
 import * as goBinary from "../targets/go-binary.mjs";
 import { loadTarget } from "../targets/index.mjs";
@@ -61,8 +61,18 @@ test("a real varlatchd: up, the operations, restart with its data, the request l
     assert.deepEqual(await goBinary.probe(state, "proxy-addresses"), []);
     assert.deepEqual(await goBinary.probe(state, "device-sign-in-addresses", "nobody"), []);
     assert.equal(await goBinary.probe(state, "expire-pending-device-sign-ins"), true);
-    await assert.rejects(goBinary.serveCli(state, true), (err) => err.code === NOT_IMPLEMENTED_YET);
-    assert.equal((await fetch(`${state.origin}/readyz`)).status, 200, "varlatchd runs again after the serve_cli probe");
+    // serve_cli (step 6.8): on, the release is prepared and varlatchd
+    // serves it once it has verified it; off again, nothing is served.
+    await goBinary.serveCli(state, true);
+    let served = false;
+    for (let i = 0; i < 50 && !served; i++) {
+      served = (await fetch(`${state.origin}/v1/meta`).then((r) => r.json())).capabilities.includes("cli.download");
+      if (!served) await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    assert.ok(served, "/v1/meta lists cli.download with serve_cli on");
+    assert.match(await fetch(`${state.origin}/install.sh`).then((r) => r.text()), new RegExp(`^ORIGIN='${state.origin}'$`, "m"));
+    await goBinary.serveCli(state, false);
+    assert.equal((await fetch(`${state.origin}/install.sh`)).status, 404, "nothing is served with serve_cli off");
     await goBinary.restart(state);
     const again = await fetch(`${state.origin}/v1/meta`).then((r) => r.json());
     assert.equal(again.installationId, meta.installationId);
@@ -79,8 +89,7 @@ test("a real varlatchd: up, the operations, restart with its data, the request l
 // The probe against a real varlatchd: every operation expect/go-binary.json
 // lists answers the stub, so nothing is stale; an operation with a handler
 // (here /v1/meta, which this varlatchd serves) listed as lacking is stale,
-// named, and fails the run. serve-cli stays unbuilt until step 6, so it is
-// the one that is not stale.
+// named, and fails the run.
 test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
   const lacks = [...lacksFor(JSON.parse(readFileSync(join(here, "..", "expect", "go-binary.json"), "utf8")), "go-binary").keys()];
   let state;
@@ -88,7 +97,7 @@ test("the stale-lacks probe against a real varlatchd", needBinary, async () => {
     state = await goBinary.up({ argument: binary, onState: (s) => (state = s) });
     const ask = (list) => probeLacks({ inventory, openapi, lacks: list, origin: state.origin, target: goBinary, state });
     assert.deepEqual(await ask(lacks), []);
-    const stale = await ask(["serve-cli", "getMeta", "whoami"]);
+    const stale = await ask(["getMeta", "whoami"]);
     assert.deepEqual(stale.map((s) => s.operation), ["getMeta", "whoami"]);
     assert.match(stale[0].why, /answered 200, not 501 NOT_IMPLEMENTED_YET/);
     // The runner turns a stale entry into a problem: the run fails.
@@ -239,6 +248,39 @@ test("up, restart and down keep the directory until down, then leave nothing", l
     assert.ok(!alive(second) && !existsSync(state.dir));
   } finally {
     if (state) await goBinary.down(state);
+    fake.cleanup();
+  }
+});
+
+// VARLATCH_GO_BINARY_KEEP (G6, go/release/g6.sh): down copies the stopped
+// installation's data directory and Root KEK out before removing it, and
+// never writes into a directory that exists.
+test("down keeps the stopped installation where VARLATCH_GO_BINARY_KEEP says", linuxOnly, async () => {
+  const fake = fakeBinary();
+  const parent = mkdtempSync(join(tmpdir(), "go-binary-keep-"));
+  const keepDir = join(parent, "kept");
+  const before = process.env.VARLATCH_GO_BINARY_KEEP;
+  let state;
+  try {
+    process.env.VARLATCH_GO_BINARY_KEEP = keepDir;
+    state = await goBinary.up({ argument: fake.path, onState: (s) => (state = s) });
+    writeFileSync(join(state.dataDir, "varlatch.db"), "the database");
+    const kek = readFileSync(state.kekFile, "utf8");
+    await goBinary.down(state);
+    assert.ok(!existsSync(state.dir), "the installation is removed");
+    assert.equal(readFileSync(join(keepDir, "data", "varlatch.db"), "utf8"), "the database");
+    assert.equal(readFileSync(join(keepDir, "root-kek"), "utf8"), kek);
+
+    // A second run into the same directory leaves it as it is.
+    state = await goBinary.up({ argument: fake.path, onState: (s) => (state = s) });
+    writeFileSync(join(state.dataDir, "varlatch.db"), "another database");
+    await goBinary.down(state);
+    assert.equal(readFileSync(join(keepDir, "data", "varlatch.db"), "utf8"), "the database");
+  } finally {
+    if (before === undefined) delete process.env.VARLATCH_GO_BINARY_KEEP;
+    else process.env.VARLATCH_GO_BINARY_KEEP = before;
+    if (state) await goBinary.down(state);
+    rmSync(parent, { recursive: true, force: true });
     fake.cleanup();
   }
 });

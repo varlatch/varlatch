@@ -229,6 +229,55 @@ test("a check in the inventory that did not report fails the run", () => {
   assert.deepEqual(outcome(run, "stub.page"), { id: "stub.page", suite: "stub", kind: "component", feature: null, outcome: "fail", why: "did not report", reports: 0, failure: "reporting" });
 });
 
+test("a check that did not report names its suite's error, or the run's stop", () => {
+  const without = all().filter((r) => r.id !== "stub.page");
+  // A fixture of the suite did not start: its checks say so.
+  let run = evaluate({
+    inventory: base(),
+    reports: without,
+    errors: [{ suite: "stub", message: "Error: target operation oidc-issuer start failed (exit 1): the oidc issuer did not start: exited 1, on 127.0.0.1:21234" }],
+  });
+  assert.equal(
+    outcome(run, "stub.page").why,
+    "did not report: Error: target operation oidc-issuer start failed (exit 1): the oidc issuer did not start: exited 1, on 127.0.0.1:21234",
+  );
+  assert.equal(outcome(run, "stub.page").failure, "reporting");
+  // The run stopped before the suite: the stop says why.
+  run = evaluate({ inventory: base(), reports: without, errors: [{ suite: "runner", message: "the run stopped: the passkey suite named no identity (passkey: browserType.launch: Executable doesn't exist): nothing after it can run" }] });
+  assert.match(outcome(run, "stub.page").why, /^did not report: the run stopped: the passkey suite named no identity \(passkey: browserType\.launch/);
+  // A crashed suite: its own error (a fixture that did not start) is the
+  // cause, not the runner's note that it did not finish, recorded first.
+  run = evaluate({
+    inventory: base(),
+    reports: without,
+    errors: [
+      { suite: "stub", message: "did not finish: no end marker; exit 1; the checks it did not report fail" },
+      { suite: "stub", message: "the webhook receiver did not start: exited 1, on 127.0.0.1:21235", cause: true },
+    ],
+  });
+  assert.equal(outcome(run, "stub.page").why, "did not report: the webhook receiver did not start: exited 1, on 127.0.0.1:21235");
+  // The run stopped while the suite was being started: its checks name that
+  // failure (the suite's), a later suite's the run's stop.
+  run = evaluate({
+    inventory: base(),
+    reports: all().filter((r) => r.id !== "stub.page" && r.suite !== "web"),
+    errors: [
+      { suite: "stub", message: "the oidc issuer did not start: exited 1", cause: true },
+      { suite: "runner", message: "the run stopped in stub: the oidc issuer did not start: exited 1" },
+    ],
+  });
+  assert.equal(outcome(run, "stub.page").why, "did not report: the oidc issuer did not start: exited 1");
+  const web = run.checks.find((c) => c.suite === "web" && c.why?.startsWith("did not report"));
+  assert.ok(web, "a later suite's check did not report");
+  assert.equal(web.why, "did not report: the run stopped in stub: the oidc issuer did not start: exited 1");
+  // Another suite's error is not this check's cause; a long cause is cut.
+  run = evaluate({ inventory: base(), reports: without, errors: [{ suite: "web", message: "x".repeat(400) }] });
+  assert.equal(outcome(run, "stub.page").why, "did not report");
+  run = evaluate({ inventory: base(), reports: without, errors: [{ suite: "stub", message: `line one\n${"y".repeat(400)}` }] });
+  assert.ok(outcome(run, "stub.page").why.length <= "did not report: ".length + 240);
+  assert.match(outcome(run, "stub.page").why, /^did not report: line one y+…$/);
+});
+
 test("a reported check that is not in the inventory, or comes from another suite, fails the run", () => {
   let run = evaluate({ inventory: base(), reports: [...all(), pass("web", "web.extra")] });
   assert.equal(run.ok, false);

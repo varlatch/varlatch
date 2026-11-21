@@ -19,6 +19,12 @@
 # route, download the files and check them with cosign first:
 # https://docs.varlatch.com/operations/verify-release/
 #
+# An installation that serves this script (varlatchd's serve_cli; ADR-0058
+# Decision 3) stamps its own address in $Origin below: the CLI then comes
+# from it, and is checked the same way. Installing from an installation
+# trusts it, and whoever controls its host or its address, to run code on
+# this machine.
+#
 # Every line that runs is inside the & { ... } below, which ends the file.
 # PowerShell parses a whole script before it runs any of it, and a copy cut
 # off before the closing brace does not parse, so it runs nothing at all.
@@ -35,6 +41,11 @@
   # --version.
   $VarlatchRelease = '@VARLATCH_VERSION@'
   $Base = 'https://github.com/varlatch/varlatch/releases/download/v'
+  # The serving installation's address, stamped when it serves this script;
+  # empty in a release, which installs from github.com.
+  $Origin = ''
+  # https, or http when the installation is on this machine.
+  $Scheme = 'https'
 
   function Stop-Install([string]$Message) { throw "varlatch install: $Message" }
 
@@ -55,7 +66,7 @@
   function Get-File([string]$Uri, [string]$Path) {
     $Next = [Uri]$Uri
     for ($Hop = 0; $Hop -le 5; $Hop++) {
-      if ($Next.Scheme -ne 'https') { Stop-Install "refusing to download $($Next.AbsoluteUri): not HTTPS" }
+      if ($Next.Scheme -ne $Scheme) { Stop-Install "refusing to download $($Next.AbsoluteUri): not $($Scheme.ToUpperInvariant())" }
       $Request = [Net.HttpWebRequest]::Create($Next)
       $Request.AllowAutoRedirect = $false
       $Request.UserAgent = 'varlatch-install'
@@ -68,6 +79,7 @@
       try {
         $Code = [int]$Response.StatusCode
         if ($Code -ge 300 -and $Code -lt 400) {
+          if ($Origin) { Stop-Install "could not download $Uri (HTTP ${Code}: a redirect is never followed from an installation)" }
           $Location = $Response.Headers['Location']
           if (-not $Location) { Stop-Install "could not download $Uri (HTTP $Code without a location)" }
           $Next = [Uri]::new($Next, $Location)
@@ -109,6 +121,18 @@
       })
     if ($Found.Count -ne 1) { Stop-Install "SHA256SUMS does not list $Name exactly once; nothing was installed" }
     return $Found[0]
+  }
+
+  # Whether a file is the TypeScript CLI's single-file build
+  # (varlatch-cli-<version>.cjs): its banner is in its first bytes.
+  function Test-TypeScriptCli([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $Stream = [IO.File]::OpenRead($Path)
+    try {
+      $Head = New-Object byte[] 512
+      $Read = $Stream.Read($Head, 0, $Head.Length)
+      return [Text.Encoding]::ASCII.GetString($Head, 0, $Read).Contains('Varlatch CLI. Copyright')
+    } finally { $Stream.Dispose() }
   }
 
   # Replaces a file atomically when it exists ([IO.File]::Replace, with a
@@ -155,6 +179,12 @@
     }
 
     $From = "$Base$Version"
+    if ($Origin) {
+      if ($Origin -cmatch '^https://[A-Za-z0-9.:\[\]-]+$') { $Scheme = 'https' }
+      elseif ($Origin -cmatch '^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$') { $Scheme = 'http' }
+      else { Stop-Install "$Origin is neither https: nor http: on this machine" }
+      $From = "$Origin/cli/v$Version"
+    }
     $Name = "varlatch-$Version-windows-$Arch.exe"
     $Dir = Join-Path $env:LOCALAPPDATA 'Programs\Varlatch'
     $Target = Join-Path $Dir 'varlatch.exe'
@@ -201,6 +231,37 @@
       Remove-Item -Force -LiteralPath $Next -ErrorAction SilentlyContinue
     }
 
+    # The TypeScript CLI this replaces (decision 11): the varlatch.cmd that
+    # starts varlatch.cjs with Node.js, in this folder, as the documentation
+    # and the tray app install it. Both go once the new varlatch runs from
+    # its place; until then both CLIs share one store of sign-ins and
+    # settings. If it does not run, it goes, and the TypeScript CLI stays.
+    $Shim = Join-Path $Dir 'varlatch.cmd'
+    $Script = Join-Path $Dir 'varlatch.cjs'
+    $OldShim = (Test-Path -LiteralPath $Shim -PathType Leaf) -and ([IO.File]::ReadAllText($Shim).Trim() -ceq '@node "%~dp0varlatch.cjs" %*')
+    $OldScript = Test-TypeScriptCli $Script
+    if ($OldShim -or $OldScript) {
+      try { $Run = Invoke-Program $Target @('--version') } catch { $Run = $null }
+      if ($null -eq $Run -or $Run.Code -ne 0) {
+        Remove-Item -Force -LiteralPath $Target -ErrorAction SilentlyContinue
+        Stop-Install "the new varlatch does not run at $Target; the TypeScript CLI (varlatch.cmd, varlatch.cjs) was left in place"
+      }
+      # varlatch.exe is in place and runs: a file that cannot be removed
+      # now (in use) is named, never reported as nothing installed.
+      $Left = @()
+      if ($OldShim) {
+        try { Remove-Item -Force -LiteralPath $Shim -ErrorAction Stop } catch { $Left += 'varlatch.cmd' }
+      }
+      if ($OldScript) {
+        try { Remove-Item -Force -LiteralPath $Script -ErrorAction Stop } catch { $Left += 'varlatch.cjs' }
+      }
+      if ($Left.Count -eq 0) {
+        Write-Host "Removed the TypeScript CLI (varlatch.cmd, varlatch.cjs) from ${Dir}: varlatch.exe replaces it. Your sign-ins and settings carry over: both CLIs use the same store."
+      } else {
+        Write-Host "varlatch.exe is installed and comes first in ${Dir}, but the TypeScript CLI's $($Left -join ' and ') could not be removed (in use?); remove it once nothing runs it. Your sign-ins and settings carry over: both CLIs use the same store."
+      }
+    }
+
     # The user PATH as stored in the registry: its %VARIABLES% unexpanded
     # and its kind kept ([Environment]::SetEnvironmentVariable would write it
     # back expanded, as REG_SZ). Entries are compared expanded; added once.
@@ -235,7 +296,8 @@
     if ($First -and ($First.Source -ine $Target)) {
       Write-Host "Another varlatch comes first on your PATH: $($First.Source). Remove it, or put $Dir before it."
     }
-    Write-Host 'Next: varlatch login --server <your Varlatch address>'
+    if ($Origin) { Write-Host "Next: varlatch login --server $Origin" }
+    else { Write-Host 'Next: varlatch login --server <your Varlatch address>' }
   }
 
   # A failed check prints its one line and exits 1; nothing was installed.

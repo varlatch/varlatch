@@ -137,6 +137,22 @@
         "release": "0.14.0",
         "quote": "The MCP server ships inside the CLI as `varlatch mcp`, in every release and under the CLI's version."
       }
+    },
+    "audit-export": {
+      "title": "varlatch audit-export: an Organization's audit log copied to a bucket it controls",
+      "introducedIn": "0.22.0",
+      "changelog": {
+        "release": "0.22.0",
+        "quote": "`varlatch audit-export create`, the Security page, or the API"
+      }
+    },
+    "incident-freeze": {
+      "title": "varlatch org freeze and org unfreeze: the incident freeze",
+      "introducedIn": "0.22.0",
+      "changelog": {
+        "release": "0.22.0",
+        "quote": "(`varlatch org freeze <slug> --reason <text> --confirm <slug>`)"
+      }
     }
   },
   "operations": {
@@ -212,9 +228,12 @@
       ]
     },
     "cli-handover": {
-      "title": "the hand-over between the Go CLI and the TypeScript CLI: token and device sign-in both ways (internal docs/design/go-cli.md, decision 11)",
+      "title": "the hand-over between the Go CLI and the TypeScript CLI: token and device sign-in both ways, the shared store, and run (internal docs/design/go-cli.md, decision 11)",
       "script": "scripts/conformance/suites/cli-handover.mjs",
       "client": "go",
+      "needs": [
+        "probe:expire-pending-device-sign-ins"
+      ],
       "operations": [
         "admin-recover",
         "seed",
@@ -761,6 +780,91 @@
         "securityApprovalKeys"
       ]
     },
+    "admin-cli": {
+      "title": "Organization administration with the CLI under test (slice 5.7a): one smoke check per command, exit 0 and --json parsing, in an Organization of its own",
+      "script": "scripts/conformance/suites/admin-cli.mjs",
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "listOrganizations",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "listProjects",
+        "renameProject",
+        "createEnvironment",
+        "listEnvironments",
+        "deleteEnvironment",
+        "createInvitation",
+        "listIdentities",
+        "changeMemberRole",
+        "memberExposure",
+        "createServiceIdentity",
+        "renameIdentity",
+        "machineReach",
+        "issueIdentityCredential",
+        "listIdentityCredentials",
+        "revokeIdentityCredential",
+        "retireIdentity",
+        "reactivateIdentity",
+        "createRequirement",
+        "listRequirements",
+        "deleteRequirement",
+        "listAuditEvents"
+      ]
+    },
+    "security-cli": {
+      "title": "The security commands with the CLI under test (slice 5.7b): one check per command, exit 0 and --json parsing, a loosening that waits for its approval, in an Organization of its own",
+      "script": "scripts/conformance/suites/security-cli.mjs",
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "whoami",
+        "createOrganization",
+        "listSecurityControls",
+        "changeSecurityControl",
+        "cancelApproval",
+        "myOrganizationPermissions",
+        "getIncidentFreeze",
+        "securityControlReport",
+        "securityApprovalKeys",
+        "credentialReview",
+        "refusedDestinations",
+        "listRequirements",
+        "getAuditExport"
+      ]
+    },
+    "audit-cli": {
+      "title": "The audit export, deletion and freezes with the CLI under test (slice 5.7c): each command against a real installation and a local S3 server with Object Lock, each destructive one refused unconfirmed with nothing changed, each approval-gated step stopping for its approval",
+      "script": "scripts/conformance/suites/audit-cli.mjs",
+      "needs": [
+        "object-store"
+      ],
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "listProjects",
+        "deleteProject",
+        "exportAuditEvents",
+        "exportDeletedOrganizationAuditEvents",
+        "getOrganization",
+        "getOrganizationDeletion",
+        "scheduleOrganizationDeletion",
+        "cancelOrganizationDeletion",
+        "getIncidentFreeze",
+        "freezeOrganization",
+        "liftIncidentFreeze",
+        "cancelApproval",
+        "getAuditExport",
+        "checkAuditExport",
+        "createAuditExport",
+        "changeAuditExport",
+        "removeAuditExport"
+      ]
+    },
     "deletion": {
       "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce; an Organization's deletion scheduled, approved by a second admin, cancelled and run when due, and the audit-access tombstone's readers; what the due run tears down (a Sync Target and its Connection, a webhook, the GitHub App) and the audit export's drain, completed or abandoned at its deadline",
       "script": "scripts/conformance/suites/deletion.mjs",
@@ -1122,6 +1226,63 @@
       "kind": "go-client",
       "feature": "login-device",
       "title": "inside an agent-safe run, both CLIs refuse to start a device sign-in (64) and write no pending sign-in"
+    },
+    "cli-handover.ts-login-go-runs": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "run",
+      "title": "signed in with the TypeScript CLI, the Go CLI runs a command with the development environment's values (varlatch run)"
+    },
+    "cli-handover.store-holds-both": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "after interleaved logins (the TypeScript CLI to one address of the server, the Go CLI to another), the store holds both entries, the first byte for byte, and both CLIs read both: status --json alike, whoami of each"
+    },
+    "cli-handover.default-server-both-ways": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "a default server set with `server use` by one CLI is the one the other uses (whoami outside a repository), both ways, and both write settings.json alike"
+    },
+    "cli-handover.corrupt-store-both": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "title": "a corrupt credentials.json and settings.json are an empty store to both CLIs (status --json and whoami alike: no server, not authenticated), and a login by either replaces them with a store the other reads"
+    },
+    "cli-handover.device-ts-start-go-expired": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "expired before approval, a device sign-in started with the TypeScript CLI ends for the other with 77, the entry removed and the stored credential kept"
+    },
+    "cli-handover.device-ts-slow-down-go-keeps": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a slow_down the TypeScript CLI was answered (a longer interval) is kept by the other: its --wait reaches its deadline (75) without polling, the entry as it was; the file 0600 in a 0700 directory"
+    },
+    "cli-handover.device-ts-collects-go-recovers": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a credential the TypeScript CLI collected but could not store is named for revocation by the other: --wait ends with 77 naming it, the entry removed, nothing stored"
+    },
+    "cli-handover.device-go-start-ts-expired": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "expired before approval, a device sign-in started with the Go CLI ends for the other with 77, the entry removed and the stored credential kept"
+    },
+    "cli-handover.device-go-slow-down-ts-keeps": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a slow_down the Go CLI was answered (a longer interval) is kept by the other: its --wait reaches its deadline (75) without polling, the entry as it was; the file 0600 in a 0700 directory"
+    },
+    "cli-handover.device-go-collects-ts-recovers": {
+      "suite": "cli-handover",
+      "kind": "go-client",
+      "feature": "login-device",
+      "title": "a credential the Go CLI collected but could not store is named for revocation by the other: --wait ends with 77 naming it, the entry removed, nothing stored"
     },
     "dashboard.enrollment-dashboard-origin": {
       "suite": "dashboard",
@@ -3636,6 +3797,266 @@
       "kind": "conformance",
       "title": "the approval keys list the Organization's admins with their passkeys' trust, names and dates, never a credential id or key"
     },
+    "admin-cli.org-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "org create makes an organization the caller administers"
+    },
+    "admin-cli.org-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "org list --json lists it"
+    },
+    "admin-cli.project-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project create --org makes a project"
+    },
+    "admin-cli.project-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project list --json lists it"
+    },
+    "admin-cli.project-rename": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project rename renames it (project list shows the new name)"
+    },
+    "admin-cli.env-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "env-create makes a root environment (the environment list has it)"
+    },
+    "admin-cli.env-delete": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "env-delete deletes it (the environment list has it no more)"
+    },
+    "admin-cli.invite": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "invite prints a one-time enrollment link with its invitation token"
+    },
+    "admin-cli.member-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member list --json lists the caller"
+    },
+    "admin-cli.member-role": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member role to the role the caller has changes nothing (member list agrees)"
+    },
+    "admin-cli.member-exposure-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member exposure --json is NDJSON, the member first"
+    },
+    "admin-cli.identity-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity list --json lists the machine"
+    },
+    "admin-cli.identity-rename": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity rename renames it"
+    },
+    "admin-cli.identity-reach-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity reach --json shows its reach"
+    },
+    "admin-cli.credential-issue-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential issue --json writes the token to a new 0600 file only, and refuses an --out that exists"
+    },
+    "admin-cli.credential-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential list --json lists it"
+    },
+    "admin-cli.credential-revoke": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential revoke revokes it"
+    },
+    "admin-cli.identity-retire": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity retire --confirm retires it (identity list shows it retired)"
+    },
+    "admin-cli.identity-reactivate": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity reactivate reactivates it (identity list shows it active)"
+    },
+    "admin-cli.tailnet-require": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet require makes a Tailnet Requirement"
+    },
+    "admin-cli.tailnet-requirements-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet requirements --json lists it"
+    },
+    "admin-cli.tailnet-remove": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet remove removes it"
+    },
+    "admin-cli.audit-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "audit list --json lists the organization's events"
+    },
+    "security-cli.controls": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security controls lists the organization's controls"
+    },
+    "security-cli.controls-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security controls --json lists them"
+    },
+    "security-cli.set": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security set turns a control up at once (security controls agrees)"
+    },
+    "security-cli.set-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security set --json prints the change"
+    },
+    "security-cli.set-loosen-waits": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "a loosening in assisted mode stops for the approval (75), unchanged and with no credential printed"
+    },
+    "security-cli.status": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security status shows the organization's security"
+    },
+    "security-cli.status-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security status --json shows it"
+    },
+    "security-cli.report": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security report shows the credential review"
+    },
+    "security-cli.report-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security report --json shows it"
+    },
+    "audit-cli.project-delete-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "project delete without --confirm refuses (64) and deletes nothing"
+    },
+    "audit-cli.project-delete": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "project delete --confirm deletes the Project"
+    },
+    "audit-cli.audit-export-ndjson": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit export prints the log as NDJSON"
+    },
+    "audit-cli.audit-export-deleted-unknown": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit export --deleted-org of an unknown id fails with the server's 404 (1)"
+    },
+    "audit-cli.org-delete-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete without --confirm refuses (64) and schedules nothing"
+    },
+    "audit-cli.org-delete-schedule": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete --confirm schedules the deletion"
+    },
+    "audit-cli.org-deletion-json": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org deletion --json shows it"
+    },
+    "audit-cli.org-delete-cancel": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete --cancel cancels it"
+    },
+    "audit-cli.org-freeze-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org freeze without --confirm refuses (64) and freezes nothing",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.org-freeze": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org freeze --confirm freezes it",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.org-unfreeze-waits": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org unfreeze in assisted mode stops for the passkey approval (75), still frozen",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.audit-export-show-json": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export show --json shows no export yet",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-check": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export check passes a destination, saves nothing, never shows the key",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-create": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export create --json makes the export, never showing the key",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-change": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export change --retention longer applies at once",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-show": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export show shows it active",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-remove-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export remove without --confirm refuses (64), the export kept",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-remove-waits": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export remove in assisted mode stops for the passkey approval (75), the export kept",
+      "feature": "audit-export"
+    },
     "deletion.project-deleted": {
       "suite": "deletion",
       "kind": "conformance",
@@ -4144,7 +4565,7 @@
       "script": "scripts/test-backup-compose.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go container image and upgrade's recovery gate"
+        "none": "Its Go counterpart is go/image/check-image.mjs, not a runner check: the Go workflow (.github/workflows/go.yml) runs it in the job go-image, in the step 'The image as an operator runs it', against the single-container image built from the commit (go/image/Dockerfile): the user, entrypoint, volume and license label of the image; a key in the environment refused by varlatchd and by the CLI in the image (exit 78, the variable named, never its value); an installation on a new volume, owned by the image user alone and run as that user; no key in docker inspect or /proc/1/environ; the recovery gate (a maintenance lease) held in the volume across containers until it ends; and a backup restored into a new volume through the image alone, served and its canary opened. The job go-container runs the conformance suites against the image nightly (target go-container)."
       }
     },
     "backup-e2e": {
@@ -4224,7 +4645,7 @@
       "script": "scripts/test-move.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: moving a Go installation to another public URL"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflow (.github/workflows/go.yml), not runner checks: go/server/daemon.TestPublicHTTPSMoveAgainstPebble in the step 'Public HTTPS against Pebble' (varlatch move, built from the commit, takes an installation on the public ingress from one name to another: an archive first, the certificate for the new name from Pebble, the passkey of the old address removed once and the old name no longer served, one re-enrollment link per person, never in the journal of the move or a log, the Installation Admin re-enrolled over HTTPS at the new origin on the same identity, and a rerun closing the move); and in the step 'Test': go/server/daemon.TestMoveKeepsTheTailnetNode (the settings, pin and state of the tailnet node unchanged by a move, and a move to the tailnet ingress refused), go/server/daemon.TestMoveCommands (admin public-url-changed and admin reenroll through the socket, else offline: passkeys and browser sessions removed once, one live link per person, no link in an audit event or a log), go/server/httpserver.TestMoveReenrollsAtTheNewRelyingParty (the relying party is the new host: an old passkey refused there, a re-enrollment link used once from the new origin only), go/cmd/varlatch/internal/cli.TestMoveRefusals, go/cmd/varlatch/internal/cli.TestMovedConfig and go/cmd/varlatch/internal/cli.TestAdminReenroll."
       }
     },
     "installers": {
