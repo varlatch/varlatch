@@ -25,6 +25,13 @@
     "0.22.0": {
       "commit": "bf177b40c238de9a5618dccd38429a2e1772fe95",
       "sha256": "84d3ea55fafecb1b2bc87efc51be4b089d72e8741920d4a57cd3c15093d56e2a"
+    },
+    "0.22.4": {
+      "commit": "4ce101308356be857d53da0f1c6aa45b1c6b2490",
+      "sha256": "5c7720c87299e63286a31a685d3766293b41c8f3da0814c8bd6750aa3c1562e7"
+    },
+    "0.23.0": {
+      "pending": "awaiting v0.23.0 release; replace with commit and sha256 from verified SHA256SUMS once v0.23.0 is tagged"
     }
   }
 }

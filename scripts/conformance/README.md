@@ -525,21 +525,25 @@ shows this on the inventory as it stands.
 (`gh workflow run conformance.yml --ref <branch>`), on GitHub-hosted
 runners with only the read-only job token:
 
-| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` |
-| --- | --- | --- | --- |
-| `ts-source` | ✓ | ✓ | ✓ |
-| `ts-release:0.22.0` | ✓ | ✓ | ✓ |
-| `go-binary` | ✓ | | |
+| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` | CLI `0.22.4` | CLI `0.23.0` | CLI `go` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ts-source` | ✓ | ✓ | ✓ | | | ✓ |
+| `ts-release:0.22.0` | ✓ | ✓ | ✓ | | | ✓ |
+| `go-binary` | ✓ | | | ✓ | ✓ (when pinned) | |
 
 The `images` job builds the source images once (`source-images.mjs`) and
-passes them to the `ts-source` cells as an artifact. The `go-binary` cell
-builds the dashboard and `varlatchd` from the checkout. Each cell is its own
-job, with its own stack (or server) on its own free ports, at most three at
-a time and 60 minutes each, and uploads its `conformance-report.json`
+passes them to the `ts-source` cells as an artifact. The `go-binary` cells
+build the dashboard and `varlatchd` from the checkout; the `0.22.4` and
+`0.23.0` cells cover ADR-0059 gate G2 (the last two TypeScript CLI releases
+against the Go server). Any CLI entry marked `pending` in `clients.json`
+(such as `0.23.0` before it is tagged) is skipped in `cells` with a notice
+and activates automatically once its commit and hash are pinned. Each cell is
+its own job, with its own stack (or server) on its own free ports, at most
+three at a time and 60 minutes each, and uploads its `conformance-report.json`
 (`conformance-report-<target>-cli-<cli>`, tokens masked as in the logs).
-`go.yml` also runs the `go-binary` target with the source CLI on every pull
-request that changes `go/` or the harness's `go-binary` pieces, in three
-shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
+`go.yml` also runs the `go-binary` target with the source CLI and the Go CLI
+on every pull request that changes `go/` or the harness's `go-binary` pieces,
+in three shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
 
 ## Clients
 
@@ -548,9 +552,12 @@ shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
 checkout: `cd go && go build -o <path> ./cmd/varlatch`), or a
 released TypeScript CLI pinned in `clients.json` by version, release commit
 and the hash of `varlatch-cli-<version>.cjs`, never "latest". The pins now
-are 0.21.0 and 0.22.0; a later release is added by hand (its commit from
+are 0.21.0, 0.22.0, and 0.22.4, plus 0.23.0 as a `pending` placeholder until
+`v0.23.0` is tagged; a later release is added by hand (its commit from
 `gh api repos/varlatch/varlatch/commits/v<V> --jq .sha`, its hash from the
-verified `SHA256SUMS`).
+verified `SHA256SUMS`). Selecting a `pending` version directly with
+`run.mjs --cli <version>` fails closed with a usage error and never downloads
+anything.
 
 Before the target starts, a pinned CLI is downloaded from its GitHub release
 into a new, empty directory and verified as
