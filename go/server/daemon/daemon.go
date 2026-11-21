@@ -353,8 +353,12 @@ func serve(opts Options, h *hooks) int {
 	if cfg.Tailnet != nil {
 		var err error
 		controlURL := cfg.Tailnet.ControlURL
-		if h.tailnetControl != "" {
+		switch {
+		case h.tailnetControl != "":
 			controlURL = h.tailnetControl
+		case testTailnetControl != "":
+			// A crashpoint build's G5 gate only (tailnethook_crashpoint.go).
+			controlURL = testTailnetControl
 		}
 		if tn, err = startTailnet(cfg, controlURL, h.tailnetCerts, log); err != nil {
 			return fail(ExitFailure, "cannot start the tailnet node", "error", err)

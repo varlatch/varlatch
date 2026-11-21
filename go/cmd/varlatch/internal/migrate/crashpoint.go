@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Crash points for G5's interruption gate (go test -tags g5, which builds
@@ -20,8 +21,12 @@ import (
 // for good, so the gate kills it exactly there. The points: "entered
 // <phase>" once each phase is journalled in both places, "barrier held"
 // once the source's barrier is up and recorded, "transfer started" once
-// the target serves under the transfer's gate, and "open source" when the
-// source's journal says open but the live open has not run yet.
+// the target serves under the transfer's gate, "open source" when the
+// source's journal says open but the live open has not run yet, and
+// "tailnet <forward|undo|rollback> <step>" once the tailnet handoff has
+// journalled a step (prepared, switching, serving closed, serving renamed,
+// incoming renamed, opening, done, undoing, undone, undo-pending), before
+// its act.
 //
 // The gate's stand-in source and target need two more of this build only:
 // VARLATCH_MIGRATE_PIN=<repository>@<digest> pins the stand-in's image (a
@@ -45,6 +50,11 @@ func init() {
 		cp.log = f
 	}
 	cp.pause = os.Getenv("VARLATCH_MIGRATE_PAUSE")
+	// The tailnet handoff's undo wait, shortened for the gate's undo cases
+	// (an undo cut short by a control plane gone).
+	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_UNDO_WAIT")); err == nil && d > 0 {
+		testHandoffUndoWait = d
+	}
 	if m := pinText.FindStringSubmatch(os.Getenv("VARLATCH_MIGRATE_PIN")); m != nil {
 		testPin = &imagePin{Repository: m[1], Digest: m[2]}
 	}
