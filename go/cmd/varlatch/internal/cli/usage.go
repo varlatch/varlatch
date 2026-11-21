@@ -56,9 +56,10 @@ func CommandHelp(command string) (string, bool) {
 // commandHelp is what `varlatch help <command>` and `<command> --help`
 // print: CommandHelp, except for `admin` and `move`, whose forms are a Go
 // installation's (adminUsage, moveUsage; go/README.md, the accepted
-// differences admin-usage and move-usage), and `self-update`, whose forms
-// are the Go CLI's (selfUpdateUsage; the accepted difference
-// self-update-usage).
+// differences admin-usage and move-usage), `self-update`, whose forms are
+// the Go CLI's (selfUpdateUsage; the accepted difference
+// self-update-usage), and `upgrade`, a Go installation's (upgradeUsage;
+// upgrade-usage).
 func commandHelp(command string) (string, bool) {
 	switch command {
 	case "admin":
@@ -67,6 +68,8 @@ func commandHelp(command string) (string, bool) {
 		return moveUsage, true
 	case "self-update":
 		return selfUpdateUsage, true
+	case "upgrade":
+		return upgradeUsage, true
 	}
 	return CommandHelp(command)
 }
