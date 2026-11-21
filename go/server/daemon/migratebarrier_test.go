@@ -290,8 +290,11 @@ func TestTheReverseBarrier(t *testing.T) {
 		}
 	}
 	other := filepath.Join(t.TempDir(), "other.jsonl")
+	// Another run key: its first byte flipped, never the same key (a key
+	// whose first byte is already 1 would be with {1} put in its place).
+	otherKey := append([]byte{runKey[0] ^ 0xff}, runKey[1:]...)
 	b := migrationtest.Bundle(t, rebuilt, migrationtest.Options{Sections: &migrationtest.Sections{
-		Digests: migrationtest.Digests(t, rebuilt, append([]byte{1}, runKey[1:]...)), Decisions: decisions, At: 1}})
+		Digests: migrationtest.Digests(t, rebuilt, otherKey), Decisions: decisions, At: 1}})
 	if err := os.WriteFile(other, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
