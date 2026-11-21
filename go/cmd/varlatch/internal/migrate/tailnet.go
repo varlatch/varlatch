@@ -310,7 +310,7 @@ func (r handoffResolver) Reaches(ctx context.Context, name, nodeID string) (bool
 
 // testHandoffUndoWait is the handoff's undo wait in a crashpoint build's
 // gate (crashpoint.go); zero in every other build.
-var testHandoffUndoWait time.Duration
+var testHandoffUndoWait, testHandoffDeadline time.Duration
 
 // handoffEngine is tailhandoff's engine for this migration.
 func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engine, error) {
@@ -340,7 +340,7 @@ func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engin
 		Endpoints:  handoffEndpoints{src: ts, tgt: tt, target: e.Target, reverse: reverse},
 		Resolver:   handoffResolver{tgt: tt},
 		Journal:    handoffJournal{e: e, j: j, slot: slot},
-		Deadline:   o.Deadline,
+		Deadline:   cmp.Or(testHandoffDeadline, o.Deadline),
 		UndoWait:   cmp.Or(testHandoffUndoWait, o.UndoWait),
 		RetryEvery: o.RetryEvery,
 		// Real time, never the migration's clock: the handoff's deadlines

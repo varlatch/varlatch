@@ -68,15 +68,20 @@ type tailnetEnv struct {
 	mu        sync.Mutex
 	tokens    map[string]bool
 	renames   int
-	// refuse is a name a rename to is refused (409, as a name another
-	// device holds): for refuseNode only when set, else for every node but
-	// refuseExcept. downAfterRefusal takes the API down after the first
-	// refusal, as a control plane lost in the middle of an undo.
-	refuse           string
-	refuseNode       string
-	refuseExcept     string
-	downAfterRefusal bool
-	down             bool
+	// failName is a name a rename to fails with a server error (503), as
+	// a control plane failing on that call: for failNode only when set,
+	// else for every node but failExcept. downAfterFail takes the API down
+	// after the first such failure, as a control plane lost in the middle
+	// of an undo.
+	failName      string
+	failNode      string
+	failExcept    string
+	downAfterFail bool
+	down          bool
+	// stealFrom and stealBy: once stealFrom's node is renamed away from
+	// the name, the third node stealBy takes it, as another device of the
+	// tailnet would (the name is then really taken).
+	stealFrom, stealBy string
 }
 
 func (tn *tailnetEnv) set(f func(tn *tailnetEnv)) {
@@ -109,15 +114,15 @@ func newTailnetWorld(t *testing.T) (*world, *tailnetEnv) {
 	tn.oauthFile = filepath.Join(w.compose, "oauth-client.json")
 	b, _ := json.Marshal(map[string]string{"clientId": tn.clientID, "clientSecret": tn.secret})
 	keyFile := filepath.Join(w.compose, "tailnet-auth-key")
-	for name, body := range map[string][]byte{tn.oauthFile: b, keyFile: []byte("g5-reusable-key\n")} {
+	for name, body := range map[string][]byte{tn.oauthFile: b, keyFile: []byte("g5-reusable-auth-key\n")} {
 		if err := os.WriteFile(name, body, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	w.env = []string{"G5_TAILNET=1", "VARLATCH_TEST_HANDOFF_UNDO_WAIT=3s", "G5_TAILNET_CONTROL=" + tn.control.BaseURL(), "VARLATCH_TEST_TAILNET_CONTROL=" + tn.control.BaseURL(),
+	w.env = []string{"G5_TAILNET=1", "VARLATCH_TEST_HANDOFF_UNDO_WAIT=3s", "VARLATCH_TEST_HANDOFF_DEADLINE=8s", "G5_TAILNET_CONTROL=" + tn.control.BaseURL(), "VARLATCH_TEST_TAILNET_CONTROL=" + tn.control.BaseURL(),
 		"VARLATCH_TEST_TAILSCALE_API=" + tn.api.URL, "VARLATCH_TEST_TAILSCALE_CA=" + ca}
 	w.extraArgs = []string{"--tailscale-oauth-client-file", tn.oauthFile, "--tailnet-auth-key-file", keyFile}
-	w.secrets = [][]byte{[]byte(tn.secret), []byte("g5-reusable-key")}
+	w.secrets = [][]byte{[]byte(tn.secret), []byte("g5-reusable-auth-key")}
 	// The source's .env names its node and tailnet; the target's
 	// configuration takes the same name.
 	env, _ := os.ReadFile(filepath.Join(w.compose, ".env"))
@@ -200,44 +205,50 @@ func (tn *tailnetEnv) serveAPI(rw http.ResponseWriter, r *http.Request) {
 			fail(http.StatusBadRequest, "invalid name")
 			return
 		}
-		var stable string
-		for _, n := range tn.control.AllNodes() {
-			if strconv.FormatInt(int64(n.ID), 10) == id {
-				stable = string(n.StableID)
-			}
-		}
+		// One rename at a time, as the control server's own: the listing,
+		// the checks and the change under the lock.
 		tn.mu.Lock()
-		refused := tn.refuse != "" && body.Name == tn.refuse &&
-			(tn.refuseNode == "" || tn.refuseNode == stable) && (tn.refuseExcept == "" || tn.refuseExcept != stable)
-		if refused && tn.downAfterRefusal {
-			tn.down = true
-		}
-		tn.mu.Unlock()
-		if refused {
-			fail(http.StatusConflict, "name already in use")
-			return
-		}
+		defer tn.mu.Unlock()
 		var target *tailcfg.Node
-		for _, n := range tn.control.AllNodes() {
-			label, _, _ := strings.Cut(n.Name, ".")
+		nodes := tn.control.AllNodes()
+		for _, n := range nodes {
 			if strconv.FormatInt(int64(n.ID), 10) == id {
 				target = n
-			} else if strings.EqualFold(label, body.Name) {
-				fail(http.StatusConflict, "name already in use")
-				return
 			}
 		}
 		if target == nil {
 			fail(http.StatusNotFound, "no such device")
 			return
 		}
+		stable := string(target.StableID)
+		if tn.failName != "" && body.Name == tn.failName && (tn.failNode == "" || tn.failNode == stable) && (tn.failExcept == "" || tn.failExcept != stable) {
+			if tn.downAfterFail {
+				tn.down = true
+			}
+			fail(http.StatusServiceUnavailable, "server error")
+			return
+		}
+		for _, n := range nodes {
+			label, _, _ := strings.Cut(n.Name, ".")
+			if n.ID != target.ID && strings.EqualFold(label, body.Name) {
+				fail(http.StatusConflict, "name already in use")
+				return
+			}
+		}
+		was, _, _ := strings.Cut(target.Name, ".")
 		// The control server's rename: the node's name, pushed to every
 		// peer's map.
 		target.Name = body.Name + "." + tn.suffix + "."
 		tn.control.UpdateNode(target)
-		tn.mu.Lock()
 		tn.renames++
-		tn.mu.Unlock()
+		if tn.stealFrom == stable && was == "vault" && body.Name != "vault" {
+			for _, n := range nodes {
+				if string(n.StableID) == tn.stealBy {
+					n.Name = "vault." + tn.suffix + "."
+					tn.control.UpdateNode(n)
+				}
+			}
+		}
 		rw.WriteHeader(http.StatusOK)
 	default:
 		fail(http.StatusNotFound, "not found")
@@ -679,13 +690,13 @@ func TestG5TailnetForwardUndoSteps(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				w, tn := newTailnetWorld(t)
 				sidecar := sidecarID(t)
-				// The target's rename to the name refused; the sidecar may
-				// take it back.
-				tn.set(func(tn *tailnetEnv) { tn.refuse, tn.refuseExcept, tn.downAfterRefusal = "vault", sidecar, c.down })
+				// The control plane fails the target's rename to the name;
+				// the sidecar may take it back.
+				tn.set(func(tn *tailnetEnv) { tn.failName, tn.failExcept, tn.downAfterFail = "vault", sidecar, c.down })
 				if code := w.run("tailnet forward " + c.step); code != -1 {
 					t.Fatalf("not killed at %s: %d\n%s", c.step, code, w.outputs[len(w.outputs)-1])
 				}
-				tn.set(func(tn *tailnetEnv) { tn.refuse, tn.refuseExcept, tn.downAfterRefusal, tn.down = "", "", false, false })
+				tn.set(func(tn *tailnetEnv) { tn.failName, tn.failExcept, tn.downAfterFail, tn.down = "", "", false, false })
 				if abort {
 					if code := w.run("", "--abort"); code != 0 {
 						t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
@@ -758,7 +769,11 @@ func TestG5TailnetUndoSlotSteps(t *testing.T) {
 // journals (the sidecar's rename to the name refused): --resume hands the
 // name back again and rolls back; --abort leaves it with Go.
 func TestG5TailnetRollbackUndoSteps(t *testing.T) {
-	for _, step := range []string{"undoing", "undone"} {
+	for _, c := range []struct {
+		step string
+		down bool
+	}{{"undoing", false}, {"undone", false}, {"undo-pending", true}} {
+		step := c.step
 		for _, abort := range []bool{false, true} {
 			name := step + map[bool]string{false: ", resumed", true: ", aborted"}[abort]
 			t.Run(name, func(t *testing.T) {
@@ -767,13 +782,13 @@ func TestG5TailnetRollbackUndoSteps(t *testing.T) {
 				if code := w.run(""); code != 0 {
 					t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
 				}
-				// The sidecar's rename to the name refused; Go's node may take
-				// it back.
-				tn.set(func(tn *tailnetEnv) { tn.refuse, tn.refuseNode = "vault", sidecar })
+				// The control plane fails the sidecar's rename to the name;
+				// Go's node may take it back.
+				tn.set(func(tn *tailnetEnv) { tn.failName, tn.failNode, tn.downAfterFail = "vault", sidecar, c.down })
 				if code := w.rollback("tailnet rollback "+step, "--rollback"); code != -1 {
 					t.Fatalf("not killed at %s: %d\n%s", step, code, w.outputs[len(w.outputs)-1])
 				}
-				tn.set(func(tn *tailnetEnv) { tn.refuse, tn.refuseNode = "", "" })
+				tn.set(func(tn *tailnetEnv) { tn.failName, tn.failNode, tn.downAfterFail, tn.down = "", "", false, false })
 				if abort {
 					if code := w.rollback("", "--abort"); code != 0 {
 						t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
@@ -794,4 +809,92 @@ func TestG5TailnetRollbackUndoSteps(t *testing.T) {
 			})
 		}
 	}
+}
+
+// A third device takes the name the sidecar freed, so the target's rename
+// is really refused and the undo cannot give the name back: the migration
+// stops (exit 1), naming the device and the operator's step, the
+// installations closed. Once the operator renames that device away,
+// --resume finishes the undo and moves the name again.
+func TestG5TailnetAThirdDeviceTakesTheName(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	w, tn := newTailnetWorld(t)
+	sidecar := sidecarID(t)
+	laptop := &tsnet.Server{Dir: t.TempDir(), Hostname: "laptop", ControlURL: tn.control.BaseURL(), AuthKey: "g5-laptop", Logf: logger.Discard}
+	t.Cleanup(func() { _ = laptop.Close() })
+	st, err := laptop.Up(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tn.set(func(tn *tailnetEnv) { tn.stealFrom, tn.stealBy = sidecar, string(st.Self.ID) })
+	if code := w.run(""); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "another device holds it now") {
+		t.Fatalf("a taken name: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if s, d := w.phases(); s != "transfer" || d != "transfer" {
+		t.Fatalf("the journals: %s / %s", s, d)
+	}
+	if tn.names()[string(st.Self.ID)] != "vault" {
+		t.Fatalf("names %v", tn.names())
+	}
+	// The operator renames the laptop away.
+	tn.set(func(tn *tailnetEnv) {
+		tn.stealFrom = ""
+		for _, n := range tn.control.AllNodes() {
+			if n.StableID == st.Self.ID {
+				n.Name = "laptop." + tn.suffix + "."
+				tn.control.UpdateNode(n)
+			}
+		}
+	})
+	if code := w.run("", "--resume"); code != 0 {
+		t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.useState()
+	w.expect("resumed", "open", "open", "target-open", "migrated-out")
+	w.tailnetAt(t, tn, sidecar, "target")
+	w.noSecrets()
+}
+
+// A completed reverse, then --finish --delete-old-data, then a new
+// migration to the same target: Go's node, held again under the reverse's
+// temporary name, takes the name over once more.
+func TestG5TailnetMigrateAgainAfterARollback(t *testing.T) {
+	w, tn := newTailnetWorld(t)
+	sidecar := sidecarID(t)
+	// --finish --delete-old-data's final archive of Go's copy goes to a
+	// bucket (its uploaded copy is then the only one).
+	w.withRemote()
+	if code := w.run(""); code != 0 {
+		t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if code := w.rollback("", "--rollback"); code != 0 {
+		t.Fatalf("the reverse: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.useState()
+	w.tailnetAt(t, tn, sidecar, "source")
+	rec := w.tailnetRecord(t)
+	rop, _ := rec["rollbackOperation"].(string)
+	if h := w.heldAs(); rop == "" || h != "vault-vl-"+rop+"-n" {
+		t.Fatalf("Go's node is not held again under the reverse's name: %q (operation %q)", h, rop)
+	}
+	given := w.extraArgs
+	w.extraArgs = nil // --finish takes no tailnet authority
+	code := w.runArgs("", w.finishArgs("--delete-old-data"))
+	w.extraArgs = given
+	if code != 0 {
+		t.Fatalf("--finish --delete-old-data: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	// The step the finish notice names: its final archive moved out of
+	// the data directory, which an import builds into empty only.
+	if err := os.Rename(filepath.Join(w.data, "backups"), filepath.Join(t.TempDir(), "backups")); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.run(""); code != 0 {
+		t.Fatalf("the new migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.useState()
+	w.expect("migrated again", "open", "open", "target-open", "migrated-out")
+	w.tailnetAt(t, tn, sidecar, "target")
+	w.noSecrets()
 }
