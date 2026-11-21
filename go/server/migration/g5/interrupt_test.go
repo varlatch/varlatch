@@ -402,10 +402,20 @@ func startService(bin, conf string) error {
 			return nil
 		}
 		if !alive(cmd.Process.Pid) {
-			return errors.New("varlatchd exited at start (service.log)")
+			return fmt.Errorf("varlatchd exited at start; service.log ends:\n%s", serviceLogTail())
 		}
 	}
-	return errors.New("varlatchd did not start within 30 s")
+	return fmt.Errorf("varlatchd did not start within 30 s; service.log ends:\n%s", serviceLogTail())
+}
+
+// serviceLogTail is the end of the target varlatchd's log, for a start
+// that failed (as kinds_test.go's tail).
+func serviceLogTail() string {
+	b, _ := os.ReadFile(state("service.log"))
+	if len(b) > 4000 {
+		b = b[len(b)-4000:]
+	}
+	return string(b)
 }
 
 func stopService() error {

@@ -311,11 +311,13 @@ func (e *HandoffError) Error() string {
 	case Switching:
 		return fmt.Sprintf("the handoff was interrupted while opening the incoming installation and its name, certificate or reach could not be verified again: the incoming installation may be open, so it is not undone (an undo would take the name from an open listener); close the incoming installation, or run a reverse handoff, or resume it once the check holds: %v", e.Err)
 	case UndoPending:
-		if gone := (*GoneError)(nil); errors.As(e.Err, &gone) {
-			return fmt.Sprintf("the handoff failed and its undo cannot give the name back: the device %s is no longer in the tailnet (deleted during the handoff), and neither installation is opened on the tailnet: %v", gone.ID, e.Err)
-		}
+		// A device holding the name is the operator's step, so it leads,
+		// even when the device the name was to go back to is gone too.
 		if errors.Is(e.Err, tailcontrol.ErrNameTaken) {
 			return fmt.Sprintf("the handoff failed and its undo could not give a name back: another device holds it now, and neither installation is opened on the tailnet. Rename or delete that device in the tailnet's admin console, then resume: %v", e.Err)
+		}
+		if gone := (*GoneError)(nil); errors.As(e.Err, &gone) {
+			return fmt.Sprintf("the handoff failed and its undo cannot give the name back: the device %s is no longer in the tailnet (deleted during the handoff), and neither installation is opened on the tailnet: %v", gone.ID, e.Err)
 		}
 		return fmt.Sprintf("the handoff failed and its undo could not finish: neither installation is opened on the tailnet (the serving one closed, or closing when the failure came first); resume it once the control plane answers: %v", e.Err)
 	default:
@@ -816,9 +818,37 @@ func (e *Engine) takeFreedName(ctx context.Context, s *State) (*State, error) {
 	sctx, cancel := context.WithDeadline(ctx, s.SwitchStarted.Add(orDefault(e.Deadline, DefaultDeadline)))
 	defer cancel()
 	if err := e.incomingSteps(sctx, s); err != nil {
-		return e.undoOrForward(ctx, s, fmt.Errorf("the dead node %s was deleted from the tailnet, and the restored node could not take its free name: %w", s.Plan.ServingID, err), false)
+		cause := fmt.Errorf("the dead node %s was deleted from the tailnet, and the restored node could not take its free name: %w", s.Plan.ServingID, err)
+		if errors.Is(err, tailcontrol.ErrNameTaken) {
+			// Another device took the freed name first: name it.
+			cause = fmt.Errorf("the dead node %s was deleted from the tailnet, and another device took its free name before the restored node could: %w", s.Plan.ServingID, err)
+			if holder, ok := e.holder(ctx, s.Plan.Name, s.Plan.IncomingID, nil); ok {
+				cause = fmt.Errorf("the dead node %s was deleted from the tailnet, and %s took its free name before the restored node could: %w", s.Plan.ServingID, holder, err)
+			}
+		}
+		return e.undoOrForward(ctx, s, cause, false)
 	}
 	return s, nil
+}
+
+// holder is the device other than except holding name: from devices when
+// it is there, else from a fresh listing.
+func (e *Engine) holder(ctx context.Context, name, except string, devices []tailcontrol.Device) (tailcontrol.Device, bool) {
+	find := func(ds []tailcontrol.Device) (tailcontrol.Device, bool) {
+		for _, d := range ds {
+			if d.ID != except && strings.EqualFold(d.Name, name) {
+				return d, true
+			}
+		}
+		return tailcontrol.Device{}, false
+	}
+	if d, ok := find(devices); ok {
+		return d, true
+	}
+	if again, err := e.Control.Devices(ctx); err == nil {
+		return find(again)
+	}
+	return tailcontrol.Device{}, false
 }
 
 // restoreName renames a device to name unless it is listed under it
@@ -840,17 +870,8 @@ func (e *Engine) restoreName(ctx context.Context, id, name string) error {
 	if errors.Is(err, tailcontrol.ErrNameTaken) {
 		// Another device took the name while it was free: say which, so
 		// the operator can rename or delete it.
-		for _, d := range devices {
-			if d.ID != id && strings.EqualFold(d.Name, name) {
-				return fmt.Errorf("%w: it is held by %s now", err, d)
-			}
-		}
-		if again, lerr := e.Control.Devices(ctx); lerr == nil {
-			for _, d := range again {
-				if d.ID != id && strings.EqualFold(d.Name, name) {
-					return fmt.Errorf("%w: it is held by %s now", err, d)
-				}
-			}
+		if d, ok := e.holder(ctx, name, id, devices); ok {
+			return fmt.Errorf("%w: it is held by %s now", err, d)
 		}
 	}
 	return err

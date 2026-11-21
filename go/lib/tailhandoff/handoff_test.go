@@ -917,14 +917,14 @@ func TestAThirdDeviceTakesTheFreedName(t *testing.T) {
 // restoreRig is a restore on Tailscale's API: the dead node "1", offline
 // for a day, under the name; the restored node "2" under its temporary
 // name.
-func restoreRig(t *testing.T) (*rig, tailhandoff.Plan) {
+func restoreRig(t *testing.T, extra ...tailcontroltest.Node) (*rig, tailhandoff.Plan) {
 	t.Helper()
 	const rop = "ssssssss25"
 	in, _ := tailcontrol.TempName("vault", rop, tailcontrol.RoleNew)
-	r := newRigWith(t, []tailcontroltest.Node{
+	r := newRigWith(t, append([]tailcontroltest.Node{
 		{ID: "1", NodeID: "nDead1", Name: "vault", LastSeen: time.Now().Add(-24 * time.Hour)},
 		{ID: "2", NodeID: "nNew2", Name: in, Online: true},
-	})
+	}, extra...))
 	p, err := tailhandoff.NewRestore(rop, "vault", "1", "2", false)
 	if err != nil {
 		t.Fatal(err)
@@ -997,6 +997,29 @@ func TestADeadNodeDeletedDuringTheSwitch(t *testing.T) {
 	}
 	if _, incoming := r.ep.state(); !incoming {
 		t.Error("the restored installation did not open")
+	}
+}
+
+// TestAThirdDeviceTakesTheNameADeletionFreed: the dead node's device is
+// deleted, and a laptop takes the name it freed before the restored node
+// can: the pending undo leads with the device that holds the name now,
+// and names it, as the operator's step is to rename it.
+func TestAThirdDeviceTakesTheNameADeletionFreed(t *testing.T) {
+	r, p := restoreRig(t, tailcontroltest.Node{ID: "3", NodeID: "nLaptop3", Name: "laptop", Online: true})
+	r.f.Delete("1")
+	r.f.SetName("3", "vault")
+	_, err := r.engine.Switch(ctx, p.Operation)
+	var he *tailhandoff.HandoffError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || !errors.Is(err, tailcontrol.ErrNameTaken) {
+		t.Fatalf("%v", err)
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "the handoff failed and its undo could not give a name back: another device holds it now") ||
+		!strings.Contains(msg, "the dead node 1 was deleted from the tailnet, and vault (3, online) took its free name before the restored node could") {
+		t.Fatalf("the message: %s", msg)
+	}
+	if n := r.names(); n["2"] != p.IncomingName || n["3"] != "vault" {
+		t.Errorf("names %v", n)
 	}
 }
 
