@@ -5,7 +5,8 @@
  * network and cosign are replaced; nothing here downloads anything.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -72,6 +73,47 @@ test("conformance.yml pairs go-binary with 0.22.4 and 0.23.0 and only lists CLIs
     if (cli !== "source" && cli !== "go") {
       assert.ok(Object.hasOwn(clientsJson.cli, cli), `conformance.yml cell ${opt} names CLI ${cli} missing from clients.json`);
     }
+  }
+  const chooseStep = wf.jobs.cells.steps.find((s) => s.id === "cells");
+  assert.ok(chooseStep?.run, "missing cells step script");
+  if (spawnSync("jq", ["--version"]).status === 0) {
+    const runCells = (cell) => {
+      const dir = mkdtempSync(join(tmpdir(), "conformance-cells-test-"));
+      try {
+        const out = join(dir, "output");
+        const summary = join(dir, "summary");
+        writeFileSync(out, "");
+        writeFileSync(summary, "");
+        const r = spawnSync("bash", ["-e", "-c", chooseStep.run], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: { ...process.env, CELL: cell, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: summary },
+        });
+        assert.equal(r.status, 0, `cells step failed for ${cell}: ${r.stderr}\n${r.stdout}`);
+        const outputs = Object.fromEntries(readFileSync(out, "utf8").trim().split("\n").map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+        return { stdout: r.stdout, summary: readFileSync(summary, "utf8"), outputs };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const allRun = runCells("all");
+    assert.equal(allRun.outputs.has_cells, "true");
+    const allMatrix = JSON.parse(allRun.outputs.matrix).include;
+    assert.ok(allMatrix.some((c) => c.target === "go-binary" && c.cli === "0.22.4"));
+    assert.ok(!allMatrix.some((c) => c.target === "go-binary" && c.cli === "0.23.0"));
+    assert.match(allRun.stdout, /::notice::Skipping go-binary x 0\.23\.0:/);
+    assert.match(allRun.summary, /Skipped `go-binary x 0\.23\.0`/);
+
+    const cutoverRun = runCells("go-binary x 0.22.4");
+    assert.equal(cutoverRun.outputs.has_cells, "true");
+    assert.equal(cutoverRun.outputs.images, "false");
+    assert.deepEqual(JSON.parse(cutoverRun.outputs.matrix).include, [{ target: "go-binary", cli: "0.22.4" }]);
+
+    const pendingRun = runCells("go-binary x 0.23.0");
+    assert.equal(pendingRun.outputs.has_cells, "false");
+    assert.equal(pendingRun.outputs.images, "false");
+    assert.deepEqual(JSON.parse(pendingRun.outputs.matrix).include, []);
+    assert.match(pendingRun.stdout, /::notice::Skipping go-binary x 0\.23\.0:/);
   }
 });
 

@@ -94,8 +94,8 @@ jobs:
           [ "$selected" != "[]" ] || { echo "::error::No cell is named $CELL."; exit 1; }
 
           missing=$(jq -r --slurpfile clients scripts/conformance/clients.json '
-            .[] | select(.cli != "source" and .cli != "go")
-            | select(($clients[0].cli | has(.cli)) | not)
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select(($clients[0].cli | has($cell.cli)) | not)
             | "\(.target) x \(.cli)"' <<< "$selected")
           if [ -n "$missing" ]; then
             while IFS= read -r m; do
@@ -105,9 +105,9 @@ jobs:
           fi
 
           skipped=$(jq -r --slurpfile clients scripts/conformance/clients.json '
-            .[] | select(.cli != "source" and .cli != "go")
-            | select($clients[0].cli[.cli] | has("pending"))
-            | "\(.target) x \(.cli)\t\($clients[0].cli[.cli].pending)"' <<< "$selected")
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select($clients[0].cli[$cell.cli] | has("pending"))
+            | "\(.target) x \(.cli)\t\($clients[0].cli[$cell.cli].pending)"' <<< "$selected")
           if [ -n "$skipped" ]; then
             while IFS=$'\t' read -r label reason; do
               echo "::notice::Skipping ${label}: ${reason}"
@@ -116,7 +116,7 @@ jobs:
           fi
 
           cells=$(jq -c --slurpfile clients scripts/conformance/clients.json '
-            [.[] | select(.cli == "source" or .cli == "go" or (($clients[0].cli[.cli] | has("pending")) | not))]' <<< "$selected")
+            [.[] | . as $cell | select(.cli == "source" or .cli == "go" or (($clients[0].cli[$cell.cli] | has("pending")) | not))]' <<< "$selected")
           jq -r '.[] | "\(.target) x CLI \(.cli)"' <<< "$cells"
           has_cells=$(jq 'length > 0' <<< "$cells")
           echo "matrix={\"include\":$cells}" >> "$GITHUB_OUTPUT"
