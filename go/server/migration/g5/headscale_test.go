@@ -44,7 +44,9 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+	registerCleanupDir(dir)
 	if hsCA, err = headscaletest.Trust(dir); err != nil {
+		_ = os.RemoveAll(dir)
 		panic(err)
 	}
 }
