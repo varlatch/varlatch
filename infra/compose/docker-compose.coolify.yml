@@ -1,11 +1,12 @@
 # GENERATED FILE — do not edit. Regenerate with `pnpm compose:generate`
 # from infra/compose/docker-compose.yml,
+#      infra/coolify/compose.overlay.yml,
 #      infra/coolify/compose.images.yml.
 
 # Coolify deployment without the Tailscale sidecar: the canonical contract
-# with the release's published images in place of `build:`, so Coolify runs
-# exactly the signed images. Assign the domain to varlatch-web port 80, as
-# infra/coolify/README.md describes.
+# with the Coolify-only deltas and the release's published images in place
+# of `build:`, so Coolify runs exactly the signed images. Assign the domain
+# to varlatch-web port 80, as infra/coolify/README.md describes.
 
 # The release's images, by digest (infra/coolify/compose.images.yml), from
 # the release's coolify-image-digests.env; a deploy without them stops:
@@ -100,7 +101,7 @@ services:
       # limits and the device sign-in confirmation see each caller's own
       # address: the dashboard's nginx here; each ingress overlay adds its
       # TLS proxy. Your own reverse proxy in front: add its name or address.
-      VARLATCH_TRUSTED_PROXIES: ${VARLATCH_TRUSTED_PROXIES:-varlatch-web}
+      VARLATCH_TRUSTED_PROXIES: ${VARLATCH_TRUSTED_PROXIES:-varlatch-web,coolify-proxy}
       # Private destinations Organizations may reach (webhooks, Coolify,
       # Convex, OIDC issuers): host names, *.suffixes, addresses and CIDR
       # ranges, each with an optional port, comma-separated. Unset: public
@@ -166,6 +167,11 @@ services:
     depends_on:
       varlatchd:
         condition: service_healthy
+    # Explicit default-network membership: Coolify swaps the implicit default
+    # network for its own on services without a networks key, which separates
+    # web from the sidecar's `varlatchd` alias (nginx: host not found).
+    networks:
+      - default
     image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatch-web@${VARLATCH_WEB_DIGEST:?set VARLATCH_WEB_DIGEST to the release's varlatch-web digest (coolify-image-digests.env)}
 
   # Application Plane backend (ADR-0005): non-authoritative; its admin key is
@@ -207,6 +213,12 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    # Same reason: Convex fetches varlatchd's JWKS at its fixed name
+    # (http://varlatchd:8686, the alias on the default network). Without this,
+    # Convex sits only on Coolify's network and resolves just the legacy
+    # `tailscale` name, so `varlatch adopt` cannot move trust to varlatchd.
+    networks:
+      - default
 
   # One-shot Application Plane reconciliation (ADR-0035 D3/D4): deploys the
   # functions and applies Convex's trust configuration only where they differ
@@ -215,7 +227,6 @@ services:
   # CONVEX_ADMIN_KEY where an existing installation still sets one.
   # Runs on first boot, upgrade, and repair: docker compose run --rm convex-deploy
   convex-deploy:
-    profiles: [ deploy ]
     environment:
       CONVEX_SELF_HOSTED_URL: http://convex-backend:3210
       CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_ADMIN_KEY:-}
@@ -229,6 +240,13 @@ services:
     depends_on:
       convex-backend:
         condition: service_healthy
+    # Deliberate divergence from the canonical file: no `profiles: [deploy]`,
+    # so every Coolify redeploy rebuilds and runs this one-shot and the
+    # Application Plane functions can never go stale against the web bundle
+    # (the v0.6.0 `mirror:listMine` incident). Nothing depends_on it: a failed
+    # function push must not take the already-running stack down — it
+    # surfaces in the deploy log instead.
+    restart: "no"
     image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatch-convex-deploy@${VARLATCH_CONVEX_DEPLOY_DIGEST:?set VARLATCH_CONVEX_DEPLOY_DIGEST to the release's convex-deploy digest (coolify-image-digests.env)}
 
 secrets:

@@ -26,6 +26,15 @@ for (const files of variants) {
   const unset = spawnSync('docker', ['compose', ...args, '--profile', 'deploy', 'config', '--quiet'], { env: { ...env, VARLATCH_PUBLIC_URL: '' }, encoding: 'utf8' });
   assert.notEqual(unset.status, 0, `${name}: starts without VARLATCH_PUBLIC_URL`);
   assert.match(unset.stderr, /VARLATCH_PUBLIC_URL/, `${name}: the refusal names the variable`);
+  if (name.includes('coolify')) {
+    // The Coolify-only deltas (infra/coolify/compose.overlay.yml), in both Coolify files.
+    assert.equal(config.services['convex-deploy'].profiles, undefined, `${name}: convex-deploy runs on every Coolify deploy`);
+    for (const service of ['varlatch-web', 'convex-backend']) {
+      assert(Object.keys(config.services[service].networks ?? {}).includes('default'), `${name}: ${service} joins the default network`);
+    }
+    assert.equal(config.services.varlatchd.environment.VARLATCH_TRUSTED_PROXIES, 'varlatch-web,coolify-proxy', `${name}: varlatchd trusts Coolify's proxy`);
+    assert(!Object.values(config.services).some(s => s.build), `${name}: nothing builds from the checkout`);
+  }
   if (config.services.tailscale) {
     // varlatchd shares the sidecar's network namespace: Docker refuses published
     // ports there, and web/Convex reach it only through the sidecar's alias.

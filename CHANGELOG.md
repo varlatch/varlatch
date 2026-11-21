@@ -69,6 +69,10 @@ describes.
   ([Deploying on Coolify](infra/coolify/README.md#upgrades)). A resource
   that deploys the canonical `docker-compose.yml` switches its Docker
   Compose Location to `docker-compose.coolify.yml` in the same upgrade.
+  That file carries the Coolify settings the Tailscale one has: varlatchd
+  trusts `coolify-proxy` as well as the dashboard, the dashboard and Convex
+  join the default network explicitly, and `convex-deploy` runs on every
+  deploy.
 - Audit consumers that list the event types they accept: add
   `installation.migrated`.
 

@@ -94,6 +94,11 @@ Never public: PostgreSQL, `varlatch-migrate`, the Convex dashboard.
 
    They are the same digests the release's `varlatch-release.json` pins.
    A deploy without one stops before anything starts, naming the variable.
+   Keep `VARLATCH_IMAGE_REGISTRY` at the release's own repository
+   (`ghcr.io/varlatch`): with a mirror, the images are not pulled from the
+   repository the release was signed for, and a later `varlatch migrate`
+   refuses the installation, since it starts only from the published
+   `ghcr.io/varlatch/varlatchd` image.
    Set them again for every release, together with the repository ref
    ([Upgrades](#upgrades)).
 
@@ -276,6 +281,9 @@ none of, so its release consistency stays unknown there.)
 **From the canonical file** (`docker-compose.yml`, which builds from the
 checkout): switch the Docker Compose Location to
 `docker-compose.coolify.yml` in the same upgrade, with the four variables
-set. Nothing else changes: the services, volumes and networks are the
-same, only their images come from the release. `varlatch migrate` refuses
-an installation whose images were built locally.
+set. The services and volumes stay the same; the images come from the
+release, and the Coolify-only deltas of `infra/coolify/compose.overlay.yml`
+apply as in the Tailscale file: `convex-deploy` runs on every deploy, the
+dashboard and Convex join the default network explicitly, and varlatchd
+trusts `coolify-proxy`. `varlatch migrate` refuses an installation whose
+images were built locally.

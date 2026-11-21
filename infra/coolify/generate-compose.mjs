@@ -11,6 +11,7 @@
  *     infra/coolify/compose.images.yml           the release's images by digest
  *   infra/compose/docker-compose.coolify.yml, from
  *     infra/compose/docker-compose.yml
+ *     infra/coolify/compose.overlay.yml
  *     infra/coolify/compose.images.yml
  *
  * Coolify deploys exactly one Compose file, so the Tailscale variant used to
@@ -43,7 +44,7 @@ export const INPUTS = [
   "infra/coolify/compose.images.yml",
 ];
 export const OUTPUT = "infra/compose/docker-compose.coolify-tailscale.yml";
-export const PUBLIC_INPUTS = ["infra/compose/docker-compose.yml", "infra/coolify/compose.images.yml"];
+export const PUBLIC_INPUTS = ["infra/compose/docker-compose.yml", "infra/coolify/compose.overlay.yml", "infra/coolify/compose.images.yml"];
 export const PUBLIC_OUTPUT = "infra/compose/docker-compose.coolify.yml";
 
 /** The release's images, as Coolify variables (infra/coolify/compose.images.yml). */
@@ -87,9 +88,9 @@ ${IMAGE_VARIABLES}`;
 const PUBLIC_HEADER = `${generatedFrom(PUBLIC_INPUTS)}
 
  Coolify deployment without the Tailscale sidecar: the canonical contract
- with the release's published images in place of \`build:\`, so Coolify runs
- exactly the signed images. Assign the domain to varlatch-web port 80, as
- infra/coolify/README.md describes.
+ with the Coolify-only deltas and the release's published images in place
+ of \`build:\`, so Coolify runs exactly the signed images. Assign the domain
+ to varlatch-web port 80, as infra/coolify/README.md describes.
 ${IMAGE_VARIABLES}`;
 
 const RESET = "!reset";
@@ -157,6 +158,23 @@ export const FILES = [
   { output: PUBLIC_OUTPUT, inputs: PUBLIC_INPUTS, header: PUBLIC_HEADER, tailscale: false },
 ];
 
+/**
+ * The Coolify-only deltas (compose.overlay.yml) hold in every Coolify file:
+ * convex-deploy runs on every deploy (no profile), the dashboard and Convex
+ * join the default network explicitly, and varlatchd trusts Coolify's proxy.
+ */
+export function checkCoolifyDeltas(text, output) {
+  const services = parseDocument(text).toJS().services ?? {};
+  if (services["convex-deploy"]?.profiles?.length) throw new Error(`${output}: convex-deploy has a profile, so a Coolify redeploy would not run it`);
+  for (const name of ALIAS_CONSUMERS) {
+    const networks = services[name]?.networks;
+    const joined = Array.isArray(networks) ? networks.includes("default") : Boolean(networks && "default" in networks);
+    if (!joined) throw new Error(`${output}: ${name} must join the default network explicitly on Coolify`);
+  }
+  const trusted = services.varlatchd?.environment?.VARLATCH_TRUSTED_PROXIES;
+  if (trusted !== "${VARLATCH_TRUSTED_PROXIES:-varlatch-web,coolify-proxy}") throw new Error(`${output}: varlatchd trusts ${trusted}, not Coolify's proxy`);
+}
+
 /** Every build: block is gone: Coolify runs the published images only. */
 export function checkNoBuild(text, output) {
   for (const [name, service] of Object.entries(parseDocument(text).toJS().services ?? {})) {
@@ -216,6 +234,7 @@ function main() {
   for (const { output, inputs, header, tailscale } of FILES) {
     const generated = generate(inputs, header);
     if (tailscale) checkAliasReachability(generated);
+    checkCoolifyDeltas(generated, output);
     checkNoBuild(generated, output);
     const outPath = join(ROOT, output);
     if (args.includes("--check")) {
