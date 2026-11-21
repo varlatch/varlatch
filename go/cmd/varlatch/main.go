@@ -13,10 +13,14 @@ import (
 	"strings"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/lib/keyenv"
 )
 
 func main() {
+	// What a self-update on Windows left beside this binary (the old one,
+	// renamed aside while it ran) goes now that it no longer runs.
+	selfupdate.CleanUp()
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 

@@ -29,11 +29,26 @@ export function ephemeralRange(read = () => readFileSync("/proc/sys/net/ipv4/ip_
   return [32768, 60999];
 }
 
-/** The range ports are picked from: below the ephemeral range, above the well-known services. */
-export function pickRange([ephemeralLow] = ephemeralRange()) {
+/** The fixed range ports are picked from when neither side of the ephemeral range has room. */
+export const FALLBACK_RANGE = [20000, 21999];
+
+/** The fewest ports a range below or above the ephemeral range must hold. */
+const MIN_ROOM = 500;
+
+/**
+ * The range ports are picked from: below the ephemeral range, above the
+ * well-known services (1024). An ephemeral range that starts too low for
+ * that (at 1025, there is no room at all) leaves the room above it, when
+ * it ends low enough; else FALLBACK_RANGE, which may overlap the ephemeral
+ * range (the race reservePort avoids returns, only rarely). Always a valid
+ * range: low <= high, both unprivileged.
+ */
+export function pickRange([ephemeralLow, ephemeralHigh = 65535] = ephemeralRange()) {
   const high = ephemeralLow - 1;
   const low = Math.min(20000, Math.max(1024, high - 2000));
-  return [low, high];
+  if (high - low + 1 >= MIN_ROOM) return [low, high];
+  if (65535 - ephemeralHigh >= MIN_ROOM) return [ephemeralHigh + 1, Math.min(65535, ephemeralHigh + 2000)];
+  return [...FALLBACK_RANGE];
 }
 
 function bindable(port) {

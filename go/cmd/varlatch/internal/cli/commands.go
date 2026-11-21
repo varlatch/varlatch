@@ -60,7 +60,7 @@ var commands = []command{
 	{name: "doctor", slice: "step 6", partial: doctorCommand},
 	{name: "version", slice: "5.1a", run: versionCommand},
 	{name: "--version", slice: "5.1a", run: versionCommand},
-	{name: "self-update", slice: "step 6"},
+	{name: "self-update", slice: "step 6", partial: selfUpdateCommand},
 	{name: "upgrade", slice: "step 6"},
 }
 
