@@ -98,6 +98,10 @@ func migrationOpen(dir, id, what string) error {
 		return fmt.Errorf("the data directory's journal is the migration %s, not %s", h.ID, id)
 	case h.Phase != "open" && !slices.Contains(reversing, h.Phase):
 		return fmt.Errorf("the migration %s is in phase %s: its reverse starts from an open migration", h.ID, h.Phase)
+	case h.Phase == "open" && h.WindowEnded != nil:
+		// Upgrading to a release that ends the window recorded it: no
+		// reverse starts from this installation's data.
+		return fmt.Errorf("the migration %s's rollback window ended with the upgrade to varlatchd %s: its reverse does not start", h.ID, h.WindowEnded.Release)
 	}
 	return nil
 }
