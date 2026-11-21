@@ -292,12 +292,17 @@ func varlatchdEnviron(r *Run) []string {
 
 // hostCredentials: the unit hands varlatchd its keys as credentials
 // (CREDENTIALS_DIRECTORY); a host command run as root, outside the unit,
-// finds them where setup wrote them, beside the configuration. So
-// CREDENTIALS_DIRECTORY is the configuration's directory when the run set
-// none and the Root KEK is there (a person who may not look there gets
-// none, and varlatchd says what it lacks). Only a directory's name: no
-// key goes into the environment.
-func hostCredentials(env []string, config string) []string {
+// finds them where setup wrote them, beside the configuration. So for a
+// run as root (root), CREDENTIALS_DIRECTORY is the configuration's
+// directory when the run set none and the Root KEK is there; varlatchd
+// admin applies the same rule itself (config.HostEnv). Not for another
+// user: /etc/varlatch is 0750 root:varlatch, so a member of the varlatch
+// group can see that root-kek is there, though not read it. Only a
+// directory's name: no key goes into the environment.
+func hostCredentials(env []string, config string, root bool) []string {
+	if !root {
+		return env
+	}
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "CREDENTIALS_DIRECTORY=") {
 			return env

@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -86,12 +87,14 @@ func Refusal(environ []string, keys ...Key) string {
 	return ""
 }
 
-// Configured are the keys a varlatchd configuration file names
-// (root_kek_file, backup_key_file), each read when this process can read
-// it: the CLI's view of them. A key it cannot read or parse is left out;
-// so is everything when the configuration cannot be read. Clear each
-// Bytes after use.
-func Configured(confPath string) []Key {
+// Configured are the keys a varlatchd configuration file loads: those it
+// names (root_kek_file, backup_key_file) and, for one it names none for,
+// credentialsDir's (root-kek, backup-key: the credentials directory, as
+// the configuration takes it; "" for none), each read when this process
+// can read it: the CLI's view of them. A key it cannot read or parse is
+// left out; so is everything when the configuration cannot be read. Clear
+// each Bytes after use.
+func Configured(confPath, credentialsDir string) []Key {
 	f, err := os.Open(confPath)
 	if err != nil {
 		return nil
@@ -113,8 +116,11 @@ func Configured(confPath string) []Key {
 	}
 	_ = f.Close()
 	var keys []Key
-	read := func(name, what string, parse func(string) ([]byte, error)) {
+	read := func(name, credential, what string, parse func(string) ([]byte, error)) {
 		path := files[name]
+		if path == "" && credentialsDir != "" {
+			path = filepath.Join(credentialsDir, credential)
+		}
 		if path == "" {
 			return
 		}
@@ -128,7 +134,7 @@ func Configured(confPath string) []Key {
 			keys = append(keys, Key{what, key})
 		}
 	}
-	read("root_kek_file", RootKEK, envelope.ParseRootKEK)
-	read("backup_key_file", BEK, backup.ParseKey)
+	read("root_kek_file", "root-kek", RootKEK, envelope.ParseRootKEK)
+	read("backup_key_file", "backup-key", BEK, backup.ParseKey)
 	return keys
 }

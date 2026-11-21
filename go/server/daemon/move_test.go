@@ -248,4 +248,8 @@ func TestConfigCheck(t *testing.T) {
 	if code, _, errOut := runAdmin(t, "config", "check", "--config", in.conf); code != ExitConfig || !strings.Contains(errOut, "is not valid") {
 		t.Fatalf("an invalid configuration: %d %q", code, errOut)
 	}
+	// What setup asks before it starts the unit: no other word.
+	if code, _, errOut := runAdmin(t, "config", "check", "extra", "--config", in.conf); code != 64 || !strings.Contains(errOut, "Usage: varlatchd admin config check") {
+		t.Fatalf("usage: %d %q", code, errOut)
+	}
 }

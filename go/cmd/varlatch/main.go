@@ -72,7 +72,7 @@ func imageRefusal() string {
 	if os.Getenv(keyenv.ImageMarker) == "" {
 		return ""
 	}
-	keys := keyenv.Configured(imageConfig)
+	keys := keyenv.Configured(imageConfig, os.Getenv("CREDENTIALS_DIRECTORY"))
 	why := keyenv.Refusal(os.Environ(), keys...)
 	for _, k := range keys {
 		clear(k.Bytes)
