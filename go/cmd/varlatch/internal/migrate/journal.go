@@ -108,8 +108,11 @@ type Journal struct {
 	// Rollback is the reverse migration's record (the last one begun).
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	// Finish is --finish's record.
-	Finish  *FinishRecord `json:"finish,omitempty"`
-	History []Step        `json:"history"`
+	Finish *FinishRecord `json:"finish,omitempty"`
+	// Tailnet is the tailnet handoff's (tailnet.go), when the source
+	// serves a tailnet address.
+	Tailnet *TailnetRecord `json:"tailnet,omitempty"`
+	History []Step         `json:"history"`
 }
 
 // RollbackRecord is a reverse migration's: Go's barrier, the reverse

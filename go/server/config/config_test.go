@@ -362,6 +362,26 @@ func TestParsePublicHTTPS(t *testing.T) {
 	}
 }
 
+// TestBackupKeyCredential: without backup_key_file, the unit's backup-key
+// credential is the backup key when it exists, as the root-kek
+// credential is the Root KEK; without one, no scheduled backup.
+func TestBackupKeyCredential(t *testing.T) {
+	dir := t.TempDir()
+	c, err := Parse(strings.NewReader(""), env(map[string]string{"CREDENTIALS_DIRECTORY": dir}))
+	if err != nil || c.BackupKeyFile != "" || c.RootKEKFile != filepath.Join(dir, "root-kek") {
+		t.Fatalf("no backup-key credential: %+v %v", c, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "backup-key"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = Parse(strings.NewReader(""), env(map[string]string{"CREDENTIALS_DIRECTORY": dir})); err != nil || c.BackupKeyFile != filepath.Join(dir, "backup-key") {
+		t.Errorf("the backup-key credential: %+v %v", c, err)
+	}
+	if c, err = Parse(strings.NewReader("backup_key_file = /etc/bek\n"), env(map[string]string{"CREDENTIALS_DIRECTORY": dir})); err != nil || c.BackupKeyFile != "/etc/bek" {
+		t.Errorf("backup_key_file wins: %+v %v", c, err)
+	}
+}
+
 func TestServeCLI(t *testing.T) {
 	for file, want := range map[string]bool{
 		"root_kek_file = /k\n":                  false,

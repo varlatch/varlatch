@@ -96,6 +96,9 @@ type Engine struct {
 	BEK []byte
 	// Prober asks the public URL which installation serves it.
 	Prober Prober
+	// Tailnet is the tailnet handoff's authority (tailnet.go); nil when
+	// the source serves no tailnet address.
+	Tailnet *TailnetOptions
 	// pin replaces the published image's (the tests' fakes only).
 	pin *imagePin
 	// sleep waits between probes (time.Sleep; the tests' clock).
@@ -261,6 +264,9 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 		return j, err
 	}
 	if err := e.preflight(ctx, j); err != nil {
+		return j, err
+	}
+	if err := e.prepareTailnet(ctx, j); err != nil {
 		return j, err
 	}
 	report, err := e.dryRun(ctx, j)
@@ -476,7 +482,7 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 	r := &DryRunReport{At: checked.UTC().Format(time.RFC3339Nano), ExportMs: exportedAt.Sub(start).Milliseconds(),
 		ImportMs: imported.Sub(exportedAt).Milliseconds(), CheckMs: checked.Sub(imported).Milliseconds(),
 		DrainMs: e.drain().Milliseconds(), MaxDowntimeMs: e.maxDowntime().Milliseconds(), Copy: cp, Checks: &checks,
-		TransferMs: transferEstimate(j.Ingress).Milliseconds(), Ingress: j.Ingress}
+		TransferMs: (transferEstimate(j.Ingress) + tailnetEstimate(j.Tailnet)).Milliseconds(), Ingress: j.Ingress}
 	r.ProjectedMs = r.DrainMs + r.ExportMs + r.ImportMs + r.CheckMs + r.TransferMs
 	r.Fits = r.ProjectedMs <= r.MaxDowntimeMs
 	j.DryRun = r
@@ -573,6 +579,9 @@ func (e *Engine) cutover(ctx context.Context, j *Journal) (*Journal, error) {
 		return j, e.undo(ctx, j, err)
 	}
 	if err := e.transfer(ctx, j); err != nil {
+		return j, err
+	}
+	if err := e.switchTailnet(ctx, j); err != nil {
 		return j, err
 	}
 	return j, e.switchAndOpen(ctx, j)
@@ -712,7 +721,17 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	}
 	var problems []error
 	if from == Transfer {
-		problems = append(problems, e.returnAddress(ctx, j)...)
+		// The tailnet name first, then the address (decision 12's reverse
+		// order); an address is never given back while the name is not.
+		if err := e.unwindTailnet(ctx, j); errors.Is(err, ErrAwaitingOperator) {
+			// The operator's step first (exit 75); --resume goes on with
+			// the undo.
+			return fmt.Errorf("%w; undoing waits: %w", cause, err)
+		} else if err != nil {
+			problems = append(problems, err)
+		} else {
+			problems = append(problems, e.returnAddress(ctx, j)...)
+		}
 	}
 	released := false
 	g, err := e.Source.Gate(ctx)
@@ -822,6 +841,9 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	case j.Phase == Transfer:
 		e.say("The migration %s is transferring its address: the public URL is checked again.", j.ID)
 		if err := e.transfer(ctx, j); err != nil {
+			return j, err
+		}
+		if err := e.switchTailnet(ctx, j); err != nil {
 			return j, err
 		}
 		return j, e.switchAndOpen(ctx, j)

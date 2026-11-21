@@ -26,6 +26,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
+	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
 // The target's side of `varlatch migrate` (internal docs/design/
@@ -310,10 +311,53 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		MigrationGate bool   `json:"migrationGate"`
 		Barrier       string `json:"barrier,omitempty"`
 		Running       bool   `json:"running"`
+		// Tailnet is the tailnet listener's settings and its node's handoff
+		// state (go-step7 decision 11), null when tailnet = off.
+		Tailnet *tailnetState `json:"tailnet"`
 	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https,
-		gerr != nil || (gate != nil && gate.Kind == "migration" && gate.Phase == "transfer"), barrierPhase(gate), running})
+		gerr != nil || (gate != nil && gate.Kind == "migration" && gate.Phase == "transfer"), barrierPhase(gate), running, readTailnetState(cfg)})
 	fmt.Fprintln(stdout, string(out))
 	return ExitOK
+}
+
+// tailnetState is `admin migrate state`'s tailnet: what `varlatch migrate`
+// plans the handoff from. Never the auth key, only whether its file holds
+// one.
+type tailnetState struct {
+	Hostname   string   `json:"hostname"`
+	Tags       []string `json:"tags"`
+	HTTPSPort  int      `json:"httpsPort"`
+	AuthKey    bool     `json:"authKey"`
+	Enrolled   bool     `json:"enrolled"`
+	HeldAs     string   `json:"heldAs"`
+	PinnedTo   string   `json:"pinnedTo"`
+	HoldBroken bool     `json:"holdBroken,omitempty"`
+}
+
+func readTailnetState(cfg *config.Config) *tailnetState {
+	t := cfg.Tailnet
+	if t == nil {
+		return nil
+	}
+	st := &tailnetState{Hostname: t.Hostname, Tags: t.Tags, HTTPSPort: t.HTTPSPort}
+	if t.AuthKeyFile != "" {
+		if b, err := os.ReadFile(t.AuthKeyFile); err == nil {
+			st.AuthKey = len(bytes.TrimSpace(b)) > 0
+			clear(b)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, tailnet.StateDir, "tailscaled.state")); err == nil {
+		st.Enrolled = true
+	}
+	if h, err := tailnet.LoadHold(cfg.DataDir); err != nil {
+		st.HoldBroken = true
+	} else if h != nil {
+		st.HeldAs = h.Hostname
+	}
+	if p, err := tailnet.LoadPin(filepath.Join(cfg.DataDir, tailnet.PinFile)); err == nil && p != nil && !p.Enrolling {
+		st.PinnedTo = p.Suffix
+	}
+	return st
 }
 
 // barrierPhase is a reverse migration's barrier's phase, "" for none.
@@ -416,7 +460,9 @@ func runMigrateDiscard(cfg *config.Config, a migrateArgs, stdout io.Writer, fail
 // Backup Encryption Key when given, written to the target's key files
 // (root_kek_file, backup_key_file; mode 0600, owned by the caller), on
 // stdin as {"rootKek": "<the file's bytes, base64>", "bek": "<the same>"}
-// (decision 9: the same keys, never a rotation). Each is checked first: a
+// (decision 9: the same keys, never a rotation), and the new tailnet node's
+// auth key when given ("tailnetAuthKey", into tailnet_auth_key_file: the
+// handoff enrols the node with it). Each is checked first: a
 // Root KEK as varlatchd reads one, a BEK as its backups read one, distinct
 // from the Root KEK. A key file that is already there must hold the same
 // key; another is refused. Nothing of a key is printed.
@@ -427,8 +473,9 @@ func runMigrateKeys(cfg *config.Config, stdin io.Reader, stdout io.Writer, fail 
 	}
 	defer clear(raw)
 	var in struct {
-		RootKEK []byte `json:"rootKek"`
-		BEK     []byte `json:"bek"`
+		RootKEK        []byte `json:"rootKek"`
+		BEK            []byte `json:"bek"`
+		TailnetAuthKey []byte `json:"tailnetAuthKey"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -437,6 +484,10 @@ func runMigrateKeys(cfg *config.Config, stdin io.Reader, stdout io.Writer, fail 
 	}
 	defer clear(in.RootKEK)
 	defer clear(in.BEK)
+	defer clear(in.TailnetAuthKey)
+	if len(in.TailnetAuthKey) > 0 && (cfg.Tailnet == nil || cfg.Tailnet.AuthKeyFile == "") {
+		return fail(ExitConfig, "a tailnet auth key was given and the configuration names no tailnet_auth_key_file (tailnet = on); nothing was written")
+	}
 	kek, err := envelope.ParseRootKEK(string(in.RootKEK))
 	if err != nil {
 		return fail(ExitFailure, "the source's Root KEK is not one varlatchd reads: %v; nothing was written", err)
@@ -473,6 +524,19 @@ func runMigrateKeys(cfg *config.Config, stdin io.Reader, stdout io.Writer, fail 
 			return fail(ExitFailure, "the target's Backup Encryption Key file %s: %v; nothing was written", cfg.BackupKeyFile, err)
 		}
 	}
+	// Said only when one was given: the answer is as before otherwise.
+	tailnetKeyState := ""
+	if len(in.TailnetAuthKey) > 0 {
+		trimmed := bytes.TrimSpace(in.TailnetAuthKey)
+		if tailnetKeyState, err = keyFileState(cfg.Tailnet.AuthKeyFile, trimmed, func(s string) ([]byte, error) {
+			if v := strings.TrimSpace(s); v != "" {
+				return []byte(v), nil
+			}
+			return nil, errors.New("empty")
+		}); err != nil {
+			return fail(ExitFailure, "the target's tailnet auth key file %s: %v; nothing was written", cfg.Tailnet.AuthKeyFile, err)
+		}
+	}
 	if kekState == "written" {
 		if err := writeKeyFile(cfg.RootKEKFile, in.RootKEK); err != nil {
 			return fail(ExitFailure, "the target's Root KEK file %s: %v", cfg.RootKEKFile, err)
@@ -483,10 +547,16 @@ func runMigrateKeys(cfg *config.Config, stdin io.Reader, stdout io.Writer, fail 
 			return fail(ExitFailure, "the target's Backup Encryption Key file %s: %v", cfg.BackupKeyFile, err)
 		}
 	}
+	if tailnetKeyState == "written" {
+		if err := writeKeyFile(cfg.Tailnet.AuthKeyFile, append(bytes.TrimSpace(in.TailnetAuthKey), '\n')); err != nil {
+			return fail(ExitFailure, "the target's tailnet auth key file %s: %v", cfg.Tailnet.AuthKeyFile, err)
+		}
+	}
 	out, _ := json.Marshal(struct {
-		RootKEK string `json:"rootKek"`
-		BEK     string `json:"bek"`
-	}{kekState, bekState})
+		RootKEK    string `json:"rootKek"`
+		BEK        string `json:"bek"`
+		TailnetKey string `json:"tailnetAuthKey,omitempty"`
+	}{kekState, bekState, tailnetKeyState})
 	fmt.Fprintln(stdout, string(out))
 	return ExitOK
 }

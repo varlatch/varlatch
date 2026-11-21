@@ -63,8 +63,12 @@ func commandHelp(command string) (string, bool) {
 	switch command {
 	case "admin":
 		return adminUsage, true
+	case "doctor":
+		return doctorUsage, true
 	case "move":
 		return moveUsage, true
+	case "setup":
+		return setupUsage, true
 	case "self-update":
 		return selfUpdateUsage, true
 	}

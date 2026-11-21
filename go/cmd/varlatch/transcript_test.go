@@ -235,12 +235,28 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = cli.AdminHelp + "\n"
 		}
 	},
+	// `varlatch help doctor` (and `doctor --help`, `doctor -h`) prints a
+	// Go installation's doctor, which varlatchd runs; the TypeScript usage
+	// is a Compose installation's (slice 6.5).
+	"doctor-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch doctor ") {
+			o.Stdout = cli.DoctorHelp + "\n"
+		}
+	},
 	// `varlatch help move` (and `move --help`, `move -h`) prints a Go
 	// installation's move (slice 6.9); the TypeScript usage is a Compose
 	// installation's. The recording's usage becomes the Go one.
 	"move-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
 		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch move ") {
 			o.Stdout = cli.MoveHelp + "\n"
+		}
+	},
+	// `varlatch help setup` (and `setup --help`, `setup -h`) prints a Go
+	// installation's setup; the TypeScript usage is a Compose
+	// installation's (slice 6.4a).
+	"setup-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch setup ") {
+			o.Stdout = cli.SetupHelp + "\n"
 		}
 	},
 	// `varlatch help self-update` (and `self-update --help`, `-h`) prints
