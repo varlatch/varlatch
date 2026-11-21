@@ -418,6 +418,7 @@ jobs:
           go vet -tags g9a ./...
           go vet -tags g5 ./server/migration/g5/
           go vet -tags headscale ./server/tailnet/...
+          go vet -tags "g5 headscale" ./server/migration/g5/
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -520,6 +521,18 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -tags headscale -run '^TestHeadscale' -v ./server/tailnet/
+
+      # G5's tailnet half on a self-hosted control server (step 7.5c c2;
+      # go/server/migration/g5/headscale_test.go): varlatch migrate moves
+      # the tailnet name on Headscale 0.29.7, its authority Headscale's API
+      # (a key expiring within the hour, expired by each run) or its CLI;
+      # the rollback gives it back; a handoff killed mid-switch is aborted
+      # (the name back) or resumed (open). No certificates.
+      - name: G5 on Headscale, the tailnet handoff on a self-hosted control server
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags "g5 headscale" -run '^TestG5Headscale' -v ./server/migration/g5/
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a

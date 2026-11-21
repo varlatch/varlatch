@@ -277,6 +277,11 @@ func runSidecar() int {
 	logtail.Disable()
 	srv := &tsnet.Server{Dir: state("sidecar"), Hostname: "vault", ControlURL: os.Getenv("G5_TAILNET_CONTROL"), AuthKey: "g5-sidecar",
 		AdvertiseTags: []string{"tag:varlatch"}, Logf: logger.Discard, UserLogf: logger.Discard}
+	if os.Getenv("G5_HEADSCALE") != "" {
+		// On Headscale (headscale_test.go): its tagged pre-auth key gives
+		// the node its tags, and it advertises none.
+		srv.AuthKey, srv.AdvertiseTags = os.Getenv("G5_SIDECAR_AUTHKEY"), nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	st, err := srv.Up(ctx)
@@ -369,9 +374,14 @@ func fakeDockerTailnet(args []string) (int, bool) {
 	switch {
 	case j == "compose config --no-interpolate --format json":
 		logCall(j)
+		sidecarEnv := map[string]any{"TS_STATE_DIR": "/var/lib/tailscale"}
+		if u := os.Getenv("G5_HEADSCALE"); u != "" {
+			// The operator's override: the sidecar logs in to Headscale.
+			sidecarEnv["TS_EXTRA_ARGS"] = "--login-server=" + u
+		}
 		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{
 			"varlatchd": map[string]any{"network_mode": "service:tailscale"},
-			"tailscale": map[string]any{"environment": map[string]any{"TS_STATE_DIR": "/var/lib/tailscale"}},
+			"tailscale": map[string]any{"environment": sidecarEnv},
 		}})
 		fmt.Println(string(out))
 		return 0, true

@@ -506,6 +506,9 @@ type world struct {
 	// secrets are a world's own, scanned for too (the tailnet's OAuth
 	// client secret and auth key).
 	secrets [][]byte
+	// beforeRun runs before every varlatch migrate (Headscale's world
+	// writes a new API key: each run expires its own).
+	beforeRun func()
 }
 
 // shared is built once: the binaries, the seed and its decision table.
@@ -525,11 +528,11 @@ const ownerFile = "g5-owner.pid"
 // process is gone: one killed (SIGKILL, or go test's -timeout panic) runs
 // none of its cleanup. Only this user's; a shared directory only when the
 // process its owner file names is dead; one without an owner file (a
-// scratch directory, or a run of a branch from before owner files) only
-// once it is older than abandonedAfter, longer than any G5 run, so a live
-// run's is never removed.
+// scratch directory, the Headscale cases' CA, or a run of a branch from
+// before owner files) only once it is older than abandonedAfter, longer
+// than any G5 run, so a live run's is never removed.
 func sweepAbandoned() {
-	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*"} {
+	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*", "g5-headscale-ca-*"} {
 		dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
 		for _, d := range dirs {
 			st, err := os.Lstat(d)
@@ -784,6 +787,9 @@ func (w *world) run(pause string, extra ...string) int {
 func (w *world) runArgs(pause string, args []string) int {
 	t := w.t
 	t.Helper()
+	if w.beforeRun != nil {
+		w.beforeRun()
+	}
 	log := filepath.Join(w.stateDir, "crashpoints.log")
 	_ = os.Remove(log)
 	cmd := exec.Command(shared.varlatch, args...)

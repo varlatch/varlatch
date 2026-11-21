@@ -67,6 +67,11 @@ const (
 // take its name from under it.
 const deadGrace = 5 * time.Minute
 
+// clockSkewLimit is how far the control plane's Date may be from this
+// host's clock: the dead node is judged by the control plane's, but one
+// more than this apart is refused, not trusted.
+const clockSkewLimit = time.Hour
+
 // Test hooks: Tailscale's API and its certificate (a crashpoint build's
 // gate, tailnethook_crashpoint.go, or the package's tests); and the kill
 // points, each journalled step's.
@@ -96,6 +101,12 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	t := cfg.Tailnet
 	if t == nil {
 		return fail("the tailnet listener is off (tailnet = off): there is no name to take over")
+	}
+	if t.ControlURL != "" {
+		// Its authority is Tailscale's OAuth client; a restore on a
+		// self-hosted control server (Headscale) is slice 7.5c's c4.
+		return fail("tailnet_control_url names a self-hosted control server (%s): take-name takes the name over on Tailscale's only, for now; nothing was done. "+
+			"Remove or rename the old node in Headscale (headscale nodes delete or rename), then varlatchd admin tailnet open and start varlatchd", t.ControlURL)
 	}
 	owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
@@ -299,6 +310,13 @@ func listedAt(ctx context.Context, cp tailcontrol.ControlPlane) ([]tailcontrol.D
 	if at.IsZero() {
 		return nil, time.Time{}, errors.New("the control plane's listing has no Date header (or one that does not parse): the old node's last-seen time is judged by the control plane's clock, never this host's; nothing was renamed")
 	}
+	// A Date far from this host's clock is not the control plane's own
+	// (something between rewrote it) or this host's clock is badly wrong:
+	// either way, neither can judge.
+	if now := time.Now(); at.Sub(now).Abs() > clockSkewLimit {
+		return nil, time.Time{}, fmt.Errorf("the control plane's listing is dated %s, and this host's clock says %s: more than %s apart, so one of them is wrong (a proxy rewriting the Date, or this host's clock); set this host's clock right, or reach the control plane directly, then run take-name again; nothing was renamed",
+			at.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339), clockSkewLimit)
+	}
 	return devices, at, nil
 }
 
@@ -365,7 +383,7 @@ func heldOperation(name, held string) string {
 // heldNode is the enrolled node, started in this process under its hold's
 // name.
 func heldNode(ctx context.Context, cfg *config.Config, hostname string) (*tailnet.TSNode, func(), error) {
-	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: filepath.Join(cfg.DataDir, tailnet.StateDir), Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags})
+	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: filepath.Join(cfg.DataDir, tailnet.StateDir), Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags, KeyTags: keyTags(cfg)})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -473,7 +491,7 @@ func (r probeResolver) Reaches(ctx context.Context, name, nodeID string) (bool, 
 		return false, err
 	}
 	defer os.RemoveAll(dir)
-	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(r.cfg), AuthKey: r.authKey, Tags: r.cfg.Tailnet.Tags}, name, nodeID, wait)
+	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(r.cfg), AuthKey: r.authKey, Tags: r.cfg.Tailnet.Tags, KeyTags: keyTags(r.cfg)}, name, nodeID, wait)
 	return res.Reaches, err
 }
 

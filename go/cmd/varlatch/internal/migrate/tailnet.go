@@ -42,8 +42,8 @@ import (
 // the operator's (O4: a Tailscale OAuth client with devices:core only),
 // given in a file, never an argument or the environment; so is the new
 // node's auth key, written to the target's tailnet_auth_key_file through
-// admin migrate keys. Tailscale only: Headscale support in varlatchd is
-// slice 7.5c.
+// admin migrate keys. On a self-hosted control server (Headscale), the
+// authority is Headscale's and there are no certificates (headscale.go).
 
 // TailnetInfo is a source's tailnet ingress.
 type TailnetInfo struct {
@@ -58,6 +58,9 @@ type TailnetInfo struct {
 	// HTTPS is the tailnet HTTPS overlay: Tailscale certificates follow
 	// the name.
 	HTTPS bool `json:"https"`
+	// ControlURL is the control server the sidecar logs in to (its
+	// --login-server, canonical); "" is Tailscale's.
+	ControlURL string `json:"controlUrl,omitempty"`
 }
 
 // TailnetSource is a source's tailnet side.
@@ -86,6 +89,9 @@ type TargetTailnet struct {
 	Enrolled  bool     `json:"enrolled"`
 	HeldAs    string   `json:"heldAs"`
 	PinnedTo  string   `json:"pinnedTo"`
+	// ControlURL is the target's tailnet_control_url (canonical); "" is
+	// Tailscale's.
+	ControlURL string `json:"controlUrl"`
 }
 
 // EnrolledNode is varlatchd admin tailnet enroll's answer.
@@ -113,7 +119,8 @@ type TailnetTarget interface {
 // migration has none (the source serves no tailnet address).
 type TailnetOptions struct {
 	// Control is the tailnet's control plane, built with the operator's
-	// OAuth client and the CLI's own *http.Client.
+	// authority (Tailscale's OAuth client, or Headscale's API key or CLI)
+	// and the CLI's own *http.Client.
 	Control tailcontrol.ControlPlane
 	// Deadline, UndoWait and RetryEvery are tailhandoff's (zero: its
 	// defaults).
@@ -121,6 +128,9 @@ type TailnetOptions struct {
 	// AcceptRollbackCertificate is tailhandoff's: a rollback after the old
 	// node's certificate ends needs a new one.
 	AcceptRollbackCertificate bool
+	// Server is the authority's server: Headscale's API URL (canonical,
+	// --headscale-url), cliAuthority(path) for its CLI, "" for Tailscale's.
+	Server string
 }
 
 // TailnetRecord is the handoff, as the journal holds it.
@@ -132,6 +142,12 @@ type TailnetRecord struct {
 	ServingID    string `json:"servingId"`
 	IncomingID   string `json:"incomingId"`
 	StableID     string `json:"stableId"`
+	// Control is the control plane's kind ("tailscale", "headscale") the
+	// handoff was planned on, and ControlServer its authority's server
+	// (TailnetOptions.Server); a run with another is refused
+	// (sameAuthority).
+	Control       string `json:"control,omitempty"`
+	ControlServer string `json:"controlServer,omitempty"`
 	// Handoff is the forward handoff's state; Reverse the one that undoes
 	// it, when it was done and the migration is undone before its switch;
 	// Rollback a reverse migration's (--rollback), under its own operation.
@@ -149,7 +165,7 @@ type TailnetRecord struct {
 
 // ErrNoTailnetAuthority is a source with a tailnet address and no
 // authority given.
-var ErrNoTailnetAuthority = errors.New("the source serves a tailnet address: the handoff needs the tailnet's authority (--tailscale-oauth-client-file, an OAuth client with the devices:core scope only) and the new node's auth key (--tailnet-auth-key-file)")
+var ErrNoTailnetAuthority = errors.New("the source serves a tailnet address: the handoff needs the tailnet's authority (--tailscale-oauth-client-file, an OAuth client with the devices:core scope only; on a self-hosted control server, --headscale-url with --headscale-api-key-file, a key expiring within the hour, or --headscale-cli) and the new node's auth key (--tailnet-auth-key-file)")
 
 // tailnetSides are the two sides' tailnet halves.
 func (e *Engine) tailnetSides() (TailnetSource, TailnetTarget, error) {
@@ -321,10 +337,13 @@ func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engin
 	// Every handoff needs the tailnet's authority: a run resumed without
 	// it is refused here, whoever asks, before anything is touched.
 	if e.Tailnet == nil || e.Tailnet.Control == nil {
-		return nil, fmt.Errorf("%w: the migration's tailnet handoff goes on with them (varlatch migrate --resume --tailscale-oauth-client-file <file> --tailnet-auth-key-file <file>)", ErrNoTailnetAuthority)
+		return nil, fmt.Errorf("%w: the migration's tailnet handoff goes on with them (varlatch migrate --resume with the authority and --tailnet-auth-key-file <file>)", ErrNoTailnetAuthority)
 	}
 	if j.Tailnet == nil {
 		return nil, errors.New("the journal records no tailnet handoff")
+	}
+	if err := sameAuthority(j.Tailnet, e.Tailnet); err != nil {
+		return nil, err
 	}
 	reverse := slot != slotForward
 	ts, tt, err := e.tailnetSides()
@@ -405,6 +424,14 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 		return fmt.Errorf("preflight: the source serves the tailnet address %s.%s, and the target's configuration has tailnet = off: set tailnet = on, tailnet_hostname = %s and its tags; nothing was done", info.Machine, info.Suffix, info.Machine)
 	case !strings.EqualFold(tn.Hostname, info.Machine):
 		return fmt.Errorf("preflight: the target's tailnet_hostname is %s, the source's node %s: the name moves as it is, so set tailnet_hostname = %s; nothing was done", tn.Hostname, info.Machine, info.Machine)
+	}
+	if err := checkControlPlane(e.Tailnet.Control.Kind(), e.Tailnet.Server, info, tn); err != nil {
+		return err
+	}
+	if err := sameAuthority(j.Tailnet, e.Tailnet); err != nil {
+		return fmt.Errorf("preflight: %w", err)
+	}
+	switch {
 	case info.HTTPS && tn.HTTPSPort == 0:
 		return errors.New("preflight: the source serves the tailnet browser endpoint over HTTPS (Tailscale certificates), and the target's configuration has no tailnet_https_port: set it; nothing was done")
 	case tn.Enrolled && tn.HeldAs == "" && (j.Tailnet == nil || j.Tailnet.Operation == ""):
@@ -471,6 +498,7 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 	}
 	rec.Name, rec.Suffix, rec.Operation, rec.Certificates = name, strings.ToLower(info.Suffix), op, info.HTTPS
 	rec.ServingID, rec.IncomingID, rec.StableID = serving[0].ID, incoming[0].ID, node.StableID
+	rec.Control, rec.ControlServer = e.Tailnet.Control.Kind(), e.Tailnet.Server
 	if rec.Handoff != nil && rec.Handoff.Phase != tailhandoff.Prepared {
 		// Only a handoff that changed nothing is prepared again.
 		return fmt.Errorf("preflight: the tailnet handoff %s is %s, not prepared: varlatch migrate --resume", op, rec.Handoff.Phase)
