@@ -23,6 +23,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/tailnet/closed"
 )
 
 // StatusNode is the part of a node the manager reads.
@@ -38,7 +39,7 @@ type DERPNode interface {
 
 // TagsDiffer is why tailnet access is closed while a node on a self-hosted
 // control server does not carry exactly tailnet_tags (RequireTags).
-const TagsDiffer = "tags-differ"
+const TagsDiffer = closed.TagsDiffer
 
 // Files of the tailnet in the data directory.
 const (
@@ -129,14 +130,13 @@ type Manager struct {
 
 type admission struct{ cancel context.CancelFunc }
 
-// PinMissing is why access is closed for an enrolled node without a pin.
-const PinMissing = "pin-missing"
-
-// NameSuffixed is why access is closed for a node the control plane named
-// its configured hostname with a suffix (varlatch-1): the name is still held
-// by another node, as after a restore while the old installation's node is
-// not deleted (internal docs/design/go-step6.md decision 16).
-const NameSuffixed = "name-suffixed"
+// PinMissing is why access is closed for an enrolled node without a pin;
+// NameSuffixed for a node the control plane named with a suffix (package
+// closed says more).
+const (
+	PinMissing   = closed.PinMissing
+	NameSuffixed = closed.NameSuffixed
+)
 
 // ErrNameSuffixed: a re-pin while the node's name still carries the
 // control plane's suffix.
@@ -385,7 +385,7 @@ func tailscaleDERPHosts(hosts []string) []string {
 	var out []string
 	for _, h := range hosts {
 		h = strings.ToLower(strings.TrimSuffix(h, "."))
-		if strings.HasSuffix(h, ".tailscale.com") && !slices.Contains(out, h) {
+		if (h == "tailscale.com" || strings.HasSuffix(h, ".tailscale.com")) && !slices.Contains(out, h) {
 			out = append(out, h)
 		}
 	}

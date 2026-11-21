@@ -799,7 +799,7 @@ func TestTheTagRule(t *testing.T) {
 // read. On Tailscale's control server it is never asked.
 func TestTailscaleDERPIsSaid(t *testing.T) {
 	ctx := context.Background()
-	node := &derpNode{statusNode: &statusNode{st: running("", "g10.example")}, hosts: []string{"derp1f.tailscale.com.", "DERP2.tailscale.com", "derp.g10.example", "derp1f.tailscale.com"}}
+	node := &derpNode{statusNode: &statusNode{st: running("", "g10.example")}, hosts: []string{"derp1f.tailscale.com.", "DERP2.tailscale.com", "derp.g10.example", "derp1f.tailscale.com", "tailscale.com"}}
 	m := enrolling(t, node, "https://192.0.2.10", t.TempDir(), nil)
 	m.RequireTags([]string{"tag:varlatch"})
 	m.Check(ctx)
@@ -807,16 +807,16 @@ func TestTailscaleDERPIsSaid(t *testing.T) {
 		t.Fatalf("closed: %q", m.Closed())
 	}
 	detail, warnings := m.Explain()
-	if detail != "" || len(warnings) != 1 || !strings.Contains(warnings[0], "Tailscale's DERP servers (derp1f.tailscale.com, derp2.tailscale.com)") {
+	if detail != "" || len(warnings) != 1 || !strings.Contains(warnings[0], "Tailscale's DERP servers (derp1f.tailscale.com, derp2.tailscale.com, tailscale.com)") {
 		t.Errorf("Explain: %q %q", detail, warnings)
 	}
-	if report := string(jsvalueStringify(m.Report())); !strings.Contains(report, `"warnings":["The control server's DERP map lists Tailscale's DERP servers (derp1f.tailscale.com, derp2.tailscale.com)`) {
+	if report := string(jsvalueStringify(m.Report())); !strings.Contains(report, `"warnings":["The control server's DERP map lists Tailscale's DERP servers (derp1f.tailscale.com, derp2.tailscale.com, tailscale.com)`) {
 		t.Errorf("the listeners report:\n%s", report)
 	}
 	for _, c := range []struct {
 		hosts []string
 		err   error
-	}{{[]string{"derp.g10.example", "tailscale.com.evil.example"}, nil}, {nil, errors.New("no DERP map yet")}} {
+	}{{[]string{"derp.g10.example", "tailscale.com.evil.example", "nottailscale.com"}, nil}, {nil, errors.New("no DERP map yet")}} {
 		node.setHosts(c.hosts, c.err)
 		m.Check(ctx)
 		if _, w := m.Explain(); w != nil {

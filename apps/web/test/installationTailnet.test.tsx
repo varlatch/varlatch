@@ -229,6 +229,14 @@ describe("Tailnet tab", () => {
     expect(text(byTestId("tailnet-endpoint-lines"))).toContain("VARLATCH_TAILNET_CERT_UID=999");
   });
 
+  it("names a reason this dashboard does not know by its code, as a newer server may send one", async () => {
+    // A server newer than this dashboard: a reason outside the enum it was built with.
+    const reason = "SOME_NEW_REASON" as unknown as "NAME_CHANGED";
+    await mount(async () => ({ tailnet: report({ node: { status: "fail", reason } }, ago(60_000)) }));
+    expect(row("node").props["data-status"]).toBe("fail");
+    expect(text(row("node"))).toContain("SOME_NEW_REASON");
+  });
+
   it("shows one check time for the whole report, each check's result, and the fix for the chosen deployment", async () => {
     await mount(async () => ({ tailnet: report({ node: { status: "fail", reason: "NAME_CHANGED" } }, ago(4 * 60_000)) }));
     // The report says which port is configured, not who can connect to it: the listener may bind 0.0.0.0.

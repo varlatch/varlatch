@@ -40,6 +40,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/custody"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/tailnet/closed"
 )
 
 // Status of a check.
@@ -657,7 +658,7 @@ func tailnetPin(live *Live) Check {
 		c.Status, c.Detail, c.Remedy = Unknown, notRunning, startIt
 	case !live.Tailnet:
 		c.Status, c.Detail = Unknown, "varlatchd runs no tailnet listener"
-	case live.TailnetClosed == tailnetTagsDiffer:
+	case live.TailnetClosed == closed.TagsDiffer:
 		// The node's tags, not its pin: a self-hosted control server's
 		// pre-auth key gave it others than tailnet_tags.
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetDetail
@@ -670,10 +671,6 @@ func tailnetPin(live *Live) Check {
 	}
 	return c
 }
-
-// tailnetTagsDiffer is tailnet.TagsDiffer (doctor does not import the
-// tailnet package).
-const tailnetTagsDiffer = "tags-differ"
 
 // tailnetControl is the coordination server's: Tailscale's, or a
 // self-hosted one (tailnet_control_url), whose DERP map should list only
