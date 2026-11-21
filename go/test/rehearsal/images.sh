@@ -9,8 +9,10 @@
 #
 #   images.sh <typescript-checkout> <run> <out-dir>
 #
-# Writes <out-dir>/images.json ({"registry": <port>, "images": {name: ref}})
-# and the release's files (build-release-artifacts.mjs). The registry runs
+# Writes <out-dir>/images.json ({"registry": <port>, "images": {name: ref}}),
+# the release's files (build-release-artifacts.mjs) and
+# coolify-image-digests.env (the Coolify variables, as the release job
+# publishes them; written here when the checkout's builder predates it). The registry runs
 # as the container vl-rh-<run>-registry; run.sh removes that container and
 # its three images by exact name/tag on teardown (and this script cleans
 # them up on error). If run standalone, remove vl-rh-<run>-registry and
@@ -54,7 +56,25 @@ done
 (cd "$out" && node "$ts/infra/release/build-release-artifacts.mjs" "$version" --out "$out" \
   --image "${refs[0]}" --image "${refs[1]}" --image "${refs[2]}" >&2)
 node -e '
+  const fs = require("fs");
   const [port, out, ...refs] = process.argv.slice(1);
   const images = Object.fromEntries(refs.map(r => [r.slice(0, r.indexOf("=")), r.slice(r.indexOf("=") + 1)]));
-  require("fs").writeFileSync(out + "/images.json", JSON.stringify({ registry: Number(port), images }, null, 2) + "\n");
+  fs.writeFileSync(out + "/images.json", JSON.stringify({ registry: Number(port), images }, null, 2) + "\n");
+  // coolify-image-digests.env, in the release job'"'"'s format (#373,
+  // infra/release/coolify-digests.mjs): the registry, then each image'"'"'s
+  // digest. A 0.23.0 candidate'"'"'s builder writes it; an older checkout'"'"'s
+  // does not, so it is written here; one the builder wrote must agree.
+  const vars = { varlatchd: "VARLATCH_VARLATCHD_DIGEST", "varlatch-web": "VARLATCH_WEB_DIGEST", "convex-deploy": "VARLATCH_CONVEX_DEPLOY_DIGEST" };
+  const lines = [];
+  let registry;
+  for (const [name, variable] of Object.entries(vars)) {
+    const m = /^(.+)\/[^/:@]+(?::[^@]+)?@(sha256:[0-9a-f]{64})$/.exec(images[name] || "");
+    if (!m) throw new Error("no digest-pinned reference for " + name);
+    registry = m[1];
+    lines.push(variable + "=" + m[2]);
+  }
+  const text = "VARLATCH_IMAGE_REGISTRY=" + registry + "\n" + lines.join("\n") + "\n";
+  const file = out + "/coolify-image-digests.env";
+  if (fs.existsSync(file) && fs.readFileSync(file, "utf8") !== text) throw new Error(file + " (the release builder'"'"'s) names other images than images.json");
+  fs.writeFileSync(file, text);
 ' "$port" "$out" "${refs[@]}"

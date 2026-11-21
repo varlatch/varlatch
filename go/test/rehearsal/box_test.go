@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +66,17 @@ func env(name, def string) string {
 // name, before anything starts.
 func loadProfile(t *testing.T) {
 	t.Helper()
-	prof = profileConfig{
+	p, err := readProfile(os.Geteuid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prof = p
+}
+
+// readProfile is loadProfile's reading and checks, for a process of that
+// effective user ID.
+func readProfile(euid int) (profileConfig, error) {
+	prof := profileConfig{
 		box: env("VL_RH_PROFILE", "workstation") == "box", target: env("VL_RH_TARGET", "host"), ingress: env("VL_RH_INGRESS", "proxy"),
 		publicName: os.Getenv("VL_RH_PUBLIC_NAME"), publicBind: os.Getenv("VL_RH_PUBLIC_BIND"),
 		source: env("VL_RH_SOURCE", "seed"), kill: os.Getenv("VL_RH_KILL"), sync: os.Getenv("VL_RH_SYNC"),
@@ -72,48 +84,57 @@ func loadProfile(t *testing.T) {
 		goImage:     os.Getenv("VL_RH_GO_IMAGE"), coolifySourceDir: os.Getenv("VL_RH_COOLIFY_SOURCE_DIR"),
 	}
 	if p := env("VL_RH_PROFILE", "workstation"); p != "workstation" && p != "box" {
-		t.Fatalf("VL_RH_PROFILE is workstation or box, not %q", p)
+		return prof, fmt.Errorf("VL_RH_PROFILE is workstation or box, not %q", p)
 	}
 	if !slices.Contains([]string{"proxy", "public", "coolify", "tailnet", "combined"}, prof.ingress) {
-		t.Fatalf("VL_RH_INGRESS is proxy, public, coolify, tailnet or combined, not %q", prof.ingress)
+		return prof, fmt.Errorf("VL_RH_INGRESS is proxy, public, coolify, tailnet or combined, not %q", prof.ingress)
 	}
-	if prof.box && os.Geteuid() != 0 {
-		t.Fatal("the box profile runs as root (the owner's): sudo -i, then run.sh")
+	if prof.box && euid != 0 {
+		return prof, errors.New("the box profile runs as root (the owner's): sudo -i, then run.sh")
 	}
 	switch {
 	case !prof.box && prof.ingress != "proxy":
-		t.Fatalf("VL_RH_INGRESS=%s runs on the box only (VL_RH_PROFILE=box)", prof.ingress)
+		return prof, fmt.Errorf("VL_RH_INGRESS=%s runs on the box only (VL_RH_PROFILE=box)", prof.ingress)
 	case prof.ingress == "tailnet" || prof.ingress == "combined":
-		t.Fatal("the tailnet handoff (B4) needs varlatch migrate's tailnet options (step 7.5b2's wiring), which this stack does not have yet")
+		return prof, errors.New("the tailnet handoff (B4) needs varlatch migrate's tailnet options (step 7.5b2's wiring), which this stack does not have yet")
 	case prof.sync != "":
-		t.Fatal("Sync Targets to real endpoints (B5) need the owner's destinations (internal#221, question 2); not built yet")
+		return prof, errors.New("Sync Targets to real endpoints (B5) need the owner's destinations (internal#221, question 2); not built yet")
 	case strings.HasPrefix(prof.source, "restore:"):
-		t.Fatal("the restored-production runs (B6) need 0.23.0 published and production on it (go-step8.md phase 1)")
+		return prof, errors.New("the restored-production runs (B6) need 0.23.0 published and production on it (go-step8.md phase 1)")
 	case prof.source != "seed":
-		t.Fatalf("VL_RH_SOURCE is seed or restore:<archive>, not %q", prof.source)
+		return prof, fmt.Errorf("VL_RH_SOURCE is seed or restore:<archive>, not %q", prof.source)
 	case prof.target == "image" && prof.ingress != "coolify":
-		t.Fatal("the image target runs with the Coolify ingress only (B3); with Compose it is not built yet")
+		return prof, errors.New("the image target runs with the Coolify ingress only (B3); with Compose it is not built yet")
 	case prof.target != "host" && prof.target != "image":
-		t.Fatalf("VL_RH_TARGET is host or image, not %q", prof.target)
+		return prof, fmt.Errorf("VL_RH_TARGET is host or image, not %q", prof.target)
 	case prof.ingress == "public":
 		if prof.publicName == "" || net.ParseIP(prof.publicBind) == nil || net.ParseIP(prof.publicBind).IsUnspecified() {
-			t.Fatal("public ingress (B2) needs VL_RH_PUBLIC_NAME and VL_RH_PUBLIC_BIND, the address 80 and 443 are free on (internal#221, question 1); never 0.0.0.0")
+			return prof, errors.New("public ingress (B2) needs VL_RH_PUBLIC_NAME and VL_RH_PUBLIC_BIND, the address 80 and 443 are free on (internal#221, question 1); never 0.0.0.0")
 		}
 		for _, port := range []string{"80", "443"} {
 			l, err := net.Listen("tcp", net.JoinHostPort(prof.publicBind, port))
 			if err != nil {
-				t.Fatalf("%s:%s is not free (%v): the run never stops what holds it", prof.publicBind, port, err)
+				return prof, fmt.Errorf("%s:%s is not free (%v): the run never stops what holds it", prof.publicBind, port, err)
 			}
 			l.Close()
 		}
 	case prof.ingress == "coolify":
 		if prof.target != "image" || prof.goImage == "" || prof.coolifySourceDir == "" || prof.publicName == "" {
-			t.Fatal("the Coolify domain move (B3) needs VL_RH_TARGET=image, VL_RH_GO_IMAGE (name@sha256:...), VL_RH_COOLIFY_SOURCE_DIR and VL_RH_PUBLIC_NAME")
+			return prof, errors.New("the Coolify domain move (B3) needs VL_RH_TARGET=image, VL_RH_GO_IMAGE (name@sha256:...), VL_RH_COOLIFY_SOURCE_DIR and VL_RH_PUBLIC_NAME")
+		}
+		// What the owner's source app is made from: the release's Coolify
+		// variables (images.sh writes them) and the candidate checkout's
+		// Coolify Compose file and README.
+		for _, f := range []string{filepath.Join(releaseDir, "coolify-image-digests.env"), filepath.Join(tsCheckout, "infra", "compose", "docker-compose.coolify.yml"), filepath.Join(tsCheckout, "infra", "coolify", "README.md")} {
+			if _, err := os.Stat(f); err != nil {
+				return prof, fmt.Errorf("the Coolify domain move (B3) needs %s: run images.sh again (it writes coolify-image-digests.env), from a checkout of the 0.23.0 candidate (#373's branch, which has the Coolify files); %v", f, err)
+			}
 		}
 	}
 	if prof.kill != "" && prof.kill != "transfer" && prof.kill != "barrier" {
-		t.Fatalf("VL_RH_KILL is transfer or barrier, not %q", prof.kill)
+		return prof, fmt.Errorf("VL_RH_KILL is transfer or barrier, not %q", prof.kill)
 	}
+	return prof, nil
 }
 
 // --- the guard: nothing of the box's own is touched ---
@@ -151,10 +172,19 @@ func guardOthers(t *testing.T) {
 
 // --- pauses for the owner ---
 
+// pauses counts the run's pauses for the owner.
+var pauses int
+
 // pause prints what the owner does, then waits until they touch
-// <continueDir>/<step>.
+// <continueDir>/<step>. run.sh sizes the test's timeout for
+// VL_RH_PAUSE_BUDGET pauses at their longest, so one more fails the run
+// here, with its cleanups, before the timeout could panic past them.
 func pause(t *testing.T, step string, lines ...string) {
 	t.Helper()
+	pauses++
+	if b, err := strconv.Atoi(os.Getenv("VL_RH_PAUSE_BUDGET")); err == nil && pauses > b {
+		t.Fatalf("the owner's step %q is pause %d, more than the %d run.sh sized the test's timeout for", step, pauses, b)
+	}
 	if err := os.MkdirAll(prof.continueDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +372,17 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	secretsDir, op, tmpDir := filepath.Join(base, "secrets"), filepath.Join(base, "operator"), filepath.Join(base, "tmp")
 	for _, d := range []string{secretsDir, op, tmpDir} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The source app's secrets are 0644 files in 0700 directories, as
+	// infra/coolify/README.md has them: its containers' own users (uid 999)
+	// must read them, which a root-owned 0600 file refuses (varlatchd then
+	// does not start); the directories keep everyone else out. MkdirAll
+	// leaves an existing directory's mode, and the umask may narrow a new
+	// one, so each is set here.
+	for _, d := range []string{filepath.Dir(base), base, secretsDir, op, tmpDir} {
+		if err := os.Chmod(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}

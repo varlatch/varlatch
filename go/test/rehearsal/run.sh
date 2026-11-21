@@ -28,6 +28,28 @@ if [ "$profile" = box ] && [ "$(id -u)" != 0 ]; then
   echo "the box profile runs as root: sudo -i, then run this again" >&2
   exit 64
 fi
+# The box's test timeout: the run's own work (6 h at most) plus every pause
+# for the owner at its longest (VL_RH_PAUSE_TIMEOUT, default 2h, in h, m and
+# s), so a slow owner never trips the timeout's panic, which skips the
+# cleanups. The Coolify case pauses at most pause_budget times (the source
+# and target apps, each exit 75 of the migration and the rollback, the
+# cleanup), which the test holds it to; the other cases never pause.
+duration_seconds() {
+  [[ $1 =~ ^(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?$ ]] && [ -n "$1" ] || return 1
+  echo $(( ${BASH_REMATCH[2]:-0} * 3600 + ${BASH_REMATCH[4]:-0} * 60 + ${BASH_REMATCH[6]:-0} ))
+}
+pause_budget=0
+[ "${VL_RH_INGRESS:-proxy}" != coolify ] || pause_budget=8
+pause_seconds=$(duration_seconds "${VL_RH_PAUSE_TIMEOUT:-2h}") || {
+  echo "VL_RH_PAUSE_TIMEOUT is hours, minutes and seconds (2h, 90m, 1h30m), not ${VL_RH_PAUSE_TIMEOUT}" >&2
+  exit 64
+}
+test_timeout=$(( 6 * 3600 + pause_budget * pause_seconds ))s
+if [ "$profile" = box ] && [ -z "${SUDO_UID:-}" ]; then
+  echo "warning: SUDO_UID is not set (a root shell from su, not sudo -i): the run's files, its report" >&2
+  echo "  included, stay root-owned under ${VL_RH_ROOT:-$PWD/rehearsal-runs}/$2; before fetch-report.sh can" >&2
+  echo "  read them, chown -R <your user> that directory as root (or use sudo -i next time)" >&2
+fi
 here=$(cd "$(dirname "$0")" && pwd) gomod=$(cd "$here/../.." && pwd)
 ts=$(cd "$1" && pwd) run=$2
 [[ $run =~ ^[a-z0-9-]+$ ]] || { echo "run is lowercase letters, digits and dashes" >&2; exit 64; }
@@ -97,6 +119,8 @@ cleanup() {
   fi
   if [ "$profile" = box ] && [ -n "${SUDO_UID:-}" ]; then
     chown -R "$SUDO_UID:$SUDO_GID" "$root" || true
+  elif [ "$profile" = box ]; then
+    echo "warning: SUDO_UID is not set: $root stays root-owned; chown -R <your user> it as root before fetch-report.sh" >&2
   fi
 }
 trap cleanup EXIT
@@ -129,7 +153,8 @@ if [ "$profile" = box ]; then
   # root-owned path; the run's files handed back to the sudo user after.
   cd "$root/work"
   VL_RH_RUN=$run VL_RH_RELEASE_DIR=$release VL_RH_BIN=$root/bin VL_RH_WORK=$root/work VL_RH_REPORT=$root/report VL_RH_TS=$ts \
-    VL_RH_TARGET_ROOT="$target_root" "$root/bin/rehearsal.test" -test.v -test.timeout 6h -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"
+    VL_RH_TARGET_ROOT="$target_root" VL_RH_PAUSE_BUDGET=$pause_budget \
+    "$root/bin/rehearsal.test" -test.v -test.timeout "$test_timeout" -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"
   exit "${PIPESTATUS[0]}"
 fi
 # On a workstation the test binary runs as root, as varlatch migrate does

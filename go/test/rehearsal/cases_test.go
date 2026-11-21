@@ -43,7 +43,15 @@ func TestRehearsal(t *testing.T) {
 		if os.Getenv("VL_RH_ONLY") == "setup" {
 			return
 		}
-		t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
+		// Item 6's squatter takes the dashboard's port from inside the
+		// workstation's fake systemctl, between the dashboard's stop and
+		// the target's start; on the box real systemd starts the target and
+		// nothing squats, so the case would record false failures there.
+		if prof.box {
+			measure("item 6: the port-collision case", "not run on the box: its squatter is the workstation profile's fake systemctl")
+		} else {
+			t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
+		}
 	}
 	if prof.kill != "" {
 		t.Run("kill", func(t *testing.T) { killCase(t, rel, s3) })
