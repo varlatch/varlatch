@@ -2917,6 +2917,53 @@ Grants in whatever order its plan gives; the Go query orders by rowid
 the lists derived from them (`grantIds`, `groupIds`, `roleIds`,
 `applied`), as sets; the pure evaluator vectors check their order.
 
+### The tailnet's control plane (step 7, slice 7.5a)
+
+`lib/tailcontrol` is what a tailnet handoff asks of the control plane.
+The handoffs themselves (internal docs/design/go-step7.md decision 11) are
+slice 7.5b.
+
+- **One interface, two backends.** Each lists the devices, offline and
+  expired ones included, and renames one.
+  - `Tailscale` uses the API with an OAuth client that has the
+    `devices:core` scope and no other (O4); any other scope is refused
+    before a token is used. Each operation exchanges the client for a
+    token of its own, and nothing keeps one.
+  - `HeadscaleAPI` uses a key that `Open` checks expires within the hour
+    (every Headscale key is a full administrator); `Close` expires it.
+  - `HeadscaleCLI` runs `headscale` on the control server (an absolute
+    path when named), with the new name after `--`.
+  - Both APIs are https only, and are built with a constructor that
+    keeps the credential in a closure, so printing a control plane shows
+    none. The constructor requires the caller's `*http.Client` and never
+    makes one: `varlatch migrate` passes its own; varlatchd's restore
+    handoff (7.5b) passes the outbound policy's (`go/server/outbound`),
+    so the guard there needs no exception for `lib/tailcontrol`.
+- **Names.**
+  - `TempName` is a handoff's temporary name, `<name>-vl-<operation
+    id>-n|o`, in canonical form within 63 bytes; when too long, the name
+    is cut, never the operation id.
+  - `CheckNames` compares a plan with every device case-insensitively.
+    The name must be held by exactly the expected device, and every
+    temporary name must be free, whoever holds it, online, offline or
+    expired.
+  - Every backend refuses a name not in canonical form.
+    `RenameAndReadBack` counts a rename only once the control plane lists
+    the device under exactly that name, reading it again once, a second
+    later, before it calls a difference a failure.
+- **Errors** name the operation and the device. Every credential is
+  scrubbed from them before any cut, in every form an answer could echo
+  (as sent, escaped, base64), even when the control plane echoes it. A
+  transport error still answers `errors.Is` (a passed deadline stays
+  `context.DeadlineExceeded`).
+- **Testing.** `tailcontroltest` fakes both control planes, with the
+  behaviour ADR-0059 Decision 9 records:
+  - Tailscale rewrites non-canonical names and refuses a taken one;
+  - Headscale keeps a case variant and refuses only the exact name.
+
+  The real APIs are checked by hand against the owner's throwaway tailnet
+  and a Headscale server (O6) in 7.5b.
+
 ## The OpenAPI document
 
 The `/v1` contract is `packages/protocol/openapi.yaml` (OpenAPI 3.1),

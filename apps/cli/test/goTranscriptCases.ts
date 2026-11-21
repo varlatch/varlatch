@@ -2374,6 +2374,180 @@ const security57b: TranscriptCase[] = [
   a({ id: "status.items-not-a-list", title: "a list of another shape stops status (TypeScript throws a TypeError)", args: STATUS, server: statusAt({ list: { availableModes: ["off"], items: "x" }, report: null, keys: null, review: null, reqs: null, audit: null, perms: { actions: [] } }), differences: UNCAUGHT }),
 ];
 
+// ---------------------------------------------------------------------------
+// 5.7c: the audit export, deletion and freezes (audit-export, audit export
+// [--deleted-org], project delete, org delete/deletion, org
+// freeze/unfreeze). Every refusal before the write is recorded with the
+// requests it sent (none, for a command line that is wrong).
+
+const META_DESTROY = { ...META, capabilities: ["projects.delete", "organizations.delete", "organizations.incident-freeze", "audit.storage-export"] };
+const META_DELETE_ONLY = { ...META, capabilities: ["organizations.delete"] };
+const metaOf = (meta: unknown = META_DESTROY) => ok("/v1/meta", meta);
+const DELETED = { projectId: "prj_1", slug: "web", environments: 3, values: 12, versionsErased: 40, capabilitiesRevoked: 2, targetsRevoked: 1, teamLinksRemoved: 4 };
+const PD = (...rest: string[]) => ["project", "delete", ...rest];
+const OD = (...rest: string[]) => ["org", "delete", ...rest];
+const deletionOf = (extra: Record<string, unknown> = {}) => ({ id: "del_1", scheduledAt: "2026-11-19T10:00:00.000Z", requestedBy: "Ada", runAfter: FUTURE, approvalRequired: true, approvedBy: null, approvedAt: null, ...extra });
+const ORG_ROW = { id: "org_acme", slug: "acme", name: "Acme" };
+const scheduleAt = (body: unknown = deletionOf()) => exch("POST", `${ORG}/deletion`, 201, body);
+const auditAt = (answer: unknown = AUDIT_ACTIVE, status = 200) => ({ ...ok(`${ORG}/audit-export`, answer), status });
+const FROZEN_AT = { id: "frz_1", frozenAt: "2026-11-19T09:00:00Z", frozenBy: { id: ADA, name: "Ada" }, reason: "Laptop stolen" };
+const FZ = (...rest: string[]) => ["org", "freeze", "acme", ...rest];
+const UNFZ = (...rest: string[]) => ["org", "unfreeze", "acme", ...rest];
+const freezeState = (extra: Record<string, unknown> = {}) => ok(`${ORG}/incident-freeze`, { freeze: FROZEN_AT, resumingTargets: [], ...extra });
+const liftAt = (status: number, answer: unknown) => exch("POST", `${ORG}/incident-freeze/frz_1/lift`, status, answer);
+const LIFTED = { freeze: { ...FROZEN_AT, liftedAt: "2026-11-19T11:00:00.000Z" }, resumingTargets: [{ id: "stg_1", projectSlug: "web", environmentName: "prod", platform: "coolify", destination: "app-1" }] };
+const LIFT_APPROVAL = { ...APPROVAL, summary: { title: "Lift the incident freeze of Acme", changes: [{ field: "freeze", from: "frozen", to: "lifted", loosens: true }] } };
+const liftPoll = (state: string) => ok("/v1/me/approvals/apr_1", { ...LIFT_APPROVAL, state });
+
+const AE = (...rest: string[]) => ["audit-export", ...rest];
+const SECRET_FILE = { "secret.txt": "fake-secret-access-key-0001\n" };
+const DEST = ["--endpoint", "https://s3.example.com", "--region", "eu-west-1", "--bucket", "audit"];
+const KEY = ["--access-key-id", "AKIAFAKE0001", "--secret-file", "{{dir}}/secret.txt"];
+const withSecret = (files: Record<string, string> = SIGNED_IN) => ({ ...files, ...SECRET_FILE });
+const EXPORT = AUDIT_ACTIVE.export;
+const changedExport = (extra: Record<string, unknown> = {}) => ({ changed: true, loosened: false, export: { ...EXPORT, version: 4, ...extra } });
+const CHECK_OK = { ok: true, objectLock: "accepted", keyCanRead: true, message: null };
+const NDJSON = '{"id":"evt_1","eventType":"organization.created"}\n{"id":"evt_2","eventType":"project.created"}\n';
+
+const audit57c: TranscriptCase[] = [
+  // project delete
+  a({ id: "pd.no-slug", title: "project delete without a slug (64)", args: PD() }),
+  a({ id: "pd.no-confirm", title: "without --confirm: what it erases and the command to confirm, nothing sent (64)", args: PD("web") }),
+  a({ id: "pd.no-confirm.server", title: "the same with --server: the command repeats it", args: PD("web", "--server", "{{server}}") }),
+  a({ id: "pd.no-confirm.outside", title: "outside a repository: <org> in the command (64)", args: PD("web"), ...OUTSIDE }),
+  a({ id: "pd.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...PD("web")] }),
+  a({ id: "pd.wrong-confirm", title: "--confirm naming another Project (64), nothing sent", args: PD("web", "--confirm", "api") }),
+  a({ id: "pd.extra", title: "an extra argument (64)", args: PD("web", "api", "--confirm", "web") }),
+  a({ id: "pd.deleted", title: "--confirm: deleted, with what was erased and what deletion does not reach", args: PD("web", "--confirm", "web"), server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.assisted-confirmed", title: "assisted mode with --confirm deletes", args: ["--assisted", ...PD("web", "--confirm", "web")], server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.outside", title: "outside a repository with --org and --server", args: PD("web", "--confirm", "web", "--org", "acme", "--server", "{{server}}"), ...OUTSIDE, server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.outside-no-org", title: "outside a repository with --confirm but no --org (64), nothing sent", args: PD("web", "--confirm", "web"), ...OUTSIDE }),
+  a({ id: "pd.no-capability", title: "a server that cannot delete projects (1), nothing deleted", args: PD("web", "--confirm", "web"), server: [metaOf(META_BARE)] }),
+  a({ id: "pd.refused", title: "the deletion refused: the server's error", args: PD("web", "--confirm", "web"), server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "pd.not-signed-in", title: "no credential (77), nothing sent", args: PD("web", "--confirm", "web"), files: NOT_SIGNED_IN }),
+
+  // org delete and org deletion: the command line
+  a({ id: "od.no-slug", title: "org delete without a slug (64)", args: OD() }),
+  a({ id: "od.no-confirm", title: "scheduling without --confirm: what it does and the command (64), nothing sent", args: OD("acme") }),
+  a({ id: "od.no-confirm.after", title: "the same with --after: the command keeps it", args: OD("acme", "--after", "7", "--server", "{{server}}") }),
+  a({ id: "od.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...OD("acme")] }),
+  a({ id: "od.wrong-confirm", title: "--confirm naming another Organization (64)", args: OD("acme", "--confirm", "other") }),
+  a({ id: "od.approve-and-cancel", title: "--approve with --cancel (64)", args: OD("acme", "--approve", "del_1", "--cancel", "del_1") }),
+  a({ id: "od.cancel-confirm", title: "a cancel with --confirm (64)", args: OD("acme", "--cancel", "del_1", "--confirm", "acme") }),
+  a({ id: "od.cancel-after", title: "--after with --cancel (64)", args: OD("acme", "--cancel", "del_1", "--after", "3") }),
+  a({ id: "od.approve-after", title: "--after with --approve (64)", args: OD("acme", "--approve", "del_1", "--after", "3") }),
+  a({ id: "od.after-zero", title: "--after 0 (64)", args: OD("acme", "--confirm", "acme", "--after", "0") }),
+  a({ id: "od.after-31", title: "--after 31 (64)", args: OD("acme", "--confirm", "acme", "--after", "31") }),
+  a({ id: "od.after-word", title: "--after that is not a number (64)", args: OD("acme", "--confirm", "acme", "--after", "1w") }),
+  a({ id: "od.approve-assisted", title: "approving in assisted mode without --confirm (78), nothing sent", args: ["--assisted", ...OD("acme", "--approve", "del_1")] }),
+
+  // org delete: requests
+  a({ id: "od.schedule", title: "scheduled: the request, what it suspends, the tombstone export, the limits, the audit export's key", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt()] }),
+  a({ id: "od.schedule.after", title: "--after 7 is sent; a server without audit export says nothing of it", args: OD("acme", "--confirm", "acme", "--after", "7"), server: [metaOf(META_DELETE_ONLY), ok(ORG, ORG_ROW), { ...scheduleAt(deletionOf({ approvalRequired: false })), path: `${ORG}/deletion` }] }),
+  a({ id: "od.schedule.no-export", title: "no audit export: nothing about its key", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt(AUDIT_NONE)] }),
+  a({ id: "od.schedule.export-unreadable", title: "the audit export's state unreadable: said, never left out", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt(apiError(500, "INTERNAL"), 500)] }),
+  a({ id: "od.schedule.step-up", title: "scheduling under admin step-up in assisted mode: the approval to give (75)", args: ["--assisted", ...OD("acme", "--confirm", "acme")], server: [metaOf(), ok(ORG, ORG_ROW), exch("POST", `${ORG}/deletion`, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }))] }),
+  a({ id: "od.schedule.refused", title: "the schedule refused: the server's error", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), exch("POST", `${ORG}/deletion`, 409, apiError(409, "CONFLICT", "a deletion is already scheduled"))] }),
+  a({ id: "od.approve", title: "approved: the request as it stands", args: OD("acme", "--approve", "del_1"), server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/approve`, 200, deletionOf({ approvedBy: "Bob", approvedAt: "2026-11-19T10:30:00Z" }))] }),
+  a({ id: "od.approve.assisted-confirmed", title: "approving in assisted mode with --confirm", args: ["--assisted", ...OD("acme", "--approve", "del_1", "--confirm", "acme")], server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/approve`, 200, deletionOf({ approvedBy: "Bob", approvedAt: "not a time" }))] }),
+  a({ id: "od.cancel", title: "cancelled", args: OD("acme", "--cancel", "del_1"), server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/cancel`, 200, deletionOf())] }),
+  a({ id: "od.no-capability", title: "a server that cannot delete organizations (1), nothing sent but meta", args: OD("acme", "--confirm", "acme"), server: [metaOf(META_BARE)] }),
+  a({ id: "deletion.open", title: "org deletion: an overdue request waiting for approval never runs without it", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: deletionOf({ runAfter: PAST }) })] }),
+  a({ id: "deletion.open.json", title: "org deletion --json", args: ["org", "deletion", "acme", "--json"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: deletionOf() })] }),
+  a({ id: "deletion.none", title: "no deletion scheduled", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: null })] }),
+  a({ id: "deletion.none.json", title: "the same, --json: deletion null", args: ["org", "deletion", "acme", "--json"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: null })] }),
+  a({ id: "deletion.confirm-option", title: "org deletion takes no --confirm (64)", args: ["org", "deletion", "acme", "--confirm", "acme"] }),
+  a({ id: "deletion.answer-null", title: "an answer of another shape stops org deletion (TypeScript throws a TypeError)", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, null)], differences: UNCAUGHT }),
+
+  // org freeze and unfreeze
+  a({ id: "fz.no-slug", title: "org freeze without a slug (64)", args: ["org", "freeze"] }),
+  a({ id: "fz.no-reason", title: "without --reason (64), nothing sent", args: FZ("--confirm", "acme") }),
+  a({ id: "fz.blank-reason", title: "a reason of spaces only (64)", args: FZ("--reason", "   ", "--confirm", "acme") }),
+  a({ id: "fz.long-reason", title: "a reason over 200 characters (64)", args: FZ("--reason", "x".repeat(201), "--confirm", "acme") }),
+  a({ id: "fz.no-confirm", title: "without --confirm: what it stops and the command (64), nothing sent", args: FZ("--reason", "laptop stolen") }),
+  a({ id: "fz.wrong-confirm", title: "--confirm naming another Organization: the same prompt (64)", args: FZ("--reason", "it's stolen", "--confirm", "other", "--server", "{{server}}") }),
+  a({ id: "fz.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...FZ("--reason", "laptop stolen")] }),
+  a({ id: "fz.frozen", title: "frozen: what it stops and how to lift it", args: FZ("--reason", "  laptop stolen  ", "--confirm", "acme"), server: [metaOf(), exch("POST", `${ORG}/incident-freeze`, 201, FROZEN_AT)] }),
+  a({ id: "fz.no-capability", title: "a server without the incident freeze (1)", args: FZ("--reason", "x", "--confirm", "acme"), server: [metaOf(META_BARE)] }),
+  a({ id: "fz.refused", title: "the freeze refused: the server's error", args: FZ("--reason", "x", "--confirm", "acme"), server: [metaOf(), exch("POST", `${ORG}/incident-freeze`, 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "unfz.not-frozen", title: "unfreeze an Organization that is not frozen", args: UNFZ(), server: [metaOf(), ok(`${ORG}/incident-freeze`, { freeze: null, resumingTargets: null })] }),
+  a({ id: "unfz.not-frozen.json", title: "the same, --json: freeze null", args: UNFZ("--json"), server: [metaOf(), ok(`${ORG}/incident-freeze`, { freeze: null })] }),
+  a({ id: "unfz.assisted", title: "unfreezing in assisted mode: what the lift does, then the approval to give (75)", args: ["--assisted", ...UNFZ()], server: [metaOf(), freezeState({ resumingTargets: null }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL }))] }),
+  a({ id: "unfz.approved", title: "unfreezing: waits for the approval, then lifts; resuming Sync Targets listed", args: UNFZ(), server: [metaOf(), freezeState({ resumingTargets: LIFTED.resumingTargets }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("approved"), liftAt(200, LIFTED)] }),
+  a({ id: "unfz.approved.json", title: "the same, --json: no confirmation lines", args: UNFZ("--json"), server: [metaOf(), freezeState(), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("approved"), liftAt(200, { ...LIFTED, resumingTargets: [] })] }),
+  a({ id: "unfz.cancelled", title: "the lift's approval cancelled (77): still frozen", args: UNFZ(), server: [metaOf(), freezeState(), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("closed")] }),
+  a({ id: "unfz.reason-escaped", title: "a reason with a control character: escaped", args: ["--assisted", ...UNFZ()], server: [metaOf(), freezeState({ freeze: { ...FROZEN_AT, reason: "bell\u0007 here", frozenBy: { id: BOB, name: null } } }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL }))] }),
+  a({ id: "unfz.reason-option", title: "unfreeze takes no --reason (64)", args: UNFZ("--reason", "x") }),
+
+  // audit-export: the command line, before any request
+  a({ id: "ae.none", title: "audit-export alone (64)", args: AE() }),
+  a({ id: "ae.unknown", title: "an unknown subcommand (64)", args: AE("list") }),
+  a({ id: "ae.create.no-bucket", title: "create without --bucket (64)", args: AE("create", "--endpoint", "https://s3.example.com", "--region", "eu", ...KEY), files: withSecret() }),
+  a({ id: "ae.create.no-key", title: "create without --access-key-id (64)", args: AE("create", ...DEST) }),
+  a({ id: "ae.create.no-retention", title: "create with --no-retention (64)", args: AE("create", ...DEST, ...KEY, "--no-retention"), files: withSecret() }),
+  a({ id: "ae.create.no-path-style", title: "create with --no-path-style (64)", args: AE("create", ...DEST, ...KEY, "--no-path-style"), files: withSecret() }),
+  a({ id: "ae.create.from", title: "--from that is neither (64)", args: AE("create", ...DEST, ...KEY, "--from", "yesterday"), files: withSecret() }),
+  a({ id: "ae.create.retention", title: "--retention of another form (64)", args: AE("create", ...DEST, ...KEY, "--retention", "compliance:3651"), files: withSecret() }),
+  a({ id: "ae.create.both-sources", title: "--secret-stdin and --secret-file (64)", args: AE("create", ...DEST, ...KEY, "--secret-stdin"), files: withSecret() }),
+  a({ id: "ae.change.secret-alone", title: "a secret source without --access-key-id (64)", args: AE("change", "--secret-stdin") }),
+  a({ id: "ae.change.nothing", title: "change naming nothing (64)", args: AE("change") }),
+  a({ id: "ae.change.key-and-settings", title: "a key with a setting (64): each change is approved separately", args: AE("change", "--bucket", "b", ...KEY), files: withSecret() }),
+  a({ id: "ae.change.both-retentions", title: "--retention with --no-retention (64)", args: AE("change", "--retention", "governance:30", "--no-retention") }),
+  a({ id: "ae.change.both-styles", title: "--path-style with --no-path-style (64)", args: AE("change", "--path-style", "--no-path-style") }),
+  a({ id: "ae.check.retention", title: "check with a malformed --retention (64)", args: AE("check", "--retention", "forever") }),
+  a({ id: "ae.create.no-source", title: "a key without a secret source off a terminal (64), nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001") }),
+  a({ id: "ae.create.no-source.assisted", title: "the same in assisted mode: it never prompts (64)", args: ["--assisted", ...AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001")] }),
+  a({ id: "ae.create.secret-missing", title: "a --secret-file that does not exist (1), nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-file", "{{dir}}/nope.txt") }),
+  a({ id: "ae.create.secret-empty", title: "an empty secret on standard input, nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-stdin"), stdin: "" }),
+  a({ id: "ae.extra", title: "an extra argument (64)", args: AE("show", "now") }),
+
+  // audit-export: requests
+  a({ id: "ae.show", title: "show: the export's status", args: AE("show"), server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.json", title: "show --json", args: AE("show", "--json"), server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.none", title: "show with no export", args: AE("show"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.show.stopped", title: "show with the export stopped by the host operator", args: AE("show"), server: [metaOf(), auditAt(AUDIT_OFF)] }),
+  a({ id: "ae.show.no-capability", title: "a server without audit export (1)", args: AE("show"), server: [metaOf(META_BARE)] }),
+  a({ id: "ae.show.outside", title: "outside a repository with --org and --server", args: AE("show", "--org", "acme", "--server", "{{server}}"), ...OUTSIDE, server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.outside-no-org", title: "outside a repository without --org (64), nothing sent", args: AE("show"), ...OUTSIDE }),
+  a({ id: "ae.create", title: "create from a secret file: what it copies and the status without its first line", args: AE("create", ...DEST, ...KEY, "--retention", "compliance:400"), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export`, 201, EXPORT)] }),
+  a({ id: "ae.create.json", title: "create --json, from standard input, starting now", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-stdin", "--from", "now", "--prefix", "logs/", "--path-style", "--json"), stdin: "fake-secret-access-key-0002\n", server: [metaOf(), exch("POST", `${ORG}/audit-export`, 201, { ...EXPORT, state: "active" })] }),
+  a({ id: "ae.create.echoed", title: "a server echoing the key in its error: masked", args: AE("create", ...DEST, ...KEY), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export`, 400, apiError(400, "VALIDATION_FAILED", "key fake-secret-access-key-0001 refused"))] }),
+  a({ id: "ae.change", title: "change the bucket at the current version", args: AE("change", "--bucket", "audit-2"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport())] }),
+  a({ id: "ae.change.stream", title: "a change that starts a new stream, with approval", args: AE("change", "--endpoint", "https://other.example.com", "--no-retention"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport({ streamId: "st_2", cursor: 0 }))] }),
+  a({ id: "ae.change.loosened", title: "a loosening change: your approval was used", args: AE("change", "--retention", "governance:30"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, { ...changedExport(), loosened: true })] }),
+  a({ id: "ae.change.same", title: "the settings it already has: nothing changed", args: AE("change", "--prefix", ""), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, { changed: false, loosened: false, export: EXPORT })] }),
+  a({ id: "ae.change.json", title: "change --json", args: AE("change", "--path-style", "--json"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport())] }),
+  a({ id: "ae.change.key", title: "a new key on its own: replaced", args: AE("change", ...KEY), files: withSecret(), server: [metaOf(), auditAt(), exch("PUT", `${ORG}/audit-export/credential`, 200, { ...EXPORT, version: 4 })] }),
+  a({ id: "ae.change.none", title: "change with no export (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.change.removed", title: "change of a removed export (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(AUDIT_OFF)] }),
+  a({ id: "ae.change.conflict", title: "the export changed meanwhile: run it again (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 409, apiError(409, "VERSION_CONFLICT", "version 3 is not current"))] }),
+  a({ id: "ae.change.step-up", title: "a change needing approval in assisted mode: the approval to give (75)", args: ["--assisted", ...AE("change", "--endpoint", "https://other.example.com")], server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }))] }),
+  a({ id: "ae.remove.no-confirm", title: "remove without --confirm: what it stops and the command (64), nothing sent", args: AE("remove") }),
+  a({ id: "ae.remove.no-confirm.outside", title: "the same outside a repository: <organization>", args: AE("remove"), ...OUTSIDE }),
+  a({ id: "ae.remove.wrong-confirm", title: "--confirm naming another Organization (64)", args: AE("remove", "--confirm", "other") }),
+  a({ id: "ae.remove.assisted", title: "assisted mode without --confirm (78), nothing sent", args: ["--assisted", ...AE("remove")] }),
+  a({ id: "ae.remove", title: "removed at the current version", args: AE("remove", "--confirm", "acme"), server: [metaOf(), auditAt(), exch("DELETE", `${ORG}/audit-export?expectedVersion=3`, 200, { ...EXPORT, state: "removed", version: 4 })] }),
+  a({ id: "ae.remove.json", title: "remove --json", args: AE("remove", "--confirm", "acme", "--json"), server: [metaOf(), auditAt(), exch("DELETE", `${ORG}/audit-export?expectedVersion=3`, 200, { ...EXPORT, state: "removed", version: 4 })] }),
+  a({ id: "ae.remove.none", title: "remove with no export (1)", args: AE("remove", "--confirm", "acme"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.check", title: "check the export's own destination with its stored key", args: AE("check"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, CHECK_OK)] }),
+  a({ id: "ae.check.named", title: "check a named destination with a new key: no status read", args: AE("check", ...DEST, ...KEY, "--retention", "governance:7"), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export/check`, 200, { ...CHECK_OK, objectLock: null, keyCanRead: null })] }),
+  a({ id: "ae.check.prefix", title: "check with only --prefix: the export's destination, the prefix named", args: AE("check", "--prefix", "new/", "--json"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ...CHECK_OK, objectLock: "verified", keyCanRead: false })] }),
+  a({ id: "ae.check.failed", title: "a failed check: its reason, exit 1", args: AE("check"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ok: false, message: "AccessDenied\u0007", objectLock: null, keyCanRead: null })] }),
+  a({ id: "ae.check.failed-silent", title: "a failed check without a reason, --json: exit 1", args: AE("check", "--json"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ok: false, message: null })] }),
+  a({ id: "ae.check.nothing", title: "no export and no destination named (1)", args: AE("check"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.check.key-no-destination", title: "a key but no destination (64, after the meta)", args: AE("check", ...KEY), files: withSecret(), server: [metaOf()] }),
+
+  // audit export, NDJSON
+  a({ id: "export.ndjson", title: "audit export: the log as NDJSON, as the server sent it", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.refused", title: "audit export refused: the server's error", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, apiError(403, "PERMISSION_DENIED")), status: 403 }] }),
+  a({ id: "export.not-json-error", title: "an error that is not a Varlatch error: HTTP <status>", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, "<html>bad gateway</html>"), status: 502, headers: { "content-type": "text/html" } }] }),
+  a({ id: "export.deleted", title: "audit export --deleted-org: a deleted Organization's log", args: ["audit", "export", "--deleted-org", "org_gone", "--server", "{{server}}"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.deleted.default-server", title: "--deleted-org with the only credential's server", args: ["audit", "export", "--deleted-org", "org_gone"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.deleted.no-value", title: "--deleted-org without a value (64)", args: ["audit", "export", "--deleted-org"], ...OUTSIDE }),
+  a({ id: "export.deleted.extra", title: "--deleted-org with an extra argument (64)", args: ["audit", "export", "now", "--deleted-org", "org_gone"], ...OUTSIDE }),
+  a({ id: "export.deleted.not-found", title: "an unknown deleted Organization: the server's 404", args: ["audit", "export", "--deleted-org", "org_gone", "--server", "{{server}}"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }] }),
+];
+
 // ---- 5.8a: guided init, and what it never does off a terminal ---------------
 //
 // Guided `init` runs only with a terminal on both ends, outside assisted
@@ -2410,5 +2584,6 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.6b-mcp": mcp56b,
   "5.7a-admin": admin57a,
   "5.7b-security": security57b,
+  "5.7c-audit": audit57c,
   "5.8a-guided-init": guided58a,
 };
