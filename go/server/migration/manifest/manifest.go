@@ -83,7 +83,7 @@ type Column struct {
 	Source  string         `json:"source"`
 	Type    canonical.Type `json:"type"`
 	Target  string         `json:"target,omitempty"`
-	LeftOut string         `json:"leftOut,omitempty"`
+	LeftOut *string        `json:"leftOut,omitempty"`
 }
 
 // Load parses v1.json strictly and checks it is consistent with itself.
@@ -133,6 +133,9 @@ func (m *Manifest) check() error {
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf("manifest: "+format, args...)) }
 	if m.Version != 1 || m.Encoding != "canonical-v1" {
 		add("version %d, encoding %q: v1.json is version 1 in canonical-v1", m.Version, m.Encoding)
+	}
+	if m.ForeignKeys == "" {
+		add("foreignKeys: how the import treats the schema's foreign keys is required")
 	}
 	if m.Source.Release == "" || m.Source.Schema == "" || len(m.Source.Migrations) == 0 || m.Target.SchemaVersion < 1 {
 		add("the source release, schema, migrations and target schema version are required")
@@ -216,7 +219,7 @@ func (m *Manifest) check() error {
 			}
 			switch t.Action {
 			case Copy:
-				if c.Target == "" || c.LeftOut != "" {
+				if c.Target == "" || c.LeftOut != nil {
 					add("table %s: column %s: a copied table's column has a target and nothing left out", t.Source, c.Source)
 				}
 			case Transform:
@@ -224,9 +227,12 @@ func (m *Manifest) check() error {
 					add("table %s: column %s: a transformed table's column names its counterpart", t.Source, c.Source)
 				}
 			case LeftOut:
-				if c.Target != "" || c.LeftOut != "" {
+				if c.Target != "" || c.LeftOut != nil {
 					add("table %s: column %s: a table left out lists its columns only", t.Source, c.Source)
 				}
+			}
+			if c.LeftOut != nil && *c.LeftOut == "" {
+				add("table %s: column %s: leftOut, when present, gives the reason", t.Source, c.Source)
 			}
 			if c.Target != "" {
 				if colTargets[c.Target] {
