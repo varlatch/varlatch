@@ -10,11 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -310,25 +308,24 @@ func (c *Compose) Rebuild(ctx context.Context, plan RebuildRecord) error {
 	return c.compose(ctx, "docker compose up -d postgres", "up", "-d", "postgres")
 }
 
-// leftoverReverse is the reverse bundle's copy in the backups directory.
-var leftoverReverse = regexp.MustCompile(`^migration-reverse-[0-9a-f]{12}\.jsonl$`)
+// importAnswerLimit bounds what the import's standard output keeps: its
+// one JSON line.
+const importAnswerLimit = 1 << 20
 
-// ImportReverse copies the bundle into the installation's backups
-// directory (given to that directory's owner, so the container's user
-// reads it), runs the import's one-off service, and removes the copy.
+// ImportReverse runs the import's one-off service with the reverse bundle
+// on its standard input (--in -): no copy of it in the installation's
+// backups directory, which the container's user cannot read. The import's
+// refusals (varlatchd running, a gate) come before it reads its input: its
+// exit status and standard error say why.
 func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRecord, error) {
-	suffix := make([]byte, 6)
-	if _, err := rand.Read(suffix); err != nil {
+	in, err := os.Open(bundle)
+	if err != nil {
 		return TSImportRecord{}, err
 	}
-	name := "migration-reverse-" + hex.EncodeToString(suffix) + ".jsonl"
-	host := filepath.Join(c.Directory, "backups", name)
-	if err := copyOwned(bundle, host, filepath.Join(c.Directory, "backups")); err != nil {
-		return TSImportRecord{}, fmt.Errorf("the reverse bundle into the installation's backups directory: %w", err)
-	}
-	defer os.Remove(host)
-	r, err := c.docker(ctx, []string{"compose", "--profile", reverseProfile, "run", "--rm", "-T", "varlatch-reverse-import",
-		"node", "dist/cli.js", "admin", "migration", "import", "--in", "/backups/" + name}, nil)
+	defer in.Close()
+	answer := &tail{n: importAnswerLimit}
+	r, err := c.stream(ctx, []string{"compose", "--profile", reverseProfile, "run", "--rm", "-T", "varlatch-reverse-import",
+		"node", "dist/cli.js", "admin", "migration", "import", "--in", "-"}, in, answer)
 	if err != nil {
 		return TSImportRecord{}, err
 	}
@@ -336,42 +333,10 @@ func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRec
 		return TSImportRecord{}, failure("the TypeScript release's admin migration import", r)
 	}
 	var rec TSImportRecord
-	if err := json.Unmarshal(lastLine(r.Answer), &rec); err != nil || rec.InstallationID == "" || rec.AuditPosition == "" {
+	if err := json.Unmarshal(lastLine(answer.b), &rec); err != nil || rec.InstallationID == "" || rec.AuditPosition == "" {
 		return TSImportRecord{}, errors.New("the TypeScript release's admin migration import did not answer with the installation and its audit position")
 	}
 	return rec, nil
-}
-
-// copyOwned copies from to a new file to, mode 0600, given to dir's owner
-// when this process is root.
-func copyOwned(from, to, dir string) error {
-	in, err := os.Open(from)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(out, in)
-	if err == nil {
-		err = out.Sync()
-	}
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		if st, serr := os.Stat(dir); serr == nil {
-			if uid, gid, ok := ownerOf(st); ok && os.Getuid() == 0 {
-				err = os.Chown(to, int(uid), int(gid))
-			}
-		}
-	}
-	if err != nil {
-		_ = os.Remove(to)
-	}
-	return err
 }
 
 // ResetConvex: Convex on its fresh volume and database, its functions

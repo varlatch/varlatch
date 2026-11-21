@@ -19,6 +19,33 @@ type Runner interface {
 	Run(ctx context.Context, dir, name string, args []string, stdin []byte) (Ran, error)
 }
 
+// Streamer is a Runner that also runs a program on streams, for what is
+// too large to hold in memory (a migration bundle): stdin is read to its
+// end and then closed, as the program reads it; stdout goes to the writer
+// as the program writes it; only stderr is kept, its last saidLimit bytes,
+// in the Ran's Said (Answer is empty).
+type Streamer interface {
+	Stream(ctx context.Context, dir, name string, args []string, stdin io.Reader, stdout io.Writer) (Ran, error)
+}
+
+// saidLimit bounds what a streamed program's stderr keeps: its last lines
+// are what failure and a summary read.
+const saidLimit = 1 << 20
+
+// tail keeps the last n bytes written to it.
+type tail struct {
+	n int
+	b []byte
+}
+
+func (t *tail) Write(p []byte) (int, error) {
+	t.b = append(t.b, p...)
+	if len(t.b) > t.n {
+		t.b = append([]byte(nil), t.b[len(t.b)-t.n:]...)
+	}
+	return len(p), nil
+}
+
 // Ran is a program's outcome: its standard output, its standard error, its
 // exit status.
 type Ran struct {
@@ -75,6 +102,38 @@ func (x ExecRunner) Run(ctx context.Context, dir, name string, args []string, st
 	said := <-done
 	err = cmd.Wait()
 	r := Ran{Answer: answer, Said: said}
+	var exit *exec.ExitError
+	switch {
+	case errors.As(err, &exit):
+		r.Code = exit.ExitCode()
+		if r.Code < 0 {
+			r.Code = 1
+		}
+	case err != nil:
+		return r, err
+	}
+	return r, nil
+}
+
+// Stream runs name with args in dir on streams (Streamer). A program that
+// stops reading stdin early (it refused before reading) is no error of the
+// copy: its exit status says why.
+func (x ExecRunner) Stream(ctx context.Context, dir, name string, args []string, stdin io.Reader, stdout io.Writer) (Ran, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = x.Env
+	if x.As != nil {
+		if err := runAs(cmd, *x.As); err != nil {
+			return Ran{}, err
+		}
+	}
+	said := &tail{n: saidLimit}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, said
+	if err := cmd.Start(); err != nil {
+		return Ran{}, fmt.Errorf("%s could not be started: %w", name, err)
+	}
+	err := cmd.Wait()
+	r := Ran{Said: said.b}
 	var exit *exec.ExitError
 	switch {
 	case errors.As(err, &exit):
