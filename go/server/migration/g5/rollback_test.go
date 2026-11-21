@@ -202,12 +202,28 @@ func migrateRunsAgain(args []string) bool {
 	return false
 }
 
+// sharedNetworkDown reports whether these docker arguments start varlatchd,
+// or a one-off container of its, without its dependencies while it runs in
+// the Tailscale sidecar's network (G5_SHARED_NAMESPACE) and the sidecar is
+// stopped.
+func sharedNetworkDown(args []string) bool {
+	if os.Getenv("G5_SHARED_NAMESPACE") == "" || !stopped("tailscale") || len(args) < 3 || args[0] != "compose" || !slices.Contains(args, "--no-deps") {
+		return false
+	}
+	return (args[1] == "run" || args[1] == "up") && slices.Contains(args, "varlatchd")
+}
+
 // fakeDockerReverse answers the commands a reverse migration gives; ok is
 // false for the others (fakeDocker's).
 func fakeDockerReverse(args []string) (int, bool) {
 	fail := func(f string, a ...any) (int, bool) { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1, true }
 	j := strings.Join(args, " ")
 	logCall(j)
+	if sharedNetworkDown(args) {
+		// As Docker: a container in a stopped container's network
+		// namespace does not start.
+		return fail("Error response from daemon: cannot join network namespace of a non running container: g5-installation-tailscale-1")
+	}
 	switch {
 	case len(args) >= 3 && args[0] == "compose" && (args[1] == "start" || args[1] == "up") && migrateRunsAgain(args[2:]) && readGate() != nil:
 		// As the real Compose: starting a service that depends on the
@@ -723,6 +739,50 @@ func TestG5RollbackWhole(t *testing.T) {
 		}
 		w.expectReverse("undone", undoneState)
 		w.noSecrets()
+	})
+	// varlatchd in the Tailscale sidecar's network (network_mode:
+	// service:tailscale), its one-off commands too. With the sidecar
+	// running, a reverse whose checks fail is undone as anywhere else
+	// (the TypeScript varlatchd started without its dependencies). With
+	// it stopped (the old node, after a tailnet handoff), --rollback is
+	// refused before anything, with the step to take: no barrier, no
+	// one-off container, no start.
+	t.Run("shared ns, the sidecar running", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		t.Setenv("G5_SHARED_NAMESPACE", "1")
+		if err := os.WriteFile(filepath.Join(w.stateDir, "corrupt-import"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone: Go serves again") {
+			t.Fatalf("--rollback with a faulty import: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if !slices.Contains(w.calls("docker-calls"), "compose up -d --no-deps varlatchd") {
+			t.Errorf("the TypeScript varlatchd was not started without its dependencies: %v", w.calls("docker-calls"))
+		}
+		w.expectReverse("undone", undoneState)
+		w.noSecrets()
+	})
+	t.Run("shared ns, the sidecar stopped", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		t.Setenv("G5_SHARED_NAMESPACE", "1")
+		if err := os.WriteFile(filepath.Join(w.stateDir, "stopped-tailscale"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := len(w.calls("docker-calls"))
+		code := w.rollback("", "--rollback")
+		out := string(w.outputs[len(w.outputs)-1])
+		if code != 1 || !strings.Contains(out, "start it by hand (docker compose up -d --no-deps tailscale") || !strings.Contains(out, "then varlatch migrate --rollback again") {
+			t.Fatalf("--rollback with the sidecar stopped: %d\n%s", code, out)
+		}
+		for _, c := range w.calls("docker-calls")[before:] {
+			if strings.HasPrefix(c, "compose run") || strings.HasPrefix(c, "compose up") || strings.HasPrefix(c, "compose start") || strings.HasPrefix(c, "compose stop") {
+				t.Errorf("ran %q", c)
+			}
+		}
+		if !w.stopped("tailscale") {
+			t.Error("the old node was started")
+		}
+		w.expect("refused", "open", "open", "target-open", "migrated-out")
 	})
 	// The undo puts the installation back on its own volumes, then asks
 	// Docker who uses each fresh one: a container still holding one (not
