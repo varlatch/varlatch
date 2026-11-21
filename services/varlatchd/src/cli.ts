@@ -4,7 +4,9 @@ import { Maintenance, prepareRestore, activeGate, isMigrationGate } from "@varla
 import { operatorLease } from "./backup/operator-lock.js";
 import { stateDir, startBackupControl, control } from "./backup/control.js";
 import { MirrorStatusReporter } from "./mirror/status.js";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { EXPORT_SUMMARY_PREFIX, migrationFailure } from "./migration/failure.js";
 import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { TrustedProxies, clientAddressResolver } from "./http/client-address.js";
@@ -360,8 +362,8 @@ async function readPassphrase(prompt: string, opts: { confirm?: boolean } = {}):
 const MIGRATION_USAGE =
   "Usage: varlatchd admin migration barrier [--drain-seconds <n>] | varlatchd admin migration status | " +
   "varlatchd admin migration release --id <gate> | varlatchd admin migration mark-migrated-out --id <gate> | " +
-  "varlatchd admin migration export --out <bundle> [--digests] [--dry-run] | " +
-  "varlatchd admin migration import --in <reverse bundle> | varlatchd admin migration backfill";
+  "varlatchd admin migration export --out <bundle|-> [--digests] [--dry-run] | " +
+  "varlatchd admin migration import --in <reverse bundle|-> | varlatchd admin migration backfill";
 
 /**
  * `admin migration backfill` (go-step7 decision 18, slice 7.7b): the
@@ -418,7 +420,8 @@ async function migrationBackfill(args: string[]): Promise<void> {
  */
 async function migrationImport(args: string[]): Promise<void> {
   if (args.length !== 2 || args[0] !== "--in" || !args[1]) fail(MIGRATION_USAGE);
-  const path = args[1]!;
+  const fromStdin = args[1] === "-";
+  if (fromStdin && process.stdin.isTTY) fail("varlatchd admin migration import: --in - reads the reverse bundle from a pipe (varlatch migrate gives it), never a terminal");
   try {
     await control({ command: "migration-status" });
     fail("varlatchd admin migration import: varlatchd is running; stop it first: the import builds the database it starts on");
@@ -434,6 +437,21 @@ async function migrationImport(args: string[]): Promise<void> {
   const { importReverse, ImportRefused } = await import("./migration/import.js");
   const config = loadConfig(process.env, { requireKek: true, listeners: false });
   const rootKek = config.loadRootKek();
+  // --in -: the bundle on standard input, spooled into this container's own
+  // temporary directory (0700, the file 0600) because the import reads it
+  // twice (whole, then to load); removed when the import ends. The one-off
+  // container varlatch migrate runs it in goes with its run (--rm), so a
+  // killed import leaves nothing behind either.
+  let spool: string | null = null;
+  let path = args[1]!;
+  if (fromStdin) {
+    const { mkdtempSync, createWriteStream } = await import("node:fs");
+    const { pipeline } = await import("node:stream/promises");
+    const { tmpdir } = await import("node:os");
+    spool = mkdtempSync(join(tmpdir(), "varlatch-import-"));
+    path = join(spool, "reverse.jsonl");
+    await pipeline(process.stdin, createWriteStream(path, { flags: "wx", mode: 0o600 }));
+  }
   const db = createPgQuerier(config.databaseUrl);
   try {
     const result = await importReverse(db, { path, rootKek });
@@ -450,6 +468,7 @@ async function migrationImport(args: string[]): Promise<void> {
     process.exitCode = 1;
   } finally {
     rootKek.fill(0);
+    if (spool) rmSync(spool, { recursive: true, force: true });
     await db.end();
   }
 }
@@ -473,6 +492,11 @@ async function migrationExport(args: string[]): Promise<void> {
     else fail(MIGRATION_USAGE);
   }
   if (!opts.out) fail(MIGRATION_USAGE);
+  // --out -: the bundle on standard output, for varlatch migrate to write
+  // on the host (go-step7 7.8b: the container cannot write the operator's
+  // backups directory), the summary as the last line of standard error.
+  const toStdout = opts.out === "-";
+  if (toStdout && process.stdout.isTTY) fail("varlatchd admin migration export: --out - writes the bundle to a pipe (varlatch migrate reads it), never a terminal");
   let runKey: Buffer | null = null;
   if (opts.digests) {
     if (process.stdin.isTTY) fail("varlatchd admin migration export: --digests reads the run key from a pipe (varlatch migrate gives it), never a terminal");
@@ -489,25 +513,33 @@ async function migrationExport(args: string[]): Promise<void> {
   const db = createPgQuerier(config.databaseUrl);
   const partial = `${opts.out}.partial`;
   const removePartial = () => {
+    if (toStdout) return;
     try { unlinkSync(partial); } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
   };
   // An export killed before it finished leaves its .partial: never a bundle, so it goes.
   removePartial();
-  const out = createWriteStream(partial, { flags: "wx", mode: 0o600 });
+  const out = toStdout ? process.stdout : createWriteStream(partial, { flags: "wx", mode: 0o600 });
   // A write error is the bundle writer's to report; this keeps it from being unhandled meanwhile.
   out.on("error", () => {});
-  const closed = (w: ReturnType<typeof createWriteStream>) => new Promise<void>((resolve, reject) => { w.once("error", reject); w.end(resolve); });
+  const closed = (w: typeof out) => new Promise<void>((resolve, reject) => {
+    w.once("error", reject);
+    // Standard output is never ended: what was written is flushed.
+    if (toStdout) w.write("", () => resolve());
+    else w.end(resolve);
+  });
   let ok = false;
   try {
     const gate = activeGate(stateDir());
     const result = await exportSource(db, { gate, dryRun: opts.dryRun, out, rootKek, runKey });
     await closed(out);
-    renameSync(partial, opts.out);
+    if (!toStdout) renameSync(partial, opts.out);
     ok = true;
-    console.log(JSON.stringify({
+    const summary = JSON.stringify({
       frozenPoint: result.frozenPoint, bundle: result.bundle,
       preflight: { ok: true, verificationRows: result.preflight.verificationRows, crossOrganizationGrants: result.preflight.crossOrganizationGrants },
-    }));
+    });
+    if (toStdout) console.error(`${EXPORT_SUMMARY_PREFIX}${summary}`);
+    else console.log(summary);
   } catch (err) {
     if (!(err instanceof ExportRefused)) throw err;
     // Not fail(): it exits at once, and the partial file must go first.
@@ -520,7 +552,7 @@ async function migrationExport(args: string[]): Promise<void> {
   } finally {
     runKey?.fill(0);
     rootKek?.fill(0);
-    if (!ok) {
+    if (!ok && !toStdout) {
       out.destroy();
       removePartial();
     }
@@ -1015,4 +1047,10 @@ async function kekCommand(
   }
 }
 
-void main().catch(() => { console.error("Operator command failed; check configuration and maintenance status."); process.exitCode = 1; });
+void main().catch((err: unknown) => {
+  // An admin migration command says what failed, by its kind and place
+  // (migrationFailure); every other command keeps the catch-all.
+  const migration = process.argv[2] === "admin" && process.argv[3] === "migration";
+  console.error(migration ? migrationFailure(process.argv[4] ?? "", err) : "Operator command failed; check configuration and maintenance status.");
+  process.exitCode = 1;
+});

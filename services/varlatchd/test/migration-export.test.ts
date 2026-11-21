@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHmac, randomBytes } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -15,6 +15,7 @@ import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { compareDigests, idsText } from "../src/migration/bundle.js";
+import { EXPORT_SUMMARY_PREFIX } from "../src/migration/failure.js";
 import { digestInput, jsonbKeyOrder } from "../src/migration/canonical.js";
 import { exportSource, ExportRefused } from "../src/migration/export.js";
 import { readBundle } from "./helpers/bundle-read.js";
@@ -266,6 +267,59 @@ describe.skipIf(!url)("the migration's export", () => {
     expect((err as ExportRefused).preflight!.crossOrganizationGrants).toEqual([
       { grantId: "grt_crossorg", organizationId: seeded.beta, names: "group", namedId: group.id, namedOrganizationId: seeded.acme },
     ]);
+  }, 120_000);
+
+  it("as a command to standard output (--out -): the bundle on stdout, the summary as stderr's last line, no file", () => {
+    const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+    if (!existsSync(cli)) return; // CI builds before it tests
+    const kekFile = join(dir, "root-kek");
+    writeFileSync(kekFile, ctx.rootKek.toString("hex") + "\n", { mode: 0o600 });
+    const env = { PATH: process.env.PATH ?? "", VARLATCH_DATABASE_URL: databaseUrl, VARLATCH_KEK_FILE: kekFile, VARLATCH_STATE_DIR: dir };
+    const runKey = randomBytes(32).toString("hex");
+    const before = readdirSync(dir).sort();
+    const r = spawnSync(process.execPath, [cli, "admin", "migration", "export", "--out", "-", "--dry-run", "--digests"],
+      { env, input: `${runKey}\n`, cwd: dir, maxBuffer: 256 << 20 });
+    const stderr = r.stderr.toString("utf8");
+    expect(r.status, stderr).toBe(0);
+    // The bundle is stdout's bytes alone, whole: header, tables, digests, end.
+    const path = join(dir, "from-stdout.jsonl");
+    writeFileSync(path, r.stdout, { mode: 0o600 });
+    const read = readBundle(r.stdout.toString("utf8"));
+    expect(read.tables.size).toBeGreaterThan(0);
+    expect(read.digests.length).toBeGreaterThan(0);
+    expect(read.end).not.toBeNull();
+    // The summary: the last line of stderr, prefixed; stdout holds no summary.
+    const last = stderr.trimEnd().split("\n").pop()!;
+    expect(last.startsWith(EXPORT_SUMMARY_PREFIX)).toBe(true);
+    const summary = JSON.parse(last.slice(EXPORT_SUMMARY_PREFIX.length)) as { bundle: { digests: number }; preflight: { ok: boolean } };
+    expect(summary.preflight.ok).toBe(true);
+    expect(summary.bundle.digests).toBeGreaterThan(0);
+    expect(r.stdout.toString("utf8")).not.toContain(EXPORT_SUMMARY_PREFIX);
+    // No file written beside the export, partial or whole.
+    expect(readdirSync(dir).filter((f) => f !== "from-stdout.jsonl" && f !== "root-kek").sort()).toEqual(before.filter((f) => f !== "root-kek"));
+    for (const secret of [...seeded.secrets, runKey]) expect((r.stdout.toString("utf8") + stderr).includes(secret)).toBe(false);
+  }, 120_000);
+
+  it("as a command to standard output, killed mid-stream: no exit 0, no summary, nothing on disk", async () => {
+    const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+    if (!existsSync(cli)) return; // CI builds before it tests
+    const env = { PATH: process.env.PATH ?? "", VARLATCH_DATABASE_URL: databaseUrl, VARLATCH_STATE_DIR: dir };
+    const before = readdirSync(dir).sort();
+    const child = spawn(process.execPath, [cli, "admin", "migration", "export", "--out", "-", "--dry-run"], { env, cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (b: Buffer) => { stderr += b.toString("utf8"); });
+    // The first bytes arrive; the reader then stops reading, so the export
+    // blocks on its full pipe, mid-bundle, and is killed there.
+    const first = await new Promise<Buffer>((resolve) => child.stdout.once("data", resolve));
+    child.stdout.pause();
+    expect(first.length).toBeGreaterThan(0);
+    const ended = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+    child.kill("SIGKILL");
+    const { code, signal } = await ended;
+    expect(code === 0).toBe(false);
+    expect(signal).toBe("SIGKILL");
+    expect(stderr).not.toContain(EXPORT_SUMMARY_PREFIX);
+    expect(readdirSync(dir).sort()).toEqual(before);
   }, 120_000);
 
   it("as a command: the run key only on a pipe, files only once complete (0600), nothing secret printed", () => {
