@@ -79,6 +79,9 @@ type Manager struct {
 	verdict   string // Pin.Check's on observed, "" while it holds
 	status    *Status
 	statusErr bool
+	// untagged is whether the last check found a node on a self-hosted
+	// control server running with no tags (logged once as it starts).
+	untagged  bool
 	listening *bool
 	checkedAt *time.Time
 	// The browser endpoint (step 4.13c), when configured: the node's
@@ -381,6 +384,15 @@ func (m *Manager) checkLocked(ctx context.Context) {
 		return
 	}
 	m.status, m.statusErr = &st, false
+	// On a self-hosted control server the node's tags are its pre-auth
+	// key's: an untagged key leaves it untagged, which is said (the
+	// listeners report's warning), not refused (step 7.5c c1; c3 closes
+	// access when the tags are not tailnet_tags).
+	untagged := m.controlURL != "" && st.BackendState == "Running" && len(st.Tags) == 0
+	if untagged && !m.untagged {
+		m.log.Warn("the tailnet node joined its self-hosted control server with no tags: its tags are its pre-auth key's, which must carry tailnet_tags (headscale preauthkeys create --tags)", "controlUrl", m.controlURL)
+	}
+	m.untagged = untagged
 	if st.BackendState != "Running" || st.Suffix == "" {
 		m.persistLocked()
 		return
@@ -587,6 +599,10 @@ func (m *Manager) Repin(ctx context.Context, adopt bool, offer string, record fu
 	return old, next, nil
 }
 
+// UntaggedWarning is the listeners report's warning for a node on a
+// self-hosted control server that joined with no tags.
+const UntaggedWarning = "The node joined its self-hosted control server with no tags: its tags are its pre-auth key's, which must carry tailnet_tags. Enrol it again with a tagged key (headscale preauthkeys create --tags <tailnet_tags>)."
+
 // Report is the listeners report (TailnetListenerReport), as GET
 // /v1/installation/listeners answers it.
 func (m *Manager) Report() any {
@@ -622,6 +638,11 @@ func (m *Manager) reportLocked() jsvalue.Object {
 		endpoint = fmt.Sprintf("https://%s:%d", host, m.browser.port)
 	}
 	configured := jsvalue.Object{{Key: "tailnet", Value: tailnetName}, {Key: "listenerPort", Value: m.port}, {Key: "browserEndpoint", Value: endpoint}}
+	if m.controlURL != "" {
+		// A self-hosted control server (Headscale), named; Tailscale's is
+		// the default and left out.
+		configured = append(configured, jsvalue.Member{Key: "controlUrl", Value: m.controlURL})
+	}
 	listener, localAPI, node := unchecked, unchecked, unchecked
 	wanted := []*bool{m.listening}
 	if m.browser != nil {
@@ -664,6 +685,9 @@ func (m *Manager) reportLocked() jsvalue.Object {
 	observed := jsvalue.Object{{Key: "checkedAt", Value: checkedAt}, {Key: "checks", Value: checks}}
 	if len(details) > 0 {
 		observed = append(observed, jsvalue.Member{Key: "node", Value: details})
+	}
+	if m.untagged {
+		observed = append(observed, jsvalue.Member{Key: "warnings", Value: []any{UntaggedWarning}})
 	}
 	return jsvalue.Object{{Key: "configured", Value: configured}, {Key: "observed", Value: observed}}
 }

@@ -44,6 +44,9 @@ var firstSigned = [3]int{0, 15, 1}
 // suffix. Nothing in it can change what the identity below points to.
 var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$`)
 
+// IsVersion reports whether v is a release version (without the v).
+func IsVersion(v string) bool { return versionPattern.MatchString(v) }
+
 var (
 	// ErrVersion means the version is not a release version.
 	ErrVersion = errors.New("release: not a release version")
@@ -87,6 +90,20 @@ func NewVerifier(trusted root.TrustedMaterial) (*Verifier, error) {
 // and any failure to refresh is an error: there is no stale fallback.
 func LiveTrustedRoot(ctx context.Context, cacheDir string) (*root.TrustedRoot, error) {
 	return liveTrustedRoot(ctx, cacheDir, "", http.DefaultClient)
+}
+
+// LiveTrustedRootWith is LiveTrustedRoot through client (varlatchd's
+// outbound policy's, which never follows a redirect: Sigstore's TUF
+// repository answers its metadata and targets directly, and a redirect
+// makes the refresh fail, never a stale root used).
+func LiveTrustedRootWith(ctx context.Context, cacheDir string, client *http.Client) (*root.TrustedRoot, error) {
+	return liveTrustedRoot(ctx, cacheDir, "", client)
+}
+
+// LiveTrustedRootFrom is LiveTrustedRootWith from another TUF repository
+// (tests of a client's behaviour against a repository of their own).
+func LiveTrustedRootFrom(ctx context.Context, cacheDir, repositoryURL string, client *http.Client) (*root.TrustedRoot, error) {
+	return liveTrustedRoot(ctx, cacheDir, repositoryURL, client)
 }
 
 // liveTrustedRoot lets tests point at their own repository.

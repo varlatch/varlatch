@@ -160,8 +160,7 @@
       "of": "varlatch",
       "commands": [
         "org"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--after-context": {
       "sources": [
@@ -322,8 +321,7 @@
       "of": "varlatch",
       "commands": [
         "org"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--archive": {
       "sources": [
@@ -522,8 +520,7 @@
       "of": "varlatch",
       "commands": [
         "org"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--certificate-identity": {
       "sources": [
@@ -620,11 +617,7 @@
         "org",
         "project",
         "values"
-      ],
-      "commandSlices": {
-        "org": "5.7c",
-        "project": "5.7c"
-      }
+      ]
     },
     "--context": {
       "sources": [
@@ -722,8 +715,7 @@
       "of": "varlatch",
       "commands": [
         "audit"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--depth": {
       "sources": [
@@ -1971,8 +1963,7 @@
       "of": "varlatch",
       "commands": [
         "org"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--record": {
       "sources": [
@@ -3620,7 +3611,15 @@
         "none: the error (no GITHUB_TOKEN or GH_TOKEN fallback)"
       ],
       "source": "apps/cli/src/main.ts sync, syncPush.ts, syncCheck.ts",
-      "cases": []
+      "cases": [
+        "transcripts/5.8b-sync.json#check.token-env.given",
+        "transcripts/5.8b-sync.json#check.token-env.absent",
+        "transcripts/5.8b-sync.json#check.token-env.empty",
+        "transcripts/5.8b-sync.json#check.token-env.unset",
+        "transcripts/5.8b-sync.json#push.token-env.given",
+        "transcripts/5.8b-sync.json#push.token-env.absent",
+        "transcripts/5.8b-sync.json#push.token-env.empty"
+      ]
     },
     {
       "name": "mcp-writes",

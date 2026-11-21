@@ -5,5 +5,5 @@
 package db
 
 // CompatibleFrom: G6's fixture step is rollback-safe, so a varlatchd of
-// schema 1 may still open the database (version_g6fixture.go).
+// the released schemas may still open the database (version_g6fixture.go).
 const CompatibleFrom = 1
