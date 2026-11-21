@@ -62,7 +62,12 @@ func runCertificateIssuances(cfg *config.Config, rest []string, now time.Time, s
 		fmt.Fprintf(stderr, "varlatchd admin certificate issuances: %s\n", err.Error())
 		return ExitFailure
 	}
-	rep := issuancesReport{Window: publictls.IssuanceWindow.String()}
+	// The window varlatchd holds a name for: the CA's week and its slack
+	// (publictls.IssuanceSlack). An attempt counts while it is younger than
+	// the window: at Until exactly, the oldest no longer counts, and the
+	// name is free again.
+	window := publictls.IssuanceWindow + publictls.IssuanceSlack
+	rep := issuancesReport{Window: window.String()}
 	if p := cfg.PublicHTTPS; p != nil {
 		rep.Name, rep.CA, rep.Limit = strings.ToLower(p.Host), p.CA, publictls.LimitFor(p.CA)
 		conn, err := openReadOnly(cfg)
@@ -71,7 +76,7 @@ func runCertificateIssuances(cfg *config.Config, rest []string, now time.Time, s
 		}
 		if conn != nil {
 			defer conn.Close()
-			row, err := query.New(conn).CountCertificateIssuances(context.Background(), query.CountCertificateIssuancesParams{Name: rep.Name, StartedAt: now.Add(-publictls.IssuanceWindow).UnixMicro()})
+			row, err := query.New(conn).CountCertificateIssuances(context.Background(), query.CountCertificateIssuancesParams{Name: rep.Name, StartedAt: now.Add(-window).UnixMicro() + 1})
 			// A database from before the count (an older archive) has no
 			// table: nothing was counted.
 			if err != nil && !strings.Contains(err.Error(), "no such table: certificate_issuances") {
@@ -79,7 +84,7 @@ func runCertificateIssuances(cfg *config.Config, rest []string, now time.Time, s
 			}
 			if err == nil && row.N > 0 {
 				oldest := time.UnixMicro(row.Oldest).UTC()
-				until := oldest.Add(publictls.IssuanceWindow)
+				until := oldest.Add(window)
 				rep.Attempts, rep.Oldest, rep.Until = int(row.N), &oldest, &until
 			}
 		}
@@ -97,11 +102,11 @@ func runCertificateIssuances(cfg *config.Config, rest []string, now time.Time, s
 	case rep.Name == "":
 		fmt.Fprintln(stdout, "varlatchd serves no public HTTPS (listen_https is unset): it asks no CA for a certificate.")
 	case rep.Limit == 0:
-		fmt.Fprintf(stdout, "Certificate requests for %s in the last 7 days: %d (the CA %s has no limit varlatchd keeps).\n", rep.Name, rep.Attempts, rep.CA)
+		fmt.Fprintf(stdout, "Certificate requests for %s in the last 7 days and an hour: %d (the CA %s has no limit varlatchd keeps).\n", rep.Name, rep.Attempts, rep.CA)
 	case rep.Full:
-		fmt.Fprintf(stdout, "Certificate requests for %s in the last 7 days: %d, Let's Encrypt's limit of %d: varlatchd asks for none until %s.\n", rep.Name, rep.Attempts, rep.Limit, rep.Until.Format(time.RFC3339))
+		fmt.Fprintf(stdout, "Certificate requests for %s in the last 7 days and an hour: %d, Let's Encrypt's limit of %d: varlatchd asks for none until %s.\n", rep.Name, rep.Attempts, rep.Limit, rep.Until.Format(time.RFC3339))
 	default:
-		fmt.Fprintf(stdout, "Certificate requests for %s in the last 7 days: %d of Let's Encrypt's %d.\n", rep.Name, rep.Attempts, rep.Limit)
+		fmt.Fprintf(stdout, "Certificate requests for %s in the last 7 days and an hour: %d of Let's Encrypt's %d.\n", rep.Name, rep.Attempts, rep.Limit)
 	}
 	return ExitOK
 }
