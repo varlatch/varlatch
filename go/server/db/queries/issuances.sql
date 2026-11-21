@@ -1,0 +1,30 @@
+-- The certificate issuance count (internal docs/design/go-step6.md
+-- decision 16; schema version 2). Every time written is varlatchd's clock,
+-- passed in.
+
+-- name: BeginCertificateIssuance :one
+INSERT INTO certificate_issuances (name, started_at) VALUES (?, ?) RETURNING id;
+
+-- name: EndCertificateIssuance :exec
+UPDATE certificate_issuances SET outcome = ?, ended_at = ? WHERE id = ? AND outcome = 'started';
+
+-- name: CountCertificateIssuances :one
+-- The attempts that count: issued, or never ended (a timeout, a crash).
+SELECT count(*) AS n, CAST(coalesce(min(started_at), 0) AS INTEGER) AS oldest
+FROM certificate_issuances
+WHERE name = ? AND started_at >= ? AND outcome IN ('started', 'issued');
+
+-- name: PruneCertificateIssuances :exec
+DELETE FROM certificate_issuances WHERE started_at < ?;
+
+-- name: ListCertificateIssuances :many
+-- Every attempt kept, for a migration's rollback to carry the count back
+-- (go-step7 decision 11).
+SELECT name, started_at, outcome, ended_at FROM certificate_issuances ORDER BY started_at, id;
+
+-- name: CertificateIssuanceRecorded :one
+SELECT count(*) FROM certificate_issuances WHERE name = ? AND started_at = ?;
+
+-- name: RecordCertificateIssuance :exec
+-- An attempt made elsewhere (a migration's handoff), recorded as it ended.
+INSERT INTO certificate_issuances (name, started_at, outcome, ended_at) VALUES (?, ?, ?, ?);

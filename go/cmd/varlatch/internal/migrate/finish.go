@@ -58,30 +58,49 @@ type FinishRecord struct {
 	ArchiveFormat int      `json:"archiveFormat,omitempty"`
 	VerifiedAt    string   `json:"verifiedAt,omitempty"`
 	Removed       []string `json:"removed,omitempty"`
+	// Removing are the volumes whose removal began (journalled before
+	// `docker volume rm`): one not there and named here was removed by a
+	// run killed before it journalled it removed.
+	Removing []string `json:"removing,omitempty"`
 	// Operator is what is the operator's to remove (Coolify's shape).
 	Operator string `json:"operator,omitempty"`
 	DoneAt   string `json:"doneAt,omitempty"`
 }
 
+// Removals is what --finish removed and began to remove, from the
+// source's journal, and how each step is journalled: Intend before a
+// volume's removal, Removed after any removal.
+type Removals struct {
+	Done     []string
+	Removing []string
+	Intend   func(volume string) error
+	Removed  func(item string) error
+}
+
 // FinishSource is the TypeScript side's part of --finish.
 type FinishSource interface {
 	// CheckData is RemoveOld's (plan nil) or RemoveRetained's data volumes
-	// inspected before anything is done: one not there (and not in done)
-	// is refused, so --delete-old-data stops before its final archive and
-	// before the window closes.
-	CheckData(ctx context.Context, kind Ingress, plan *RebuildRecord, done []string) error
+	// inspected before anything is done: one not there (and neither done
+	// nor begun) is refused, so --delete-old-data stops before its final
+	// archive and before the window closes.
+	CheckData(ctx context.Context, kind Ingress, plan *RebuildRecord, r Removals) error
 	// ServeForArchive starts what the TypeScript installation's backup
-	// needs (its varlatchd and Postgres, behind its migrated-out gate).
-	ServeForArchive(ctx context.Context) error
+	// needs (its varlatchd, Postgres and Convex, behind its migrated-out
+	// gate): the services it started (none when all ran already).
+	ServeForArchive(ctx context.Context) ([]string, error)
+	// StopStarted stops the services ServeForArchive started.
+	StopStarted(ctx context.Context, services []string) error
 	// RemoveOld removes the TypeScript installation's containers and its
 	// old node's state and certificates, and, with data, its Postgres and
-	// Convex volumes, calling removed with each, once removed; what done
-	// names was removed by an earlier run. A data volume that is not there
-	// (and not in done) is an error: never a removal claimed for nothing.
-	RemoveOld(ctx context.Context, kind Ingress, data bool, done []string, removed func(string) error) error
+	// Convex volumes, journalling each through r; what r.Done names was
+	// removed by an earlier run, and a volume in r.Removing that is not
+	// there was too (killed before it was journalled removed). A data
+	// volume not there, neither done nor begun, is an error: never a
+	// removal claimed for nothing.
+	RemoveOld(ctx context.Context, kind Ingress, data bool, r Removals) error
 	// RemoveRetained removes the pre-migration volumes a reverse left
 	// unused (the installation runs on plan's fresh ones), as RemoveOld.
-	RemoveRetained(ctx context.Context, plan RebuildRecord, done []string, removed func(string) error) error
+	RemoveRetained(ctx context.Context, plan RebuildRecord, r Removals) error
 }
 
 // FinishTarget is the Go side's part.
@@ -118,13 +137,19 @@ func (e *Engine) Finish(ctx context.Context, deleteOldData bool) (*Journal, erro
 	case j == nil:
 		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to finish", e.Source.Dir())
 	case j.Phase == Finished && j.Finish != nil:
+		// Go's journal agrees first (an interrupted finish written into
+		// the source's only is written into Go's now): never another
+		// installation archived or removed.
+		if err := e.finishAgrees(ctx, j); err != nil {
+			return j, err
+		}
 		if deleteOldData && !j.Finish.DeleteOldData {
 			// The window ended earlier; the old data goes now.
 			if err := e.checkData(ctx, j); err != nil {
 				return j, err
 			}
 			j.Finish.DeleteOldData, j.Finish.DoneAt = true, ""
-			if err := e.finalArchive(ctx, j); err != nil {
+			if err := e.archiveOnce(ctx, j); err != nil {
 				return j, err
 			}
 		}
@@ -132,50 +157,42 @@ func (e *Engine) Finish(ctx context.Context, deleteOldData bool) (*Journal, erro
 			return j, e.finishRemove(ctx, j)
 		}
 		return j, nil
-	case j.Phase == Open:
-		_, st, err := e.Target.Describe(ctx)
-		if err != nil {
+	case j.Phase == Open || j.Phase == RolledBack:
+		if err := e.finishAgrees(ctx, j); err != nil {
 			return j, err
-		}
-		if st.Journal == nil || st.Journal.ID != j.ID || st.Journal.Phase != Open {
-			return j, fmt.Errorf("the target's journal says %v, not the migration %s open: nothing was done", st.Journal, j.ID)
-		}
-		if st.Barrier != "" {
-			return j, fmt.Errorf("a reverse's barrier stands on the Go installation (%s): varlatch migrate --resume first", st.Barrier)
-		}
-	case j.Phase == RolledBack:
-		// Go's journal must agree before anything is lifted or archived.
-		_, st, err := e.Target.Describe(ctx)
-		if err != nil {
-			return j, err
-		}
-		if st.Journal == nil || st.Journal.ID != j.ID || st.Journal.Phase != RolledBack {
-			return j, fmt.Errorf("the target's journal says %v, not the migration %s rolled back: nothing was done", st.Journal, j.ID)
 		}
 	default:
 		return j, fmt.Errorf("the migration %s is in phase %s: --finish ends an open migration's rollback window, or a rolled back one's record (varlatch migrate --resume first)", j.ID, j.Phase)
 	}
 	// A run killed after its final archive was verified and journalled
-	// (finish archived) is run again with that archive, not another.
-	if prev := j.Finish; prev != nil && prev.After == j.Phase && prev.DoneAt == "" && prev.VerifiedAt != "" && prev.ArchiveID != "" && deleteOldData {
-		e.say("The final archive %s, verified %s, is this run's.", prev.ArchiveID, prev.VerifiedAt)
+	// (finish archived) keeps that archive, whatever this run's flags: a
+	// later --delete-old-data uses it, never makes another.
+	if prev := j.Finish; prev != nil && prev.After == j.Phase && prev.DoneAt == "" && prev.VerifiedAt != "" && prev.ArchiveID != "" {
+		prev.DeleteOldData = deleteOldData
 	} else {
 		j.Finish = &FinishRecord{After: j.Phase, DeleteOldData: deleteOldData, StartedAt: e.now().UTC().Format(time.RFC3339Nano)}
-		if deleteOldData {
-			if err := e.checkData(ctx, j); err != nil {
-				return j, err
-			}
-			if err := e.finalArchive(ctx, j); err != nil {
-				return j, err
-			}
+	}
+	if deleteOldData {
+		if err := e.checkData(ctx, j); err != nil {
+			return j, err
+		}
+		if err := e.archiveOnce(ctx, j); err != nil {
+			return j, err
 		}
 	}
 	if j.Finish.After == Open {
-		// Both journals: Go's says finished beside it, and the window is
-		// closed.
-		if err := e.enter(ctx, j, Finished); err != nil {
+		// Both journals: the source's, then Go's beside it, and the window
+		// is closed. Killed between the two, the next --finish or --resume
+		// writes Go's (finishAgrees).
+		j.enter(Finished, e.now())
+		if err := writeJournal(e.Source.Dir(), j); err != nil {
 			return j, err
 		}
+		crashPoint("finished source written")
+		if err := e.Target.WriteJournal(ctx, j); err != nil {
+			return j, fmt.Errorf("the journal in the target's data directory: %w; varlatch migrate --resume writes it", err)
+		}
+		crashPoint("entered finished")
 	} else {
 		// Go's stays rolled back: it never starts on its copy again.
 		j.enter(Finished, e.now())
@@ -186,6 +203,64 @@ func (e *Engine) Finish(ctx context.Context, deleteOldData bool) (*Journal, erro
 	}
 	e.say("Finished: the migration's rollback window is closed.")
 	return j, e.finishRemove(ctx, j)
+}
+
+// finishAgrees is Go's journal checked against the source's before
+// --finish does anything: the same migration, open (a forward migration
+// being finished), rolled back (a reverse's record being finished), or
+// finished. A forward migration finished in the source's journal whose
+// Go journal still says open (a run killed between the two writes) has
+// Go's written now, beside its varlatchd, so the rollback window is not
+// reported open (RollbackWindowOpen) once --finish closed it.
+func (e *Engine) finishAgrees(ctx context.Context, j *Journal) error {
+	_, st, err := e.Target.Describe(ctx)
+	if err != nil {
+		return err
+	}
+	after := j.Phase
+	if j.Phase == Finished {
+		after = j.Finish.After
+	}
+	want := []Phase{after}
+	if j.Phase == Finished && after == Open {
+		want = []Phase{Open, Finished}
+	}
+	if st.Journal == nil || st.Journal.ID != j.ID || !slices.Contains(want, st.Journal.Phase) {
+		var says any = "nothing"
+		if st.Journal != nil {
+			says = fmt.Sprintf("the migration %s in phase %s", st.Journal.ID, st.Journal.Phase)
+		}
+		return fmt.Errorf("the target's journal (--config) says %v, not the migration %s %s: nothing was done", says, j.ID, after)
+	}
+	if after == Open && st.Barrier != "" {
+		return fmt.Errorf("a reverse's barrier stands on the Go installation (%s): varlatch migrate --resume first", st.Barrier)
+	}
+	if after == Open && st.Barrier == "" && j.Rollback != nil && j.Rollback.Undone != nil && !j.Rollback.Undone.Released {
+		// An undone reverse killed between its barrier's release and the
+		// record of it (as --resume's finishOpen back-fills it).
+		j.Rollback.Undone.Released = true
+		if err := writeJournal(e.Source.Dir(), j); err != nil {
+			return err
+		}
+	}
+	if j.Phase == Finished && st.Journal.Phase == Open {
+		e.say("The migration %s is finished, but Go's journal says open: it is written finished.", j.ID)
+		if err := e.Target.WriteJournal(ctx, j); err != nil {
+			return fmt.Errorf("the journal in the target's data directory: %w; varlatch migrate --resume writes it", err)
+		}
+	}
+	return nil
+}
+
+// archiveOnce is the final archive, unless the journal records one
+// verified already for this finish (made by a killed run): that one is
+// used, never another made.
+func (e *Engine) archiveOnce(ctx context.Context, j *Journal) error {
+	if f := j.Finish; f.ArchiveID != "" && f.VerifiedAt != "" {
+		e.say("The final archive %s, verified %s, is this run's.", f.ArchiveID, f.VerifiedAt)
+		return nil
+	}
+	return e.finalArchive(ctx, j)
 }
 
 // checkData is CheckData for j's --delete-old-data.
@@ -201,7 +276,7 @@ func (e *Engine) checkData(ctx context.Context, j *Journal) error {
 		}
 		plan = j.Rollback.Rebuild
 	}
-	if err := fs.CheckData(ctx, j.Ingress, plan, j.Finish.Removed); err != nil {
+	if err := fs.CheckData(ctx, j.Ingress, plan, Removals{Done: j.Finish.Removed, Removing: j.Finish.Removing}); err != nil {
 		return fmt.Errorf("%w; nothing was done", err)
 	}
 	return nil
@@ -215,18 +290,33 @@ func (e *Engine) finalArchive(ctx context.Context, j *Journal) error {
 		// Its backup needs its varlatchd and Postgres, which an earlier
 		// --finish took down: up again, behind its migrated-out gate (it
 		// serves nothing), then down again with the rest.
-		if fs, ok := e.Source.(FinishSource); ok && j.Ingress != Coolify {
-			if err := fs.ServeForArchive(ctx); err != nil {
-				return fmt.Errorf("starting the TypeScript installation for its final archive: %w; nothing was removed", err)
+		var started []string
+		fs, _ := e.Source.(FinishSource)
+		// On a failure, what this run started for the archive goes down
+		// again (only that: what ran before it is left running).
+		failed := func(err error) error {
+			if len(started) == 0 {
+				return fmt.Errorf("%w; nothing was removed", err)
+			}
+			if serr := fs.StopStarted(ctx, started); serr != nil {
+				return fmt.Errorf("%w; nothing was removed, but %s, started for the archive, could not be stopped again (%v): docker compose stop %s", err, strings.Join(started, ", "), serr, strings.Join(started, " "))
+			}
+			return fmt.Errorf("%w; nothing was removed, and %s, started for the archive, are stopped again", err, strings.Join(started, ", "))
+		}
+		if fs != nil && j.Ingress != Coolify {
+			var err error
+			// A start that failed part way says what it did start.
+			if started, err = fs.ServeForArchive(ctx); err != nil {
+				return failed(fmt.Errorf("starting the TypeScript installation for its final archive: %w", err))
 			}
 		}
 		e.say("Final archive: the TypeScript installation, made, uploaded, then downloaded and verified (format 2).")
 		id, err := e.Source.Backup(ctx)
 		if err != nil {
-			return fmt.Errorf("the final archive: %w; nothing was removed", err)
+			return failed(fmt.Errorf("the final archive: %w", err))
 		}
 		if err := e.Source.VerifyBackup(ctx, id); err != nil {
-			return fmt.Errorf("the final archive %s did not verify: %w; nothing was removed", id, err)
+			return failed(fmt.Errorf("the final archive %s did not verify: %w", id, err))
 		}
 		j.Finish.ArchiveID, j.Finish.ArchiveFormat = id, 2
 	} else {
@@ -271,14 +361,27 @@ func (e *Engine) finishRemove(ctx context.Context, j *Journal) error {
 	}
 	// Each removal journalled once it is done, so a resume does not
 	// expect again what is gone.
+	// A volume's removal is journalled begun before `docker volume rm`, so
+	// one killed before it was journalled removed is known, not refused.
 	removed := func(item string) error {
 		if !slices.Contains(f.Removed, item) {
 			f.Removed = append(f.Removed, item)
 		}
 		return writeJournal(e.Source.Dir(), j)
 	}
+	log := func() Removals {
+		return Removals{Done: f.Removed, Removing: f.Removing, Removed: removed, Intend: func(v string) error {
+			if !slices.Contains(f.Removing, v) {
+				f.Removing = append(f.Removing, v)
+			}
+			return writeJournal(e.Source.Dir(), j)
+		}}
+	}
 	if f.After == Open {
-		err := fs.RemoveOld(ctx, j.Ingress, data, f.Removed, removed)
+		// The handoff's certificate attempts in Go's count, in case the
+		// transfer could not write them (each attempt once).
+		e.recordNow(ctx, j)
+		err := fs.RemoveOld(ctx, j.Ingress, data, log())
 		var human *HumanStep
 		if errors.As(err, &human) {
 			f.Operator = human.Instruction
@@ -301,7 +404,7 @@ func (e *Engine) finishRemove(ctx context.Context, j *Journal) error {
 		if j.Rollback == nil || j.Rollback.Rebuild == nil {
 			return errors.New("the journal records no rebuild: the pre-migration volumes are not known; left as they are")
 		}
-		if err := fs.RemoveRetained(ctx, *j.Rollback.Rebuild, f.Removed, removed); err != nil {
+		if err := fs.RemoveRetained(ctx, *j.Rollback.Rebuild, log()); err != nil {
 			return fmt.Errorf("removing the pre-migration volumes: %w; varlatch migrate --resume finishes it", err)
 		}
 	}
@@ -442,42 +545,56 @@ func (c *Compose) volumeThere(ctx context.Context, name string) (bool, error) {
 	return false, failure("docker volume inspect "+name, r)
 }
 
-// inspectVolumes are the volumes there of expected and optional, but
-// those in done; an expected one not there is an error.
-func (c *Compose) inspectVolumes(ctx context.Context, expected, optional []string, done []string) ([]string, error) {
-	var there, missing []string
+// inspectVolumes are the volumes of expected and optional that are there
+// (but those done), and those not there whose removal began (removed by a
+// killed run); an expected one not there, neither done nor begun, is an
+// error.
+func (c *Compose) inspectVolumes(ctx context.Context, expected, optional []string, r Removals) (there, gone []string, err error) {
+	var missing []string
 	for _, v := range append(append([]string{}, expected...), optional...) {
-		if slices.Contains(done, v) {
+		if slices.Contains(r.Done, v) {
 			continue
 		}
 		ok, err := c.volumeThere(ctx, v)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		switch {
 		case ok:
 			there = append(there, v)
+		case slices.Contains(r.Removing, v):
+			gone = append(gone, v)
 		case slices.Contains(expected, v):
 			missing = append(missing, v)
 		}
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("the volumes %s are not there (docker volume inspect): not the installation's Compose project's, or removed by hand; none of its data volumes was removed", strings.Join(missing, ", "))
+		return nil, nil, fmt.Errorf("the volumes %s are not there (docker volume inspect), and no run of --finish began to remove them: not the installation's Compose project's, or removed by hand; none of its data volumes was removed", strings.Join(missing, ", "))
 	}
-	return there, nil
+	return there, gone, nil
 }
 
-// removeVolumes removes each volume, inspected first: one in done was
-// removed by an earlier run (gone is as expected); an optional one not
-// there is skipped; any other one not there is an error, before anything
-// else is removed, so a removal is never claimed for a volume that is not
-// the installation's.
-func (c *Compose) removeVolumes(ctx context.Context, expected, optional []string, done []string, removed func(string) error) error {
-	there, err := c.inspectVolumes(ctx, expected, optional, done)
+// removeVolumes removes each volume, inspected first: one done was
+// removed by an earlier run; one not there whose removal began was too
+// (journalled removed now); an optional one not there is skipped; any
+// other one not there is an error, before anything else is removed, so a
+// removal is never claimed for a volume that is not the installation's.
+// Each removal is journalled begun before `docker volume rm`, and removed
+// after it.
+func (c *Compose) removeVolumes(ctx context.Context, expected, optional []string, log Removals) error {
+	there, gone, err := c.inspectVolumes(ctx, expected, optional, log)
 	if err != nil {
 		return err
 	}
+	for _, v := range gone {
+		if err := log.Removed(v); err != nil {
+			return err
+		}
+	}
 	for _, v := range there {
+		if err := log.Intend(v); err != nil {
+			return err
+		}
 		r, err := c.docker(ctx, []string{"volume", "rm", v}, nil)
 		if err != nil {
 			return err
@@ -485,7 +602,8 @@ func (c *Compose) removeVolumes(ctx context.Context, expected, optional []string
 		if r.Code != 0 {
 			return failure("docker volume rm "+v, r)
 		}
-		if err := removed(v); err != nil {
+		crashPoint("finish volume removed")
+		if err := log.Removed(v); err != nil {
 			return err
 		}
 	}
@@ -494,7 +612,7 @@ func (c *Compose) removeVolumes(ctx context.Context, expected, optional []string
 
 // CheckData: the data volumes RemoveOld or RemoveRetained would remove,
 // inspected (Coolify's are the operator's: nothing is checked).
-func (c *Compose) CheckData(ctx context.Context, kind Ingress, plan *RebuildRecord, done []string) error {
+func (c *Compose) CheckData(ctx context.Context, kind Ingress, plan *RebuildRecord, log Removals) error {
 	if kind == Coolify {
 		return nil
 	}
@@ -510,7 +628,7 @@ func (c *Compose) CheckData(ctx context.Context, kind Ingress, plan *RebuildReco
 	} else {
 		expected = []string{project + "_postgres-data", project + "_convex-data"}
 	}
-	_, err = c.inspectVolumes(ctx, expected, nil, done)
+	_, _, err = c.inspectVolumes(ctx, expected, nil, log)
 	return err
 }
 
@@ -521,28 +639,52 @@ func (c *Compose) CheckData(ctx context.Context, kind Ingress, plan *RebuildReco
 // Where varlatchd shares the old Tailscale node's network (network_mode:
 // service:...), it does not start without that node: refused, its data
 // kept.
-func (c *Compose) ServeForArchive(ctx context.Context) error {
+func (c *Compose) ServeForArchive(ctx context.Context) ([]string, error) {
 	need := []string{"postgres", service, "convex-backend"}
-	r, err := c.docker(ctx, []string{"compose", "ps", "--status", "running", "--services"}, nil)
+	running, err := c.running(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if r.Code != 0 {
-		return failure("docker compose ps", r)
-	}
-	running := strings.Fields(string(r.Answer))
-	if !slices.ContainsFunc(need, func(s string) bool { return !slices.Contains(running, s) }) {
-		return nil
+	start := slices.DeleteFunc(slices.Clone(need), func(s string) bool { return slices.Contains(running, s) })
+	if len(start) == 0 {
+		return nil, nil
 	}
 	cfg, err := c.config(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:"); ok {
-		return fmt.Errorf("its varlatchd runs in %s's network (the old Tailscale node), which is not started again beside Go's: its data volumes are kept. "+
-			"Make and restore-test a backup of them by your own means, then remove them by hand (docker volume rm %s_postgres-data %s_convex-data)", owner, cfg.Name, cfg.Name)
+		return nil, fmt.Errorf("--delete-old-data is refused here: the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), so starting it for the final archive "+
+			"would bring the old Tailscale node back beside Go's. Its data volumes are kept. By hand: 1. make a backup of them by your own means and test that it restores; "+
+			"2. remove them: docker volume rm %s_postgres-data %s_convex-data", owner, owner, cfg.Name, cfg.Name)
 	}
-	return c.compose(ctx, "docker compose up -d --no-deps postgres varlatchd convex-backend", append([]string{"up", "-d", "--no-deps", "--no-recreate"}, need...)...)
+	if err := c.compose(ctx, "docker compose up -d --no-deps "+strings.Join(start, " "), append([]string{"up", "-d", "--no-deps", "--no-recreate"}, start...)...); err != nil {
+		// An up that failed part way may have started some: those it did,
+		// running now and not before, are this run's to stop again.
+		now, perr := c.running(ctx)
+		if perr != nil {
+			return start, fmt.Errorf("%w; which of %s it started is not known (docker compose ps: %v)", err, strings.Join(start, ", "), perr)
+		}
+		return slices.DeleteFunc(slices.Clone(start), func(s string) bool { return !slices.Contains(now, s) }), err
+	}
+	return start, nil
+}
+
+// running are the Compose services running now.
+func (c *Compose) running(ctx context.Context) ([]string, error) {
+	r, err := c.docker(ctx, []string{"compose", "ps", "--status", "running", "--services"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if r.Code != 0 {
+		return nil, failure("docker compose ps", r)
+	}
+	return strings.Fields(string(r.Answer)), nil
+}
+
+// StopStarted: `docker compose stop` of the services named.
+func (c *Compose) StopStarted(ctx context.Context, services []string) error {
+	return c.compose(ctx, "docker compose stop "+strings.Join(services, " "), append([]string{"stop"}, services...)...)
 }
 
 // RemoveOld: `docker compose down` (the containers and networks, never a
@@ -550,7 +692,7 @@ func (c *Compose) ServeForArchive(ctx context.Context) error {
 // Caddy's volumes, those the installation has), and, with data, the
 // Postgres and Convex volumes it ran on (and its varlatch-state). In
 // Coolify's shape all of it is the operator's, said as steps.
-func (c *Compose) RemoveOld(ctx context.Context, kind Ingress, data bool, done []string, removed func(string) error) error {
+func (c *Compose) RemoveOld(ctx context.Context, kind Ingress, data bool, log Removals) error {
 	if kind == Coolify {
 		steps := "In Coolify, the TypeScript application (not Go's) is yours to remove: 1. Keep it as it is (it serves nothing: its domain is Go's) until varlatch migrate --finish --delete-old-data, " +
 			"whose final archive needs its Postgres, varlatchd and Convex. 2. Then delete it, its volumes included."
@@ -568,7 +710,7 @@ func (c *Compose) RemoveOld(ctx context.Context, kind Ingress, data bool, done [
 	if err := c.compose(ctx, "docker compose down", "down"); err != nil {
 		return err
 	}
-	if err := removed("the TypeScript installation's containers"); err != nil {
+	if err := log.Removed("the TypeScript installation's containers"); err != nil {
 		return err
 	}
 	crashPoint("finish containers removed")
@@ -582,13 +724,13 @@ func (c *Compose) RemoveOld(ctx context.Context, kind Ingress, data bool, done [
 		expected = vols
 		optional = append(optional, project+"_varlatch-state")
 	}
-	return c.removeVolumes(ctx, expected, optional, done, removed)
+	return c.removeVolumes(ctx, expected, optional, log)
 }
 
 // RemoveRetained removes the project's own Postgres and Convex volumes,
 // which a reverse left unused: only while COMPOSE_FILE names migrate's
 // file and its fresh volumes are plan's, never a volume in use.
-func (c *Compose) RemoveRetained(ctx context.Context, plan RebuildRecord, done []string, removed func(string) error) error {
+func (c *Compose) RemoveRetained(ctx context.Context, plan RebuildRecord, log Removals) error {
 	project, err := c.projectName(ctx)
 	if err != nil {
 		return err
@@ -600,7 +742,7 @@ func (c *Compose) RemoveRetained(ctx context.Context, plan RebuildRecord, done [
 	if !rebuilt || !slices.Equal(inUse, plan.Volumes) {
 		return fmt.Errorf("the installation does not run on the reverse's fresh volumes %v (its Compose files name %v): the pre-migration volumes are left as they are", plan.Volumes, inUse)
 	}
-	return c.removeVolumes(ctx, []string{project + "_postgres-data", project + "_convex-data"}, nil, done, removed)
+	return c.removeVolumes(ctx, []string{project + "_postgres-data", project + "_convex-data"}, nil, log)
 }
 
 // configName is the Go configuration's path, as the operator edits it.

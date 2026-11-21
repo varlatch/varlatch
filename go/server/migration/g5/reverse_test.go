@@ -306,7 +306,8 @@ func TestG5Reverse(t *testing.T) {
 	g := setUp(t)
 	in := withDatabase(t, g.source.RootKEK, g.clean)
 	// The seed's rows are the TypeScript server's test fixtures: its Sync
-	// Targets and webhooks name hosts no test reaches.
+	// Targets and webhooks name hosts no test reaches, so a sync pass in
+	// flight could outlast the reverse barrier's drain.
 	f, err := os.OpenFile(in.conf, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
