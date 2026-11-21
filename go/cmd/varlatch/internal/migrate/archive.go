@@ -602,20 +602,43 @@ func (i *isolation) startPostgres(ctx context.Context, started *[]string) (strin
 // /tmp and the mounts given, as i.user, no capability, removed when it
 // ends. Its name goes in started first.
 func (i *isolation) inNamespace(ctx context.Context, pg, image, role string, started *[]string, mounts, cmd []string, stdin []byte) (Ran, error) {
-	n, err := name(role)
+	args, err := i.namespaceArgs(pg, image, role, started, mounts, cmd, stdin != nil)
 	if err != nil {
 		return Ran{}, err
+	}
+	return i.run.Run(ctx, "", i.docker, args, stdin)
+}
+
+// inNamespaceStream is inNamespace on streams (Streamer): in on the
+// container's standard input, its standard output to out as it writes it.
+func (i *isolation) inNamespaceStream(ctx context.Context, pg, image, role string, started *[]string, mounts, cmd []string, in io.Reader, out io.Writer) (Ran, error) {
+	s, ok := i.run.(Streamer)
+	if !ok {
+		return Ran{}, errors.New("this runner cannot stream a bundle")
+	}
+	args, err := i.namespaceArgs(pg, image, role, started, mounts, cmd, in != nil)
+	if err != nil {
+		return Ran{}, err
+	}
+	return s.Stream(ctx, "", i.docker, args, in, out)
+}
+
+// namespaceArgs is docker run's arguments for inNamespace (-i when the
+// container is given an input).
+func (i *isolation) namespaceArgs(pg, image, role string, started *[]string, mounts, cmd []string, input bool) ([]string, error) {
+	n, err := name(role)
+	if err != nil {
+		return nil, err
 	}
 	*started = append(*started, n)
 	args := []string{"run", "--rm", "--name", n, "--network", "container:" + pg, "--label", "varlatch.convert=" + role,
 		"--read-only", "--tmpfs", "/tmp", "--user", i.user, "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"-e", "VARLATCH_DATABASE_URL=" + databaseURL, "-e", "VARLATCH_STATE_DIR=/tmp/state", "-e", "HOME=/tmp"}
 	args = append(args, mounts...)
-	if stdin != nil {
+	if input {
 		args = append(args, "-i")
 	}
-	args = append(append(args, image), cmd...)
-	return i.run.Run(ctx, "", i.docker, args, stdin)
+	return append(append(args, image), cmd...), nil
 }
 
 // removeAll removes the containers named, with a fresh context, so a
@@ -679,16 +702,18 @@ func (i *isolation) export(ctx context.Context, dump, kekFile, bundleDir string,
 	if err := ts("backfill", nil, []string{"admin", "migration", "backfill"}, nil); err != nil {
 		return "", err
 	}
+	// The bundle on the export's standard output (--out -), into the
+	// conversion's own scratch on this host: no directory is shared with
+	// the container's user, which writes nothing but its /tmp.
 	i.say("Exporting the bundle.")
-	key := RunKeyText(runKey)
-	defer clear(key)
-	mounts := []string{"-v", bundleDir + ":/out", "-v", kekFile + ":/run/varlatch/root-kek:ro", "-e", "VARLATCH_KEK_FILE=/run/varlatch/root-kek"}
-	if err := ts("export", mounts, []string{"admin", "migration", "export", "--out", "/out/bundle.jsonl", "--digests", "--dry-run"}, key); err != nil {
-		return "", err
-	}
+	mounts := []string{"-v", kekFile + ":/run/varlatch/root-kek:ro", "-e", "VARLATCH_KEK_FILE=/run/varlatch/root-kek"}
+	cmd := []string{"admin", "migration", "export", "--out", "-", "--digests", "--dry-run"}
 	bundle := filepath.Join(bundleDir, "bundle.jsonl")
-	if st, err := os.Stat(bundle); err != nil || !st.Mode().IsRegular() {
-		return "", errors.New("the export wrote no bundle")
+	err = receiveBundle(ctx, "the TypeScript release's export", bundle, runKey, func(ctx context.Context, in io.Reader, out io.Writer) (Ran, error) {
+		return i.inNamespaceStream(ctx, pg, i.tsImage, "export", &started, mounts, cmd, in, out)
+	})
+	if err != nil {
+		return "", err
 	}
 	return bundle, nil
 }

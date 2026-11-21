@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,6 +116,26 @@ func (f *fakeRunner) Run(_ context.Context, _ string, name string, args []string
 		return Ran{}, nil
 	}
 	return f.answer(c), nil
+}
+
+// Stream is Run on streams: its input read to its end (the call's stdin),
+// the answer written to out, only Said and Code back.
+func (f *fakeRunner) Stream(ctx context.Context, dir, name string, args []string, in io.Reader, out io.Writer) (Ran, error) {
+	var input []byte
+	if in != nil {
+		var err error
+		if input, err = io.ReadAll(in); err != nil {
+			return Ran{}, err
+		}
+	}
+	r, err := f.Run(ctx, dir, name, args, input)
+	if err != nil {
+		return Ran{}, err
+	}
+	if _, err := out.Write(r.Answer); err != nil {
+		return Ran{}, err
+	}
+	return Ran{Said: r.Said, Code: r.Code}, nil
 }
 
 // A conversion refuses, before any program runs and with nothing written,
@@ -245,12 +266,19 @@ func TestArchiveConversionSequence(t *testing.T) {
 		case c.name == "docker" && len(c.args) > 3 && c.args[0] == "exec" && slices.Contains(c.args, "SELECT 1"):
 			return Ran{Answer: []byte("1\n")}
 		case c.name == "docker" && c.args[0] == "run" && slices.Contains(c.args, "export"):
+			// 0.23.0's export to its standard output (--out -): the bundle
+			// there, the summary as stderr's last line. No directory is
+			// mounted for it to write.
 			exportStdin = c.stdin
 			for i, a := range c.args {
-				if a == "-v" && strings.HasSuffix(c.args[i+1], ":/out") {
-					write(t, filepath.Join(strings.TrimSuffix(c.args[i+1], ":/out"), "bundle.jsonl"), []byte("a bundle\n"))
+				if a == "-v" && !strings.HasSuffix(c.args[i+1], ":/run/varlatch/root-kek:ro") {
+					t.Errorf("the export is given a writable mount: %s", c.args[i+1])
 				}
 			}
+			if !slices.Equal(c.args[len(c.args)-7:], []string{"admin", "migration", "export", "--out", "-", "--digests", "--dry-run"}) {
+				t.Errorf("the export's command: %q", c.args)
+			}
+			return Ran{Answer: []byte("a bundle\n"), Said: []byte(ExportSummaryPrefix + `{"frozenPoint":{},"bundle":{},"preflight":{"ok":true}}` + "\n")}
 		case c.name == "varlatchd" && slices.Equal(c.args[:3], []string{"admin", "migrate", "import"}):
 			return Ran{Answer: []byte(`{"installationId":"` + v.installationID + `","tables":58,"rows":3}`)}
 		case c.name == "varlatchd" && slices.Equal(c.args[:3], []string{"admin", "migrate", "check"}):
@@ -418,6 +446,44 @@ func TestArchiveInterruptCleansUp(t *testing.T) {
 		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: dir, Run: stuck, LockDir: t.TempDir()})
 	if err == nil || !res.CleanupIncomplete {
 		t.Errorf("a failed removal: err %v, cleanup incomplete %v", err, res.CleanupIncomplete)
+	}
+}
+
+// The TypeScript release's export streams its bundle (--out -): one that
+// ends without its summary, or fails, is never taken, and the conversion
+// stops there, before varlatchd's import, with no output.
+func TestArchiveExportStreamRefused(t *testing.T) {
+	v := loadVectors(t)[0]
+	for name, export := range map[string]Ran{
+		"no summary": {Answer: []byte("half a bundle\n"), Said: []byte("exporting\n")},
+		"a failure":  {Code: 1, Answer: []byte("half a bundle\n"), Said: []byte("varlatchd admin migration export: the test's failure\n")},
+	} {
+		dir := t.TempDir()
+		run := &fakeRunner{}
+		run.answer = func(c call) Ran {
+			switch {
+			case c.args[0] == "exec" && slices.Contains(c.args, "SELECT 1"):
+				return Ran{Answer: []byte("1\n")}
+			case c.args[0] == "run" && slices.Contains(c.args, "export"):
+				return export
+			}
+			return Ran{}
+		}
+		out := filepath.Join(dir, "out.vltbak")
+		_, err := ConvertArchive(context.Background(), ArchiveOptions{Archive: v.archive, Out: out, KEKFile: v.kekFile, BEKFile: v.bekFile,
+			TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: dir, Run: run, LockDir: t.TempDir()})
+		want := map[string]string{"no summary": "ended without its summary", "a failure": "the test's failure"}[name]
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", name, err)
+		}
+		for _, c := range run.calls {
+			if c.name == "varlatchd" {
+				t.Errorf("%s: varlatchd ran after the export was refused: %q", name, c.args)
+			}
+		}
+		if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s: an output: %v", name, err)
+		}
 	}
 }
 
