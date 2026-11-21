@@ -134,7 +134,7 @@ func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 		if h.issued == 0 {
 			until = ""
 		}
-		return []byte(fmt.Sprintf(`{"name":"vault.example.com","limit":5,"window":"168h0m0s","attempts":%d%s,"full":%t}`, h.issued, until, h.issued >= 5)), nil
+		return []byte(fmt.Sprintf(`{"name":"vault.example.com","limit":5,"window":"169h0m0s","attempts":%d%s,"full":%t}`, h.issued, until, h.issued >= 5)), nil
 	}
 	if args[0] == "tailnet" && args[1] == "probe-name" {
 		// Offline, before the unit: the probe's findings, as JSON.
@@ -1192,7 +1192,7 @@ func TestRestoreChecksTheIssuanceCount(t *testing.T) {
 	o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
 	o.Given = Answers{Ingress: Public, PublicURL: "https://vault.example.com", ACMEEmail: "ops@example.com", Backups: "host"}
 	err := Run(context.Background(), o)
-	if err == nil || !strings.Contains(err.Error(), "5 certificate requests for vault.example.com in the last 7 days, Let's Encrypt's limit of 5") ||
+	if err == nil || !strings.Contains(err.Error(), "5 certificate requests for vault.example.com in the last 7 days and an hour, Let's Encrypt's limit of 5") ||
 		!strings.Contains(err.Error(), "Nothing has asked; the restored data stays. Run setup again after 2026-11-25T08:00:00Z") {
 		t.Fatalf("a full count: %v", err)
 	}
@@ -1208,7 +1208,7 @@ func TestRestoreChecksTheIssuanceCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	restores := len(slices.DeleteFunc(slices.Clone(h.adminCalls), func(c string) bool { return !strings.HasPrefix(c, "backup restore ") }))
-	if restores != 1 || !slices.Contains(h.systemctl, "enable --now varlatchd.service") || !slices.Contains(said.lines, "Certificate requests for vault.example.com in the last 7 days, by the restored records: 3 of Let's Encrypt's 5.") {
+	if restores != 1 || !slices.Contains(h.systemctl, "enable --now varlatchd.service") || !slices.Contains(said.lines, "Certificate requests for vault.example.com in the last 7 days and an hour, by the restored records: 3 of Let's Encrypt's 5.") {
 		t.Errorf("restores %d, systemctl %q, said %q", restores, h.systemctl, said.lines)
 	}
 	// Without public HTTPS, there is nothing to count.
