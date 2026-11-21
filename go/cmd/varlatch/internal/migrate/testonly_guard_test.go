@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -41,23 +42,41 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// builtWithout reports whether src is built when neither test tag is set.
-func builtWithout(t *testing.T, src []byte) bool {
+// releasePlatforms are the platforms go/release/build-assets.sh builds.
+var releasePlatforms = [][2]string{{"linux", "amd64"}, {"linux", "arm64"}, {"darwin", "amd64"}, {"darwin", "arm64"}, {"windows", "amd64"}, {"windows", "arm64"}}
+
+// builtWithout reports the release platform src is built on when neither
+// test tag is set ("" when none): its //go:build constraint evaluated for
+// each platform the release ships, with the release tags (go1.N) true and
+// cgo false (CGO_ENABLED=0), as go build evaluates it there.
+func builtWithout(t *testing.T, src []byte) string {
 	t.Helper()
+	var expr constraint.Expr
 	for _, line := range strings.Split(string(src), "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if strings.HasPrefix(line, "package ") {
 			break
 		}
 		if constraint.IsGoBuild(line) {
-			expr, err := constraint.Parse(line)
+			e, err := constraint.Parse(line)
 			if err != nil {
 				t.Fatal(err)
 			}
-			return expr.Eval(func(tag string) bool { return tag == runtime.GOOS || tag == runtime.GOARCH || tag == "unix" })
+			expr = e
+			break
 		}
 	}
-	return true
+	for _, p := range releasePlatforms {
+		if expr == nil {
+			return p[0] + "/" + p[1]
+		}
+		if expr.Eval(func(tag string) bool {
+			return tag == p[0] || tag == p[1] || (tag == "unix" && p[0] != "windows") || strings.HasPrefix(tag, "go1.")
+		}) {
+			return p[0] + "/" + p[1]
+		}
+	}
+	return ""
 }
 
 func TestTestOverridesAreInTestBuildsOnly(t *testing.T) {
@@ -77,8 +96,11 @@ func TestTestOverridesAreInTestBuildsOnly(t *testing.T) {
 			return err
 		}
 		for _, v := range overrideVariables {
-			if bytes.Contains(src, []byte(v)) && builtWithout(t, src) {
-				t.Errorf("%s names %s and is built without the crashpoint or rehearsal tag", path, v)
+			if !bytes.Contains(src, []byte(v)) {
+				continue
+			}
+			if on := builtWithout(t, src); on != "" {
+				t.Errorf("%s names %s and is built without the crashpoint or rehearsal tag (on %s)", path, v, on)
 			}
 		}
 		return nil
@@ -91,18 +113,36 @@ func TestTestOverridesAreInTestBuildsOnly(t *testing.T) {
 // testTags is a -tags value, or a GOFLAGS one, that names a test tag.
 var testTags = regexp.MustCompile(`(-tags[= ]|GOFLAGS)[^\n]*\b(crashpoint|rehearsal)\b`)
 
+// releasePaths are the files the release is built from; each must exist
+// (a rename must update the guard, not drop out of it).
+var releasePaths = []string{".github/workflows/release.yml", "go/release/build-assets.sh", "go/release/check-assets.sh", "go/image/build.sh", "go/image/Dockerfile"}
+
 func TestNoReleasePathBuildsWithATestTag(t *testing.T) {
 	root := repoRoot(t)
-	paths := []string{".github/workflows/release.yml", "go/release/build-assets.sh", "go/release/check-assets.sh", "go/image/build.sh"}
+	for _, p := range releasePaths {
+		if _, err := os.Stat(filepath.Join(root, p)); err != nil {
+			t.Errorf("the release path %s: %v (renamed? update releasePaths)", p, err)
+		}
+	}
+	// Every Dockerfile, workflow (go.yml apart, below) and shell script
+	// under go/, but the rehearsal harness's own (go/test/rehearsal, which
+	// builds with the tag on purpose and ships nothing).
+	paths := slices.Clone(releasePaths)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && (d.Name() == "node_modules" || d.Name() == ".git") {
+		rel, _ := filepath.Rel(root, path)
+		if d.IsDir() && (d.Name() == "node_modules" || d.Name() == ".git" || rel == filepath.Join("go", "test", "rehearsal")) {
 			return filepath.SkipDir
 		}
-		if !d.IsDir() && (d.Name() == "Dockerfile" || strings.HasSuffix(d.Name(), ".Dockerfile")) {
-			rel, _ := filepath.Rel(root, path)
+		if d.IsDir() {
+			return nil
+		}
+		dockerfile := d.Name() == "Dockerfile" || strings.HasSuffix(d.Name(), ".Dockerfile")
+		workflow := filepath.Dir(rel) == filepath.Join(".github", "workflows") && strings.HasSuffix(d.Name(), ".yml") && d.Name() != "go.yml"
+		script := strings.HasPrefix(rel, "go"+string(filepath.Separator)) && strings.HasSuffix(d.Name(), ".sh")
+		if (dockerfile || workflow || script) && !slices.Contains(paths, rel) {
 			paths = append(paths, rel)
 		}
 		return nil
@@ -112,11 +152,9 @@ func TestNoReleasePathBuildsWithATestTag(t *testing.T) {
 	}
 	for _, p := range paths {
 		src, err := os.ReadFile(filepath.Join(root, p))
-		if os.IsNotExist(err) {
-			continue
-		}
 		if err != nil {
-			t.Fatal(err)
+			t.Errorf("%s: %v", p, err)
+			continue
 		}
 		if m := testTags.Find(src); m != nil {
 			t.Errorf("%s builds with a test tag: %q", p, m)
@@ -135,22 +173,23 @@ func TestNoReleasePathBuildsWithATestTag(t *testing.T) {
 	}
 }
 
-// A build without tags, the release's, holds neither variable's name;
-// the rehearsal build holds both (the control).
+// A build without tags, the release's (its flags, for linux, windows and
+// darwin), holds neither variable's name; the rehearsal build holds both
+// (the control).
 func TestTheDefaultBinaryHasNoOverrides(t *testing.T) {
 	if testing.Short() {
-		t.Skip("builds varlatch twice")
+		t.Skip("builds varlatch four times")
 	}
 	gomod := filepath.Join(repoRoot(t), "go")
 	dir := t.TempDir()
-	build := func(out string, tags ...string) []byte {
-		args := []string{"build", "-trimpath", "-o", filepath.Join(dir, out)}
+	build := func(out, goos, goarch string, tags ...string) []byte {
+		args := []string{"build", "-trimpath", "-buildvcs=false", "-ldflags", "-s -w -buildid=", "-o", filepath.Join(dir, out)}
 		if len(tags) > 0 {
 			args = append(args, "-tags", strings.Join(tags, ","))
 		}
 		cmd := exec.Command("go", append(args, "./cmd/varlatch")...)
 		cmd.Dir = gomod
-		cmd.Env = append(os.Environ(), "GOFLAGS=", "CGO_ENABLED=0")
+		cmd.Env = append(os.Environ(), "GOFLAGS=", "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
 		if b, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, b)
 		}
@@ -160,13 +199,18 @@ func TestTheDefaultBinaryHasNoOverrides(t *testing.T) {
 		}
 		return bin
 	}
-	release, rehearsal := build("varlatch"), build("varlatch-rehearsal", "rehearsal")
+	rehearsal := build("varlatch-rehearsal", runtime.GOOS, runtime.GOARCH, "rehearsal")
 	for _, v := range overrideVariables {
-		if bytes.Contains(release, []byte(v)) {
-			t.Errorf("the build without tags contains %s", v)
-		}
 		if !bytes.Contains(rehearsal, []byte(v)) {
 			t.Errorf("the rehearsal build does not contain %s: the control does not see the override", v)
+		}
+	}
+	for _, p := range [][2]string{{"linux", "amd64"}, {"windows", "amd64"}, {"darwin", "arm64"}} {
+		release := build("varlatch-"+p[0]+"-"+p[1], p[0], p[1])
+		for _, v := range overrideVariables {
+			if bytes.Contains(release, []byte(v)) {
+				t.Errorf("the %s/%s build without tags contains %s", p[0], p[1], v)
+			}
 		}
 	}
 }
