@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -185,6 +187,22 @@ func volumeThere(name string) bool {
 		slices.Contains([]string{"postgres-data", "convex-data", "varlatch-state", "tailscale-state", "tailscale-socket", "caddy-data", "caddy-config"}, base)
 }
 
+// migrateRunsAgain reports whether `docker compose start|up` of these
+// services runs the one-off varlatch-migrate again: each of varlatchd,
+// the dashboard (on varlatchd) and Caddy (on the dashboard) depends on it
+// (infra/compose's depends_on), unless --no-deps.
+func migrateRunsAgain(args []string) bool {
+	if slices.Contains(args, "--no-deps") {
+		return false
+	}
+	for _, svc := range args {
+		if slices.Contains([]string{"varlatchd", "varlatch-web", "caddy"}, svc) {
+			return true
+		}
+	}
+	return false
+}
+
 // fakeDockerReverse answers the commands a reverse migration gives; ok is
 // false for the others (fakeDocker's).
 func fakeDockerReverse(args []string) (int, bool) {
@@ -192,6 +210,14 @@ func fakeDockerReverse(args []string) (int, bool) {
 	j := strings.Join(args, " ")
 	logCall(j)
 	switch {
+	case len(args) >= 3 && args[0] == "compose" && (args[1] == "start" || args[1] == "up") && migrateRunsAgain(args[2:]) && readGate() != nil:
+		// As the real Compose: starting a service that depends on the
+		// one-off varlatch-migrate (service_completed_successfully) runs it
+		// again, and the TypeScript migrate refuses behind any gate
+		// (services/varlatchd/src/cli.ts, migrateCommand), so the service
+		// does not start (run r8 of the 7.8b rehearsal).
+		return fail("Migration refused during installation maintenance\nOperator command failed; check configuration and maintenance status.\n" +
+			"service \"varlatch-migrate\" didn't complete successfully: exit 1")
 	case len(args) >= 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start"):
 		for _, svc := range args[2:] {
 			if err := setStopped(svc, args[1] == "stop"); err != nil {
@@ -274,7 +300,12 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		return 0, true
 	case j == "compose ps --status running --services":
-		for _, svc := range []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"} {
+		services := []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"}
+		if os.Getenv("G5_SHARED_NAMESPACE") != "" {
+			// The Tailscale topology: the sidecar varlatchd shares.
+			services = append(services, "tailscale")
+		}
+		for _, svc := range services {
 			if !stopped(svc) {
 				fmt.Println(svc)
 			}
@@ -294,9 +325,9 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		return 0, true
 	}
-	importPrefix := []string{"compose", "--profile", "varlatch-rollback", "run", "--rm", "-T", "varlatch-reverse-import", "node", "dist/cli.js", "admin", "migration", "import", "--in"}
-	if len(args) == len(importPrefix)+1 && slices.Equal(args[:len(importPrefix)], importPrefix) {
-		return tsImport(strings.TrimPrefix(args[len(importPrefix)], "/backups/")), true
+	importArgs := []string{"compose", "--profile", "varlatch-rollback", "run", "--rm", "-T", "varlatch-reverse-import", "node", "dist/cli.js", "admin", "migration", "import", "--in", "-"}
+	if slices.Equal(args, importArgs) {
+		return tsImport(), true
 	}
 	oneOff := []string{"compose", "run", "--rm", "-T", "--no-deps", "varlatchd", "node", "dist/cli.js", "admin", "migration"}
 	if len(args) > len(oneOff) && slices.Equal(args[:len(oneOff)], oneOff) {
@@ -305,8 +336,11 @@ func fakeDockerReverse(args []string) (int, bool) {
 	return 0, false
 }
 
-// tsImport is 7.2c's `admin migration import --in /backups/<name>`.
-func tsImport(name string) int {
+// tsImport is 0.23.0's `admin migration import --in -`: its refusals
+// before it reads its input (varlatch migrate's copy then meets a closed
+// pipe), the reverse bundle on its standard input, read to its end, and
+// its answer on its standard output.
+func tsImport() int {
 	fail := func(f string, a ...any) int {
 		fmt.Fprintf(os.Stderr, "varlatchd admin migration import: "+f+"\n", a...)
 		return 1
@@ -322,7 +356,7 @@ func tsImport(name string) int {
 	if db == state("source.json") {
 		return fail("the database is not empty: it holds relations of another schema; the import builds a fresh database")
 	}
-	b, err := os.ReadFile(filepath.Join("backups", name))
+	b, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -627,9 +661,10 @@ func TestG5RollbackWhole(t *testing.T) {
 	t.Run("rolled back", func(t *testing.T) {
 		w := migratedWorld(t, false, false)
 		old := w.oldDB()
-		// What a killed run left on this host: a reverse bundle's copy in
-		// the backups directory, an export's directory in the source's.
-		leftovers := []string{filepath.Join(w.compose, "backups", "migration-reverse-0123456789ab.jsonl"), filepath.Join(w.compose, ".dry-run-123")}
+		// What a killed run left on this host: an export's .partial in the
+		// backups directory (the reverse checks' re-export streams there),
+		// an export's directory in the source's.
+		leftovers := []string{filepath.Join(w.compose, "backups", "migration-0123456789ab.jsonl.partial"), filepath.Join(w.compose, ".dry-run-123")}
 		if err := os.WriteFile(leftovers[0], []byte("partial"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -726,9 +761,9 @@ func TestG5RollbackWhole(t *testing.T) {
 		if code := w.rollback("rollback barrier held", "--rollback"); code != -1 {
 			t.Fatalf("not killed: %d", code)
 		}
-		// A reverse bundle's copy, as a run killed mid-import leaves it: the
-		// undo removes it.
-		bundle := filepath.Join(w.compose, "backups", "migration-reverse-0123456789ab.jsonl")
+		// An export's .partial, as a run killed in the reverse checks'
+		// re-export leaves it: the undo removes it.
+		bundle := filepath.Join(w.compose, "backups", "migration-0123456789ab.jsonl.partial")
 		if err := os.WriteFile(bundle, []byte("partial"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -784,6 +819,31 @@ func TestG5RollbackWhole(t *testing.T) {
 		}
 		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "rollback window is over") {
 			t.Fatalf("--rollback after 31 days: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.expectReverse("refused", undoneState)
+	})
+	// An upgrade to a release that ends the window recorded it in Go's
+	// journal (varlatch upgrade, beside the running varlatchd: open over
+	// open, no transfer gate): --rollback refuses, nothing changed.
+	t.Run("ended by an upgrade", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		b, err := os.ReadFile(filepath.Join(w.data, "migration.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var j map[string]any
+		if err := json.Unmarshal(b, &j); err != nil {
+			t.Fatal(err)
+		}
+		j["windowEnded"] = map[string]any{"release": "0.50.1", "at": time.Now().UTC().Format(time.RFC3339Nano)}
+		b, _ = json.Marshal(j)
+		cmd := exec.Command(filepath.Join(filepath.Dir(shared.varlatch), "varlatchd"), "admin", "migrate", "state", "--write", "--config", w.conf)
+		cmd.Stdin = bytes.NewReader(b)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("the window's end written beside the running varlatchd: %v\n%s", err, out)
+		}
+		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "rollback window ended when varlatchd 0.50.1 was installed") {
+			t.Fatalf("--rollback once an upgrade ended the window: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
 		w.expectReverse("refused", undoneState)
 	})

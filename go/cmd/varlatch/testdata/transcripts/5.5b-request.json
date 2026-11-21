@@ -1,0 +1,1100 @@
+{
+  "schema": 2,
+  "comment": "Recorded from the TypeScript CLI by apps/cli/test/go-transcripts.test.ts; do not edit. Regenerate with VARLATCH_WRITE_GO_VECTORS=1.",
+  "area": "5.5b-request",
+  "cases": [
+    {
+      "files": {},
+      "id": "usage.no-url",
+      "title": "no URL",
+      "args": [
+        "request",
+        "-i"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: give the URL\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.two-urls",
+      "title": "two URLs",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges",
+        "--",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: give one URL\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.method",
+      "title": "-X with something that is not a method",
+      "args": [
+        "request",
+        "-X",
+        "GET X",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: -X: not an HTTP method: GET X\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.request-last",
+      "title": "--request without a value",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges",
+        "--request"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: --request needs a value\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.header",
+      "title": "-H without a colon",
+      "args": [
+        "request",
+        "-H",
+        "Authorization",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: -H expects '<name>: <value>'\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.header-break",
+      "title": "--header with a line break in its value",
+      "args": [
+        "request",
+        "--header",
+        "X-A: one\ntwo",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: --header X-A: a header value cannot contain a line break\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.body-twice",
+      "title": "-d and --data: the body once",
+      "args": [
+        "request",
+        "-d",
+        "a=1",
+        "--data",
+        "b=2",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: give the body once: --data after -d or --json\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.json-file-missing",
+      "title": "--json @file naming no file",
+      "args": [
+        "request",
+        "--json",
+        "@nosuch.json",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: cannot read nosuch.json (ENOENT)\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.unknown-option",
+      "title": "an unknown option",
+      "args": [
+        "request",
+        "--insecure",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: unknown option --insecure\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.not-absolute",
+      "title": "not an absolute URL",
+      "args": [
+        "request",
+        "/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: not an absolute URL: /v1/charges\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.not-http",
+      "title": "not an HTTP URL",
+      "args": [
+        "request",
+        "ftp://api.example.com/x"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: not an HTTP URL: ftp:\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.credentials",
+      "title": "credentials in the URL are not sent",
+      "args": [
+        "request",
+        "https://user:pw@api.example.com/x"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: credentials in the URL are not sent; use a header\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "usage.output-last",
+      "title": "-o without a value",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges",
+        "-o"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: -o needs a value\nUsage: varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-] [-o <file>] [-i] <https-url>\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "broker.not-agent-run",
+      "title": "outside an agent-safe run: refused",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: varlatch request sends requests through the Broker of an agent-safe run, and this is not one (VARLATCH_AGENT_RUN is not set). Outside an agent-safe run, use any HTTP client.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "broker.no-proxy",
+      "title": "an agent-safe run without a Broker",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": ""
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: agent-safe run run_0123456789abcdef has no Broker: it carries no Secrets, so there is nothing to substitute. Use any HTTP client.\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "broker.not-url",
+      "title": "a proxy that is not a URL",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "not a url"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: the proxy in HTTPS_PROXY is not a URL\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "broker.not-loopback",
+      "title": "a proxy that is not this run's Broker",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:x@proxy.example:3128"
+      },
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch request: HTTPS_PROXY does not name this run's Broker (a loopback http:// proxy with the per-run credential)\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "broker.http-proxy",
+      "title": "HTTP_PROXY names the Broker when no HTTPS_PROXY is set",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "files": {},
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTP_PROXY": "http://vlt:x@127.0.0.1:9"
+      },
+      "expect": {
+        "status": 69,
+        "stdout": "",
+        "stderr": "varlatch request: cannot reach the Broker at 127.0.0.1:9 (ECONNREFUSED)\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "broker.node-proxy",
+      "title": "NODE_USE_ENV_PROXY does not send the request to the Broker through itself",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}",
+        "NODE_USE_ENV_PROXY": "1"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "https://api.example.com/v1/charges",
+          "status": 200,
+          "answer": "direct\n",
+          "headers": {
+            "content-type": "text/plain"
+          }
+        }
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "direct\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "broker.unreachable",
+      "title": "nothing listens at the Broker's address: 69",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:x@127.0.0.1:9"
+      },
+      "expect": {
+        "status": 69,
+        "stdout": "",
+        "stderr": "varlatch request: cannot reach the Broker at 127.0.0.1:9 (ECONNREFUSED)\n",
+        "requests": [],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "send.get",
+      "title": "a GET: the destination's body on stdout, 0",
+      "args": [
+        "request",
+        "-H",
+        "Authorization: Bearer vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "https://api.example.com/v1/charges"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "https://api.example.com/v1/charges",
+          "status": 200,
+          "answer": "charged\n",
+          "headers": {
+            "content-type": "text/plain"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "charged\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "authorization": "Bearer vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "send.json",
+      "title": "--json: POST, JSON content type and accept",
+      "args": [
+        "request",
+        "--json",
+        "{\"amount\":5}",
+        "https://api.example.com/v1/charges"
+      ],
+      "server": [
+        {
+          "method": "POST",
+          "path": "https://api.example.com/v1/charges",
+          "status": 200,
+          "answer": {
+            "ok": true
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "{\"ok\":true}",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "POST",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "content-type": "application/json",
+              "accept": "application/json"
+            },
+            "body": {
+              "amount": 5
+            }
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "send.form-stdin",
+      "title": "-d @-: the body from stdin, a form",
+      "args": [
+        "request",
+        "-X",
+        "PUT",
+        "-d",
+        "@-",
+        "https://api.example.com/v1/charges"
+      ],
+      "stdin": "a=1&b=2",
+      "server": [
+        {
+          "method": "PUT",
+          "path": "https://api.example.com/v1/charges",
+          "status": 200,
+          "answer": "done\n",
+          "headers": {
+            "content-type": "text/plain"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "done\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "PUT",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "content-type": "application/x-www-form-urlencoded",
+              "accept": "*/*"
+            },
+            "body": "a=1&b=2"
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "body.json": "{\"from\":\"file\"}"
+      },
+      "id": "send.data-file",
+      "title": "--data @file, a content type given",
+      "args": [
+        "request",
+        "--data",
+        "@body.json",
+        "--header",
+        "Content-Type: application/json",
+        "https://api.example.com/v1/charges"
+      ],
+      "server": [
+        {
+          "method": "POST",
+          "path": "https://api.example.com/v1/charges",
+          "status": 200,
+          "answer": "ok\n",
+          "headers": {
+            "content-type": "text/plain"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "ok\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "POST",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "from": "file"
+            }
+          }
+        ],
+        "files": {
+          "body.json": {
+            "mode": "0644",
+            "content": "{\"from\":\"file\"}"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "send.output",
+      "title": "-o: the body written to the file, nothing on stdout",
+      "args": [
+        "request",
+        "-o",
+        "out.txt",
+        "https://api.example.com/v1/charges"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "https://api.example.com/v1/charges",
+          "status": 200,
+          "answer": "to the file\n",
+          "headers": {
+            "content-type": "text/plain"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "out.txt": {
+            "mode": "0644",
+            "content": "to the file\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "send.output-long",
+      "title": "--output and --request DELETE",
+      "args": [
+        "request",
+        "--request",
+        "DELETE",
+        "--output",
+        "out.txt",
+        "https://api.example.com/v1/charges"
+      ],
+      "server": [
+        {
+          "method": "DELETE",
+          "path": "https://api.example.com/v1/charges",
+          "status": 200,
+          "answer": "deleted\n",
+          "headers": {
+            "content-type": "text/plain"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "DELETE",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "out.txt": {
+            "mode": "0644",
+            "content": "deleted\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "send.destination-error",
+      "title": "a destination's error status is relayed: 0",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "https://api.example.com/v1/charges",
+          "status": 500,
+          "answer": "varlatch-broker: not the Broker's\n",
+          "headers": {
+            "content-type": "text/plain"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "varlatch-broker: not the Broker's\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "send.query-fragment",
+      "title": "the URL as written: a query, a fragment, and an empty query",
+      "args": [
+        "request",
+        "https://api.example.com/a b?q=1 2#frag ment"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "https://api.example.com/a%20b?q=1%202#frag%20ment",
+          "status": 200,
+          "answer": "ok\n",
+          "headers": {
+            "content-type": "text/plain"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 0,
+        "stdout": "ok\n",
+        "stderr": "",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "https://api.example.com/a%20b?q=1%202#frag%20ment",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "refused.blocked",
+      "title": "the Broker refuses: its text, 1",
+      "args": [
+        "request",
+        "--include",
+        "https://api.example.com/v1/charges"
+      ],
+      "differences": [
+        "broker-reply-once"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "https://api.example.com/v1/charges",
+          "status": 403,
+          "answer": "varlatch-broker: API_KEY: placeholder at header \"x-debug\", which is not a target\n",
+          "headers": {
+            "content-type": "text/plain",
+            "varlatch-broker": "refused"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch-broker: API_KEY: placeholder at header \"x-debug\", which is not a target\nvarlatch-broker: API_KEY: placeholder at header \"x-debug\", which is not a target\nvarlatch request: the Broker refused the request (403); nothing reached the destination unless it says so above\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "refused.credential",
+      "title": "the proxy credential refused: 77",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "differences": [
+        "broker-reply-once"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "https://api.example.com/v1/charges",
+          "status": 407,
+          "answer": "",
+          "headers": {
+            "content-type": "text/plain",
+            "varlatch-broker": "refused"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 77,
+        "stdout": "",
+        "stderr": "varlatch-broker: the per-run proxy credential in HTTPS_PROXY was not accepted\nvarlatch-broker: the per-run proxy credential in HTTPS_PROXY was not accepted\nvarlatch request: the Broker refused the request (407); nothing reached the destination unless it says so above\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    },
+    {
+      "files": {},
+      "id": "refused.maintenance",
+      "title": "the installation in maintenance: 69",
+      "args": [
+        "request",
+        "https://api.example.com/v1/charges"
+      ],
+      "differences": [
+        "broker-reply-once"
+      ],
+      "server": [
+        {
+          "method": "GET",
+          "path": "https://api.example.com/v1/charges",
+          "status": 503,
+          "answer": "varlatch-broker: the Varlatch installation is in maintenance (restore or upgrade); retry later\n",
+          "headers": {
+            "content-type": "text/plain",
+            "varlatch-broker": "refused"
+          }
+        }
+      ],
+      "env": {
+        "VARLATCH_AGENT_RUN": "run_0123456789abcdef",
+        "HTTPS_PROXY": "http://vlt:proxyCredentialFake123@{{server-host}}"
+      },
+      "expect": {
+        "status": 69,
+        "stdout": "",
+        "stderr": "varlatch-broker: the Varlatch installation is in maintenance (restore or upgrade); retry later\nvarlatch-broker: the Varlatch installation is in maintenance (restore or upgrade); retry later\nvarlatch request: the Broker refused the request (503); nothing reached the destination unless it says so above\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "https://api.example.com/v1/charges",
+            "headers": {
+              "user-agent": "varlatch-request",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          }
+        }
+      }
+    }
+  ]
+}

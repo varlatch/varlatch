@@ -5,7 +5,6 @@
 package g5_test
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -302,7 +301,10 @@ func tsMigration(verb string, rest []string) int {
 		}
 	case "export":
 		dry := slices.Contains(rest, "--dry-run")
-		if len(rest) < 3 || rest[0] != "--out" || !strings.HasPrefix(rest[1], "/backups/") || rest[2] != "--digests" {
+		// 0.23.0's export to its standard output (--out -): the bundle on
+		// stdout only, the summary as stderr's last line behind its prefix,
+		// nothing written in the container.
+		if len(rest) < 3 || rest[0] != "--out" || rest[1] != "-" || rest[2] != "--digests" {
 			return fail("usage")
 		}
 		if !dry && (g == nil || g.Kind != "migration") {
@@ -311,9 +313,12 @@ func tsMigration(verb string, rest []string) int {
 		if dry && g != nil {
 			return fail("varlatchd admin migration export: a %s gate is open: a dry run reads a running installation only", g.Kind)
 		}
-		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-		key, kerr := hex.DecodeString(strings.TrimSpace(line))
-		if err != nil || kerr != nil || len(key) != 32 {
+		// The run key is all of stdin, read to its end: one line of 64
+		// lowercase hex digits, its newline optional.
+		in, err := io.ReadAll(os.Stdin)
+		text := strings.TrimSuffix(string(in), "\n")
+		key, kerr := hex.DecodeString(text)
+		if err != nil || kerr != nil || len(key) != 32 || strings.ContainsAny(text, "\n") || text != strings.ToLower(text) {
 			return fail("the run key on standard input is not 64 lowercase hex digits")
 		}
 		f, err := os.OpenFile(state("runkeys"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
@@ -336,10 +341,15 @@ func tsMigration(verb string, rest []string) int {
 		}
 		sec.At, sec.Digests = 1795000000000000, migrationtest.Digests(stdTB{}, s, key)
 		out := migrationtest.Bundle(stdTB{}, s, migrationtest.Options{Sections: &sec})
-		if err := os.WriteFile(filepath.Join("backups", strings.TrimPrefix(rest[1], "/backups/")), out, 0o600); err != nil {
+		if _, err := os.Stdout.Write(out); err != nil {
 			return fail("%v", err)
 		}
-		fmt.Println(`{"frozenPoint":{},"bundle":{},"preflight":{"ok":true}}`)
+		// The test's: an export cut off after its bundle, its summary
+		// never written.
+		if _, err := os.Stat(state("export-no-summary")); err == nil {
+			return 0
+		}
+		fmt.Fprintln(os.Stderr, "varlatch-export-summary: "+`{"frozenPoint":{},"bundle":{},"preflight":{"ok":true}}`)
 	default:
 		return fail("unknown verb %s", verb)
 	}
@@ -1055,6 +1065,60 @@ func TestG5Interruptions(t *testing.T) {
 			})
 		}
 	}
+}
+
+// The export's stream (0.23.0's --out -): a bundle with no summary after
+// it is never taken. The dry run fails, nothing is left in the backups
+// directory (neither a bundle nor its .partial), and the failed dry run is
+// recorded as stopped, so the next run starts it again instead of finding
+// it interrupted; that run migrates, its bundle gone once imported.
+func TestG5TheExportStream(t *testing.T) {
+	w := newWorld(t, false)
+	w.useState()
+	before := w.sourceHash()
+	if err := os.WriteFile(filepath.Join(w.stateDir, "export-no-summary"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundles := func() []string {
+		var out []string
+		entries, _ := os.ReadDir(filepath.Join(w.compose, "backups"))
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "migration-") {
+				out = append(out, e.Name())
+			}
+		}
+		return out
+	}
+	if code := w.run("", "--dry-run"); code != 1 {
+		t.Fatalf("a dry run whose export ends without its summary: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "ended without its summary") || !strings.Contains(out, "recorded as stopped") {
+		t.Errorf("the refusal:\n%s", out)
+	}
+	if b := bundles(); len(b) != 0 {
+		t.Errorf("left in the backups directory: %v", b)
+	}
+	var j struct {
+		Phase   string `json:"phase"`
+		Stopped bool   `json:"stopped"`
+	}
+	if b, err := os.ReadFile(filepath.Join(w.compose, "migration.json")); err != nil || json.Unmarshal(b, &j) != nil || !j.Stopped {
+		t.Fatalf("the journal after the failed dry run: %+v %v", j, err)
+	}
+	if err := os.Remove(filepath.Join(w.stateDir, "export-no-summary")); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.run(""); code != 0 {
+		t.Fatalf("the run after the failed dry run: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expect("migrated after a failed dry run", "open", "open", "target-open", "migrated-out")
+	if b := bundles(); len(b) != 0 {
+		t.Errorf("left in the backups directory after the migration: %v", b)
+	}
+	if after := w.sourceHash(); after != before {
+		t.Error("the source's data changed")
+	}
+	w.noSecrets()
 }
 
 // The image's service: the operator's start at the transfer (exit 75),
