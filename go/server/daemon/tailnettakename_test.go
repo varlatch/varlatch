@@ -52,6 +52,10 @@ type apiOver struct {
 	down     bool
 	seen     map[string]presence
 	deleted  map[string]bool
+	// skew moves the listing's Date header off this host's clock, as a
+	// host whose clock is off sees it; noDate sends none.
+	skew   time.Duration
+	noDate bool
 }
 
 type presence struct {
@@ -132,6 +136,14 @@ func (a *apiOver) serve(rw http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v2/tailnet/-/devices":
+		a.mu.Lock()
+		skew, noDate := a.skew, a.noDate
+		a.mu.Unlock()
+		if noDate {
+			rw.Header()["Date"] = nil // net/http adds none then
+		} else {
+			rw.Header().Set("Date", time.Now().Add(skew).UTC().Format(http.TimeFormat))
+		}
 		var out []map[string]any
 		for _, n := range a.listed() {
 			a.mu.Lock()
@@ -422,6 +434,47 @@ func TestTakeNameRefusesALiveHolder(t *testing.T) {
 	code, out, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--json", "--config", w.in.conf)
 	if code != ExitOK || !strings.Contains(out, `"phase":"done"`) {
 		t.Fatalf("take-name over a long-dead holder: %d %q %q", code, out, errOut)
+	}
+	if n := w.api.names(); n[ours] != "vault" {
+		t.Fatalf("names %v", n)
+	}
+}
+
+// The dead node is judged by the control plane's clock (its listing's
+// Date header), never this host's: a node the control plane saw a minute
+// ago is too recent, though this host's fast clock makes it eleven; one it
+// saw eleven minutes ago is dead, though this host's slow clock makes it
+// one; a listing without a Date is refused.
+func TestTakeNameJudgesByTheControlPlanesClock(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	w := newRestoreWorld(t, ctx)
+	ours := w.restored(t)
+	set := func(skew time.Duration, noDate bool, seen time.Time) {
+		w.api.mu.Lock()
+		w.api.skew, w.api.noDate = skew, noDate
+		w.api.mu.Unlock()
+		w.api.setSeen(w.dead, presence{lastSeen: seen})
+	}
+	// This host's clock ten minutes fast: by it, the old node was seen
+	// eleven minutes ago; by the control plane's, one.
+	set(-10*time.Minute, false, time.Now().Add(-11*time.Minute))
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "within 5m0s") || !strings.Contains(errOut, "nothing was renamed") {
+		t.Fatalf("seen a minute ago by the control plane's clock: %d %q", code, errOut)
+	}
+	set(0, true, time.Now().Add(-time.Hour))
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "no Date header") || !strings.Contains(errOut, "nothing was renamed") {
+		t.Fatalf("a listing without a Date: %d %q", code, errOut)
+	}
+	if n := w.api.names(); n[w.dead] != "vault" || w.api.renameCount() != 0 {
+		t.Fatalf("names %v after %d renames", n, w.api.renameCount())
+	}
+	// This host's clock ten minutes slow: by it, a minute ago; by the
+	// control plane's, eleven: dead.
+	set(10*time.Minute, false, time.Now().Add(-time.Minute))
+	code, out, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--json", "--config", w.in.conf)
+	if code != ExitOK || !strings.Contains(out, `"phase":"done"`) {
+		t.Fatalf("seen eleven minutes ago by the control plane's clock: %d %q %q", code, out, errOut)
 	}
 	if n := w.api.names(); n[ours] != "vault" {
 		t.Fatalf("names %v", n)

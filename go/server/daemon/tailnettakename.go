@@ -245,9 +245,9 @@ func takeOver(ctx context.Context, he *tailhandoff.Engine, journal *takeoverJour
 	if err := journal.clear(); err != nil {
 		return nil, err
 	}
-	devices, err := cp.Devices(ctx)
+	devices, at, err := listedAt(ctx, cp)
 	if err != nil {
-		return nil, fmt.Errorf("listing the tailnet's devices: %w", err)
+		return nil, err
 	}
 	var dead, incoming []tailcontrol.Device
 	for _, d := range devices {
@@ -266,7 +266,7 @@ func takeOver(ctx context.Context, he *tailhandoff.Engine, journal *takeoverJour
 	case len(dead) > 1:
 		return nil, fmt.Errorf("%d devices are named %s: nothing is renamed", len(dead), name)
 	}
-	if err := checkDead(dead[0], time.Now()); err != nil {
+	if err := checkDead(dead[0], at); err != nil {
 		return nil, err
 	}
 	plan, err := tailhandoff.NewRestore(op, name, dead[0].ID, incoming[0].ID, certificates)
@@ -282,8 +282,29 @@ func takeOver(ctx context.Context, he *tailhandoff.Engine, journal *takeoverJour
 	return he.Switch(ctx, op)
 }
 
+// listedAt is the tailnet's devices and the listing's time by the control
+// plane's clock (its answer's Date header): the dead node's last-seen time
+// is the control plane's, so it is judged by that clock, never this
+// host's, which may be minutes off. A listing without a usable time is
+// refused.
+func listedAt(ctx context.Context, cp tailcontrol.ControlPlane) ([]tailcontrol.Device, time.Time, error) {
+	cl, ok := cp.(tailcontrol.ClockedLister)
+	if !ok {
+		return nil, time.Time{}, fmt.Errorf("the %s control plane's listing says no time, by which the old node's last-seen time is judged: nothing was renamed", cp.Kind())
+	}
+	devices, at, err := cl.DevicesAt(ctx)
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("listing the tailnet's devices: %w", err)
+	}
+	if at.IsZero() {
+		return nil, time.Time{}, errors.New("the control plane's listing has no Date header (or one that does not parse): the old node's last-seen time is judged by the control plane's clock, never this host's; nothing was renamed")
+	}
+	return devices, at, nil
+}
+
 // checkDead refuses a dead node the control plane does not show dead: one
-// connected now, last seen within deadGrace, or with no last-seen time.
+// connected now, last seen within deadGrace of now (the listing's time by
+// the control plane's clock), or with no last-seen time.
 func checkDead(d tailcontrol.Device, now time.Time) error {
 	var why string
 	switch {
@@ -303,13 +324,13 @@ func checkDead(d tailcontrol.Device, now time.Time) error {
 // the first rename. A device no longer listed was deleted: the switch
 // finds its name free.
 func stillDead(ctx context.Context, cp tailcontrol.ControlPlane, id string) error {
-	devices, err := cp.Devices(ctx)
+	devices, at, err := listedAt(ctx, cp)
 	if err != nil {
-		return fmt.Errorf("listing the tailnet's devices: %w", err)
+		return err
 	}
 	for _, d := range devices {
 		if d.ID == id {
-			return checkDead(d, time.Now())
+			return checkDead(d, at)
 		}
 	}
 	return nil

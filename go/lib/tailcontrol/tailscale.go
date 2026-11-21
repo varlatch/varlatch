@@ -147,29 +147,39 @@ type tailscaleDevice struct {
 	LastSeen           time.Time `json:"lastSeen"`
 }
 
+var _ ClockedLister = (*Tailscale)(nil)
+
 // Devices lists every device of the tailnet.
 func (t *Tailscale) Devices(ctx context.Context) ([]Device, error) {
+	d, _, err := t.DevicesAt(ctx)
+	return d, err
+}
+
+// DevicesAt is Devices, with the listing's time by Tailscale's clock (its
+// answer's Date header; zero without a usable one).
+func (t *Tailscale) DevicesAt(ctx context.Context) ([]Device, time.Time, error) {
 	const op = "list devices"
 	tok, err := t.token(ctx, op, "")
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.base+"/api/v2/tailnet/"+url.PathEscape(t.tailnet)+"/devices?fields=all", nil)
 	if err != nil {
-		return nil, t.err(op, "", err)
+		return nil, time.Time{}, t.err(op, "", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	var got struct {
 		Devices []tailscaleDevice `json:"devices"`
 	}
-	if err := do(t.http, req, &got, t.secret(), tok); err != nil {
-		return nil, t.err(op, "", err)
+	at, err := doDated(t.http, req, &got, t.secret(), tok)
+	if err != nil {
+		return nil, time.Time{}, t.err(op, "", err)
 	}
 	now := t.now()
 	out := make([]Device, 0, len(got.Devices))
 	for _, d := range got.Devices {
 		if d.ID == "" || d.Name == "" {
-			return nil, t.err(op, "", fmt.Errorf("a device without an id or a name (%q, %q)", d.ID, d.Name))
+			return nil, time.Time{}, t.err(op, "", fmt.Errorf("a device without an id or a name (%q, %q)", d.ID, d.Name))
 		}
 		machine, _, _ := strings.Cut(d.Name, ".")
 		out = append(out, Device{
@@ -181,7 +191,7 @@ func (t *Tailscale) Devices(ctx context.Context) ([]Device, error) {
 			LastSeen: d.LastSeen,
 		})
 	}
-	return out, nil
+	return out, at, nil
 }
 
 // Rename asks Tailscale to give the device the machine name, which must be
@@ -260,10 +270,28 @@ var errNoClient = errors.New("no http.Client: the caller passes one (varlatchd p
 // cut. A transport error keeps answering errors.Is as it did (a passed
 // deadline stays context.DeadlineExceeded), with its text scrubbed.
 func do(c *http.Client, req *http.Request, out any, secrets ...string) error {
+	_, err := doDated(c, req, out, secrets...)
+	return err
+}
+
+// doDated is do, answering too the response's Date (zero when it has none
+// that parses).
+func doDated(c *http.Client, req *http.Request, out any, secrets ...string) (time.Time, error) {
 	res, err := c.Do(req)
 	if err != nil {
-		return scrubbed(err, secrets...)
+		return time.Time{}, scrubbed(err, secrets...)
 	}
+	var at time.Time
+	if v := res.Header.Get("Date"); v != "" {
+		if t, err := http.ParseTime(v); err == nil {
+			at = t.UTC()
+		}
+	}
+	err = answer(res, out, secrets...)
+	return at, err
+}
+
+func answer(res *http.Response, out any, secrets ...string) error {
 	defer res.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if err != nil {
