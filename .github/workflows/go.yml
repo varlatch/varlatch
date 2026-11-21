@@ -583,8 +583,8 @@ jobs:
       - name: install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck
         run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh go/install/test-setup.sh
 
-      - name: The release's asset scripts pass shellcheck
-        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh
+      - name: The release's asset scripts and the nightly report pass shellcheck
+        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh scripts/ci-nightly-report.sh
 
       # G13 (ADR-0059 step 4.14), and the Go replacement of
       # scripts/test-backup-s3.mjs: the S3 client against a local S3 server
@@ -1659,3 +1659,34 @@ jobs:
             echo "::error::A Go job failed or was cancelled."
             exit 1
           fi
+
+  # The nightly's issue (scripts/ci-nightly-report.sh): nobody is notified of
+  # a scheduled run, so a red nightly could stay red unseen. While go-ok is
+  # red on main's nightly, one issue, "Nightly go.yml is red", is open, with
+  # each red run's link, commit and failed jobs; the next green nightly
+  # closes it. Main's nightly and dispatched runs only (a branch's dispatch
+  # says nothing about main), on GITHUB_TOKEN with issues: write alone.
+  nightly-report:
+    if: always() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [go-ok]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-nightly-report.sh
+          sparse-checkout-cone-mode: false
+      - name: The nightly's issue follows go-ok
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.go-ok.result }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: scripts/ci-nightly-report.sh
