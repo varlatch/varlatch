@@ -13,6 +13,11 @@
 //	releasecheck schema --previous <schema.sql> [--current <schema.sql>] [--declaration <file>] [--json]
 //	    the changes from the previous release's schema to this one's (or to
 //	    --current), held against the declaration (schemadiff.Judge)
+//	releasecheck previous --tags <file> [--declaration <file>]
+//	    the declaration's previous release is the last Go release among
+//	    the tags in the file (one per line: the v* tags reachable from
+//	    HEAD), compared as semantic versions (rc.10 after rc.9, 0.50.0
+//	    after its release candidates); none of them when it names none
 //
 // The declaration defaults to release/release.json. Exit 0 when the checks
 // pass, 1 when they fail, 64 on a usage error.
@@ -25,6 +30,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
+
+	"golang.org/x/mod/semver"
 
 	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/server/db"
@@ -40,9 +49,38 @@ const (
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
+// goLine is the first Go release's lowest version: tags below it are the
+// TypeScript server's (0.22, 0.23), never a Go release's previous.
+const goLine = "v0.50.0-0"
+
+// newerReleases are the Go release tags after previous (all of them when
+// previous is nil), newest first, compared as semantic versions. A line
+// that is not a release tag (v<version>) is ignored.
+func newerReleases(tags []string, previous *release.Previous) []string {
+	floor := goLine
+	if previous != nil {
+		floor = "v" + previous.Version
+	}
+	var newer []string
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if !strings.HasPrefix(t, "v") || !release.IsVersion(strings.TrimPrefix(t, "v")) || !semver.IsValid(t) {
+			continue
+		}
+		if semver.Compare(t, goLine) < 0 {
+			continue
+		}
+		if previous == nil || semver.Compare(t, floor) > 0 {
+			newer = append(newer, t)
+		}
+	}
+	slices.SortFunc(newer, func(a, b string) int { return semver.Compare(b, a) })
+	return newer
+}
+
 func run(args []string, stdout, stderr io.Writer) int {
 	usage := func(msg string) int {
-		fmt.Fprintf(stderr, "releasecheck: %s\nUsage: releasecheck declaration|manifest|schema [flags] (see the package comment)\n", msg)
+		fmt.Fprintf(stderr, "releasecheck: %s\nUsage: releasecheck declaration|manifest|schema|previous [flags] (see the package comment)\n", msg)
 		return exitUsage
 	}
 	if len(args) == 0 {
@@ -55,6 +93,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	previous := fs.String("previous", "", "")
 	current := fs.String("current", "", "")
 	asJSON := fs.Bool("json", false, "")
+	tags := fs.String("tags", "", "")
 	if err := fs.Parse(args[1:]); err != nil {
 		return usage(err.Error())
 	}
@@ -73,6 +112,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		if *previous != "" || *current != "" || *asJSON {
 			return usage("manifest takes only --version and --declaration")
+		}
+	case "previous":
+		if *tags == "" {
+			return usage("previous needs --tags")
+		}
+		if *version != "" || *previous != "" || *current != "" || *asJSON {
+			return usage("previous takes only --tags and --declaration")
 		}
 	case "schema":
 		if *previous == "" {
@@ -126,6 +172,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return fail("%v", err)
 		}
 		_, _ = stdout.Write(b)
+		return exitOK
+
+	case "previous":
+		raw, err := os.ReadFile(*tags)
+		if err != nil {
+			return fail("%v", err)
+		}
+		newer := newerReleases(strings.Split(string(raw), "\n"), decl.Previous)
+		if len(newer) > 0 {
+			return fail("%s's previous (%s) is not the last Go release: %s came after it; name it in previous",
+				*declPath, previousName(decl), strings.Join(newer, ", "))
+		}
+		fmt.Fprintf(stdout, "%s's previous (%s) is the last Go release reachable\n", *declPath, previousName(decl))
 		return exitOK
 
 	case "schema":

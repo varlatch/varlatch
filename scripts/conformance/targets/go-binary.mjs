@@ -78,6 +78,7 @@ import { accessSync, appendFileSync, chmodSync, closeSync, constants, cpSync, ex
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixtureStatus } from "../lib/fixture-status.mjs";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
 import { reservePort } from "../lib/ports.mjs";
 import { issuerCertificate, ISSUER_SOURCE, OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady, PLATFORM_FAKE_HOSTS, platformFakesCertificate } from "./compose-stack.mjs";
@@ -615,10 +616,7 @@ async function startFixture(state, { name, args, pidFile, port, ready }) {
   }
   if (exit === null && (await ready())) return;
   const tail = (existsSync(log) ? readFileSync(log, "utf8") : "").trim().split("\n").slice(-8).join(" | ");
-  throw new Error(
-    `${name} did not start: ${exit ?? `still running, not answering after ${FIXTURE_START_MS / 1000} s`}, on 127.0.0.1:${port}; ` +
-      `its log (${log}): ${tail || "(empty)"}`,
-  );
+  throw new Error(`${name} did not start: ${fixtureStatus(exit, alive(child.pid), FIXTURE_START_MS)}, on 127.0.0.1:${port}; its log (${log}): ${tail || "(empty)"}`);
 }
 
 const basenameOf = (file) => file.split(/[\\/]/).pop().replace(/\.c?js$/, "");
