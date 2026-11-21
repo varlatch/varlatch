@@ -5223,6 +5223,264 @@
         "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
       },
       "cwd": "repo",
+      "id": "strict.no-preflight",
+      "title": "strict: server without retrieval.preflight fails closed",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--target",
+        "API_KEY=header:authorization",
+        "--allow-host",
+        "api.example.com",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "capabilities.targets",
+              "retrieval.strict"
+            ]
+          }
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 78,
+        "stdout": "",
+        "stderr": "varlatch: --agent-safe --strict needs the agent-safe preflight and substitution targets, which this server (0.22.0) does not offer; it needs Varlatch 0.11.0 or later. Nothing was started.\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "strict.no-targets",
+      "title": "strict: server without capabilities.targets fails closed",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--target",
+        "API_KEY=header:authorization",
+        "--allow-host",
+        "api.example.com",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "capabilities": [
+              "retrieval.strict",
+              "retrieval.preflight"
+            ]
+          }
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 78,
+        "stdout": "",
+        "stderr": "varlatch: --agent-safe --strict needs the agent-safe preflight and substitution targets, which this server (an older release) does not offer; it needs Varlatch 0.11.0 or later. Nothing was started.\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "strict.no-strict",
+      "title": "strict: server without retrieval.preflight or retrieval.strict fails closed",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--target",
+        "API_KEY=header:authorization",
+        "--allow-host",
+        "api.example.com",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "capabilities.targets"
+            ]
+          }
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 78,
+        "stdout": "",
+        "stderr": "varlatch: --agent-safe --strict needs the agent-safe preflight and substitution targets, which this server (0.22.0) does not offer; it needs Varlatch 0.11.0 or later. Nothing was started.\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
       "id": "strict.not-evaluated",
       "title": "strict: not-evaluated before invalid and an unresolved reference",
       "args": [
@@ -7791,6 +8049,1891 @@
               "accept": "*/*"
             },
             "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "strict.multi-mixed-verdicts",
+      "title": "strict: multiple Secrets with mixed verdicts, only failing Secrets named in Contract order",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--target",
+        "API_KEY=header:authorization",
+        "--target",
+        "PIN=query:pin",
+        "--target",
+        "LEGACY_KEY=header:x-legacy",
+        "--allow-host",
+        "api.example.com",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "capabilities.targets",
+              "retrieval.strict",
+              "retrieval.preflight"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/identities",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "idn_human",
+                "kind": "human",
+                "name": "coder"
+              },
+              {
+                "id": "idn_agent",
+                "kind": "agent",
+                "name": "coder"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "manifest": {
+              "manifestVersion": 1,
+              "projectId": "prj_1",
+              "environment": {
+                "id": "env_1",
+                "rootId": "env_root",
+                "parentId": null,
+                "tier": "development",
+                "expiresAt": null
+              },
+              "contract": {
+                "revisionId": "rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+                "contentHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "semanticsVersion": 2
+              },
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "source": "self",
+                  "valueRowId": "val_apiqkeyaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "PIN",
+                  "source": "self",
+                  "valueRowId": "val_pinaaaaaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_pinaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "LEGACY_KEY",
+                  "source": "self",
+                  "valueRowId": "val_legacyqkeyaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_legacyqkeyaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "PORT",
+                  "source": "self",
+                  "valueRowId": "val_portaaaaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            },
+            "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 2,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                },
+                {
+                  "name": "LEVEL",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "enum",
+                  "enumValues": [
+                    "debug",
+                    "info",
+                    "warn"
+                  ],
+                  "defaultValue": "info"
+                },
+                {
+                  "name": "REGION",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                },
+                {
+                  "name": "NUM",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                },
+                {
+                  "name": "PIN",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                },
+                {
+                  "name": "LEGACY_KEY",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                }
+              ]
+            },
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PIN",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_pinaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "LEGACY_KEY",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_legacyqkeyaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "value": "8080",
+                "source": "self",
+                "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "callerView": {
+              "withheld": [],
+              "unexpanded": [],
+              "contractWithheld": false
+            },
+            "validation": {
+              "invalid": [
+                {
+                  "name": "PIN",
+                  "reason": "is not a valid string"
+                }
+              ],
+              "unresolved": [],
+              "notEvaluated": [],
+              "missing": []
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities",
+          "status": 201,
+          "answer": {
+            "id": "cap_1",
+            "secret": "capsecret-fake-value",
+            "destinations": [
+              "api.example.com:443"
+            ],
+            "targets": {
+              "API_KEY": [
+                "header:authorization"
+              ],
+              "PIN": [
+                "query:pin"
+              ],
+              "LEGACY_KEY": [
+                "header:x-legacy"
+              ]
+            },
+            "expiresAt": "2100-01-01T00:00:00.000Z",
+            "preflightItems": [
+              {
+                "name": "API_KEY",
+                "present": true,
+                "authorized": true
+              },
+              {
+                "name": "PIN",
+                "present": true,
+                "authorized": true
+              },
+              {
+                "name": "LEGACY_KEY",
+                "present": true,
+                "authorized": false,
+                "reason": "permission"
+              }
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities/cap_1",
+          "status": 204
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 78,
+        "stdout": "",
+        "stderr": "varlatch: strict startup found 2 violation(s); the command was not started:\n  PIN: invalid: the stored value is not a valid string\n  LEGACY_KEY: agent-unauthorized: the Agent lacks secret.use here\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/identities",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "mode": "preflight"
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities",
+            "headers": {
+              "authorization": "Bearer vlt_brk_fakeBROKER",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "agentIdentityId": "idn_agent",
+              "items": [
+                "API_KEY",
+                "PIN",
+                "LEGACY_KEY"
+              ],
+              "destinations": [
+                "api.example.com"
+              ],
+              "targets": {
+                "API_KEY": [
+                  "header:authorization"
+                ],
+                "PIN": [
+                  "query:pin"
+                ],
+                "LEGACY_KEY": [
+                  "header:x-legacy"
+                ]
+              },
+              "ttlSeconds": 3600,
+              "runId": "run_{{id}}",
+              "precondition": {
+                "projectId": "prj_1",
+                "environmentId": "env_1",
+                "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "method": "DELETE",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities/cap_1",
+            "headers": {
+              "authorization": "Bearer vlt_brk_fakeBROKER",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "strict.withheld-secret",
+      "title": "strict: a Secret listed in callerView.withheld at preflight is still mediated as a Placeholder",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--target",
+        "API_KEY=header:authorization",
+        "--allow-host",
+        "api.example.com",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER",
+        "API_KEY": "inherited-copy"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "capabilities.targets",
+              "retrieval.strict",
+              "retrieval.preflight"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/identities",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "idn_human",
+                "kind": "human",
+                "name": "coder"
+              },
+              {
+                "id": "idn_agent",
+                "kind": "agent",
+                "name": "coder"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "manifest": {
+              "manifestVersion": 1,
+              "projectId": "prj_1",
+              "environment": {
+                "id": "env_1",
+                "rootId": "env_root",
+                "parentId": null,
+                "tier": "development",
+                "expiresAt": null
+              },
+              "contract": {
+                "revisionId": "rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+                "contentHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "semanticsVersion": 2
+              },
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "source": "self",
+                  "valueRowId": "val_apiqkeyaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "PORT",
+                  "source": "self",
+                  "valueRowId": "val_portaaaaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            },
+            "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 2,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                },
+                {
+                  "name": "LEVEL",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "enum",
+                  "enumValues": [
+                    "debug",
+                    "info",
+                    "warn"
+                  ],
+                  "defaultValue": "info"
+                },
+                {
+                  "name": "REGION",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                },
+                {
+                  "name": "NUM",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                }
+              ]
+            },
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "value": "8080",
+                "source": "self",
+                "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "callerView": {
+              "withheld": [
+                {
+                  "name": "API_KEY",
+                  "reason": "permission",
+                  "requires": "secret.reveal"
+                }
+              ],
+              "unexpanded": [],
+              "contractWithheld": false
+            },
+            "validation": {
+              "invalid": [],
+              "unresolved": [],
+              "notEvaluated": [],
+              "missing": []
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities",
+          "status": 201,
+          "answer": {
+            "id": "cap_1",
+            "secret": "capsecret-fake-value",
+            "destinations": [
+              "api.example.com:443"
+            ],
+            "targets": {
+              "API_KEY": [
+                "header:authorization"
+              ]
+            },
+            "expiresAt": "2100-01-01T00:00:00.000Z",
+            "preflightItems": [
+              {
+                "name": "API_KEY",
+                "present": true,
+                "authorized": true
+              }
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities/cap_1",
+          "status": 204
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"{{placeholder}}\",\"PORT\":\"8080\",\"VARLATCH_RUN_CONTEXT\":\"{\\\"v\\\":1,\\\"mode\\\":\\\"strict\\\",\\\"contractRevisionId\\\":\\\"rev_runaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"contractHash\\\":\\\"sha256:abababababababababababababababababababababababababababababababab\\\",\\\"semanticsVersion\\\":2,\\\"environment\\\":{\\\"rootId\\\":\\\"env_root\\\",\\\"tier\\\":\\\"development\\\"},\\\"items\\\":{\\\"API_KEY\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"varlatch\\\"},\\\"PORT\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"varlatch\\\"},\\\"LEVEL\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"default\\\"},\\\"REGION\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"absent\\\"},\\\"NUM\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"absent\\\"}}}\",\"NODE_USE_ENV_PROXY\":\"1\",\"NO_PROXY\":\"127.0.0.1:{{port}}\",\"no_proxy\":\"127.0.0.1:{{port}}\",\"VARLATCH_AGENT_RUN\":\"run_{{id}}\",\"proxy\":\"broker\",\"configDir\":\"own, empty\"}\n",
+        "stderr": "varlatch: agent-safe run run_{{id}} — 1 Secret(s) as placeholders, broker on 127.0.0.1:{{port}}, destinations: api.example.com:443\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/identities",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "mode": "preflight"
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities",
+            "headers": {
+              "authorization": "Bearer vlt_brk_fakeBROKER",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "agentIdentityId": "idn_agent",
+              "items": [
+                "API_KEY"
+              ],
+              "destinations": [
+                "api.example.com"
+              ],
+              "targets": {
+                "API_KEY": [
+                  "header:authorization"
+                ]
+              },
+              "ttlSeconds": 3600,
+              "runId": "run_{{id}}",
+              "precondition": {
+                "projectId": "prj_1",
+                "environmentId": "env_1",
+                "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "method": "DELETE",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities/cap_1",
+            "headers": {
+              "authorization": "Bearer vlt_brk_fakeBROKER",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "strict.allow-inherited",
+      "title": "strict: --allow-inherited accepts a non-sensitive Contract item from the parent environment",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--target",
+        "API_KEY=header:authorization",
+        "--allow-host",
+        "api.example.com",
+        "--allow-inherited",
+        "REGION",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER",
+        "REGION": "eu-west"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "capabilities.targets",
+              "retrieval.strict",
+              "retrieval.preflight"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/identities",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "idn_human",
+                "kind": "human",
+                "name": "coder"
+              },
+              {
+                "id": "idn_agent",
+                "kind": "agent",
+                "name": "coder"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "manifest": {
+              "manifestVersion": 1,
+              "projectId": "prj_1",
+              "environment": {
+                "id": "env_1",
+                "rootId": "env_root",
+                "parentId": null,
+                "tier": "development",
+                "expiresAt": null
+              },
+              "contract": {
+                "revisionId": "rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+                "contentHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "semanticsVersion": 2
+              },
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "source": "self",
+                  "valueRowId": "val_apiqkeyaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "PORT",
+                  "source": "self",
+                  "valueRowId": "val_portaaaaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            },
+            "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 2,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                },
+                {
+                  "name": "LEVEL",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "enum",
+                  "enumValues": [
+                    "debug",
+                    "info",
+                    "warn"
+                  ],
+                  "defaultValue": "info"
+                },
+                {
+                  "name": "REGION",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                },
+                {
+                  "name": "NUM",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                }
+              ]
+            },
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "value": "8080",
+                "source": "self",
+                "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "callerView": {
+              "withheld": [],
+              "unexpanded": [],
+              "contractWithheld": false
+            },
+            "validation": {
+              "invalid": [],
+              "unresolved": [],
+              "notEvaluated": [],
+              "missing": []
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities",
+          "status": 201,
+          "answer": {
+            "id": "cap_1",
+            "secret": "capsecret-fake-value",
+            "destinations": [
+              "api.example.com:443"
+            ],
+            "targets": {
+              "API_KEY": [
+                "header:authorization"
+              ]
+            },
+            "expiresAt": "2100-01-01T00:00:00.000Z",
+            "preflightItems": [
+              {
+                "name": "API_KEY",
+                "present": true,
+                "authorized": true
+              }
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities/cap_1",
+          "status": 204
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"{{placeholder}}\",\"PORT\":\"8080\",\"VARLATCH_RUN_CONTEXT\":\"{\\\"v\\\":1,\\\"mode\\\":\\\"strict\\\",\\\"contractRevisionId\\\":\\\"rev_runaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"contractHash\\\":\\\"sha256:abababababababababababababababababababababababababababababababab\\\",\\\"semanticsVersion\\\":2,\\\"environment\\\":{\\\"rootId\\\":\\\"env_root\\\",\\\"tier\\\":\\\"development\\\"},\\\"items\\\":{\\\"API_KEY\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"varlatch\\\"},\\\"PORT\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"varlatch\\\"},\\\"LEVEL\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"default\\\"},\\\"REGION\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"inherited\\\"},\\\"NUM\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"absent\\\"}}}\",\"NODE_USE_ENV_PROXY\":\"1\",\"NO_PROXY\":\"127.0.0.1:{{port}}\",\"no_proxy\":\"127.0.0.1:{{port}}\",\"VARLATCH_AGENT_RUN\":\"run_{{id}}\",\"proxy\":\"broker\",\"configDir\":\"own, empty\"}\n",
+        "stderr": "varlatch: agent-safe run run_{{id}} — 1 Secret(s) as placeholders, broker on 127.0.0.1:{{port}}, destinations: api.example.com:443\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/identities",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "mode": "preflight"
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities",
+            "headers": {
+              "authorization": "Bearer vlt_brk_fakeBROKER",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "agentIdentityId": "idn_agent",
+              "items": [
+                "API_KEY"
+              ],
+              "destinations": [
+                "api.example.com"
+              ],
+              "targets": {
+                "API_KEY": [
+                  "header:authorization"
+                ]
+              },
+              "ttlSeconds": 3600,
+              "runId": "run_{{id}}",
+              "precondition": {
+                "projectId": "prj_1",
+                "environmentId": "env_1",
+                "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "method": "DELETE",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities/cap_1",
+            "headers": {
+              "authorization": "Bearer vlt_brk_fakeBROKER",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "strict.allow-inherited-secret",
+      "title": "strict: --allow-inherited naming a Secret is refused before issuance",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--target",
+        "API_KEY=header:authorization",
+        "--allow-host",
+        "api.example.com",
+        "--allow-inherited",
+        "API_KEY",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER",
+        "API_KEY": "inherited-copy"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "capabilities.targets",
+              "retrieval.strict",
+              "retrieval.preflight"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/identities",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "idn_human",
+                "kind": "human",
+                "name": "coder"
+              },
+              {
+                "id": "idn_agent",
+                "kind": "agent",
+                "name": "coder"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "manifest": {
+              "manifestVersion": 1,
+              "projectId": "prj_1",
+              "environment": {
+                "id": "env_1",
+                "rootId": "env_root",
+                "parentId": null,
+                "tier": "development",
+                "expiresAt": null
+              },
+              "contract": {
+                "revisionId": "rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+                "contentHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "semanticsVersion": 2
+              },
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "source": "self",
+                  "valueRowId": "val_apiqkeyaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "PORT",
+                  "source": "self",
+                  "valueRowId": "val_portaaaaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            },
+            "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 2,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                },
+                {
+                  "name": "LEVEL",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "enum",
+                  "enumValues": [
+                    "debug",
+                    "info",
+                    "warn"
+                  ],
+                  "defaultValue": "info"
+                },
+                {
+                  "name": "REGION",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                },
+                {
+                  "name": "NUM",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                }
+              ]
+            },
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "value": "8080",
+                "source": "self",
+                "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "callerView": {
+              "withheld": [],
+              "unexpanded": [],
+              "contractWithheld": false
+            },
+            "validation": {
+              "invalid": [],
+              "unresolved": [],
+              "notEvaluated": [],
+              "missing": []
+            }
+          }
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 64,
+        "stdout": "",
+        "stderr": "varlatch: --allow-inherited cannot name a Secret in an agent-safe run, which would put plaintext into the Agent's environment: API_KEY. Nothing was started.\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/identities",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "mode": "preflight"
+            }
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "strict.omit-optional-secret",
+      "title": "strict: --omit leaves an optional stored Secret off the Capability and out of the Agent's environment",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--target",
+        "API_KEY=header:authorization",
+        "--allow-host",
+        "api.example.com",
+        "--omit",
+        "PIN",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER",
+        "PIN": "inherited-pin"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "capabilities.targets",
+              "retrieval.strict",
+              "retrieval.preflight"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/identities",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "idn_human",
+                "kind": "human",
+                "name": "coder"
+              },
+              {
+                "id": "idn_agent",
+                "kind": "agent",
+                "name": "coder"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "manifest": {
+              "manifestVersion": 1,
+              "projectId": "prj_1",
+              "environment": {
+                "id": "env_1",
+                "rootId": "env_root",
+                "parentId": null,
+                "tier": "development",
+                "expiresAt": null
+              },
+              "contract": {
+                "revisionId": "rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+                "contentHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "semanticsVersion": 2
+              },
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "source": "self",
+                  "valueRowId": "val_apiqkeyaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "PIN",
+                  "source": "self",
+                  "valueRowId": "val_pinaaaaaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_pinaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "PORT",
+                  "source": "self",
+                  "valueRowId": "val_portaaaaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            },
+            "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 2,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                },
+                {
+                  "name": "LEVEL",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "enum",
+                  "enumValues": [
+                    "debug",
+                    "info",
+                    "warn"
+                  ],
+                  "defaultValue": "info"
+                },
+                {
+                  "name": "REGION",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                },
+                {
+                  "name": "NUM",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                },
+                {
+                  "name": "PIN",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                }
+              ]
+            },
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PIN",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_pinaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "value": "8080",
+                "source": "self",
+                "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "callerView": {
+              "withheld": [],
+              "unexpanded": [],
+              "contractWithheld": false
+            },
+            "validation": {
+              "invalid": [],
+              "unresolved": [],
+              "notEvaluated": [],
+              "missing": []
+            }
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities",
+          "status": 201,
+          "answer": {
+            "id": "cap_1",
+            "secret": "capsecret-fake-value",
+            "destinations": [
+              "api.example.com:443"
+            ],
+            "targets": {
+              "API_KEY": [
+                "header:authorization"
+              ]
+            },
+            "expiresAt": "2100-01-01T00:00:00.000Z",
+            "preflightItems": [
+              {
+                "name": "API_KEY",
+                "present": true,
+                "authorized": true
+              }
+            ]
+          }
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities/cap_1",
+          "status": 204
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 0,
+        "stdout": "{\"args\":[],\"API_KEY\":\"{{placeholder}}\",\"PORT\":\"8080\",\"VARLATCH_RUN_CONTEXT\":\"{\\\"v\\\":1,\\\"mode\\\":\\\"strict\\\",\\\"contractRevisionId\\\":\\\"rev_runaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"contractHash\\\":\\\"sha256:abababababababababababababababababababababababababababababababab\\\",\\\"semanticsVersion\\\":2,\\\"environment\\\":{\\\"rootId\\\":\\\"env_root\\\",\\\"tier\\\":\\\"development\\\"},\\\"items\\\":{\\\"API_KEY\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"varlatch\\\"},\\\"PORT\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"varlatch\\\"},\\\"LEVEL\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"default\\\"},\\\"REGION\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"absent\\\"},\\\"NUM\\\":{\\\"server\\\":\\\"notStored\\\",\\\"delivery\\\":\\\"absent\\\"},\\\"PIN\\\":{\\\"server\\\":\\\"delivered\\\",\\\"delivery\\\":\\\"absent\\\"}}}\",\"NODE_USE_ENV_PROXY\":\"1\",\"NO_PROXY\":\"127.0.0.1:{{port}}\",\"no_proxy\":\"127.0.0.1:{{port}}\",\"VARLATCH_AGENT_RUN\":\"run_{{id}}\",\"proxy\":\"broker\",\"configDir\":\"own, empty\"}\n",
+        "stderr": "varlatch: removed Secrets inherited from this shell from the Agent's environment: PIN\nvarlatch: agent-safe run run_{{id}} — 1 Secret(s) as placeholders, broker on 127.0.0.1:{{port}}, destinations: api.example.com:443\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/identities",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "mode": "preflight"
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities",
+            "headers": {
+              "authorization": "Bearer vlt_brk_fakeBROKER",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "agentIdentityId": "idn_agent",
+              "items": [
+                "API_KEY"
+              ],
+              "destinations": [
+                "api.example.com"
+              ],
+              "targets": {
+                "API_KEY": [
+                  "header:authorization"
+                ]
+              },
+              "ttlSeconds": 3600,
+              "runId": "run_{{id}}",
+              "precondition": {
+                "projectId": "prj_1",
+                "environmentId": "env_1",
+                "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "method": "DELETE",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/capabilities/cap_1",
+            "headers": {
+              "authorization": "Bearer vlt_brk_fakeBROKER",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          }
+        ],
+        "files": {
+          "config/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0644",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0755",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0644",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    },
+    {
+      "files": {
+        "repo/varlatch.toml": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n",
+        "config/credentials.json": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+      },
+      "cwd": "repo",
+      "id": "strict.omit-required-secret",
+      "title": "strict: --omit of a required stored Secret refuses with 78 without issuing a Capability",
+      "args": [
+        "run",
+        "--agent-safe",
+        "--agent",
+        "coder",
+        "--strict",
+        "--omit",
+        "API_KEY",
+        "--allow-host",
+        "api.example.com",
+        "--",
+        "node",
+        "-e",
+        "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';console.log(JSON.stringify(o))"
+      ],
+      "env": {
+        "VARLATCH_BROKER_CREDENTIAL": "vlt_brk_fakeBROKER"
+      },
+      "server": [
+        {
+          "method": "GET",
+          "path": "/v1/meta",
+          "status": 200,
+          "answer": {
+            "serverVersion": "0.22.0",
+            "apiVersion": 1,
+            "capabilities": [
+              "capabilities.targets",
+              "retrieval.strict",
+              "retrieval.preflight"
+            ]
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/v1/organizations/acme/identities",
+          "status": 200,
+          "answer": {
+            "items": [
+              {
+                "id": "idn_human",
+                "kind": "human",
+                "name": "coder"
+              },
+              {
+                "id": "idn_agent",
+                "kind": "agent",
+                "name": "coder"
+              }
+            ]
+          }
+        },
+        {
+          "method": "POST",
+          "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+          "status": 200,
+          "answer": {
+            "environmentId": "env_1",
+            "manifest": {
+              "manifestVersion": 1,
+              "projectId": "prj_1",
+              "environment": {
+                "id": "env_1",
+                "rootId": "env_root",
+                "parentId": null,
+                "tier": "development",
+                "expiresAt": null
+              },
+              "contract": {
+                "revisionId": "rev_runaaaaaaaaaaaaaaaaaaaaaaa",
+                "contentHash": "sha256:abababababababababababababababababababababababababababababababab",
+                "semanticsVersion": 2
+              },
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "source": "self",
+                  "valueRowId": "val_apiqkeyaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "name": "PORT",
+                  "source": "self",
+                  "valueRowId": "val_portaaaaaaaaaaaaaaaaaaaaaa",
+                  "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            },
+            "stateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "contract": {
+              "schemaVersion": 1,
+              "semanticsVersion": 2,
+              "items": [
+                {
+                  "name": "API_KEY",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": true,
+                  "type": "string"
+                },
+                {
+                  "name": "PORT",
+                  "required": {
+                    "kind": "always"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                },
+                {
+                  "name": "LEVEL",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "enum",
+                  "enumValues": [
+                    "debug",
+                    "info",
+                    "warn"
+                  ],
+                  "defaultValue": "info"
+                },
+                {
+                  "name": "REGION",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "string"
+                },
+                {
+                  "name": "NUM",
+                  "required": {
+                    "kind": "never"
+                  },
+                  "sensitive": false,
+                  "type": "number"
+                }
+              ]
+            },
+            "items": [
+              {
+                "name": "API_KEY",
+                "sensitive": true,
+                "value": null,
+                "source": "self",
+                "versionId": "ver_apiqkeyaaaaaaaaaaaaaaaaaaa"
+              },
+              {
+                "name": "PORT",
+                "sensitive": false,
+                "value": "8080",
+                "source": "self",
+                "versionId": "ver_portaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "callerView": {
+              "withheld": [],
+              "unexpanded": [],
+              "contractWithheld": false
+            },
+            "validation": {
+              "invalid": [],
+              "unresolved": [],
+              "notEvaluated": [],
+              "missing": []
+            }
+          }
+        }
+      ],
+      "patterns": [
+        "agent-run"
+      ],
+      "differences": [
+        "user-agent"
+      ],
+      "expect": {
+        "status": 78,
+        "stdout": "",
+        "stderr": "varlatch: strict startup found 1 violation(s); the command was not started:\n  API_KEY: omitted: required in this environment, and --omit leaves it out of the run\n",
+        "requests": [
+          {
+            "method": "GET",
+            "path": "/v1/meta",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "GET",
+            "path": "/v1/organizations/acme/identities",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "accept": "*/*"
+            },
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/v1/organizations/acme/projects/web/environments/dev/retrievals",
+            "headers": {
+              "authorization": "Bearer vlt_cli_valuesAAAA",
+              "user-agent": "varlatch-cli/0.22.0 (linux; x64)",
+              "content-type": "application/json",
+              "accept": "*/*"
+            },
+            "body": {
+              "mode": "preflight"
+            }
           }
         ],
         "files": {
