@@ -468,7 +468,7 @@ judged:
 
 ```sh
 node scripts/conformance/run.mjs --target go-binary:<path> --cli source \
-  --gate --walkthrough docs/evidence/<walkthrough record> [--recent-cli-report <report.json>]
+  --gate [--walkthrough docs/evidence/<walkthrough record>] [--recent-cli-report <report.json>]
 ```
 
 Besides passing as an ordinary run, a gate run must have:
@@ -480,8 +480,10 @@ Besides passing as an ordinary run, a gate run must have:
   with its reason. An `open` replacement fails the gate;
 - the browser-walkthrough evidence file (G1's full browser walkthrough,
   done by hand and kept under `docs/evidence/`), named with
-  `--walkthrough`. The run stops before the target starts when it is
-  missing; the report records its path and hash;
+  `--walkthrough`. Passing a missing file stops before the target starts;
+  omitting `--walkthrough` still runs every suite and fails the gate on
+  missing walkthrough evidence alongside any open entries. The report
+  records its path and hash;
 - every suite (no `--suite`);
 - the target's record of what it ran (`implementation` in the report):
   for `ts-source` the commit, whether the tree was exactly that commit, and

@@ -9,7 +9,7 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *
  *   node scripts/conformance/run.mjs --target <target> --cli source|<version>|go:<path>
  *        [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]
- *        [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]
+ *        [--gate [--walkthrough <docs/evidence/file>] [--recent-cli-report <file.json>]]
  *
  *   --target   the server under test (targets/index.mjs): ts-source,
  *              ts-release:<version> (a signed release, verified and pulled
@@ -88,7 +88,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function usage(message) {
   console.error(
     `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path>|go-container:<image> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
-      " [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]",
+      " [--gate [--walkthrough <docs/evidence/file>] [--recent-cli-report <file.json>]]",
   );
   process.exit(64);
 }
@@ -120,7 +120,9 @@ function parseArgs(argv) {
   if (options.gate && options.suites.length > 0) usage("--gate judges a whole run: --suite is not allowed");
   if (options.shard && options.suites.length > 0) usage("--shard selects the suites itself: --suite is not allowed");
   if (options.shard && options.gate) usage("--gate judges a whole run: --shard is not allowed");
-  if (options.gate && !options.walkthrough) usage("--gate needs the browser-walkthrough evidence file: --walkthrough docs/evidence/<file>");
+  // Omitting --walkthrough still runs the full suite and fails the gate on
+  // missing walkthrough evidence (lib/gate.mjs), so a pre-RC gate run can
+  // surface every open/failing entry; naming a missing file still fails fast.
   return options;
 }
 
