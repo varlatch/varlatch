@@ -88,6 +88,9 @@ func TestParseErrors(t *testing.T) {
 		"bad sync":                         kek + "sync = yes\n",
 		"unknown sync adapter":             kek + "sync_adapters = heroku\n",
 		"audit export neither on nor off":  kek + "audit_export = maybe\n",
+		"serve_cli neither on nor off":     kek + "public_url = https://varlatch.example.com\nserve_cli = yes\n",
+		"serve_cli without public_url":     kek + "serve_cli = on\n",
+		"serve_cli with a public_url path": kek + "public_url = https://example.com/vault\nserve_cli = on\n",
 		"overlong line":                    kek + "public_url = https://" + strings.Repeat("a", 70*1024) + "\n",
 		"relative backup_key_file":         kek + "backup_key_file = bek\n",
 		"relative destinations file":       kek + "backup_destinations_file = d.json\n",
@@ -355,6 +358,22 @@ func TestParsePublicHTTPS(t *testing.T) {
 		}
 		if err != nil && strings.Contains(err.Error(), "u:p") {
 			t.Errorf("%q: the error shows the URL's password", c.conf)
+		}
+	}
+}
+
+func TestServeCLI(t *testing.T) {
+	for file, want := range map[string]bool{
+		"root_kek_file = /k\n":                  false,
+		"root_kek_file = /k\nserve_cli = off\n": false,
+		"root_kek_file = /k\npublic_url = https://varlatch.example.com\nserve_cli = on\n":        true,
+		"root_kek_file = /k\npublic_url = http://127.0.0.1:8686\nserve_cli = on\n":               true,
+		"root_kek_file = /k\npublic_url = https://varlatch.example.com/\nserve_cli = on\n":       true,
+		"root_kek_file = /k\npublic_url = https://varlatch.example.com/vault\nserve_cli = off\n": false,
+	} {
+		c, err := Parse(strings.NewReader(file), env(nil))
+		if err != nil || c.ServeCLI != want {
+			t.Errorf("%q: %+v %v", file, c, err)
 		}
 	}
 }

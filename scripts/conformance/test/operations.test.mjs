@@ -145,7 +145,7 @@ test("lacks entries: a known operation (never the seed itself), a reason and the
   assert.match(validateExpectations(file, { targetName: "go-binary", inventory, cliVersions: [], openapi }).join("\n"), /ts-source is not a go-binary target/);
 });
 
-test("expect/go-binary.json lacks every operation but the ones the Go server has, each with a step of ADR-0059 step 4 (serving the CLI: step 6)", () => {
+test("expect/go-binary.json lacks every operation but the ones the Go server has, each with a step of ADR-0059 step 4", () => {
   assert.deepEqual(validateExpectations(goExpect, { targetName: "go-binary", inventory, cliVersions: ["0.21.0", "0.22.0"], openapi }), []);
   const lacks = lacksFor(goExpect, "go-binary");
   // ADR-0059 step 3.4: the browser session's paths, and the /v1 operations
@@ -227,12 +227,10 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "rotateGitHubAppKey", "listGitHubAppInstallations",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
-  // Of the named operations only serving the CLI is lacking (the seed is
-  // lacking through the writes it uses, never listed).
-  for (const [name, op] of Object.entries(inventory.operations)) assert.equal(lacks.has(name), !op.uses && name === "serve-cli", name);
-  // Serving the CLI waits for the Go CLI and installers (feature-parity
-  // decision 13); every other gap is step 4's.
-  for (const [op, e] of lacks) assert.equal(e.step, op === "serve-cli" ? "ADR-0059 step 6" : "ADR-0059 step 4", op);
+  // No named operation is lacking: serving the CLI is built (step 6.8; the
+  // seed is lacking through the writes it uses, never listed).
+  for (const name of Object.keys(inventory.operations)) assert.equal(lacks.has(name), false, name);
+  for (const [op, e] of lacks) assert.equal(e.step, "ADR-0059 step 4", op);
   // The conformance checks the Go server runs (step 3.4): the passkey
   // bootstrap, the CLI's token sign-in and whoami, the CLI browser login,
   // device sign-in with the dashboard's sign-in and the proxy probe's
@@ -267,7 +265,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   // the webhooks suite's deletion group. (4.9d) the sync suite, with
   // (4.10) its GitHub App checks. The admin-cli suite (go-cli 5.7a), on
   // the administration operations, all built, (5.7b) the
-  // security-cli suite and (5.7c) the audit-cli suite.
+  // security-cli suite and (5.7c) the audit-cli suite. (6.8) the
+  // cli-download-on suite, on serving the CLI.
   // Every other one lacks something.
   const lacking = lackingChecks(inventory, lacks.keys());
   const runs = Object.entries(inventory.checks).filter(([id, c]) => c.kind === "conformance" && !lacking.has(id) && inventory.suites[c.suite].runner !== true).map(([id]) => id);
@@ -284,12 +283,12 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
   };
   const ownLacking = [];
   const expected = Object.entries(inventory.checks).filter(([id, c]) =>
-    /^(passkey|cli-login|device|proxy-probe|cli-download-off|realtime-degraded|mcp|server-logs|sdk|security|maintenance|audit-export|oidc|deletion|sync|admin-cli|security-cli|audit-cli)\./.test(id) ||
+    /^(passkey|cli-login|device|proxy-probe|cli-download-off|cli-download-on|realtime-degraded|mcp|server-logs|sdk|security|maintenance|audit-export|oidc|deletion|sync|admin-cli|security-cli|audit-cli)\./.test(id) ||
     ["cli-core.login-token-stores-credential", "cli-core.whoami-names-signed-in-identity", "cli-core.whoami-human-format",
       "cli-core.env-list-json", "cli-core.env-list-frozen-format"].includes(id) ||
     (c.suite in notYet && c.kind === "conformance" && !notYet[c.suite].includes(c.group) && !ownLacking.includes(id))).map(([id]) => id);
   assert.deepEqual(runs.sort(), expected.sort());
-  assert.equal(runs.length, 526);
+  assert.equal(runs.length, 532);
   // The groups still lacking lack exactly their own operations.
   for (const [suite, groups] of Object.entries(notYet)) {
     for (const g of groups) {
