@@ -5,6 +5,8 @@
 package daemon
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,6 +14,33 @@ import (
 
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
+
+// openSecretFile opens a secret file without following a symbolic link, and
+// checks that it is a regular file not readable, writable or executable by
+// group or others (0600 or tighter).
+func openSecretFile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("%s is a symbolic link: give the regular file itself", path)
+		}
+		return nil, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if perm := st.Mode().Perm(); perm&0o077 != 0 {
+		_ = f.Close()
+		return nil, fmt.Errorf("%s has mode %04o (accessible to group or others): tighten it to 0600", path, perm)
+	}
+	return f, nil
+}
 
 // ownedByMe is whether a file is this process's user's.
 func ownedByMe(st fs.FileInfo) bool {

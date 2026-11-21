@@ -417,7 +417,8 @@ jobs:
           go vet -tags crashpoint ./...
           go vet -tags g9a ./...
           go vet -tags g5 ./server/migration/g5/
-          go vet -tags headscale ./server/tailnet/...
+          go vet -tags headscale ./server/tailnet/... ./server/daemon/...
+          go vet -tags "headscale crashpoint" ./server/daemon/
           go vet -tags "g5 headscale" ./server/migration/g5/
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
@@ -533,6 +534,21 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -tags "g5 headscale" -run '^TestG5Headscale' -v ./server/migration/g5/
+
+      # The restore's handoff on a self-hosted control server (step 7.5c
+      # c4; go/server/daemon/tailnettakename_headscale*_test.go):
+      # varlatchd admin tailnet take-name renames a dead holder away on
+      # Headscale 0.29.7 through its API (a key expiring within the hour,
+      # expired however the run ends), refuses a live one and one back
+      # before the rename (nothing renamed), and, killed at each journalled
+      # step (crashpoint), is resumed to done. No certificates.
+      - name: Headscale, the restore's take-name
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go test -count=1 -tags headscale -run '^TestHeadscaleTakeName' -v ./server/daemon/
+          go test -count=1 -tags "headscale crashpoint" -run '^TestKillTheHeadscaleTakeoverAtEveryStep$' -v ./server/daemon/
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a

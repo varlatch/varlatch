@@ -343,6 +343,35 @@ func TestHeadscaleTimestamps(t *testing.T) {
 	}
 }
 
+// A listing's time is Headscale's, from its answer's Date header;
+// HeadscaleCLI has no Date header and does not implement ClockedLister.
+func TestHeadscaleAPIListingIsDated(t *testing.T) {
+	f := tailcontroltest.NewHeadscale(50*time.Minute, tailcontroltest.Node{ID: "1", Name: "vault", LastSeen: time.Now().Add(-time.Hour)})
+	defer f.Close()
+	hs := headscaleOf(t, f, f.Key)
+	if err := hs.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	devices, at, err := hs.DevicesAt(ctx)
+	if err != nil || len(devices) != 1 || at.IsZero() || time.Since(at).Abs() > time.Minute {
+		t.Fatalf("%+v at %v, %v", devices, at, err)
+	}
+	f.DateSkew = 15 * time.Minute
+	_, skewed, err := hs.DevicesAt(ctx)
+	if err != nil || skewed.Sub(time.Now().Add(15*time.Minute)).Abs() > time.Minute {
+		t.Fatalf("skewed Date: %v, %v", skewed, err)
+	}
+	f.DateSkew, f.NoDate = 0, true
+	_, missing, err := hs.DevicesAt(ctx)
+	if err != nil || !missing.IsZero() {
+		t.Fatalf("missing Date: %v, %v", missing, err)
+	}
+	var cli tailcontrol.ControlPlane = &tailcontrol.HeadscaleCLI{Run: f.Run}
+	if _, ok := cli.(tailcontrol.ClockedLister); ok {
+		t.Error("HeadscaleCLI must not implement ClockedLister")
+	}
+}
+
 func TestHeadscaleAPIKeyMustExpireWithinTheHour(t *testing.T) {
 	for _, life := range []time.Duration{2 * time.Hour, 90 * 24 * time.Hour} {
 		f := tailcontroltest.NewHeadscale(life, tailcontroltest.Node{ID: "1", Name: "vault"})

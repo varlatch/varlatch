@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -11,11 +12,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 	"github.com/varlatch/varlatch/go/lib/tailhandoff"
@@ -29,24 +34,33 @@ import (
 // host takes the dead installation's tailnet name over, by rename, rather
 // than waiting for its node to be deleted.
 //
-// `varlatchd admin tailnet take-name --oauth-client-file <file> [--json]`
-// runs offline, under the data directory's lock, after `tailnet enroll`
-// held the restored node under its temporary name (<name>-vl-<op>-n) and
-// before varlatchd first starts:
-//   - the control plane is Tailscale's API with the operator's OAuth client
-//     (devices:core only, O4), read from its file, and the outbound
-//     policy's client (go/server/outbound, purpose tailnet_control);
+// `varlatchd admin tailnet take-name (--oauth-client-file <file> |
+// --headscale-url <https://IP[:port]> --headscale-api-key-file <file>)
+// [--json]` runs offline, under the data directory's lock, after `tailnet
+// enroll` held the restored node under its temporary name
+// (<name>-vl-<op>-n) and before varlatchd first starts:
+//   - on Tailscale (tailnet_control_url unset), the control plane is
+//     Tailscale's API with the operator's OAuth client (devices:core only,
+//     O4), read from its file; on Headscale (tailnet_control_url set,
+//     slice 7.5c c4), it is Headscale's API with --headscale-url matching
+//     tailnet_control_url and an API key file expiring within the hour,
+//     expired when take-name ends however it ends (Headscale's CLI is
+//     refused because its listing carries no HTTP Date header). Both go
+//     through the outbound policy's client (go/server/outbound, purpose
+//     tailnet_control); a self-hosted Headscale on a private or host-only
+//     IP needs an outbound_allow entry in varlatchd.conf;
 //   - the dead node is the one device under the configured name, and dead:
 //     not connected to the control plane, and last seen more than deadGrace
-//     ago (checked when planned and again right before the first rename; a
-//     node seen since may be the old installation still running, and is
-//     never renamed from under it); it is
-//     renamed to <name>-vl-<op>-o and the restored node to the name, each
-//     read back; with tailnet HTTPS the name's certificate is obtained
-//     (counted in tailnet-issuances.json); a client node (the reach probe)
-//     must see the name reach the restored node; then the hold is removed,
-//     so varlatchd listens when it starts. The dead node is never closed or
-//     reopened.
+//     ago by the control plane's Date header (checked when planned and
+//     again right before the first rename; a node seen since may be the old
+//     installation still running, and is never renamed from under it); it
+//     is renamed to <name>-vl-<op>-o and the restored node to the name,
+//     each read back; on Tailscale with tailnet HTTPS the name's
+//     certificate is obtained (counted in tailnet-issuances.json; skipped
+//     on Headscale, which has no certificates); a client node (the reach
+//     probe) must see the name reach the restored node; then the hold is
+//     removed, so varlatchd listens when it starts. The dead node is never
+//     closed or reopened.
 //   - the handoff's state is journalled in tailnet-takeover.json (0600)
 //     before each act; run again, take-name resumes it, never guessing: an
 //     interrupted switch is undone (the dead node takes its name back), then
@@ -64,8 +78,8 @@ const (
 // deadGrace is how long ago the control plane must have last seen the
 // dead node for take-name to rename it: within it, the node may be the old
 // installation still running (a restart, a short cut), and a rename would
-// take its name from under it.
-const deadGrace = 5 * time.Minute
+// take its name from under it. Tests shorten it against a real Headscale.
+var deadGrace = 5 * time.Minute
 
 // clockSkewLimit is how far the control plane's Date may be from this
 // host's clock: the dead node is judged by the control plane's, but one
@@ -102,11 +116,26 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	if t == nil {
 		return fail("the tailnet listener is off (tailnet = off): there is no name to take over")
 	}
-	if t.ControlURL != "" {
-		// Its authority is Tailscale's OAuth client; a restore on a
-		// self-hosted control server (Headscale) is slice 7.5c's c4.
-		return fail("tailnet_control_url names a self-hosted control server (%s): take-name takes the name over on Tailscale's only, for now; nothing was done. "+
-			"Remove or rename the old node in Headscale (headscale nodes delete or rename), then varlatchd admin tailnet open and start varlatchd", t.ControlURL)
+	isHeadscale := t.ControlURL != ""
+	switch {
+	case !isHeadscale && c.headscaleURL != "":
+		return fail("tailnet_control_url is unset (Tailscale): give --oauth-client-file, not --headscale-url and --headscale-api-key-file; nothing was done")
+	case isHeadscale && c.oauthFile != "":
+		return fail("tailnet_control_url names a self-hosted control server (%s): give --headscale-url %s --headscale-api-key-file <file>, not --oauth-client-file; nothing was done", t.ControlURL, t.ControlURL)
+	case isHeadscale && c.headscaleURL != t.ControlURL:
+		return fail("--headscale-url (%s) does not match tailnet_control_url (%s): the API authority must be the installation's own control server; nothing was done", c.headscaleURL, t.ControlURL)
+	}
+	// The authority given ends with the command, however it ends: on
+	// Headscale its API key (a full administrator's) is expired on every
+	// exit, the ones before the handoff opened it included.
+	var cp tailcontrol.ControlPlane
+	opened := false
+	if isHeadscale {
+		defer func() {
+			if cp == nil {
+				expireUnopened(cfg, c, opened, stderr)
+			}
+		}()
 	}
 	owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
@@ -135,7 +164,8 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	}
 	name := strings.ToLower(t.Hostname)
 	if prev != nil && prev.Phase == tailhandoff.Done && hold == nil {
-		// Done and opened: nothing is left to do.
+		// Done and opened: nothing is left to do (a Headscale key given
+		// for this run is expired on the way out).
 		return takeNameOut(stdout, c.asJSON, prev, "")
 	}
 	var op, heldAs string
@@ -159,36 +189,23 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	if _, err := os.Stat(filepath.Join(cfg.DataDir, tailnet.StateDir, "tailscaled.state")); err != nil {
 		return fail("the node is not enrolled: varlatchd admin tailnet enroll first")
 	}
-	raw, err := os.ReadFile(c.oauthFile)
-	if err != nil {
-		return fail("cannot read the OAuth client file: %v", err)
-	}
-	var client struct {
-		ClientID     string `json:"clientId"`
-		ClientSecret string `json:"clientSecret"`
-		Tailnet      string `json:"tailnet"`
-	}
-	jerr := json.Unmarshal(raw, &client)
-	clear(raw)
-	if jerr != nil || client.ClientID == "" || client.ClientSecret == "" {
-		return fail("the OAuth client file %s is not {\"clientId\": ..., \"clientSecret\": ...}", c.oauthFile)
-	}
 	entries, err := outbound.ParseAllow(cfg.OutboundAllow)
 	if err != nil {
 		return fail("outbound_allow: %v", err)
 	}
 	policy := outbound.New(entries, outbound.Options{TLS: takeNameTLS})
 	defer policy.Close()
-	cp, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: takeNameAPI, Tailnet: client.Tailnet, ClientID: client.ClientID,
-		ClientSecret: client.ClientSecret, HTTP: policy.Client(outbound.TailnetControl)})
-	client.ClientSecret = ""
-	if err != nil {
-		return fail("%v", err)
-	}
-	defer func() { _ = cp.Close(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	opened = true
+	cp, err = openTakeNameControl(ctx, cfg, c, policy)
+	if err != nil {
+		cp = nil
+		return fail("%v", err)
+	}
+	defer closeControlPlane(cp, stderr)
+
 	node, done, err := heldNode(ctx, cfg, heldAs)
 	if err != nil {
 		return fail("%v", err)
@@ -217,7 +234,9 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 		Journal:   journal,
 	}
 	tuneTakeName(he)
-	certificates := t.HTTPSPort != 0
+	// Headscale issues no HTTPS certificates: skip the certificate step and
+	// the issuance count on a self-hosted control server.
+	certificates := !isHeadscale && t.HTTPSPort != 0
 	if certificates {
 		he.Certs = nodeCerts{node: node, dataDir: cfg.DataDir, suffix: st.Suffix}
 		he.Ledger = &issuanceFile{path: filepath.Join(cfg.DataDir, IssuanceFile)}
@@ -248,6 +267,230 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 		return fail("the handoff ended %v, not done: run take-name again", state)
 	}
 	return takeNameOut(stdout, c.asJSON, state, st.SelfID)
+}
+
+// maxSecretFileBytes bounds a credential file read by take-name.
+const maxSecretFileBytes = 64 << 10
+
+// readSecretFile reads a credential file with secret-file checks: no
+// symbolic link, regular file, mode 0600 or tighter on Unix, bounded size,
+// valid UTF-8, and no NUL byte. The caller clears the returned slice.
+func readSecretFile(path string) ([]byte, error) {
+	f, err := openSecretFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, maxSecretFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxSecretFileBytes {
+		clear(raw)
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, maxSecretFileBytes)
+	}
+	if bytes.IndexByte(raw, 0) >= 0 {
+		clear(raw)
+		return nil, fmt.Errorf("%s contains a NUL byte", path)
+	}
+	if !utf8.Valid(raw) {
+		clear(raw)
+		return nil, fmt.Errorf("%s is not valid UTF-8 text", path)
+	}
+	return raw, nil
+}
+
+// openTakeNameControl builds and opens take-name's control plane through
+// the outbound policy's tailnet_control client.
+func openTakeNameControl(ctx context.Context, cfg *config.Config, c nodeCmd, policy *outbound.Policy) (tailcontrol.ControlPlane, error) {
+	if c.headscaleURL != "" {
+		raw, err := readSecretFile(c.headscaleKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read the Headscale API key file: %w", err)
+		}
+		key := strings.TrimRight(string(raw), "\r\n")
+		clear(raw)
+		if key == "" || strings.ContainsAny(key, "\r\n") {
+			return nil, fmt.Errorf("the Headscale API key file %s must hold one non-empty line", c.headscaleKeyFile)
+		}
+		hs, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{
+			BaseURL: c.headscaleURL,
+			APIKey:  key,
+			HTTP:    policy.Client(outbound.TailnetControl),
+		})
+		key = ""
+		if err != nil {
+			return nil, err
+		}
+		if err := hs.Open(ctx); err != nil {
+			return nil, headscaleOutboundRefusal(policy, cfg.OutboundAllow, c.headscaleURL, err)
+		}
+		return hs, nil
+	}
+	raw, err := readSecretFile(c.oauthFile)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read the OAuth client file: %w", err)
+	}
+	var client struct {
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+		Tailnet      string `json:"tailnet"`
+	}
+	jerr := json.Unmarshal(raw, &client)
+	clear(raw)
+	if jerr != nil || client.ClientID == "" || client.ClientSecret == "" {
+		return nil, fmt.Errorf("the OAuth client file %s is not {\"clientId\": ..., \"clientSecret\": ...}", c.oauthFile)
+	}
+	cp, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{
+		BaseURL:      takeNameAPI,
+		Tailnet:      client.Tailnet,
+		ClientID:     client.ClientID,
+		ClientSecret: client.ClientSecret,
+		HTTP:         policy.Client(outbound.TailnetControl),
+	})
+	client.ClientSecret = ""
+	if err != nil {
+		return nil, err
+	}
+	return cp, nil
+}
+
+// closeControlPlane ends take-name's authority on a fresh bounded context
+// so a Headscale API key is expired even when the handoff's context ended
+// or failed.
+func closeControlPlane(cp tailcontrol.ControlPlane, stderr io.Writer) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := cp.Close(ctx); err != nil {
+		if hs, ok := cp.(*tailcontrol.HeadscaleAPI); ok && hs.KeyPrefix() != "" {
+			fmt.Fprintf(stderr, "varlatchd admin tailnet take-name: warning: could not expire Headscale API key %s (%v): expire it with: headscale apikeys expire --prefix %s\n",
+				hs.KeyPrefix(), err, hs.KeyPrefix())
+			return
+		}
+		fmt.Fprintf(stderr, "varlatchd admin tailnet take-name: warning: closing control plane: %v\n", err)
+	}
+}
+
+// expireUnopened expires the Headscale API key of a take-name that ended
+// before its handoff used it (a refusal, or a rerun with nothing left to
+// do): through the outbound policy's client, as the handoff would. tried
+// says the handoff's own open already failed: then it is not tried again,
+// and the operator is told how to expire the key on the control server.
+func expireUnopened(cfg *config.Config, c nodeCmd, tried bool, stderr io.Writer) {
+	manual := func(why error) {
+		raw, err := readSecretFile(c.headscaleKeyFile)
+		if err != nil {
+			return
+		}
+		prefix := headscaleKeyPrefix(strings.TrimSpace(string(raw)))
+		clear(raw)
+		if prefix == "" {
+			return
+		}
+		fmt.Fprintf(stderr, "varlatchd admin tailnet take-name: warning: the Headscale API key %s was not expired (%v); if it is still live, expire it on the control server: headscale apikeys expire --prefix %s\n",
+			prefix, why, prefix)
+	}
+	if tried {
+		manual(errors.New("the control server could not be reached with it"))
+		return
+	}
+	entries, err := outbound.ParseAllow(cfg.OutboundAllow)
+	if err != nil {
+		manual(fmt.Errorf("outbound_allow: %w", err))
+		return
+	}
+	policy := outbound.New(entries, outbound.Options{TLS: takeNameTLS})
+	defer policy.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cp, err := openTakeNameControl(ctx, cfg, c, policy)
+	if err != nil {
+		manual(err)
+		return
+	}
+	closeControlPlane(cp, stderr)
+}
+
+// headscaleKeyPrefix is the part of a Headscale API key that Headscale
+// lists and `headscale apikeys expire --prefix` takes: hskey-api-<12> for
+// Headscale 0.28 and later, the part before the dot for an earlier key;
+// "" for anything else. It names the key without disclosing it.
+func headscaleKeyPrefix(key string) string {
+	const marker = "hskey-api-"
+	if rest, ok := strings.CutPrefix(key, marker); ok {
+		if len(rest) > 13 && rest[12] == '-' {
+			return marker + rest[:12]
+		}
+		return ""
+	}
+	if p, _, ok := strings.Cut(key, "."); ok && len(p) >= 4 && len(p) <= 16 {
+		return p
+	}
+	return ""
+}
+
+// headscaleOutboundAllowEntry is the exact outbound_allow entry for a
+// canonical self-hosted Headscale URL (https://<IP>[:port]): /32 for IPv4,
+// /128 for IPv6, with the explicit port when not 443.
+func headscaleOutboundAllowEntry(canonicalURL string) string {
+	u, err := url.Parse(canonicalURL)
+	if err != nil {
+		return ""
+	}
+	addr, err := netip.ParseAddr(u.Hostname())
+	if err != nil {
+		return ""
+	}
+	addr = addr.Unmap()
+	prefix := "32"
+	if addr.Is6() {
+		prefix = "128"
+	}
+	port := u.Port()
+	if port == "" {
+		return addr.String() + "/" + prefix
+	}
+	if addr.Is6() {
+		return "[" + addr.String() + "/" + prefix + "]:" + port
+	}
+	return addr.String() + "/" + prefix + ":" + port
+}
+
+// headscaleOutboundRefusal adds the exact outbound_allow line to add to
+// varlatchd.conf when the outbound policy refused Headscale's IP or port.
+func headscaleOutboundRefusal(policy *outbound.Policy, existingAllow, canonicalURL string, cause error) error {
+	u, err := url.Parse(canonicalURL)
+	if err != nil {
+		return cause
+	}
+	addr, err := netip.ParseAddr(u.Hostname())
+	if err != nil {
+		return cause
+	}
+	addr = addr.Unmap()
+	port := 443
+	if p := u.Port(); p != "" {
+		if n, perr := strconv.Atoi(p); perr == nil {
+			port = n
+		}
+	}
+	v := policy.Decide(outbound.Destination{Scheme: "https:", Host: addr.String(), Port: port}, []string{addr.String()})
+	if v.Allowed {
+		return cause
+	}
+	label := outbound.Labels[v.Reason]
+	if label == "" {
+		label = string(v.Reason)
+	}
+	if v.Reason == outbound.PrivateAddress || v.Reason == outbound.HostOnlyAddress || v.Reason == outbound.PortReason {
+		entry := headscaleOutboundAllowEntry(canonicalURL)
+		line := "outbound_allow = " + entry
+		if existing := strings.TrimSpace(existingAllow); existing != "" {
+			line = "outbound_allow = " + existing + ", " + entry
+		}
+		return fmt.Errorf("the outbound policy refused Headscale at %s (%s): add to varlatchd.conf:\n  %s\n(%v)", canonicalURL, label, line, cause)
+	}
+	return fmt.Errorf("the outbound policy refused Headscale at %s (%s): %v", canonicalURL, label, cause)
 }
 
 // takeOver plans the restore handoff from the control plane's listing and
