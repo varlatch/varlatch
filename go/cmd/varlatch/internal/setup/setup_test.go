@@ -32,6 +32,7 @@ type fakeHost struct {
 	groups    map[string][]string
 	chowns    map[string][2]int
 	systemctl []string
+	enabled   bool
 	active    bool
 	probe     diskprobe.Result
 	probeErr  error
@@ -81,6 +82,11 @@ func (h *fakeHost) CreateUser(name string) error {
 	h.shells[name] = "/usr/sbin/nologin"
 	return nil
 }
+func (h *fakeHost) DeleteUser(name string) error {
+	delete(h.users, name)
+	delete(h.shells, name)
+	return nil
+}
 func (h *fakeHost) LoginShell(name string) (string, error) { return h.shells[name], nil }
 func (h *fakeHost) SupplementaryGroups(name string) ([]string, error) {
 	return h.groups[name], nil
@@ -103,7 +109,17 @@ func (h *fakeHost) Systemctl(args ...string) (string, error) {
 		if h.failUnit {
 			return "Job failed", errors.New("exit status 1")
 		}
-		h.active = true
+		h.enabled = true
+		if slices.Contains(args, "--now") {
+			h.active = true
+		}
+	case "disable":
+		h.enabled = false
+	case "is-enabled":
+		if h.enabled {
+			return "enabled\n", nil
+		}
+		return "disabled\n", errors.New("exit status 1")
 	}
 	return "", nil
 }

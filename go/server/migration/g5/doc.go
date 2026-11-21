@@ -25,4 +25,6 @@
 // window ended after a forward migration and after a reverse, the old data
 // deleted only with --delete-old-data and only after its verified final
 // archive, killed at each step and finished by --resume.
+// maketarget_test.go is the host target migrate makes (slice 7.4e) under a
+// test root: migrated into, undone, killed while making it.
 package g5

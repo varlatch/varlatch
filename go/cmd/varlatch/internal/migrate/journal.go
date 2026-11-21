@@ -110,6 +110,8 @@ type Journal struct {
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	// Finish is --finish's record.
 	Finish *FinishRecord `json:"finish,omitempty"`
+	// Created is the target migrate made, when it made it (slice 7.4e).
+	Created *CreatedRecord `json:"created,omitempty"`
 	// WindowEnded is the rollback window ended early, on the Go side: an
 	// upgrade to a release that ends it (decision 17, release.json's
 	// endsRollbackWindow), recorded in Go's journal before the upgrade.

@@ -3522,6 +3522,32 @@ migrations.
   the stated end, a second `--resume` changing nothing; the Coolify shape
   and the image's operator steps too. Every output, journal and log is
   scanned for the keys and the run keys.
+- The host target `varlatch migrate` makes (step 7, slice 7.4e; decision
+  20): with `--config /etc/varlatch/varlatchd.conf` not there, migrate (as
+  root, on a systemd host) makes the Go installation with setup's steps
+  (`internal/setup` `PrepareTarget`):
+  - **The answers:** the source's public URL and ingress, and for an own
+    proxy the dashboard's address; `--acme-email` and `--listen` for what
+    the source cannot say.
+  - **What it makes:**
+    - the varlatch user (an existing one judged as setup judges it,
+      supplementary groups included, unless `--accept-existing-user`);
+    - `/etc/varlatch` and the data directory;
+    - the configuration, checked by varlatchd;
+    - the unit enabled but not started.
+  - **Never keys:** they are the source's, which `admin migrate keys`
+    writes where the unit loads them (`CREDENTIALS_DIRECTORY`: the
+    configuration names no key file).
+  - **Journalled first:** each item goes in the source's journal before
+    it is made (`created`), the keys' files too.
+  - **Undone:** an undo before the switch removes exactly those, after
+    both journals say released (`UndoTarget`), as does `--abort` of a
+    run killed while making it.
+  - **A prepared target** (another `--config`, or one already there) is
+    used as it is.
+  - **Tests:** G5's `maketarget_test.go` runs it under a test root
+    (the crashpoint build's seam); go.yml's runner-only step makes and
+    undoes it on a real systemd.
 - `varlatch migrate --rollback` (step 7, slice 7.6a; decisions 16 and
   17): the reverse migration, within 30 days of the switch, back to the
   last TypeScript release. Its phases are journalled in both places, as

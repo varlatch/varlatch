@@ -767,6 +767,23 @@ jobs:
           sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_PEBBLE="$VARLATCH_TEST_PEBBLE" VARLATCH_TEST_PEBBLE_ROOT="$VARLATCH_TEST_PEBBLE_ROOT" \
             go/install/test-setup.sh "$RUNNER_TEMP/setup-bin"
 
+      # A migration's host target (step 7, slice 7.4e): varlatch migrate
+      # makes it with setup's steps, keys aside, on this runner's systemd,
+      # then undoes it (setup's PrepareTarget and UndoTarget for real:
+      # useradd, /etc/varlatch, the data directory, the unit enabled, not
+      # started; then all of it removed). GitHub-hosted runners only, as the
+      # setup step above: it changes the machine's users, /etc and systemd.
+      - name: varlatch migrate makes and removes its host target, on this runner's systemd
+        if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go build -o "$RUNNER_TEMP/target-bin/varlatchd" ./cmd/varlatchd
+          go test -c -o "$RUNNER_TEMP/target-bin/setup.test" ./cmd/varlatch/internal/setup/
+          sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_VARLATCHD="$RUNNER_TEMP/target-bin/varlatchd" \
+            "$RUNNER_TEMP/target-bin/setup.test" -test.count=1 -test.run '^TestPrepareTargetOnThisHost$' -test.v
+
       # ADR-0059 Order step 3: envelopes cross between the servers in both
       # directions. The Go tests open what TypeScript releases sealed
       # (ts-v0.21.0.json, ts-v0.22.0.json); here the TypeScript server's own

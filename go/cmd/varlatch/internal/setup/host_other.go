@@ -31,6 +31,7 @@ func (SystemHost) Systemctl(...string) (string, error)              { return "",
 func (SystemHost) CheckConfig(string) (string, error)               { return "", errNotLinux }
 func (SystemHost) Ready(context.Context, string) error              { return errNotLinux }
 func (SystemHost) Admin(context.Context, ...string) ([]byte, error) { return nil, errNotLinux }
+func (SystemHost) DeleteUser(string) error                          { return errNotLinux }
 func (SystemHost) Probe(context.Context, string) (diskprobe.Result, error) {
 	return diskprobe.Result{}, errNotLinux
 }
