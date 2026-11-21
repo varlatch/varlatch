@@ -10,6 +10,7 @@ import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DeletionUsageError, deletionStateLines, orgDeleteMode } from "../src/deletion.js";
 import { EXIT } from "../src/exitCodes.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * Deleting Projects and Organizations from the CLI (ADR-0051 Decision 11):
@@ -124,7 +125,7 @@ interface Result {
 
 function cli(args: string[], env: Record<string, string> = {}, cwd = repo): Promise<Result> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd,
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0", ...env },
       stdio: ["ignore", "pipe", "pipe"],
