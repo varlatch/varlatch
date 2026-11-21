@@ -5691,6 +5691,12 @@ components:
             tailnet: { type: string }
             listenerPort: { type: integer }
             browserEndpoint: { type: [string, "null"] }
+            controlUrl:
+              type: string
+              description: >
+                The self-hosted control server the node joins (Headscale),
+                https on an IP address. Absent for Tailscale's coordination
+                server, and from older servers.
         observed:
           type: object
           required: [checkedAt, checks]
@@ -5715,6 +5721,14 @@ components:
                 The node as varlatchd last read it, at checkedAt. Absent
                 before the first successful LocalAPI read and after a failed
                 one, and from older servers.
+            warnings:
+              type: array
+              items: { type: string }
+              description: >
+                What the last check found that does not close access, each
+                a sentence for the operator: a node on a self-hosted control
+                server that joined with no tags (its tags are its pre-auth
+                key's). Absent when there is none, and from older servers.
 
     ObservedNode:
       type: object
