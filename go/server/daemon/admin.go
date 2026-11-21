@@ -191,7 +191,9 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			return adminUsage(stderr, msg)
 		}
 	}
-	cfg, err := config.Load(path)
+	// Outside the unit, the keys beside the configuration, as the unit
+	// hands them (config.LoadHost).
+	cfg, err := config.LoadHost(path)
 	if err != nil {
 		var cerr *config.Error
 		if errors.As(err, &cerr) {
