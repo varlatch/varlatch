@@ -218,7 +218,19 @@ const (
 // env supplies CREDENTIALS_DIRECTORY (systemd's credentials, the default
 // home of the Root KEK) and STATE_DIRECTORY (the unit's state directory,
 // the default data directory when set).
-func Parse(r io.Reader, env Env) (*Config, error) {
+func Parse(r io.Reader, env Env) (*Config, error) { return parse(r, env, false) }
+
+// noRootKEK is what a configuration with no Root KEK lacks: under the unit
+// (serve), its credential; run by hand (host), the key beside the
+// configuration, read as root.
+func noRootKEK(host bool) *Error {
+	if host {
+		return &Error{0, "no Root KEK: set root_kek_file, or run this as root with the root-kek file beside the configuration (where setup writes it, and the unit's credential comes from)"}
+	}
+	return &Error{0, "no Root KEK: set root_kek_file, or run varlatchd under its unit, which hands it the root-kek credential"}
+}
+
+func parse(r io.Reader, env Env, host bool) (*Config, error) {
 	values := map[string]string{}
 	lines := map[string]int{}
 	sc := bufio.NewScanner(r)
@@ -300,7 +312,7 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 	case env("CREDENTIALS_DIRECTORY") != "":
 		c.RootKEKFile = filepath.Join(env("CREDENTIALS_DIRECTORY"), "root-kek")
 	default:
-		return nil, &Error{0, "no Root KEK: set root_kek_file, or run varlatchd under its unit, which hands it the root-kek credential"}
+		return nil, noRootKEK(host)
 	}
 	if v := values["trusted_proxies"]; v != "" {
 		if _, err := clientaddr.ParseTrustedProxies(v); err != nil {
@@ -755,29 +767,32 @@ func Load(path string) (*Config, error) {
 	return Parse(f, os.Getenv)
 }
 
-// LoadHost is Load for a host command run outside the unit (varlatchd
-// admin, by an operator as root): the unit hands varlatchd its keys as
-// credentials from beside the configuration (LoadCredential=root-kek:
-// /etc/varlatch/root-kek), so when the run sets no CREDENTIALS_DIRECTORY
-// and the Root KEK is there, the configuration's directory stands for it.
-// The keys are read where they are, under their own modes (root's, 0600),
-// never copied, and nothing goes into the environment. A person who may
-// not look there gets no such directory, and the error says what is
-// lacking, as Load's does. The varlatch CLI's host front applies the same
-// rule (hostCredentials).
-func LoadHost(path string) (*Config, error) {
+// LoadHost is Load for a host command run by hand outside the unit
+// (varlatchd admin), with env from HostEnv: the configuration as the unit
+// loads it, and, without a Root KEK, a remedy for a run by hand.
+func LoadHost(path string, env Env) (*Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return Parse(f, HostEnv(os.Getenv, path))
+	return parse(f, env, true)
 }
 
-// HostEnv is env with CREDENTIALS_DIRECTORY defaulting to the
-// configuration's directory when the Root KEK is there (LoadHost).
-func HostEnv(env Env, path string) Env {
-	if env("CREDENTIALS_DIRECTORY") != "" {
+// HostEnv is env for a host command run by hand outside the unit: the unit
+// hands varlatchd its keys as credentials from beside the configuration
+// (LoadCredential=root-kek:/etc/varlatch/root-kek), so for a run as root
+// that sets no CREDENTIALS_DIRECTORY, with the Root KEK beside the
+// configuration, the configuration's directory stands for it. The keys are
+// read where they are, under their own modes (root's, 0600), never copied,
+// and nothing goes into the process's environment.
+//
+// Only as root, since host commands are root's: /etc/varlatch is 0750
+// root:varlatch, so a member of the varlatch group can see that root-kek
+// is there (though not read it), and gets no such directory. The varlatch
+// CLI's host front applies the same rule (hostCredentials).
+func HostEnv(env Env, path string, root bool) Env {
+	if !root || env("CREDENTIALS_DIRECTORY") != "" {
 		return env
 	}
 	abs, err := filepath.Abs(path)

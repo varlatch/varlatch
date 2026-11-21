@@ -81,21 +81,36 @@ func TestConfigured(t *testing.T) {
 		}
 	}
 	write("# keys\nlisten = 127.0.0.1:8686\nroot_kek_file = " + filepath.Join(dir, "root-kek") + "\n  backup_key_file=" + filepath.Join(dir, "backup-key") + "  \n")
-	got := Configured(conf)
+	got := Configured(conf, "")
 	if len(got) != 2 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) || got[1].What != BEK || hex.EncodeToString(got[1].Bytes) != hex.EncodeToString(bek) {
 		t.Fatalf("both keys: %d", len(got))
 	}
 	// A byte order mark before the first line, as config.Parse allows.
 	write("\uFEFFroot_kek_file = " + filepath.Join(dir, "root-kek") + "\n")
-	if got := Configured(conf); len(got) != 1 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) {
+	if got := Configured(conf, ""); len(got) != 1 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) {
 		t.Fatalf("after a byte order mark: %d", len(got))
 	}
 	// A key file it cannot read, or that holds no key, is left out.
 	write("root_kek_file = " + filepath.Join(dir, "missing") + "\nbackup_key_file = " + conf + "\n")
-	if got := Configured(conf); len(got) != 0 {
+	if got := Configured(conf, ""); len(got) != 0 {
 		t.Fatalf("unreadable keys: %d", len(got))
 	}
-	if got := Configured(filepath.Join(dir, "no-such.conf")); got != nil {
+	if got := Configured(filepath.Join(dir, "no-such.conf"), dir); got != nil {
 		t.Fatal("a missing configuration")
+	}
+	// A configuration that names no key file loads the credentials
+	// directory's (as varlatchd admin finds them beside the configuration);
+	// one it names wins.
+	write("listen = 127.0.0.1:8686\n")
+	if got := Configured(conf, ""); len(got) != 0 {
+		t.Fatalf("no key named, no credentials directory: %d", len(got))
+	}
+	got = Configured(conf, dir)
+	if len(got) != 2 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) || got[1].What != BEK || hex.EncodeToString(got[1].Bytes) != hex.EncodeToString(bek) {
+		t.Fatalf("the credentials directory's keys: %d", len(got))
+	}
+	write("root_kek_file = " + filepath.Join(dir, "missing") + "\n")
+	if got := Configured(conf, dir); len(got) != 1 || got[0].What != BEK {
+		t.Fatalf("root_kek_file named wins over the credential: %d", len(got))
 	}
 }
