@@ -447,6 +447,59 @@ func TestADryRunStopsThere(t *testing.T) {
 	w.noSecrets(t)
 }
 
+// A dry run that fails (its export, here) is recorded as stopped, as one
+// that ends is: the next run starts it again on the same id, never
+// "interrupted" (--resume or --abort only). The barrier was never held.
+func TestAFailedDryRunCanRunAgain(t *testing.T) {
+	for _, dryRunOnly := range []bool{true, false} {
+		w := newWorld(t)
+		w.src.fail = map[string]error{"export --dry-run": errors.New("the source's migration export failed (exit 1): EACCES open /backups/x.partial")}
+		j, err := w.eng.Run(context.Background(), dryRunOnly)
+		if err == nil || !strings.Contains(err.Error(), "EACCES") || !strings.Contains(err.Error(), "recorded as stopped") || j == nil || !j.Stopped || !slices.Contains(beforeBarrier, j.Phase) {
+			t.Fatalf("dry run only %v: a failed dry run: %+v %v", dryRunOnly, j, err)
+		}
+		if containsCall(w.src.calls, "barrier") {
+			t.Fatal("a failed dry run held the barrier")
+		}
+		onDisk, err := readJournal(w.src.dir)
+		if err != nil || onDisk == nil || !onDisk.Stopped || onDisk.ID != j.ID {
+			t.Fatalf("the journal after a failed dry run: %+v %v", onDisk, err)
+		}
+		w.src.fail = nil
+		again, err := w.eng.Run(context.Background(), dryRunOnly)
+		want := Open
+		if dryRunOnly {
+			want = DryRun
+		}
+		if err != nil || again.ID != j.ID || again.Phase != want {
+			t.Fatalf("dry run only %v: the run after a failed dry run: %+v %v", dryRunOnly, again, err)
+		}
+		w.noSecrets(t)
+	}
+}
+
+// The pin's refusal names both images, repository and digest apart: never
+// "<repository>@<digest>", which the CLI's fail-safe reads as credentials
+// before the "@" and masks (a registry with a port, here).
+func TestThePinRefusalNamesBothImages(t *testing.T) {
+	w := newWorld(t)
+	other := "sha256:" + hexOf(randomBytes(32))
+	w.src.info.DigestRepository, w.src.info.Digest = "registry.example:5000/varlatch/varlatchd", other
+	_, err := w.eng.Run(context.Background(), true)
+	if err == nil {
+		t.Fatal("another image was not refused")
+	}
+	msg := err.Error()
+	for _, want := range []string{"repository registry.example:5000/varlatch/varlatchd, digest " + other, "not the published 0.23.0 image: repository "} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("%q lacks %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "@") {
+		t.Errorf("%q joins a repository and a digest by @", msg)
+	}
+}
+
 // A projection over the budget refuses the barrier: nothing switched.
 func TestOverTheBudget(t *testing.T) {
 	w := newWorld(t)

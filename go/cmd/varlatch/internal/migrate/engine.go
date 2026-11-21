@@ -258,14 +258,14 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	// What a migration interrupted before the barrier built is discarded
 	// (decision 14); a new migration's target holds no database.
 	if err := e.discard(ctx, j); err != nil {
-		return j, err
+		return j, e.stopBefore(ctx, j, err)
 	}
 	if err := e.preflight(ctx, j); err != nil {
-		return j, err
+		return j, e.stopBefore(ctx, j, err)
 	}
 	report, err := e.dryRun(ctx, j)
 	if err != nil {
-		return j, err
+		return j, e.stopBefore(ctx, j, err)
 	}
 	if dryRunOnly || !report.Fits {
 		j.Stopped = true
@@ -278,6 +278,19 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 		return j, nil
 	}
 	return e.cutover(ctx, j)
+}
+
+// stopBefore records a migration that failed before the barrier (its
+// discard, preflight or dry run: nothing was frozen or switched) as
+// stopped, as a dry run that ends is: the next run starts it again, on the
+// same id, instead of finding it interrupted (--resume or --abort only).
+// A run killed there is still interrupted; --resume says what to do.
+func (e *Engine) stopBefore(ctx context.Context, j *Journal, cause error) error {
+	j.Stopped = true
+	if err := e.save(ctx, j); err != nil {
+		return fmt.Errorf("%w; recording it as stopped: %v", cause, err)
+	}
+	return fmt.Errorf("%w (recorded as stopped: varlatch migrate starts it again once that is fixed)", cause)
 }
 
 // pinned refuses a source that is not the last TypeScript release's
@@ -298,7 +311,10 @@ func (e *Engine) pinned(src SourceInfo) error {
 	case src.Digest == "":
 		return errors.New("the source's image is not pinned by a registry digest: a migration starts from the last TypeScript release's published image only")
 	case src.DigestRepository != pin.Repository || src.Digest != pin.Digest:
-		return fmt.Errorf("the source's image is %s@%s, not the published %s image %s@%s", src.DigestRepository, src.Digest, LastTypeScriptRelease, pin.Repository, pin.Digest)
+		// Repository and digest apart, never joined by "@": the CLI's
+		// fail-safe reads what comes before an "@" as possible credentials.
+		return fmt.Errorf("the source's image is repository %s, digest %s, not the published %s image: repository %s, digest %s",
+			src.DigestRepository, src.Digest, LastTypeScriptRelease, pin.Repository, pin.Digest)
 	}
 	return nil
 }

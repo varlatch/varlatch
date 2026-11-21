@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -294,9 +295,9 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		return 0, true
 	}
-	importPrefix := []string{"compose", "--profile", "varlatch-rollback", "run", "--rm", "-T", "varlatch-reverse-import", "node", "dist/cli.js", "admin", "migration", "import", "--in"}
-	if len(args) == len(importPrefix)+1 && slices.Equal(args[:len(importPrefix)], importPrefix) {
-		return tsImport(strings.TrimPrefix(args[len(importPrefix)], "/backups/")), true
+	importArgs := []string{"compose", "--profile", "varlatch-rollback", "run", "--rm", "-T", "varlatch-reverse-import", "node", "dist/cli.js", "admin", "migration", "import", "--in", "-"}
+	if slices.Equal(args, importArgs) {
+		return tsImport(), true
 	}
 	oneOff := []string{"compose", "run", "--rm", "-T", "--no-deps", "varlatchd", "node", "dist/cli.js", "admin", "migration"}
 	if len(args) > len(oneOff) && slices.Equal(args[:len(oneOff)], oneOff) {
@@ -305,8 +306,11 @@ func fakeDockerReverse(args []string) (int, bool) {
 	return 0, false
 }
 
-// tsImport is 7.2c's `admin migration import --in /backups/<name>`.
-func tsImport(name string) int {
+// tsImport is 0.23.0's `admin migration import --in -`: its refusals
+// before it reads its input (varlatch migrate's copy then meets a closed
+// pipe), the reverse bundle on its standard input, read to its end, and
+// its answer on its standard output.
+func tsImport() int {
 	fail := func(f string, a ...any) int {
 		fmt.Fprintf(os.Stderr, "varlatchd admin migration import: "+f+"\n", a...)
 		return 1
@@ -322,7 +326,7 @@ func tsImport(name string) int {
 	if db == state("source.json") {
 		return fail("the database is not empty: it holds relations of another schema; the import builds a fresh database")
 	}
-	b, err := os.ReadFile(filepath.Join("backups", name))
+	b, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -627,9 +631,10 @@ func TestG5RollbackWhole(t *testing.T) {
 	t.Run("rolled back", func(t *testing.T) {
 		w := migratedWorld(t, false, false)
 		old := w.oldDB()
-		// What a killed run left on this host: a reverse bundle's copy in
-		// the backups directory, an export's directory in the source's.
-		leftovers := []string{filepath.Join(w.compose, "backups", "migration-reverse-0123456789ab.jsonl"), filepath.Join(w.compose, ".dry-run-123")}
+		// What a killed run left on this host: an export's .partial in the
+		// backups directory (the reverse checks' re-export streams there),
+		// an export's directory in the source's.
+		leftovers := []string{filepath.Join(w.compose, "backups", "migration-0123456789ab.jsonl.partial"), filepath.Join(w.compose, ".dry-run-123")}
 		if err := os.WriteFile(leftovers[0], []byte("partial"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -726,9 +731,9 @@ func TestG5RollbackWhole(t *testing.T) {
 		if code := w.rollback("rollback barrier held", "--rollback"); code != -1 {
 			t.Fatalf("not killed: %d", code)
 		}
-		// A reverse bundle's copy, as a run killed mid-import leaves it: the
-		// undo removes it.
-		bundle := filepath.Join(w.compose, "backups", "migration-reverse-0123456789ab.jsonl")
+		// An export's .partial, as a run killed in the reverse checks'
+		// re-export leaves it: the undo removes it.
+		bundle := filepath.Join(w.compose, "backups", "migration-0123456789ab.jsonl.partial")
 		if err := os.WriteFile(bundle, []byte("partial"), 0o600); err != nil {
 			t.Fatal(err)
 		}
