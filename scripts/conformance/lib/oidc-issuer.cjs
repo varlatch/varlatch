@@ -67,6 +67,13 @@ if (mode === "serve") {
       });
     },
   );
+  // Its log (the harness keeps it beside the installation) says whether it
+  // listened, or why not: a port taken by another socket, for one.
+  server.on("error", (err) => {
+    process.stderr.write(`oidc-issuer: cannot listen on 127.0.0.1:${port}: ${err.code || err.message}\n`);
+    process.exit(1);
+  });
+  server.on("listening", () => process.stdout.write(`oidc-issuer: listening on 127.0.0.1:${port} at ${new Date().toISOString()}\n`));
   server.listen(port, "127.0.0.1");
   if (dir) {
     setInterval(() => {

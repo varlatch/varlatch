@@ -13,6 +13,7 @@ import { apiErrorExit, EXIT } from "../src/exitCodes.js";
 import { FreezeUsageError, freezeReason } from "../src/freeze.js";
 import { retryOnce } from "../src/strictRun.js";
 import { commandHelp } from "../src/usage.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * The incident freeze from the CLI (ADR-0055 Decision 11): `org freeze`
@@ -124,7 +125,7 @@ beforeEach(() => {
 
 function cli(args: string[], env: Record<string, string> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd: dir,
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0", ...env },
       stdio: ["ignore", "pipe", "pipe"],

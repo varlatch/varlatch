@@ -21,9 +21,9 @@
  */
 import { spawnSync } from "node:child_process";
 import { deadlineSpawnSync } from "../lib/deadline.mjs";
+import { reservePorts } from "../lib/ports.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { requestsFromNginxLog } from "./nginx-log.mjs";
 
@@ -78,19 +78,8 @@ export async function hostAdmin(state, ...args) {
 
 const psql = (state, sql) => mustCompose(state, ["exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "varlatch", "-Atqc", sql]).trim();
 
-/** Ask the kernel for `count` unused loopback ports. */
-async function freePorts(count) {
-  const servers = await Promise.all(
-    Array.from({ length: count }, () => new Promise((resolve, reject) => {
-      const server = createServer();
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => resolve(server));
-    })),
-  );
-  const ports = servers.map((s) => s.address().port);
-  await Promise.all(servers.map((s) => new Promise((resolve) => s.close(resolve))));
-  return ports;
-}
+/** `count` unused loopback ports, below the ephemeral range (lib/ports.mjs). */
+const freePorts = (count) => reservePorts(count);
 
 async function status(url) {
   try {
