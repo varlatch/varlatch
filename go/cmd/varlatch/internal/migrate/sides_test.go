@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build linux
+
 package migrate
 
 import (
@@ -7,6 +9,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,12 +228,13 @@ func TestHostCommands(t *testing.T) {
 	pre := "/usr/bin/varlatchd admin migrate "
 	report := `{"passed":false,"bundle":{},"checks":[{"name":"rows","passed":false,"checked":902,"failures":[{"table":"grants","what":"row 2 differs from the source's in revoked_at"}],"more":0},{"name":"audit","passed":true,"checked":77,"failures":[],"more":0}]}`
 	run := &scripted{t: t, answers: map[string]Ran{
-		pre + "state --config": {Answer: []byte(`{"journal":{"format":1,"id":"mig_cccccccccccccccccccccccccc","phase":"preflight"},"database":false,"dataDir":"/var/lib/varlatch"}`)},
-		pre + "state --write":  {Answer: []byte(`{}`)},
-		pre + "keys":           {Answer: []byte(`{"rootKek":"written","bek":"unchanged"}`)},
-		pre + "import":         {Answer: []byte(`{"installationId":"inst_x","direction":"forward","tables":58,"rows":902,"perTable":{},"sessionsEnded":1,"credentialsRevoked":1,"migratedPosition":48}`)},
-		pre + "check":          {Code: 1, Answer: []byte(report)},
-		pre + "discard --id":   {Answer: []byte(`{"removed":["varlatch.db"]}`)},
+		pre + "state --config": {Answer: []byte(`{"journal":{"format":1,"id":"mig_cccccccccccccccccccccccccc","phase":"preflight"},"database":false,"dataDir":"/var/lib/varlatch",` +
+			`"release":"0.50.0","publicUrl":"https://v.example.test","listen":"127.0.0.1:8686","listenHttps":"","migrationGate":false,"running":false}`)},
+		pre + "state --write": {Answer: []byte(`{}`)},
+		pre + "keys":          {Answer: []byte(`{"rootKek":"written","bek":"unchanged"}`)},
+		pre + "import":        {Answer: []byte(`{"installationId":"inst_x","direction":"forward","tables":58,"rows":902,"perTable":{},"sessionsEnded":1,"credentialsRevoked":1,"migratedPosition":48}`)},
+		pre + "check":         {Code: 1, Answer: []byte(report)},
+		pre + "discard --id":  {Answer: []byte(`{"removed":["varlatch.db"]}`)},
 	}}
 	h := &Host{Varlatchd: "/usr/bin/varlatchd", Config: conf, Run: run}
 	ctx := context.Background()
@@ -279,4 +284,125 @@ func TestHostCommands(t *testing.T) {
 		t.Fatalf("ran:\n%s\nwant:\n%s", strings.Join(run.ran, "\n"), strings.Join(want, "\n"))
 	}
 	noKeyInArgs(t, run.ran, runKey, bytes.TrimSpace(kek), bytes.TrimSpace(bek))
+}
+
+// The source's ingress, as its .env and Compose files have it, and the
+// services the transfer stops and starts.
+func TestComposeIngress(t *testing.T) {
+	dir := t.TempDir()
+	run := &scripted{t: t, answers: map[string]Ran{"docker compose": {}}}
+	c := &Compose{Directory: dir, Run: run}
+	ing, err := c.Ingress(context.Background())
+	if err != nil || ing.PublicURL != "" || ing.Caddy || ing.WebAddress != "127.0.0.1:8787" {
+		t.Fatalf("no .env: %+v %v", ing, err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, ".env"), []byte("# the installation\nVARLATCH_PUBLIC_URL=\"https://vault.example.test\"\n"+
+		"COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml\nVARLATCH_WEB_PORT=9000\nBIND_ADDRESS=0.0.0.0\n"), 0o600)
+	ing, err = c.Ingress(context.Background())
+	if err != nil || ing.PublicURL != "https://vault.example.test" || !ing.Caddy || ing.WebAddress != "0.0.0.0:9000" {
+		t.Fatalf(".env: %+v %v", ing, err)
+	}
+	ctx := context.Background()
+	for _, c2 := range []struct {
+		kind Ingress
+		want []string
+	}{{Public, []string{"docker compose stop caddy", "docker compose start caddy"}}, {Proxy, []string{"docker compose stop varlatch-web", "docker compose start varlatch-web"}}} {
+		run.ran = nil
+		if err := c.StopIngress(ctx, c2.kind); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.StartIngress(ctx, c2.kind); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(run.ran, "|") != strings.Join(c2.want, "|") {
+			t.Fatalf("%s: %q", c2.kind, run.ran)
+		}
+	}
+	if err := c.StopIngress(ctx, Coolify); err == nil {
+		t.Fatal("the Coolify shape has nothing here to stop")
+	}
+}
+
+// The target's service and what its state says of its address.
+func TestHostServiceAndAddress(t *testing.T) {
+	run := &scripted{t: t, answers: map[string]Ran{
+		"systemctl": {},
+		"/usr/bin/varlatchd admin migrate state": {Answer: []byte(`{"journal":null,"database":false,"dataDir":"/var/lib/varlatch","release":"0.50.0",` +
+			`"publicUrl":"https://vault.example.test/","listen":"127.0.0.1:8686","listenHttps":":443","migrationGate":false,"running":false}`)},
+	}}
+	h := &Host{Varlatchd: "/usr/bin/varlatchd", Config: "/etc/varlatch/varlatchd.conf", Run: run, Unit: "varlatchd-go"}
+	if err := h.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	info, _, err := h.Describe(context.Background())
+	if err != nil || info.Release != "0.50.0" || info.PublicURL != "https://vault.example.test/" || info.ListenHTTPS != ":443" || info.Listen != "127.0.0.1:8686" {
+		t.Fatalf("%+v %v", info, err)
+	}
+	// An older varlatchd: its state names no release or gate.
+	old := &Host{Varlatchd: "/usr/bin/varlatchd-old", Run: &scripted{t: t, answers: map[string]Ran{
+		"/usr/bin/varlatchd-old admin migrate state": {Answer: []byte(`{"journal":null,"database":false,"dataDir":"/var/lib/varlatch"}`)}}}}
+	if _, _, err := old.Describe(context.Background()); err == nil || !strings.Contains(err.Error(), "older than this varlatch") {
+		t.Fatalf("an older varlatchd: %v", err)
+	}
+	if err := (&Host{Run: run, Unit: "--host=x"}).Start(context.Background()); err == nil {
+		t.Fatal("an option as the unit")
+	}
+	if run.ran[0] != "systemctl start varlatchd-go" || run.ran[1] != "systemctl stop varlatchd-go" {
+		t.Fatalf("%q", run.ran)
+	}
+}
+
+// The public URL's probe, end to end against a local server: GET
+// /v1/meta's installationId and serverVersion; anything else an error.
+func TestHTTPProber(t *testing.T) {
+	status, body := http.StatusOK, `{"apiMajor":1,"serverVersion":"0.50.0","capabilities":[],"installationId":"inst_x"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/meta" || r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	p := HTTPProber{}
+	id, version, err := p.Probe(context.Background(), srv.URL)
+	if err != nil || id != "inst_x" || version != "0.50.0" {
+		t.Fatalf("%s %s %v", id, version, err)
+	}
+	status, body = http.StatusServiceUnavailable, `{"error":{"code":"MAINTENANCE"}}`
+	if _, _, err := p.Probe(context.Background(), srv.URL); err == nil || !strings.Contains(err.Error(), "503") {
+		t.Errorf("a 503: %v", err)
+	}
+	status, body = http.StatusOK, "<html>"
+	if _, _, err := p.Probe(context.Background(), srv.URL); err == nil {
+		t.Error("not JSON")
+	}
+	srv.Close()
+	if _, _, err := p.Probe(context.Background(), srv.URL); err == nil {
+		t.Error("nothing listening")
+	}
+}
+
+// The origin a migration keeps.
+func TestOrigin(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://Vault.Example.test":       "https://vault.example.test",
+		"https://vault.example.test:443/x": "https://vault.example.test",
+		"https://vault.example.test:8443":  "https://vault.example.test:8443",
+		"http://127.0.0.1:80":              "http://127.0.0.1",
+		"http://[::1]:8686":                "http://[::1]:8686",
+	} {
+		if got, _, err := origin(raw); err != nil || got != want {
+			t.Errorf("%s: %s %v, want %s", raw, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "vault.example.test", "ftp://x", "https://"} {
+		if _, _, err := origin(bad); err == nil {
+			t.Errorf("%q", bad)
+		}
+	}
 }

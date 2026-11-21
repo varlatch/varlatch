@@ -38,7 +38,7 @@ var commands = []command{
 	{name: "mcp", slice: "5.6b", run: mcpCommand},
 	{name: "request", slice: "5.5b"},
 	{name: "import", slice: "5.3a", run: importCommand},
-	{name: "sync", slice: "5.8b"},
+	{name: "sync", slice: "5.8b", run: syncCommand},
 	{name: "contract", slice: "5.3b", run: contractCommand},
 	{name: "types", slice: "5.3c", run: typesCommand},
 	{name: "invite", slice: "5.7a", run: inviteCommand},
@@ -55,12 +55,12 @@ var commands = []command{
 	{name: "security", slice: "5.7b", run: securityCommand},
 	{name: "admin", slice: "step 6", partial: adminCommand},
 	{name: "setup", slice: "step 6"},
-	{name: "move", slice: "step 6"},
+	{name: "move", slice: "step 6", partial: movePartial},
 	{name: "adopt", slice: "never"},
 	{name: "doctor", slice: "step 6"},
 	{name: "version", slice: "5.1a", run: versionCommand},
 	{name: "--version", slice: "5.1a", run: versionCommand},
-	{name: "self-update", slice: "step 6"},
+	{name: "self-update", slice: "step 6", partial: selfUpdateCommand},
 	{name: "upgrade", slice: "step 6"},
 }
 

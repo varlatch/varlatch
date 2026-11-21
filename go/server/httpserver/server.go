@@ -46,6 +46,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/pgtime"
 	"github.com/varlatch/varlatch/go/server/realtime"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -149,6 +150,10 @@ type Options struct {
 	// served by the generated strict handler: a pattern whose operation
 	// this package does not implement answers 500 if it is ever reached.
 	Built []string
+	// CLI, when set, is serve_cli (ADR-0058 Decision 3; go/server/
+	// servecli): the handler of the release being served, nil until one is
+	// ready. Unset, serve_cli is off.
+	CLI func() http.Handler
 	// Stubbed takes operations, by route pattern, out of the ones this
 	// build has, for tests of the stub itself now that every /v1 operation
 	// is built: each answers the shared stub. Built wins over it.
@@ -448,6 +453,15 @@ type Admission interface {
 	Enter() (leave func(), ok bool)
 }
 
+// MetaAdmission is an Admission that, under a migration's gate, still
+// answers GET /v1/meta (go-step7 decision 12): `varlatch migrate` checks
+// the public URL answers with the migrated installation's id while the
+// installation admits nothing else. /v1/meta reads no data but the
+// installation's id and writes nothing.
+type MetaAdmission interface {
+	AdmitsMeta() bool
+}
+
 // BackupStatus is the backup status (server/backups), as JSON.
 type BackupStatus interface {
 	StatusJSON() ([]byte, error)
@@ -472,7 +486,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target := requestTarget(r)
 	normalized := normalizeTarget(target)
 	front := nginxPath(target)
-	isAPI := apiPrefix.MatchString(front) || cliPaths[front]
+	isAPI := apiPrefix.MatchString(front) || cliPaths[front] || s.opts.CLI != nil && servecli.IsPath(front)
 	p := front
 	if s.opts.Tailnet != nil {
 		// A tailnet listener is the API alone: no nginx in front of it.
@@ -545,7 +559,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// maintenance screen.
 		if s.opts.Maintenance != nil && p != "/healthz" {
 			leave, ok := s.opts.Maintenance.Enter()
-			if !ok {
+			metaOnly := false
+			if m, isMeta := s.opts.Maintenance.(MetaAdmission); !ok && isMeta && p == "/v1/meta" && isGet(r) && m.AdmitsMeta() {
+				metaOnly = true
+			}
+			if !ok && !metaOnly {
 				if p == "/readyz" {
 					writeJS(rec, http.StatusServiceUnavailable, jsvalue.Object{
 						{Key: "ready", Value: false}, {Key: "checks", Value: jsvalue.Object{{Key: "maintenance", Value: false}}},
@@ -556,7 +574,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				writeError(rec, r, http.StatusServiceUnavailable, "MAINTENANCE", MaintenanceMessage)
 				return
 			}
-			defer leave()
+			if ok {
+				defer leave()
+			}
 		}
 		// Hono's bodyLimit, on every route, before the request window,
 		// authentication and any handler: a declared length is judged by
@@ -667,9 +687,17 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case p == "/readyz" && isGet(r):
 		s.readyz(w, r)
-	case cliPaths[p] && isGet(r):
-		// ADR-0058 Decision 3, off (VARLATCH_SERVE_CLI's default): the same
-		// answer as a path that does not exist, as the TypeScript server's.
+	case (cliPaths[p] || s.opts.CLI != nil && servecli.IsPath(p)) && isGet(r):
+		// ADR-0058 Decision 3: the release being served, on the public
+		// listener only.
+		if s.opts.CLI != nil && s.opts.Tailnet == nil {
+			if h := s.opts.CLI(); h != nil {
+				h.ServeHTTP(w, r)
+				return
+			}
+		}
+		// Off (serve_cli's default), or not ready yet: the same answer as
+		// a path that does not exist, as the TypeScript server's.
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "text/plain; charset=UTF-8")

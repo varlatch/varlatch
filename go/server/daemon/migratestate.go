@@ -16,10 +16,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
+	"time"
 
 	"golang.org/x/term"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
+	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
@@ -40,15 +43,28 @@ import (
 const JournalFile = "migration.json"
 
 // The journal's phases, in order (`varlatch migrate`'s
-// internal/migrate.Phase); "released" is a migration undone.
-var journalPhases = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "switched", "open", "released"}
+// internal/migrate.Phase); "released" is a migration undone. After them,
+// the reverse migration's (go-step7 decision 16, slice 7.6a): reversing
+// (Go behind its barrier, or being put there), then the reverse bundle
+// exported, imported by the TypeScript release onto a fresh database,
+// checked, the address moving back; "rolled-back" is the reverse done,
+// the TypeScript release the installation again. A reverse undone goes
+// back to "open". "finished" is an open migration whose rollback window
+// `varlatch migrate --finish` ended (decision 17): Go is the installation
+// for good, and no reverse starts from it.
+var journalPhases = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "transfer", "switched", "open", "released",
+	"rollback", "rollback-exported", "rollback-imported", "rollback-checked", "rollback-transfer", "rolled-back", "finished"}
+
+// reversing are the reverse migration's phases before it is done: Go
+// still the installation, behind its barrier once it froze.
+var reversing = []string{"rollback", "rollback-exported", "rollback-imported", "rollback-checked", "rollback-transfer"}
 
 // beforeBarrier are the phases a migration is redone from its start in.
 var beforeBarrier = []string{"started", "preflight", "dry-run"}
 
 // undoable are the phases before the switch: the target's database may be
 // discarded then.
-var undoable = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "released"}
+var undoable = []string{"started", "preflight", "dry-run", "barrier", "copied", "checked", "transfer", "released"}
 
 var journalID = regexp.MustCompile(`^mig_[a-z2-7]{26}$`)
 
@@ -96,10 +112,35 @@ func migrationGate(dataDir string) error {
 	switch {
 	case err != nil:
 		return fmt.Errorf("%s: %v; varlatchd does not start on a data directory whose migration it cannot read", filepath.Join(dataDir, JournalFile), err)
-	case !ok || h.Phase == "open":
+	case !ok || h.Phase == "open" || h.Phase == "finished":
+		return nil
+	case h.Phase == "transfer":
+		// The address transfer (decision 12): varlatchd serves, isolated
+		// by the migration's own gate, so the public URL can be checked;
+		// without that gate it does not start.
+		g, err := backup.ReadGate(dataDir)
+		if err != nil || g == nil || g.Kind != "migration" || g.ID != h.ID {
+			return fmt.Errorf("the migration %s is transferring its address, but the data directory holds no gate of it; varlatchd starts isolated by it only (varlatch migrate --status)", h.ID)
+		}
 		return nil
 	case h.Phase == "released":
 		return fmt.Errorf("the migration %s into this data directory was undone; its database is the old installation's copy, not to serve (varlatch migrate --status)", h.ID)
+	case h.Phase == "rollback":
+		// Reversing, Go is still the installation: it serves, isolated by
+		// its barrier once that stands (an interrupted reverse leaves Go
+		// running, decision 17).
+		return nil
+	case slices.Contains(reversing, h.Phase):
+		// Past the frozen point the rebuilt TypeScript installation holds
+		// Go's state as the barrier froze it: varlatchd serves behind
+		// that barrier only, never taking a write the rebuild lacks.
+		g, err := backup.ReadGate(dataDir)
+		if err != nil || g == nil || g.Kind != "migration" || g.ID != h.ID || g.Phase == "transfer" {
+			return fmt.Errorf("the migration %s is being reversed (phase %s), but the data directory holds no barrier of it; varlatchd starts behind it only (varlatch migrate --status)", h.ID, h.Phase)
+		}
+		return nil
+	case h.Phase == "rolled-back":
+		return fmt.Errorf("the migration %s was reversed: the TypeScript release is the installation again, and this data directory is Go's copy as it was, not to serve (varlatch migrate --status; varlatch migrate --finish removes it)", h.ID)
 	}
 	return fmt.Errorf("the migration %s into this data directory is in phase %s; varlatchd starts once varlatch migrate opens it (varlatch migrate --status)", h.ID, h.Phase)
 }
@@ -160,12 +201,8 @@ func readLimited(stdin io.Reader, n int64, what string) ([]byte, error) {
 // there}); with --write, the journal on stdin written in its place. A
 // journal of another migration is replaced only once that one was undone
 // (released).
-func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout io.Writer, fail func(int, string, ...any) int) int {
+func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writer, fail func(int, string, ...any) int) int {
 	if a.write {
-		b, err := readLimited(stdin, 1<<20, "the journal")
-		if err != nil {
-			return fail(64, "%v", err)
-		}
 		h, err := parseJournal(b)
 		if err != nil {
 			return fail(ExitFailure, "%v; nothing was written", err)
@@ -174,14 +211,29 @@ func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout 
 		if err != nil {
 			return fail(ExitFailure, "the data directory's journal: %v; nothing was written", err)
 		}
-		if ok && old.ID != h.ID && old.Phase != "released" {
+		// Another migration's journal is replaced once that one was undone
+		// (released), or reversed and its database discarded (rolled back,
+		// then finished with its old data deleted).
+		_, dbErr := os.Stat(cfg.DatabasePath())
+		replaceable := old.Phase == "released" || old.Phase == "rolled-back" && errors.Is(dbErr, fs.ErrNotExist)
+		if ok && old.ID != h.ID && !replaceable {
 			return fail(ExitFailure, "the data directory holds the migration %s, in phase %s; it is not replaced by %s; nothing was written", old.ID, old.Phase, h.ID)
 		}
 		// A journal goes forward, but for a migration redone from its
 		// start before its barrier, or undone before its switch.
 		back := slices.Index(journalPhases, h.Phase) < slices.Index(journalPhases, old.Phase)
 		redone := h.Phase == "started" && slices.Contains(beforeBarrier, old.Phase)
-		if ok && old.ID == h.ID && back && h.Phase != "released" && !redone {
+		// A reverse undone goes back to open, and to nothing else.
+		reverseUndone := h.Phase == "open" && slices.Contains(reversing, old.Phase)
+		if ok && old.ID == h.ID && slices.Contains(append(slices.Clone(reversing), "rolled-back"), old.Phase) && !slices.Contains(append(slices.Clone(reversing), "open", "rolled-back"), h.Phase) {
+			return fail(ExitFailure, "the migration %s is in phase %s; its journal goes on to the reverse's phases, or back to open, not to %s; nothing was written", h.ID, old.Phase, h.Phase)
+		}
+		// Finished is the migration's last phase: never undone (released),
+		// running or not.
+		if ok && old.ID == h.ID && old.Phase == "finished" && h.Phase != "finished" {
+			return fail(ExitFailure, "the migration %s is finished: its rollback window ended, and its journal stays finished, not %s; nothing was written", h.ID, h.Phase)
+		}
+		if ok && old.ID == h.ID && back && h.Phase != "released" && !redone && !reverseUndone {
 			return fail(ExitFailure, "the migration %s is in phase %s; its journal does not go back to %s; nothing was written", h.ID, old.Phase, h.Phase)
 		}
 		if ok && old.ID == h.ID && (old.Phase == "switched" || old.Phase == "open") && h.Phase == "released" {
@@ -194,6 +246,24 @@ func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout 
 		owner := -1
 		if st, err := os.Stat(cfg.DataDir); err == nil {
 			owner = statOwner(st)
+		}
+		// The transfer's gate: written before the journal says transfer,
+		// removed before it says open or released, so a journal never
+		// says either while the gate stands (writeTransferGate).
+		if h.Phase == "transfer" {
+			if err := writeTransferGate(cfg.DataDir, h.ID, owner); err != nil {
+				return fail(ExitFailure, "%v; nothing was written", err)
+			}
+		}
+		if h.Phase == "open" || h.Phase == "released" {
+			prior := old.Phase
+			if !ok {
+				prior = "nothing"
+			}
+			if err := removeTransferGate(cfg.DataDir, h.ID); err != nil {
+				return fail(ExitFailure, "the transfer's gate %s could not be removed (%v), so the journal still says %s; remove that file by hand (it is the migration's gate, nothing else), then run varlatch migrate --resume",
+					filepath.Join(cfg.DataDir, backup.GateFile), err, prior)
+			}
 		}
 		if err := writeDurably(filepath.Join(cfg.DataDir, JournalFile), append(compact.Bytes(), '\n'), owner); err != nil {
 			return fail(ExitFailure, "%v", err)
@@ -211,13 +281,81 @@ func runMigrateState(cfg *config.Config, a migrateArgs, stdin io.Reader, stdout 
 		return fail(ExitFailure, "%v", err)
 	}
 	_, dbErr := os.Stat(cfg.DatabasePath())
+	public := ""
+	if cfg.PublicURL != nil {
+		public = cfg.PublicURL.String()
+	}
+	https := ""
+	if cfg.PublicHTTPS != nil {
+		https = cfg.PublicHTTPS.Listen
+	}
+	gate, gerr := backup.ReadGate(cfg.DataDir)
+	running := false
+	if controlAnswers(cfg.DataDir, 2*time.Second) {
+		running = true
+	}
 	out, _ := json.Marshal(struct {
-		Journal  json.RawMessage `json:"journal"`
-		Database bool            `json:"database"`
-		DataDir  string          `json:"dataDir"`
-	}{journal, dbErr == nil, cfg.DataDir})
+		Journal     json.RawMessage `json:"journal"`
+		Database    bool            `json:"database"`
+		DataDir     string          `json:"dataDir"`
+		Release     string          `json:"release"`
+		PublicURL   string          `json:"publicUrl"`
+		Listen      string          `json:"listen"`
+		ListenHTTPS string          `json:"listenHttps"`
+		// MigrationGate is whether the transfer's gate stands (an
+		// unreadable gate counts: it isolates as well); Barrier a reverse
+		// migration's barrier's phase (draining, paused), when one
+		// stands; Running whether a varlatchd answers on the data
+		// directory's control socket.
+		MigrationGate bool   `json:"migrationGate"`
+		Barrier       string `json:"barrier,omitempty"`
+		Running       bool   `json:"running"`
+	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https,
+		gerr != nil || (gate != nil && gate.Kind == "migration" && gate.Phase == "transfer"), barrierPhase(gate), running})
 	fmt.Fprintln(stdout, string(out))
 	return ExitOK
+}
+
+// barrierPhase is a reverse migration's barrier's phase, "" for none.
+func barrierPhase(g *backup.Gate) string {
+	if g != nil && g.Kind == "migration" && g.Phase != "transfer" {
+		return g.Phase
+	}
+	return ""
+}
+
+// writeTransferGate writes the migration's gate (maintenance.json, kind
+// migration, phase transfer, no expiry): varlatchd then starts isolated,
+// answering GET /v1/meta only (httpserver.MetaAdmission). Another gate
+// (a lease, a restore) is refused, never replaced.
+func writeTransferGate(dataDir, id string, owner int) error {
+	g, err := backup.ReadGate(dataDir)
+	switch {
+	case err != nil:
+		return fmt.Errorf("the data directory's maintenance gate: %w", err)
+	case g != nil && (g.Kind != "migration" || g.ID != id):
+		return fmt.Errorf("the data directory holds a %s gate (%s); the transfer's is not written over it", g.Kind, g.ID)
+	case g != nil:
+		return nil
+	}
+	b, err := json.Marshal(backup.Gate{ID: id, Kind: "migration", Phase: "transfer"})
+	if err != nil {
+		return err
+	}
+	return writeDurably(filepath.Join(dataDir, backup.GateFile), b, owner)
+}
+
+// removeTransferGate removes the migration's gate, when it is this one's.
+func removeTransferGate(dataDir, id string) error {
+	g, err := backup.ReadGate(dataDir)
+	if err != nil || g == nil || g.Kind != "migration" || g.ID != id || g.Phase != "transfer" {
+		// A reverse's barrier is its own commands' (barrier, release).
+		return err
+	}
+	if err := os.Remove(filepath.Join(dataDir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return syncFile(dataDir)
 }
 
 // runMigrateDiscard is `admin migrate discard --id <migration>`: the
@@ -234,9 +372,14 @@ func runMigrateDiscard(cfg *config.Config, a migrateArgs, stdout io.Writer, fail
 		return fail(ExitFailure, "the data directory %s has no migration journal: its database is not a migration's to discard; nothing was removed", cfg.DataDir)
 	case h.ID != a.id:
 		return fail(ExitFailure, "the data directory's journal is the migration %s, not %s; nothing was removed", h.ID, a.id)
-	case !slices.Contains(undoable, h.Phase):
+	case !slices.Contains(undoable, h.Phase) && h.Phase != "rolled-back":
 		return fail(ExitFailure, "the migration %s is in phase %s, past its switch: its database is the installation's; nothing was removed", h.ID, h.Phase)
 	}
+	// Rolled back, the database is Go's copy, the TypeScript release the
+	// installation again: varlatch migrate --finish --delete-old-data
+	// discards it (and the reverse's frozen copy) once its final archive
+	// is verified.
+	frozen := FrozenCopyName(h.ID)
 	entries, err := os.ReadDir(cfg.DataDir)
 	if err != nil {
 		return fail(ExitFailure, "%v", err)
@@ -248,6 +391,9 @@ func runMigrateDiscard(cfg *config.Config, a migrateArgs, stdout io.Writer, fail
 			continue
 		}
 		db := n == config.DatabaseFile || n == config.DatabaseFile+"-wal" || n == config.DatabaseFile+"-shm" || n == config.DatabaseFile+"-journal"
+		if h.Phase == "rolled-back" && strings.HasPrefix(n, frozen) {
+			db = true
+		}
 		if !db && !migrate.IsLeftover(n) {
 			continue
 		}
@@ -386,4 +532,66 @@ func writeKeyFile(path string, key []byte) error {
 		return err
 	}
 	return syncFile(filepath.Dir(path))
+}
+
+// runMigrateOpen is `admin migrate open --id <migration>`, the live open
+// (decision 12): in the running varlatchd, through its control socket (or
+// offline on the data directory), the migration's gate ended, then its
+// journal written open (its phase, and the step in its history). The
+// journal must name the migration and be switched (or open already: then
+// nothing changes but a gate left over). The gate first, as `state
+// --write`: the journal never says open while the gate stands.
+func runMigrateOpen(env *hostEnv, rest []string, stdout, stderr io.Writer) int {
+	fail := func(status int, format string, args ...any) int {
+		fmt.Fprintf(stderr, "varlatchd admin migrate open: "+format+"\n", args...)
+		return status
+	}
+	a, msg := parseMigrate(rest)
+	if msg != "" || a.sub != "open" {
+		fmt.Fprintln(stderr, migrateUsage)
+		return 64
+	}
+	dir := env.cfg.DataDir
+	raw, err := os.ReadFile(filepath.Join(dir, JournalFile))
+	if err != nil {
+		return fail(ExitFailure, "the data directory's journal: %v", err)
+	}
+	h, err := parseJournal(raw)
+	switch {
+	case err != nil:
+		return fail(ExitFailure, "%v", err)
+	case h.ID != a.id:
+		return fail(ExitFailure, "the data directory's journal is the migration %s, not %s", h.ID, a.id)
+	case h.Phase != "switched" && h.Phase != "open":
+		return fail(ExitFailure, "the migration %s is in phase %s; it opens once switched", h.ID, h.Phase)
+	}
+	if err := env.admission.EndMigration(h.ID); err != nil {
+		return fail(ExitFailure, "the transfer's gate %s could not be ended (%v), so the journal still says %s; remove that file by hand, then run varlatch migrate --resume",
+			filepath.Join(dir, backup.GateFile), err, h.Phase)
+	}
+	if h.Phase == "switched" {
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return fail(ExitFailure, "%v", err)
+		}
+		var history []json.RawMessage
+		_ = json.Unmarshal(doc["history"], &history)
+		step, _ := json.Marshal(map[string]string{"phase": "open", "at": time.Now().UTC().Format(time.RFC3339Nano)})
+		history = append(history, step)
+		doc["phase"], _ = json.Marshal("open")
+		doc["history"], _ = json.Marshal(history)
+		b, err := json.Marshal(doc)
+		if err != nil {
+			return fail(ExitFailure, "%v", err)
+		}
+		owner := -1
+		if st, err := os.Stat(dir); err == nil {
+			owner = statOwner(st)
+		}
+		if err := writeDurably(filepath.Join(dir, JournalFile), append(b, '\n'), owner); err != nil {
+			return fail(ExitFailure, "the gate is ended, but the journal could not say open: %v; varlatch migrate --resume finishes it", err)
+		}
+	}
+	fmt.Fprintln(stdout, `{"opened":true}`)
+	return ExitOK
 }

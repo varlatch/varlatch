@@ -36,6 +36,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -58,7 +59,26 @@ type Options struct {
 	// Work is a directory of this host's for the dry run's scratch
 	// database (removed after it).
 	Work string
+	// Ingress is the source's ingress shape (decision 12); required.
+	Ingress Ingress
+	// TransferTimeout bounds the wait for the public URL to answer from
+	// the target (3 minutes by default: an ACME issuance, a domain move).
+	TransferTimeout time.Duration
+	// ProbeEvery is the wait between two probes (2 s by default).
+	ProbeEvery time.Duration
+	// Stage, when set (an image target, whose varlatchd runs as the
+	// image's user), is the user a bundle and the dry run's scratch
+	// database are given to: each in a directory of its own in StageBase
+	// (this source's), which that user owns.
+	Stage     *Owner
+	StageBase string
+	// StageKeep is this run's own directory in StageBase (an image's
+	// derived configuration), which the leftovers' cleanup spares.
+	StageKeep string
 }
+
+// DefaultTransferTimeout bounds the transfer's wait for the public URL.
+const DefaultTransferTimeout = 3 * time.Minute
 
 // DefaultMaxDowntime is O7's budget.
 const DefaultMaxDowntime = 10 * time.Minute
@@ -74,20 +94,30 @@ type Engine struct {
 	// BEK is the source's Backup Encryption Key file's text, given to the
 	// target's key file (nil: none is copied). The caller clears it.
 	BEK []byte
+	// Prober asks the public URL which installation serves it.
+	Prober Prober
 	// pin replaces the published image's (the tests' fakes only).
 	pin *imagePin
+	// sleep waits between probes (time.Sleep; the tests' clock).
+	sleep func(time.Duration)
 }
 
 // DryRunReport is the dry run's: each part of the projected downtime
 // (decision 19), the total against the budget, and the checks.
 type DryRunReport struct {
-	At               string        `json:"at"`
-	ExportMs         int64         `json:"exportMs"`
-	ImportMs         int64         `json:"importMs"`
-	CheckMs          int64         `json:"checkMs"`
-	DrainMs          int64         `json:"drainMs"`
+	At       string `json:"at"`
+	ExportMs int64  `json:"exportMs"`
+	ImportMs int64  `json:"importMs"`
+	CheckMs  int64  `json:"checkMs"`
+	DrainMs  int64  `json:"drainMs"`
+	// TransferMs is the address transfer's share, estimated for the
+	// ingress shape (decision 19: an ACME issuance or a domain move about
+	// a minute, an own proxy's port a few seconds), and the target's
+	// restart at open; it is included in ProjectedMs. The dry run cannot
+	// measure it: nothing is transferred before the barrier.
 	TransferMs       int64         `json:"transferMs"`
 	TransferMeasured bool          `json:"transferMeasured"`
+	Ingress          Ingress       `json:"ingress"`
 	ProjectedMs      int64         `json:"projectedMs"`
 	MaxDowntimeMs    int64         `json:"maxDowntimeMs"`
 	Fits             bool          `json:"fits"`
@@ -125,7 +155,11 @@ func (e *Engine) save(ctx context.Context, j *Journal) error {
 
 func (e *Engine) enter(ctx context.Context, j *Journal, p Phase) error {
 	j.enter(p, e.now())
-	return e.save(ctx, j)
+	if err := e.save(ctx, j); err != nil {
+		return err
+	}
+	crashPoint("entered " + string(p))
+	return nil
 }
 
 // Status is the source directory's journal (nil when none).
@@ -149,10 +183,18 @@ func (e *Engine) Run(ctx context.Context, dryRunOnly bool) (*Journal, error) {
 	case j == nil, j.Phase == Released, j.Stopped && slices.Contains(beforeBarrier, j.Phase):
 	case j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is open: this installation was migrated (varlatch migrate --status)", j.ID)
+	case j.Phase == RolledBack:
+		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves again, and the target holds Go's copy; varlatch migrate --finish --delete-old-data removes it before a new migration", j.ID)
+	case j.Phase == Finished && j.Finish != nil && j.Finish.After == RolledBack && j.Finish.DeleteOldData && j.Finish.DoneAt != "":
+		// Rolled back, Go's copy discarded: a new migration may start.
+	case j.Phase == Finished && j.Finish != nil && j.Finish.After == RolledBack:
+		return j, fmt.Errorf("the migration %s was rolled back and finished, but Go's copy is kept: varlatch migrate --finish --delete-old-data removes it before a new migration", j.ID)
+	case j.Phase == Finished:
+		return j, fmt.Errorf("the migration %s is finished: this installation was migrated, and its rollback window is closed (varlatch migrate --status)", j.ID)
 	default:
 		return j, fmt.Errorf("the migration %s was interrupted in phase %s: varlatch migrate --resume continues or undoes it (varlatch migrate --status)", j.ID, j.Phase)
 	}
-	reuse := j != nil && j.Phase != Released
+	reuse := j != nil && j.Phase != Released && j.Phase != Finished
 	return e.start(ctx, j, reuse, dryRunOnly)
 }
 
@@ -177,8 +219,19 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if head == nil && st.Database {
 		return prev, fmt.Errorf("the target's data directory %s holds a database and no migration journal: a migration imports into an empty one only", tgt.DataDir)
 	}
+	ing, err := e.Source.Ingress(ctx)
+	if err != nil {
+		return prev, err
+	}
+	origin, err := e.sameAddress(ing, tgt)
+	if err != nil {
+		return prev, err
+	}
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
-		Drain: int64(e.drain() / time.Second), Transfer: "none: the address transfer is slice 7.4b's", History: []Step{}}
+		Drain: int64(e.drain() / time.Second), Ingress: e.Options.Ingress, Transfer: &TransferRecord{Origin: origin}, History: []Step{}}
+	if e.Options.Ingress == Proxy {
+		j.Transfer.Publish = ing.WebAddress
+	}
 	if reuse {
 		// The same migration goes on only to the same target.
 		if prev.Target.Config != tgt.Config || prev.Target.DataDir != tgt.DataDir {
@@ -190,7 +243,10 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	} else if j.ID, err = newID(); err != nil {
 		return prev, err
 	}
-	if head != nil && head.ID != j.ID && head.Phase != Released {
+	// Another migration's journal: one undone (released), or reversed with
+	// its database discarded (rolled back, then finished with its old
+	// data deleted), gives way to a new one.
+	if head != nil && head.ID != j.ID && head.Phase != Released && !(head.Phase == RolledBack && !st.Database) {
 		return prev, fmt.Errorf("the target's data directory holds the migration %s, in phase %s: it is not this one", head.ID, head.Phase)
 	}
 	if head != nil && head.ID == j.ID && !slices.Contains(beforeBarrier, head.Phase) && head.Phase != Released {
@@ -230,6 +286,9 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 // source is refused.
 func (e *Engine) pinned(src SourceInfo) error {
 	pin := imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
+	if testPin != nil {
+		pin = *testPin
+	}
 	if e.pin != nil {
 		pin = *e.pin
 	}
@@ -286,6 +345,13 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	if err := cleanScratch(e.work()); err != nil {
 		return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
 	}
+	if e.Options.Stage != nil && e.Options.StageBase != "" {
+		for _, re := range []*regexp.Regexp{leftoverStage, leftoverConf} {
+			if err := removeMatchingExcept(e.Options.StageBase, re, true, e.Options.StageKeep); err != nil {
+				return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
+			}
+		}
+	}
 	e.say("Preflight: a fresh backup of the source, uploaded, then downloaded and verified.")
 	archive, err := e.Source.Backup(ctx)
 	if err != nil {
@@ -312,6 +378,7 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 var (
 	leftoverScratch = regexp.MustCompile(`^\.dry-run-[0-9]+$`)
 	leftoverJournal = regexp.MustCompile(`^\.migration\.json\.[0-9a-f]{12}\.tmp$`)
+	leftoverStage   = regexp.MustCompile(`^\.varlatch-migrate-stage-[0-9]+$`)
 )
 
 // cleanScratch removes what a killed run left in its work directory: the
@@ -327,6 +394,11 @@ func cleanScratch(dir string) error {
 // removeMatching removes dir's entries whose names match: directories
 // (whole) when dirs, else regular files; nothing else, no symbolic link.
 func removeMatching(dir string, names *regexp.Regexp, dirs bool) error {
+	return removeMatchingExcept(dir, names, dirs, "")
+}
+
+// removeMatchingExcept is removeMatching sparing the path keep.
+func removeMatchingExcept(dir string, names *regexp.Regexp, dirs bool, keep string) error {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -339,6 +411,9 @@ func removeMatching(dir string, names *regexp.Regexp, dirs bool) error {
 			continue
 		}
 		p := filepath.Join(dir, e.Name())
+		if keep != "" && filepath.Clean(p) == filepath.Clean(keep) {
+			continue
+		}
 		switch {
 		case dirs && e.Type().IsDir():
 			err = os.RemoveAll(p)
@@ -372,18 +447,22 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 		return nil, err
 	}
 	defer clear(runKey)
-	scratch, err := os.MkdirTemp(e.work(), ".dry-run-")
+	scratch, err := e.scratchDir()
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(scratch)
 	start := e.now()
-	bundle, err := e.Source.Export(ctx, runKey, true)
+	exported, err := e.Source.Export(ctx, runKey, true)
 	if err != nil {
 		return nil, fmt.Errorf("the dry run's export: %w; nothing was switched", err)
 	}
-	defer os.Remove(bundle)
-	exported := e.now()
+	defer os.Remove(exported)
+	bundle, err := e.stage(exported, scratch)
+	if err != nil {
+		return nil, err
+	}
+	exportedAt := e.now()
 	cp, err := e.Target.Import(ctx, bundle, filepath.Join(scratch, "data"))
 	if err != nil {
 		return nil, fmt.Errorf("the dry run's import: %w; nothing was switched", err)
@@ -394,9 +473,10 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 		return nil, fmt.Errorf("the dry run's checks: %w; nothing was switched", err)
 	}
 	checked := e.now()
-	r := &DryRunReport{At: checked.UTC().Format(time.RFC3339Nano), ExportMs: exported.Sub(start).Milliseconds(),
-		ImportMs: imported.Sub(exported).Milliseconds(), CheckMs: checked.Sub(imported).Milliseconds(),
-		DrainMs: e.drain().Milliseconds(), MaxDowntimeMs: e.maxDowntime().Milliseconds(), Copy: cp, Checks: &checks}
+	r := &DryRunReport{At: checked.UTC().Format(time.RFC3339Nano), ExportMs: exportedAt.Sub(start).Milliseconds(),
+		ImportMs: imported.Sub(exportedAt).Milliseconds(), CheckMs: checked.Sub(imported).Milliseconds(),
+		DrainMs: e.drain().Milliseconds(), MaxDowntimeMs: e.maxDowntime().Milliseconds(), Copy: cp, Checks: &checks,
+		TransferMs: transferEstimate(j.Ingress).Milliseconds(), Ingress: j.Ingress}
 	r.ProjectedMs = r.DrainMs + r.ExportMs + r.ImportMs + r.CheckMs + r.TransferMs
 	r.Fits = r.ProjectedMs <= r.MaxDowntimeMs
 	j.DryRun = r
@@ -408,6 +488,58 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 		return r, fmt.Errorf("the dry run's checks failed: %v; nothing was switched", checks.Faults)
 	}
 	return r, e.enter(ctx, j, DryRun)
+}
+
+// scratchDir is a new directory for the dry run's database or a staged
+// bundle: in the work directory, or, with Stage, under the system's
+// temporary directory and given to that user.
+func (e *Engine) scratchDir() (string, error) {
+	if e.Options.Stage == nil {
+		return os.MkdirTemp(e.work(), ".dry-run-")
+	}
+	dir, err := os.MkdirTemp(e.Options.StageBase, ".varlatch-migrate-stage-")
+	if err != nil {
+		return "", err
+	}
+	if err := chownAll(*e.Options.Stage, dir); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
+}
+
+// stage is the bundle as the target's varlatchd reads it: as it is, or,
+// with Stage, a copy in dir given to that user (the export's file is the
+// source container's user's).
+func (e *Engine) stage(bundle, dir string) (string, error) {
+	if e.Options.Stage == nil {
+		return bundle, nil
+	}
+	in, err := os.Open(bundle)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	p := filepath.Join(dir, "bundle.jsonl")
+	out, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	_, err = io.Copy(out, in)
+	if err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = chownAll(*e.Options.Stage, p)
+	}
+	if err != nil {
+		_ = os.Remove(p)
+		return "", fmt.Errorf("staging the bundle for the target's user: %w", err)
+	}
+	return p, nil
 }
 
 func (e *Engine) work() string {
@@ -436,8 +568,12 @@ func (e *Engine) cutover(ctx context.Context, j *Journal) (*Journal, error) {
 	if err := e.save(ctx, j); err != nil {
 		return j, e.undo(ctx, j, err)
 	}
+	crashPoint("barrier held")
 	if err := e.finalCopy(ctx, j); err != nil {
 		return j, e.undo(ctx, j, err)
+	}
+	if err := e.transfer(ctx, j); err != nil {
+		return j, err
 	}
 	return j, e.switchAndOpen(ctx, j)
 }
@@ -451,11 +587,22 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 		return err
 	}
 	defer clear(runKey)
-	bundle, err := e.Source.Export(ctx, runKey, false)
+	exported, err := e.Source.Export(ctx, runKey, false)
 	if err != nil {
 		return fmt.Errorf("the export: %w", err)
 	}
-	defer os.Remove(bundle)
+	defer os.Remove(exported)
+	bundle := exported
+	if e.Options.Stage != nil {
+		dir, err := e.scratchDir()
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(dir)
+		if bundle, err = e.stage(exported, dir); err != nil {
+			return err
+		}
+	}
 	cp, err := e.Target.Import(ctx, bundle, "")
 	if err != nil {
 		return fmt.Errorf("the import: %w", err)
@@ -475,8 +622,10 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 	return e.enter(ctx, j, Checked)
 }
 
-// switchAndOpen: the source marked migrated out (journalled first: from
-// here the migration goes forward only), then the target opened.
+// switchAndOpen: once the public URL answers from the target, the source
+// marked migrated out (journalled first: from here the migration goes
+// forward only), then the target opened: stopped, its journal open (which
+// removes the transfer's gate), started again.
 func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 	if err := e.enter(ctx, j, Switched); err != nil {
 		return err
@@ -485,11 +634,41 @@ func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 		return err
 	}
 	e.say("Switched: the source refuses writes from now on.")
-	// The address transfer (slice 7.4b) goes here.
-	if err := e.enter(ctx, j, Open); err != nil {
+	return e.open(ctx, j)
+}
+
+// open restarts the target out of the transfer's isolation: stopped, its
+// journal open (varlatchd removes the gate first), started. Interrupted
+// anywhere, --resume finishes it (finishOpen).
+func (e *Engine) open(ctx context.Context, j *Journal) error {
+	_, st, err := e.Target.Describe(ctx)
+	if err != nil {
 		return err
 	}
-	e.say("Open: start varlatchd on the target; it serves the migrated installation.")
+	if st.Running {
+		// The live open: the source's journal open, then the running
+		// target ends its gate and writes its own journal open.
+		j.enter(Open, e.now())
+		if err := writeJournal(e.Source.Dir(), j); err != nil {
+			return fmt.Errorf("the journal in %s: %w", e.Source.Dir(), err)
+		}
+		crashPoint("open source")
+		if err := e.Target.OpenLive(ctx, j.ID); err != nil {
+			return fmt.Errorf("opening the target: %w; varlatch migrate --resume finishes it", err)
+		}
+	} else {
+		if err := e.enter(ctx, j, Open); err != nil {
+			return fmt.Errorf("opening the target: %w; varlatch migrate --resume finishes it", err)
+		}
+		if err := e.Target.Start(ctx); err != nil {
+			return e.waitForHuman(err, "The migration is open; start the target, then varlatch migrate --resume checks it serves.")
+		}
+	}
+	at := "its address"
+	if j.Transfer != nil {
+		at = j.Transfer.Origin
+	}
+	e.say("Open: the target serves the migrated installation at %s.", at)
 	return nil
 }
 
@@ -523,7 +702,18 @@ func (e *Engine) migratedOut(ctx context.Context, j *Journal) error {
 func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	from := j.Phase
 	e.say("Undoing: %v.", cause)
+	// Marked first: an undo held up (a step for the operator, a side that
+	// failed) is resumed as an undo, never as what it undid.
+	if !j.Undoing {
+		j.Undoing = true
+		if err := e.save(ctx, j); err != nil {
+			return fmt.Errorf("%w; undoing could not start: %v", cause, err)
+		}
+	}
 	var problems []error
+	if from == Transfer {
+		problems = append(problems, e.returnAddress(ctx, j)...)
+	}
 	released := false
 	g, err := e.Source.Gate(ctx)
 	switch {
@@ -546,8 +736,13 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 		return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, errors.Join(problems...))
 	}
 	j.Undone = &UndoneRecord{From: from, Why: cause.Error(), Released: released, At: e.now().UTC().Format(time.RFC3339Nano)}
+	j.Undoing = false
 	if err := e.enter(ctx, j, Released); err != nil {
-		return fmt.Errorf("%w; the barrier was lifted, but the journal could not say so: %v", cause, err)
+		did := "the barrier lifted, the target's database discarded"
+		if from == Transfer {
+			did = "the address returned, " + did
+		}
+		return fmt.Errorf("%w; it was undone (%s), but a journal could not say released: %v; varlatch migrate --resume finishes it", cause, did, err)
 	}
 	return fmt.Errorf("%w; the barrier was lifted and the old installation reopened unchanged", cause)
 }
@@ -577,8 +772,12 @@ func (e *Engine) discard(ctx context.Context, j *Journal) error {
 //   - between the barrier and the switch: undone (the barrier lifted, the
 //     old installation reopened unchanged, the target's database
 //     discarded);
+//   - transfer: the public URL checked again, then switched and opened (or,
+//     in the public and proxy shapes, the address given back and undone);
 //   - switched: continued to open (the source refuses writes);
-//   - open or released: nothing to do.
+//   - open or released: finished on the target if it was not (its journal
+//     open and its service started, or its journal released), else
+//     nothing.
 func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	unlock, err := lockDir(e.Source.Dir())
 	if err != nil {
@@ -592,25 +791,171 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	if j == nil {
 		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to resume", e.Source.Dir())
 	}
+	if slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer || j.Phase == RolledBack {
+		return j, e.resumeReverse(ctx, j)
+	}
+	if j.Phase == Finished {
+		if j.Finish == nil {
+			return j, nil
+		}
+		// Go's journal first: the same migration, and finished there too
+		// (written now when a run was killed between the two journals).
+		if err := e.finishAgrees(ctx, j); err != nil {
+			return j, err
+		}
+		if j.Finish.DoneAt == "" {
+			e.say("The migration %s's --finish was interrupted: it goes on.", j.ID)
+			return j, e.finishRemove(ctx, j)
+		}
+		return j, nil
+	}
 	switch {
+	case j.Undoing && j.Phase != Released:
+		e.say("The migration %s was being undone: undoing goes on.", j.ID)
+		return j, e.undo(ctx, j, errors.New("undoing resumed"))
 	case slices.Contains(beforeBarrier, j.Phase):
 		e.say("The migration %s stopped before the barrier: it starts again from the preflight.", j.ID)
 		return e.start(ctx, j, true, j.DryRunOnly)
 	case slices.Contains(held, j.Phase):
 		e.say("The migration %s was interrupted in phase %s: it is undone.", j.ID, j.Phase)
 		return j, e.undo(ctx, j, fmt.Errorf("interrupted in phase %s", j.Phase))
+	case j.Phase == Transfer:
+		e.say("The migration %s is transferring its address: the public URL is checked again.", j.ID)
+		if err := e.transfer(ctx, j); err != nil {
+			return j, err
+		}
+		return j, e.switchAndOpen(ctx, j)
 	case j.Phase == Switched:
 		e.say("The migration %s was switched: it goes on to open.", j.ID)
 		if err := e.migratedOut(ctx, j); err != nil {
 			return j, err
 		}
-		if err := e.enter(ctx, j, Open); err != nil {
-			return j, err
-		}
-		e.say("Open: start varlatchd on the target; it serves the migrated installation.")
-		return j, nil
+		return j, e.open(ctx, j)
+	case j.Phase == Open:
+		return j, e.finishOpen(ctx, j)
+	case j.Phase == Released:
+		return j, e.finishReleased(ctx, j)
 	}
 	return j, nil
+}
+
+// finishOpen finishes an open the source's journal records: the target's
+// journal open (which removes its gate) and its service running. Done
+// already, it changes nothing.
+func (e *Engine) finishOpen(ctx context.Context, j *Journal) error {
+	_, st, err := e.Target.Describe(ctx)
+	if err != nil {
+		return err
+	}
+	if st.Barrier != "" && j.Rollback != nil && j.Rollback.Undone != nil {
+		// A reverse undone, interrupted before Go's barrier was lifted:
+		// lifted now, through the running varlatchd or, stopped, on its
+		// data directory (varlatchd's release works offline too).
+		if rt, ok := e.Target.(ReverseTarget); ok {
+			e.say("The reverse of the migration %s was undone, but Go's barrier stands: it is lifted.", j.ID)
+			if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
+				return err
+			}
+			_, st, err = e.Target.Describe(ctx)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if st.Barrier == "" && j.Rollback != nil && j.Rollback.Undone != nil && !j.Rollback.Undone.Released {
+		// Lifted (now, or by a run killed before it journalled it).
+		// The source's journal only, as undoReverse writes it.
+		j.Rollback.Undone.Released = true
+		if err := writeJournal(e.Source.Dir(), j); err != nil {
+			return err
+		}
+	}
+	if st.Journal != nil && st.Journal.ID == j.ID && st.Journal.Phase == Open && !st.Gate && st.Running {
+		return nil
+	}
+	e.say("The migration %s is open, but the target does not serve it yet: it is opened.", j.ID)
+	if st.Running {
+		return e.Target.OpenLive(ctx, j.ID)
+	}
+	if err := e.Target.WriteJournal(ctx, j); err != nil {
+		return err
+	}
+	if err := e.Target.Start(ctx); err != nil {
+		return e.waitForHuman(err, "Then varlatch migrate --resume checks it serves.")
+	}
+	return nil
+}
+
+// waitForHuman is err, or, when it is a step for the operator (an image's
+// service to start or stop), its instruction said with what follows, and
+// ErrAwaitingOperator.
+func (e *Engine) waitForHuman(err error, then string) error {
+	var human *HumanStep
+	if !errors.As(err, &human) {
+		return err
+	}
+	e.say("%s %s", human.Instruction, then)
+	return ErrAwaitingOperator
+}
+
+// finishReleased finishes an undo the source's journal records: the
+// target's journal released (which removes the transfer's gate).
+func (e *Engine) finishReleased(ctx context.Context, j *Journal) error {
+	_, st, err := e.Target.Describe(ctx)
+	if err != nil {
+		return err
+	}
+	if st.Journal == nil || st.Journal.ID != j.ID || (st.Journal.Phase == Released && !st.Gate) {
+		return nil
+	}
+	if st.Running {
+		if err := e.Target.Stop(ctx); err != nil {
+			return e.waitForHuman(err, "Then run varlatch migrate --resume (or --abort) again.")
+		}
+	}
+	return e.Target.WriteJournal(ctx, j)
+}
+
+// Abort is `varlatch migrate --abort`: a migration not yet switched
+// undone on purpose, from any phase before the switch (the address
+// returned first, during the transfer). A switched one is not: it goes
+// forward only.
+func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
+	unlock, err := lockDir(e.Source.Dir())
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	j, err := readJournal(e.Source.Dir())
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case j == nil:
+		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to abort", e.Source.Dir())
+	case j.Phase == Released:
+		return j, nil
+	case slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer:
+		if j.Rollback == nil {
+			return j, fmt.Errorf("the migration %s is in phase %s, but its journal records no reverse", j.ID, j.Phase)
+		}
+		err := e.undoReverse(ctx, j, errors.New("aborted by the operator"))
+		if j.Phase == Open && j.Rollback.Undone != nil {
+			return j, nil
+		}
+		return j, err
+	case j.Phase == RolledBack:
+		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves; going to Go again is a new migration (after varlatch migrate --finish)", j.ID)
+	case j.Phase == Finished:
+		return j, fmt.Errorf("the migration %s is finished: its rollback window is closed, and nothing of it is undone", j.ID)
+	case j.Phase == Switched || j.Phase == Open:
+		return j, fmt.Errorf("the migration %s is %s: past its switch it goes forward only (varlatch migrate --resume)", j.ID, j.Phase)
+	}
+	err = e.undo(ctx, j, errors.New("aborted by the operator"))
+	if j.Phase == Released {
+		return j, nil
+	}
+	return j, err
 }
 
 // RunKeyText is a run key as the sides read it: 64 lowercase hex digits

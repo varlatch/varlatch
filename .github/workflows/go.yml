@@ -417,6 +417,7 @@ jobs:
           go vet -tags crashpoint ./...
           go vet -tags g9a ./...
           go vet -tags g5 ./server/migration/g5/
+          go vet -tags headscale ./server/tailnet/...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -445,13 +446,17 @@ jobs:
       # the varlatchd binary on a seeded installation, every damage of the
       # bundle stream, its check sections and the imported database failing
       # at its stage and check, named, a killed import cleared by the next,
-      # and nothing secret printed. Its own step, so the gate's evidence is
-      # its own line in the run.
+      # and nothing secret printed; its interrupted half (7.4c) and its
+      # reverse half (7.6a: Go's barrier, the reverse export and checks, a
+      # second forward migration reproducing the state, after each kind of
+      # change on Go; varlatch migrate --rollback interrupted at every
+      # phase boundary; --finish and --delete-old-data). Its own step, so the gate's evidence is its own line
+      # in the run.
       - name: G5, the migration's damage gate
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 -tags g5 -run '^TestG5$' -v ./server/migration/g5/
+        run: go test -count=1 -tags g5 -run '^TestG5' -v ./server/migration/g5/
 
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's
@@ -469,6 +474,13 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           go run ./server/db/releasecheck declaration
+          # previous must be the last Go release reachable from HEAD (a
+          # release tagged since without updating it would be skipped):
+          # the history and tags fetched without trees, compared as
+          # semantic versions (rc.10 after rc.9, 0.50.0 after its rcs).
+          git fetch --quiet --filter=tree:0 --unshallow --tags origin 2>/dev/null || git fetch --quiet --filter=tree:0 --tags origin
+          git tag --merged HEAD -l 'v*' > "$RUNNER_TEMP/release-tags"
+          go run ./server/db/releasecheck previous --tags "$RUNNER_TEMP/release-tags"
           previous=$(jq -r '.previous.version // empty' release/release.json)
           if [ -n "$previous" ]; then
             git fetch --no-tags --depth=1 origin "refs/tags/v$previous:refs/tags/v$previous"
@@ -495,6 +507,19 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -tags conformance ./server/outbound
+
+      # A self-hosted control server (ADR-0059 Decision 5 as amended for
+      # step 7.5c; go/server/tailnet/headscaletest): varlatchd's node joins
+      # Headscale 0.29.7 (by digest, in a container named for the run,
+      # unprivileged, its embedded DERP only) on https at an IP address,
+      # tagged by its pre-auth key, and is pinned to it; while Headscale is
+      # unreachable, no bootstrap DNS query. Its own build tag: it needs
+      # Docker.
+      - name: Headscale, a self-hosted control server
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags headscale -run '^TestHeadscale' -v ./server/tailnet/
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a
@@ -593,7 +618,10 @@ jobs:
       # expiry (45-second certificates), a failed challenge reported and
       # retried with backoff, the store's modes, a restart serving the
       # stored certificate, and varlatchd serving HTTPS with nothing before
-      # a certificate and only a redirect on its plain listener. No outside
+      # a certificate and only a redirect on its plain listener; and a move
+      # to another name (slice 6.9, TestPublicHTTPSMoveAgainstPebble):
+      # `varlatch move` built from this commit, the new name's certificate,
+      # the old passkeys removed, a re-enrollment over HTTPS. No outside
       # network: every name resolves to 127.0.0.1. Never Let's Encrypt from
       # CI (its staging only by hand, with the owner).
       - name: Public HTTPS against Pebble

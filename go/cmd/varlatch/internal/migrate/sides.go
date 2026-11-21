@@ -27,6 +27,10 @@ type imagePin struct {
 	Repository, Digest string
 }
 
+// testPin replaces the constants in a crashpoint build only (G5's
+// interruption gate, crashpoint.go); nil in a release.
+var testPin *imagePin
+
 // Source is the old installation, driven as processes (go-step7 decision
 // 2): its CLI's commands inside its containers, and its host CLI. A
 // Source never opens a database itself.
@@ -58,6 +62,36 @@ type Source interface {
 	// left of the source's on this host (the bundles), by their exact
 	// names only.
 	CleanLeftovers() error
+	// Ingress is what the source's address is served by: its public URL
+	// and, by shape, what serves it here.
+	Ingress(ctx context.Context) (IngressInfo, error)
+	// StopIngress and StartIngress stop and start what serves the
+	// address (Caddy for public ingress, the dashboard's port for an own
+	// proxy); the Coolify shape has nothing here to stop or start.
+	StopIngress(ctx context.Context, kind Ingress) error
+	StartIngress(ctx context.Context, kind Ingress) error
+}
+
+// Ingress is a source's ingress shape (decision 12).
+type Ingress string
+
+// The shapes.
+const (
+	Public  Ingress = "public"  // the installation's Caddy terminates HTTPS on 80 and 443; varlatchd's own ACME takes over
+	Proxy   Ingress = "proxy"   // the operator's reverse proxy targets the dashboard's loopback port; varlatchd binds it
+	Coolify Ingress = "coolify" // Coolify's proxy routes the domain by application: the operator moves it, at the prompt
+)
+
+// Ingresses are the shapes.
+var Ingresses = []Ingress{Public, Proxy, Coolify}
+
+// IngressInfo is a source's: its public URL (the origin people open, the
+// passkeys' RP ID its host), whether its Caddy runs, and the dashboard's
+// address on this host.
+type IngressInfo struct {
+	PublicURL  string
+	Caddy      bool
+	WebAddress string
 }
 
 // SourceInfo is what a migration starts from.
@@ -97,12 +131,43 @@ type Target interface {
 	// Discard removes the database migration id built in the data
 	// directory (before the switch only).
 	Discard(ctx context.Context, id string) error
+	// Start and Stop start and stop the target's service: done, or, where
+	// that is the operator's (an image's service), a *HumanStep unless it
+	// is so already.
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	// OpenLive opens the running target: through its control socket, it
+	// ends the transfer's gate and writes its journal open.
+	OpenLive(ctx context.Context, id string) error
+}
+
+// HumanStep is a step only the operator takes (go-step7 decision 20: what
+// needs Docker or Coolify is a human's): its exact instruction.
+type HumanStep struct {
+	Instruction string
+}
+
+func (h *HumanStep) Error() string { return h.Instruction }
+
+// Prober asks a public URL which installation serves it: GET /v1/meta's
+// installationId and serverVersion.
+type Prober interface {
+	Probe(ctx context.Context, publicURL string) (installationID, serverVersion string, err error)
 }
 
 // TargetInfo is the target, as the journal records it.
 type TargetInfo struct {
+	// Kind is "host" (a host install) or "image" (the image's service,
+	// through its bind paths).
+	Kind    string `json:"kind,omitempty"`
 	Config  string `json:"config"`
 	DataDir string `json:"dataDir"`
+	// Release is the target's varlatchd's; PublicURL, Listen and
+	// ListenHTTPS its configuration's.
+	Release     string `json:"release"`
+	PublicURL   string `json:"publicUrl"`
+	Listen      string `json:"listen"`
+	ListenHTTPS string `json:"listenHttps"`
 }
 
 // TargetState is what the target holds: its journal's head (nil for
@@ -110,6 +175,12 @@ type TargetInfo struct {
 type TargetState struct {
 	Journal  *JournalHead
 	Database bool
+	// Gate is whether the transfer's gate stands; Barrier a reverse's
+	// barrier's phase ("" for none); Running whether the target's
+	// varlatchd runs.
+	Gate    bool
+	Barrier string
+	Running bool
 }
 
 // JournalHead is what the target's journal says.

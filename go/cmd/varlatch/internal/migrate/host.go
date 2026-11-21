@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -20,6 +21,43 @@ type Host struct {
 	Varlatchd string
 	Config    string
 	Run       Runner
+	// Unit is the target's systemd unit ("varlatchd"), started and
+	// stopped around the address transfer.
+	Unit string
+}
+
+func (h *Host) unit() string {
+	if h.Unit == "" {
+		return "varlatchd"
+	}
+	return h.Unit
+}
+
+// unitName is a systemd unit's name as systemctl takes it as an argument:
+// no option (a leading -), no path.
+var unitName = regexp.MustCompile(`^[A-Za-z0-9:_.\\@][A-Za-z0-9:_.\\@-]*$`)
+
+// ValidUnit says whether name may be given to systemctl as a unit.
+func ValidUnit(name string) bool { return len(name) <= 256 && unitName.MatchString(name) }
+
+// Start is `systemctl start <unit>`.
+func (h *Host) Start(ctx context.Context) error { return h.systemctl(ctx, "start") }
+
+// Stop is `systemctl stop <unit>`.
+func (h *Host) Stop(ctx context.Context) error { return h.systemctl(ctx, "stop") }
+
+func (h *Host) systemctl(ctx context.Context, verb string) error {
+	if !ValidUnit(h.unit()) {
+		return fmt.Errorf("%q is not a systemd unit's name", h.unit())
+	}
+	r, err := h.Run.Run(ctx, "", "systemctl", []string{verb, h.unit()}, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return failure("systemctl "+verb+" "+h.unit(), r)
+	}
+	return nil
 }
 
 func (h *Host) admin(ctx context.Context, args []string, stdin []byte) (Ran, error) {
@@ -41,15 +79,25 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		return info, TargetState{}, failure("varlatchd admin migrate state", r)
 	}
 	var s struct {
-		Journal  *JournalHead `json:"journal"`
-		Database bool         `json:"database"`
-		DataDir  string       `json:"dataDir"`
+		Journal     *JournalHead `json:"journal"`
+		Database    bool         `json:"database"`
+		DataDir     string       `json:"dataDir"`
+		Release     string       `json:"release"`
+		PublicURL   string       `json:"publicUrl"`
+		Listen      string       `json:"listen"`
+		ListenHTTPS string       `json:"listenHttps"`
+		Gate        *bool        `json:"migrationGate"`
+		Barrier     string       `json:"barrier"`
+		Running     bool         `json:"running"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &s); err != nil || s.DataDir == "" {
 		return info, TargetState{}, errors.New("varlatchd admin migrate state did not answer in JSON")
 	}
-	info.DataDir = s.DataDir
-	return info, TargetState{Journal: s.Journal, Database: s.Database}, nil
+	if s.Release == "" || s.Gate == nil {
+		return info, TargetState{}, errors.New("the target's varlatchd is older than this varlatch (its admin migrate state names no release, address or gate): install the varlatchd of this release")
+	}
+	info.DataDir, info.Release, info.PublicURL, info.Listen, info.ListenHTTPS = s.DataDir, s.Release, s.PublicURL, s.Listen, s.ListenHTTPS
+	return info, TargetState{Journal: s.Journal, Database: s.Database, Gate: *s.Gate, Barrier: s.Barrier, Running: s.Running}, nil
 }
 
 // Keys is `admin migrate keys`, the keys on its stdin as JSON, each
@@ -130,9 +178,13 @@ func (h *Host) Import(ctx context.Context, bundle, scratch string) (CopyRecord, 
 // Check is `admin migrate check --json`, the run key on its stdin. A
 // report that fails is a CheckSummary not passed, not an error.
 func (h *Host) Check(ctx context.Context, bundle, scratch string, runKey []byte) (CheckSummary, error) {
+	return h.check(ctx, append([]string{"check", "--in", bundle, "--json"}, scratchArgs(scratch)...), runKey)
+}
+
+func (h *Host) check(ctx context.Context, args []string, runKey []byte) (CheckSummary, error) {
 	key := RunKeyText(runKey)
 	defer clear(key)
-	r, err := h.admin(ctx, append([]string{"check", "--in", bundle, "--json"}, scratchArgs(scratch)...), key)
+	r, err := h.admin(ctx, args, key)
 	if err != nil {
 		return CheckSummary{}, err
 	}
@@ -174,6 +226,19 @@ func (h *Host) Check(ctx context.Context, bundle, scratch string, runKey []byte)
 		}
 	}
 	return s, nil
+}
+
+// OpenLive is `admin migrate open --id`, which varlatchd routes through
+// its control socket while it runs.
+func (h *Host) OpenLive(ctx context.Context, id string) error {
+	r, err := h.admin(ctx, []string{"open", "--id", id}, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return failure("varlatchd admin migrate open", r)
+	}
+	return nil
 }
 
 // Discard is `admin migrate discard --id`.

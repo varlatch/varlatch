@@ -3,7 +3,6 @@
 package migrate
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -12,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -152,6 +152,35 @@ func lastLine(b []byte) []byte {
 	return b
 }
 
+// envFile is the installation's .env as Compose reads it: NAME=value
+// lines, the last of a name wins, quotes around a value taken off.
+func (c *Compose) envFile() (map[string]string, error) {
+	env, err := os.ReadFile(filepath.Join(c.Directory, ".env"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	out := map[string]string{}
+	// Split on newlines, not scanned: a line of any length is read whole
+	// (a scanner's token limit would stop at a long one and read on as if
+	// the file ended there).
+	for _, raw := range bytes.Split(env, []byte("\n")) {
+		line := strings.TrimSpace(string(raw))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = v[1 : len(v)-1]
+		}
+		out[strings.TrimSpace(name)] = v
+	}
+	return out, nil
+}
+
 // kekPath is the source's Root KEK file on this host: KEKFile, else .env's
 // VARLATCH_KEK_HOST_PATH (relative to Directory), else secrets/varlatch-kek, as
 // the Compose file has it.
@@ -160,24 +189,81 @@ func (c *Compose) kekPath() (string, error) {
 		return c.KEKFile, nil
 	}
 	p := filepath.Join(c.Directory, "secrets", "varlatch-kek")
-	env, err := os.ReadFile(filepath.Join(c.Directory, ".env"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	env, err := c.envFile()
+	if err != nil {
 		return "", err
 	}
-	sc := bufio.NewScanner(bytes.NewReader(env))
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if v, ok := strings.CutPrefix(line, "VARLATCH_KEK_HOST_PATH="); ok {
-			v = strings.Trim(v, `"'`)
-			if v != "" {
-				p = v
-				if !filepath.IsAbs(p) {
-					p = filepath.Join(c.Directory, p)
-				}
-			}
+	if v := env["VARLATCH_KEK_HOST_PATH"]; v != "" {
+		p = v
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(c.Directory, p)
 		}
 	}
 	return p, nil
+}
+
+// Ingress reads the installation's .env as its Compose files do: the
+// public URL (VARLATCH_PUBLIC_URL), the Caddy overlay in COMPOSE_FILE
+// (public ingress), and the dashboard's published address
+// (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default).
+func (c *Compose) Ingress(context.Context) (IngressInfo, error) {
+	env, err := c.envFile()
+	if err != nil {
+		return IngressInfo{}, err
+	}
+	info := IngressInfo{PublicURL: env["VARLATCH_PUBLIC_URL"]}
+	for _, f := range strings.Split(env["COMPOSE_FILE"], string(os.PathListSeparator)) {
+		if filepath.Base(strings.TrimSpace(f)) == "docker-compose.caddy.yml" {
+			info.Caddy = true
+		}
+	}
+	bind, port := env["BIND_ADDRESS"], env["VARLATCH_WEB_PORT"]
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
+	if port == "" {
+		port = "8787"
+	}
+	info.WebAddress = net.JoinHostPort(bind, port)
+	return info, nil
+}
+
+// ingressService is the Compose service that serves the address, by
+// shape: Caddy for public ingress, the dashboard for an own proxy.
+func ingressService(kind Ingress) (string, error) {
+	switch kind {
+	case Public:
+		return "caddy", nil
+	case Proxy:
+		return "varlatch-web", nil
+	}
+	return "", fmt.Errorf("the %s shape has no service of this host's to stop or start", kind)
+}
+
+// StopIngress is `docker compose stop` of the service that serves the
+// address (idempotent).
+func (c *Compose) StopIngress(ctx context.Context, kind Ingress) error {
+	return c.ingress(ctx, "stop", kind)
+}
+
+// StartIngress is `docker compose start` of it.
+func (c *Compose) StartIngress(ctx context.Context, kind Ingress) error {
+	return c.ingress(ctx, "start", kind)
+}
+
+func (c *Compose) ingress(ctx context.Context, verb string, kind Ingress) error {
+	svc, err := ingressService(kind)
+	if err != nil {
+		return err
+	}
+	r, err := c.docker(ctx, []string{"compose", verb, svc}, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return failure("docker compose "+verb+" "+svc, r)
+	}
+	return nil
 }
 
 // RootKEK reads the source's Root KEK file.
@@ -308,6 +394,14 @@ func (c *Compose) Barrier(ctx context.Context, drain time.Duration) (BarrierReco
 // under a new name, the run key on the export's stdin; its path on this
 // host.
 func (c *Compose) Export(ctx context.Context, runKey []byte, dryRun bool) (string, error) {
+	return c.export(ctx, runKey, dryRun, func(args ...string) []string {
+		return append([]string{"compose", "exec", "-T", service, "node", "dist/cli.js", "admin"}, args...)
+	})
+}
+
+// export runs the export with the command prefix gives (exec into the
+// running daemon's container, or a one-off one).
+func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix func(...string) []string) (string, error) {
 	suffix := make([]byte, 6)
 	if _, err := rand.Read(suffix); err != nil {
 		return "", err
@@ -319,7 +413,7 @@ func (c *Compose) Export(ctx context.Context, runKey []byte, dryRun bool) (strin
 	}
 	key := RunKeyText(runKey)
 	defer clear(key)
-	r, err := c.admin(ctx, args, key)
+	r, err := c.docker(ctx, prefix(args...), key)
 	host := filepath.Join(c.Directory, "backups", name)
 	if err != nil {
 		_ = os.Remove(host)
@@ -342,6 +436,9 @@ var leftoverBundle = regexp.MustCompile(`^migration-[0-9a-f]{12}\.jsonl(\.partia
 // installation's backups directory: Export's names only, regular files
 // only.
 func (c *Compose) CleanLeftovers() error {
+	if err := removeMatching(filepath.Join(c.Directory, "backups"), leftoverReverse, false); err != nil {
+		return err
+	}
 	return removeMatching(filepath.Join(c.Directory, "backups"), leftoverBundle, false)
 }
 

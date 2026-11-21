@@ -50,7 +50,10 @@ try {
   check(
     "cli-download-on.installed-version-matches-server",
     "the installed CLI reports the server's own version",
-    version.status === 0 && typeof served?.serverVersion === "string" && installed.startsWith(`varlatch ${served.serverVersion} `),
+    // The TypeScript CLI adds its migration ("varlatch 0.22.0 (migration
+    // 28)"); the Go CLI prints the version alone.
+    version.status === 0 && typeof served?.serverVersion === "string" &&
+      (installed === `varlatch ${served.serverVersion}` || installed.startsWith(`varlatch ${served.serverVersion} `)),
     `installed '${installed}', server ${served?.serverVersion ?? "unknown"}`,
   );
   check("cli-download-on.install-names-next-step", "install.sh names the next step", output.includes(`Next: varlatch login --server ${origin}`));

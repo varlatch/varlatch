@@ -233,7 +233,7 @@ func FlipCiphertext(t testing.TB, path, table, column, where string) {
 // expired and revoked too; with no Tailnet Context, and for the actions
 // Requirements constrain, with one too. every keeps one pair in every
 // (1 for all of them).
-func Tuples(t testing.TB, db *sql.DB, every int) []bundle.Decision {
+func Tuples(t TB, db *sql.DB, every int) []bundle.Decision {
 	t.Helper()
 	rows, err := db.Query(`SELECT c.id, o.organization_id FROM credentials c
 		JOIN (SELECT identity_id, organization_id FROM org_memberships WHERE removed_at IS NULL
