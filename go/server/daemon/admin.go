@@ -188,6 +188,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
+	case sub == "migrate" && (rest[0] == "open" || rest[0] == "barrier" || rest[0] == "release"):
+		// The live open, and the reverse's barrier: through the running
+		// daemon, whose admission holds the migration's gate; offline, on
+		// the data directory.
+		return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 	case sub == "migrate":
 		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
 	}
@@ -200,7 +205,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] | varlatchd admin doctor [--json] | varlatchd admin migrate import|check|export --reverse | "+
+		"varlatchd admin schema status|upgrade [--json] | varlatchd admin doctor [--json] | varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
 		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
 		"varlatchd admin move-facts | varlatchd admin config check  (each with [--config <file>])\n", msg)
 	return 64
@@ -348,9 +353,10 @@ const MaintenanceRefusal = "Installation is in maintenance; ordinary admin opera
 // writes reports whether a host command may write the installation: all
 // but the backup and maintenance commands, which take the admission their
 // own way (backup run enters it; maintenance manages it; backup status
-// only reads), and doctor and move-facts, which only read.
+// only reads), doctor (which only reads), migrate (which manages its own
+// gate), and move-facts, which only reads.
 func writes(sub string) bool {
-	return sub != "backup" && sub != "maintenance" && sub != "doctor" && sub != "move-facts"
+	return sub != "backup" && sub != "maintenance" && sub != "doctor" && sub != "migrate" && sub != "move-facts"
 }
 
 // runHost runs one host command, in the daemon or offline, with env. A
@@ -384,6 +390,12 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runTailnetRepin(ctx, env, rest, stdout, stderr)
 	case sub == "doctor":
 		return runDoctorLive(ctx, env, rest, stdout, stderr)
+	case sub == "migrate" && len(rest) > 0 && rest[0] == "barrier":
+		return runMigrateBarrier(ctx, env, rest, stdout, stderr)
+	case sub == "migrate" && len(rest) > 0 && rest[0] == "release":
+		return runMigrateRelease(env, rest, stdout, stderr)
+	case sub == "migrate":
+		return runMigrateOpen(env, rest, stdout, stderr)
 	case isMoveCommand(sub):
 		return runMoveCommand(ctx, env, sub, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":

@@ -49,13 +49,23 @@ const maxFailures = 50
 type Options struct {
 	RootKEK []byte
 	RunKey  []byte
+	// Reverse is the reverse checks (go-step7 decision 16, slice 7.6a):
+	// the target is the transformed copy a reverse bundle was written from,
+	// and the bundle the TypeScript release's export of the database it
+	// rebuilt from that reverse bundle. The rebuilt database holds the
+	// copy's state exactly, so the target is held against the bundle with
+	// no transformation between them: no event follows the frozen point,
+	// and the bundle holds no session.
+	Reverse bool
 }
 
 // Report is a check run's outcome.
 type Report struct {
-	Passed bool         `json:"passed"`
-	Bundle BundleCounts `json:"bundle"`
-	Checks []Result     `json:"checks"`
+	Passed bool `json:"passed"`
+	// Reverse is the reverse checks' report.
+	Reverse bool         `json:"reverse,omitempty"`
+	Bundle  BundleCounts `json:"bundle"`
+	Checks  []Result     `json:"checks"`
 }
 
 // BundleCounts describe the bundle the target was held against.
@@ -161,7 +171,7 @@ func Run(ctx context.Context, db *sql.DB, in io.ReadSeeker, o Options) (Report, 
 	if err := r.End(); err != nil {
 		return Report{}, err
 	}
-	rep := Report{Passed: true, Bundle: c.counts}
+	rep := Report{Passed: true, Reverse: o.Reverse, Bundle: c.counts}
 	rep.Bundle.Release, rep.Bundle.AuditPosition = c.head.Release, c.head.FrozenPoint.AuditPosition
 	for _, n := range Names {
 		res := c.results[n]
@@ -248,8 +258,12 @@ func (r Report) Text() string {
 	if !r.Passed {
 		verdict = "FAILED"
 	}
-	fmt.Fprintf(&b, "The migration's checks %s, against the bundle of %s frozen at audit position %d (%d tables, %d rows, %d digests, %d decisions).\n",
-		verdict, r.Bundle.Release, r.Bundle.AuditPosition, r.Bundle.Tables, r.Bundle.Rows, r.Bundle.Digests, r.Bundle.Decisions)
+	which := "The migration's checks"
+	if r.Reverse {
+		which = "The reverse checks"
+	}
+	fmt.Fprintf(&b, "%s %s, against the bundle of %s frozen at audit position %d (%d tables, %d rows, %d digests, %d decisions).\n",
+		which, verdict, r.Bundle.Release, r.Bundle.AuditPosition, r.Bundle.Tables, r.Bundle.Rows, r.Bundle.Digests, r.Bundle.Decisions)
 	for _, c := range r.Checks {
 		if c.Passed {
 			fmt.Fprintf(&b, "  %s: passed (%d checked)\n", c.Name, c.Checked)

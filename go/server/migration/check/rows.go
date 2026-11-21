@@ -338,9 +338,18 @@ func normalize(v any) any {
 	return v
 }
 
+// reverseKeeps are the target-only tables a reverse's target (Go's copy,
+// after it served) may hold rows in: varlatchd's own records, which no
+// bundle carries. certificate_issuances is the public name's issuance
+// count (schema version 2), carried across a reverse apart from the bundle
+// (migrate's migration-issuances.json).
+var reverseKeeps = map[string]bool{"certificate_issuances": true}
+
 // otherTables checks the target holds no table the bundle does not
 // account for, and the target-only tables what an import writes:
-// schema_version its one row, any other none.
+// schema_version its one row, any other none. In the reverse checks the
+// target is Go's copy, not an import: a table of reverseKeeps may hold
+// rows there; every other target-only table is held as an import's.
 func (c *checker) otherTables(ctx context.Context) error {
 	known := map[string]bool{}
 	for _, t := range bundle.Tables(c.m) {
@@ -368,6 +377,9 @@ func (c *checker) otherTables(ctx context.Context) error {
 		}
 		if _, targetOnly := c.m.TargetOnly.Tables[name]; !targetOnly {
 			c.fail(Rows, name, "", "a table neither the bundle nor the manifest's target-only tables account for")
+			continue
+		}
+		if c.o.Reverse && reverseKeeps[name] {
 			continue
 		}
 		var n int
