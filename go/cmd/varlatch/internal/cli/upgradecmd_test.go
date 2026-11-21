@@ -84,6 +84,11 @@ func TestUpgradeUsageAndPrivilege(t *testing.T) {
 // records the newer release for the dashboard; upgrade --yes upgrades to
 // it; a release that is not rollback-safe is refused until accepted. As
 // root (the command's rule): the host's directories are root's.
+// reversible is the test releases' declaration that a reverse migration
+// returns their data to the last TypeScript release, which lib/release
+// requires of a release (reversibleTo, go-step7 decision 17).
+var reversible = release.LastTypeScriptRelease
+
 func TestUpgradeCommandOnAHost(t *testing.T) {
 	if testing.Short() || runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		t.Skip("builds varlatchd and runs as root on Linux (go.yml's Go container)")
@@ -106,7 +111,7 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 
 	// Not rollback-safe: refused without --accept-not-rollback-safe.
 	h := newCLIHost(t, from)
-	publish(unsafe, release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, Previous: prev})
+	publish(unsafe, release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, Previous: prev, ReversibleTo: &reversible})
 	code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
 	if code != ExitFailure || !strings.Contains(out, "rollback:  NOT safe") || !strings.Contains(errs, "pass --accept-not-rollback-safe") {
 		t.Fatalf("not rollback-safe: %d %q %q", code, out, errs)
@@ -120,7 +125,7 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 
 	// Rollback-safe: --check records it, upgrade --yes upgrades.
 	h = newCLIHost(t, from)
-	publish(to, release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: prev})
+	publish(to, release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: prev, ReversibleTo: &reversible})
 	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--check", "--config", h.conf)
 	if code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.2 is available (this host runs 0.50.0-rc.1)") {
 		t.Fatalf("--check: %d %q %q", code, out, errs)
