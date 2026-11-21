@@ -50,7 +50,19 @@ func pebbleDaemon(t *testing.T, host, redirect, extra string) (*running, install
 		r.stop(t)
 		t.Fatalf("the public listeners: %v %v", httpsAddr, httpAddr)
 	}
-	// Pebble's issuing roots, from its management API.
+	roots := pebbleRoots(t, rootFile)
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{ForceAttemptHTTP2: true,
+		TLSClientConfig: &tls.Config{ServerName: host, RootCAs: roots},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:5001")
+		}}}
+	return r, in, client
+}
+
+// pebbleRoots are the roots Pebble issues from, from its management API
+// (trusted through rootFile, its API's own root).
+func pebbleRoots(t *testing.T, rootFile string) *x509.CertPool {
+	t.Helper()
 	apiPEM, err := os.ReadFile(rootFile)
 	if err != nil {
 		t.Fatal(err)
@@ -68,12 +80,7 @@ func pebbleDaemon(t *testing.T, host, redirect, extra string) (*running, install
 		res.Body.Close()
 		roots.AppendCertsFromPEM(b)
 	}
-	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{ForceAttemptHTTP2: true,
-		TLSClientConfig: &tls.Config{ServerName: host, RootCAs: roots},
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:5001")
-		}}}
-	return r, in, client
+	return roots
 }
 
 // waitHTTPS is GET https://host:5001/readyz through client once varlatchd
