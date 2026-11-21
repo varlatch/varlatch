@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -24,14 +25,16 @@ import (
 // go/README.md `upgrade-usage`; the TypeScript CLI's upgrade is a Compose
 // installation's, varlatch-ts upgrade).
 const upgradeUsage = `Usage:
-  varlatch upgrade [<version>] [--prerelease] [--accept-not-rollback-safe] [--yes] [--config <file>]
+  varlatch upgrade [<version>] [--prerelease] [--accept-not-rollback-safe] [--end-rollback-window] [--yes] [--config <file>]
   varlatch upgrade --check [--prerelease] [--json] [--config <file>]
                (a Go installation's upgrade, on its host, as root: downloads the release's varlatch, varlatchd and
                 release.json, checks that SHA256SUMS is signed by the release workflow of varlatch/varlatch for that
                 version, takes an encrypted snapshot kept 30 days, updates a copy of the database, swaps the binaries
                 and the database, restarts varlatchd and keeps the new release only when its health checks pass;
-                anything else ends with the previous release serving. --check looks for a newer release and records
-                what it found for the dashboard's notice. A Compose installation's upgrade is varlatch-ts upgrade)`
+                anything else ends with the previous release serving. While a migration's rollback window is open, a
+                release that ends it is upgraded to only once confirmed (--end-rollback-window without a prompt).
+                --check looks for a newer release and records what it found for the dashboard's notice. A Compose
+                installation's upgrade is varlatch-ts upgrade)`
 
 // UpgradeHelp is upgradeUsage, for the transcripts' accepted difference.
 const UpgradeHelp = upgradeUsage
@@ -65,7 +68,7 @@ func upgradeCommand(r *Run) (bool, error) {
 func (r *Run) upgrade() error {
 	parsed, err := strictOptions("upgrade", r.Args, OptionSpec{
 		Values:      []string{"--config", "--repo"},
-		Booleans:    []string{"--check", "--json", "--yes", "--prerelease", "--accept-not-rollback-safe"},
+		Booleans:    []string{"--check", "--json", "--yes", "--prerelease", "--accept-not-rollback-safe", "--end-rollback-window"},
 		Positionals: 1,
 	}, upgradeUsage)
 	if err != nil {
@@ -82,8 +85,8 @@ func (r *Run) upgrade() error {
 	if parsed.Has("--json") && !check {
 		return UsageErrorWithUsage("varlatch upgrade: --json goes with --check", "\n"+upgradeUsage)
 	}
-	if check && (parsed.Has("--accept-not-rollback-safe") || parsed.Has("--yes")) {
-		return UsageErrorWithUsage("varlatch upgrade: --check upgrades nothing: it takes no --yes or --accept-not-rollback-safe", "\n"+upgradeUsage)
+	if check && (parsed.Has("--accept-not-rollback-safe") || parsed.Has("--yes") || parsed.Has("--end-rollback-window")) {
+		return UsageErrorWithUsage("varlatch upgrade: --check upgrades nothing: it takes no --yes, --accept-not-rollback-safe or --end-rollback-window", "\n"+upgradeUsage)
 	}
 	config, given := parsed.Value("--config")
 	if !given {
@@ -138,6 +141,14 @@ func (r *Run) upgrade() error {
 		return upgradeFailure(err)
 	}
 	safe := upgrade.RollbackSafe(rel.Manifest, inst)
+	// Decision 17: a release that ends a migration's rollback window is
+	// upgraded to only once the operator confirms it, while the window is
+	// open (Go's migration journal, read as root on this host).
+	windowOpen, err := migrate.RollbackWindowOpen(inst.DataDir, time.Now())
+	if err != nil {
+		return Fail("varlatch upgrade: the migration journal in "+inst.DataDir+": "+err.Error()+". Nothing was changed.", ExitFailure)
+	}
+	endsWindow := windowOpen && rel.Manifest.EndsRollbackWindow()
 	lines := []string{
 		"",
 		"  varlatchd " + inst.Version + " -> " + rel.Version + " (schema version " + fmt.Sprint(inst.Schema) + " -> " + fmt.Sprint(rel.Manifest.SchemaVersion) + ")",
@@ -153,11 +164,28 @@ func (r *Run) upgrade() error {
 			"             which "+inst.Version+" (schema "+fmt.Sprint(inst.Schema)+") is not. Going back means restoring the pre-upgrade",
 			"             snapshot, which loses every change made after it.")
 	}
+	if endsWindow {
+		lines = append(lines, "  migration: "+release.RollbackWindowNotice)
+	}
 	lines = append(lines, "")
 	for _, line := range lines {
 		if err := r.println(line); err != nil {
 			return err
 		}
+	}
+	confirmed := false
+	if endsWindow && !parsed.Has("--end-rollback-window") {
+		if !isTerminal(r.Stdin) || parsed.Has("--yes") {
+			return Fail("varlatch upgrade: "+rel.Version+" ends the migration's rollback window (above): pass --end-rollback-window to upgrade anyway, or end the window first (varlatch migrate --finish). Nothing was changed.", ExitFailure)
+		}
+		ok, err := newTerminalPrompter(r).confirm("Upgrade to "+rel.Version+", which ends the migration's rollback window?", false)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return r.println("Nothing was changed.")
+		}
+		confirmed = true
 	}
 	if !safe && !parsed.Has("--accept-not-rollback-safe") {
 		if !isTerminal(r.Stdin) || parsed.Has("--yes") {
@@ -170,7 +198,7 @@ func (r *Run) upgrade() error {
 		if !ok {
 			return r.println("Nothing was changed.")
 		}
-	} else if !parsed.Has("--yes") {
+	} else if !parsed.Has("--yes") && !confirmed {
 		if !isTerminal(r.Stdin) {
 			return Fail("varlatch upgrade: not a terminal: pass --yes to upgrade without a prompt. Nothing was changed.", ExitFailure)
 		}
@@ -180,6 +208,18 @@ func (r *Run) upgrade() error {
 		}
 		if !ok {
 			return r.println("Nothing was changed.")
+		}
+	}
+	if endsWindow {
+		// Recorded before anything is upgraded, in Go's journal beside the
+		// running varlatchd: from now no reverse starts, even if the
+		// upgrade is undone (its way back ends with the window).
+		host := &migrate.Host{Varlatchd: varlatchd, Config: config, Run: migrate.ExecRunner{Env: varlatchdEnviron(r)}}
+		if err := migrate.EndRollbackWindow(ctx, host, inst.DataDir, rel.Version, time.Now()); err != nil {
+			return Fail("varlatch upgrade: recording the end of the migration's rollback window: "+err.Error()+". Nothing was changed.", ExitFailure)
+		}
+		if err := r.println("The migration's rollback window ends: recorded in its journal (varlatch migrate --rollback now refuses)."); err != nil {
+			return err
 		}
 	}
 	if _, err := u.Run(ctx, inst, rel); err != nil {

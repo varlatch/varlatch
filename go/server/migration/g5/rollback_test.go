@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -784,6 +785,31 @@ func TestG5RollbackWhole(t *testing.T) {
 		}
 		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "rollback window is over") {
 			t.Fatalf("--rollback after 31 days: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.expectReverse("refused", undoneState)
+	})
+	// An upgrade to a release that ends the window recorded it in Go's
+	// journal (varlatch upgrade, beside the running varlatchd: open over
+	// open, no transfer gate): --rollback refuses, nothing changed.
+	t.Run("ended by an upgrade", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		b, err := os.ReadFile(filepath.Join(w.data, "migration.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var j map[string]any
+		if err := json.Unmarshal(b, &j); err != nil {
+			t.Fatal(err)
+		}
+		j["windowEnded"] = map[string]any{"release": "0.50.1", "at": time.Now().UTC().Format(time.RFC3339Nano)}
+		b, _ = json.Marshal(j)
+		cmd := exec.Command(filepath.Join(filepath.Dir(shared.varlatch), "varlatchd"), "admin", "migrate", "state", "--write", "--config", w.conf)
+		cmd.Stdin = bytes.NewReader(b)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("the window's end written beside the running varlatchd: %v\n%s", err, out)
+		}
+		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "rollback window ended when varlatchd 0.50.1 was installed") {
+			t.Fatalf("--rollback once an upgrade ended the window: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
 		w.expectReverse("refused", undoneState)
 	})

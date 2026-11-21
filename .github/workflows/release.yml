@@ -521,10 +521,53 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # G5 for the release being cut (internal docs/design/go-step7.md
+  # decision 17, slice 7.6b): a release that keeps the migration's rollback
+  # window (release.json's reversibleTo, the last TypeScript release) must
+  # pass G5 whole, forward and reverse; one declared as ending the window
+  # (endsRollbackWindow) passes its forward half, the reverse being what it
+  # ends. A declaration with neither fails here too (releasecheck refuses
+  # it before). go/server/migration/g5's stand-ins for the TypeScript side;
+  # the run against the last TypeScript release's published image is the
+  # step 7.8 rehearsal's.
+  go-g5:
+    needs: [validation, hosted-runner, line]
+    if: needs.line.outputs.line == 'go'
+    runs-on: ${{ vars.RELEASE_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - name: G5, the migration's gate, for this release
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          last=$(sed -n 's/^const LastTypeScriptRelease = "\(.*\)"$/\1/p' lib/release/manifest.go)
+          reversible=$(jq -r '.reversibleTo // ""' release/release.json)
+          ends=$(jq -r '.endsRollbackWindow // false' release/release.json)
+          if [ -n "$last" ] && [ "$reversible" = "$last" ] && [ "$ends" = "false" ]; then
+            echo "release.json keeps the rollback window (reversible to $last): G5 whole, forward and reverse."
+            go test -count=1 -tags g5 -run '^TestG5' -v ./server/migration/g5/
+          elif [ -z "$reversible" ] && [ "$ends" = "true" ]; then
+            echo "release.json ends the rollback window: G5's forward half."
+            go test -count=1 -tags g5 -run '^(TestG5|TestG5Interruptions|TestG5InterruptionsImage|TestG5InterruptionsCoolify|TestG5Kinds)$' -v ./server/migration/g5/
+          else
+            echo "release.json declares neither reversibleTo $last nor endsRollbackWindow (reversibleTo '$reversible', endsRollbackWindow $ends)" >&2
+            exit 1
+          fi
+
   # Signs SHA256SUMS, verifies the signature with the release's own CLI as
   # the installers will, and publishes the Go release.
   go-release:
-    needs: [hosted-runner, line, go-assets]
+    needs: [hosted-runner, line, go-assets, go-g5]
     runs-on: ${{ vars.RELEASE_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
     timeout-minutes: 30
     permissions:

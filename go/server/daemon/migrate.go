@@ -177,7 +177,10 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	// database stay as they are), or the same migration's journal in the
 	// phase it is in already (what it records of that phase: the
 	// transfer's check, an undo begun). Open and released change the
-	// gate, and a journal never goes back: those wait for it to stop.
+	// gate, and a journal never goes back: those wait for it to stop,
+	// but for open over open once no transfer gate stands, which changes
+	// nothing but the journal (an upgrade's record that it ends the
+	// rollback window).
 	//
 	// Beside the varlatchd a reverse migration reverses (go-step7 decision
 	// 16), every write of its journal is the journal's word alone: from
@@ -193,7 +196,11 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 			same := oerr == nil && ok && old.ID == h.ID
 			inert = h.Phase != "open" && (h.Phase == "switched" || same && old.Phase == h.Phase || same && old.Phase == "open" && h.Phase == "finished")
 			if same && (old.Phase == "open" || slices.Contains(reversing, old.Phase)) && (h.Phase == "open" || slices.Contains(reversing, h.Phase)) {
-				inert = !(old.Phase == "open" && h.Phase == "open")
+				// Open over open changes the gate only by removing a
+				// transfer gate that still stands; with none, it is the
+				// journal's word alone (what it records of that phase:
+				// an upgrade ending the rollback window, decision 17).
+				inert = !(old.Phase == "open" && h.Phase == "open") || !transferGateStands(cfg.DataDir, h.ID)
 			}
 		}
 	}

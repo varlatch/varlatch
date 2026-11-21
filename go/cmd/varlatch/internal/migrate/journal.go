@@ -108,8 +108,19 @@ type Journal struct {
 	// Rollback is the reverse migration's record (the last one begun).
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	// Finish is --finish's record.
-	Finish  *FinishRecord `json:"finish,omitempty"`
-	History []Step        `json:"history"`
+	Finish *FinishRecord `json:"finish,omitempty"`
+	// WindowEnded is the rollback window ended early, on the Go side: an
+	// upgrade to a release that ends it (decision 17, release.json's
+	// endsRollbackWindow), recorded in Go's journal before the upgrade.
+	WindowEnded *WindowEndedRecord `json:"windowEnded,omitempty"`
+	History     []Step             `json:"history"`
+}
+
+// WindowEndedRecord is the release whose upgrade ended a migration's
+// rollback window, and when it was recorded.
+type WindowEndedRecord struct {
+	Release string `json:"release"`
+	At      string `json:"at"`
 }
 
 // RollbackRecord is a reverse migration's: Go's barrier, the reverse

@@ -73,6 +73,11 @@ type journalHead struct {
 	Format int    `json:"format"`
 	ID     string `json:"id"`
 	Phase  string `json:"phase"`
+	// WindowEnded is an upgrade's record that it ended the migration's
+	// rollback window (decision 17): no reverse starts after it.
+	WindowEnded *struct {
+		Release string `json:"release"`
+	} `json:"windowEnded"`
 }
 
 func parseJournal(b []byte) (journalHead, error) {
@@ -343,6 +348,13 @@ func writeTransferGate(dataDir, id string, owner int) error {
 		return err
 	}
 	return writeDurably(filepath.Join(dataDir, backup.GateFile), b, owner)
+}
+
+// transferGateStands is whether the migration id's transfer gate stands
+// in dataDir; an unreadable gate counts as standing.
+func transferGateStands(dataDir, id string) bool {
+	g, err := backup.ReadGate(dataDir)
+	return err != nil || g != nil && g.Kind == "migration" && g.ID == id && g.Phase == "transfer"
 }
 
 // removeTransferGate removes the migration's gate, when it is this one's.

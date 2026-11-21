@@ -218,7 +218,12 @@ func (h *host) release(t *testing.T, varlatchd string, d release.Declaration) Re
 	return Release{Version: toVersion, Varlatch: []byte("#!/bin/sh\necho varlatch " + toVersion + "\n"), Varlatchd: build(t, varlatchd), Manifest: m}
 }
 
-var safe = release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: fromVersion, SchemaVersion: 1}}
+// reversible is release.json's reversibleTo for a release that keeps a
+// migration's rollback window (#368: every declaration says it or ends
+// the window).
+var reversible = func() *string { v := release.LastTypeScriptRelease; return &v }()
+
+var safe = release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: fromVersion, SchemaVersion: 1}, ReversibleTo: reversible}
 
 func (h *host) inspect(t *testing.T) Installed {
 	t.Helper()
@@ -440,7 +445,7 @@ func TestAFailedHealthCheckIsUndone(t *testing.T) {
 func TestNotRollbackSafe(t *testing.T) {
 	h := newHost(t)
 	inst := h.inspect(t)
-	unsafe := release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, RollbackSafe: false, Previous: &release.Previous{Version: fromVersion, SchemaVersion: 1}}
+	unsafe := release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, RollbackSafe: false, Previous: &release.Previous{Version: fromVersion, SchemaVersion: 1}, ReversibleTo: reversible}
 	rel := h.release(t, "unsafe", unsafe)
 	if RollbackSafe(rel.Manifest, inst) {
 		t.Fatal("compatible from 2 is not rollback-safe for schema 1")
@@ -492,7 +497,7 @@ func TestFetch(t *testing.T) {
 
 func mustManifest(t *testing.T, version string) []byte {
 	t.Helper()
-	m, err := release.NewManifest(version, release.Declaration{SchemaVersion: 1, CompatibleFrom: 1})
+	m, err := release.NewManifest(version, release.Declaration{SchemaVersion: 1, CompatibleFrom: 1, ReversibleTo: reversible})
 	if err != nil {
 		t.Fatal(err)
 	}
