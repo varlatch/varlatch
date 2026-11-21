@@ -24,10 +24,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sigstore/sigstore-go/pkg/root"
+
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/keyenv"
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auditexport"
@@ -47,6 +50,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/publictls"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/syncs"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/values"
@@ -555,6 +559,32 @@ func serve(opts Options, h *hooks) int {
 	}
 	if public != nil {
 		hopts.PublicListener = func() any { return public.Report() }
+	}
+	if cfg.ServeCLI {
+		// serve_cli (ADR-0058 Decision 3; go/server/servecli): this
+		// release's CLI and installers, from github.com through the
+		// outbound policy, verified before anything is cached or served.
+		o := servecli.Options{
+			Version:  buildinfo.Version,
+			Origin:   cfg.PublicURL.Scheme + "://" + cfg.PublicURL.Host,
+			CacheDir: filepath.Join(cfg.DataDir, "cli"),
+			Source: servecli.GitHub(release.Downloader{
+				Hosts: release.GitHubHosts, Transport: policy.Transport(outbound.GitHub), UserAgent: "varlatchd/" + buildinfo.Version,
+			}, buildinfo.Version),
+			Trusted: func(ctx context.Context) (root.TrustedMaterial, error) {
+				return release.LiveTrustedRootWith(ctx, filepath.Join(cfg.DataDir, "sigstore"), policy.Client(outbound.GitHub))
+			},
+		}
+		if conformanceCLIRelease != nil {
+			conformanceCLIRelease(&o, log)
+		}
+		served := servecli.Start(ctx, o, log)
+		hopts.CLI = func() http.Handler {
+			if r := served.Current(); r != nil {
+				return r
+			}
+			return nil
+		}
 	}
 	if tn != nil {
 		hopts.TailnetListeners = tn.manager.Report
