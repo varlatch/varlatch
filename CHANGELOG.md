@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## 0.23.0 (2026-11-20)
+## 0.23.0 (2026-11-22)
 
 The last release of the current server line: the 0.50 line replaces it.
 An installation moves to it with `varlatch migrate`, which runs the
