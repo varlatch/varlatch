@@ -34,6 +34,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/pgtime"
 	"github.com/varlatch/varlatch/go/server/realtime"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -77,6 +79,10 @@ type Options struct {
 	Outbound *outbound.Policy
 	// Version is the server version /v1/meta reports.
 	Version string
+	// ReleaseCheckDir holds the host's release check (release-check.json,
+	// ADR-0049), which `varlatch upgrade --check` records and
+	// getInstallationRelease reads; "" when there is none to read.
+	ReleaseCheckDir string
 	// PublicURL is the configured public URL; nil when not set.
 	PublicURL *url.URL
 	// Sync is the outbound sync installation switch; SyncAdapters narrows
@@ -149,6 +155,10 @@ type Options struct {
 	// served by the generated strict handler: a pattern whose operation
 	// this package does not implement answers 500 if it is ever reached.
 	Built []string
+	// CLI, when set, is serve_cli (ADR-0058 Decision 3; go/server/
+	// servecli): the handler of the release being served, nil until one is
+	// ready. Unset, serve_cli is off.
+	CLI func() http.Handler
 	// Stubbed takes operations, by route pattern, out of the ones this
 	// build has, for tests of the stub itself now that every /v1 operation
 	// is built: each answers the shared stub. Built wins over it.
@@ -481,7 +491,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target := requestTarget(r)
 	normalized := normalizeTarget(target)
 	front := nginxPath(target)
-	isAPI := apiPrefix.MatchString(front) || cliPaths[front]
+	isAPI := apiPrefix.MatchString(front) || cliPaths[front] || s.opts.CLI != nil && servecli.IsPath(front)
 	p := front
 	if s.opts.Tailnet != nil {
 		// A tailnet listener is the API alone: no nginx in front of it.
@@ -513,7 +523,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if v == http.ErrAbortHandler {
 				panic(v)
 			}
-			s.opts.Log.Error("a request handler panicked", "method", r.Method, "path", p, "requestId", id, "panic", fmt.Sprint(v))
+			// The panic's type and where it was, never its value: it can hold a request's or a row's data.
+			s.opts.Log.Error("a request handler panicked", "method", r.Method, "path", p, "requestId", id, "panic", fmt.Sprintf("%T", v), "stack", string(debug.Stack()))
 			if rec.status == 0 {
 				writeError(rec, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
 			}
@@ -682,9 +693,17 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case p == "/readyz" && isGet(r):
 		s.readyz(w, r)
-	case cliPaths[p] && isGet(r):
-		// ADR-0058 Decision 3, off (VARLATCH_SERVE_CLI's default): the same
-		// answer as a path that does not exist, as the TypeScript server's.
+	case (cliPaths[p] || s.opts.CLI != nil && servecli.IsPath(p)) && isGet(r):
+		// ADR-0058 Decision 3: the release being served, on the public
+		// listener only.
+		if s.opts.CLI != nil && s.opts.Tailnet == nil {
+			if h := s.opts.CLI(); h != nil {
+				h.ServeHTTP(w, r)
+				return
+			}
+		}
+		// Off (serve_cli's default), or not ready yet: the same answer as
+		// a path that does not exist, as the TypeScript server's.
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Type", "text/plain; charset=UTF-8")

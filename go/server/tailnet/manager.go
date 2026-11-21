@@ -79,12 +79,17 @@ type Manager struct {
 	verdict   string // Pin.Check's on observed, "" while it holds
 	status    *Status
 	statusErr bool
+	// untagged is whether the last check found a node on a self-hosted
+	// control server running with no tags (logged once as it starts).
+	untagged  bool
 	listening *bool
 	checkedAt *time.Time
 	// The browser endpoint (step 4.13c), when configured: the node's
 	// configured host name, the port, its certificate, and whether it
 	// bound its port.
-	browser   *browserEndpoint
+	browser *browserEndpoint
+	// hostname is the configured name, for the read-back (NameSuffixed).
+	hostname  string
 	persisted struct {
 		json string
 		at   time.Time
@@ -107,6 +112,44 @@ type admission struct{ cancel context.CancelFunc }
 
 // PinMissing is why access is closed for an enrolled node without a pin.
 const PinMissing = "pin-missing"
+
+// NameSuffixed is why access is closed for a node the control plane named
+// its configured hostname with a suffix (varlatch-1): the name is still held
+// by another node, as after a restore while the old installation's node is
+// not deleted (internal docs/design/go-step6.md decision 16).
+const NameSuffixed = "name-suffixed"
+
+// ErrNameSuffixed: a re-pin while the node's name still carries the
+// control plane's suffix.
+var ErrNameSuffixed = errors.New("tailnet: the node's name still carries a suffix the control plane added (its configured name is held by another node): delete that node in the tailnet's admin console and rename this one to its configured name, then re-pin")
+
+// suffixedName is whether dnsName's first label is hostname with the
+// control plane's collision suffix (-1, -2, ...), case-insensitively. A
+// name an administrator chose is not one.
+func suffixedName(dnsName, hostname string) bool {
+	if hostname == "" {
+		return false
+	}
+	label, _, _ := strings.Cut(strings.ToLower(dnsName), ".")
+	rest, ok := strings.CutPrefix(label, strings.ToLower(hostname)+"-")
+	if !ok || rest == "" {
+		return false
+	}
+	for _, c := range rest {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// SetHostname gives the node's configured hostname, for the read-back of
+// its name after enrolment (NameSuffixed).
+func (m *Manager) SetHostname(hostname string) {
+	m.mu.Lock()
+	m.hostname = hostname
+	m.mu.Unlock()
+}
 
 // NewManager loads the pin from dataDir; controlURL is the configured one
 // ("" for Tailscale's), port the tailnet listener's. Without a pin file
@@ -381,6 +424,15 @@ func (m *Manager) checkLocked(ctx context.Context) {
 		return
 	}
 	m.status, m.statusErr = &st, false
+	// On a self-hosted control server the node's tags are its pre-auth
+	// key's: an untagged key leaves it untagged, which is said (the
+	// listeners report's warning), not refused (step 7.5c c1; c3 closes
+	// access when the tags are not tailnet_tags).
+	untagged := m.controlURL != "" && st.BackendState == "Running" && len(st.Tags) == 0
+	if untagged && !m.untagged {
+		m.log.Warn("the tailnet node joined its self-hosted control server with no tags: its tags are its pre-auth key's, which must carry tailnet_tags (headscale preauthkeys create --tags)", "controlUrl", m.controlURL)
+	}
+	m.untagged = untagged
 	if st.BackendState != "Running" || st.Suffix == "" {
 		m.persistLocked()
 		return
@@ -402,9 +454,18 @@ func (m *Manager) checkLocked(ctx context.Context) {
 		return
 	}
 	m.verdict = m.pin.Check(o)
-	if m.verdict != "" && m.pin.Closed == nil {
+	if m.verdict == "" && suffixedName(st.DNSName, m.hostname) {
+		m.verdict = NameSuffixed
+	}
+	switch {
+	case m.verdict == NameSuffixed && m.pin.Closed == nil:
+		m.log.Error("the control plane named this node with a suffix: its configured name is held by another node (after a restore, the old installation's); tailnet access is closed. Delete that node in the tailnet's admin console, rename this one to its configured name, then re-pin on the host (varlatch tailnet repin --yes)",
+			"name", st.DNSName, "hostname", m.hostname)
+	case m.verdict != "" && m.pin.Closed == nil:
 		m.log.Error("the tailnet no longer matches its pin; tailnet access is closed until it is re-pinned on the host",
 			"reason", m.verdict, "pinnedSuffix", m.pin.Suffix, "observedSuffix", o.Suffix, "pinnedTailnetId", m.pin.TailnetID, "observedTailnetId", o.TailnetID)
+	}
+	if m.verdict != "" && m.pin.Closed == nil {
 		closed := *m.pin
 		closed.Closed = &Closure{Reason: m.verdict, Since: now.UTC().Format(time.RFC3339), Observed: o}
 		// Latched in memory whatever happens to the file.
@@ -560,6 +621,8 @@ func (m *Manager) Repin(ctx context.Context, adopt bool, offer string, record fu
 		next = &Pin{ControlURL: o.ControlURL, TailnetID: o.TailnetID, Suffix: o.Suffix, PinnedAt: now.UTC().Format(time.RFC3339)}
 	case m.pin.Enrolling:
 		return m.pin, nil, nil
+	case m.verdict == NameSuffixed:
+		return m.pin, nil, ErrNameSuffixed
 	default:
 		var err error
 		if next, err = m.pin.Repin(*m.observed, now); err != nil || next == nil {
@@ -586,6 +649,10 @@ func (m *Manager) Repin(ctx context.Context, adopt bool, offer string, record fu
 	m.persistLocked()
 	return old, next, nil
 }
+
+// UntaggedWarning is the listeners report's warning for a node on a
+// self-hosted control server that joined with no tags.
+const UntaggedWarning = "The node joined its self-hosted control server with no tags: its tags are its pre-auth key's, which must carry tailnet_tags. Enrol it again with a tagged key (headscale preauthkeys create --tags <tailnet_tags>)."
 
 // Report is the listeners report (TailnetListenerReport), as GET
 // /v1/installation/listeners answers it.
@@ -622,6 +689,11 @@ func (m *Manager) reportLocked() jsvalue.Object {
 		endpoint = fmt.Sprintf("https://%s:%d", host, m.browser.port)
 	}
 	configured := jsvalue.Object{{Key: "tailnet", Value: tailnetName}, {Key: "listenerPort", Value: m.port}, {Key: "browserEndpoint", Value: endpoint}}
+	if m.controlURL != "" {
+		// A self-hosted control server (Headscale), named; Tailscale's is
+		// the default and left out.
+		configured = append(configured, jsvalue.Member{Key: "controlUrl", Value: m.controlURL})
+	}
 	listener, localAPI, node := unchecked, unchecked, unchecked
 	wanted := []*bool{m.listening}
 	if m.browser != nil {
@@ -664,6 +736,9 @@ func (m *Manager) reportLocked() jsvalue.Object {
 	observed := jsvalue.Object{{Key: "checkedAt", Value: checkedAt}, {Key: "checks", Value: checks}}
 	if len(details) > 0 {
 		observed = append(observed, jsvalue.Member{Key: "node", Value: details})
+	}
+	if m.untagged {
+		observed = append(observed, jsvalue.Member{Key: "warnings", Value: []any{UntaggedWarning}})
 	}
 	return jsvalue.Object{{Key: "configured", Value: configured}, {Key: "observed", Value: observed}}
 }

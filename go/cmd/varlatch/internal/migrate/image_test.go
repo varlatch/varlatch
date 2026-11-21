@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//go:build unix
+//go:build linux
 
 package migrate
 
@@ -33,6 +33,12 @@ func TestDeriveConfig(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("no %q in\n%s", want, got)
 		}
+	}
+	// A line beyond a scanner's 64 KiB is kept whole, and so is the rest.
+	long := "# " + strings.Repeat("x", 200<<10)
+	got, err = DeriveConfig(long+"\nlisten = 0.0.0.0:8686\nroot_kek_file = /keys/root-kek\n", "/srv/data", "/srv/keys", "/srv/conf")
+	if err != nil || !strings.Contains(got, long+"\n") || !strings.Contains(got, "listen = 0.0.0.0:8686\n") || !strings.Contains(got, "root_kek_file = /srv/keys/root-kek\n") {
+		t.Errorf("a long line: %v (%d bytes)", err, len(got))
 	}
 	if _, err := DeriveConfig("root_kek_file = /run/secrets/kek\n", "/d", "/k", "/c"); err == nil || !strings.Contains(err.Error(), "this host cannot reach it") {
 		t.Errorf("a key elsewhere: %v", err)

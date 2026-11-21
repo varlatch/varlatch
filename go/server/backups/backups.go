@@ -409,7 +409,9 @@ func (s *Service) clean(backups string) {
 	entries, _ := os.ReadDir(backups)
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".work-") || strings.HasSuffix(name, ".partial") && strings.Contains(name, ".vltbak.") ||
+		// A killed run's work directory, a killed remote verification's
+		// download (.remote-<id>), a partial archive.
+		if strings.HasPrefix(name, ".work-") || strings.HasPrefix(name, ".remote-") || strings.HasSuffix(name, ".partial") && strings.Contains(name, ".vltbak.") ||
 			tests && strings.HasPrefix(name, bucketTestPrefix) {
 			if err := os.RemoveAll(filepath.Join(backups, name)); err != nil {
 				s.o.Log.Warn("backup: cannot remove a killed run's file", "file", name, "error", err)
@@ -658,8 +660,85 @@ func (s *Service) upload(ctx context.Context, id, archive string) (*backup.Deliv
 	return &backup.Delivery{Destination: cfg.BackupDestination, UploadedAt: iso(s.o.Now())}, nil
 }
 
-// retain keeps the newest backup_keep archives (by their status record's
-// creation time, else the file's), and removes the others' files.
+// ErrNoDestination refuses a remote verification with no destination.
+var ErrNoDestination = errors.New("No backup destination is configured (backup_destinations_file, backup_destination): there is no remote copy to verify")
+
+// HasDestination is whether a backup destination is configured.
+func (s *Service) HasDestination() bool {
+	return s.o.Config.BackupDestinationsFile != "" && s.o.Config.BackupDestination != ""
+}
+
+// VerifyRemote downloads the archive id's uploaded copy from the
+// configured destination, opens it and checks it as the run checked the
+// local one (integrity, this release restores it, the Root KEK opens its
+// canaries), and records the result as its delivery's remote
+// verification. The download is removed after. An archive with no
+// recorded upload is refused.
+func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verification, error) {
+	if !s.HasDestination() {
+		return backup.Verification{}, ErrNoDestination
+	}
+	// Never beside a run, whose clean removes a .remote-<id> left by a
+	// killed verification.
+	if !s.running.TryLock() {
+		return backup.Verification{}, ErrRunning
+	}
+	defer s.running.Unlock()
+	st, err := backup.ReadStatus(s.dir, s.o.Now())
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	var record *backup.StatusRecord
+	for i := range st.Archives {
+		if st.Archives[i].ArchiveID == id {
+			record = &st.Archives[i]
+		}
+	}
+	if record == nil || record.Delivery == nil {
+		return backup.Verification{}, fmt.Errorf("the archive %s has no recorded upload: there is no remote copy to verify", id)
+	}
+	bek, err := s.bek()
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	defer bek.Clear()
+	client, d, err := s.client()
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	key, err := backup.ObjectKey(d, id)
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	work := filepath.Join(s.dir, Dir, ".remote-"+id)
+	_ = os.RemoveAll(work) // a killed verification's
+	if err := os.Mkdir(work, 0o700); err != nil {
+		return backup.Verification{}, err
+	}
+	defer os.RemoveAll(work)
+	downloaded := filepath.Join(work, id+".vltbak")
+	if _, err := client.Download(ctx, key, downloaded); err != nil {
+		return backup.Verification{}, err
+	}
+	v, err := s.verify(ctx, downloaded, bek, work, &backup.KeyCache{})
+	if err != nil {
+		return v, err
+	}
+	record.Delivery.RemoteVerification = &v
+	if err := backup.SaveStatus(s.dir, *record); err != nil {
+		return v, fmt.Errorf("the archive %s's remote copy was verified, but the result could not be recorded: %w", id, err)
+	}
+	return v, nil
+}
+
+// retain keeps the newest backup_keep of Go's own archives (by their status
+// record's creation time) and removes the others' files. It counts and
+// removes only an archive whose status record names a Go release: never a
+// TypeScript-format archive (go-step7 decision 18: restorable through the
+// converter, its retention the bucket's lifecycle rule or the operator's),
+// and never an archive without a readable record: one Go did not make, or
+// did not finish publishing (a run renames its archive into place before it
+// writes the record, and a failed write leaves none), is kept.
 func (s *Service) retain(backups string) []string {
 	type local struct {
 		id string
@@ -672,19 +751,17 @@ func (s *Service) retain(backups string) []string {
 		if !ok || !e.Type().IsRegular() || len(id) != 36 {
 			continue
 		}
-		at := time.Time{}
-		if info, err := e.Info(); err == nil {
-			at = info.ModTime()
+		raw, err := os.ReadFile(filepath.Join(backups, id+".json"))
+		if err != nil {
+			continue
 		}
-		if raw, err := os.ReadFile(filepath.Join(backups, id+".json")); err == nil {
-			var r struct {
-				CreatedAt string `json:"createdAt"`
-			}
-			if json.Unmarshal(raw, &r) == nil {
-				if t, err := time.Parse(time.RFC3339Nano, r.CreatedAt); err == nil {
-					at = t
-				}
-			}
+		var r backup.StatusRecord
+		if json.Unmarshal(raw, &r) != nil || !r.Go() {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, r.CreatedAt)
+		if err != nil {
+			continue
 		}
 		archives = append(archives, local{id, at})
 	}

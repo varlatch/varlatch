@@ -97,8 +97,9 @@ backup_destination = offsite
 # Tailscale node, in process, and serves the API on its tailnet address,
 # where each request carries the verified identity of the device it came
 # from. The node is always tagged, joins Tailscale's coordination server
-# (a self-hosted one is not supported yet), and pins its tailnet at
-# enrolment. Default: off.
+# (or a self-hosted one given by tailnet_control_url, by IP address only:
+# see docs/self-hosting/self-hosted-tailnet-control.md), and pins its
+# tailnet at enrolment. Default: off.
 tailnet = off
 
 # With tailnet = on: the node's host name, fixed at enrolment; the tags
@@ -148,3 +149,17 @@ tailnet = off
 # A PEM file of roots trusted for the CA's own API (a private CA); default:
 # the system's.
 #acme_ca_root =
+
+# Serving the CLI (ADR-0058 Decision 3), off by default: on, the
+# installation serves this release's varlatch for Linux, macOS and Windows,
+# and installers that install it from public_url (required):
+#   curl -fsSLo install.sh <public_url>/install.sh && sh install.sh
+# varlatchd downloads the release's files from github.com in the
+# background, after checking that SHA256SUMS is signed by the release
+# workflow of varlatch/varlatch for this version (the Sigstore trusted
+# root comes from its TUF repository), keeps them in <data_dir>/cli, and
+# checks them again at every start before serving anything. Installing
+# from the installation trusts it, and whoever controls its address, to
+# run code on the installing machine; the CLI it serves still checks the
+# release signature before it is put in place.
+#serve_cli = off

@@ -42,9 +42,10 @@ func migrated(t *testing.T) (install, migrationtest.Source) {
 	if err := os.WriteFile(path, migrationtest.Bundle(t, s, migrationtest.Options{}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// sync = off: the seed's rows come from the TypeScript server's test
-	// fixtures, some of whose Sync Targets hold a mapping its API never
-	// writes ({}).
+	// sync = off: the seed's Sync Targets (the TypeScript server's test
+	// fixtures) name hosts no test reaches, so a sync pass in flight can
+	// outlast a barrier's 5 s drain, and the barrier then stays, as it
+	// must (not a fault of the server: of the fixture).
 	in := newInstall(t, "backup_interval = off\nsync = off\n")
 	if err := os.WriteFile(in.kekFile, []byte(hex.EncodeToString(s.RootKEK)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -292,8 +293,11 @@ func TestTheReverseBarrier(t *testing.T) {
 		}
 	}
 	other := filepath.Join(t.TempDir(), "other.jsonl")
+	// Another run key: its first byte flipped, never the same key (a key
+	// whose first byte is already 1 would be with {1} put in its place).
+	otherKey := append([]byte{runKey[0] ^ 0xff}, runKey[1:]...)
 	b := migrationtest.Bundle(t, rebuilt, migrationtest.Options{Sections: &migrationtest.Sections{
-		Digests: migrationtest.Digests(t, rebuilt, append([]byte{1}, runKey[1:]...)), Decisions: decisions, At: 1}})
+		Digests: migrationtest.Digests(t, rebuilt, otherKey), Decisions: decisions, At: 1}})
 	if err := os.WriteFile(other, b, 0o600); err != nil {
 		t.Fatal(err)
 	}

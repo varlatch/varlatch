@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { canonical, judgeGate, predatedFeatures, recentCliProblems, replacements } from "../lib/gate.mjs";
+import { canonical, judgeGate, onGoServer, predatedFeatures, recentCliProblems, replacements } from "../lib/gate.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const inventory = JSON.parse(readFileSync(join(here, "..", "inventory.json"), "utf8"));
@@ -146,10 +146,11 @@ test("a gate run needs its own implementation fingerprint", () => {
   assert.match(verdict.problems.join(), /recorded no implementation fingerprint/);
 });
 
-test("today no target can pass the gate: the doctor and lifecycle replacements are open", () => {
+test("today no target can pass the gate: doctor's pending-upgrade check and the lifecycle replacements are open", () => {
   const open = replacements(inventory).filter((r) => r.replacement && typeof r.replacement === "object" && "open" in r.replacement);
-  // Doctor is written in step 6, and each lifecycle and installer suite in
-  // the step its Go counterpart lands. The Convex realtime checks' are
+  // Doctor's checks are the Go installation's (step 6.5), but for its
+  // pending upgrade (step 6.6's journal); each lifecycle and installer
+  // suite is written in the step its Go counterpart lands. The Convex realtime checks' are
   // written (step 3.5): the degraded-state checks, which run on every
   // target.
   assert.ok(!open.some((r) => r.of.startsWith("realtime.")));
@@ -158,9 +159,10 @@ test("today no target can pass the gate: the doctor and lifecycle replacements a
   }
   assert.ok(open.some((r) => r.of.startsWith("doctor.") && /step 6/.test(r.replacement.open)));
   // An external suite is open until its Go counterpart lands; the backup
-  // suites' run in the Go workflow, so they name none.
+  // suites', the Compose recovery gate's (the image test, step 6.10a) and
+  // the move's (step 6.9) run in the Go workflow, so they name none.
   for (const [name, suite] of Object.entries(inventory.externalSuites)) {
-    if (["backup-e2e", "backup-s3"].includes(name)) assert.match(suite.replacement.none, /go\.yml/, name);
+    if (["backup-e2e", "backup-s3", "backup-compose", "move"].includes(name)) assert.match(suite.replacement.none, /go\.yml/, name);
     // The Coolify live checks' Go counterparts are manual too (step 4.9e:
     // build tag coolifylive, run by hand on the lab, with their evidence).
     else if (["coolify-live", "coolify-live-expands"].includes(name)) assert.match(suite.replacement.none, /TestCoolifyLive\w+ \(build tag coolifylive/, name);
@@ -172,7 +174,7 @@ test("today no target can pass the gate: the doctor and lifecycle replacements a
   // go-server check where it is not the Go server), with a recent CLI, no
   // expected failure and the walkthrough named. Only the open replacements
   // stop it.
-  for (const [target, tsStack, goServer] of [["ts-source", "pass", "not-applicable"], ["ts-release:0.22.0", "pass", "not-applicable"], ["go-binary:/opt/varlatchd", "not-applicable", "pass"]]) {
+  for (const [target, tsStack, goServer] of [["ts-source", "pass", "not-applicable"], ["ts-release:0.22.0", "pass", "not-applicable"], ["go-binary:/opt/varlatchd", "not-applicable", "pass"], ["go-container:varlatchd:test", "not-applicable", "pass"]]) {
     const outcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" ? tsStack : c.kind === "go-server" ? goServer : "pass"]));
     const verdict = judgeGate({ inventory, run: run(outcomes, { target }), walkthrough });
     assert.equal(verdict.passed, false, target);
@@ -190,8 +192,17 @@ test("a ts-stack check replaced by a go-server check: on the Go server the repla
   const ts = judgeGate({ inventory, run: run(outcomes(of), { target: "ts-source" }), walkthrough });
   assert.ok(ts.problems.some((p) => p.startsWith(`${of}: off the Go server it must pass itself`)), ts.problems.join("\n"));
   const goOutcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" ? "not-applicable" : id === replacement ? "fail" : "pass"]));
-  const go = judgeGate({ inventory, run: run(goOutcomes, { target: "go-binary:/opt/varlatchd" }), walkthrough });
-  assert.ok(go.problems.some((p) => p.startsWith(`${of}: its replacement ${replacement} must pass in this run`)), go.problems.join("\n"));
+  // The Go server is go-binary and go-container alike (the image's
+  // varlatchd, run as go-binary): there the replacement must pass.
+  for (const target of ["go-binary:/opt/varlatchd", "go-container:varlatchd:test"]) {
+    const go = judgeGate({ inventory, run: run(goOutcomes, { target }), walkthrough });
+    assert.ok(go.problems.some((p) => p.startsWith(`${of}: its replacement ${replacement} must pass in this run`)), `${target}: ${go.problems.join("\n")}`);
+    assert.ok(!go.problems.some((p) => p.startsWith(`${of}: off the Go server`)), target);
+  }
+  assert.equal(onGoServer("go-container:varlatchd:test"), true);
+  assert.equal(onGoServer("go-binary:/opt/varlatchd"), true);
+  assert.equal(onGoServer("ts-release:0.22.0"), false);
+  assert.equal(onGoServer("go-binaryx:/x"), false);
 });
 
 test("the hand-over's go-client checks may be not applicable only when the CLI under test is not the Go CLI", () => {

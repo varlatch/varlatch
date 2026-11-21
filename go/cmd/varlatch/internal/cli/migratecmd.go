@@ -247,7 +247,13 @@ func migrateCommand(r *Run) error {
 	default:
 		j, err = e.Run(context.Background(), o.dryRun)
 	}
+	// What the journal records, read back: a refusal's request (such as
+	// --delete-old-data refused before anything was done) is not shown as
+	// done.
 	if j != nil {
+		if disk, rerr := migrate.Status(o.from); rerr == nil && disk != nil {
+			j = disk
+		}
 		if serr := r.showJournal(j, o.asJSON); serr != nil {
 			return serr
 		}
@@ -349,7 +355,7 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		}
 		b.WriteString("\n")
 		for _, a := range rb.Archives {
-			fmt.Fprintf(&b, "Go archive made since the switch, not deleted: %s (release %s, %s).\n", a.ArchiveID, a.Release, a.CreatedAt)
+			fmt.Fprintf(&b, "Go archive made since the switch (migrate deletes none; its local file follows backup_keep): %s (release %s, %s).\n", a.ArchiveID, a.Release, a.CreatedAt)
 		}
 	}
 	if c := j.Created; c != nil {
@@ -360,14 +366,30 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		fmt.Fprintf(&b, "Target made by migrate: %s (%s).\n", strings.Join(c.Made, ", "), state)
 	}
 	if f := j.Finish; f != nil {
-		fmt.Fprintf(&b, "Finished (after %s), begun %s; old data deleted: %v.", f.After, f.StartedAt, f.DeleteOldData)
+		data := "the old data kept"
+		switch {
+		case f.DeleteOldData && f.DoneAt != "":
+			data = "the old data deleted"
+		case f.DeleteOldData:
+			data = "the old data to be deleted (--delete-old-data)"
+		}
+		fmt.Fprintf(&b, "Finish (after %s), begun %s; %s.", f.After, f.StartedAt, data)
 		if f.ArchiveID != "" {
 			fmt.Fprintf(&b, " Final archive %s (format %d), verified %s.", f.ArchiveID, f.ArchiveFormat, f.VerifiedAt)
 		}
-		if f.DoneAt != "" {
+		switch {
+		case f.DoneAt != "":
 			fmt.Fprintf(&b, " Removed: %s.", strings.Join(f.Removed, ", "))
-		} else {
+		case j.Phase == migrate.Finished:
 			b.WriteString(" Not done yet: varlatch migrate --resume finishes it.")
+		default:
+			// Before finished (killed before the window closed): --finish
+			// again, which keeps a verified final archive.
+			again := "varlatch migrate --finish"
+			if f.DeleteOldData {
+				again += " --delete-old-data"
+			}
+			b.WriteString(" Not finished: run " + again + " again.")
 		}
 		b.WriteString("\n")
 	}

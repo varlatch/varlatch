@@ -3,7 +3,6 @@
 package migrate
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -11,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -53,11 +53,25 @@ const service = "varlatchd"
 func (c *Compose) Dir() string { return c.Directory }
 
 func (c *Compose) docker(ctx context.Context, args []string, stdin []byte) (Ran, error) {
-	name := c.Docker
-	if name == "" {
-		name = "docker"
+	return c.Run.Run(ctx, c.Directory, c.dockerName(), args, stdin)
+}
+
+func (c *Compose) dockerName() string {
+	if c.Docker == "" {
+		return "docker"
 	}
-	return c.Run.Run(ctx, c.Directory, name, args, stdin)
+	return c.Docker
+}
+
+// stream runs docker on streams (Streamer): a bundle in or out, never
+// held in memory, and never in a directory the container's user must
+// share with the operator.
+func (c *Compose) stream(ctx context.Context, args []string, in io.Reader, out io.Writer) (Ran, error) {
+	s, ok := c.Run.(Streamer)
+	if !ok {
+		return Ran{}, errors.New("this runner cannot stream a bundle")
+	}
+	return s.Stream(ctx, c.Directory, c.dockerName(), args, in, out)
 }
 
 // admin runs the source's `admin migration` (or another admin command)
@@ -161,9 +175,11 @@ func (c *Compose) envFile() (map[string]string, error) {
 		return nil, err
 	}
 	out := map[string]string{}
-	sc := bufio.NewScanner(bytes.NewReader(env))
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	// Split on newlines, not scanned: a line of any length is read whole
+	// (a scanner's token limit would stop at a long one and read on as if
+	// the file ended there).
+	for _, raw := range bytes.Split(env, []byte("\n")) {
+		line := strings.TrimSpace(string(raw))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -388,56 +404,128 @@ func (c *Compose) Barrier(ctx context.Context, drain time.Duration) (BarrierReco
 	return rec, nil
 }
 
-// Export writes the source bundle into the installation's backups
-// directory (the Compose file's ./backups, /backups in the container),
-// under a new name, the run key on the export's stdin; its path on this
-// host.
+// Export is the source bundle, written on this host into the
+// installation's backups directory under a new name, mode 0600 and owned
+// as that directory is: the export writes it to its standard output
+// (--out -), the run key on its standard input, so the container's user
+// never writes the operator's directory. Its path on this host.
 func (c *Compose) Export(ctx context.Context, runKey []byte, dryRun bool) (string, error) {
 	return c.export(ctx, runKey, dryRun, func(args ...string) []string {
 		return append([]string{"compose", "exec", "-T", service, "node", "dist/cli.js", "admin"}, args...)
 	})
 }
 
+// ExportSummaryPrefix starts the last line of the export's standard error
+// when it writes the bundle to its standard output: its summary, as JSON.
+const ExportSummaryPrefix = "varlatch-export-summary: "
+
 // export runs the export with the command prefix gives (exec into the
-// running daemon's container, or a one-off one).
+// running daemon's container, or a one-off one). The bundle streams into
+// a .partial beside its name, renamed to it only once the export ended
+// with status 0 and its summary: a killed run leaves the .partial, which
+// CleanLeftovers removes, and never a bundle.
 func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix func(...string) []string) (string, error) {
 	suffix := make([]byte, 6)
 	if _, err := rand.Read(suffix); err != nil {
 		return "", err
 	}
-	name := "migration-" + hex.EncodeToString(suffix) + ".jsonl"
-	args := []string{"migration", "export", "--out", "/backups/" + name, "--digests"}
+	backups := filepath.Join(c.Directory, "backups")
+	host := filepath.Join(backups, "migration-"+hex.EncodeToString(suffix)+".jsonl")
+	partial := host + ".partial"
+	out, err := createOwned(partial, backups)
+	if err != nil {
+		return "", fmt.Errorf("the bundle in the installation's backups directory: %w", err)
+	}
+	args := []string{"migration", "export", "--out", "-", "--digests"}
 	if dryRun {
 		args = append(args, "--dry-run")
 	}
 	key := RunKeyText(runKey)
 	defer clear(key)
-	r, err := c.docker(ctx, prefix(args...), key)
-	host := filepath.Join(c.Directory, "backups", name)
+	r, err := c.stream(ctx, prefix(args...), bytes.NewReader(key), out)
+	if serr := out.Sync(); err == nil && serr != nil {
+		err = serr
+	}
+	if cerr := out.Close(); err == nil && cerr != nil {
+		err = cerr
+	}
+	if err == nil && r.Code != 0 {
+		err = failure("the source's migration export", r)
+	}
+	if err == nil && !exportSummary(r.Said) {
+		err = errors.New("the source's migration export ended without its summary: the bundle it wrote is not taken")
+	}
+	if err == nil {
+		err = os.Rename(partial, host)
+	}
 	if err != nil {
+		_ = os.Remove(partial)
+		return "", err
+	}
+	// The rename made durable, as writeJournal's is: the bundle the
+	// journal will name is there after a crash.
+	if err := syncDir(backups); err != nil {
 		_ = os.Remove(host)
 		return "", err
 	}
-	if r.Code != 0 {
-		_ = os.Remove(host)
-		return "", failure("the source's migration export", r)
-	}
-	if st, err := os.Stat(host); err != nil || !st.Mode().IsRegular() {
-		return "", fmt.Errorf("the export wrote no bundle at %s", host)
-	}
 	return host, nil
+}
+
+// syncDir makes a directory's entries durable (a rename into it).
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
+// exportSummary is whether said (the export's standard error) ends with
+// its summary line: the prefix, then a JSON object.
+func exportSummary(said []byte) bool {
+	line, ok := bytes.CutPrefix(lastLine(said), []byte(ExportSummaryPrefix))
+	return ok && len(line) > 0 && line[0] == '{' && json.Valid(line)
+}
+
+// createOwned creates path (it must not exist), mode 0600, owned as dir is
+// when this process is root (dir is the operator's: setup makes it 0700).
+func createOwned(path, dir string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if os.Getuid() == 0 {
+		// As root the file must be the directory's owner's: a directory
+		// whose owner cannot be read is refused, never a root-owned file.
+		st, err := os.Stat(dir)
+		var uid, gid uint32
+		ok := false
+		if err == nil {
+			uid, gid, ok = ownerOf(st)
+			if !ok {
+				err = fmt.Errorf("the owner of %s cannot be read", dir)
+			}
+		}
+		if err == nil {
+			err = f.Chown(int(uid), int(gid))
+		}
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(path)
+			return nil, err
+		}
+	}
+	return f, nil
 }
 
 // leftoverBundle is a bundle Export names (and the export's .partial).
 var leftoverBundle = regexp.MustCompile(`^migration-[0-9a-f]{12}\.jsonl(\.partial)?$`)
 
 // CleanLeftovers removes the bundles a killed run left in the
-// installation's backups directory: Export's names only, regular files
-// only.
+// installation's backups directory (an export's .partial, a bundle not
+// yet removed): Export's names only, regular files only.
 func (c *Compose) CleanLeftovers() error {
-	if err := removeMatching(filepath.Join(c.Directory, "backups"), leftoverReverse, false); err != nil {
-		return err
-	}
 	return removeMatching(filepath.Join(c.Directory, "backups"), leftoverBundle, false)
 }
 

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build linux
+
 package migrate
 
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -52,9 +53,17 @@ func (s *fakeSource) StopIngress(_ context.Context, kind Ingress) error {
 	s.ingressDown = true
 	return nil
 }
+
+// StartIngress fails behind a gate, as the real one does: Compose starts
+// the ingress's one-off dependency (varlatch-migrate) again with it, and
+// the TypeScript migrate refuses during maintenance (run r8 of the 7.8b
+// rehearsal).
 func (s *fakeSource) StartIngress(_ context.Context, kind Ingress) error {
 	if err := s.call("start " + string(kind)); err != nil {
 		return err
+	}
+	if s.gate != nil {
+		return errors.New(`docker compose start failed (exit 1): service "varlatch-migrate" didn't complete successfully: exit 1`)
 	}
 	s.ingressDown = false
 	return nil
@@ -318,8 +327,6 @@ type fakeClock struct{ t time.Time }
 func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 func newClock() *fakeClock                   { return &fakeClock{t: time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)} }
-func randomBytes(n int) []byte               { b := make([]byte, n); _, _ = rand.Read(b); return b }
-func hexOf(b []byte) string                  { return hex.EncodeToString(b) }
 func phasesOf(j *Journal) (out []Phase) {
 	for _, s := range j.History {
 		out = append(out, s.Phase)
@@ -327,6 +334,16 @@ func phasesOf(j *Journal) (out []Phase) {
 	return
 }
 func containsCall(calls []string, c string) bool { return slices.Contains(calls, c) }
+
+// lastCall is the index of c's last call, -1 if none.
+func lastCall(calls []string, c string) int {
+	for i := len(calls) - 1; i >= 0; i-- {
+		if calls[i] == c {
+			return i
+		}
+	}
+	return -1
+}
 
 type world struct {
 	src    *fakeSource
@@ -450,6 +467,59 @@ func TestADryRunStopsThere(t *testing.T) {
 		t.Fatalf("the run after the dry run: %+v %v", again, err)
 	}
 	w.noSecrets(t)
+}
+
+// A dry run that fails (its export, here) is recorded as stopped, as one
+// that ends is: the next run starts it again on the same id, never
+// "interrupted" (--resume or --abort only). The barrier was never held.
+func TestAFailedDryRunCanRunAgain(t *testing.T) {
+	for _, dryRunOnly := range []bool{true, false} {
+		w := newWorld(t)
+		w.src.fail = map[string]error{"export --dry-run": errors.New("the source's migration export failed (exit 1): EACCES open /backups/x.partial")}
+		j, err := w.eng.Run(context.Background(), dryRunOnly)
+		if err == nil || !strings.Contains(err.Error(), "EACCES") || !strings.Contains(err.Error(), "recorded as stopped") || j == nil || !j.Stopped || !slices.Contains(beforeBarrier, j.Phase) {
+			t.Fatalf("dry run only %v: a failed dry run: %+v %v", dryRunOnly, j, err)
+		}
+		if containsCall(w.src.calls, "barrier") {
+			t.Fatal("a failed dry run held the barrier")
+		}
+		onDisk, err := readJournal(w.src.dir)
+		if err != nil || onDisk == nil || !onDisk.Stopped || onDisk.ID != j.ID {
+			t.Fatalf("the journal after a failed dry run: %+v %v", onDisk, err)
+		}
+		w.src.fail = nil
+		again, err := w.eng.Run(context.Background(), dryRunOnly)
+		want := Open
+		if dryRunOnly {
+			want = DryRun
+		}
+		if err != nil || again.ID != j.ID || again.Phase != want {
+			t.Fatalf("dry run only %v: the run after a failed dry run: %+v %v", dryRunOnly, again, err)
+		}
+		w.noSecrets(t)
+	}
+}
+
+// The pin's refusal names both images, repository and digest apart: never
+// "<repository>@<digest>", which the CLI's fail-safe reads as credentials
+// before the "@" and masks (a registry with a port, here).
+func TestThePinRefusalNamesBothImages(t *testing.T) {
+	w := newWorld(t)
+	other := "sha256:" + hexOf(randomBytes(32))
+	w.src.info.DigestRepository, w.src.info.Digest = "registry.example:5000/varlatch/varlatchd", other
+	_, err := w.eng.Run(context.Background(), true)
+	if err == nil {
+		t.Fatal("another image was not refused")
+	}
+	msg := err.Error()
+	for _, want := range []string{"repository registry.example:5000/varlatch/varlatchd, digest " + other, "not the published 0.23.0 image: repository "} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("%q lacks %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "@") {
+		t.Errorf("%q joins a repository and a digest by @", msg)
+	}
 }
 
 // A projection over the budget refuses the barrier: nothing switched.
@@ -795,6 +865,105 @@ func TestATransferThatFailsGoesBack(t *testing.T) {
 	}
 	if w.prober.probes < 5 {
 		t.Errorf("probed %d times in 10 s", w.prober.probes)
+	}
+}
+
+// An undo in the transfer gives the address back in this order: the
+// target stopped, the barrier lifted, then the source's ingress started.
+// Started behind the barrier, the ingress does not come up (its one-off
+// dependency refuses during maintenance), and the source answers nothing
+// (run r8 of the 7.8b rehearsal: a single --abort after a kill in the
+// transfer left the dashboard down). For each shape that has an ingress
+// of this host's, by a failed transfer and by --abort.
+func TestAnUndoInTheTransferLiftsTheBarrierFirst(t *testing.T) {
+	for _, kind := range []Ingress{Public, Proxy} {
+		for _, how := range []string{"a failed transfer", "--abort"} {
+			t.Run(string(kind)+", "+how, func(t *testing.T) {
+				var w *world
+				if how == "--abort" {
+					// Killed in the transfer: the barrier held, the
+					// source's ingress stopped, the target serving.
+					w = interrupted(t, Transfer)
+					j, err := readJournal(w.src.dir)
+					if err != nil {
+						t.Fatal(err)
+					}
+					j.Ingress = kind
+					if err := writeJournal(w.src.dir, j); err != nil {
+						t.Fatal(err)
+					}
+					w.src.ingressDown, w.tgt.running = true, true
+					if _, err := w.eng.Abort(context.Background()); err != nil {
+						t.Fatalf("--abort: %v\n%v", err, w.src.calls)
+					}
+				} else {
+					w = newWorld(t)
+					w.eng.Options.Ingress = kind
+					if kind == Proxy {
+						w.tgt.info.Listen, w.tgt.info.ListenHTTPS = "127.0.0.1:8787", ""
+					}
+					w.eng.Options.TransferTimeout = 10 * time.Second
+					w.prober.wrong = "inst_other"
+					if _, err := w.eng.Run(context.Background(), false); err == nil || !strings.Contains(err.Error(), "not the migrated inst_fake") {
+						t.Fatalf("%v", err)
+					}
+				}
+				release, start := slices.Index(w.src.calls, "release gate-1"), lastCall(w.src.calls, "start "+string(kind))
+				if release < 0 || start < release || w.src.ingressDown || w.tgt.running || w.src.gate != nil {
+					t.Fatalf("not given back in order: release at %d, start at %d, down %v, target running %v, gate %v\n%v",
+						release, start, w.src.ingressDown, w.tgt.running, w.src.gate, w.src.calls)
+				}
+				if stop := lastCall(w.tgt.calls, "stop"); stop < 0 {
+					t.Fatalf("the target was not stopped: %v", w.tgt.calls)
+				}
+			})
+		}
+	}
+}
+
+// An undo in the transfer that cannot show the source's gate is gone
+// leaves the ingress stopped and the journal where it was, for --resume:
+// the gate unreadable, a gate that is not the migration's, the barrier's
+// release refused. Each says why the ingress was not started.
+func TestAnUndoInTheTransferKeepsTheIngressStoppedBehindAGate(t *testing.T) {
+	for _, c := range []struct {
+		name, why string
+		set       func(w *world)
+		abort     bool
+	}{
+		{"the gate unreadable", "could not confirm the source's gate is lifted, so its Caddy is not started again",
+			func(w *world) { w.src.fail["gate"] = errors.New("docker: no answer") }, true},
+		{"another gate", "the source's Caddy is not started again while its gate stands",
+			func(w *world) { w.src.gate = &Gate{Kind: "restore", ID: "restore-1"} }, true},
+		{"the release refused", "the source's Caddy is not started again while its barrier stands",
+			func(w *world) { w.src.fail["release gate-1"] = errors.New("Migration ownership lost") }, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var w *world
+			var err error
+			if c.abort {
+				w = interrupted(t, Transfer)
+				w.src.ingressDown, w.tgt.running = true, true
+				c.set(w)
+				_, err = w.eng.Abort(context.Background())
+			} else {
+				w = newWorld(t)
+				w.prober.wrong = "inst_other"
+				w.eng.Options.TransferTimeout = 10 * time.Second
+				c.set(w)
+				_, err = w.eng.Run(context.Background(), false)
+			}
+			if err == nil || !strings.Contains(err.Error(), c.why) || !strings.Contains(err.Error(), "varlatch migrate --resume tries again") {
+				t.Fatalf("%v, want %q", err, c.why)
+			}
+			if containsCall(w.src.calls, "start public") || !w.src.ingressDown || w.tgt.running {
+				t.Fatalf("the ingress started (down %v), or the target runs (%v): %v", w.src.ingressDown, w.tgt.running, w.src.calls)
+			}
+			j, rerr := readJournal(w.src.dir)
+			if rerr != nil || j.Phase != Transfer || !j.Undoing || j.Undone != nil {
+				t.Fatalf("the journal: %+v %v", j, rerr)
+			}
+		})
 	}
 }
 

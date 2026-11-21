@@ -3,7 +3,6 @@
 package migrate
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -11,11 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -80,34 +78,45 @@ type ReverseSource interface {
 	UndoRebuild(ctx context.Context, plan RebuildRecord) error
 }
 
-// projectName is the installation's Compose project: .env's
-// COMPOSE_PROJECT_NAME, else its directory's name as Compose normalizes it.
-func (c *Compose) projectName() (string, error) {
-	env, err := c.envFile()
+// projectName is the installation's Compose project, as Compose itself
+// resolves it (its -p, COMPOSE_PROJECT_NAME, the files' top-level name:,
+// the directory's name, in that order): `docker compose config` in the
+// installation's directory, whose .env names its files. Uninterpolated:
+// the configuration interpolated would carry the installation's secrets
+// from .env, and only its name is read. Every volume name the reverse and
+// --finish derive starts with it.
+func (c *Compose) projectName(ctx context.Context) (string, error) {
+	cfg, err := c.config(ctx)
+	return cfg.Name, err
+}
+
+// composeConfig is what migrate reads of `docker compose config`.
+type composeConfig struct {
+	Name     string `json:"name"`
+	Services map[string]struct {
+		NetworkMode string `json:"network_mode"`
+	} `json:"services"`
+}
+
+func (c *Compose) config(ctx context.Context) (composeConfig, error) {
+	r, err := c.docker(ctx, []string{"compose", "config", "--no-interpolate", "--format", "json"}, nil)
 	if err != nil {
-		return "", err
+		return composeConfig{}, err
 	}
-	name := env["COMPOSE_PROJECT_NAME"]
-	if name == "" {
-		name = filepath.Base(c.Directory)
+	if r.Code != 0 {
+		return composeConfig{}, errors.New("docker compose config failed: the installation's Compose project could not be read")
 	}
-	name = strings.ToLower(name)
-	var b strings.Builder
-	for _, r := range name {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
-			b.WriteRune(r)
-		}
+	var m composeConfig
+	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &m); err != nil || m.Name == "" || strings.ContainsAny(m.Name, "/ \t\n") {
+		return composeConfig{}, errors.New("docker compose config did not name the installation's Compose project")
 	}
-	if b.Len() == 0 {
-		return "", fmt.Errorf("%s has no Compose project name", c.Directory)
-	}
-	return b.String(), nil
+	return m, nil
 }
 
 // RebuildPlan: the fresh volumes, named by the project and the migration
 // (its id's last 8 letters), and COMPOSE_FILE as it is now.
-func (c *Compose) RebuildPlan(_ context.Context, j *Journal) (RebuildRecord, error) {
-	project, err := c.projectName()
+func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, error) {
+	project, err := c.projectName(ctx)
 	if err != nil {
 		return RebuildRecord{}, err
 	}
@@ -193,10 +202,23 @@ func (c *Compose) composeFiles(plan RebuildRecord) string {
 	return strings.Join(append(files, OverrideFile), sep)
 }
 
-// setEnv writes .env with name set to value (nil: the line removed),
-// every other line as it is; the file's mode kept.
+// setEnv writes .env with name set to value (nil: the line removed), every
+// other byte as it was: the file is split on newlines, never scanned, so a
+// line of any length is kept whole (a scanner stopped by its token limit
+// would write a truncated .env over the operator's). A .env that is a
+// symbolic link is written at its target, which is replaced through a
+// temporary name beside it; the link stays. A link whose target is not
+// there is refused, never replaced by a file. Its mode is kept.
 func (c *Compose) setEnv(name string, value *string) error {
 	path := filepath.Join(c.Directory, ".env")
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	} else if st, lerr := os.Lstat(path); lerr == nil && st.Mode()&fs.ModeSymlink != 0 {
+		link, _ := os.Readlink(path)
+		return fmt.Errorf("%s is a symbolic link to %s, which is not there: the installation's .env is not replaced by a file; restore its target, then run varlatch migrate again", path, link)
+	}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -207,20 +229,25 @@ func (c *Compose) setEnv(name string, value *string) error {
 	}
 	var out bytes.Buffer
 	done := false
-	sc := bufio.NewScanner(bytes.NewReader(b))
-	for sc.Scan() {
-		line := sc.Text()
-		key, _, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && strings.TrimSpace(key) == name && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+	for _, line := range bytes.SplitAfter(b, []byte("\n")) {
+		if len(line) == 0 {
+			continue
+		}
+		text := strings.TrimSpace(string(line))
+		key, _, ok := strings.Cut(text, "=")
+		if ok && strings.TrimSpace(key) == name && !strings.HasPrefix(text, "#") {
 			if value != nil && !done {
 				out.WriteString(name + "=" + *value + "\n")
 			}
 			done = true
 			continue
 		}
-		out.WriteString(line + "\n")
+		out.Write(line)
 	}
 	if value != nil && !done {
+		if out.Len() > 0 && !bytes.HasSuffix(out.Bytes(), []byte("\n")) {
+			out.WriteByte('\n')
+		}
 		out.WriteString(name + "=" + *value + "\n")
 	}
 	return writeFileDurably(path, out.Bytes(), mode)
@@ -282,25 +309,24 @@ func (c *Compose) Rebuild(ctx context.Context, plan RebuildRecord) error {
 	return c.compose(ctx, "docker compose up -d postgres", "up", "-d", "postgres")
 }
 
-// leftoverReverse is the reverse bundle's copy in the backups directory.
-var leftoverReverse = regexp.MustCompile(`^migration-reverse-[0-9a-f]{12}\.jsonl$`)
+// importAnswerLimit bounds what the import's standard output keeps: its
+// one JSON line.
+const importAnswerLimit = 1 << 20
 
-// ImportReverse copies the bundle into the installation's backups
-// directory (given to that directory's owner, so the container's user
-// reads it), runs the import's one-off service, and removes the copy.
+// ImportReverse runs the import's one-off service with the reverse bundle
+// on its standard input (--in -): no copy of it in the installation's
+// backups directory, which the container's user cannot read. The import's
+// refusals (varlatchd running, a gate) come before it reads its input: its
+// exit status and standard error say why.
 func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRecord, error) {
-	suffix := make([]byte, 6)
-	if _, err := rand.Read(suffix); err != nil {
+	in, err := os.Open(bundle)
+	if err != nil {
 		return TSImportRecord{}, err
 	}
-	name := "migration-reverse-" + hex.EncodeToString(suffix) + ".jsonl"
-	host := filepath.Join(c.Directory, "backups", name)
-	if err := copyOwned(bundle, host, filepath.Join(c.Directory, "backups")); err != nil {
-		return TSImportRecord{}, fmt.Errorf("the reverse bundle into the installation's backups directory: %w", err)
-	}
-	defer os.Remove(host)
-	r, err := c.docker(ctx, []string{"compose", "--profile", reverseProfile, "run", "--rm", "-T", "varlatch-reverse-import",
-		"node", "dist/cli.js", "admin", "migration", "import", "--in", "/backups/" + name}, nil)
+	defer in.Close()
+	answer := &tail{n: importAnswerLimit}
+	r, err := c.stream(ctx, []string{"compose", "--profile", reverseProfile, "run", "--rm", "-T", "varlatch-reverse-import",
+		"node", "dist/cli.js", "admin", "migration", "import", "--in", "-"}, in, answer)
 	if err != nil {
 		return TSImportRecord{}, err
 	}
@@ -308,42 +334,10 @@ func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRec
 		return TSImportRecord{}, failure("the TypeScript release's admin migration import", r)
 	}
 	var rec TSImportRecord
-	if err := json.Unmarshal(lastLine(r.Answer), &rec); err != nil || rec.InstallationID == "" || rec.AuditPosition == "" {
+	if err := json.Unmarshal(lastLine(answer.bytes()), &rec); err != nil || rec.InstallationID == "" || rec.AuditPosition == "" {
 		return TSImportRecord{}, errors.New("the TypeScript release's admin migration import did not answer with the installation and its audit position")
 	}
 	return rec, nil
-}
-
-// copyOwned copies from to a new file to, mode 0600, given to dir's owner
-// when this process is root.
-func copyOwned(from, to, dir string) error {
-	in, err := os.Open(from)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(out, in)
-	if err == nil {
-		err = out.Sync()
-	}
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		if st, serr := os.Stat(dir); serr == nil {
-			if uid, gid, ok := ownerOf(st); ok && os.Getuid() == 0 {
-				err = os.Chown(to, int(uid), int(gid))
-			}
-		}
-	}
-	if err != nil {
-		_ = os.Remove(to)
-	}
-	return err
 }
 
 // ResetConvex: Convex on its fresh volume and database, its functions
@@ -409,13 +403,31 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 		return err
 	}
 	for _, v := range plan.Volumes {
-		r, err := c.docker(ctx, []string{"volume", "rm", "-f", v}, nil)
+		// Asked directly before its removal: no container, running or
+		// stopped, still uses the fresh volume (the services are back on
+		// their own ones).
+		r, err := c.docker(ctx, []string{"ps", "-a", "--filter", "volume=" + v, "--format", "{{.Names}}"}, nil)
+		if err != nil {
+			return err
+		}
+		if r.Code != 0 {
+			return failure("docker ps --filter volume="+v, r)
+		}
+		if users := strings.Fields(string(r.Answer)); len(users) > 0 {
+			return fmt.Errorf("the reverse's fresh volume %s is still used by %s: left as it is", v, strings.Join(users, ", "))
+		}
+		r, err = c.docker(ctx, []string{"volume", "rm", "-f", v}, nil)
 		if err != nil {
 			return err
 		}
 		if r.Code != 0 {
 			return failure("docker volume rm "+v, r)
 		}
+	}
+	// The one-off commands below and varlatchd itself run in varlatchd's
+	// network, without their dependencies.
+	if err := c.networkOwnerRunning(ctx); err != nil {
+		return err
 	}
 	g, err := c.gateOffline(ctx)
 	if err != nil {
@@ -449,7 +461,38 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 			return failure("the TypeScript release's migration mark-migrated-out", r)
 		}
 	}
-	return c.compose(ctx, "docker compose up -d varlatchd", "up", "-d", service)
+	// --no-deps: varlatchd's one-off dependency (varlatch-migrate,
+	// service_completed_successfully) would run again with it and refuse
+	// behind the migrated-out marker, so varlatchd would not start. Its
+	// own volume's schema is current already, Postgres was started above,
+	// and varlatchd restarts (unless-stopped) until Postgres answers.
+	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
+}
+
+// networkOwnerRunning refuses, with the step to take, when varlatchd runs
+// in another service's network (network_mode: service:tailscale) and that
+// service is not running: without their dependencies, neither varlatchd
+// nor a one-off container of its starts there. That service is not started
+// here: it is the old Tailscale node, which must not come back beside Go's
+// unasked (as ServeForArchive refuses to).
+func (c *Compose) networkOwnerRunning(ctx context.Context) error {
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return err
+	}
+	owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:")
+	if !ok {
+		return nil
+	}
+	running, err := c.running(ctx)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(running, owner) {
+		return nil
+	}
+	return fmt.Errorf("the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), which is not running, so neither it nor its one-off commands can start: "+
+		"start it by hand (docker compose up -d --no-deps %s, in %s; it brings the old Tailscale node back), then varlatch migrate --resume", owner, owner, owner, c.Directory)
 }
 
 // gateOffline is the installation's gate, read in a one-off container.

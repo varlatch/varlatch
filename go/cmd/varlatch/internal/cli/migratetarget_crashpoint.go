@@ -87,3 +87,9 @@ func (h rootedHost) CheckConfig(path string) (string, error) {
 func (rootedHost) Ready(context.Context, string) error {
 	return errors.New("no readiness under a test root")
 }
+
+// Admin: making a target runs no varlatchd admin command of setup's (its
+// configuration is checked by CheckConfig), so none runs under a test root.
+func (rootedHost) Admin(context.Context, ...string) ([]byte, error) {
+	return nil, errors.New("no varlatchd admin under a test root")
+}

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -77,6 +78,11 @@ type hostEnv struct {
 	// public is public HTTPS's certificate manager, in a running varlatchd
 	// with listen_https; nil otherwise.
 	public *publictls.Manager
+	// serving is set once the HTTP listener serves, in a running
+	// varlatchd; nil offline. admin status reports it.
+	serving *atomic.Bool
+	// ready is the /readyz checks of a running varlatchd; nil offline.
+	ready func(context.Context) (schema, kek, inst bool)
 	// barrier serializes the reverse's barrier and release commands: one
 	// at a time makes, or removes, the frozen copy and its temporary name.
 	barrier sync.Mutex
@@ -199,16 +205,9 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s: %v; nothing was sent or written\n", what, err)
 		return ExitConfig
 	}
-	path := filepath.Join(cfg.DataDir, ControlSocket)
-	if conn, err := net.DialTimeout("unix", path, 5*time.Second); err == nil {
-		uc := conn.(*net.UnixConn)
-		// The server must be the data directory's owner (or root): a socket
-		// someone else put there is refused before anything is sent.
-		if peer, ok := peerUID(uc); !ok || !serverPeerAllowed(peer, owner) {
-			_ = uc.Close()
-			fmt.Fprintf(stderr, "%s: the process on %s is not the data directory's owner (uid %d) or root; nothing was sent or written\n", what, path, owner)
-			return ExitConfig
-		}
+	if uc, status := daemonConn(cfg, owner, what, stderr); status != ExitOK {
+		return status
+	} else if uc != nil {
 		return viaSocket(uc, what, args, stdout, stderr)
 	}
 	// The lock comes first, as the TypeScript admin CLI takes its operator
@@ -259,6 +258,26 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 	}
 	defer env.store.Close()
 	return runHost(context.Background(), env, args, stdout, stderr)
+}
+
+// daemonConn is a connection to the varlatchd answering on the data
+// directory's control socket: nil (ExitOK) when none answers; a refusal,
+// printed, when the process there is not the data directory's owner (or
+// root), so a socket someone else put there is refused before anything is
+// sent.
+func daemonConn(cfg *config.Config, owner int, what string, stderr io.Writer) (*net.UnixConn, int) {
+	path := filepath.Join(cfg.DataDir, ControlSocket)
+	conn, err := net.DialTimeout("unix", path, 5*time.Second)
+	if err != nil {
+		return nil, ExitOK
+	}
+	uc := conn.(*net.UnixConn)
+	if peer, ok := peerUID(uc); !ok || !serverPeerAllowed(peer, owner) {
+		_ = uc.Close()
+		fmt.Fprintf(stderr, "%s: the process on %s is not the data directory's owner (uid %d) or root; nothing was sent or written\n", what, path, owner)
+		return nil, ExitConfig
+	}
+	return uc, ExitOK
 }
 
 // fileOnly reports whether a host command reads and writes only the data

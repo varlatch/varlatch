@@ -7,6 +7,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -95,11 +96,11 @@ func TestAdminSchemaStatusAndUpgrade(t *testing.T) {
 	r.stop(t)
 
 	code, out, errOut := runAdmin(t, "schema", "upgrade", "--config", in.conf)
-	if code != ExitOK || !strings.Contains(out, "already version 1: nothing to do") {
+	if code != ExitOK || !strings.Contains(out, fmt.Sprintf("already version %d: nothing to do", db.SchemaVersion)) {
 		t.Fatalf("upgrade of a current database: %d %q %q", code, out, errOut)
 	}
 	code, out, _ = runAdmin(t, "schema", "upgrade", "--json", "--config", in.conf)
-	if code != ExitOK || !strings.Contains(out, `"from":1,"to":1,"compatibleFrom":1,"changed":false`) {
+	if code != ExitOK || !strings.Contains(out, fmt.Sprintf(`"from":%d,"to":%d,"compatibleFrom":%d,"changed":false`, db.SchemaVersion, db.SchemaVersion, db.CompatibleFrom)) {
 		t.Fatalf("upgrade --json: %d %q", code, out)
 	}
 
@@ -120,10 +121,10 @@ func TestAdminSchemaStatusAndUpgrade(t *testing.T) {
 		t.Fatalf("a newer database it may not open: %+v", doc)
 	}
 	code, out, _ = runAdmin(t, "schema", "status", "--config", in.conf)
-	if code != ExitOK || !strings.Contains(out, "This varlatchd cannot open it: it needs varlatchd of schema 2 or later.") {
+	if code != ExitOK || !strings.Contains(out, fmt.Sprintf("This varlatchd cannot open it: it needs varlatchd of schema %d or later.", db.SchemaVersion+1)) {
 		t.Fatalf("%d %q", code, out)
 	}
-	if code, _, errOut = runAdmin(t, "schema", "upgrade", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "needs a varlatchd that knows version 2") {
+	if code, _, errOut = runAdmin(t, "schema", "upgrade", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, fmt.Sprintf("needs a varlatchd that knows version %d", db.SchemaVersion+1)) {
 		t.Fatalf("%d %q", code, errOut)
 	}
 	// serve stops with a failure before it serves anything.
@@ -135,7 +136,7 @@ func TestAdminSchemaStatusAndUpgrade(t *testing.T) {
 	}()
 	select {
 	case code := <-done:
-		if code != ExitFailure || !strings.Contains(stderr.String(), "needs a varlatchd that knows version 2") {
+		if code != ExitFailure || !strings.Contains(stderr.String(), fmt.Sprintf("needs a varlatchd that knows version %d", db.SchemaVersion+1)) {
 			t.Fatalf("serve on a database it may not open: %d %q", code, stderr.String())
 		}
 	case <-served:
@@ -161,7 +162,7 @@ func TestAdminSchemaUsage(t *testing.T) {
 	in := newInstall(t, "")
 	for _, args := range [][]string{{"schema"}, {"schema", "migrate"}, {"schema", "status", "--json", "--json"}, {"schema", "upgrade", "--yes"}} {
 		code, out, errOut := runAdmin(t, append(args, "--config", in.conf)...)
-		if code != 64 || out != "" || !strings.Contains(errOut, "Usage: varlatchd admin schema status|upgrade [--json] [--config <file>]") {
+		if code != 64 || out != "" || !strings.Contains(errOut, schemaUsage) {
 			t.Errorf("%v: %d %q %q", args, code, out, errOut)
 		}
 	}

@@ -1430,3 +1430,19 @@ CREATE TABLE sync_cursor (
   event_id TEXT NOT NULL DEFAULT '',
   cursor_order INTEGER NOT NULL DEFAULT 0
 ) STRICT;
+
+-- Certificate issuances for the public HTTPS name (ADR-0059 Decision 9;
+-- internal docs/design/go-step6.md decision 16): every order or renewal
+-- this installation started, kept in the database so that the count
+-- survives a backup and a restore. outcome is 'started' until the attempt
+-- ends: 'issued', or 'refused' when the CA answered with a problem and
+-- issued nothing. A started attempt that never ended (a timeout, a crash)
+-- counts as issued.
+CREATE TABLE certificate_issuances (
+  id INTEGER NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL CONSTRAINT certificate_issuances_name_check CHECK (length(name) BETWEEN 1 AND 253 AND name = lower(name)),
+  started_at INTEGER NOT NULL,
+  outcome TEXT NOT NULL DEFAULT 'started' CONSTRAINT certificate_issuances_outcome_check CHECK (outcome IN ('started', 'issued', 'refused')),
+  ended_at INTEGER
+) STRICT;
+CREATE INDEX certificate_issuances_name_started ON certificate_issuances (name, started_at);

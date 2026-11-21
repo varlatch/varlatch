@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -163,6 +164,45 @@ func (h SystemHost) CheckConfig(path string) (string, error) {
 		return oneLine(string(out)), nil
 	}
 	return "", err
+}
+
+// Admin runs `varlatchd admin <args> --config /etc/varlatch/varlatchd.conf`,
+// with the credentials directory a host command outside the unit needs.
+// What it prints (which may hold a one-time link) is returned, never put
+// in an error; what it says when it fails is.
+func (h SystemHost) Admin(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, h.Varlatchd, append(append([]string{"admin"}, args...), "--config", ConfigFile)...)
+	cmd.Env = append(append([]string{}, h.Env...), "CREDENTIALS_DIRECTORY="+filepath.Dir(RootKEK))
+	out, said, err := runChild(cmd)
+	if err != nil {
+		clear(out)
+		return nil, fmt.Errorf("setup: varlatchd admin %s: %v %s", args[0], err, oneLine(string(said)))
+	}
+	return out, nil
+}
+
+// runChild runs cmd and returns what it printed and what it said, each
+// read whole from its pipe before the wait (as internal/cli's runChild).
+func runChild(cmd *exec.Cmd) (answer, said []byte, err error) {
+	outPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	errPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, nil, err
+	}
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(errPipe)
+		done <- b
+	}()
+	answer, _ = io.ReadAll(outPipe)
+	said = <-done
+	return answer, said, cmd.Wait()
 }
 
 func (SystemHost) Ready(ctx context.Context, listen string) error {

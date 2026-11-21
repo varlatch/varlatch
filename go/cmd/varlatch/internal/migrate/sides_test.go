@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build linux
+
 package migrate
 
 import (
@@ -7,6 +9,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +43,89 @@ func (s *scripted) Run(_ context.Context, dir, name string, args []string, stdin
 	}
 	s.t.Fatalf("unexpected run: %s", key)
 	return Ran{}, nil
+}
+
+// Stream is Run on streams: what stdin gives is recorded (read to its
+// end), the answer goes to stdout, and only Said and Code come back.
+func (s *scripted) Stream(ctx context.Context, dir, name string, args []string, in io.Reader, out io.Writer) (Ran, error) {
+	var input []byte
+	if in != nil {
+		var err error
+		if input, err = io.ReadAll(in); err != nil {
+			return Ran{}, err
+		}
+	}
+	r, err := s.Run(ctx, dir, name, args, input)
+	if err != nil {
+		return Ran{}, err
+	}
+	if _, err := out.Write(r.Answer); err != nil {
+		return Ran{}, err
+	}
+	return Ran{Said: r.Said, Code: r.Code}, nil
+}
+
+// failingWriter fails once more than limit bytes were written to it.
+type failingWriter struct{ n, limit int }
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	if w.n+len(p) > w.limit {
+		return 0, errors.New("the disk is full (the test's)")
+	}
+	w.n += len(p)
+	return len(p), nil
+}
+
+// ExecRunner.Stream, with real programs: the input is read to its end and
+// closed, the output arrives whole, stderr's tail is kept; a program that
+// writes more than the destination takes is killed, and Stream returns
+// (never waits on a pipe nobody reads); one that refuses before reading
+// its input is its exit status, not an error of the copy.
+func TestExecRunnerStream(t *testing.T) {
+	ctx := context.Background()
+	var x ExecRunner
+	input := randomBytes(3 << 20)
+	var got bytes.Buffer
+	r, err := x.Stream(ctx, t.TempDir(), "sh", []string{"-c", "cat; echo said >&2"}, bytes.NewReader(input), &got)
+	if err != nil || r.Code != 0 || !bytes.Equal(got.Bytes(), input) || string(r.Said) != "said\n" || r.Answer != nil {
+		t.Fatalf("cat: %d bytes, %+v, %v", got.Len(), r, err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := x.Stream(ctx, t.TempDir(), "sh", []string{"-c", "while :; do printf '%065536d' 0; done"}, nil, &failingWriter{limit: 1 << 20})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "the disk is full") {
+			t.Fatalf("a destination that fails: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Stream waited on a program whose output nobody reads")
+	}
+	r, err = x.Stream(ctx, t.TempDir(), "sh", []string{"-c", "echo refused >&2; exit 3"}, bytes.NewReader(input), io.Discard)
+	if err != nil || r.Code != 3 || string(r.Said) != "refused\n" {
+		t.Fatalf("a refusal before reading: %+v %v", r, err)
+	}
+}
+
+// tail keeps exactly the last n bytes, however they were written.
+func TestTail(t *testing.T) {
+	all := randomBytes(10_000)
+	for _, chunk := range []int{1, 7, 100, 999, 1000, 4000} {
+		tl := &tail{n: 1000}
+		for i := 0; i < len(all); i += chunk {
+			_, _ = tl.Write(all[i:min(i+chunk, len(all))])
+		}
+		if !bytes.Equal(tl.bytes(), all[len(all)-1000:]) || len(tl.b) > 2000 {
+			t.Errorf("chunk %d: kept %d bytes (held %d), not the last 1000", chunk, len(tl.bytes()), len(tl.b))
+		}
+	}
+	short := &tail{n: 1000}
+	_, _ = short.Write([]byte("abc"))
+	if string(short.bytes()) != "abc" {
+		t.Errorf("a short tail: %q", short.bytes())
+	}
 }
 
 // The arguments never hold a key: the run key and the keys go on stdin.
@@ -108,24 +195,17 @@ func TestComposeCommands(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "secrets", "varlatch-kek"), kek, 0o600)
 	archive := "0f0e0d0c-0b0a-4908-8706-050403020100"
 	exec := "docker compose exec -T varlatchd node dist/cli.js admin migration "
+	bundleBytes := randomBytes(3 << 20)
 	run := &scripted{t: t, answers: map[string]Ran{
 		exec + "status":                     {Answer: []byte(`{"daemon":true,"gate":{"kind":"migration","id":"g1","phase":"frozen"}}` + "\n")},
 		exec + "barrier --drain-seconds 90": {Answer: []byte(`{"gate":{"kind":"migration","id":"g1"},"drained":{"ms":1200,"waitedFor":{}},"frozen":{"auditPosition":"46","at":"2026-11-20T12:00:00.000Z","snapshot":"00000003-0000001B-1"}}` + "\n")},
-		exec + "export":                     {Answer: []byte(`{"frozenPoint":{},"bundle":{}}` + "\n")},
+		exec + "export":                     {Answer: bundleBytes, Said: []byte("exporting\n" + ExportSummaryPrefix + `{"frozenPoint":{},"bundle":{}}` + "\n")},
 		exec + "release --id g1":            {Answer: []byte(`{"released":true}`)},
 		exec + "mark-migrated-out --id g1":  {Answer: []byte(`{"gate":{"kind":"migrated-out"}}`)},
 		"varlatch-ts admin backup create":   {Answer: []byte("Archive created: " + dir + "/backups/" + archive + ".vltbak (" + archive + ")\nUpload completed to offsite; remote retrieval has not been verified.\n")},
 		"varlatch-ts admin backup verify":   {Answer: []byte(`{"archiveId":"` + archive + `","integrity":true,"compatibility":true,"keyMatch":true,"message":"checks passed"}` + "\n")},
 	}}
 	c := &Compose{Directory: dir, Run: run, BEKFile: "/keys/bek", Destination: "offsite", ReadCredentialsFile: "/keys/read.json"}
-	// The export's bundle appears where its --out names it, in backups/.
-	exportPath := func(key string) string {
-		i := strings.Index(key, "/backups/")
-		name := key[i+len("/backups/"):]
-		return filepath.Join(dir, "backups", strings.Fields(name)[0])
-	}
-	runWithBundle := &bundleRunner{scripted: run, at: exportPath}
-	c.Run = runWithBundle
 	ctx := context.Background()
 	g, err := c.Gate(ctx)
 	if err != nil || g == nil || g.Kind != "migration" || g.ID != "g1" {
@@ -147,13 +227,24 @@ func TestComposeCommands(t *testing.T) {
 	if err != nil || filepath.Dir(path) != filepath.Join(dir, "backups") {
 		t.Fatalf("export: %s %v", path, err)
 	}
+	// The bundle came on the export's stdout, into a file of this host's:
+	// all of it, mode 0600, and no .partial left.
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, bundleBytes) {
+		t.Fatalf("the bundle on this host: %d bytes, %v", len(got), err)
+	}
+	if st, err := os.Stat(path); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("the bundle's mode: %v %v", st, err)
+	}
+	if _, err := os.Stat(path + ".partial"); !os.IsNotExist(err) {
+		t.Fatalf("the .partial after the export: %v", err)
+	}
 	var exportKey string
 	for _, r := range run.ran {
 		if strings.HasPrefix(r, exec+"export") {
 			exportKey = r
 		}
 	}
-	if !strings.HasSuffix(exportKey, " --digests --dry-run") || !bytes.Equal(run.stdins[exportKey], RunKeyText(runKey)) {
+	if exportKey != exec+"export --out - --digests --dry-run" || !bytes.Equal(run.stdins[exportKey], RunKeyText(runKey)) {
 		t.Fatalf("the export: %q, stdin %q", exportKey, run.stdins[exportKey])
 	}
 	if err := c.Release(ctx, "g1"); err != nil {
@@ -174,19 +265,60 @@ func TestComposeCommands(t *testing.T) {
 	noKeyInArgs(t, run.ran, runKey, bytes.TrimSpace(kek))
 }
 
-// bundleRunner leaves the export's bundle where its --out names it.
-type bundleRunner struct {
-	*scripted
-	at func(string) string
+// An export that fails, or ends without its summary, leaves nothing in
+// the backups directory: neither its bundle nor its .partial.
+func TestComposeExportLeavesNothingWhenItFails(t *testing.T) {
+	exec := "docker compose exec -T varlatchd node dist/cli.js admin migration export"
+	for name, r := range map[string]Ran{
+		"a failure":          {Code: 1, Answer: []byte("half a bundle"), Said: []byte("varlatchd admin migration export: EACCES open /tmp/x\n")},
+		"no summary":         {Answer: []byte("a bundle"), Said: []byte("exporting\n")},
+		"a summary not JSON": {Answer: []byte("a bundle"), Said: []byte(ExportSummaryPrefix + "{not json\n")},
+		"a summary not last": {Answer: []byte("a bundle"), Said: []byte(ExportSummaryPrefix + "{}\nsomething after\n")},
+	} {
+		dir := t.TempDir()
+		_ = os.MkdirAll(filepath.Join(dir, "backups"), 0o700)
+		c := &Compose{Directory: dir, Run: &scripted{t: t, answers: map[string]Ran{exec: r}}}
+		_, err := c.Export(context.Background(), randomBytes(32), false)
+		if err == nil {
+			t.Errorf("%s: no error", name)
+		}
+		if name == "a failure" && (err == nil || !strings.Contains(err.Error(), "EACCES")) {
+			t.Errorf("%s: %v does not say the export's own error", name, err)
+		}
+		if entries, _ := os.ReadDir(filepath.Join(dir, "backups")); len(entries) != 0 {
+			t.Errorf("%s: left %v in backups", name, entries)
+		}
+	}
 }
 
-func (b *bundleRunner) Run(ctx context.Context, dir, name string, args []string, stdin []byte) (Ran, error) {
-	r, err := b.scripted.Run(ctx, dir, name, args, stdin)
-	key := name + " " + strings.Join(args, " ")
-	if strings.Contains(key, "migration export --out ") {
-		_ = os.WriteFile(b.at(key), []byte("bundle"), 0o600)
+// The reverse import gets the bundle on its stdin (--in -), never as a
+// copy in the backups directory; its answer is its stdout's last line, and
+// a refusal (before it reads its input) is said with its own words.
+func TestComposeImportReverseStreams(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "backups"), 0o700)
+	bundle := filepath.Join(t.TempDir(), "reverse.jsonl")
+	content := randomBytes(2 << 20)
+	if err := os.WriteFile(bundle, content, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	return r, err
+	cmd := "docker compose --profile varlatch-rollback run --rm -T varlatch-reverse-import node dist/cli.js admin migration import --in -"
+	run := &scripted{t: t, answers: map[string]Ran{cmd: {Answer: []byte(`{"installationId":"inst_x","auditPosition":"48","migratedOutGate":"lifted"}` + "\n")}}}
+	c := &Compose{Directory: dir, Run: run}
+	rec, err := c.ImportReverse(context.Background(), bundle)
+	if err != nil || rec.InstallationID != "inst_x" || rec.AuditPosition != "48" {
+		t.Fatalf("import: %+v %v", rec, err)
+	}
+	if len(run.ran) != 1 || run.ran[0] != cmd || !bytes.Equal(run.stdins[cmd], content) {
+		t.Fatalf("the import's command and stdin: %q, %d bytes", run.ran, len(run.stdins[cmd]))
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "backups")); len(entries) != 0 {
+		t.Fatalf("a copy in backups: %v", entries)
+	}
+	run.answers[cmd] = Ran{Code: 1, Said: []byte("varlatchd admin migration import: varlatchd is running; stop it first\n")}
+	if _, err := c.ImportReverse(context.Background(), bundle); err == nil || !strings.Contains(err.Error(), "varlatchd is running") {
+		t.Fatalf("a refused import: %v", err)
+	}
 }
 
 // What the source's answers must hold, or the step fails.

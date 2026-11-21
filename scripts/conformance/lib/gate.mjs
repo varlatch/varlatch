@@ -69,7 +69,16 @@ export function predatedFeatures(inventory, version) {
  */
 function mayNotApply(inventory, id, target, cli) {
   const kind = inventory.checks[id]?.kind;
-  return kind === "ts-stack" || (kind === "go-server" && !String(target).startsWith("go-binary")) || (kind === "go-client" && cli !== "go");
+  return kind === "ts-stack" || (kind === "go-server" && !onGoServer(target)) || (kind === "go-client" && cli !== "go");
+}
+
+/**
+ * Whether target is the Go server: go-binary, and go-container (the same
+ * varlatchd in the single-container image, run as go-binary). The one
+ * test of it, for every rule that tells the Go server's checks apart.
+ */
+export function onGoServer(target) {
+  return /^go-(binary|container)(:|$)/.test(String(target));
 }
 
 /** The rules a run's own checks must meet: no expected failure, every replacement passing. */
@@ -102,7 +111,7 @@ function runRules(inventory, run) {
     if (typeof replacement === "string") {
       // A go-server replacement runs only on the Go server: off it, the
       // TypeScript check it replaces is the one that must pass.
-      if (inventory.checks[replacement]?.kind === "go-server" && !String(run.target).startsWith("go-binary")) {
+      if (inventory.checks[replacement]?.kind === "go-server" && !onGoServer(run.target)) {
         const got = outcome.get(of);
         if (got !== "pass") problems.push(`${of}: off the Go server it must pass itself, its replacement ${replacement} being the Go server's (${got ?? "not in the run"})`);
         continue;

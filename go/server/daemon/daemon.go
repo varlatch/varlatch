@@ -24,9 +24,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sigstore/sigstore-go/pkg/root"
+
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auditexport"
@@ -46,6 +50,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/publictls"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/syncs"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/values"
@@ -210,6 +215,21 @@ func serve(opts Options, h *hooks) int {
 	if err != nil {
 		return fail(ExitConfig, "the Root KEK file does not hold a Root KEK", "file", cfg.RootKEKFile, "error", err)
 	}
+	// No key in the environment (lib/keyenv): checked before anything is
+	// opened, against the Root KEK and, when one is configured, the BEK.
+	keys := []keyenv.Key{{What: keyenv.RootKEK, Bytes: rootKEK}}
+	if cfg.BackupKeyFile != "" {
+		if raw, err := os.ReadFile(cfg.BackupKeyFile); err == nil {
+			if bek, err := backup.ParseKey(string(raw)); err == nil {
+				keys = append(keys, keyenv.Key{What: keyenv.BEK, Bytes: bek})
+				defer clear(bek)
+			}
+			clear(raw)
+		}
+	}
+	if why := keyenv.Refusal(os.Environ(), keys...); why != "" {
+		return fail(ExitConfig, why)
+	}
 	if st, err := os.Stat(cfg.DataDir); err != nil || !st.IsDir() {
 		return fail(ExitFailure, "the data directory is not there", "dir", cfg.DataDir, "error", err)
 	}
@@ -322,6 +342,9 @@ func serve(opts Options, h *hooks) int {
 		popts := publictls.Options{
 			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
 			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
+			// The issuance count, in the database: it survives a backup and
+			// a restore (step 6 decision 16).
+			Issuances: publictls.StoreIssuances{DB: store}, IssuanceLimit: publictls.LimitFor(p.CA),
 		}
 		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
 		if p.CARootFile != "" {
@@ -344,7 +367,8 @@ func serve(opts Options, h *hooks) int {
 		}
 		defer public.Close()
 	}
-	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public}
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public,
+		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready}
 	env.backups = newBackups(env)
 	// The tailnet listener (step 4.13b), when tailnet = on: its node starts
 	// now and joins its tailnet in the background; the ordinary listener
@@ -520,27 +544,54 @@ func serve(opts Options, h *hooks) int {
 		log.Warn("public_url names an IP address, which browsers refuse as a passkey's relying party: the dashboard cannot sign in at it. Use a host name, such as http://localhost:8686 on this machine", "publicUrl", u.String())
 	}
 	hopts := httpserver.Options{
-		Outbound:       policy,
-		Version:        buildinfo.Version,
-		PublicURL:      cfg.PublicURL,
-		Sync:           cfg.Sync,
-		AuditExportOff: !cfg.AuditExport,
-		SyncAdapters:   cfg.SyncAdapters,
-		TrustedProxies: trusts,
-		AccessLog:      httpserver.NewAccessLog(accessOut),
-		Web:            web.FS(),
-		Backend:        &backend{store: store, rootKEK: rootKEK},
-		Auth:           approvals,
-		Realtime:       hub,
-		Values:         readPath,
-		Writer:         writer,
-		RootKEK:        rootKEK,
-		Maintenance:    admission,
-		Backups:        env.backups,
-		Log:            log,
+		Outbound:        policy,
+		Version:         buildinfo.Version,
+		ReleaseCheckDir: cfg.DataDir,
+		PublicURL:       cfg.PublicURL,
+		Sync:            cfg.Sync,
+		AuditExportOff:  !cfg.AuditExport,
+		SyncAdapters:    cfg.SyncAdapters,
+		TrustedProxies:  trusts,
+		AccessLog:       httpserver.NewAccessLog(accessOut),
+		Web:             web.FS(),
+		Backend:         &backend{store: store, rootKEK: rootKEK},
+		Auth:            approvals,
+		Realtime:        hub,
+		Values:          readPath,
+		Writer:          writer,
+		RootKEK:         rootKEK,
+		Maintenance:     admission,
+		Backups:         env.backups,
+		Log:             log,
 	}
 	if public != nil {
 		hopts.PublicListener = func() any { return public.Report() }
+	}
+	if cfg.ServeCLI {
+		// serve_cli (ADR-0058 Decision 3; go/server/servecli): this
+		// release's CLI and installers, from github.com through the
+		// outbound policy, verified before anything is cached or served.
+		o := servecli.Options{
+			Version:  buildinfo.Version,
+			Origin:   cfg.PublicURL.Scheme + "://" + cfg.PublicURL.Host,
+			CacheDir: filepath.Join(cfg.DataDir, "cli"),
+			Source: servecli.GitHub(release.Downloader{
+				Hosts: release.GitHubHosts, Transport: policy.Transport(outbound.GitHub), UserAgent: "varlatchd/" + buildinfo.Version,
+			}, buildinfo.Version),
+			Trusted: func(ctx context.Context) (root.TrustedMaterial, error) {
+				return release.LiveTrustedRootWith(ctx, filepath.Join(cfg.DataDir, "sigstore"), policy.Client(outbound.GitHub))
+			},
+		}
+		if conformanceCLIRelease != nil {
+			conformanceCLIRelease(&o, log)
+		}
+		served := servecli.Start(ctx, o, log)
+		hopts.CLI = func() http.Handler {
+			if r := served.Current(); r != nil {
+				return r
+			}
+			return nil
+		}
 	}
 	if tn != nil {
 		hopts.TailnetListeners = tn.manager.Report
@@ -600,6 +651,7 @@ func serve(opts Options, h *hooks) int {
 	srv.RegisterOnShutdown(hub.Close)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
+	env.serving.Store(true)
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)
 	var publicServers []*http.Server
 	publicDone := make(chan struct{})

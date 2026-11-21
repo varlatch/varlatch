@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -100,6 +101,9 @@ type Config struct {
 	// (ADR-0059 Decision 5, step 6's decision 4); nil when off, which
 	// leaves every other listener exactly as it is.
 	PublicHTTPS *PublicHTTPS
+	// ServeCLI is serve_cli (ADR-0058 Decision 3): the installation serves
+	// its release's CLI and installers at its public URL.
+	ServeCLI bool
 }
 
 // PublicHTTPS is varlatchd's own public HTTPS: a certificate for the
@@ -191,7 +195,7 @@ var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "truste
 	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination",
 	"tailnet", "tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file",
 	"tailnet_https_port", "tailnet_browser_origins",
-	"listen_https", "listen_http_redirect", "acme_email", "acme_ca", "acme_ca_root"}
+	"listen_https", "listen_http_redirect", "acme_email", "acme_ca", "acme_ca_root", "serve_cli"}
 
 // Backup defaults: a day between backups, seven archives kept (the
 // TypeScript host backup's LOCAL_KEEP), the destination named offsite
@@ -325,6 +329,23 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		c.Sync = false
 	default:
 		return nil, at("sync", "%q must be on or off", v)
+	}
+	switch v := values["serve_cli"]; v {
+	case "", "off":
+	case "on":
+		// The installers name the public URL, and it is what people
+		// trust to run code on their machines (https, or this machine).
+		if c.PublicURL == nil {
+			return nil, at("serve_cli", "on needs public_url: the installers it serves download from that address")
+		}
+		// The installers download from the origin; a path would be dropped,
+		// so the address they name would not be the one configured.
+		if p := c.PublicURL.EscapedPath(); p != "" && p != "/" {
+			return nil, at("serve_cli", "on needs a public_url without a path (%q has %q): the installers it serves name the origin alone", c.PublicURL.String(), p)
+		}
+		c.ServeCLI = true
+	default:
+		return nil, at("serve_cli", "%q must be on or off", v)
 	}
 	switch v := values["audit_export"]; v {
 	case "", "on":
@@ -560,12 +581,11 @@ func parseTailnet(values map[string]string, at func(string, string, ...any) erro
 	case "", TailscaleControlURL:
 		// Tailscale's, given or not: the pin records it as "".
 	default:
-		// ADR-0059 Decision 5: a self-hosted control server (Headscale)
-		// needs https and tsnet's bootstrap DNS fallback off, so that its
-		// host name never goes to Tailscale while it is down; the tsnet
-		// release in use has no way to turn that fallback off.
-		return nil, at("tailnet_control_url", "%q: this release joins Tailscale's coordination server only; a self-hosted one "+
-			"(Headscale) is not supported yet. Leave tailnet_control_url unset.", v)
+		u, msg := selfHostedControlURL(v)
+		if msg != "" {
+			return nil, at("tailnet_control_url", "%q: %s", v, msg)
+		}
+		t.ControlURL = u
 	}
 	switch v := values["tailnet_auth_key_file"]; {
 	case v != "":
@@ -579,12 +599,64 @@ func parseTailnet(values map[string]string, at func(string, string, ...any) erro
 	return t, parseBrowserEndpoint(values, at, c, t)
 }
 
+// selfHostedControlURL is a self-hosted control server's URL (Headscale),
+// as the node is given it and the pin records it: https, and an IP
+// address for its host (ADR-0059 Decision 5, as amended for step 7.5c).
+// tsnet resolves a control server's host name through Tailscale's DERP
+// servers whenever the ordinary lookup fails (its bootstrap DNS fallback,
+// which no tailscale.com release can turn off), so a self-hosted server's
+// name would go to Tailscale while that server or its DNS is down; an IP
+// address is never looked up. msg says why v is refused, "" when it is
+// not.
+func selfHostedControlURL(v string) (string, string) {
+	const why = "a self-hosted control server (Headscale) is given as https://<its IP address>[:port], such as https://192.0.2.10 or https://[2001:db8::10]:8443: " +
+		"tsnet looks a control server's host name up through Tailscale's DERP servers when the ordinary lookup fails, so a name would go to Tailscale; " +
+		"an IP address is never looked up. Leave tailnet_control_url unset for Tailscale's"
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme != "https" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", why
+	}
+	addr, err := netip.ParseAddr(u.Hostname())
+	if err != nil {
+		return "", why
+	}
+	// Judged as it is written back: an IPv4-mapped address is its IPv4
+	// one, so ::ffff:0.0.0.0 is the unspecified address it unmaps to.
+	if addr.Zone() != "" {
+		return "", "a zoned address is not a control server's; " + why
+	}
+	addr = addr.Unmap()
+	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
+		return "", "not an address a control server listens on (an unspecified, multicast, link-local or broadcast address); " + why
+	}
+	host := addr.String()
+	if addr.Is6() {
+		host = "[" + host + "]"
+	}
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return "", "its port is not 1 to 65535; " + why
+		}
+		if n != 443 {
+			host += ":" + strconv.Itoa(n)
+		}
+	}
+	return "https://" + host, ""
+}
+
 // parseBrowserEndpoint reads tailnet_https_port and tailnet_browser_origins
 // (config.ts's tailnetBrowser): the browser endpoint is off unless the
 // port is set, and then needs a port of its own and at least one origin.
 // Its host is tailnet_hostname in the pinned tailnet, known at enrolment.
 func parseBrowserEndpoint(values map[string]string, at func(string, string, ...any) error, c *Config, t *Tailnet) error {
 	raw := values["tailnet_https_port"]
+	if raw != "" && t.ControlURL != "" {
+		// The browser endpoint serves the node's Tailscale certificate,
+		// which only Tailscale's coordination server issues.
+		return at("tailnet_https_port", "the browser endpoint serves a Tailscale certificate, which a self-hosted control server (tailnet_control_url) does not issue: "+
+			"leave tailnet_https_port unset with a self-hosted control server")
+	}
 	if raw == "" {
 		if values["tailnet_browser_origins"] != "" {
 			return at("tailnet_browser_origins", "is set, but the browser endpoint is off; set tailnet_https_port to serve it")
@@ -681,6 +753,47 @@ func Load(path string) (*Config, error) {
 	}
 	defer f.Close()
 	return Parse(f, os.Getenv)
+}
+
+// LoadHost is Load for a host command run outside the unit (varlatchd
+// admin, by an operator as root): the unit hands varlatchd its keys as
+// credentials from beside the configuration (LoadCredential=root-kek:
+// /etc/varlatch/root-kek), so when the run sets no CREDENTIALS_DIRECTORY
+// and the Root KEK is there, the configuration's directory stands for it.
+// The keys are read where they are, under their own modes (root's, 0600),
+// never copied, and nothing goes into the environment. A person who may
+// not look there gets no such directory, and the error says what is
+// lacking, as Load's does. The varlatch CLI's host front applies the same
+// rule (hostCredentials).
+func LoadHost(path string) (*Config, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return Parse(f, HostEnv(os.Getenv, path))
+}
+
+// HostEnv is env with CREDENTIALS_DIRECTORY defaulting to the
+// configuration's directory when the Root KEK is there (LoadHost).
+func HostEnv(env Env, path string) Env {
+	if env("CREDENTIALS_DIRECTORY") != "" {
+		return env
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return env
+	}
+	dir := filepath.Dir(abs)
+	if !fileExists(filepath.Join(dir, "root-kek")) {
+		return env
+	}
+	return func(name string) string {
+		if name == "CREDENTIALS_DIRECTORY" {
+			return dir
+		}
+		return env(name)
+	}
 }
 
 // fileExists is whether path names something (a credential's file).

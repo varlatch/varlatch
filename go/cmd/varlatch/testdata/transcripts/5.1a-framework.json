@@ -1837,6 +1837,9 @@
         "help",
         "move"
       ],
+      "differences": [
+        "move-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]\n                [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--reenroll-hours <1-168>]\n                [--yes] [--no-wait]                    # another public URL: archive, move, re-enrollment links\n  varlatch move --abandon [--dir <compose-directory>]  # give up an open move: back to the old address\n",
@@ -1857,6 +1860,9 @@
         "move",
         "--help"
       ],
+      "differences": [
+        "move-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]\n                [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--reenroll-hours <1-168>]\n                [--yes] [--no-wait]                    # another public URL: archive, move, re-enrollment links\n  varlatch move --abandon [--dir <compose-directory>]  # give up an open move: back to the old address\n",
@@ -1876,6 +1882,9 @@
       "args": [
         "move",
         "-h"
+      ],
+      "differences": [
+        "move-usage"
       ],
       "expect": {
         "status": 0,
@@ -2257,6 +2266,9 @@
         "help",
         "self-update"
       ],
+      "differences": [
+        "self-update-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]\n                                                       # replace this CLI with a release build (checksum, signature)\n",
@@ -2277,6 +2289,9 @@
         "self-update",
         "--help"
       ],
+      "differences": [
+        "self-update-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]\n                                                       # replace this CLI with a release build (checksum, signature)\n",
@@ -2296,6 +2311,9 @@
       "args": [
         "self-update",
         "-h"
+      ],
+      "differences": [
+        "self-update-usage"
       ],
       "expect": {
         "status": 0,
@@ -2686,6 +2704,9 @@
         "help",
         "upgrade"
       ],
+      "differences": [
+        "upgrade-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch upgrade [<version>] [--dir <compose-dir>] [--check] [--repo <owner/repo>]\n                   [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--yes]\n                   # backup-gated compose upgrade on this host (run where docker-compose.yml lives)\n",
@@ -2706,6 +2727,9 @@
         "upgrade",
         "--help"
       ],
+      "differences": [
+        "upgrade-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch upgrade [<version>] [--dir <compose-dir>] [--check] [--repo <owner/repo>]\n                   [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--yes]\n                   # backup-gated compose upgrade on this host (run where docker-compose.yml lives)\n",
@@ -2725,6 +2749,9 @@
       "args": [
         "upgrade",
         "-h"
+      ],
+      "differences": [
+        "upgrade-usage"
       ],
       "expect": {
         "status": 0,
