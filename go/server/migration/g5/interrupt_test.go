@@ -560,11 +560,7 @@ func newWorld(t *testing.T, image bool) *world {
 			t.Fatal(err)
 		}
 	}
-	// sync = off: the seed's rows are the TypeScript server's fixtures,
-	// some of whose Sync Targets hold a mapping its API never writes ({}),
-	// on which the sync loop's first pass panics (#366 fixes that) once a
-	// test leaves the target serving unisolated.
-	host := fmt.Sprintf("listen = %s\npublic_url = %s\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\nsync = off\n",
+	host := fmt.Sprintf("listen = %s\npublic_url = %s\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\n",
 		w.listen, w.origin, w.data, filepath.Join(w.keys, "root-kek"), filepath.Join(w.keys, "backup-key"))
 	w.conf = filepath.Join(target, "varlatchd.conf")
 	if err := os.WriteFile(w.conf, []byte(host), 0o600); err != nil {
@@ -577,7 +573,7 @@ func newWorld(t *testing.T, image bool) *world {
 	}
 	if image {
 		w.serviceConf = filepath.Join(target, "service-varlatchd.conf")
-		svc := fmt.Sprintf("listen = %s\npublic_url = %s\ndata_dir = /var/lib/varlatch\nroot_kek_file = /keys/root-kek\nbackup_key_file = /keys/backup-key\nbackup_interval = off\nsync = off\n", w.listen, w.origin)
+		svc := fmt.Sprintf("listen = %s\npublic_url = %s\ndata_dir = /var/lib/varlatch\nroot_kek_file = /keys/root-kek\nbackup_key_file = /keys/backup-key\nbackup_interval = off\n", w.listen, w.origin)
 		if err := os.WriteFile(w.serviceConf, []byte(svc), 0o600); err != nil {
 			t.Fatal(err)
 		}
