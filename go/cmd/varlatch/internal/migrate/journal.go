@@ -83,8 +83,9 @@ type Journal struct {
 	Format int    `json:"format"`
 	ID     string `json:"id"`
 	Phase  Phase  `json:"phase"`
-	// Stopped is a run that ended where it meant to (a dry run), not one
-	// that was interrupted.
+	// Stopped is a run that ended before the barrier, where it meant to (a
+	// dry run) or on a failure there (stopBefore), not one that was
+	// interrupted: the next run starts it again.
 	Stopped bool `json:"stopped"`
 	// DryRunOnly is a run that stops after the dry run (--dry-run): a
 	// resume does what it was asked, no more.
