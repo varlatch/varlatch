@@ -40,6 +40,7 @@ export default defineConfig({
             "self-hosting/requirements",
             "self-hosting",
             "self-hosting/configuration",
+            { label: "Self-hosted tailnet control (Headscale)", slug: "self-hosting/self-hosted-tailnet-control" },
             { label: "Backup and recovery", slug: "operations/backup" },
             { label: "First off-host backup (B2)", slug: "operations/backup-b2" },
             { label: "Moving to another address", slug: "operations/move-installation" },
