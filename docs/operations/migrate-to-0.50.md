@@ -210,14 +210,21 @@ data directory whose journal is not open, and the old one refuses to start
 writable once its journal says switched.
 
 > **Do not recreate or redeploy the old TypeScript application after the
-> switch.** Do not run `docker compose up -d`, recreate containers on
-> reboot, or click **Redeploy** in Coolify on the old TypeScript
-> installation: Compose re-runs its one-off `varlatch-migrate` service,
+> switch.** When containers are recreated (Coolify **Redeploy**,
+> `docker compose up -d --force-recreate`, `docker compose down` then
+> `up`, or a reboot that recreates containers) or when `varlatchd` is
+> already stopped, Compose re-runs the one-off `varlatch-migrate` service,
 > which refuses behind the migrated-out gate, so the old `varlatchd` does
-> not start and stops answering its migrated-out `503`. A plain
-> `docker compose restart` is fine (it restarts existing containers without
-> re-running `varlatch-migrate`), and `varlatch migrate` uses `--no-deps`
-> for its own restarts.
+> not start and stops answering its migrated-out `503`. On a still-running
+> old installation, a plain `docker compose up -d` re-runs and fails
+> `varlatch-migrate` while leaving the running `varlatchd` answering `503`.
+> A plain `docker compose restart` is fine too (it does not recreate
+> `varlatchd` or re-check its dependency; the re-run one-off simply
+> refuses again), and `varlatch migrate` uses `--no-deps` for its own
+> restarts.
+
+<!-- pending (0.23.0, release/0.22): varlatch-migrate refusing behind the
+     migrated-out gate and the resulting Compose recreate behaviour. -->
 
 ### Interrupted
 
