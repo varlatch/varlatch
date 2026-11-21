@@ -3,7 +3,6 @@
 package migrate
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -114,9 +113,13 @@ func DeriveConfig(text, data, keys, confDir string) (string, error) {
 	}
 	var out strings.Builder
 	sawData := false
-	sc := bufio.NewScanner(strings.NewReader(text))
-	for sc.Scan() {
-		line := sc.Text()
+	// Split on newlines, never a scanner: a line of any length is kept,
+	// and every line but the paths mapped is written as it was.
+	lines := strings.Split(text, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		key, value, ok := strings.Cut(trimmed, "=")
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") || !ok {
@@ -142,7 +145,7 @@ func DeriveConfig(text, data, keys, confDir string) (string, error) {
 	if !sawData {
 		out.WriteString("data_dir = " + data + "\n")
 	}
-	return out.String(), sc.Err()
+	return out.String(), nil
 }
 
 // PrepareImage checks the image target before anything is done, and

@@ -220,6 +220,70 @@ func TestRetention(t *testing.T) {
 	}
 }
 
+// Retention never removes a TypeScript-format archive (go-step7 decision
+// 18) nor an archive without a status record Go wrote, however old: it
+// counts and removes Go's own archives only. The status lists the
+// TypeScript ones apart.
+func TestRetentionLeavesTypeScriptArchives(t *testing.T) {
+	f := newFixture(t)
+	s := f.service(nil)
+	backups := filepath.Join(f.dir, Dir)
+	if err := os.MkdirAll(backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := f.clock().Add(-400 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
+	ts := backup.StatusRecord{ArchiveID: "00000000-0000-4000-8000-0000000000aa", InstallationID: f.inst, CreatedAt: old, Release: "0.22.4", RequiredKeyVersions: []int{1}}
+	if err := backup.SaveStatus(f.dir, ts); err != nil {
+		t.Fatal(err)
+	}
+	unrecorded := "00000000-0000-4000-8000-0000000000bb"
+	for _, id := range []string{ts.ArchiveID, unrecorded} {
+		path := filepath.Join(backups, id+".vltbak")
+		if err := os.WriteFile(path, []byte("an archive this installation did not make"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		past := f.clock().Add(-400 * 24 * time.Hour)
+		if err := os.Chtimes(path, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ids []string
+	for i := 0; i < 4; i++ {
+		res, err := s.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, res.ArchiveID)
+		for _, removed := range res.Removed {
+			if removed == ts.ArchiveID || removed == unrecorded {
+				t.Errorf("run %d removed %s", i, removed)
+			}
+		}
+		f.add(time.Hour)
+	}
+	for _, id := range []string{ts.ArchiveID, unrecorded, ids[2], ids[3]} {
+		if _, err := os.Stat(filepath.Join(backups, id+".vltbak")); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+	}
+	for _, id := range ids[:2] {
+		if _, err := os.Stat(filepath.Join(backups, id+".vltbak")); err == nil {
+			t.Errorf("%s was kept beyond backup_keep", id)
+		}
+	}
+	st, err := s.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Archives) != 4 || len(st.TypeScriptArchives) != 1 || st.TypeScriptArchives[0].ArchiveID != ts.ArchiveID {
+		t.Errorf("archives %d, typescriptArchives %+v", len(st.Archives), st.TypeScriptArchives)
+	}
+	js, err := s.StatusJSON()
+	if err != nil || !bytes.Contains(js, []byte(`"typescriptArchives":[{"archiveId":"`+ts.ArchiveID+`"`)) {
+		t.Errorf("status JSON %s %v", js, err)
+	}
+}
+
 // What a run refuses before it writes anything.
 func TestRefusals(t *testing.T) {
 	ctx := context.Background()
@@ -770,9 +834,17 @@ func TestVerifyRemote(t *testing.T) {
 	if _, err := s.VerifyRemote(context.Background(), res.ArchiveID); err == nil || !strings.Contains(err.Error(), "no recorded upload") {
 		t.Fatalf("never uploaded: %v", err)
 	}
+	// A killed verification's download directory: the next run removes it.
+	killed := filepath.Join(f.dir, Dir, ".remote-"+res.ArchiveID)
+	if err := os.MkdirAll(killed, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	up, err := s.Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(killed); !os.IsNotExist(err) {
+		t.Errorf("a killed verification's directory after a run: %v", err)
 	}
 	v, err := s.VerifyRemote(context.Background(), up.ArchiveID)
 	if err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {

@@ -349,7 +349,7 @@ func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engin
 	return &tailhandoff.Engine{
 		Control:    o.Control,
 		Certs:      handoffCerts{src: ts, tgt: tt, suffix: rec.Suffix, retain: retain, now: e.now, reverse: reverse},
-		Ledger:     &fileLedger{path: filepath.Join(e.Source.Dir(), LedgerFile)},
+		Ledger:     &fileLedger{path: e.ledgerPath()},
 		Endpoints:  handoffEndpoints{src: ts, tgt: tt, target: e.Target, reverse: reverse},
 		Resolver:   handoffResolver{tgt: tt},
 		Journal:    handoffJournal{e: e, j: j, slot: slot},
@@ -514,7 +514,10 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 // could not be verified again, waits for --resume with both closed.
 func (e *Engine) switchTailnet(ctx context.Context, j *Journal) error {
 	rec := j.Tailnet
-	if rec == nil || rec.Checked != "" {
+	if rec == nil {
+		return nil
+	}
+	if rec.Checked != "" {
 		return nil
 	}
 	he, err := e.handoffEngine(j, slotForward)
@@ -566,7 +569,30 @@ func (e *Engine) switchTailnet(ctx context.Context, j *Journal) error {
 		return e.undo(ctx, j, fmt.Errorf("the combined final check: %w", err))
 	}
 	rec.Checked = e.now().UTC().Format(time.RFC3339Nano)
-	return e.save(ctx, j)
+	if err := e.save(ctx, j); err != nil {
+		return err
+	}
+	e.recordNow(ctx, j)
+	return nil
+}
+
+// recordNow writes the handoff's certificate attempts into Go's count
+// (issuances.go; each attempt once, so writing again changes nothing). A
+// failure is said: the ledger keeps the attempts, varlatch migrate
+// --finish writes them again, and the migration goes on either way.
+func (e *Engine) recordNow(ctx context.Context, j *Journal) {
+	rec := j.Tailnet
+	if rec == nil || !rec.Certificates {
+		return
+	}
+	if err := e.recordIssuances(ctx, rec); err != nil {
+		e.say("Tailnet: the certificate issuance count is not in Go's installation yet (%v): %s keeps it, and varlatch migrate --finish writes it.", err, e.ledgerPath())
+	}
+}
+
+// ledgerPath is the handoff's issuance ledger, in the source's directory.
+func (e *Engine) ledgerPath() string {
+	return filepath.Join(e.Source.Dir(), LedgerFile)
 }
 
 // unwindTailnet gives the tailnet name back during an undo, before the
@@ -711,6 +737,13 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 		retained, err := tailcontrol.TempName(rec.Name, rec.Operation, tailcontrol.RoleOld)
 		if err != nil {
 			return err
+		}
+		// Go's attempts for the name count too: merged into the ledger
+		// before the name moves back (issuances.go).
+		if rec.Certificates {
+			if err := e.mergeIssuances(ctx, rec); err != nil {
+				return fmt.Errorf("the tailnet name back: %w; varlatch migrate --resume goes on", err)
+			}
 		}
 		rec.RollbackOperation, rec.Rollback = op, nil
 		plan := tailhandoff.NewReverse(op, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)

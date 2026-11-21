@@ -42,9 +42,9 @@ func TestTheG6FixtureUpgradesToItsSchema(t *testing.T) {
 	older := openFile(t, filepath.Join(t.TempDir(), "older.db"))
 	defer older.Close()
 	exec(t, older, schemaSQL,
-		"INSERT INTO schema_version (version, compatible_from, created_at, created_by_release, updated_at, updated_by_release) VALUES (1, 1, 1, 'previous', 1, 'previous')")
+		"INSERT INTO schema_version (version, compatible_from, created_at, created_by_release, updated_at, updated_by_release) VALUES (2, 1, 1, 'previous', 1, 'previous')")
 	up, err := Upgrade(ctx, older, testRelease)
-	if err != nil || !up.Changed || up.From != 1 || up.To != 2 || up.CompatibleFrom != CompatibleFrom {
+	if err != nil || !up.Changed || up.From != releaseVersion || up.To != SchemaVersion || up.CompatibleFrom != CompatibleFrom {
 		t.Fatalf("%+v, %v", up, err)
 	}
 	fresh := openDB(t)

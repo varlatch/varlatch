@@ -21,6 +21,7 @@ import {
 } from "../src/auditExport.js";
 import { EXIT } from "../src/exitCodes.js";
 import { commandHelp } from "../src/usage.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch audit-export` (ADR-0056): the secret access key never on the
@@ -156,7 +157,7 @@ beforeEach(() => {
 
 function cli(args: string[], options: { env?: Record<string, string>; stdin?: string } = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const child = spawn(...cliCommand(bundle, args), {
       cwd: dir,
       env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0", ...options.env },
       stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],

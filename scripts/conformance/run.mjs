@@ -301,6 +301,9 @@ async function main() {
   const declared = [];
   let state = null;
   let stopped = null;
+  // The suite being started or run: a failure that stops the run there is
+  // that suite's cause too (its fixture, its arguments).
+  let current = null;
 
   const cleanup = async () => {
     for (const pid of running) killGroup(pid);
@@ -460,6 +463,7 @@ async function main() {
         continue;
       }
       console.log(`--- ${suite.title}`);
+      current = entry.suite;
       const args = await entry.args(ctx);
       await pace(entry.suite);
       const around = entry.around === "convex-down" ? await convexDown(entry.suite) : null;
@@ -551,7 +555,7 @@ async function main() {
       const reportedIds = new Set(parsed.results.map((r) => r.id));
       const unreported = ended ? new Set() : new Set([...clientLacked].filter((id) => !reportedIds.has(id) && !observedNotBuilt.has(id)));
       reportLacks(failed, unreported);
-      for (const message of parsed.errors) errors.push({ suite: entry.suite, message });
+      for (const message of parsed.errors) errors.push({ suite: entry.suite, message, cause: true });
       // A failed check explains a non-zero exit.
       const failedResults = anyFailed;
       if (out.timedOut) errors.push({ suite: entry.suite, message: `did not finish within ${SUITE_TIMEOUT_MS / 60_000} minutes` });
@@ -560,10 +564,12 @@ async function main() {
       }
       report.suites.push({ suite: entry.suite, start: new Date(start).toISOString(), end: new Date(end).toISOString(), exit: out.code ?? out.signal, results: parsed.results.length });
       if (entry.suite === "passkey") ctx.adminId = out.stdout.match(/idn_[a-z0-9]*/)?.[0];
+      current = null;
     }
   } catch (err) {
     stopped = err.message;
-    errors.push({ suite: "runner", message: `the run stopped: ${err.message}` });
+    if (current) errors.push({ suite: current, message: err.message, cause: true });
+    errors.push({ suite: "runner", message: `the run stopped${current ? ` in ${current}` : ""}: ${err.message}` });
     if (state && target.describe && !report.targetDetails) report.targetDetails = target.describe(state);
     // What the server refused so far still helps explain the failure.
     if (state && !report.requestBudget && inScope("request-budget")) {
