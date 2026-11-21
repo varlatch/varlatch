@@ -378,6 +378,7 @@ func serve(opts Options, h *hooks) int {
 			return fail(ExitFailure, "cannot start the tailnet node", "error", err)
 		}
 		env.tailnet = tn.manager
+		env.node = tn
 		// A start that fails after this point leaves the tailnet too.
 		defer tn.stop(context.Background())
 	}
