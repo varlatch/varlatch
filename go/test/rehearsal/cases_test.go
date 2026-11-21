@@ -29,7 +29,9 @@ func TestRehearsal(t *testing.T) {
 	rel := loadRelease(t)
 	loadProfile(t)
 	report.Run, report.Started, report.Images = runID, time.Now().UTC(), rel.Images
-	defer writeReport(t)
+	// Cleanups run last-registered first: the guard's check (and every
+	// other cleanup's record) lands in the report before it is written.
+	t.Cleanup(func() { writeReport(t) })
 	guardOthers(t)
 	s3 := startS3(t)
 	secret(s3.secret)
