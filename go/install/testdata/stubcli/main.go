@@ -30,6 +30,13 @@ func main() {
 	if len(os.Args) < 2 {
 		os.Exit(2)
 	}
+	// STUB_FAIL_UNDER: the stub fails when it runs from below that
+	// directory (installed, as opposed to staged).
+	if under := os.Getenv("STUB_FAIL_UNDER"); under != "" {
+		if exe, err := os.Executable(); err == nil && strings.HasPrefix(strings.ToLower(exe), strings.ToLower(under)) {
+			os.Exit(1)
+		}
+	}
 	switch os.Args[1] {
 	case "--version":
 		v := os.Getenv("STUB_REPORTS")

@@ -244,6 +244,21 @@ describe("Tailnet tab", () => {
     expect(text(byTestId("tailnet-rule"))).toContain("tcp:8688");
   });
 
+  it("names a self-hosted control server, and Tailscale's when the report names none", async () => {
+    await mount(async () => ({ tailnet: report() }));
+    expect(text(byTestId("tailnet-control-server"))).toBe("Tailscale");
+    const r = report();
+    r.configured = { ...r.configured, browserEndpoint: null, controlUrl: "https://192.0.2.10:8443" };
+    await mount(async () => ({ tailnet: r }));
+    expect(text(byTestId("tailnet-control-server"))).toBe("https://192.0.2.10:8443");
+    expect(all("tailnet-warning")).toHaveLength(0);
+    // A warning of the last check (an untagged node there) is shown as it is.
+    r.observed = { ...r.observed, warnings: ["The node joined its self-hosted control server with no tags."] };
+    await mount(async () => ({ tailnet: r }));
+    expect(all("tailnet-warning")).toHaveLength(1);
+    expect(text(byTestId("tailnet-warning"))).toContain("joined its self-hosted control server with no tags");
+  });
+
   it("shows the node under Observed with the one shared check time, and what a tag destination means", async () => {
     const r = report();
     r.observed.node = { name: "varlatch", dnsName: "varlatch.example.ts.net", tailnet: "example.ts.net", tags: ["tag:server"], addresses: ["100.64.0.7"], nodeId: "nExampleNode1CNTRL" };

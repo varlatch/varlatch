@@ -5,6 +5,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -27,14 +28,14 @@ func TestInitCreatesTheSchemaOnceAndRecordsItsVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "varlatch.db")
 	s := openFile(t, path)
 	st, err := Init(context.Background(), s, "0.50.0")
-	if err != nil || !st.Created || st.Version != SchemaVersion || st.CompatibleFrom != SchemaVersion {
+	if err != nil || !st.Created || st.Version != SchemaVersion || st.CompatibleFrom != CompatibleFrom {
 		t.Fatalf("Init on a new file: %+v, %v", st, err)
 	}
 	v, err := query.New(s.Reader()).GetSchemaVersion(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Version != SchemaVersion || v.CompatibleFrom != SchemaVersion || v.CreatedByRelease != "0.50.0" || v.UpdatedByRelease != "0.50.0" ||
+	if v.Version != SchemaVersion || v.CompatibleFrom != CompatibleFrom || v.CreatedByRelease != "0.50.0" || v.UpdatedByRelease != "0.50.0" ||
 		v.CreatedAt == 0 || v.CreatedAt != v.UpdatedAt {
 		t.Fatalf("schema_version: %+v", v)
 	}
@@ -106,18 +107,19 @@ func TestInitRefusesABadReleaseName(t *testing.T) {
 // before its own.
 func TestInitChecksANewerSchema(t *testing.T) {
 	s := openDB(t)
-	exec(t, s, "UPDATE schema_version SET version = 2, compatible_from = 1")
+	newer := int64(SchemaVersion + 1)
+	exec(t, s, fmt.Sprintf("UPDATE schema_version SET version = %d, compatible_from = %d", newer, SchemaVersion))
 	st, err := Init(context.Background(), s, testRelease)
-	if err != nil || st.Version != 2 || st.Created {
+	if err != nil || st.Version != newer || st.Created {
 		t.Fatalf("a rollback-safe newer schema: %+v, %v", st, err)
 	}
-	exec(t, s, "UPDATE schema_version SET compatible_from = 2")
+	exec(t, s, fmt.Sprintf("UPDATE schema_version SET compatible_from = %d", newer))
 	_, err = Init(context.Background(), s, testRelease)
 	var ve *VersionError
-	if !errors.As(err, &ve) || ve.Database != 2 || ve.CompatibleFrom != 2 || ve.Binary != SchemaVersion {
+	if !errors.As(err, &ve) || ve.Database != newer || ve.CompatibleFrom != newer || ve.Binary != SchemaVersion {
 		t.Fatalf("a newer schema that is not compatible: %v", err)
 	}
-	if !strings.Contains(err.Error(), "needs a varlatchd that knows version 2") {
+	if !strings.Contains(err.Error(), fmt.Sprintf("needs a varlatchd that knows version %d", newer)) {
 		t.Fatalf("message: %v", err)
 	}
 	older := &VersionError{Database: 1, CompatibleFrom: 1, Binary: 2}

@@ -2448,6 +2448,8 @@ export interface components {
                 tailnet: string;
                 listenerPort: number;
                 browserEndpoint: string | null;
+                /** @description The self-hosted control server the node joins (Headscale), https on an IP address. Absent for Tailscale's coordination server, and from older servers. */
+                controlUrl?: string;
             };
             observed: {
                 /**
@@ -2464,6 +2466,8 @@ export interface components {
                 };
                 /** @description The node as varlatchd last read it, at checkedAt. Absent before the first successful LocalAPI read and after a failed one, and from older servers. */
                 node?: components["schemas"]["ObservedNode"];
+                /** @description What the last check found that does not close access, each a sentence for the operator: a node on a self-hosted control server that joined with no tags (its tags are its pre-auth key's). Absent when there is none, and from older servers. */
+                warnings?: string[];
             };
         };
         /** @description The node's own details from its LocalAPI status. Each field is validated: one that is absent or malformed is omitted. Nothing here says who can reach the node. */
