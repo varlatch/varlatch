@@ -36,7 +36,11 @@ import (
 //   - the control plane is Tailscale's API with the operator's OAuth client
 //     (devices:core only, O4), read from its file, and the outbound
 //     policy's client (go/server/outbound, purpose tailnet_control);
-//   - the dead node is the one device under the configured name; it is
+//   - the dead node is the one device under the configured name, and dead:
+//     not connected to the control plane, and last seen more than deadGrace
+//     ago (checked when planned and again right before the first rename; a
+//     node seen since may be the old installation still running, and is
+//     never renamed from under it); it is
 //     renamed to <name>-vl-<op>-o and the restored node to the name, each
 //     read back; with tailnet HTTPS the name's certificate is obtained
 //     (counted in tailnet-issuances.json); a client node (the reach probe)
@@ -46,13 +50,22 @@ import (
 //   - the handoff's state is journalled in tailnet-takeover.json (0600)
 //     before each act; run again, take-name resumes it, never guessing: an
 //     interrupted switch is undone (the dead node takes its name back), then
-//     done again.
+//     done again. A crash after the hold's removal and before the journal
+//     said done is finished: the name, certificate and reach checked again.
+//     A dead node deleted from the tailnet mid-switch leaves its name free:
+//     the restored node takes it (tailhandoff's takeFreedName).
 
 // The data directory's files of a restore's handoff.
 const (
 	TakeoverFile = "tailnet-takeover.json"
 	IssuanceFile = "tailnet-issuances.json"
 )
+
+// deadGrace is how long ago the control plane must have last seen the
+// dead node for take-name to rename it: within it, the node may be the old
+// installation still running (a restart, a short cut), and a rename would
+// take its name from under it.
+const deadGrace = 5 * time.Minute
 
 // Test hooks: Tailscale's API and its certificate (a crashpoint build's
 // gate, tailnethook_crashpoint.go, or the package's tests); and the kill
@@ -114,12 +127,23 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 		// Done and opened: nothing is left to do.
 		return takeNameOut(stdout, c.asJSON, prev, "")
 	}
-	if hold == nil {
+	var op, heldAs string
+	switch {
+	case hold != nil:
+		heldAs = hold.Hostname
+		if op = heldOperation(name, heldAs); op == "" {
+			return fail("the node is held as %s, not a temporary name of %s (%s-vl-<operation>-n)", heldAs, name, name)
+		}
+	case prev != nil && prev.Phase == tailhandoff.Switching && prev.IncomingOpened && strings.EqualFold(prev.Plan.Name, name):
+		// Stopped after the open removed the hold, before the journal said
+		// done: resumed below, it is checked again (finishOpen) and done.
+		op = prev.Plan.Operation
+		var err error
+		if heldAs, err = tailcontrol.TempName(name, op, tailcontrol.RoleNew); err != nil {
+			return fail("the handoff's journal names the operation %q: %v", op, err)
+		}
+	default:
 		return fail("the node is not held for a handoff: varlatchd admin tailnet enroll --hostname <temporary name> holds it first")
-	}
-	op := heldOperation(name, hold.Hostname)
-	if op == "" {
-		return fail("the node is held as %s, not a temporary name of %s (%s-vl-<operation>-n)", hold.Hostname, name, name)
 	}
 	if _, err := os.Stat(filepath.Join(cfg.DataDir, tailnet.StateDir, "tailscaled.state")); err != nil {
 		return fail("the node is not enrolled: varlatchd admin tailnet enroll first")
@@ -154,7 +178,7 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	node, done, err := heldNode(ctx, cfg, hold.Hostname)
+	node, done, err := heldNode(ctx, cfg, heldAs)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -163,15 +187,17 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	if err != nil {
 		return fail("the node's status: %v", err)
 	}
-	authKey := ""
-	if t.AuthKeyFile != "" {
-		if b, err := os.ReadFile(t.AuthKeyFile); err == nil {
-			authKey = strings.TrimSpace(string(b))
-			clear(b)
-		}
-	}
-	if authKey == "" {
+	if t.AuthKeyFile == "" {
 		return fail("no auth key (tailnet_auth_key_file): the reach check's probe joins with it (it must be reusable)")
+	}
+	b, err := os.ReadFile(t.AuthKeyFile)
+	if err != nil {
+		return fail("cannot read the auth key file: %v", err)
+	}
+	authKey := strings.TrimSpace(string(b))
+	clear(b)
+	if authKey == "" {
+		return fail("the auth key file %s is empty: the reach check's probe joins with it (it must be reusable)", t.AuthKeyFile)
 	}
 	he := &tailhandoff.Engine{
 		Control:   cp,
@@ -190,7 +216,9 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	case prev == nil || prev.Plan.Operation != op || prev.Phase == tailhandoff.Undone:
 		state, err = takeOver(ctx, he, journal, cp, op, name, st.SelfID, certificates)
 	case prev.Phase == tailhandoff.Prepared:
-		state, err = he.Switch(ctx, op)
+		if err = stillDead(ctx, cp, prev.Plan.ServingID); err == nil {
+			state, err = he.Switch(ctx, op)
+		}
 	case prev.Phase == tailhandoff.Done:
 		state = prev
 	default:
@@ -238,6 +266,9 @@ func takeOver(ctx context.Context, he *tailhandoff.Engine, journal *takeoverJour
 	case len(dead) > 1:
 		return nil, fmt.Errorf("%d devices are named %s: nothing is renamed", len(dead), name)
 	}
+	if err := checkDead(dead[0], time.Now()); err != nil {
+		return nil, err
+	}
 	plan, err := tailhandoff.NewRestore(op, name, dead[0].ID, incoming[0].ID, certificates)
 	if err != nil {
 		return nil, err
@@ -245,12 +276,52 @@ func takeOver(ctx context.Context, he *tailhandoff.Engine, journal *takeoverJour
 	if _, err := he.Prepare(ctx, plan); err != nil {
 		return nil, err
 	}
+	if err := stillDead(ctx, cp, dead[0].ID); err != nil {
+		return nil, err
+	}
 	return he.Switch(ctx, op)
+}
+
+// checkDead refuses a dead node the control plane does not show dead: one
+// connected now, last seen within deadGrace, or with no last-seen time.
+func checkDead(d tailcontrol.Device, now time.Time) error {
+	var why string
+	switch {
+	case d.Online:
+		why = "is connected to the tailnet now"
+	case d.LastSeen.IsZero():
+		why = "has no last-seen time from the control plane"
+	case now.Sub(d.LastSeen) < deadGrace:
+		why = fmt.Sprintf("was last seen at %s, within %s", d.LastSeen.UTC().Format(time.RFC3339), deadGrace)
+	default:
+		return nil
+	}
+	return fmt.Errorf("the device %s (%s) under the name %s %s: it may be the old installation still running, and its name is not taken from under it. Stop the old installation (or remove its device from the tailnet), then run take-name again; nothing was renamed", d.Name, d.ID, d.Name, why)
+}
+
+// stillDead checks the dead node again from a fresh listing, right before
+// the first rename. A device no longer listed was deleted: the switch
+// finds its name free.
+func stillDead(ctx context.Context, cp tailcontrol.ControlPlane, id string) error {
+	devices, err := cp.Devices(ctx)
+	if err != nil {
+		return fmt.Errorf("listing the tailnet's devices: %w", err)
+	}
+	for _, d := range devices {
+		if d.ID == id {
+			return checkDead(d, time.Now())
+		}
+	}
+	return nil
 }
 
 func takeNameOut(stdout io.Writer, asJSON bool, s *tailhandoff.State, stableID string) int {
 	res := takeNameResult{Operation: s.Plan.Operation, Name: s.Plan.Name, Phase: s.Phase, DeadID: s.Plan.ServingID, IncomingID: s.Plan.IncomingID, StableID: stableID}
-	nodeOut(stdout, asJSON, res, fmt.Sprintf("The restored node holds the tailnet name %s; the old node is named %s. varlatchd's tailnet listener opens when it starts.", s.Plan.Name, s.ServingTemp))
+	old := "the old node is named " + s.ServingTemp
+	if s.ServingGone {
+		old = "the old node's device was deleted from the tailnet"
+	}
+	nodeOut(stdout, asJSON, res, fmt.Sprintf("The restored node holds the tailnet name %s; %s. varlatchd's tailnet listener opens when it starts.", s.Plan.Name, old))
 	return ExitOK
 }
 
@@ -355,7 +426,11 @@ type restoreEndpoints struct{ dataDir string }
 func (restoreEndpoints) CloseServing(context.Context) error  { return nil }
 func (restoreEndpoints) ReopenServing(context.Context) error { return nil }
 func (e restoreEndpoints) OpenIncoming(context.Context) error {
-	return tailnet.ClearHold(e.dataDir)
+	if err := tailnet.ClearHold(e.dataDir); err != nil {
+		return err
+	}
+	handoffPoint("take-name hold cleared")
+	return nil
 }
 
 // probeResolver is the reach check: a client node joined with the node's

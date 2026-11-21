@@ -14,15 +14,19 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/tailhandoff"
+	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
 // The restore's takeover killed (SIGKILL) at every step it journals, in a
 // process of its own (this test binary, built with the crashpoint tag:
 // tailnethook_crashpoint.go's VARLATCH_TEST_HANDOFF_PAUSE), then run again:
 // it resumes from its journal (an unfinished switch undone, then done
-// again) and the restored node holds the name.
+// again; one killed after the hold's removal checked again and finished)
+// and the restored node holds the name.
 func TestKillTheTakeoverAtEveryStep(t *testing.T) {
-	for _, step := range []string{"prepared", "switching", "serving renamed", "incoming renamed", "opening", "done"} {
+	for _, step := range []string{"prepared", "switching", "serving renamed", "incoming renamed", "opening", "hold cleared", "done"} {
 		t.Run(step, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer cancel()
@@ -55,6 +59,15 @@ func TestKillTheTakeoverAtEveryStep(t *testing.T) {
 				if time.Now().After(deadline) {
 					_ = cmd.Process.Kill()
 					t.Fatalf("take-name did not reach %q:\n%s", step, out.String())
+				}
+			}
+			if step == "hold cleared" {
+				// Opened, not yet done: the hold is gone, the journal still
+				// switching.
+				j := &takeoverJournal{path: filepath.Join(w.in.data, TakeoverFile)}
+				s, err := j.read()
+				if hold, _ := tailnet.LoadHold(w.in.data); hold != nil || err != nil || s == nil || s.Phase != tailhandoff.Switching || !s.IncomingOpened {
+					t.Fatalf("after the kill at %s: the hold %+v, the journal %+v %v", step, hold, s, err)
 				}
 			}
 			code, stdout, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--json", "--config", w.in.conf)

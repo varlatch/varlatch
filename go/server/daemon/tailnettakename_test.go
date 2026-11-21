@@ -38,6 +38,9 @@ import (
 // devices from the control server, and a rename that is the control
 // server's (its node's name, pushed to every peer's netmap); a taken name
 // is refused. down makes it answer 503, as a control plane out of reach.
+// Each device's presence (connectedToControl, lastSeen) is seen's, by
+// StableID, else connected and seen now; a deleted one is no longer listed
+// (and no longer holds its name).
 type apiOver struct {
 	control  *testcontrol.Server
 	suffix   string
@@ -47,6 +50,52 @@ type apiOver struct {
 	renames  int
 	downFrom int // the rename after which it is down (0: never)
 	down     bool
+	seen     map[string]presence
+	deleted  map[string]bool
+}
+
+type presence struct {
+	online   bool
+	lastSeen time.Time // zero: not said
+}
+
+func (a *apiOver) setSeen(stableID string, p presence) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.seen[stableID] = p
+}
+
+// remove deletes a device, as the tailnet's admin console would: gone from
+// the listing, and its name freed in every netmap.
+func (a *apiOver) remove(stableID string) {
+	for _, n := range a.control.AllNodes() {
+		if string(n.StableID) == stableID {
+			n.Name = "deleted-" + strconv.FormatInt(int64(n.ID), 10) + "." + a.suffix + "."
+			a.control.UpdateNode(n)
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.deleted[stableID] = true
+}
+
+func (a *apiOver) renameCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.renames
+}
+
+// listed is the control server's nodes less the deleted ones.
+func (a *apiOver) listed() []*tailcfg.Node {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []*tailcfg.Node
+	for _, n := range a.control.AllNodes() {
+		if !a.deleted[string(n.StableID)] {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func (a *apiOver) serve(rw http.ResponseWriter, r *http.Request) {
@@ -84,8 +133,18 @@ func (a *apiOver) serve(rw http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v2/tailnet/-/devices":
 		var out []map[string]any
-		for _, n := range a.control.AllNodes() {
-			out = append(out, map[string]any{"id": strconv.FormatInt(int64(n.ID), 10), "nodeId": string(n.StableID), "name": strings.TrimSuffix(n.Name, "."), "keyExpiryDisabled": true})
+		for _, n := range a.listed() {
+			a.mu.Lock()
+			p, ok := a.seen[string(n.StableID)]
+			a.mu.Unlock()
+			if !ok {
+				p = presence{online: true, lastSeen: time.Now()}
+			}
+			d := map[string]any{"id": strconv.FormatInt(int64(n.ID), 10), "nodeId": string(n.StableID), "name": strings.TrimSuffix(n.Name, "."), "keyExpiryDisabled": true, "connectedToControl": p.online}
+			if !p.lastSeen.IsZero() {
+				d["lastSeen"] = p.lastSeen.UTC().Format(time.RFC3339)
+			}
+			out = append(out, d)
 		}
 		_ = json.NewEncoder(rw).Encode(map[string]any{"devices": out})
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/name"):
@@ -98,7 +157,7 @@ func (a *apiOver) serve(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var target *tailcfg.Node
-		for _, n := range a.control.AllNodes() {
+		for _, n := range a.listed() {
 			label, _, _ := strings.Cut(n.Name, ".")
 			if strconv.FormatInt(int64(n.ID), 10) == id {
 				target = n
@@ -127,7 +186,7 @@ func (a *apiOver) serve(rw http.ResponseWriter, r *http.Request) {
 
 func (a *apiOver) names() map[string]string {
 	out := map[string]string{}
-	for _, n := range a.control.AllNodes() {
+	for _, n := range a.listed() {
 		label, _, _ := strings.Cut(n.Name, ".")
 		out[string(n.StableID)] = label
 	}
@@ -145,6 +204,7 @@ func randomTestBytes(n int) []byte {
 // the same control server, and the restored node enrolled, held.
 type restoreWorld struct {
 	in      install
+	keyFile string
 	control *testcontrol.Server
 	api     *apiOver
 	oauth   string
@@ -159,7 +219,8 @@ func newRestoreWorld(t *testing.T, ctx context.Context) *restoreWorld {
 	t.Helper()
 	control := startTestControl(t)
 	w := &restoreWorld{control: control}
-	w.api = &apiOver{control: control, suffix: "corp.ts.net", id: "k" + hex.EncodeToString(randomTestBytes(6)), sec: hex.EncodeToString(randomTestBytes(16)), tokens: map[string]bool{}}
+	w.api = &apiOver{control: control, suffix: "corp.ts.net", id: "k" + hex.EncodeToString(randomTestBytes(6)), sec: hex.EncodeToString(randomTestBytes(16)), tokens: map[string]bool{},
+		seen: map[string]presence{}, deleted: map[string]bool{}}
 	srv := httptest.NewTLSServer(http.HandlerFunc(w.api.serve))
 	t.Cleanup(srv.Close)
 	pool := x509.NewCertPool()
@@ -185,8 +246,11 @@ func newRestoreWorld(t *testing.T, ctx context.Context) *restoreWorld {
 	}
 	w.dead = string(st.Self.ID)
 	_ = dead.Close()
+	// Gone for two hours, as the control plane sees it.
+	w.api.setSeen(w.dead, presence{lastSeen: time.Now().Add(-2 * time.Hour)})
 	w.in = newInstall(t, "")
 	keyFile := filepath.Join(w.in.dir, "tailnet-auth-key")
+	w.keyFile = keyFile
 	w.oauth = filepath.Join(w.in.dir, "oauth-client.json")
 	b, _ := json.Marshal(map[string]string{"clientId": w.api.id, "clientSecret": w.api.sec})
 	for path, body := range map[string][]byte{keyFile: []byte("hermetic\n"), w.oauth: b} {
@@ -309,6 +373,127 @@ func TestATakeoverCutShortIsResumed(t *testing.T) {
 	}
 	if n := w.api.names(); n[ours] != "vault" {
 		t.Fatalf("names %v", n)
+	}
+}
+
+// The dead node must be dead: a device under the name that is connected
+// now, was seen within deadGrace, or has no last-seen time may be the old
+// installation still running, and take-name renames nothing. Once the
+// control plane has not seen it for long, the name is taken over. An
+// unreadable auth key file is refused with its read error.
+func TestTakeNameRefusesALiveHolder(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	w := newRestoreWorld(t, ctx)
+	ours := w.restored(t)
+	recent := time.Now().Add(-time.Minute).UTC()
+	for _, c := range []struct {
+		name string
+		p    presence
+		want string
+	}{
+		{"online", presence{online: true, lastSeen: time.Now()}, "is connected to the tailnet now"},
+		{"seen a minute ago", presence{lastSeen: recent}, "was last seen at " + recent.Format(time.RFC3339) + ", within 5m0s"},
+		{"last seen unknown", presence{}, "has no last-seen time"},
+	} {
+		w.api.setSeen(w.dead, c.p)
+		code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf)
+		if code != ExitFailure || !strings.Contains(errOut, c.want) || !strings.Contains(errOut, "the device vault (") ||
+			!strings.Contains(errOut, "Stop the old installation (or remove its device from the tailnet), then run take-name again; nothing was renamed") {
+			t.Fatalf("%s: %d %q", c.name, code, errOut)
+		}
+		if n := w.api.names(); n[w.dead] != "vault" || n[ours] != w.temp || w.api.renameCount() != 0 {
+			t.Fatalf("%s: names %v after %d renames", c.name, n, w.api.renameCount())
+		}
+		if hold, _ := tailnet.LoadHold(w.in.data); hold == nil {
+			t.Fatalf("%s: the hold went", c.name)
+		}
+	}
+	w.api.setSeen(w.dead, presence{lastSeen: time.Now().Add(-time.Hour)})
+	if err := os.Chmod(w.keyFile, 0); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "cannot read the auth key file: ") || !strings.Contains(errOut, "permission denied") {
+		t.Fatalf("an unreadable auth key file: %d %q", code, errOut)
+	}
+	if err := os.Chmod(w.keyFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--json", "--config", w.in.conf)
+	if code != ExitOK || !strings.Contains(out, `"phase":"done"`) {
+		t.Fatalf("take-name over a long-dead holder: %d %q %q", code, out, errOut)
+	}
+	if n := w.api.names(); n[ours] != "vault" {
+		t.Fatalf("names %v", n)
+	}
+}
+
+// The dead node checked again right before the first rename: one that
+// comes back online after the plan is refused, nothing renamed, the
+// handoff left prepared; run again once it is gone for long, it is done.
+func TestAHolderBackOnlineBeforeTheRename(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	w := newRestoreWorld(t, ctx)
+	ours := w.restored(t)
+	prev := handoffPoint
+	t.Cleanup(func() { handoffPoint = prev })
+	handoffPoint = func(step string) {
+		if step == "take-name prepared" {
+			w.api.setSeen(w.dead, presence{online: true, lastSeen: time.Now()})
+		}
+	}
+	code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf)
+	if code != ExitFailure || !strings.Contains(errOut, "is connected to the tailnet now") || !strings.Contains(errOut, "nothing was renamed") {
+		t.Fatalf("a holder back online: %d %q", code, errOut)
+	}
+	if n := w.api.names(); n[w.dead] != "vault" || n[ours] != w.temp || w.api.renameCount() != 0 {
+		t.Fatalf("names %v after %d renames", n, w.api.renameCount())
+	}
+	j := &takeoverJournal{path: filepath.Join(w.in.data, TakeoverFile)}
+	if s, err := j.read(); err != nil || s == nil || s.Phase != tailhandoff.Prepared {
+		t.Fatalf("the journal: %+v %v", s, err)
+	}
+	// Still online: the prepared handoff is refused the same way.
+	handoffPoint = prev
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "is connected to the tailnet now") {
+		t.Fatalf("again while online: %d %q", code, errOut)
+	}
+	w.api.setSeen(w.dead, presence{lastSeen: time.Now().Add(-time.Hour)})
+	code, out, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--json", "--config", w.in.conf)
+	if code != ExitOK || !strings.Contains(out, `"phase":"done"`) {
+		t.Fatalf("take-name once it is gone: %d %q %q", code, out, errOut)
+	}
+	if n := w.api.names(); n[ours] != "vault" {
+		t.Fatalf("names %v", n)
+	}
+}
+
+// The dead node's device deleted by the operator during the takeover,
+// before its rename: its name is free, and the restored node takes it
+// (tailhandoff's takeFreedName) instead of an undo that would wait on a
+// device that is gone.
+func TestADeadNodeDeletedDuringTheTakeover(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	w := newRestoreWorld(t, ctx)
+	ours := w.restored(t)
+	prev := handoffPoint
+	t.Cleanup(func() { handoffPoint = prev })
+	handoffPoint = func(step string) {
+		if step == "take-name serving renamed" {
+			w.api.remove(w.dead)
+		}
+	}
+	code, out, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf)
+	if code != ExitOK || !strings.Contains(out, "the old node's device was deleted from the tailnet") {
+		t.Fatalf("take-name: %d %q %q", code, out, errOut)
+	}
+	if n := w.api.names(); n[ours] != "vault" || n[w.dead] != "" {
+		t.Fatalf("names %v", n)
+	}
+	if hold, _ := tailnet.LoadHold(w.in.data); hold != nil {
+		t.Fatal("the hold is still there")
 	}
 }
 

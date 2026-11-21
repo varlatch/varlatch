@@ -39,6 +39,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -176,6 +177,10 @@ type State struct {
 	// RollbackNeedsCertificate is set when that certificate ends before the
 	// rollback window does and the operator accepted it.
 	RollbackNeedsCertificate bool `json:"rollbackNeedsCertificate"`
+	// ServingGone is set when a Restore's dead node was deleted from the
+	// tailnet during the switch: its name was free, and the restored node
+	// took it without the dead node's rename (takeFreedName).
+	ServingGone bool `json:"servingGone,omitempty"`
 	// SwitchStarted is when the first change under the barrier was made.
 	SwitchStarted time.Time `json:"switchStarted"`
 	// Failure is why a switch was undone, or why an undo is pending.
@@ -306,6 +311,9 @@ func (e *HandoffError) Error() string {
 	case Switching:
 		return fmt.Sprintf("the handoff was interrupted while opening the incoming installation and its name, certificate or reach could not be verified again: the incoming installation may be open, so it is not undone (an undo would take the name from an open listener); close the incoming installation, or run a reverse handoff, or resume it once the check holds: %v", e.Err)
 	case UndoPending:
+		if gone := (*GoneError)(nil); errors.As(e.Err, &gone) {
+			return fmt.Sprintf("the handoff failed and its undo cannot give the name back: the device %s is no longer in the tailnet (deleted during the handoff), and neither installation is opened on the tailnet: %v", gone.ID, e.Err)
+		}
 		if errors.Is(e.Err, tailcontrol.ErrNameTaken) {
 			return fmt.Sprintf("the handoff failed and its undo could not give a name back: another device holds it now, and neither installation is opened on the tailnet. Rename or delete that device in the tailnet's admin console, then resume: %v", e.Err)
 		}
@@ -508,6 +516,13 @@ func (e *Engine) switchSteps(ctx context.Context, s *State) error {
 	if err := e.rename(ctx, p.ServingID, s.ServingTemp); err != nil {
 		return err
 	}
+	return e.incomingSteps(ctx, s)
+}
+
+// incomingSteps is the switch once the name is free: the incoming node
+// renamed to it, its certificate, a client's reach, then the open.
+func (e *Engine) incomingSteps(ctx context.Context, s *State) error {
+	p := s.Plan
 	s.IncomingRenamed = true
 	if err := e.save(ctx, s); err != nil {
 		return err
@@ -619,15 +634,39 @@ func (e *Engine) obtain(ctx context.Context, node Role, name string, until time.
 func (e *Engine) rename(ctx context.Context, id, name string) error {
 	return e.retry(ctx, func() error {
 		_, err := tailcontrol.RenameAndReadBack(ctx, e.Control, id, name)
+		if err != nil && !final(err) && e.unlisted(ctx, id) {
+			return &GoneError{ID: id}
+		}
 		return err
 	})
+}
+
+// GoneError is a device the control plane no longer lists: deleted from
+// the tailnet. Trying again does not bring it back.
+type GoneError struct{ ID string }
+
+func (e *GoneError) Error() string {
+	return fmt.Sprintf("the control plane no longer lists the device %s (deleted from the tailnet)", e.ID)
+}
+
+// unlisted reports whether a listing that answers lacks the device.
+func (e *Engine) unlisted(ctx context.Context, id string) bool {
+	devices, err := e.Control.Devices(ctx)
+	return err == nil && !slices.ContainsFunc(devices, func(d tailcontrol.Device) bool { return d.ID == id })
+}
+
+// goneDevice reports whether a failure is that device's being gone.
+func goneDevice(err error, id string) bool {
+	var gone *GoneError
+	return errors.As(err, &gone) && gone.ID == id
 }
 
 // final reports whether a control-plane failure will not pass by trying
 // again.
 func final(err error) bool {
 	var rb *tailcontrol.ReadBackError
-	return errors.Is(err, tailcontrol.ErrNameTaken) || errors.As(err, &rb)
+	var gone *GoneError
+	return errors.Is(err, tailcontrol.ErrNameTaken) || errors.As(err, &rb) || errors.As(err, &gone)
 }
 
 func (e *Engine) retry(ctx context.Context, f func() error) error {
@@ -699,12 +738,22 @@ func (e *Engine) reaches(ctx context.Context, name, nodeID string) error {
 // It runs on a context of its own (the switch's deadline may be what
 // failed), for UndoWait.
 func (e *Engine) undo(ctx context.Context, s *State, cause error) (*State, error) {
+	return e.undoOrForward(ctx, s, cause, true)
+}
+
+// undoOrForward is undo; with forward, a Restore whose dead node was
+// deleted from the tailnet is finished forward instead (takeFreedName):
+// its name is free, and nothing is left to give it back to.
+func (e *Engine) undoOrForward(ctx context.Context, s *State, cause error, forward bool) (*State, error) {
 	s.Phase = Undoing
 	s.Failure = cause.Error()
 	if err := e.Journal.Save(ctx, s); err != nil {
 		return s, &HandoffError{Phase: UndoPending, Err: errors.Join(cause, fmt.Errorf("writing the journal: %w", err))}
 	}
 	if err := e.undoSteps(ctx, s); err != nil {
+		if forward && s.Plan.Kind == Restore && !s.IncomingOpened && goneDevice(err, s.Plan.ServingID) {
+			return e.takeFreedName(ctx, s)
+		}
 		s.Phase = UndoPending
 		s.Failure = errors.Join(cause, err).Error()
 		_ = e.Journal.Save(ctx, s)
@@ -753,11 +802,34 @@ func (e *Engine) undoSteps(parent context.Context, s *State) error {
 	return nil
 }
 
-// restoreName renames a device to name unless it is listed under it already.
+// takeFreedName finishes a Restore forward once its dead node is gone from
+// the tailnet (deleted by the operator mid-handoff): the name is free, so
+// the restored node takes it, under a deadline of its own, without the dead
+// node's rename. If that fails, the restored node is given its own name
+// back and the undo is pending (resumed, it tries forward again).
+func (e *Engine) takeFreedName(ctx context.Context, s *State) (*State, error) {
+	s.Phase, s.ServingGone, s.Failure = Switching, true, ""
+	s.SwitchStarted = e.now()
+	if err := e.save(ctx, s); err != nil {
+		return s, &HandoffError{Phase: UndoPending, Err: err}
+	}
+	sctx, cancel := context.WithDeadline(ctx, s.SwitchStarted.Add(orDefault(e.Deadline, DefaultDeadline)))
+	defer cancel()
+	if err := e.incomingSteps(sctx, s); err != nil {
+		return e.undoOrForward(ctx, s, fmt.Errorf("the dead node %s was deleted from the tailnet, and the restored node could not take its free name: %w", s.Plan.ServingID, err), false)
+	}
+	return s, nil
+}
+
+// restoreName renames a device to name unless it is listed under it
+// already; a device no longer listed is gone (GoneError).
 func (e *Engine) restoreName(ctx context.Context, id, name string) error {
 	devices, err := e.Control.Devices(ctx)
 	if err != nil {
 		return err
+	}
+	if !slices.ContainsFunc(devices, func(d tailcontrol.Device) bool { return d.ID == id }) {
+		return &GoneError{ID: id}
 	}
 	for _, d := range devices {
 		if d.ID == id && d.Name == name {
@@ -797,7 +869,7 @@ func (e *Engine) confirm(ctx context.Context, id, name string) error {
 			return nil
 		}
 	}
-	return &tailcontrol.ReadBackError{Want: name, Missing: true}
+	return &GoneError{ID: id}
 }
 
 // finishOpen completes a switch interrupted after it decided to open the
