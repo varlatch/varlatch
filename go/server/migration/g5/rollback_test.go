@@ -299,7 +299,12 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		return 0, true
 	case j == "compose ps --status running --services":
-		for _, svc := range []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"} {
+		services := []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"}
+		if os.Getenv("G5_SHARED_NAMESPACE") != "" {
+			// The Tailscale topology: the sidecar varlatchd shares.
+			services = append(services, "tailscale")
+		}
+		for _, svc := range services {
 			if !stopped(svc) {
 				fmt.Println(svc)
 			}

@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -423,6 +424,11 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 			return failure("docker volume rm "+v, r)
 		}
 	}
+	// The one-off commands below and varlatchd itself run in varlatchd's
+	// network, without their dependencies.
+	if err := c.networkOwnerRunning(ctx); err != nil {
+		return err
+	}
 	g, err := c.gateOffline(ctx)
 	if err != nil {
 		return err
@@ -461,6 +467,32 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 	// own volume's schema is current already, Postgres was started above,
 	// and varlatchd restarts (unless-stopped) until Postgres answers.
 	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
+}
+
+// networkOwnerRunning refuses, with the step to take, when varlatchd runs
+// in another service's network (network_mode: service:tailscale) and that
+// service is not running: without their dependencies, neither varlatchd
+// nor a one-off container of its starts there. That service is not started
+// here: it is the old Tailscale node, which must not come back beside Go's
+// unasked (as ServeForArchive refuses to).
+func (c *Compose) networkOwnerRunning(ctx context.Context) error {
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return err
+	}
+	owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:")
+	if !ok {
+		return nil
+	}
+	running, err := c.running(ctx)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(running, owner) {
+		return nil
+	}
+	return fmt.Errorf("the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), which is not running, so neither it nor its one-off commands can start: "+
+		"start it by hand (docker compose up -d --no-deps %s, in %s; it brings the old Tailscale node back), then varlatch migrate --resume", owner, owner, owner, c.Directory)
 }
 
 // gateOffline is the installation's gate, read in a one-off container.

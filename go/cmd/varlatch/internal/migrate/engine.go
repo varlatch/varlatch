@@ -734,19 +734,24 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	if from == Transfer {
 		problems = append(problems, e.stopTargetForUndo(ctx)...)
 	}
-	released, open := false, false
+	// open: the source is behind no gate now. Otherwise closed says why its
+	// ingress is not started.
+	released, open, closed := false, false, ""
 	g, err := e.Source.Gate(ctx)
 	switch {
 	case err != nil:
 		problems = append(problems, fmt.Errorf("reading the source's gate: %w", err))
+		closed = "could not confirm the source's gate is lifted, so its %s is not started again"
 	case g != nil && g.Kind == "migration":
 		if err := e.Source.Release(ctx, g.ID); err != nil {
 			problems = append(problems, fmt.Errorf("lifting the barrier %s: %w", g.ID, err))
+			closed = "the source's %s is not started again while its barrier stands"
 		} else {
 			released, open = true, true
 		}
 	case g != nil:
 		problems = append(problems, fmt.Errorf("the source is behind a %s gate (%s), not a migration barrier: left as it is", g.Kind, g.ID))
+		closed = "the source's %s is not started again while its gate stands"
 	default:
 		open = true
 	}
@@ -755,7 +760,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 		if open || j.Ingress == Coolify {
 			problems = append(problems, e.returnAddress(ctx, j)...)
 		} else {
-			problems = append(problems, fmt.Errorf("the source's %s is not started again while its gate stands", ingressPart(j.Ingress)))
+			problems = append(problems, fmt.Errorf(closed, ingressPart(j.Ingress)))
 		}
 	}
 	if err := e.discard(ctx, j); err != nil {

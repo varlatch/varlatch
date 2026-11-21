@@ -917,6 +917,52 @@ func TestAnUndoInTheTransferLiftsTheBarrierFirst(t *testing.T) {
 	}
 }
 
+// An undo in the transfer that cannot show the source's gate is gone
+// leaves the ingress stopped and the journal where it was, for --resume:
+// the gate unreadable, a gate that is not the migration's, the barrier's
+// release refused. Each says why the ingress was not started.
+func TestAnUndoInTheTransferKeepsTheIngressStoppedBehindAGate(t *testing.T) {
+	for _, c := range []struct {
+		name, why string
+		set       func(w *world)
+		abort     bool
+	}{
+		{"the gate unreadable", "could not confirm the source's gate is lifted, so its Caddy is not started again",
+			func(w *world) { w.src.fail["gate"] = errors.New("docker: no answer") }, true},
+		{"another gate", "the source's Caddy is not started again while its gate stands",
+			func(w *world) { w.src.gate = &Gate{Kind: "restore", ID: "restore-1"} }, true},
+		{"the release refused", "the source's Caddy is not started again while its barrier stands",
+			func(w *world) { w.src.fail["release gate-1"] = errors.New("Migration ownership lost") }, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var w *world
+			var err error
+			if c.abort {
+				w = interrupted(t, Transfer)
+				w.src.ingressDown, w.tgt.running = true, true
+				c.set(w)
+				_, err = w.eng.Abort(context.Background())
+			} else {
+				w = newWorld(t)
+				w.prober.wrong = "inst_other"
+				w.eng.Options.TransferTimeout = 10 * time.Second
+				c.set(w)
+				_, err = w.eng.Run(context.Background(), false)
+			}
+			if err == nil || !strings.Contains(err.Error(), c.why) || !strings.Contains(err.Error(), "varlatch migrate --resume tries again") {
+				t.Fatalf("%v, want %q", err, c.why)
+			}
+			if containsCall(w.src.calls, "start public") || !w.src.ingressDown || w.tgt.running {
+				t.Fatalf("the ingress started (down %v), or the target runs (%v): %v", w.src.ingressDown, w.tgt.running, w.src.calls)
+			}
+			j, rerr := readJournal(w.src.dir)
+			if rerr != nil || j.Phase != Transfer || !j.Undoing || j.Undone != nil {
+				t.Fatalf("the journal: %+v %v", j, rerr)
+			}
+		})
+	}
+}
+
 // The Coolify shape: migrate stops at the prompt; --resume before the
 // domain moved waits (nothing undone); after it, the migration opens.
 func TestCoolifysTransferByHand(t *testing.T) {
