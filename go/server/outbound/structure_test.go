@@ -76,6 +76,7 @@ var libExceptions = []exception{
 	{"lib/backup/s3.go", "http.Client", 1, "the backup destination's client when none is passed in (the CLI's admin backup; varlatchd passes none today: its destination is the host's)"},
 	{"lib/backup/s3.go", "s3.New", 1, "the backup destination's S3 client, on the http.Client passed in or the one above"},
 	{"lib/release/verify.go", "http.DefaultClient", 1, "Sigstore's TUF repository (fixed, not chosen by an Organization), for the release verifier of the installer and upgrade"},
+	{"lib/release/download.go", "http.Client", 1, "release files from github.com and its storage hosts only (fixed, not chosen by an Organization), every redirect checked, on the Transport passed in: varlatchd's serve_cli passes the outbound policy's"},
 }
 
 type rule struct {

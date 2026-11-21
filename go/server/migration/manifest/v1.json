@@ -61,7 +61,7 @@
     ]
   },
   "target": {
-    "schemaVersion": 1
+    "schemaVersion": 2
   },
   "foreignKeys": "The schema's foreign keys form cycles (identities and organization_deletions refer to each other), so no table order satisfies them all: tables are listed by name, the import defers foreign keys and checks every one before it commits.",
   "tables": [
@@ -1174,6 +1174,7 @@
   ],
   "targetOnly": {
     "tables": {
+      "certificate_issuances": "The public HTTPS name's certificate issuance count (ADR-0059 Decision 9, step 6 decision 16), schema version 2: varlatchd's own, which the TypeScript server does not keep, so an import writes no row and the count starts empty.",
       "schema_version": "Written by the import: the target schema version above."
     }
   },

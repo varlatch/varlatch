@@ -6,7 +6,8 @@
 // every key generated in this process when New runs. Its trusted root
 // verifies exactly what it signed, for any identity a test names, through
 // the same lib/release verifier the installers and self-update use. Only
-// tests import it: nothing it makes is trusted outside them.
+// tests and varlatchd's conformance build (its conformance-sign-release)
+// import it: nothing it makes is trusted outside them.
 package releasetest
 
 import (
@@ -26,6 +27,8 @@ import (
 	"fmt"
 	"math/big"
 	"net/url"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
@@ -271,4 +274,19 @@ func (s *Sigstore) Sign(blob []byte, identity, issuer string) []byte {
 		panic(err)
 	}
 	return bytes.Clone(out)
+}
+
+// Sums is SHA256SUMS for files, as sha256sum writes it.
+func Sums(files map[string][]byte) []byte {
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, n := range names {
+		sum := sha256.Sum256(files[n])
+		fmt.Fprintf(&b, "%s  %s\n", hex.EncodeToString(sum[:]), n)
+	}
+	return []byte(b.String())
 }

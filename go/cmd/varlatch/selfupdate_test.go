@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"go/build/constraint"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -288,10 +289,16 @@ func TestSeamIsTestOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A Windows checkout may hold the file with CRLF line endings.
-	seam = bytes.ReplaceAll(seam, []byte("\r\n"), []byte("\n"))
-	if !bytes.Contains(seam, []byte("\n//go:build selfupdatetest\n")) {
-		t.Fatal("selfupdate_testseam.go is not built only with -tags selfupdatetest")
+	// The file's constraint as Go reads it (a checkout may end lines with
+	// CRLF): built with the tag, and without it, never.
+	expr := buildConstraint(t, seam)
+	with := expr.Eval(func(tag string) bool { return tag == "selfupdatetest" || tag == runtime.GOOS || tag == runtime.GOARCH })
+	without := expr.Eval(func(tag string) bool { return tag == runtime.GOOS || tag == runtime.GOARCH })
+	if !with || without {
+		t.Fatalf("selfupdate_testseam.go is not built only with -tags selfupdatetest (//go:build %s)", expr)
+	}
+	if crlf := buildConstraint(t, bytes.ReplaceAll(seam, []byte("\n"), []byte("\r\n"))); crlf.String() != expr.String() {
+		t.Fatalf("with CRLF line endings the constraint reads %s, not %s", crlf, expr)
 	}
 	const variable = "VARLATCH_TEST_SELFUPDATE_SOURCE"
 	for _, dir := range []string{"internal/cli", "internal/selfupdate", "."} {
@@ -312,4 +319,26 @@ func TestSeamIsTestOnly(t *testing.T) {
 	if bytes.Contains(script, []byte("-tags")) {
 		t.Fatal("build-assets.sh builds with tags")
 	}
+}
+
+// buildConstraint is a Go file's //go:build constraint, read as Go reads
+// it: the header's line comments before the package clause, each line
+// with its line ending (LF or CRLF) taken off.
+func buildConstraint(t *testing.T, src []byte) constraint.Expr {
+	t.Helper()
+	for _, line := range strings.Split(string(src), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if constraint.IsGoBuild(line) {
+			expr, err := constraint.Parse(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return expr
+		}
+		if strings.HasPrefix(line, "package ") {
+			break
+		}
+	}
+	t.Fatal("no //go:build line before the package clause")
+	return nil
 }

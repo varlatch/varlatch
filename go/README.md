@@ -255,7 +255,10 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   with a Compose installation (`/srv/varlatch` holds `varlatch-install.json`
   or `docker-compose.yml`), kept beside it as `varlatch-ts` for that
   installation's host commands; if the new one does not run there, the
-  TypeScript CLI is put back.
+  TypeScript CLI is put back. A serving installation (slice 6.8) stamps
+  its address in `ORIGIN`: the CLI then comes from `<origin>/cli/v<version>/`
+  over https (or plain http on this machine), with no redirect followed,
+  and is checked the same way; `--server` installs from github.com only.
 - `install/install.ps1`: the Windows installer (CLI for the current user,
   in `%LOCALAPPDATA%\Programs\Varlatch`, added to the user `PATH`), with
   the same checks as `install.sh` and its G8 tests under PowerShell 5.1 and
@@ -970,7 +973,8 @@ it to the recording.
 | `self-update-usage` | `varlatch help self-update`, `self-update --help` and `self-update -h` print the TypeScript CLI's form | the Go CLI's: `[<version>] [--check [--json]] [--yes] [--prerelease] [--allow-downgrade]`, with what it checks; `varlatch --help` keeps the full TypeScript usage | `self-update`. Transcript cases `help.self-update`, `help.self-update.option` and `help.self-update.short` name it; pinned by `TestHelpIsTheUsageText` |
 | `skill-version` (how transcripts compare, not a behaviour) | the skill files `agents install` writes name `varlatch 0.22.0` (`SKILL.md`'s `metadata.generator`, each reference's first line) | this build's version | Each CLI names itself, so `--check` after an upgrade reports the skill as changed; the replay puts this build's version in a case's inputs and expected files alike |
 | `host-admin`: `varlatch admin backup`, `security reset`, `unfreeze`, `outbound check` and `maintenance` (slice 6.2a of internal docs/design/go-step6.md) | a Compose installation's: `docker compose exec -T varlatchd node dist/cli.js admin ...` in the `--dir` directory (or the working directory); `backup create\|verify\|restore\|status` through Compose and pg_dump; no `maintenance` | a Go installation's: runs `varlatchd admin <the same words and options> [--config <file>]` as a separate process (decision 2), the `varlatchd` beside this `varlatch` (a symbolic link to `varlatch` followed; an executable file) or else the first on `PATH` (69 when there is none); (Unix) as root, one on `PATH` is run only when root alone can change it, the directory it is in and the `PATH` entry (not writable by group or others, owned by root), else 78 naming the path; `VARLATCH_*` variables holding a credential (`VARLATCH_TOKEN`, `VARLATCH_OIDC_TOKEN`, `VARLATCH_KEK_PASSPHRASE`, any named for a token, passphrase, password, secret, credential or key) are left out of its environment, as no fronted form reads one; the forms are `varlatchd`'s (`backup run\|status\|test-bucket\|restore --in`, `maintenance begin\|end\|status`); `--config` names the installation's `varlatchd.conf` (default `/etc/varlatch/varlatchd.conf`); a JSON answer is printed again as `JSON.stringify(doc, null, 2)` after the fail-safe, any other answer and every line on stderr through the fail-safe; the exit status is `varlatchd`'s (78 adds a line saying to run it as root when not root; Unix only). `--dir` names a Compose installation and is refused (64), naming `varlatch-ts` (decision 11); `backup create` and `backup verify` are refused (64) naming `backup run`; `admin reenroll` is slice 6.9 | The Go installation has no Compose stack, and every database or key operation is `varlatchd`'s, routed through its control socket or run offline under its lock (step 4's decision 11). Pinned by `internal/cli`'s `TestAdminFrontsRunVarlatchd` and `TestAdminRefusals` (a fake `varlatchd` on `PATH`) and `TestAdminWithTheRealVarlatchd` (the real one, built from this checkout, in a temporary installation), `TestFindVarlatchdBesideFirst`, `TestFindVarlatchdAsRoot` and `TestAdminLeavesCredentialsOut` |
-| `admin-usage` | `varlatch help admin`, `admin --help` and `admin -h` print a Compose installation's `admin` forms (`backup create\|verify\|restore\|status`, `reenroll`, `security reset`, `unfreeze`, `outbound check`, each with `--dir`) | a Go installation's: `backup run\|status\|test-bucket\|restore`, `security reset`, `unfreeze`, `outbound check`, `maintenance begin\|end\|status`, each also taking `--config` (the text a usage error adds); `varlatch --help` keeps the full TypeScript usage | The Go CLI runs a Go installation's host commands (`host-admin`); a Compose installation's stay the TypeScript CLI's (decision 11). Transcript cases `help.admin`, `help.admin.option` and `help.admin.short` name it; pinned by `TestHelpAdminIsTheGoUsage` |
+| `admin-usage` | `varlatch help admin`, `admin --help` and `admin -h` print a Compose installation's `admin` forms (`backup create\|verify\|restore\|status`, `reenroll`, `security reset`, `unfreeze`, `outbound check`, each with `--dir`) | a Go installation's: `backup run\|status\|test-bucket\|restore`, `security reset`, `unfreeze`, `outbound check`, `maintenance begin\|end\|status`, `reenroll`, each also taking `--config` (the text a usage error adds); `varlatch --help` keeps the full TypeScript usage | The Go CLI runs a Go installation's host commands (`host-admin`); a Compose installation's stay the TypeScript CLI's (decision 11). Transcript cases `help.admin`, `help.admin.option` and `help.admin.short` name it; pinned by `TestHelpAdminIsTheGoUsage` |
+| `move-usage` | `varlatch help move`, `move --help` and `move -h` print a Compose installation's `move` (`--dir`, `--bek-file`, `--kek-file`) | a Go installation's: `--public-url`, `--ingress public\|external`, `--listen-https`, `--reenroll-hours`, `--yes`, `--no-wait`, `--abandon`, each with `--config`; `varlatch --help` keeps the full TypeScript usage | A Go installation's move rewrites `varlatchd.conf` and restarts `varlatchd.service` (slice 6.9); a Compose installation's stays the TypeScript CLI's (decision 11). Transcript cases `help.move`, `help.move.option` and `help.move.short` name it |
 | `upgrade`: `varlatch upgrade [<version>]` and `upgrade --check` (slice 6.6b of internal docs/design/go-step6.md) | a Compose installation's: pulls the release set's images, backs up, restarts the stack, gates on `doctor --gate`; `--check` records the newest release through the backup control | a Go installation's, on its host, as root (`--check` as anyone who may write the data directory): the release's `varlatch`, `varlatchd` and `release.json` verified against its signed `SHA256SUMS` (fail closed); a release whose manifest's `compatibleFrom` is above the installed schema is refused unless `--accept-not-rollback-safe` (or yes at a prompt); then decision 6's steps, journaled in `/etc/varlatch/upgrade.json` (`go/lib/upgradejournal`): the encrypted snapshot (`admin backup run`, kept 30 days in `<data>/upgrades/<id>`), stop, the schema update on a copy (`admin schema upgrade --database`), the swap of the database and binaries (the previous ones kept in `lib/varlatch/releases/<version>` beside the binaries), start, and the health checks (`admin status`: the release, its schema, serving, schema, Root KEK and installation ready); any failure stops varlatchd and puts the original database and binaries back, and the next run finishes (after the checks) or undoes (before) an interrupted one. `--check` records the newest release in `release-check.json` (`admin release-check record`), which `GET /v1/installation/release` reads. `--dir` and the Compose options are refused (64), naming `varlatch-ts upgrade` | ADR-0059 Decision 8 for a Go installation; a Compose installation's upgrade stays the TypeScript CLI's. Pinned by `internal/upgrade`'s tests (two prereleases built from this checkout, a kill at each step and in the undo, a full disk, a failed health check, a bad signature, a wrong identity, the snapshot restored) and `internal/cli`'s `TestUpgrade*` |
 | `upgrade-usage` | `varlatch help upgrade`, `upgrade --help` and `upgrade -h` print a Compose installation's `upgrade` form | a Go installation's: `[<version>] [--prerelease] [--accept-not-rollback-safe] [--end-rollback-window] [--yes]` and `--check [--prerelease] [--json]`, each with `--config` | The Go CLI upgrades a Go installation; a Compose installation's upgrade is `varlatch-ts upgrade` |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
@@ -1009,6 +1013,7 @@ it to the recording.
 | The hidden prompt when the terminal goes away before Enter | not compared | the terminal restored, `varlatch: no value entered; nothing was stored`, exit 1 | Nothing is stored either way; the Go CLI says so |
 | A redirect's relative `Location` | resolved by the WHATWG URL parser | resolved by `apiclient`'s own resolver (absolute, `//host`, `/path`, `?query` and path-relative references), then parsed by `lib/whatwg` | varlatchd sends no redirect; a proxy's is absolute or root-relative |
 | `loopback-nonce`: the browser sign-in's loopback callback | `http://127.0.0.1:<port>/` | `http://127.0.0.1:<port>/<32 random characters>`: only a POST to exactly that path (compared in constant time), with the listener's own address as its Host (`127.0.0.1:<port>` or `localhost:<port>`), delivers the bearer, and only once (the listener closes before it answers); any other request gets 404 (a GET on the path 405, a preflight 204) and the sign-in goes on waiting. Bound to 127.0.0.1 only, given up after 5 minutes | Delivering a bearer takes the random path as well as the port. The path is in the printed address and, while the browser runs, in its command line, so it keeps out what can read neither (a web page in the browser, a name another host resolves to 127.0.0.1), not another process of the same machine that can read the browser's command line. The sign-in page posts to the callback as given, path included, so neither server's page changes. Accepted only where Go's stdout, the path taken out of the printed address, is the recording; pinned by `internal/cli`'s `TestBrowserCallbackTakesOnlyItsPath` and the `browser-login` process tests, which require the 32-character path from the Go CLI |
+| `compose-usage-unchecked`: `sync check` on a Coolify service whose compose file has an alias inside its own anchor (step 4 defect 6) | the `yaml` package builds a cyclic object and `scalarsOf` overflows the stack: `sync check` dies with a `RangeError` (exit 1), before any Secret is disclosed | `lib/sync` reads the file as unreadable: `varlatch: usage: usage not checked: the service's compose file is too large or could not be read`, and the check finishes, disclosing the Secrets it compares as any check does, with its verdict and exit status | The adapter's `inspectUsage` never fails by design (varlatchd's engine catches the same `RangeError` and says the destination could not be read). Accepted only where the recording is that `RangeError`, Go's stderr has that line, its stdout ends with a verdict, and its requests are the recorded ones and one disclosure (`TestComposeUsageUncheckedIsExact`) |
 | `invite` prints only an invitation token | not compared | the enrollment link's token is printed only when it is an invitation token in the servers' format (`vlt_invite_` and 43 base64url characters) that neither holds nor is part of a credential or value the run knows (its bearer, `VARLATCH_TOKEN`, a stored credential, a value in flight); otherwise the first line, then `varlatch invite: the server's answer holds no invitation token in Varlatch's format, or holds a credential or value this run knows, so no link is printed. The server may have created the invitation anyway: revoke it under Pending invitations in the dashboard.`, exit 1 | The fail-safe redacts every token on stdout, and the link is the one token a command prints on purpose: its writer (`outShowing`, reachable only from `inviteCommand`; `failsafe_test.go`) keeps exactly that token, and only one that is what the link is for (`TestInviteShowsOnlyAnInvitationToken`, `TestInviteNeverPrintsAnotherSecret`) |
 | `credential issue --out` on Windows | the file is created with mode 0600, of which Windows reads only the write bit; the line `The token is in <file>, readable by you only, ...` is printed on every platform | the same | On Windows the new file takes its directory's access control list, so who can read it is who that directory lets read it; both CLIs print the same line, and `--out` belongs in a directory only its owner can read |
 | `pending-sign-ins.json` and runs at the same time | not compared | not locked across processes, as in TypeScript: each run reads the file, changes its entry and replaces the file atomically, so of two runs that change it at once the later write wins (a `--start` replacing an entry another run's `--wait` is keeping, for example) | Parity: both CLIs share the file (decision 11), and a lock one of them does not take would not hold. A lost update costs at most a sign-in to start again |
@@ -1934,6 +1939,75 @@ origin, by Origin header, by signed origin and by RP ID) and
 `TestTailnetListenerRunsNoCeremony`, and `daemon`'s
 `TestIngressModesSideBySide` (against Pebble).
 
+### Moving an installation (step 6, slice 6.9)
+
+The public URL is the passkeys' relying party (Decision 6), so moving an
+installation to another address is a re-enrollment event (decision 13,
+the TypeScript flow's semantics). `varlatch move --public-url <url>`, on
+the host as root:
+
+1. reads the installation through varlatchd (`varlatchd admin config
+   check`, which parses `varlatchd.conf` and nothing else, and `admin
+   move-facts`), shows what the move does (passkeys, sessions, people,
+   open invitations) and asks before anything changes (`--yes` outside a
+   terminal);
+2. takes and verifies an archive (`admin backup run`), the way back;
+3. writes the move's journal, `move.json` beside `varlatchd.conf` (0600:
+   the addresses, the archive's path, times, and the configuration before
+   and after; never a link or a key), then the new `public_url` (and, from
+   one ingress to the other, `listen_https` set or the public HTTPS
+   settings taken out), which varlatchd checks first; restarts
+   `varlatchd.service` and waits for `/readyz` and, on the public ingress,
+   for the new name's certificate;
+4. removes the old address's passkeys once (`varlatchd admin
+   public-url-changed --from <old>`: every passkey, every browser session
+   and the dashboard credentials minted from them; CLI, agent and machine
+   credentials keep working), and records it;
+5. prints one re-enrollment link per person (`admin reenroll --all`), and
+   waits for an Installation Admin to enroll (`--no-wait`: exit 75, rerun
+   to finish).
+
+A rerun continues where it stopped (no second archive, no second removal,
+no second set of links, no restart when varlatchd already serves the new
+address); `--abandon` puts the old configuration back and restarts
+varlatchd, naming the archive when the old passkeys were already removed.
+The tailnet node is never touched: a move to the tailnet ingress is
+refused (the node keeps its own name and state), and its settings, pin and
+state stay as they were. `varlatch admin reenroll (--all | --identity
+<id>...) [--hours <1-168>]` issues links on its own: one live link per
+person (a new one revokes the unused ones), a day by default, a week at
+most, each `reenrollment.grant_issued` without the token.
+
+**If the move stops**, rerun `varlatch move` (no `--public-url`): the
+journal says where it stands. `move.json` holds `from` and `fromIngress`,
+`to` and `toIngress`, `archive` (the archive taken first), `startedAt`,
+`passkeysRetiredAt` and `linksIssuedAt` once those steps are done, and
+`previousConfig` and `config`, `varlatchd.conf` before and after the move.
+A rerun puts `config` back if the move stopped before writing it, restarts
+varlatchd only when it does not serve the new address yet, and treats a
+removal that committed before the journal recorded it as done. A
+`varlatchd.conf` that is neither of the two is refused: put one back, or
+`varlatch move --abandon` (which writes `previousConfig` and restarts
+varlatchd). An unreadable journal stops the command with nothing changed:
+put the configuration varlatchd should run in place from the journal's
+text, restart varlatchd, and remove the journal. If the old passkeys were
+removed, only restoring `archive` brings them back.
+
+The links are the one credential a move prints. They go to the terminal
+only, through the fail-safe's one exception for them
+(`showReenrollLinks`, beside `invite`'s link): never to the journal, a log,
+an audit event or `--json`. Assisted mode refuses `move` and `admin
+reenroll` (78): a coding agent reads the output, and a link adds a passkey
+to a person's identity. In the container (`VARLATCH_IMAGE`), `move` is
+refused with the manual steps (an archive, the new `public_url` in the
+mounted configuration and the container recreated, then `varlatchd admin
+public-url-changed` and `varlatch admin reenroll --all` in it). The
+replacement of the `move` external suite: `daemon`'s
+`TestPublicHTTPSMoveAgainstPebble` (go.yml's Pebble step) and
+`TestMoveKeepsTheTailnetNode`, `TestMoveCommands`, `httpserver`'s
+`TestMoveReenrollsAtTheNewRelyingParty`, and the CLI's `TestMoveRefusals`,
+`TestMovedConfig` and `TestAdminReenroll`.
+
 ### The tailnet listeners (step 4.13a)
 
 `server/tailnet` and `server/httpserver/tailnet.go` are the tailnet
@@ -2007,28 +2081,52 @@ serves the tailnet listener on the node's own addresses
   binding is off (a userspace node has no TUN device). The node joins in
   the background: the ordinary listener serves at once, the tailnet
   listener once the node runs.
-- **Coordination server.** This release joins Tailscale's only:
-  `tailnet_control_url` other than Tailscale's is refused at startup, and
-  the node is always given Tailscale's control URL explicitly (an empty
-  one would let tsnet read `TS_CONTROL_URL`). varlatchd refuses to start
-  the node while any environment variable tsnet reads in place of its
-  settings is set (`TS_CONTROL_URL`, `TS_AUTHKEY`, `TS_AUTH_KEY`,
-  `TS_CLIENT_SECRET`, `TS_CLIENT_ID`, `TS_ID_TOKEN`, `TS_AUDIENCE`,
-  `TSNET_FORCE_LOGIN`): its control server and enrolment come from
-  `varlatchd.conf` alone.
-  Decision 5 requires a self-hosted (Headscale) control server's host name
-  never to reach Tailscale, and the tsnet release in use always keeps its
-  bootstrap DNS fallback (Tailscale's DERP servers resolve the control
-  host when the system resolver fails), with no way to turn it off. ADR-0059
-  lists a Headscale version as supported only once G10 shows no such
-  query, so none is yet. The plan's Headscale end-to-end tests (G10's step
-  4 cases against a Headscale 0.29.7 container: WhoIs, tagged peers, a
-  changed `base_domain`, a different control URL, and no bootstrap DNS
-  query while the control server is down) are deferred until a tsnet
-  release can turn the fallback off: the last of them cannot pass before
-  then, and the others would test a configuration varlatchd refuses. The
-  pin's Headscale rules are in place and unit-tested
-  (`TestHeadscalePin`) for that day.
+- **Coordination server.** Tailscale's by default (`tailnet_control_url`
+  unset, or Tailscale's own URL), and the node is always given its control
+  URL explicitly (an empty one would let tsnet read `TS_CONTROL_URL`).
+  varlatchd refuses to start the node while any environment variable
+  tsnet reads in place of its settings is set (`TS_CONTROL_URL`,
+  `TS_AUTHKEY`, `TS_AUTH_KEY`, `TS_CLIENT_SECRET`, `TS_CLIENT_ID`,
+  `TS_ID_TOKEN`, `TS_AUDIENCE`, `TSNET_FORCE_LOGIN`): its control server
+  and enrolment come from `varlatchd.conf` alone.
+  - **A self-hosted control server (Headscale)** is given as
+    `https://<its IP address>[:port]` only (step 7.5c; ADR-0059 Decision 5
+    as amended). Decision 5 requires a self-hosted server's host name
+    never to reach Tailscale. tsnet looks a control server's host name up
+    through Tailscale's DERP servers whenever the ordinary lookup fails
+    (its bootstrap DNS fallback), and no tailscale.com release can turn
+    that off (checked up to v1.105.0-pre: `controlclient/direct.go` and
+    `controlhttp/client.go` always install it). An IP address is never
+    looked up, so a host-name URL other than Tailscale's is refused, with
+    a message naming the IP form and why. The URL is kept canonical
+    (`https://192.0.2.10:8443`, `https://[2001:db8::10]`; `:443` dropped),
+    as the pin compares it; plain http, a user, a path, a query, an
+    unspecified, multicast, link-local, broadcast or zoned address
+    (judged after an IPv4-mapped address is unmapped) are refused. The server's
+    certificate must be valid for that address and trusted by the host
+    (the system's roots, or `SSL_CERT_FILE`).
+  - **Tags** come from the auth key there: Headscale refuses a node that
+    registers with a pre-auth key and advertises tags (0.29.7), so the
+    node advertises none, and its key must be a tagged pre-auth key
+    (`headscale preauthkeys create --tags <tailnet_tags>`). A node that
+    joined with no tags (an untagged key) keeps access open for now: it
+    is logged once and the listeners report carries a warning
+    (`observed.warnings`, shown in the dashboard's Tailnet tab); access
+    closes on tags other than `tailnet_tags` in a later slice.
+  - **No browser endpoint** with it: `tailnet_https_port` serves the
+    node's Tailscale certificate, which a self-hosted server does not
+    issue, so the two together are refused.
+  - The listeners report (`GET /v1/installation/listeners`, the
+    dashboard's Tailnet tab) names a self-hosted control server
+    (`configured.controlUrl`); it is absent for Tailscale's.
+  - Tested against Headscale 0.29.7 in a container (build tag
+    `headscale`, its own step in `go.yml`;
+    `server/tailnet/headscaletest`): the node joins on an IP address,
+    tagged by its key, is pinned to the control URL and `base_domain`
+    with no tailnet StableID, and while Headscale is unreachable makes no
+    bootstrap DNS query; another configured control URL closes access.
+    The handoff's Headscale cases (migrate's Headscale authority, the
+    restore handoff, StableID lookups) are step 7.5c's next slices.
 - **The pin** (`<data_dir>/tailnet-pin.json`, `server/tailnet/pin.go`)
   is the control URL, the tailnet's StableID (Tailscale) and its MagicDNS
   suffix (Headscale's `base_domain`), never the display name. It is taken
@@ -2154,6 +2252,38 @@ certificate (`server/tailnet/cert.go`, `cert.ts`; `listener.ts`'s
 The server's packages:
 
 - `server/config`: `varlatchd.conf`.
+- `server/servecli` (step 6.8; ADR-0058 Decision 3, internal
+  docs/design/go-step6.md decision 12): `serve_cli = on` serves this
+  release's `varlatch` for Linux, macOS and Windows and the installers,
+  stamped with the public URL's origin (required, without a path; https,
+  or http on this machine). Sigstore's TUF repository is read through the
+  policy's client, which follows no redirect: its CDN answers directly,
+  and a redirect makes the attempt fail and retry, never a stale root
+  used. `go/server/stages/check-release.sh` holds release binaries to none
+  of the conformance-only parts below. In the background, varlatchd downloads the release's
+  `SHA256SUMS` and its signature from github.com through the outbound
+  policy (`lib/release`'s `Downloader`: github.com and its storage hosts
+  only, sizes bounded; it follows github.com's redirect to storage
+  itself, each Location checked and fetched as a request of its own
+  through the policy, at most five), verifies the signature
+  for the release workflow's identity of its own version (Sigstore's
+  trusted root through its TUF repository, cached in `<data_dir>/sigstore`)
+  before anything else is downloaded, checks each file against its line,
+  and caches the set in `<data_dir>/cli/v<version>` only when all of it
+  checks; at every start the cache is verified again (signature and every
+  file) before anything is served, and other versions are removed. A
+  failure is retried (a minute, doubling to an hour); until a release is
+  ready, `/install.sh`, `/install.ps1` and `/cli/` answer 404 and
+  `/v1/meta` does not list `cli.download`. Requests name a file by its
+  exact name in the verified set, under `/cli/v<version>/` of this
+  version only: nothing of a request reaches the file system. Served on
+  the public listener only. With serving off, the paths answer as the
+  TypeScript server's. In a conformance build only,
+  `VARLATCH_CONFORMANCE_CLI_RELEASE` names a directory the harness signed
+  with a test Sigstore (`varlatchd admin conformance-sign-release`), and
+  the CLI built for it reads that Sigstore's trusted root
+  (`main.conformanceTrustedRoot`, set at link time); go-binary's
+  `cli-download-on` suite runs against it.
 - `server/clientaddr`: the client address behind trusted proxies, as the
   TypeScript server finds it (`trusted_proxies`).
 - `server/httpserver`: the HTTP layer, on the strict server generated
@@ -2963,6 +3093,52 @@ slice 7.5b.
 
   The real APIs are checked by hand against the owner's throwaway tailnet
   and a Headscale server (O6) in 7.5b.
+
+### The tailnet handoff (step 7, slice 7.5b, part 1)
+
+`lib/tailhandoff` moves a tailnet name from the node serving it to
+another, and back if anything fails. It covers three handoffs (internal
+docs/design/go-step7.md decision 11): the forward handoff of a migration,
+its reverse, and the restore handoff of a restore onto a new host. It is
+not wired into `varlatch migrate` or varlatchd's restore yet: that is part
+2.
+
+- **Prepare** runs before any barrier and changes nothing:
+  - It checks the names case-insensitively against every device: the
+    name held by exactly the serving node, the incoming node under exactly
+    its temporary name (an enrolment under a taken name comes back
+    suffixed and is refused), and the serving node's temporary name free.
+  - It checks the issuance count.
+  - On the Tailscale certificate path:
+    - the incoming node proves it can obtain a certificate now;
+    - the serving node's certificate must last through the rollback
+      window plus seven days, or be renewed now, or the operator accepts
+      a new certificate on a rollback.
+- **Switch** runs under the barrier, and everything from its first change
+  sits under one deadline (180 s):
+  1. The serving installation closes its tailnet listener.
+  2. The two renames, back to back, each read back.
+  3. The name's certificate: at most three attempts for fast server
+     errors, each counted before it is made. A rate-limit refusal ends the
+     wait at once, and a timed-out attempt stays counted.
+  4. A client must reach the incoming node by the name.
+  5. Then the incoming installation opens.
+- **The undo** runs on any failure after the first change, reading the
+  control plane's own listing. The incoming node gives the name back, the
+  serving node takes it again (read back), and only then does the serving
+  installation reopen.
+  - When the control plane can't be reached, the undo stays pending, and
+    neither installation is opened on the tailnet. `Resume` finishes it
+    later.
+  - A restore's serving node is dead, so its listener is never closed or
+    reopened.
+  - `Resume` also finishes a switch that crashed while opening the
+    incoming installation, once the name, the certificate and a client's
+    reach hold again; otherwise it undoes it.
+- **What the callers supply:** the journal, the certificates, the issuance
+  count (the installation's `certificate_issuances`, #344), the
+  installations' listeners, the check from a client node, and a control
+  plane built with their own `*http.Client`.
 
 ## The OpenAPI document
 

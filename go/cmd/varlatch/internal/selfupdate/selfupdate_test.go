@@ -239,7 +239,12 @@ func TestFetchRefuses(t *testing.T) {
 // A copy a package manager installed is that package manager's; a link on
 // PATH is followed to the file it names.
 func TestLocate(t *testing.T) {
-	dir := t.TempDir()
+	// Resolved: on macOS the temporary directory is below a link
+	// (/var -> /private/var), and Locate answers the resolved path.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	file := func(parts ...string) string {
 		p := filepath.Join(append([]string{dir}, parts...)...)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
