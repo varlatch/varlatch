@@ -33,6 +33,23 @@ func TestProfileRefusals(t *testing.T) {
 			t.Fatalf("%+v, %v", p, err)
 		}
 	})
+	t.Run("VL_RH_ONLY", func(t *testing.T) {
+		t.Setenv("VL_RH_PROFILE", "")
+		t.Setenv("VL_RH_INGRESS", "")
+		for _, c := range []struct{ only, kill, want string }{
+			{"kill", "", "VL_RH_ONLY=kill needs VL_RH_KILL"},
+			{"everything", "", "VL_RH_ONLY is setup or kill"},
+			{"kill", "transfer", ""},
+			{"setup", "", ""},
+		} {
+			t.Setenv("VL_RH_ONLY", c.only)
+			t.Setenv("VL_RH_KILL", c.kill)
+			_, err := readProfile(1000)
+			if (c.want == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), c.want) {
+				t.Errorf("VL_RH_ONLY=%s VL_RH_KILL=%s: %v, want %q", c.only, c.kill, err, c.want)
+			}
+		}
+	})
 	t.Run("the box not as root", func(t *testing.T) {
 		coolify(t)
 		if _, err := readProfile(1000); err == nil || !strings.Contains(err.Error(), "runs as root") {

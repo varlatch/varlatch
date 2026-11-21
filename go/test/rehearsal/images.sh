@@ -75,6 +75,16 @@ node -e '
   }
   const text = "VARLATCH_IMAGE_REGISTRY=" + registry + "\n" + lines.join("\n") + "\n";
   const file = out + "/coolify-image-digests.env";
-  if (fs.existsSync(file) && fs.readFileSync(file, "utf8") !== text) throw new Error(file + " (the release builder'"'"'s) names other images than images.json");
+  if (fs.existsSync(file)) {
+    const have = fs.readFileSync(file, "utf8");
+    if (have !== text) {
+      // Digests are not secrets: the lines are shown as they differ.
+      const a = have.split("\n"), b = text.split("\n");
+      // Each line quoted, so whitespace shows.
+      const diff = [...a.filter(l => !b.includes(l)).map(l => "- " + JSON.stringify(l)), ...b.filter(l => !a.includes(l)).map(l => "+ " + JSON.stringify(l))];
+      throw new Error(file + " (the release builder'"'"'s) differs from what the release job'"'"'s format (#373, infra/release/coolify-digests.mjs) gives for images.json (- the file, + images.json):\n" +
+        (diff.length ? diff.join("\n") : "  the same lines, in another order or with other whitespace"));
+    }
+  }
   fs.writeFileSync(file, text);
 ' "$port" "$out" "${refs[@]}"

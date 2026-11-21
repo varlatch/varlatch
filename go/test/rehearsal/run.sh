@@ -44,6 +44,12 @@ pause_seconds=$(duration_seconds "${VL_RH_PAUSE_TIMEOUT:-2h}") || {
   echo "VL_RH_PAUSE_TIMEOUT is hours, minutes and seconds (2h, 90m, 1h30m), not ${VL_RH_PAUSE_TIMEOUT}" >&2
   exit 64
 }
+# Refused here, before anything starts, as each pause would refuse it
+# later (after the owner made the Coolify apps).
+if [ "$pause_seconds" -le 0 ]; then
+  echo "VL_RH_PAUSE_TIMEOUT must be longer than zero, not ${VL_RH_PAUSE_TIMEOUT}" >&2
+  exit 64
+fi
 test_timeout=$(( 6 * 3600 + pause_budget * pause_seconds ))s
 if [ "$profile" = box ] && [ -z "${SUDO_UID:-}" ]; then
   echo "warning: SUDO_UID is not set (a root shell from su, not sudo -i): the run's files, its report" >&2

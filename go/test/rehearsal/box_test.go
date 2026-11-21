@@ -134,6 +134,13 @@ func readProfile(euid int) (profileConfig, error) {
 	if prof.kill != "" && prof.kill != "transfer" && prof.kill != "barrier" {
 		return prof, fmt.Errorf("VL_RH_KILL is transfer or barrier, not %q", prof.kill)
 	}
+	switch only := os.Getenv("VL_RH_ONLY"); {
+	case only != "" && only != "setup" && only != "kill":
+		return prof, fmt.Errorf("VL_RH_ONLY is setup or kill, not %q", only)
+	case only == "kill" && prof.kill == "":
+		// Alone, it would run nothing between the guard and the report.
+		return prof, errors.New("VL_RH_ONLY=kill needs VL_RH_KILL (transfer or barrier): it runs the kill case alone")
+	}
 	return prof, nil
 }
 
