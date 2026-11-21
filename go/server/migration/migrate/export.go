@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,11 +23,15 @@ import (
 )
 
 // ExportReverse writes the reverse bundle of the database in o.DataDir to
-// out (decision 2's reverse): a snapshot copy is made in the data
-// directory, the transformations are applied to the copy (every Go browser
-// session ends, installation.migrated is appended), the copy is read in the
-// manifest's tables and columns, and removed. The database itself is never
-// changed. The caller holds the data directory (no varlatchd runs).
+// out (decision 2's reverse): a snapshot copy is made, the transformations
+// are applied to the copy (every Go browser session ends,
+// installation.migrated is appended), the copy is read in the manifest's
+// tables and columns, and removed, or kept in o.Keep for the reverse
+// checks. The database itself is never changed. Either the caller holds
+// the data directory (no varlatchd runs), or o.From is the migration
+// barrier's frozen copy (go-step7 decision 6, the reverse), which is read
+// as a file and copied, never opened in place, so a varlatchd behind that
+// barrier may run.
 func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error) {
 	res := Result{Direction: bundle.Reverse, PerTable: map[string]int{}}
 	m, err := manifest.Load()
@@ -34,29 +39,54 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 		return res, err
 	}
 	path := filepath.Join(o.DataDir, config.DatabaseFile)
+	if o.From != "" {
+		path = o.From
+	}
 	if _, err := os.Stat(path); err != nil {
 		return res, fmt.Errorf("migrate: no database to export: %w", err)
 	}
-	suffix := make([]byte, 6)
-	if _, err := rand.Read(suffix); err != nil {
-		return res, err
+	var snap string
+	if o.Keep != "" {
+		if err := emptyDir(o.Keep); err != nil {
+			return res, fmt.Errorf("migrate: --keep %s: %w", o.Keep, err)
+		}
+		snap = filepath.Join(o.Keep, config.DatabaseFile)
+	} else {
+		work := o.Work
+		if work == "" {
+			work = o.DataDir
+		}
+		suffix := make([]byte, 6)
+		if _, err := rand.Read(suffix); err != nil {
+			return res, err
+		}
+		snap = filepath.Join(work, ".migrate-export-"+hex.EncodeToString(suffix)+".db")
 	}
-	snap := filepath.Join(o.DataDir, ".migrate-export-"+hex.EncodeToString(suffix)+".db")
+	kept := false
 	defer func() {
-		for _, s := range []string{"", "-wal", "-shm"} {
+		if kept {
+			return
+		}
+		for _, s := range []string{"", "-wal", "-shm", "-journal"} {
 			_ = os.Remove(snap + s)
 		}
 	}()
-	live, err := storage.Open(ctx, storage.Options{Path: path})
-	if err != nil {
-		return res, err
-	}
-	_, err = live.Snapshot(ctx, snap, storage.SnapshotOptions{})
-	if cerr := live.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return res, fmt.Errorf("migrate: the snapshot copy: %w", err)
+	if o.From != "" {
+		if err := copyFile(o.From, snap); err != nil {
+			return res, fmt.Errorf("migrate: the frozen copy: %w", err)
+		}
+	} else {
+		live, err := storage.Open(ctx, storage.Options{Path: path})
+		if err != nil {
+			return res, err
+		}
+		_, err = live.Snapshot(ctx, snap, storage.SnapshotOptions{})
+		if cerr := live.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return res, fmt.Errorf("migrate: the snapshot copy: %w", err)
+		}
 	}
 	store, err := storage.Open(ctx, storage.Options{Path: snap})
 	if err != nil {
@@ -69,6 +99,17 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 	actx := audit.WithClock(ctx, o.now())
 	var last int64
 	err = store.Write(actx, func(tx *storage.Tx) error {
+		if o.From != "" {
+			// The copy as the barrier froze it, before the transformations
+			// append their events.
+			var frozen int64
+			if err := tx.QueryRowContext(actx, "SELECT coalesce(max(event_order), 0) FROM audit_events").Scan(&frozen); err != nil {
+				return err
+			}
+			if frozen != o.FrozenAt {
+				return fmt.Errorf("the frozen copy's last audit position is %d, not its barrier's frozen point %d: it is not the copy that barrier made", frozen, o.FrozenAt)
+			}
+		}
 		if err := tx.QueryRowContext(actx, "SELECT count(*) FROM auth_sessions").Scan(&res.SessionsEnded); err != nil {
 			return err
 		}
@@ -112,7 +153,74 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 		res.Rows += int64(n)
 		res.PerTable[t.Source] = n
 	}
-	return res, w.Close()
+	// The check sections are empty, in bundle-v1 for good (BUNDLE.md): the
+	// reverse checks take the TypeScript side's digests and decisions from
+	// its export of the rebuilt database, and Go's from the kept copy.
+	if err := w.Digests(0); err != nil {
+		return res, err
+	}
+	if err := w.Decisions(0, o.now()().UnixMicro()); err != nil {
+		return res, err
+	}
+	if err := w.Close(); err != nil {
+		return res, err
+	}
+	if o.Keep != "" {
+		// The copy as the checks read it: one file, its write-ahead log
+		// folded in.
+		if err := store.Close(); err != nil {
+			return res, err
+		}
+		kept = true
+	}
+	return res, nil
+}
+
+// emptyDir makes dir, or finds it an empty directory.
+func emptyDir(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return errors.New("not an absolute path")
+	}
+	if err := os.Mkdir(dir, 0o700); err == nil || !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return errors.New("not empty: the transformed copy is kept in a new or empty directory")
+	}
+	return nil
+}
+
+// copyFile copies a database file that nothing writes (a frozen copy) to
+// a new file, mode 0600, synced.
+func copyFile(from, to string) error {
+	in, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	st, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", from)
+	}
+	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // exportTable writes one table: its rows in the manifest's order, in the

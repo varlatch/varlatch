@@ -55,20 +55,74 @@ A bundle is UTF-8 text, one JSON value per line, each line ending in `\n`
    `session` table has no rows: every Go browser session ends
    (transformation `browser-sessions-end`).
 
-3. **The end line**:
+3. **The digest section** (decision 7): a line `{"digests":<n>}`, then
+   `n` lines, one per encrypted item the writer holds, each
 
    ```json
-   {"end":{"tables":62,"rows":1234,"sha256":"<64 lowercase hex digits>"}}
+   {"class":"org-kek","ids":{"organizationId":"org_..."},"hmac":"<64 lowercase hex digits>"}
    ```
 
-   `tables` and `rows` are the counts above; `sha256` is SHA-256 of every
-   byte before the end line, header included. A bundle without its end
-   line, or whose digest or counts do not hold, is cut short or damaged:
-   a reader refuses it whole, never part of it.
+   - `class` is the item's encryption class, `ids` the item's envelope
+     context without its `purpose` (a value's `organizationId`,
+     `secretId`, `versionId`; the canary's `installationId`; ...), members
+     in jsonb's order (shorter keys first, then by bytes), every member a
+     string.
+   - `hmac` is HMAC-SHA256, under the migration's run key, of the digest
+     input `canonical.DigestInput(class, ids, plaintext)`
+     (`../canonical/CANONICAL.md`, "Digest input"). The run key itself is
+     never in the bundle: `migrate` hands it to each side on a pipe.
+   - Lines are sorted by `class`, then by the bytes of `ids` as written;
+     no two lines are the same item.
+   - The classes and the items each covers are `../check/CHECKS.md`'s.
+
+   A reverse bundle's digest section is empty (`{"digests":0}`), in
+   bundle-v1 for good: the reverse checks (slice 7.6a, `../check/CHECKS.md`,
+   "The reverse checks") take the TypeScript side's digests from its
+   export of the database it rebuilt, and compute Go's from the transformed
+   copy the reverse export kept. The TypeScript import (7.2c) reads the
+   section's form only.
+
+4. **The decision section** (decision 8): a line
+   `{"decisions":<n>,"at":<Unix microseconds>}`, then `n` lines, each one
+   decision of the writer's evaluator at `at`:
+
+   ```json
+   {"credential":"crd_...","state":"active","organization":"org_...","project":"prj_...","environment":"env_...","action":"secret.reveal","tailnet":null,"allowed":true,"code":null}
+   ```
+
+   - `state` is the credential state the decision assumes: `active`,
+     `expired` or `revoked`.
+   - `project` and `environment` are `null` for an action on the
+     Organization (or the Project); an environment is always in a Project.
+   - `tailnet` is `null`, or the Tailnet Context the decision assumes:
+     `{"tailnet":"...","nodeId":"...","tags":[...],"userLogin":null}`
+     (`userLogin` a string or `null`).
+   - `allowed` is the answer; `code` is the error code of a denial
+     (`PERMISSION_DENIED`, `RESOURCE_NOT_FOUND`, `UNAUTHENTICATED`,
+     `TAILNET_CONTEXT_REQUIRED`, ...), `null` when allowed.
+
+   Lines are in the writer's order. A reverse bundle's decision section
+   is empty (`{"decisions":0,"at":<the export's moment>}`), for the same
+   reason: the TypeScript evaluator's table comes with its export of the
+   rebuilt database, and varlatchd's evaluator answers it on the kept copy.
+
+5. **The end line**:
+
+   ```json
+   {"end":{"tables":62,"rows":1234,"digests":5,"decisions":40,"sha256":"<64 lowercase hex digits>"}}
+   ```
+
+   `tables`, `rows`, `digests` and `decisions` are the counts above;
+   `sha256` is SHA-256 of every byte before the end line, header
+   included. A bundle without its end line, or whose digest or counts do
+   not hold, is cut short or damaged: a reader refuses it whole, never
+   part of it.
 
 ## Member order and spelling
 
-Control lines (the header, table lines, the end line) are written exactly
-as above: members in the order shown, no space, integers in decimal,
-strings quoted as JSON.stringify quotes them. A reader parses them
-strictly: an unknown or missing member is refused.
+Control lines (the header, table lines, the section lines, digest and
+decision lines, the end line) are written exactly as above: members in
+the order shown, no space, integers in decimal, strings quoted as
+JSON.stringify quotes them. A reader parses them strictly: an unknown or
+missing member is refused, and a digest or decision line not written
+exactly so is refused too.

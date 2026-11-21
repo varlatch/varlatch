@@ -4,290 +4,35 @@ package migrate
 
 import (
 	"bytes"
-	"cmp"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/migration/bundle"
-	"github.com/varlatch/varlatch/go/server/migration/canonical"
 	"github.com/varlatch/varlatch/go/server/migration/manifest"
+	"github.com/varlatch/varlatch/go/server/migration/migrationtest"
 )
 
-// The source: the TypeScript server's rows of the core parity fixture
-// (written by services/varlatchd/test/go-core-fixture.test.ts from a
-// seeded v0.22.0 installation), as its export reads PostgreSQL, plus what
-// the fixture lacks to exercise the transformations: a person with a live
-// browser session, a browser credential minted from it and a CLI hand-off
-// credential from the same session, and the finished exposure backfill.
+// The source is migrationtest's: the TypeScript server's rows of the
+// v0.22.0 parity fixtures, under core's Root KEK, plus a person with a live
+// browser session, a browser credential minted from it, an expired one and
+// a CLI hand-off credential from the same session, a signing key, and the
+// finished exposure backfill.
+type source = migrationtest.Source
 
-type source struct {
-	rootKEK []byte
-	rows    map[string][]jsvalue.Object
-}
-
-func loadSource(t *testing.T) source {
-	t.Helper()
-	get := func(o jsvalue.Object, k string) any {
-		for _, m := range o {
-			if m.Key == k {
-				return m.Value
-			}
-		}
-		return nil
-	}
-	fixture := func(name string) jsvalue.Object {
-		t.Helper()
-		raw, err := os.ReadFile(filepath.Join("..", "..", "paritytest", "testdata", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		doc, err := jsvalue.Parse(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return doc.(jsvalue.Object)
-	}
-	core := fixture("core-v0.22.0.json")
-	kek, err := hex.DecodeString(get(core, "rootKek").(string))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := source{rootKEK: kek, rows: map[string][]jsvalue.Object{}}
-	// The v0.22.0 parity fixtures whose rows do not meet (several reuse
-	// fixed ids, so not all of them), each written by the TypeScript server
-	// from a seeded installation of its own. The installation (the canary
-	// under core's Root KEK) is core's, and the audit log org-deletion's, so
-	// its positions run 1..n.
-	for _, base := range []string{"core", "org-deletion", "audit-export", "converge", "security", "exposure", "capabilities",
-		"oidc", "requirements", "outbound", "tailnet", "audit-export-worker"} {
-		for _, tm := range get(fixture(base+"-v0.22.0.json"), "rows").(jsvalue.Object) {
-			switch {
-			case tm.Key == "installation" && base != "core":
-				continue
-			case tm.Key == "audit_events" && base != "org-deletion":
-				continue
-			}
-			for _, r := range tm.Value.([]any) {
-				row := r.(jsvalue.Object)
-				// Organization slugs repeat from one fixture to another
-				// (acme): each fixture's get its name.
-				if tm.Key == "organizations" && base != "core" {
-					row = slices.Clone(row)
-					for i, m := range row {
-						if m.Key == "slug" {
-							row[i].Value = m.Value.(string) + "-" + base
-						}
-					}
-				}
-				s.rows[tm.Key] = append(s.rows[tm.Key], row)
-			}
-		}
-	}
-	// The additions: a person, a live session, its browser credential, an
-	// expired browser credential and a CLI hand-off credential from it, a
-	// signing key, the backfill finished.
-	admin := ""
-	for _, id := range s.rows["identities"] {
-		if get(id, "installation_admin") == true && admin == "" {
-			admin = get(id, "id").(string)
-		}
-	}
-	if admin == "" {
-		t.Fatal("no installation admin in the fixtures")
-	}
-	at := "2026-11-17T08:05:00.000Z"
-	random := func(n int) []byte {
-		b := make([]byte, n)
-		_, _ = rand.Read(b)
-		return b
-	}
-	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
-	s.rows["user"] = append(s.rows["user"], jsvalue.Object{{Key: "id", Value: "usr_migration"}, {Key: "name", Value: "Admin"},
-		{Key: "email", Value: "migration-admin@varlatch.test"}, {Key: "emailVerified", Value: false}, {Key: "image", Value: nil},
-		{Key: "createdAt", Value: at}, {Key: "updatedAt", Value: at}})
-	s.rows["auth_user_links"] = append(s.rows["auth_user_links"], jsvalue.Object{{Key: "better_auth_user_id", Value: "usr_migration"},
-		{Key: "identity_id", Value: admin}, {Key: "created_at", Value: at}})
-	// The token is null: the export never reads it (BUNDLE.md).
-	s.rows["session"] = append(s.rows["session"], jsvalue.Object{{Key: "id", Value: "ses_migration"}, {Key: "expiresAt", Value: "2027-11-17T08:05:00.000Z"},
-		{Key: "token", Value: nil}, {Key: "createdAt", Value: at}, {Key: "updatedAt", Value: at},
-		{Key: "ipAddress", Value: nil}, {Key: "userAgent", Value: nil}, {Key: "userId", Value: "usr_migration"}})
-	cred := func(id, kind, expires string) jsvalue.Object {
-		return jsvalue.Object{{Key: "id", Value: id}, {Key: "identity_id", Value: admin}, {Key: "kind", Value: kind}, {Key: "name", Value: kind},
-			{Key: "token_hash", Value: hex.EncodeToString(random(32))}, {Key: "created_at", Value: at}, {Key: "expires_at", Value: expires},
-			{Key: "revoked_at", Value: nil}, {Key: "max_uses", Value: nil}, {Key: "use_count", Value: float64(0)}, {Key: "last_used_at", Value: nil},
-			{Key: "client", Value: nil}, {Key: "auth_session_id", Value: "ses_migration"}, {Key: "issued_by", Value: nil},
-			{Key: "evidence_user_verified", Value: nil}, {Key: "evidence_passkey_id", Value: nil}}
-	}
-	s.rows["credentials"] = append(s.rows["credentials"],
-		cred("crd_migration_browser", "browser", "2027-11-17T08:05:00.000Z"),
-		cred("crd_migration_expired", "browser", "2026-11-17T08:06:00.000Z"),
-		cred("crd_migration_cli", "cli", "2027-11-17T08:05:00.000Z"))
-	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	x, y := make([]byte, 32), make([]byte, 32)
-	signer.PublicKey.X.FillBytes(x)
-	signer.PublicKey.Y.FillBytes(y)
-	s.rows["signing_keys"] = append(s.rows["signing_keys"], jsvalue.Object{{Key: "id", Value: "key_migration"}, {Key: "algorithm", Value: "ES256"},
-		{Key: "public_jwk", Value: jsvalue.Object{{Key: "kty", Value: "EC"}, {Key: "crv", Value: "P-256"}, {Key: "x", Value: b64(x)}, {Key: "y", Value: b64(y)}}},
-		{Key: "private_key_wrapped", Value: jsvalue.Object{{Key: "nonce", Value: base64.StdEncoding.EncodeToString(random(12))},
-			{Key: "authTag", Value: base64.StdEncoding.EncodeToString(random(16))}, {Key: "algorithm", Value: "aes-256-gcm"},
-			{Key: "ciphertext", Value: base64.StdEncoding.EncodeToString(random(150))}, {Key: "formatVersion", Value: float64(1)}}},
-		{Key: "created_at", Value: at}, {Key: "retired_at", Value: nil}})
-	s.rows["exposure_backfill"] = []jsvalue.Object{{{Key: "singleton", Value: true}, {Key: "cursor", Value: float64(0)},
-		{Key: "until_order", Value: float64(0)}, {Key: "finished_at", Value: at}}}
-	return s
-}
-
-// value is a PostgreSQL value as node-postgres gives it, in the form the
-// canonical encoder takes.
-func value(t *testing.T, ty canonical.Type, v any) any {
-	t.Helper()
-	if v == nil {
-		return nil
-	}
-	switch ty {
-	case canonical.Timestamptz:
-		ts, err := time.Parse(time.RFC3339Nano, v.(string))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return ts.UnixMicro()
-	case canonical.Integer, canonical.Bigint:
-		switch x := v.(type) {
-		case float64:
-			return int64(x)
-		case string:
-			n, err := strconv.ParseInt(x, 10, 64)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return n
-		}
-	case canonical.Jsonb:
-		return string(jsvalue.Stringify(jsvalue.Jsonb(v)))
-	case canonical.Bytea:
-		// PostgreSQL's hex output, as the fixtures hold it.
-		b, err := hex.DecodeString(strings.TrimPrefix(v.(string), "\\x"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return b
-	case canonical.Boolean:
-		return v
-	case canonical.TextArray:
-		return v.([]any)
-	}
-	return v
-}
-
-// compareValues is SQLite's ascending order: NULL first, integers by value,
-// text and bytes by their bytes.
-func compareValues(a, b any) int {
-	switch {
-	case a == nil && b == nil:
-		return 0
-	case a == nil:
-		return -1
-	case b == nil:
-		return 1
-	}
-	switch x := a.(type) {
-	case int64:
-		return cmp.Compare(x, b.(int64))
-	case string:
-		return strings.Compare(x, b.(string))
-	case bool:
-		return cmp.Compare(boolInt(x), boolInt(b.(bool)))
-	}
-	return 0
-}
-
-func boolInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
+func loadSource(t *testing.T) source { return migrationtest.Load(t) }
 
 // sourceBundle is the source's forward bundle, extra rows added by table.
 func sourceBundle(t *testing.T, s source, extra map[string][][]any, sequences bool) []byte {
 	t.Helper()
-	m, err := manifest.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	w, err := bundle.NewWriter(&buf, m, bundle.Header{Manifest: m.Version, Encoding: m.Encoding, Direction: bundle.Forward,
-		Release: m.Source.Release, FrozenPoint: bundle.FrozenPoint{AuditPosition: 0, Snapshot: "00000003-0000001B-1"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tb := range bundle.Tables(m) {
-		var rows [][]any
-		for _, r := range s.rows[tb.Source] {
-			vals := make([]any, len(tb.Columns))
-			for i, c := range tb.Columns {
-				for _, mem := range r {
-					if mem.Key == c.Source {
-						vals[i] = value(t, c.Type, mem.Value)
-					}
-				}
-			}
-			rows = append(rows, vals)
-		}
-		rows = append(rows, extra[tb.Source]...)
-		if !tb.PhysicalOrder {
-			idx := map[string]int{}
-			for i, c := range tb.Columns {
-				idx[c.Source] = i
-			}
-			slices.SortStableFunc(rows, func(a, b []any) int {
-				for _, k := range tb.OrderBy {
-					if c := compareValues(a[idx[k]], b[idx[k]]); c != 0 {
-						return c
-					}
-				}
-				return 0
-			})
-		}
-		if err := w.Table(tb.Source, len(rows)); err != nil {
-			t.Fatal(err)
-		}
-		for _, r := range rows {
-			b, err := canonical.AppendRow(nil, tb.Types(), r)
-			if err != nil {
-				t.Fatalf("%s: %v", tb.Source, err)
-			}
-			if err := w.Row(b); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	b := buf.Bytes()
-	if sequences {
-		b = bytes.Replace(b, []byte(`"sequences":[]`), []byte(`"sequences":["s"]`), 1)
-	}
-	return b
+	return migrationtest.Bundle(t, s, migrationtest.Options{Extra: extra, Sequences: sequences})
 }
 
 // tablesOf reads a bundle into its rows by table.
@@ -312,6 +57,9 @@ func tablesOf(t *testing.T, b []byte) map[string][]string {
 			}
 			out[tb.Source] = append(out[tb.Source], string(row))
 		}
+	}
+	if err := r.SkipSections(); err != nil {
+		t.Fatal(err)
 	}
 	if err := r.End(); err != nil {
 		t.Fatal(err)
@@ -352,7 +100,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Errorf("only %d tables with rows", len(withData))
 	}
 	dir := t.TempDir()
-	res, err := importInto(t, dir, src, s.rootKEK)
+	res, err := importInto(t, dir, src, s.RootKEK)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +256,7 @@ func TestImportRefusals(t *testing.T) {
 	var rev bytes.Buffer
 	{
 		dir := t.TempDir()
-		if _, err := importInto(t, dir, good, s.rootKEK); err != nil {
+		if _, err := importInto(t, dir, good, s.RootKEK); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := ExportReverse(context.Background(), &rev, Options{DataDir: dir, Release: "0.50.0-test"}); err != nil {
@@ -522,16 +270,16 @@ func TestImportRefusals(t *testing.T) {
 		kek    []byte
 		why    string
 	}{
-		{"a data directory in use", used, good, s.rootKEK, "not empty"},
+		{"a data directory in use", used, good, s.RootKEK, "not empty"},
 		{"the wrong Root KEK", empty(t), good, wrongKEK, "does not open the installation's canary"},
-		{"cut short", empty(t), cut, s.rootKEK, "cut short"},
-		{"a damaged byte", empty(t), damaged, s.rootKEK, "damaged"},
-		{"a row not in canonical form", empty(t), notCanonical, s.rootKEK, "table installation: row 1: canonical: the row is not in canonical form"},
-		{"a broken foreign key", empty(t), sourceBundle(t, s, map[string][][]any{"org_memberships": {orphan}}, false), s.rootKEK, "foreign keys do not hold: org_memberships"},
-		{"a sequence", empty(t), sourceBundle(t, s, nil, true), s.rootKEK, "sequences"},
-		{"a reverse bundle", empty(t), rev.Bytes(), s.rootKEK, "a reverse bundle"},
-		{"a session token carried", empty(t), withToken(t, s), s.rootKEK, "session.token holds a value"},
-		{"a leftover that is not an import's", leftover(t, ".migrate-import-x.db"), good, s.rootKEK, "not empty (.migrate-import-x.db)"},
+		{"cut short", empty(t), cut, s.RootKEK, "cut short"},
+		{"a damaged byte", empty(t), damaged, s.RootKEK, "damaged"},
+		{"a row not in canonical form", empty(t), notCanonical, s.RootKEK, "table installation: row 1: canonical: the row is not in canonical form"},
+		{"a broken foreign key", empty(t), sourceBundle(t, s, map[string][][]any{"org_memberships": {orphan}}, false), s.RootKEK, "foreign keys do not hold: org_memberships"},
+		{"a sequence", empty(t), sourceBundle(t, s, nil, true), s.RootKEK, "sequences"},
+		{"a reverse bundle", empty(t), rev.Bytes(), s.RootKEK, "a reverse bundle"},
+		{"a session token carried", empty(t), withToken(t, s), s.RootKEK, "session.token holds a value"},
+		{"a leftover that is not an import's", leftover(t, ".migrate-import-x.db"), good, s.RootKEK, "not empty (.migrate-import-x.db)"},
 	} {
 		_, err := importInto(t, c.dir, c.bundle, c.kek)
 		if err == nil || !strings.Contains(err.Error(), c.why) {
@@ -549,17 +297,17 @@ func TestImportRefusals(t *testing.T) {
 // withToken is the source with its session's token carried.
 func withToken(t *testing.T, s source) []byte {
 	t.Helper()
-	carried := source{rootKEK: s.rootKEK, rows: map[string][]jsvalue.Object{}}
-	for k, v := range s.rows {
-		carried.rows[k] = v
+	carried := source{RootKEK: s.RootKEK, AuditPosition: s.AuditPosition, Rows: map[string][]jsvalue.Object{}}
+	for k, v := range s.Rows {
+		carried.Rows[k] = v
 	}
-	row := slices.Clone(s.rows["session"][0])
+	row := slices.Clone(s.Rows["session"][0])
 	for i, m := range row {
 		if m.Key == "token" {
 			row[i].Value = "a token the export never carries"
 		}
 	}
-	carried.rows["session"] = []jsvalue.Object{row}
+	carried.Rows["session"] = []jsvalue.Object{row}
 	return sourceBundle(t, carried, nil, false)
 }
 
@@ -579,12 +327,15 @@ func leftover(t *testing.T, name string) string {
 func TestAnInterruptedImportsLeftovers(t *testing.T) {
 	s := loadSource(t)
 	dir := t.TempDir()
-	for _, name := range []string{importPrefix + "0123456789ab.db", importPrefix + "0123456789ab.db-wal", importPrefix + "0123456789ab.db-shm"} {
+	// The -journal: killed while the database was being created, before
+	// it was in WAL mode (the G5 gate's killed import found it).
+	for _, name := range []string{importPrefix + "0123456789ab.db", importPrefix + "0123456789ab.db-wal", importPrefix + "0123456789ab.db-shm",
+		importPrefix + "ba9876543210.db", importPrefix + "ba9876543210.db-journal"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("an import cut short"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.rootKEK); err != nil {
+	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.RootKEK); err != nil {
 		t.Fatal(err)
 	}
 	entries, _ := os.ReadDir(dir)
@@ -597,17 +348,7 @@ func TestAnInterruptedImportsLeftovers(t *testing.T) {
 	}
 }
 
-// reseal writes a bundle's end line again for its changed bytes.
-func reseal(t *testing.T, b []byte) []byte {
-	t.Helper()
-	body := b[:bytes.LastIndex(b[:len(b)-1], []byte("\n"))+1]
-	end := b[len(body):]
-	sum := sha256.Sum256(body)
-	i := bytes.Index(end, []byte(`"sha256":"`)) + len(`"sha256":"`)
-	out := append(slices.Clone(body), end[:i]...)
-	out = append(out, hex.EncodeToString(sum[:])...)
-	return append(out, end[i+64:]...)
-}
+func reseal(t *testing.T, b []byte) []byte { return migrationtest.Reseal(t, b) }
 
 // A reverse export that was killed leaves its snapshot copy under its
 // temporary name: the next import removes it (that exact pattern, regular
@@ -616,12 +357,13 @@ func reseal(t *testing.T, b []byte) []byte {
 func TestAnInterruptedExportsLeftovers(t *testing.T) {
 	s := loadSource(t)
 	dir := t.TempDir()
-	for _, name := range []string{".migrate-export-0123456789ab.db", ".migrate-export-0123456789ab.db-wal", ".migrate-export-0123456789ab.db-shm"} {
+	for _, name := range []string{".migrate-export-0123456789ab.db", ".migrate-export-0123456789ab.db-wal", ".migrate-export-0123456789ab.db-shm",
+		".migrate-export-ba9876543210.db", ".migrate-export-ba9876543210.db-journal"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("an export cut short"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.rootKEK); err != nil {
+	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.RootKEK); err != nil {
 		t.Fatal(err)
 	}
 	entries, _ := os.ReadDir(dir)
@@ -629,7 +371,7 @@ func TestAnInterruptedExportsLeftovers(t *testing.T) {
 		t.Fatalf("the data directory after the import: %v", entries)
 	}
 	for _, name := range []string{".migrate-export-0123456789ab.db.bak", ".migrate-export-0123456789AB.db"} {
-		if _, err := importInto(t, leftover(t, name), sourceBundle(t, s, nil, false), s.rootKEK); err == nil || !strings.Contains(err.Error(), "not empty ("+name+")") {
+		if _, err := importInto(t, leftover(t, name), sourceBundle(t, s, nil, false), s.RootKEK); err == nil || !strings.Contains(err.Error(), "not empty ("+name+")") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -637,7 +379,69 @@ func TestAnInterruptedExportsLeftovers(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(asDir, ".migrate-export-0123456789ab.db"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := importInto(t, asDir, sourceBundle(t, s, nil, false), s.rootKEK); err == nil || !strings.Contains(err.Error(), "not empty") {
+	if _, err := importInto(t, asDir, sourceBundle(t, s, nil, false), s.RootKEK); err == nil || !strings.Contains(err.Error(), "not empty") {
 		t.Errorf("a directory under the temporary name: %v", err)
+	}
+}
+
+// The reverse export from a barrier's frozen copy (From): read as a file,
+// never opened in place; a copy whose last audit position is not the
+// frozen point it is given (another copy, or one written since) is
+// refused, naming it, with nothing written and nothing kept; at the frozen
+// point it exports, and keeps the transformed copy.
+func TestTheFrozenCopy(t *testing.T) {
+	s := loadSource(t)
+	dir := t.TempDir()
+	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.RootKEK); err != nil {
+		t.Fatal(err)
+	}
+	frozen := filepath.Join(t.TempDir(), "frozen.db")
+	b, err := os.ReadFile(filepath.Join(dir, config.DatabaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(frozen, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+frozen+"?mode=ro&immutable=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last int64
+	if err := db.QueryRow("SELECT max(event_order) FROM audit_events").Scan(&last); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	for _, at := range []int64{last - 1, last + 1} {
+		keep := filepath.Join(t.TempDir(), "keep")
+		var out bytes.Buffer
+		_, err := ExportReverse(context.Background(), &out, Options{DataDir: dir, From: frozen, FrozenAt: at, Keep: keep, Release: "0.50.0-test"})
+		if err == nil || !strings.Contains(err.Error(), "it is not the copy that barrier made") {
+			t.Fatalf("a frozen point of %d for a copy at %d: %v", at, last, err)
+		}
+		if out.Len() != 0 {
+			t.Errorf("a refused export wrote %d bytes", out.Len())
+		}
+		if _, err := os.Stat(filepath.Join(keep, config.DatabaseFile)); !os.IsNotExist(err) {
+			t.Errorf("a refused export kept its copy: %v", err)
+		}
+	}
+	after, _ := os.ReadFile(frozen)
+	if !bytes.Equal(after, b) {
+		t.Fatal("the frozen copy changed")
+	}
+	keep := filepath.Join(t.TempDir(), "keep")
+	var out bytes.Buffer
+	res, err := ExportReverse(context.Background(), &out, Options{DataDir: dir, From: frozen, FrozenAt: last, Keep: keep, Release: "0.50.0-test"})
+	if err != nil || res.MigratedPosition <= last {
+		t.Fatalf("at its frozen point: %+v %v", res, err)
+	}
+	if _, err := os.Stat(filepath.Join(keep, config.DatabaseFile)); err != nil {
+		t.Errorf("the kept copy: %v", err)
+	}
+	for _, sfx := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Stat(frozen + sfx); !os.IsNotExist(err) {
+			t.Errorf("%s beside the frozen copy: the export opened it in place", sfx)
+		}
 	}
 }

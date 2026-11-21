@@ -85,6 +85,16 @@ type Options struct {
 	Release string
 	// Now is the clock (time.Now when nil).
 	Now func() time.Time
+	// The reverse export's (ExportReverse): From is the database file it
+	// reads instead of the data directory's (the migration barrier's
+	// frozen copy), whose last audit position must be FrozenAt; Keep is a
+	// new or empty directory the transformed copy is kept in (as
+	// varlatch.db, for the reverse checks), Work one the copy is made in
+	// and removed from otherwise (the data directory when empty).
+	From     string
+	FrozenAt int64
+	Keep     string
+	Work     string
 }
 
 func (o Options) now() func() time.Time {
@@ -139,8 +149,13 @@ func insertSQL(table string, names []string) string {
 // staleTemp is what an import or a reverse export that was killed leaves
 // in the data directory: the database under its temporary name
 // (.migrate-import-<12 hex>.db, .migrate-export-<12 hex>.db), and that
-// name's WAL and shared memory.
-var staleTemp = regexp.MustCompile(`^\.migrate-(import|export)-[0-9a-f]{12}\.db(-wal|-shm)?$`)
+// name's WAL and shared memory, or its rollback journal (a kill while the
+// database was being created, before it was in WAL mode).
+var staleTemp = regexp.MustCompile(`^\.migrate-(import|export)-[0-9a-f]{12}\.db(-wal|-shm|-journal)?$`)
+
+// IsLeftover is whether name is what an import or a reverse export that
+// was killed leaves in the data directory (staleTemp).
+func IsLeftover(name string) bool { return staleTemp.MatchString(name) }
 
 // fresh checks dir holds nothing but the ignored names, after removing what
 // an import or a reverse export that was killed left (that exact pattern
@@ -208,7 +223,7 @@ func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err e
 	}
 	temp := filepath.Join(o.DataDir, importPrefix+hex.EncodeToString(suffix)+".db")
 	removeTemp := func() {
-		for _, s := range []string{"", "-wal", "-shm"} {
+		for _, s := range []string{"", "-wal", "-shm", "-journal"} {
 			_ = os.Remove(temp + s)
 		}
 	}
@@ -246,6 +261,12 @@ func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err e
 			if err := importTable(actx, tx, r, t, n, &res); err != nil {
 				return fmt.Errorf("migrate: table %s: %w", t.Source, err)
 			}
+		}
+		// The check sections are the checks' (server/migration/check),
+		// held against this database after the import; nothing of them
+		// is imported.
+		if err := r.SkipSections(); err != nil {
+			return err
 		}
 		if err := r.End(); err != nil {
 			return err
@@ -287,7 +308,7 @@ func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err e
 	if err := os.Rename(temp, final); err != nil {
 		return res, err
 	}
-	for _, s := range []string{"-wal", "-shm"} {
+	for _, s := range []string{"-wal", "-shm", "-journal"} {
 		_ = os.Remove(temp + s)
 	}
 	if err := syncFile(o.DataDir); err != nil {
