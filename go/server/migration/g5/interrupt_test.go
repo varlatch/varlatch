@@ -528,11 +528,11 @@ const ownerFile = "g5-owner.pid"
 // process is gone: one killed (SIGKILL, or go test's -timeout panic) runs
 // none of its cleanup. Only this user's; a shared directory only when the
 // process its owner file names is dead; one without an owner file (a
-// scratch directory, or a run of a branch from before owner files) only
-// once it is older than abandonedAfter, longer than any G5 run, so a live
-// run's is never removed.
+// scratch directory, the Headscale cases' CA, or a run of a branch from
+// before owner files) only once it is older than abandonedAfter, longer
+// than any G5 run, so a live run's is never removed.
 func sweepAbandoned() {
-	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*"} {
+	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*", "g5-headscale-ca-*"} {
 		dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
 		for _, d := range dirs {
 			st, err := os.Lstat(d)

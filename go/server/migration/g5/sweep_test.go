@@ -45,9 +45,10 @@ func TestG5SweepsAbandonedDirectories(t *testing.T) {
 	fresh := mk("g5-interrupt-fresh", "", time.Minute)
 	old := mk("g5-interrupt-old", "", 7*time.Hour)
 	decide := mk("g5-decide-old", "", 7*time.Hour)
+	ca := mk("g5-headscale-ca-old", "", 7*time.Hour)
 	other := mk("unrelated-old", "", 7*time.Hour)
 	sweepAbandoned()
-	for d, kept := range map[string]bool{gone: false, live: true, fresh: true, old: false, decide: false, other: true} {
+	for d, kept := range map[string]bool{gone: false, live: true, fresh: true, old: false, decide: false, ca: false, other: true} {
 		if _, err := os.Stat(d); (err == nil) != kept {
 			t.Errorf("%s: kept %v, want %v", filepath.Base(d), err == nil, kept)
 		}
