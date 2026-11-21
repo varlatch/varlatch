@@ -204,6 +204,11 @@ type fakeProber struct {
 	moved   bool // Coolify: the operator moved the domain
 	wrong   string
 	release string // another release answering (the old installation's)
+	// sourceLate is how many probes the source's ingress, started, still
+	// does not answer (its dashboard not yet listening).
+	sourceLate int
+	// sourceDown: the source's ingress, started, never answers.
+	sourceDown bool
 }
 
 func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, error) {
@@ -213,7 +218,17 @@ func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, er
 	}
 	served := p.w.tgt.running && (p.w.src.ingressDown || (p.w.eng.Options.Ingress == Coolify && p.moved))
 	if !served {
-		return "", "", errors.New("connection refused")
+		// The source answers at the address while its ingress is up and
+		// the address is not the target's (an own proxy or Caddy; in
+		// Coolify, until the domain moves).
+		if p.w.src.ingressDown || p.w.tgt.running && p.w.eng.Options.Ingress != Coolify || p.sourceDown {
+			return "", "", errors.New("connection refused")
+		}
+		if p.sourceLate > 0 {
+			p.sourceLate--
+			return "", "", errors.New("GET /v1/meta answered 502")
+		}
+		return "inst_fake", p.w.src.info.Release, nil
 	}
 	if p.wrong != "" {
 		return p.wrong, "0.50.0", nil
@@ -915,6 +930,65 @@ func TestAnUndoInTheTransferLiftsTheBarrierFirst(t *testing.T) {
 			})
 		}
 	}
+}
+
+// An undo in the transfer reopens the old installation only once it
+// answers at its address: the ingress started is not yet its dashboard
+// listening (7.8b rehearsal, run r12: --abort said it reopened while the
+// source still answered 502). A source that answers a little later is
+// waited for; one that never answers leaves the undo resumable, and
+// --resume finishes it once it does.
+func TestAnUndoWaitsForTheSourceToAnswer(t *testing.T) {
+	for _, kind := range []Ingress{Public, Proxy} {
+		t.Run(string(kind)+", a little later", func(t *testing.T) {
+			w := interrupted(t, Transfer)
+			setIngress(t, w, kind)
+			w.prober.sourceLate = 3
+			j, err := w.eng.Abort(context.Background())
+			if err != nil || j.Phase != Released {
+				t.Fatalf("--abort: %+v %v", j, err)
+			}
+			if w.prober.sourceLate != 0 {
+				t.Errorf("released before the source answered (%d probes left)", w.prober.sourceLate)
+			}
+		})
+		t.Run(string(kind)+", not at all", func(t *testing.T) {
+			w := interrupted(t, Transfer)
+			setIngress(t, w, kind)
+			w.prober.sourceDown = true
+			w.eng.Options.TransferTimeout = 10 * time.Second
+			_, err := w.eng.Abort(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "was started again, but the public URL https://vault.example.test did not answer from the TypeScript release") ||
+				!strings.Contains(err.Error(), "varlatch migrate --resume tries again") {
+				t.Fatalf("--abort with the source not answering: %v", err)
+			}
+			if j, rerr := readJournal(w.src.dir); rerr != nil || j.Phase != Transfer || !j.Undoing {
+				t.Fatalf("the journal: %+v %v", j, rerr)
+			}
+			// It answers now: --resume finishes the undo.
+			w.prober.sourceDown = false
+			if j, err := w.eng.Resume(context.Background()); err != nil && !strings.Contains(err.Error(), "reopened unchanged") || j.Phase != Released {
+				t.Fatalf("--resume once it answers: %+v %v", j, err)
+			}
+		})
+	}
+}
+
+// setIngress gives an interrupted world's journal the shape kind, its
+// ingress stopped and the target serving, as a kill in the transfer
+// leaves them.
+func setIngress(t *testing.T, w *world, kind Ingress) {
+	t.Helper()
+	j, err := readJournal(w.src.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Ingress = kind
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	w.eng.Options.Ingress = kind
+	w.src.ingressDown, w.tgt.running = true, true
 }
 
 // An undo in the transfer that cannot show the source's gate is gone

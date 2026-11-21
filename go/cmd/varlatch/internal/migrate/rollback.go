@@ -315,6 +315,17 @@ func originOf(j *Journal) string {
 // waitForSource probes the public URL until it answers with the
 // installation's id and the TypeScript release's version.
 func (e *Engine) waitForSource(ctx context.Context, j *Journal) error {
+	want := ""
+	if j.Rollback.Export != nil {
+		want = j.Rollback.Export.InstallationID
+	}
+	return e.waitForTypeScript(ctx, j, want)
+}
+
+// waitForTypeScript probes the public URL until it answers from the
+// TypeScript release: its version, and the installation id want when one
+// is known. It waits up to the transfer's timeout.
+func (e *Engine) waitForTypeScript(ctx context.Context, j *Journal, want string) error {
 	timeout := e.Options.TransferTimeout
 	if timeout <= 0 {
 		timeout = DefaultTransferTimeout
@@ -327,10 +338,6 @@ func (e *Engine) waitForSource(ctx context.Context, j *Journal) error {
 	if sleep == nil {
 		sleep = time.Sleep
 	}
-	want := ""
-	if j.Rollback.Export != nil {
-		want = j.Rollback.Export.InstallationID
-	}
 	deadline := e.now().Add(timeout)
 	var last error
 	for {
@@ -338,7 +345,7 @@ func (e *Engine) waitForSource(ctx context.Context, j *Journal) error {
 		switch {
 		case err != nil:
 			last = err
-		case id != want:
+		case want != "" && id != want:
 			last = fmt.Errorf("it answers as the installation %s, not %s", orNone(id), want)
 		case version != j.Source.Release:
 			last = fmt.Errorf("it answers with release %s, not the TypeScript release %s", orNone(version), j.Source.Release)

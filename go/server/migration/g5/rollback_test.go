@@ -239,6 +239,13 @@ func fakeDockerReverse(args []string) (int, bool) {
 			if err := setStopped(svc, args[1] == "stop"); err != nil {
 				return fail("%v", err)
 			}
+			// As a real dashboard: started, it listens a little later
+			// (G5_WEB_LATE requests answered 502 first).
+			if late := os.Getenv("G5_WEB_LATE"); svc == "varlatch-web" && args[1] == "start" && late != "" {
+				if err := os.WriteFile(state("web-late"), []byte(late), 0o600); err != nil {
+					return fail("%v", err)
+				}
+			}
 		}
 		return 0, true
 	case len(args) >= 4 && args[0] == "compose" && args[1] == "up" && args[2] == "-d":

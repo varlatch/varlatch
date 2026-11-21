@@ -631,6 +631,14 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(http.StatusBadGateway)
 		return
 	}
+	// Started, not yet listening (G5_WEB_LATE): 502, a request fewer each time.
+	if b, err := os.ReadFile(filepath.Join(w.stateDir, "web-late")); err == nil {
+		if n, _ := strconv.Atoi(strings.TrimSpace(string(b))); n > 0 {
+			_ = os.WriteFile(filepath.Join(w.stateDir, "web-late"), []byte(strconv.Itoa(n-1)), 0o600)
+			rw.WriteHeader(http.StatusBadGateway)
+			return
+		}
+	}
 	b, _ := os.ReadFile(filepath.Join(w.stateDir, "gate.json"))
 	if len(b) > 0 {
 		rw.WriteHeader(http.StatusServiceUnavailable)
@@ -943,6 +951,28 @@ func TestG5Interruptions(t *testing.T) {
 			})
 		}
 	}
+}
+
+// An abort in the transfer whose dashboard listens a little after it is
+// started (7.8b rehearsal, run r12): one --abort, and the old installation
+// answers at its address as soon as it says it was reopened.
+func TestG5AnAbortWaitsForTheDashboard(t *testing.T) {
+	w := newWorld(t, false)
+	w.useState()
+	before := w.sourceHash()
+	if code := w.run("transfer started"); code != -1 {
+		t.Fatalf("not killed: %d", code)
+	}
+	w.expect("killed at transfer started", "transfer", "transfer", "target-gated", "migration")
+	t.Setenv("G5_WEB_LATE", "3")
+	if code := w.run("", "--abort"); code != 0 {
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expect("aborted", "released", "released", "source", "")
+	if after := w.sourceHash(); after != before {
+		t.Error("the source's data changed")
+	}
+	w.noSecrets()
 }
 
 // The export's stream (0.23.0's --out -): a bundle with no summary after

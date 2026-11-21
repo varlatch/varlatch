@@ -758,7 +758,21 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	if from == Transfer {
 		// Coolify's domain goes back by hand, whatever the gate.
 		if open || j.Ingress == Coolify {
-			problems = append(problems, e.returnAddress(ctx, j)...)
+			back := e.returnAddress(ctx, j)
+			problems = append(problems, back...)
+			// The old installation is reopened only once it answers at its
+			// address: its ingress started is not yet its dashboard
+			// listening (7.8b rehearsal, run r12). Coolify's domain moves
+			// back by hand, so there is nothing to wait for here.
+			if len(back) == 0 && j.Ingress != Coolify {
+				want := ""
+				if j.Copy != nil {
+					want = j.Copy.InstallationID
+				}
+				if err := e.waitForTypeScript(ctx, j, want); err != nil {
+					problems = append(problems, fmt.Errorf("the source's %s was started again, but %w", ingressPart(j.Ingress), err))
+				}
+			}
 		} else {
 			problems = append(problems, fmt.Errorf(closed, ingressPart(j.Ingress)))
 		}
