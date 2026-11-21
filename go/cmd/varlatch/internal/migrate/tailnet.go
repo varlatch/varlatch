@@ -580,6 +580,15 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 		st, err = he.Switch(ctx, rec.Operation)
 	} else {
 		st, err = he.Resume(ctx, rec.Operation)
+		if rec.Reverse != nil && rec.Reverse.Phase == tailhandoff.Undone {
+			// A reverse a crash cut short, undone by tailhandoff (the name
+			// with the target's node again): planned and switched again.
+			rec.Reverse = nil
+			plan := tailhandoff.NewReverse(rec.Operation, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)
+			if _, err = he.Prepare(ctx, plan); err == nil {
+				st, err = he.Switch(ctx, rec.Operation)
+			}
+		}
 	}
 	var human *HumanStep
 	if errors.As(err, &human) {
