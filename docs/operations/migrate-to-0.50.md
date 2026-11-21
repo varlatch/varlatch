@@ -162,7 +162,14 @@ migration that measured its transfer reports the time alone.
   projection exceeds `--max-downtime` (10 minutes by default).
 - **Drain** is bounded by `--drain`: in-flight requests, Sync Target
   pushes, webhook deliveries and audit export batches finish within it,
-  and nothing new starts.
+  and nothing new starts. A request whose body is still uploading when
+  the barrier starts is not waited for: once its body arrives, it gets a
+  `503` with `Retry-After`, and the client sends it again. The drain
+  report does not list it.
+
+  <!-- pending: the TypeScript release's drain (0.23.0, release/0.22): an
+       upload in progress answered 503 once its body is in, and left out
+       of the report's waitedFor; check against it. -->
 
 `varlatch migrate --status` shows where a migration stands, from the
 Compose directory (or with `--from`). Add `--json` for the full report.
@@ -493,7 +500,12 @@ sudo varlatch migrate --finish --delete-old-data \
 
 - First, a final archive of the whole old installation is made, uploaded
   to the destination, then downloaded back and verified. The backup
-  options are this archive's.
+  options are this archive's. The TypeScript release takes a backup while
+  it is marked migrated out (for this archive), never behind the
+  transfer's barrier.
+
+  <!-- pending: 0.23.0 allowing a backup behind its migrated-out gate and
+       refusing one behind the transfer barrier (release/0.22). -->
 - Only once the journal records the verified archive are the old
   PostgreSQL and Convex volumes removed, with the TypeScript
   installation's `<project>_varlatch-state` volume.
