@@ -333,6 +333,9 @@ func serve(opts Options, h *hooks) int {
 		popts := publictls.Options{
 			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
 			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
+			// The issuance count, in the database: it survives a backup and
+			// a restore (step 6 decision 16).
+			Issuances: publictls.StoreIssuances{DB: store}, IssuanceLimit: publictls.LimitFor(p.CA),
 		}
 		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
 		if p.CARootFile != "" {
