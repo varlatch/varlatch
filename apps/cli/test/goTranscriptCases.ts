@@ -24,11 +24,12 @@ const HELP_TOPICS = [
 ];
 
 /**
- * `admin`'s, `doctor`'s, `move`'s and `setup`'s help are a Go installation's
- * in the Go CLI (go/README.md, the accepted differences `admin-usage`,
- * `doctor-usage`, `move-usage` and `setup-usage`), and `self-update`'s is
- * the Go CLI's own forms (the accepted difference `self-update-usage`);
- * these recordings are the TypeScript CLI's.
+ * `admin`'s, `doctor`'s, `move`'s, `setup`'s and `upgrade`'s help are a Go
+ * installation's in the Go CLI (go/README.md, the accepted differences
+ * `admin-usage`, `doctor-usage`, `move-usage`, `setup-usage` and
+ * `upgrade-usage`), and `self-update`'s is the Go CLI's own forms (the
+ * accepted difference `self-update-usage`); these recordings are the
+ * TypeScript CLI's.
  */
 const HELP_DIFFERENCES: Record<string, string> = {
   admin: "admin-usage",
@@ -36,6 +37,7 @@ const HELP_DIFFERENCES: Record<string, string> = {
   move: "move-usage",
   setup: "setup-usage",
   "self-update": "self-update-usage",
+  upgrade: "upgrade-usage",
 };
 const helpDifferences = (topic: string): { differences?: string[] } =>
   HELP_DIFFERENCES[topic] ? { differences: [HELP_DIFFERENCES[topic]] } : {};

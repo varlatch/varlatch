@@ -2704,6 +2704,9 @@
         "help",
         "upgrade"
       ],
+      "differences": [
+        "upgrade-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch upgrade [<version>] [--dir <compose-dir>] [--check] [--repo <owner/repo>]\n                   [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--yes]\n                   # backup-gated compose upgrade on this host (run where docker-compose.yml lives)\n",
@@ -2724,6 +2727,9 @@
         "upgrade",
         "--help"
       ],
+      "differences": [
+        "upgrade-usage"
+      ],
       "expect": {
         "status": 0,
         "stdout": "Usage:\n  varlatch upgrade [<version>] [--dir <compose-dir>] [--check] [--repo <owner/repo>]\n                   [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--yes]\n                   # backup-gated compose upgrade on this host (run where docker-compose.yml lives)\n",
@@ -2743,6 +2749,9 @@
       "args": [
         "upgrade",
         "-h"
+      ],
+      "differences": [
+        "upgrade-usage"
       ],
       "expect": {
         "status": 0,
