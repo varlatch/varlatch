@@ -434,6 +434,10 @@ public or external ingress, `varlatch setup --tailnet-endpoint` adds it too,
 and the setup notes below for the tailnet ingress apply to it as well; the
 public address stays what it is.
 
+For `varlatchd`'s built-in tailnet node (`varlatchd.conf`) connected to a
+self-hosted control server such as Headscale, see
+[Self-hosted tailnet control server (Headscale)](self-hosted-tailnet-control.md).
+
 ### `TS_AUTHKEY_HOST_PATH` and `TS_AUTHKEY`
 
 - **Read by:** `tailscale`, the sidecar.

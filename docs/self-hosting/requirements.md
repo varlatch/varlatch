@@ -163,7 +163,9 @@ The host connects out to:
 - **Let's Encrypt,** with the public ingress, to obtain and renew the
   certificate.
 - **Tailscale,** with the tailnet ingress or the Tailscale overlay, so the
-  node can join your tailnet.
+  node can join your tailnet. If you run `varlatchd`'s built-in tailnet node
+  against a self-hosted control server instead, see
+  [Self-hosted tailnet control server (Headscale)](self-hosted-tailnet-control.md).
 - **Your backup destination,** when you configure an S3-compatible one.
 - **The platforms of Sync Targets** (GitHub Actions, Coolify, Convex), when
   someone configures one. `VARLATCH_SYNC=off` turns delivery off:
