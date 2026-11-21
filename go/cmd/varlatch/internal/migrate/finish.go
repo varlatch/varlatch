@@ -378,6 +378,9 @@ func (e *Engine) finishRemove(ctx context.Context, j *Journal) error {
 		}}
 	}
 	if f.After == Open {
+		// The handoff's certificate attempts in Go's count, in case the
+		// transfer could not write them (each attempt once).
+		e.recordNow(ctx, j)
 		err := fs.RemoveOld(ctx, j.Ingress, data, log())
 		var human *HumanStep
 		if errors.As(err, &human) {

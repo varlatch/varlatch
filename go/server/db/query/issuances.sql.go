@@ -32,6 +32,22 @@ func (q *Queries) BeginCertificateIssuance(ctx context.Context, arg BeginCertifi
 	return id, err
 }
 
+const certificateIssuanceRecorded = `-- name: CertificateIssuanceRecorded :one
+SELECT count(*) FROM certificate_issuances WHERE name = ? AND started_at = ?
+`
+
+type CertificateIssuanceRecordedParams struct {
+	Name      string
+	StartedAt int64
+}
+
+func (q *Queries) CertificateIssuanceRecorded(ctx context.Context, arg CertificateIssuanceRecordedParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, certificateIssuanceRecorded, arg.Name, arg.StartedAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countCertificateIssuances = `-- name: CountCertificateIssuances :one
 SELECT count(*) AS n, CAST(coalesce(min(started_at), 0) AS INTEGER) AS oldest
 FROM certificate_issuances
@@ -71,11 +87,74 @@ func (q *Queries) EndCertificateIssuance(ctx context.Context, arg EndCertificate
 	return err
 }
 
+const listCertificateIssuances = `-- name: ListCertificateIssuances :many
+SELECT name, started_at, outcome, ended_at FROM certificate_issuances ORDER BY started_at, id
+`
+
+type ListCertificateIssuancesRow struct {
+	Name      string
+	StartedAt int64
+	Outcome   string
+	EndedAt   sql.NullInt64
+}
+
+// Every attempt kept, for a migration's rollback to carry the count back
+// (go-step7 decision 11).
+func (q *Queries) ListCertificateIssuances(ctx context.Context) ([]ListCertificateIssuancesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listCertificateIssuances)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCertificateIssuancesRow
+	for rows.Next() {
+		var i ListCertificateIssuancesRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.StartedAt,
+			&i.Outcome,
+			&i.EndedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneCertificateIssuances = `-- name: PruneCertificateIssuances :exec
 DELETE FROM certificate_issuances WHERE started_at < ?
 `
 
 func (q *Queries) PruneCertificateIssuances(ctx context.Context, startedAt int64) error {
 	_, err := q.db.ExecContext(ctx, pruneCertificateIssuances, startedAt)
+	return err
+}
+
+const recordCertificateIssuance = `-- name: RecordCertificateIssuance :exec
+INSERT INTO certificate_issuances (name, started_at, outcome, ended_at) VALUES (?, ?, ?, ?)
+`
+
+type RecordCertificateIssuanceParams struct {
+	Name      string
+	StartedAt int64
+	Outcome   string
+	EndedAt   sql.NullInt64
+}
+
+// An attempt made elsewhere (a migration's handoff), recorded as it ended.
+func (q *Queries) RecordCertificateIssuance(ctx context.Context, arg RecordCertificateIssuanceParams) error {
+	_, err := q.db.ExecContext(ctx, recordCertificateIssuance,
+		arg.Name,
+		arg.StartedAt,
+		arg.Outcome,
+		arg.EndedAt,
+	)
 	return err
 }

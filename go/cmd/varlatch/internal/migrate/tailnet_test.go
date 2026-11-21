@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -64,6 +65,26 @@ type tnTarget struct {
 	openErr  error
 	never    bool // no client node ever sees the name reach the target
 	enrolled string
+	// count is Go's certificate issuance count; recordErr what recording
+	// into it answers.
+	count     []IssuanceAttempt
+	recordErr error
+}
+
+func (t *tnTarget) Issuances(context.Context) ([]IssuanceAttempt, error) {
+	return slices.Clone(t.count), nil
+}
+
+func (t *tnTarget) RecordIssuances(_ context.Context, attempts []IssuanceAttempt) error {
+	if t.recordErr != nil {
+		return t.recordErr
+	}
+	for _, a := range attempts {
+		if !slices.ContainsFunc(t.count, func(x IssuanceAttempt) bool { return x.Name == a.Name && x.StartedAt.Equal(a.StartedAt) }) {
+			t.count = append(t.count, a)
+		}
+	}
+	return nil
 }
 
 func (t *tnTarget) TailnetEnroll(ctx context.Context, hostname string, _ bool) (EnrolledNode, error) {
@@ -443,6 +464,71 @@ func TestTheLedgerFile(t *testing.T) {
 // forward migration moved it, the retained old node takes it from the
 // target's under an operation of its own, the target's node closing
 // (stopped) and the sidecar opening; run again, it changes nothing.
+// The tailnet name's certificate issuance count across a migration and its
+// rollback: once the handoff is checked, its attempts are in Go's count (a
+// failure to write them said, and written by --finish); a rollback
+// merges Go's attempts for the name into the ledger before the name moves
+// back, so they count; written again, each attempt counts once.
+func TestTheIssuanceCountCarriesAcrossARollback(t *testing.T) {
+	ctx := context.Background()
+	w := newTailnetWorld(t)
+	w.src.info.HTTPS, w.src.expiry = true, time.Now().Add(80*24*time.Hour)
+	w.tgt.info.Tailnet.HTTPSPort = 8443
+	w.tgt.recordErr = errors.New("varlatchd is busy")
+	j, err := w.eng.Run(ctx, false)
+	if err != nil || j.Phase != Open {
+		t.Fatalf("%v %+v", err, j)
+	}
+	domain := "vault." + w.cp.Suffix
+	if len(w.tgt.count) != 0 || !slices.ContainsFunc(w.said, func(s string) bool { return strings.Contains(s, "varlatch migrate --finish writes it") }) {
+		t.Fatalf("a failed write: count %v, said %q", w.tgt.count, w.said)
+	}
+	// --finish writes it (recordNow, as finishRemove runs it).
+	w.tgt.recordErr = nil
+	w.eng.recordNow(ctx, j)
+	w.eng.recordNow(ctx, j)
+	ledger := &fileLedger{path: filepath.Join(w.src.dir, LedgerFile)}
+	forward, _ := ledger.read()
+	if len(forward) == 0 || len(w.tgt.count) != len(forward) || !slices.ContainsFunc(w.tgt.count, func(a IssuanceAttempt) bool { return a.Name == domain && a.Outcome == "issued" }) {
+		t.Fatalf("Go's count %+v, the ledger %+v", w.tgt.count, forward)
+	}
+	// Go renews the name's certificate during the window, and its count
+	// records it.
+	renewal := time.Now().Add(-time.Minute).UTC().Truncate(time.Microsecond)
+	w.tgt.count = append(w.tgt.count, IssuanceAttempt{Name: domain, StartedAt: renewal, Outcome: "issued"},
+		IssuanceAttempt{Name: "other.example.com", StartedAt: renewal, Outcome: "issued"})
+	j.Phase = RollbackTransfer
+	w.tgt.journal = &JournalHead{ID: j.ID, Phase: RollbackTransfer}
+	w.tgt.running = false
+	if err := w.eng.rollbackTailnet(ctx, j); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := ledger.read()
+	if !slices.ContainsFunc(after, func(x ledgerEntry) bool { return x.Name == "vault" && x.StartedAt.Equal(renewal) }) ||
+		slices.ContainsFunc(after, func(x ledgerEntry) bool { return strings.Contains(x.Name, "other") }) {
+		t.Fatalf("the ledger after the rollback: %+v", after)
+	}
+	vault := len(slices.DeleteFunc(slices.Clone(after), func(x ledgerEntry) bool { return x.Name != "vault" }))
+	if n, _ := ledger.Count(ctx, "vault", time.Now().Add(-7*24*time.Hour)); n != vault || n < 2 {
+		t.Fatalf("the ledger counts %d of vault's %d", n, vault)
+	}
+	// A forward migration after it writes the ledger again: each attempt
+	// once.
+	before := len(w.tgt.count)
+	if err := w.eng.recordIssuances(ctx, j.Tailnet); err != nil {
+		t.Fatal(err)
+	}
+	if want := before + len(after) - len(forward) - 1; len(w.tgt.count) != want {
+		t.Fatalf("Go's count has %d attempts, want %d: %+v", len(w.tgt.count), want, w.tgt.count)
+	}
+	if err := w.eng.mergeIssuances(ctx, j.Tailnet); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := ledger.read(); len(again) != len(after) {
+		t.Fatalf("merged twice: %d attempts, was %d", len(again), len(after))
+	}
+}
+
 func TestTheRollbackGivesTheNameBack(t *testing.T) {
 	w := newTailnetWorld(t)
 	j, err := w.eng.Run(context.Background(), false)
