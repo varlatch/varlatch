@@ -187,6 +187,9 @@ type TargetState struct {
 type JournalHead struct {
 	ID    string `json:"id"`
 	Phase Phase  `json:"phase"`
+	// WindowEnded is the upgrade that ended the rollback window on the Go
+	// side, when one did.
+	WindowEnded *WindowEndedRecord `json:"windowEnded,omitempty"`
 }
 
 // CheckSummary is a check run's outcome: passed, and per check whether it

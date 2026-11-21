@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
@@ -13,10 +14,8 @@ import (
 
 // The installation reads of step 4.1c (ADR-0059): getInstallationRelease
 // and getInstallationBackups, for Installation Admins, as http/app.ts
-// answers them on a server without a maintenance directory. The release
-// check's record is written by `varlatch upgrade --check` (ADR-0049),
-// which step 6 brings, so there is none to read yet; the backup supervisor
-// is step 4.14's, so there are no archives yet.
+// answers them. The release check's record is written by `varlatch upgrade
+// --check` (ADR-0049; step 6.6b).
 
 func (r reply) VisitGetInstallationReleaseResponse(w http.ResponseWriter) error { return r.visit(w) }
 func (r reply) VisitGetInstallationBackupsResponse(w http.ResponseWriter) error { return r.visit(w) }
@@ -30,16 +29,52 @@ func installationAdmin(ctx context.Context) error {
 	return nil
 }
 
-// GetInstallationRelease is GET /v1/installation/release: installationRelease
-// with no record (releaseNotice.ts): this server's version, nothing newer
-// known, no attempt, and a record that is not unreadable.
+// GetInstallationRelease is GET /v1/installation/release, as
+// releaseNotice.ts answers it: the host's last look for a newer release
+// (release-check.json, which `varlatch upgrade --check` records), compared
+// with this server's own version at read time, so the notice ends when the
+// upgrade lands; the link is built from validated fields. A record that
+// cannot be read is said (unreadable), never an error.
 func (o *operations) GetInstallationRelease(ctx context.Context, _ api.GetInstallationReleaseRequestObject) (api.GetInstallationReleaseResponseObject, error) {
 	if err := installationAdmin(ctx); err != nil {
 		return nil, err
 	}
+	running := o.s.opts.Version
+	var check *release.ReleaseCheck
+	unreadable := false
+	if dir := o.s.opts.ReleaseCheckDir; dir != "" {
+		var err error
+		if check, err = release.ReadReleaseCheck(dir); err != nil {
+			check, unreadable = nil, true
+		}
+	}
+	var newer, latest, lastAttempt any
+	if check != nil {
+		failed := any(nil)
+		if check.LastAttempt.Failed != nil {
+			failed = *check.LastAttempt.Failed
+		}
+		lastAttempt = jsvalue.Object{{Key: "checkedAt", Value: check.LastAttempt.CheckedAt}, {Key: "repo", Value: check.LastAttempt.Repo}, {Key: "failed", Value: failed}}
+		if s := check.LastSuccess; s != nil {
+			order, ok := release.CompareVersions(s.Latest.Version, running)
+			newer = ok && order > 0
+			published := any(nil)
+			if s.Latest.PublishedAt != nil {
+				published = *s.Latest.PublishedAt
+			}
+			link, err := release.ReleaseURL(s.Repo, s.Latest.Version)
+			if err != nil {
+				return nil, err
+			}
+			latest = jsvalue.Object{
+				{Key: "version", Value: s.Latest.Version}, {Key: "publishedAt", Value: published}, {Key: "url", Value: link},
+				{Key: "repo", Value: s.Repo}, {Key: "releaseSet", Value: s.ReleaseSet}, {Key: "checkedAt", Value: s.CheckedAt},
+			}
+		}
+	}
 	return ok(jsvalue.Object{
-		{Key: "running", Value: o.s.opts.Version}, {Key: "newer", Value: nil}, {Key: "latest", Value: nil},
-		{Key: "lastAttempt", Value: nil}, {Key: "unreadable", Value: false},
+		{Key: "running", Value: running}, {Key: "newer", Value: newer}, {Key: "latest", Value: latest},
+		{Key: "lastAttempt", Value: lastAttempt}, {Key: "unreadable", Value: unreadable},
 	}), nil
 }
 
