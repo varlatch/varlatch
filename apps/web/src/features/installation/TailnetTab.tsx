@@ -94,6 +94,10 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
         <dl className="grid gap-x-8 gap-y-3 px-5 py-4 text-[14px] sm:grid-cols-[max-content_1fr]">
           <dt className="text-muted">Tailnet</dt>
           <dd className="font-mono text-[13px]">{configured.tailnet}</dd>
+          <dt className="text-muted">Control server</dt>
+          <dd data-testid="tailnet-control-server">
+            {configured.controlUrl ? <span className="font-mono text-[13px]">{configured.controlUrl}</span> : <span className="text-muted">Tailscale</span>}
+          </dd>
           <dt className="text-muted">Tailnet listener</dt>
           <dd>port {configured.listenerPort}</dd>
           <dt className="text-muted">Browser endpoint</dt>
@@ -113,6 +117,11 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
         }
       >
         <NodeDetails node={observed.node} />
+        {(observed.warnings ?? []).map((w) => (
+          <Callout key={w} tone="warn" icon={<TriangleAlert size={17} />} className="mx-5 my-4" data-testid="tailnet-warning">
+            {w}
+          </Callout>
+        ))}
         <div className="flex items-center gap-2 border-b border-bd px-5 py-3">
           <span data-testid="tailnet-summary" data-tone={summary.tone}>
             <Status tone={summary.tone}>{summary.headline}</Status>

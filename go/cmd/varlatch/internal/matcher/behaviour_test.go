@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -208,30 +209,63 @@ func TestPushNeverKeepsTheCallersBuffer(t *testing.T) {
 // time, and timing the two in turn makes a busy spell slow both alike
 // instead of one.
 func growth(small, large func()) (time.Duration, time.Duration) {
+	s, l := growthRuns(small, large)
+	return slices.Min(s), slices.Min(l)
+}
+
+// growthRuns is growth's every timed run, small and large, in order, for a
+// failure to show whether one run or all of them were slow.
+func growthRuns(small, large func()) (smallRuns, largeRuns []time.Duration) {
 	small()
 	large()
-	var bestSmall, bestLarge time.Duration
-	for i := range 5 {
-		for _, f := range []struct {
-			run  func()
-			best *time.Duration
-		}{{small, &bestSmall}, {large, &bestLarge}} {
-			if took := timed(f.run); i == 0 || took < *f.best {
-				*f.best = took
-			}
-		}
+	for range 5 {
+		smallRuns = append(smallRuns, timed(small))
+		largeRuns = append(largeRuns, timed(large))
 	}
-	return bestSmall, bestLarge
+	return smallRuns, largeRuns
 }
 
 // timed is one run of f, after a garbage collection and with the collector
-// off while it runs.
+// off while it runs, except once its memory grows by timedHeapMargin (gcOffWithin).
 func timed(f func()) time.Duration {
 	runtime.GC()
-	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	defer gcOffWithin(timedHeapMargin)()
 	start := time.Now()
 	f()
 	return time.Since(start)
+}
+
+// timedHeapMargin is how far a timed run's memory grows before a
+// collection. With the collector simply off, the largest shape (every
+// byte matching, in one 4 MiB chunk) allocates about 1.9 GB that nothing
+// frees: the scanner reports an occurrence per byte, in one slice per
+// chunk, which grows by doubling. That is linear (the small run allocates
+// an eighth of it), but the large run pays for fresh memory the small one
+// never touches, and on a runner short of memory (macOS CI, 2026-11-20
+// and 21: 38.6x, then 24.3x) every one of its five runs is slow alike,
+// which no best-of-five can remove; a container capped at 1.2 GB
+// reproduces it (40x), and passes with the margin (9x). A collection there
+// frees what the run no longer holds; its cost follows what the run
+// allocates, so it adds the same per byte to both sizes. Only this
+// package's working sets are small enough for one margin: a shape that
+// holds more than it while it runs would be collected over and over.
+const timedHeapMargin = 256 << 20
+
+// gcOffWithin turns the collector off except when the memory in use grows
+// margin past what it is now (just after a collection, so the work's own
+// inputs are in it), and returns what restores both settings. A collection
+// then only reclaims what the run allocated and dropped: it never runs
+// against data the run still holds. Idle heap the runtime kept from earlier
+// runs is not in use: the limit makes the runtime return it instead.
+func gcOffWithin(margin int64) func() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	percent := debug.SetGCPercent(-1)
+	previous := debug.SetMemoryLimit(int64(m.Sys-m.HeapIdle) + margin)
+	return func() {
+		debug.SetMemoryLimit(previous)
+		debug.SetGCPercent(percent)
+	}
 }
 
 // growsLinearly is the timing tests' criterion: for an input eight times
@@ -239,10 +273,12 @@ func timed(f func()) time.Duration {
 // eightfold and quadratic about 64-fold (on CI runners, where caches and
 // load flatten the curve, nearer 38-fold), so 24 sits near the geometric
 // middle, with room for noise on either side. It judges growth only, never
-// a machine's absolute speed; 20 ms of slack keeps a shape that takes a
-// few milliseconds from failing on jitter.
+// a machine's absolute speed. A little slack keeps a shape that takes a few
+// milliseconds from failing on jitter: 20 ms, but never more than twice the
+// small run, so it cannot hide growth where the runs are short (the race
+// detector's smaller inputs).
 func growsLinearly(small, large time.Duration) bool {
-	return large <= 24*small+20*time.Millisecond
+	return large <= 24*small+min(20*time.Millisecond, 2*small)
 }
 
 // TestTheLinearityCriterion: growth an eighth of the input to all of it
@@ -262,6 +298,7 @@ func TestTheLinearityCriterion(t *testing.T) {
 		{100 * ms, 4000 * ms, false}, // 40 times
 		{50 * ms, 1900 * ms, false},  // 38 times
 		{100 * ms, 6400 * ms, false}, // 64 times
+		{2 * ms, 60 * ms, false},     // 30 times, at a few milliseconds: the slack is at most twice the small run
 	} {
 		if growsLinearly(c.small, c.large) != c.linear {
 			t.Errorf("%v then %v: judged linear %v", c.small, c.large, !c.linear)
@@ -363,10 +400,11 @@ func TestMatcherIsLinear(t *testing.T) {
 		}
 		small := large / 8
 		for _, chunk := range []int{64 * 1024, 4 << 20} { // a pipe's reads, and one huge chunk
-			tSmall, tLarge := growth(stream(small, chunk), stream(large, chunk))
+			smallRuns, largeRuns := growthRuns(stream(small, chunk), stream(large, chunk))
+			tSmall, tLarge := slices.Min(smallRuns), slices.Min(largeRuns)
 			t.Logf("%s, %d-byte chunks: %d bytes %v, %d bytes %v (%.1fx)", c.name, chunk, small, tSmall, large, tLarge, float64(tLarge)/float64(tSmall))
 			if !growsLinearly(tSmall, tLarge) {
-				t.Errorf("%s, %d-byte chunks: %d bytes %v, %d bytes %v: not linear", c.name, chunk, small, tSmall, large, tLarge)
+				t.Errorf("%s, %d-byte chunks: %d bytes %v, %d bytes %v: not linear (every run: %v, then %v)", c.name, chunk, small, tSmall, large, tLarge, smallRuns, largeRuns)
 			}
 		}
 	}
@@ -393,7 +431,11 @@ func FuzzStreamEqualsWhole(f *testing.F) {
 			if !bytes.Equal(got, want) {
 				t.Fatalf("got %q, want %q", got, want)
 			}
-			noFormSurvives(t, got, entries)
+			// The oracle finds the markers in the output by their text, so an
+			// input that holds marker text itself would confuse it.
+			if !bytes.Contains(input, []byte("[REDACTED:")) {
+				noFormSurvives(t, got, entries)
+			}
 		}
 		st, _, _ := scan(entries, input, randomCuts(r, len(input), r.IntN(12)))
 		var found []Occurrence
