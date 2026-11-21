@@ -175,6 +175,18 @@ func (c *controlServer) handle(ctx context.Context, conn *net.UnixConn) {
 	_ = json.NewEncoder(conn).Encode(controlResponse{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), Status: status})
 }
 
+// controlAnswers is whether a varlatchd answers on the data directory dir's
+// control socket (its own Unix socket, never a destination): the probe a
+// command that must not run beside a running varlatchd makes first.
+func controlAnswers(dir string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("unix", filepath.Join(dir, ControlSocket), timeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 // route runs a host command: through the daemon's socket, else offline
 // under the lock, else not at all. args[0] is the command.
 func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
