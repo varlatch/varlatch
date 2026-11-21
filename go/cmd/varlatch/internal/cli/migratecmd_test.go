@@ -49,7 +49,16 @@ func TestMigrateCommand(t *testing.T) {
 		{[]string{"migrate", "--finish", "--ingress", "proxy", "--config", "/c"}, "--finish takes --from, the target"},
 		{[]string{"migrate", "--finish", "--yes", "--config", "/c"}, "unknown option --yes"},
 		{[]string{"migrate", "--ingress", "public", "--config", "/c", "--accept-rollback-certificate"}, "--accept-rollback-certificate goes with --tailscale-oauth-client-file"},
-		{[]string{"migrate", "--status", "--tailscale-oauth-client-file", "/o"}, "--tailscale-oauth-client-file and --tailnet-auth-key-file go with a migration"},
+		{[]string{"migrate", "--status", "--tailscale-oauth-client-file", "/o"}, "the tailnet's authority and --tailnet-auth-key-file go with a migration"},
+		{[]string{"migrate", "--finish", "--config", "/c", "--headscale-cli", "/usr/bin/headscale"}, "the tailnet's authority and --tailnet-auth-key-file go with a migration"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "https://192.0.2.10"}, "--headscale-url and --headscale-api-key-file go together"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-api-key-file", "/k"}, "--headscale-url and --headscale-api-key-file go together"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "https://192.0.2.10", "--headscale-api-key-file", "/k", "--headscale-cli", "/usr/bin/headscale"}, "--headscale-url or --headscale-cli, not both"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--tailscale-oauth-client-file", "/o", "--headscale-cli", "/usr/bin/headscale"}, "one tailnet authority"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "https://headscale.example", "--headscale-api-key-file", "/k"}, "--headscale-url is https://<Headscale's IP address>[:port]"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "http://192.0.2.10", "--headscale-api-key-file", "/k"}, "--headscale-url is https://<Headscale's IP address>[:port]"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-cli", "headscale"}, "--headscale-cli is the headscale command's absolute path"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-cli", "/usr/bin/headscale", "--accept-rollback-certificate"}, "--accept-rollback-certificate goes with --tailscale-oauth-client-file"},
 	} {
 		if code, _, errOut := run(c.args...); code != ExitUsage || !strings.Contains(errOut, c.why) {
 			t.Errorf("%q: %d %q, want %q", c.args, code, errOut, c.why)

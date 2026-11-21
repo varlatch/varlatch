@@ -443,6 +443,9 @@ type world struct {
 	// secrets are a world's own, scanned for too (the tailnet's OAuth
 	// client secret and auth key).
 	secrets [][]byte
+	// beforeRun runs before every varlatch migrate (Headscale's world
+	// writes a new API key: each run expires its own).
+	beforeRun func()
 }
 
 // shared is built once: the binaries, the seed and its decision table.
@@ -679,6 +682,9 @@ func (w *world) run(pause string, extra ...string) int {
 func (w *world) runArgs(pause string, args []string) int {
 	t := w.t
 	t.Helper()
+	if w.beforeRun != nil {
+		w.beforeRun()
+	}
 	log := filepath.Join(w.stateDir, "crashpoints.log")
 	_ = os.Remove(log)
 	cmd := exec.Command(shared.varlatch, args...)

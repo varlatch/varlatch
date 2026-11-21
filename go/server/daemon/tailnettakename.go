@@ -97,6 +97,12 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	if t == nil {
 		return fail("the tailnet listener is off (tailnet = off): there is no name to take over")
 	}
+	if t.ControlURL != "" {
+		// Its authority is Tailscale's OAuth client; a restore on a
+		// self-hosted control server (Headscale) is slice 7.5c's c4.
+		return fail("tailnet_control_url names a self-hosted control server (%s): take-name takes the name over on Tailscale's only, for now; nothing was done. "+
+			"Remove or rename the old node in Headscale (headscale nodes delete or rename), then varlatchd admin tailnet open and start varlatchd", t.ControlURL)
+	}
 	owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
 		return fail("%v; nothing was done", err)
@@ -344,7 +350,7 @@ func heldOperation(name, held string) string {
 // heldNode is the enrolled node, started in this process under its hold's
 // name.
 func heldNode(ctx context.Context, cfg *config.Config, hostname string) (*tailnet.TSNode, func(), error) {
-	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: filepath.Join(cfg.DataDir, tailnet.StateDir), Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags})
+	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: filepath.Join(cfg.DataDir, tailnet.StateDir), Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags, KeyTags: keyTags(cfg)})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -452,7 +458,7 @@ func (r probeResolver) Reaches(ctx context.Context, name, nodeID string) (bool, 
 		return false, err
 	}
 	defer os.RemoveAll(dir)
-	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(r.cfg), AuthKey: r.authKey, Tags: r.cfg.Tailnet.Tags}, name, nodeID, wait)
+	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(r.cfg), AuthKey: r.authKey, Tags: r.cfg.Tailnet.Tags, KeyTags: keyTags(r.cfg)}, name, nodeID, wait)
 	return res.Reaches, err
 }
 
