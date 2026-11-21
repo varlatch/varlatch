@@ -137,6 +137,8 @@ jobs:
           sbom: ${{ steps.runner.outputs.hosted == 'true' }}
           push: true
           tags: ${{ steps.names.outputs.varlatchd }}:${{ steps.names.outputs.version }}
+          # `varlatch migrate` reads a source's release from this label.
+          labels: org.opencontainers.image.version=${{ steps.names.outputs.version }}
 
       - name: Build and push varlatch-web
         id: web
@@ -149,6 +151,8 @@ jobs:
           sbom: ${{ steps.runner.outputs.hosted == 'true' }}
           push: true
           tags: ${{ steps.names.outputs.web }}:${{ steps.names.outputs.version }}
+          # `varlatch migrate` reads a source's release from this label.
+          labels: org.opencontainers.image.version=${{ steps.names.outputs.version }}
 
       # Image-only installs must be able to (re)deploy the Application Plane
       # functions on upgrade — the deployer ships as part of the release set.
@@ -163,6 +167,8 @@ jobs:
           sbom: ${{ steps.runner.outputs.hosted == 'true' }}
           push: true
           tags: ${{ steps.names.outputs.convex_deploy }}:${{ steps.names.outputs.version }}
+          # `varlatch migrate` reads a source's release from this label.
+          labels: org.opencontainers.image.version=${{ steps.names.outputs.version }}
 
       # The image signatures go to their own package: cosign would otherwise
       # tag each one beside its image, and GitHub shows the newest tag of a
@@ -408,6 +414,12 @@ jobs:
               echo
             fi
             echo "Digest-pinned release set for linux/amd64 and linux/arm64. Check every asset against \`SHA256SUMS\`; [verifying a release](${GUIDE}) ${COVERS}. The operator CLI, \`varlatch-cli-${VERSION}.cjs\` (Node 22+), is version-coupled to the installation: replace the host CLI before anything else. First installs: unpack \`varlatch-compose-${VERSION}.tar.gz\` and follow its README."
+            echo
+            echo "Coolify installations set these variables with this release's ref (\`coolify-image-digests.env\`, in \`SHA256SUMS\`; [Deploying on Coolify](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/infra/coolify/README.md)):"
+            echo
+            echo '```sh'
+            cat coolify-image-digests.env
+            echo '```'
           } >> notes.md
 
       - name: Create GitHub release with the deployment unit
@@ -422,6 +434,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             varlatch-release.json \
             docker-compose.release.yml \
+            coolify-image-digests.env \
             convex-supervisor.cjs \
             docker-compose.tailscale.yml docker-compose.tailnet-https.yml tailscale-serve.json \
             docker-compose.caddy.yml Caddyfile \

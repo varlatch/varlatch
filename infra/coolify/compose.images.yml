@@ -1,0 +1,29 @@
+# The release's published images, pinned by digest, in place of building
+# from the checkout. Applied last by infra/coolify/generate-compose.mjs to
+# both Coolify files (docker-compose.coolify.yml and
+# docker-compose.coolify-tailscale.yml). Edit this file, never the generated
+# ones, then run `pnpm compose:generate`.
+#
+# Coolify installations run exactly the images the release workflow signed,
+# which `varlatch migrate` also requires of its source. The digests are
+# Coolify variables, taken from the release's coolify-image-digests.env
+# (listed in its SHA256SUMS); a deploy without them stops before anything
+# starts, naming the variable. VARLATCH_IMAGE_REGISTRY is optional: the
+# repository the release was published to, ghcr.io/varlatch by default.
+
+services:
+  varlatch-migrate:
+    build: !reset null
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatchd@${VARLATCH_VARLATCHD_DIGEST:?set VARLATCH_VARLATCHD_DIGEST to the release's varlatchd digest (coolify-image-digests.env)}
+
+  varlatchd:
+    build: !reset null
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatchd@${VARLATCH_VARLATCHD_DIGEST:?set VARLATCH_VARLATCHD_DIGEST to the release's varlatchd digest (coolify-image-digests.env)}
+
+  varlatch-web:
+    build: !reset null
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatch-web@${VARLATCH_WEB_DIGEST:?set VARLATCH_WEB_DIGEST to the release's varlatch-web digest (coolify-image-digests.env)}
+
+  convex-deploy:
+    build: !reset null
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatch-convex-deploy@${VARLATCH_CONVEX_DEPLOY_DIGEST:?set VARLATCH_CONVEX_DEPLOY_DIGEST to the release's convex-deploy digest (coolify-image-digests.env)}

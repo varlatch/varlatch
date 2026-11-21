@@ -521,6 +521,7 @@ Installation settings, Tailnet.
   | `docker-compose.yml` | `varlatch-web` |
   | with `docker-compose.caddy.yml` | `varlatch-web,caddy` |
   | with `docker-compose.tailnet-https.yml` | `varlatch-web,tailscale` |
+  | `docker-compose.coolify.yml` | `varlatch-web,coolify-proxy` |
   | `docker-compose.coolify-tailscale.yml` | `varlatch-web,coolify-proxy` |
 
 - **Setup:** does not write it.
