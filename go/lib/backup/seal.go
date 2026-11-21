@@ -29,7 +29,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -362,20 +361,9 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 }
 
 // SyncDir syncs a directory, so a file linked or renamed into it survives a
-// crash.
+// crash. It is the one directory sync; on Windows it does nothing
+// (syncdir_windows.go).
 func SyncDir(dir string) error { return syncDir(dir) }
-
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	if err := d.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
-		return err
-	}
-	return nil
-}
 
 // Opened is an archive authenticated and unpacked into a scratch
 // directory: its manifest, and each component as a file, every one checked

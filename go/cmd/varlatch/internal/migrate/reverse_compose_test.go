@@ -77,6 +77,21 @@ func TestTheReverseWritesEnvWhole(t *testing.T) {
 	if b, _ := os.ReadFile(real); string(b) != "A=1\nCOMPOSE_FILE="+files+"\n" {
 		t.Errorf("the target: %q", b)
 	}
+	// A link whose target is not there: refused, the link left as it is.
+	dangling := t.TempDir()
+	if err := os.Symlink(filepath.Join(dangling, "gone"), filepath.Join(dangling, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	dc := &Compose{Directory: dangling}
+	if err := dc.setEnv("COMPOSE_FILE", &files); err == nil || !strings.Contains(err.Error(), "which is not there") {
+		t.Errorf("a dangling link: %v", err)
+	}
+	if fi, err := os.Lstat(filepath.Join(dangling, ".env")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the dangling link after the refusal: %v %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(dangling, "gone")); !os.IsNotExist(err) {
+		t.Errorf("a target made: %v", err)
+	}
 }
 
 // The project is Compose's own (#371 review P2-2): its files' top-level

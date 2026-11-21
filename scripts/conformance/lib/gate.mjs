@@ -69,7 +69,7 @@ export function predatedFeatures(inventory, version) {
  */
 function mayNotApply(inventory, id, target, cli) {
   const kind = inventory.checks[id]?.kind;
-  return kind === "ts-stack" || (kind === "go-server" && !String(target).startsWith("go-binary")) || (kind === "go-client" && cli !== "go");
+  return kind === "ts-stack" || (kind === "go-server" && !/^go-(binary|container)(:|$)/.test(String(target))) || (kind === "go-client" && cli !== "go");
 }
 
 /** The rules a run's own checks must meet: no expected failure, every replacement passing. */

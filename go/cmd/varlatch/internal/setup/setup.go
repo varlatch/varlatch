@@ -50,7 +50,7 @@ const (
 )
 
 // Steps, in order. The journal records each once it is done.
-var Steps = []string{"answers", "user", "data-dir", "probe", "keys", "config", "restore", "name", "unit", "ready", "admin", "key-copies", "custody", "backup", "doctor"}
+var Steps = []string{"answers", "user", "data-dir", "probe", "keys", "config", "restore", "issuances", "name", "unit", "ready", "admin", "key-copies", "custody", "backup", "doctor"}
 
 // Host is what setup changes on the host; tests replace it.
 type Host interface {
@@ -242,6 +242,8 @@ func Run(ctx context.Context, o Options) error {
 			err = r.config()
 		case "restore":
 			err = r.restore(ctx)
+		case "issuances":
+			err = r.issuanceCheck(ctx)
 		case "name":
 			err = r.nameCheck(ctx)
 		case "unit":

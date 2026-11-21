@@ -194,7 +194,7 @@ func TestPeersThroughThePinnedNode(t *testing.T) {
 	m.Listening(true)
 	m.Check(ctx)
 	report := string(jsvalueStringify(m.Report()))
-	for _, want := range []string{`"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":null}`,
+	for _, want := range []string{`"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":null,"controlUrl":"` + control.BaseURL() + `"}`,
 		`"checks":{"listener":{"status":"pass"},"localApi":{"status":"pass"},"node":{"status":"pass"}}`,
 		`"name":"varlatch","dnsName":"varlatch.corp.ts.net","tailnet":"corp.ts.net","tags":["tag:varlatch"]`} {
 		if !strings.Contains(report, want) {

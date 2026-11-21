@@ -1,0 +1,39 @@
+{
+  "schema": 2,
+  "comment": "Windows expectations, recorded from the TypeScript CLI on Windows by the windows-expectations workflow (apps/cli/test/goWindows.ts); do not edit. Only the cases whose Linux recording names a path below their directory are here.",
+  "area": "5.7c-audit",
+  "platform": "windows",
+  "cases": [
+    {
+      "id": "ae.create.secret-missing",
+      "expect": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "varlatch audit-export create: cannot read {{dir}}/nope.txt (ENOENT). Nothing was sent.\n",
+        "requests": [],
+        "files": {
+          "config/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "config/credentials.json": {
+            "mode": "0666",
+            "content": "{\n  \"servers\": {\n    \"{{server}}\": {\n      \"token\": \"vlt_cli_valuesAAAA\",\n      \"issuedAt\": \"1900-01-01T00:00:00.000Z\",\n      \"expiresAt\": \"2100-01-01T00:00:00.000Z\"\n    }\n  }\n}\n"
+          },
+          "home/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/": {
+            "mode": "0666",
+            "content": ""
+          },
+          "repo/varlatch.toml": {
+            "mode": "0666",
+            "content": "server = \"{{server}}\"\norganization = \"acme\"\nproject = \"web\"\ndefault_environment = \"dev\"\n"
+          }
+        }
+      }
+    }
+  ]
+}
