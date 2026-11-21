@@ -116,7 +116,7 @@ for (const dir of goModule ? GO_LICENSE_ROOTS : []) {
 // The label names Varlatch's own licenses; THIRD-PARTY-NOTICES.md, copied
 // into each image, covers the third-party contents.
 const IMAGE_LICENSES = `${AGPL} AND ${APACHE}`;
-for (const path of ["services/varlatchd/Dockerfile", "apps/web/Dockerfile", "infra/compose/convex-deploy.Dockerfile"]) {
+for (const path of ["services/varlatchd/Dockerfile", "apps/web/Dockerfile", "infra/compose/convex-deploy.Dockerfile", "go/image/Dockerfile"]) {
   const label = readFileSync(join(repoRoot, path), "utf8").match(/org\.opencontainers\.image\.licenses="([^"]*)"/);
   if (label?.[1] !== IMAGE_LICENSES) problems.push(`${path}: needs LABEL org.opencontainers.image.licenses="${IMAGE_LICENSES}"`);
 }
