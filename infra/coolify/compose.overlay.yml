@@ -1,8 +1,9 @@
-# Coolify-specific deltas, applied on top of infra/compose/docker-compose.yml
-# and infra/compose/docker-compose.tailscale.yml by
-# infra/coolify/generate-compose.mjs to produce
-# infra/compose/docker-compose.coolify-tailscale.yml. Coolify deploys exactly
-# one Compose file (no -f overlay chaining), which is why that file exists.
+# Coolify-specific deltas, applied by infra/coolify/generate-compose.mjs on
+# top of infra/compose/docker-compose.yml (and, for
+# infra/compose/docker-compose.coolify-tailscale.yml, of
+# infra/compose/docker-compose.tailscale.yml) to produce both Coolify files.
+# Coolify deploys exactly one Compose file (no -f overlay chaining), which is
+# why those files exist.
 # Edit this file, never the generated one, then run `pnpm compose:generate`.
 
 services:

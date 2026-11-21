@@ -10,8 +10,11 @@ const env = {
   VARLATCH_RUNTIME_PASSWORD: 'compose-test', CONVEX_DB_PASSWORD: 'compose-test',
   CONVEX_INSTANCE_SECRET: 'compose-test', TS_AUTHKEY: 'compose-test', VARLATCH_TAILNET_NAME: 'test.ts.net',
   VARLATCH_PUBLIC_URL: 'https://vault.compose.test',
+  // The Coolify files pull the release's images by digest (infra/coolify/compose.images.yml).
+  VARLATCH_VARLATCHD_DIGEST: `sha256:${'1'.repeat(64)}`, VARLATCH_WEB_DIGEST: `sha256:${'2'.repeat(64)}`,
+  VARLATCH_CONVEX_DEPLOY_DIGEST: `sha256:${'3'.repeat(64)}`,
 };
-const variants = [['docker-compose.yml'], ['docker-compose.yml', 'docker-compose.tailscale.yml'], ['docker-compose.coolify-tailscale.yml']];
+const variants = [['docker-compose.yml'], ['docker-compose.yml', 'docker-compose.tailscale.yml'], ['docker-compose.coolify-tailscale.yml'], ['docker-compose.coolify.yml']];
 for (const files of variants) {
   const name = files.join(' + ');
   const args = files.flatMap(f => ['-f', fileURLToPath(new URL(`../infra/compose/${f}`, import.meta.url))]);
@@ -23,6 +26,15 @@ for (const files of variants) {
   const unset = spawnSync('docker', ['compose', ...args, '--profile', 'deploy', 'config', '--quiet'], { env: { ...env, VARLATCH_PUBLIC_URL: '' }, encoding: 'utf8' });
   assert.notEqual(unset.status, 0, `${name}: starts without VARLATCH_PUBLIC_URL`);
   assert.match(unset.stderr, /VARLATCH_PUBLIC_URL/, `${name}: the refusal names the variable`);
+  if (name.includes('coolify')) {
+    // The Coolify-only deltas (infra/coolify/compose.overlay.yml), in both Coolify files.
+    assert.equal(config.services['convex-deploy'].profiles, undefined, `${name}: convex-deploy runs on every Coolify deploy`);
+    for (const service of ['varlatch-web', 'convex-backend']) {
+      assert(Object.keys(config.services[service].networks ?? {}).includes('default'), `${name}: ${service} joins the default network`);
+    }
+    assert.equal(config.services.varlatchd.environment.VARLATCH_TRUSTED_PROXIES, 'varlatch-web,coolify-proxy', `${name}: varlatchd trusts Coolify's proxy`);
+    assert(!Object.values(config.services).some(s => s.build), `${name}: nothing builds from the checkout`);
+  }
   if (config.services.tailscale) {
     // varlatchd shares the sidecar's network namespace: Docker refuses published
     // ports there, and web/Convex reach it only through the sidecar's alias.

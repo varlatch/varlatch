@@ -198,8 +198,10 @@ describe("the control socket and host commands", () => {
     const dir = directory();
     try {
       const m = new Maintenance(dir);
-      await ensureInstallation({ db, rootKek: generateKey() });
-      startBackupControl({ db: pool(db), rootKek: generateKey() }, m, null);
+      // One key: a capture checks the loaded KEK against the installation's canary.
+      const rootKek = generateKey();
+      await ensureInstallation({ db, rootKek });
+      startBackupControl({ db: pool(db), rootKek }, m, null);
       await sleep(50);
       const barrier = (await control({ command: "migration-barrier", drainMs: 5_000 }, dir)) as { gate: { id: string; kind: string; phase: string } };
       expect(barrier.gate).toMatchObject({ kind: "migration", phase: "paused" });
@@ -216,6 +218,18 @@ describe("the control socket and host commands", () => {
       const marked = (await control({ command: "migration-migrated-out", id: barrier.gate.id }, dir)) as { gate: { kind: string } };
       expect(marked.gate.kind).toBe("migrated-out");
       await expect(control({ command: "migration-release", id: barrier.gate.id }, dir)).rejects.toThrow("Only the migration barrier");
+      expect(activeGate(dir, Number.MAX_SAFE_INTEGER)?.kind).toBe("migrated-out");
+      // Behind the migrated-out marker the data is frozen: the online capture,
+      // which only reads, is taken (the final archive of varlatch migrate
+      // --finish --delete-old-data); the marker stays. The frozen capture,
+      // which opens a gate of its own, is still refused.
+      const capture = (await control({ command: "online-capture-begin", ttlMs: 60_000 }, dir)) as { id: string; snapshot: string };
+      expect(capture.snapshot).toBeTruthy();
+      // (Its finish checks the exclusion in pg_locks, which this test's
+      // database does not keep; the rehearsal on a real installation
+      // finishes one, go/test/rehearsal.)
+      await expect(control({ command: "online-capture-abort", id: capture.id }, dir)).resolves.toMatchObject({ aborted: true });
+      await expect(control({ command: "capture-begin", ttlMs: 60_000 }, dir)).rejects.toThrow();
       expect(activeGate(dir, Number.MAX_SAFE_INTEGER)?.kind).toBe("migrated-out");
     } finally {
       await db.close();

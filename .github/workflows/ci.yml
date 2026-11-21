@@ -141,6 +141,8 @@ jobs:
             --image "varlatch-web=ghcr.io/ci/varlatch-web:${VERSION}@sha256:${D}" \
             --image "convex-deploy=ghcr.io/ci/varlatch-convex-deploy:${VERSION}@sha256:${D}"
           sha256sum -c SHA256SUMS
+          # The Coolify variables the release publishes are the digests it pins.
+          node infra/coolify/check-image-pins.mjs --release-dir .
 
       # The release ships apps/cli/dist/varlatch.cjs as the operator CLI; a
       # dependency that stops bundling cleanly must fail here, not at tag time.

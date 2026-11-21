@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -339,6 +339,20 @@ describe.skipIf(!url)("the migration's import", () => {
     expect(summary).toMatchObject({ migratedOutGate: "lifted", alreadyImported: false });
     expect(readGate(state)).toBeNull();
     for (const secret of [...seeded.secrets, token, ctx.rootKek.toString("hex")]) expect((done.stdout + done.stderr).includes(secret)).toBe(false);
+
+    // --in -: the same bundle on standard input (spooled in the process's
+    // own temporary directory, removed after): already imported, idempotent.
+    const spoolTmp = join(dir, "spool-tmp");
+    mkdirSync(spoolTmp);
+    const spoolEnv = { ...env, TMPDIR: spoolTmp };
+    const piped = spawnSync(process.execPath, [cli, "admin", "migration", "import", "--in", "-"], { env: spoolEnv, input: readFileSync(path), encoding: "utf8" });
+    expect(piped.status, piped.stderr).toBe(0);
+    expect(JSON.parse(piped.stdout)).toMatchObject({ alreadyImported: true, migratedOutGate: "none" });
+    expect(readdirSync(spoolTmp)).toEqual([]);
+    const cut = spawnSync(process.execPath, [cli, "admin", "migration", "import", "--in", "-"], { env: spoolEnv, input: readFileSync(path).subarray(0, 200), encoding: "utf8" });
+    expect(cut.status).toBe(1);
+    expect(cut.stderr).toMatch(/varlatchd admin migration import: /);
+    expect(readdirSync(spoolTmp)).toEqual([]);
   }, 180_000);
 });
 

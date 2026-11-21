@@ -20,6 +20,10 @@
  *                                         `varlatch mcp`, smoke-tested here);
  *                                         needs only Node 22+. Requires
  *                                         `pnpm build` beforehand.
+ *   coolify-image-digests.env             the Coolify variables that pin the
+ *                                         images above (infra/coolify/
+ *                                         compose.images.yml), for Coolify
+ *                                         installations to set
  *   THIRD-PARTY-NOTICES.md                third-party components and licenses
  *                                         (ADR-0037 D1); the bundle also
  *                                         carries it, LICENSE and LICENSES/
@@ -44,6 +48,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DIGEST_FILE, coolifyImageDigests } from "./coolify-digests.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const composeDir = join(repoRoot, "infra/compose");
@@ -154,6 +159,12 @@ cpSync(join(composeDir, "convex-supervisor.cjs"), join(outDir, "convex-superviso
 for (const name of OVERLAYS) writeFileSync(join(outDir, name), overlay(name));
 writeFileSync(join(outDir, "docker-compose.release.yml"), release);
 writeFileSync(join(outDir, "varlatch-release.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+// Coolify pulls the same images by digest: the variables to set, from these refs.
+try {
+  writeFileSync(join(outDir, DIGEST_FILE), coolifyImageDigests(images));
+} catch (e) {
+  fail(`${DIGEST_FILE}: ${e.message}`);
+}
 
 // First-install bundle: everything a self-hoster needs besides their .env,
 // KEK, and reverse proxy. postgres-init only runs on first database init,
@@ -196,7 +207,7 @@ cpSync(cliBundle, join(outDir, cliAsset));
 // already is; copying it onto itself would fail.
 if (resolve(outDir) !== repoRoot) cpSync(join(repoRoot, "THIRD-PARTY-NOTICES.md"), join(outDir, "THIRD-PARTY-NOTICES.md"));
 
-const assets = ["varlatch-release.json", "docker-compose.release.yml", "convex-supervisor.cjs", ...OVERLAYS, `varlatch-compose-${version}.tar.gz`, cliAsset, "THIRD-PARTY-NOTICES.md"];
+const assets = ["varlatch-release.json", "docker-compose.release.yml", DIGEST_FILE, "convex-supervisor.cjs", ...OVERLAYS, `varlatch-compose-${version}.tar.gz`, cliAsset, "THIRD-PARTY-NOTICES.md"];
 const sums = assets.map(name => `${createHash("sha256").update(readFileSync(join(outDir, name))).digest("hex")}  ${name}\n`).join("");
 writeFileSync(join(outDir, "SHA256SUMS"), sums);
 

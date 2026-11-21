@@ -5,6 +5,86 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## 0.23.0 (2026-11-22)
+
+The last release of the current server line: the 0.50 line replaces it.
+An installation moves to it with `varlatch migrate`, which runs the
+commands this release adds. An installation that never runs them behaves
+as on 0.22.4.
+
+### Server
+
+- **`varlatchd admin migration`.** The commands the 0.50 line's `varlatch
+  migrate` runs on a 0.23.0 installation:
+  - `barrier` stops the installation at a fixed point: it drains the
+    requests in flight, then pauses every request and background loop
+    until `release` or `mark-migrated-out`. `status` shows the barrier.
+  - `release` lifts the barrier: the installation serves again, as it
+    was. That is how a move is called off before the switch.
+  - `export` writes the installation, as it stands behind the barrier,
+    to a migration bundle (a new file, mode 0600, or standard output with
+    `--out -`, its summary then the last line of standard error). With `--dry-run` it
+    reads a consistent snapshot of a running installation instead, with
+    no barrier, to check the export before the move.
+  - `mark-migrated-out` marks an installation that moved: from then on it
+    answers no request, reads included. A backup of it can still be made
+    (`varlatch admin backup create`), since its data no longer changes:
+    the old installation's final archive. Behind the barrier, while the
+    data moves, a backup is refused.
+  - `import` rebuilds the database of a stopped installation from a
+    bundle the 0.50 line wrote (a file, or standard input with `--in -`), which moves an installation back; once it
+    commits, the installation answers requests again.
+  - `backfill` finishes, in one run and with varlatchd stopped, the audit
+    backfill an export needs, for a database brought forward from a
+    release before 0.20.0.
+- **A new audit event, `installation.migrated`.** The 0.50 line records it
+  when an installation moves to it, and an installation moved back keeps
+  it. The dashboard shows it as "Installation migrated"; audit exports and
+  webhooks deliver it like any other event.
+- An `admin migration` command that fails unexpectedly says what failed:
+  a system error's code, call and path, or PostgreSQL's error code and the
+  table or column it names, never what it read.
+- The Convex supervisor stops the backend behind the migration barrier and
+  on a migrated-out installation, as it does under a backup or restore.
+
+### Coolify
+
+- **Coolify installations run the release's published images.** Both
+  Coolify files, `docker-compose.coolify-tailscale.yml` and the new
+  `docker-compose.coolify.yml` (without the Tailscale sidecar), pull
+  varlatchd, varlatch-web and convex-deploy by digest instead of building
+  them from the checkout, so a Coolify installation runs exactly the
+  images the release signed. `varlatch migrate` requires that of its
+  source. The digests are Coolify variables, published with each release
+  as `coolify-image-digests.env` and in its release notes; a deploy without
+  them stops before anything starts, naming the variable.
+- The release images carry the `org.opencontainers.image.version` label.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.23.0.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`. It changes only its version.
+- The server: to move an installation to 0.23.0, follow the 0.22.1 notes
+  below with the 0.23.0 CLI and version.
+- Coolify: before deploying 0.23.0, set the four variables of this
+  release's `coolify-image-digests.env` (checked against `SHA256SUMS`) in
+  the resource's environment, then update the repository ref as usual
+  ([Deploying on Coolify](infra/coolify/README.md#upgrades)). A resource
+  that deploys the canonical `docker-compose.yml` switches its Docker
+  Compose Location to `docker-compose.coolify.yml` in the same upgrade.
+  That file carries the Coolify settings the Tailscale one has: varlatchd
+  trusts `coolify-proxy` as well as the dashboard, the dashboard and Convex
+  join the default network explicitly, and `convex-deploy` runs on every
+  deploy.
+- Audit consumers that list the event types they accept: add
+  `installation.migrated`.
+
+Backups: archives of 0.22.4 and earlier still restore into this release.
+
 ## 0.22.4 (2026-11-20)
 
 A CLI release: a fix to the agent-safe Broker's response scrubbing. The
