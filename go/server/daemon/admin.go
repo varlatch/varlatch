@@ -58,7 +58,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "config-check" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && !conformance && !operator && !backup && !keys {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "config-check" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && !conformance && !operator && !backup && !keys {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -137,6 +137,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
+	case sub == "certificate":
+		if _, msg := certificateArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case sub == "custody":
 		if _, _, msg := custodyArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
@@ -175,6 +180,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":
 		return runCustodyStatus(cfg, stdout, stderr)
+	case sub == "certificate":
+		return runCertificateIssuances(cfg, rest, time.Now(), stdout, stderr)
 	case sub == "tailnet" && rest[0] == "probe-name":
 		return runTailnetProbe(cfg, rest, stdout, stderr)
 	case sub == "bootstrap-status":
@@ -203,7 +210,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] | varlatchd admin doctor [--json] | varlatchd admin config-check | varlatchd admin migrate import|check|export --reverse  (each with [--config <file>])\n", msg)
+		"varlatchd admin schema status|upgrade [--json] | varlatchd admin doctor [--json] | varlatchd admin config-check | varlatchd admin certificate issuances [--json] | varlatchd admin migrate import|check|export --reverse  (each with [--config <file>])\n", msg)
 	return 64
 }
 
