@@ -42,10 +42,7 @@ func migrated(t *testing.T) (install, migrationtest.Source) {
 	if err := os.WriteFile(path, migrationtest.Bundle(t, s, migrationtest.Options{}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// sync = off: the seed's rows come from the TypeScript server's test
-	// fixtures, some of whose Sync Targets hold a mapping its API never
-	// writes ({}).
-	in := newInstall(t, "backup_interval = off\nsync = off\n")
+	in := newInstall(t, "backup_interval = off\n")
 	if err := os.WriteFile(in.kekFile, []byte(hex.EncodeToString(s.RootKEK)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
