@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # The nightly Go run's issue (.github/workflows/go.yml, job nightly-report).
 # Nobody is notified of a scheduled run, so a red nightly could stay red for
 # days unseen (the go-container job did, 2026-11-20 to 21). This keeps one
