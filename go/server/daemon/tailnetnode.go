@@ -355,7 +355,17 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	// While held, the read-back is of the hold's name, never the
 	// configured one, which another node holds (no name-suffixed latch).
 	m.SetHeldName(c.hostname)
+	if t.ControlURL != "" {
+		// On a self-hosted control server the node's tags are its key's:
+		// a node without exactly tailnet_tags would open nothing after the
+		// handoff, so it is refused here (ADR-0059 amendment 11).
+		m.RequireTags(t.Tags)
+	}
 	m.Check(ctx)
+	if m.Closed() == tailnet.TagsDiffer {
+		detail, _ := m.Explain()
+		return fail("%s Then run enroll again (the node stays held).", detail)
+	}
 	suffix, open := m.Pinned()
 	res := enrollResult{Hostname: c.hostname, DNSName: st.DNSName, StableID: st.SelfID, Suffix: st.Suffix, TailnetID: st.TailnetID,
 		ControlURL: controlURL, Pinned: suffix, Open: open, Held: true}

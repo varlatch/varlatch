@@ -39,7 +39,7 @@ func TestKillTheHeadscaleTakeoverAtEveryStep(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "handoff.log")
 			cmd := exec.Command(os.Args[0], "-test.run=^TestHeadscaleTakeNameChild$")
 			cmd.Env = append(os.Environ(),
-				"VARLATCH_HS_TAKENAME_CHILD_CONF="+w.in.conf,
+				takeNameChild+"="+w.in.conf,
 				"VARLATCH_HS_TAKENAME_CHILD_URL="+w.hs.URL,
 				"VARLATCH_HS_TAKENAME_CHILD_KEY="+w.apiKeyFile,
 				"VARLATCH_TEST_HANDOFF_LOG="+log,
@@ -107,7 +107,7 @@ func TestKillTheHeadscaleTakeoverAtEveryStep(t *testing.T) {
 // TestHeadscaleTakeNameChild is the killed process of
 // TestKillTheHeadscaleTakeoverAtEveryStep.
 func TestHeadscaleTakeNameChild(t *testing.T) {
-	conf := os.Getenv("VARLATCH_HS_TAKENAME_CHILD_CONF")
+	conf := os.Getenv(takeNameChild)
 	if conf == "" {
 		t.Skip("the child of TestKillTheHeadscaleTakeoverAtEveryStep")
 	}

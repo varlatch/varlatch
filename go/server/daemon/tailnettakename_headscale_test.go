@@ -25,31 +25,6 @@ import (
 // Real Headscale 0.29.7 container tests for `varlatchd admin tailnet
 // take-name` (slice 7.5c c4, build tag headscale).
 
-var headscaleCA *headscaletest.CA
-
-func TestMain(m *testing.M) {
-	// A crashpoint child inherits SSL_CERT_FILE from its parent test process.
-	var dir string
-	if _, set := os.LookupEnv("SSL_CERT_FILE"); !set {
-		var err error
-		dir, err = os.MkdirTemp("", "daemon-headscale-ca-")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		if headscaleCA, err = headscaletest.Trust(dir); err != nil {
-			_ = os.RemoveAll(dir)
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	code := m.Run()
-	if dir != "" {
-		_ = os.RemoveAll(dir)
-	}
-	os.Exit(code)
-}
-
 type hsRestoreWorld struct {
 	hs          *headscaletest.Server
 	in          install
@@ -67,7 +42,7 @@ func newHeadscaleRestoreWorld(t *testing.T, ctx context.Context, keepDeadOnline 
 	t.Helper()
 	headscaletest.Skip(t)
 	if headscaleCA == nil {
-		t.Fatal("SSL_CERT_FILE was set before the run: Headscale CA is not trusted")
+		t.Fatal("no CA: this is a take-name child process, which starts no Headscale")
 	}
 	hs := headscaletest.Start(t, headscaleCA)
 	t.Cleanup(func() {
