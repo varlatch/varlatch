@@ -269,10 +269,10 @@ func TestDoctorSaysWhyItCouldNotAsk(t *testing.T) {
 	}
 }
 
-// TestConfigCheck: `varlatchd admin config-check` says whether a
+// TestSetupConfigCheck: `varlatchd admin config-check` says whether a
 // configuration is valid (what setup asks before it starts the unit), and
-// reads nothing else.
-func TestConfigCheck(t *testing.T) {
+// reads nothing else. (`admin config check`, the move's, is TestConfigCheck.)
+func TestSetupConfigCheck(t *testing.T) {
 	in := newInstall(t, "")
 	if code, out, errOut := runAdmin(t, "config-check", "--config", in.conf); code != ExitOK || out != "The configuration file "+in.conf+" is valid.\n" || errOut != "" {
 		t.Errorf("valid: %d %q %q", code, out, errOut)
