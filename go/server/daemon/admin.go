@@ -61,7 +61,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
 	move := isMoveCommand(sub) || sub == "config"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && sub != "status" && sub != "release-check" && sub != "migrate" && !conformance && !operator && !backup && !keys && !move {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && sub != "migrate" && sub != "status" && sub != "release-check" && !conformance && !operator && !backup && !keys && !move {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -190,10 +190,6 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
-	case sub == "status":
-		return statusOnline(cfg, rest, stdout, stderr)
-	case sub == "release-check":
-		return runReleaseCheck(cfg, rest, stdout, stderr)
 	case sub == "migrate" && (rest[0] == "open" || rest[0] == "barrier" || rest[0] == "release"):
 		// The live open, and the reverse's barrier: through the running
 		// daemon, whose admission holds the migration's gate; offline, on
@@ -201,6 +197,10 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 	case sub == "migrate":
 		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
+	case sub == "status":
+		return statusOnline(cfg, rest, stdout, stderr)
+	case sub == "release-check":
+		return runReleaseCheck(cfg, rest, stdout, stderr)
 	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
@@ -211,9 +211,8 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin status [--json] | "+
-		"varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | "+
-		"varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
+		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
+		"varlatchd admin status [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | "+
 		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
 		"varlatchd admin move-facts | varlatchd admin config check  (each with [--config <file>])\n", msg)
 	return 64
@@ -361,8 +360,8 @@ const MaintenanceRefusal = "Installation is in maintenance; ordinary admin opera
 // writes reports whether a host command may write the installation: all
 // but the backup and maintenance commands, which take the admission their
 // own way (backup run enters it; maintenance manages it; backup status
-// only reads; status only reads), migrate (which manages its own gate),
-// and move-facts, which only reads.
+// only reads), status (which only reads), migrate (which manages its own
+// gate), and move-facts, which only reads.
 func writes(sub string) bool {
 	return sub != "backup" && sub != "maintenance" && sub != "status" && sub != "migrate" && sub != "move-facts"
 }
