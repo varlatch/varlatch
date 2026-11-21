@@ -40,7 +40,11 @@ func migrated(t *testing.T) (install, migrationtest.Source) {
 	if err := os.WriteFile(path, migrationtest.Bundle(t, s, migrationtest.Options{}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	in := newInstall(t, "backup_interval = off\n")
+	// sync = off: the seed's Sync Targets (the TypeScript server's test
+	// fixtures) name hosts no test reaches, so a sync pass in flight can
+	// outlast a barrier's 5 s drain, and the barrier then stays, as it
+	// must (not a fault of the server: of the fixture).
+	in := newInstall(t, "backup_interval = off\nsync = off\n")
 	if err := os.WriteFile(in.kekFile, []byte(hex.EncodeToString(s.RootKEK)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
