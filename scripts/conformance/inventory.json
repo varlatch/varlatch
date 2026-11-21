@@ -4582,7 +4582,7 @@
       "script": "scripts/test-setup.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go setup, with the same end-to-end suite against the Go installation"
+        "none": "Its Go counterparts are Go tests and a step of the Go workflow (.github/workflows/go.yml), not runner checks: go/cmd/varlatch/internal/setup.TestNonInteractiveSetup, go/cmd/varlatch/internal/setup.TestRerunChangesNothing, go/cmd/varlatch/internal/setup.TestInterruptedAtEachStep and go/cmd/varlatch/internal/setup.TestFailureThenResume in the step 'Test' (the Go setup on a stand-in host: one command from nothing, a rerun changes nothing, resumable after an interruption at each step), and go/install/test-setup.sh, which on a GitHub-hosted runner runs the built varlatch setup as root against the real systemd of the runner for every ingress mode from an empty host, interrupts and resumes it, and checks each installation (ADR-0059 step 6.4a, varlatch/varlatch#341)."
       }
     },
     "adopt": {
@@ -4590,7 +4590,7 @@
       "script": "scripts/test-adopt.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 7: varlatch migrate takes over existing TypeScript installations, hand-configured ones included"
+        "open": "varlatch migrate (varlatch/varlatch#371) takes a TypeScript installation over. It closes with the step 8 rehearsals on the experiments server, B1 to B5, then B6 on a restored copy of production."
       }
     },
     "backup-compose": {
@@ -4622,7 +4622,7 @@
       "script": "scripts/test-backup-upgrade.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 steps 6 and 7: upgrade and rollback safety, and recovery from the pre-migration archive"
+        "open": "Upgrade and rollback safety are built (G6, and the rollback window of varlatch/varlatch#330 and #387). Recovery from the pre-migration archive closes with the step 8 rehearsal B6."
       }
     },
     "backup-v0100-restore": {
@@ -4630,7 +4630,7 @@
       "script": "scripts/test-backup-v0100-restore.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 7: the backup converter restores archives of earlier releases"
+        "open": "The backup converter (varlatch migrate --from-archive, varlatch/varlatch#362, which lands after 0.23.0) restores archives of earlier releases, with its nightly converter job. It closes with that PR and the step 8 rehearsal B6 (the converter on the production archive)."
       }
     },
     "prod-shape": {
@@ -4638,7 +4638,7 @@
       "script": "scripts/test-prod-shape.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 7: migrating a production-shaped TypeScript installation, rehearsed"
+        "open": "Migrating a production-shaped TypeScript installation closes with the step 8 rehearsals B3 (the Coolify shape) and B6 (a restored copy of production)."
       }
     },
     "sidecar-restart": {
@@ -4646,7 +4646,7 @@
       "script": "scripts/test-sidecar-restart.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the tailnet topology of the Go installation"
+        "none": "The Go installation has no Tailscale sidecar: varlatchd is its own tailnet node, in process (tsnet, ADR-0059 Decision 5), so no sidecar can restart and strand it. What the suite guarded, the tailnet listener serving again after its node restarts, is go/server/daemon.TestTailnetListener in the step 'Test' of go.yml (restarted without its auth key, the node rejoins and the listener serves)."
       }
     },
     "ingress-public": {
@@ -4654,7 +4654,7 @@
       "script": "scripts/test-ingress-public.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: setup's public ingress"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflow (.github/workflows/go.yml), not runner checks: go/server/publictls.TestPebbleIssuanceAndRenewal and go/server/publictls.TestPebbleFailureAndBackoff in the step 'Public HTTPS against Pebble' (the built-in public listener obtains and renews its certificate in a real ACME exchange, and backs off when it fails: the Go installation has no Caddy), and go/install/test-setup.sh, which on a GitHub-hosted runner runs varlatch setup with the public ingress against Pebble from an empty host and checks that HTTPS answers with the certificate it obtained (ADR-0059 steps 6.3 and 6.4a)."
       }
     },
     "ingress-tailnet": {
@@ -4662,7 +4662,7 @@
       "script": "scripts/test-ingress-tailnet.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: setup's tailnet ingress"
+        "open": "ADR-0059 step 6.4a built setup's tailnet ingress, but no run proves it on a real tailnet yet. The step 8 rehearsal B4, on the throwaway Tailscale tailnet (internal docs/design/go-step8-rehearsals.md), closes it."
       }
     },
     "tailnet-endpoint": {
@@ -4670,7 +4670,7 @@
       "script": "scripts/test-tailnet-endpoint.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 steps 4 and 6: tailnet and Requirements, and setup's tailnet endpoint"
+        "open": "Step 4's half passed on a real tailnet (the live check of 2026-11-17, internal docs/evidence/go-tailnet-live-check-2026-11-17/). Setup's tailnet endpoint closes with the step 8 rehearsal B4, on the throwaway Tailscale tailnet."
       }
     },
     "move": {
@@ -4686,7 +4686,7 @@
       "script": "scripts/test-installers.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go installers"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflow (.github/workflows/go.yml), not runner checks: go/install.TestEveryPrefixRunsNothingOrEverything, go/install.TestInstallCLIRerun, go/install.TestInstallRefuses, go/install.TestInstallRefusesOtherPlatforms and go/install.TestInstallFromAnInstallation in the step 'Test' (install.sh: every prefix under sh, dash and bash runs nothing or everything, a rerun changes nothing, the refusals, another platform refused, the script an installation serves), go/install.TestPS1EveryPrefix and go/install.TestPS1EndToEnd in the step 'install.ps1 under PowerShell 5.1 and 7' (install.ps1 under both PowerShells), and the workflow published-release.yml, which checks a published Go release as people install it on Linux, macOS and Windows (ADR-0059 G8, step 6.1)."
       }
     },
     "coolify-live": {
