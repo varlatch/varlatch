@@ -3620,10 +3620,13 @@ type BackupArchiveStatus struct {
 		RemoteVerification *BackupVerification `json:"remoteVerification,omitempty"`
 		UploadedAt         time.Time           `json:"uploadedAt"`
 	} `json:"delivery,omitempty"`
-	InstallationId      string              `json:"installationId"`
-	Release             string              `json:"release"`
-	RequiredKeyVersions []int               `json:"requiredKeyVersions"`
-	Verification        *BackupVerification `json:"verification,omitempty"`
+	InstallationId      string `json:"installationId"`
+	Release             string `json:"release"`
+	RequiredKeyVersions []int  `json:"requiredKeyVersions"`
+
+	// RetainUntil When a TypeScript-format archive's retention ends, when it is known (an Object Lock retain-until date, or the operator's). Without it, the bucket's lifecycle rule decides.
+	RetainUntil  *time.Time          `json:"retainUntil,omitempty"`
+	Verification *BackupVerification `json:"verification,omitempty"`
 }
 
 // BackupVerification defines model for BackupVerification.
@@ -4394,7 +4397,10 @@ type IncidentFreezeLiftMethod string
 // InstallationBackups defines model for InstallationBackups.
 type InstallationBackups struct {
 	Archives []BackupArchiveStatus `json:"archives"`
-	Warnings []string              `json:"warnings"`
+
+	// TypescriptArchives A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive) and never removed by its retention. None of the warnings about Go's own archives counts them; the Root KEK's does, since converting one needs its key. Absent when there are none; the TypeScript server never sends it.
+	TypescriptArchives *[]BackupArchiveStatus `json:"typescriptArchives,omitempty"`
+	Warnings           []string               `json:"warnings"`
 }
 
 // InstallationListeners defines model for InstallationListeners.

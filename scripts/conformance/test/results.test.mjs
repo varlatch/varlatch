@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { endProblem, parseSuiteOutput, resultLine } from "../lib/results.mjs";
+import { endProblem, lastError, parseSuiteOutput, resultLine } from "../lib/results.mjs";
 
 test("reads one result per line, with its status, ID and text", () => {
   const { results, errors } = parseSuiteOutput(
@@ -62,4 +62,47 @@ test("a suite ends only with one marker on its channel, its name and nonce, and 
   assert.match(endProblem("END  [a]\n", ok), /not a marker/);
   // Output on stdout or stderr is never the channel.
   assert.deepEqual(parseSuiteOutput(`END a ${nonce} 0\nEND  [a]\n`), { results: [], errors: [] });
+});
+
+test("a suite that did not finish is named by the error it last wrote", () => {
+  // The access suite's crash on a merge-queue run, as Node printed it.
+  const playwright = [
+    "  [browser] Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "node:internal/modules/run_main:111",
+    "    triggerUncaughtException(",
+    "    ^",
+    "",
+    "page.waitForFunction: Timeout 10000ms exceeded.",
+    "    at /home/runner/work/varlatch/varlatch/apps/web/scripts/e2e-access.mjs:392:14 {",
+    "  log: [],",
+    "  name: 'TimeoutError'",
+    "}",
+    "",
+    "Node.js v26.13.1",
+    "",
+  ].join("\n");
+  assert.equal(
+    lastError(playwright),
+    "TimeoutError: page.waitForFunction: Timeout 10000ms exceeded. (at /home/runner/work/varlatch/varlatch/apps/web/scripts/e2e-access.mjs:392:14)",
+  );
+  // A plain Error: its message already carries its name; the last trace wins.
+  const two = [
+    "Error: an earlier, caught one",
+    "    at first (/x/a.mjs:1:1)",
+    "TypeError: Cannot read properties of undefined (reading 'id')",
+    "    at step (/x/e2e-values.mjs:85:12)",
+    "    at async main (/x/e2e-values.mjs:20:3)",
+  ].join("\n");
+  assert.equal(lastError(two), "TypeError: Cannot read properties of undefined (reading 'id') (at step (/x/e2e-values.mjs:85:12))");
+  // An error name with digits and underscores; a trace that starts the output.
+  assert.equal(
+    lastError(["Kaboom_2: it broke", "    at x (/x/a.mjs:2:2) {", "  name: 'Kaboom_2'", "}"].join("\n")),
+    "Kaboom_2: it broke (at x (/x/a.mjs:2:2))",
+  );
+  assert.equal(lastError(["page.click: Timeout", "    at y (/y.mjs:3:4) {", "  name: 'E2eTimeout_1'", "}"].join("\n")), "E2eTimeout_1: page.click: Timeout (at y (/y.mjs:3:4))");
+  assert.equal(lastError("    at z (/z.mjs:1:1)\n"), "an error (at z (/z.mjs:1:1))");
+  // No trace: the last line; nothing: null.
+  assert.equal(lastError("starting\nthe server went away\n\n"), "the server went away");
+  assert.equal(lastError(""), null);
+  assert.equal(lastError(undefined), null);
 });

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/custody"
@@ -322,15 +323,7 @@ func writePrivate(path string, data []byte) (err error) {
 	if err = os.Rename(tmp, path); err != nil {
 		return err
 	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	if err = d.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
-		return err
-	}
-	return nil
+	return backup.SyncDir(dir)
 }
 
 // custodyArgs checks `admin custody`'s arguments: the key and method of an
