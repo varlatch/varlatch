@@ -474,6 +474,10 @@ func TestTheRollbackGivesTheNameBack(t *testing.T) {
 	if err := w.eng.rollbackTailnet(context.Background(), j); err != nil {
 		t.Fatalf("again: %v", err)
 	}
+	// Go's node is held again under the reverse's temporary name.
+	if w.tgt.info.Tailnet.HeldAs != goTemp {
+		t.Fatalf("Go's node is not held again: %q", w.tgt.info.Tailnet.HeldAs)
+	}
 	if n := w.names(); n["old"] != "vault" {
 		t.Fatalf("names after again %v", n)
 	}

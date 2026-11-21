@@ -55,6 +55,11 @@ func init() {
 	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_UNDO_WAIT")); err == nil && d > 0 {
 		testHandoffUndoWait = d
 	}
+	// Its deadline, shortened for the cases where a control plane failing
+	// on one device's rename runs it out.
+	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_DEADLINE")); err == nil && d > 0 {
+		testHandoffDeadline = d
+	}
 	if m := pinText.FindStringSubmatch(os.Getenv("VARLATCH_MIGRATE_PIN")); m != nil {
 		testPin = &imagePin{Repository: m[1], Digest: m[2]}
 	}
