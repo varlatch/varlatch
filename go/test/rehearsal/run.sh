@@ -147,7 +147,7 @@ docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e
 release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
-  VL_RH_BACKUPS_WORKAROUND VL_RH_KEEP VL_RH_ONLY)
+  VL_RH_KEEP VL_RH_ONLY)
 if [ "$profile" = box ]; then
   # On the box: as root on the host, real systemd, the target under a
   # root-owned path; the run's files handed back to the sudo user after.

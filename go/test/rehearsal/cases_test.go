@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -39,6 +40,10 @@ func TestRehearsal(t *testing.T) {
 	case "public":
 		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
 	default:
+		// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL).
+		if os.Getenv("VL_RH_ONLY") == "kill" {
+			break
+		}
 		t.Run("main", func(t *testing.T) { mainCases(t, rel, s3) })
 		if os.Getenv("VL_RH_ONLY") == "setup" {
 			return
@@ -228,51 +233,59 @@ func record2(t *testing.T, item int, name string, ok bool, detail string) bool {
 
 // --- item 1: the export on PostgreSQL ---
 
+// exportSummary is the stream export's last line on standard error
+// (#373: services/varlatchd/src/migration/failure.ts).
+const exportSummary = "varlatch-export-summary: "
+
+// export: `admin migration export --out -`, as varlatch migrate runs it:
+// the run key on standard input, the bundle on standard output, the
+// summary as standard error's last line.
 func export(t *testing.T, in *installation) {
 	const item = 1
-	if os.Getenv("VL_RH_BACKUPS_WORKAROUND") == "1" {
-		differs(item, "G5's stand-in writes the bundle itself, into the Compose directory's backups/.",
-			"the real export runs in the TypeScript varlatchd container as uid 999 and writes --out /backups/<name>; setup makes backups/ 0700 and the operator's, so it cannot: \"Operator command failed; check configuration and maintenance status.\" (exit 1, the CLI's catch-all; run r1). This run opens backups/ to 0777 to reach the later items",
-			"blocker: every real migration's dry run fails at its export")
-	}
 	key := secret(hexBytes(32))
-	out := func(name string, dry bool, stdin string) ran {
-		args := []string{"migration", "export", "--out", "/backups/" + name, "--digests"}
+	out := func(dry bool, stdin string) ran {
+		args := []string{"migration", "export", "--out", "-", "--digests"}
 		if dry {
 			args = append(args, "--dry-run")
 		}
 		return in.admin([]byte(stdin), args...)
 	}
 	// No barrier: a real export is refused.
-	r := out("no-barrier.bundle", false, key+"\n")
+	r := out(false, key+"\n")
 	record(t, item, "export without a barrier: refused", r.code != 0 && strings.Contains(r.stderr, "no migration barrier is held"), r.String())
 	compareRefusal(item, "export without a barrier", "varlatchd admin migration export: no migration barrier is held; nothing was exported (exit 1)", r)
 	// A run key that is not 64 hex digits.
-	r = out("bad-key.bundle", true, "not-a-key\n")
+	r = out(true, "not-a-key\n")
 	record(t, item, "a malformed run key: refused", r.code != 0 && strings.Contains(r.stderr, "64 lowercase hex digits"), r.String())
 	compareRefusal(item, "a malformed run key", "the run key on standard input is not 64 lowercase hex digits (exit 1)", r)
 	// No run key at all (stdin closed).
-	r = out("no-key.bundle", true, "")
+	r = out(true, "")
 	record(t, item, "no run key: refused", r.code != 0, r.String())
 	// The dry run: a consistent snapshot of the running installation.
-	r = out("dry.bundle", true, key+"\n")
-	ok := r.code == 0 && json.Valid([]byte(strings.TrimSpace(lastLine(r.stdout))))
-	record(t, item, "dry-run export", ok, r.String())
+	r = out(true, key+"\n")
+	summary, hasSummary := strings.CutPrefix(lastLine(r.stderr), exportSummary)
+	ok := r.code == 0 && hasSummary && json.Valid([]byte(summary)) && len(r.stdout) > 0
+	record(t, item, "dry-run export to standard output, its summary on standard error", ok, r.String())
+	full := len(r.stdout)
 	if ok {
 		measure("item 1: dry-run export", r.took.Round(time.Millisecond).String())
-		if fi, err := os.Stat(filepath.Join(in.dir, "backups", "dry.bundle")); err == nil {
-			measure("item 1: bundle size (empty installation)", fmt.Sprintf("%d bytes", fi.Size()))
-		}
-		if strings.Contains(r.stdout, `"frozenPoint":{}`) {
-			differs(item, `the stand-in's export prints {"frozenPoint":{},"bundle":{},"preflight":{"ok":true}}.`, lastLine(r.stdout), "")
+		measure("item 1: bundle size (the seeded installation)", fmt.Sprintf("%d bytes", full))
+		if strings.Contains(summary, `"frozenPoint":{}`) {
+			differs(item, `the stand-in's export prints {"frozenPoint":{},"bundle":{},"preflight":{"ok":true}}.`, summary, "")
 		} else {
-			differs(item, `the stand-in's export prints empty frozenPoint and bundle objects.`, "the real one: "+lastLine(r.stdout), "migrate parses only what it needs; the real fields are richer")
+			differs(item, `the stand-in's export prints empty frozenPoint and bundle objects.`, "the real one: "+summary, "migrate parses only what it needs; the real fields are richer")
 		}
 	}
-	_ = os.Remove(filepath.Join(in.dir, "backups", "dry.bundle"))
-	// Killed mid-export: the .partial, then the next export's cleanup.
-	killed := killMidExport(t, in, key)
-	record(t, item, "killed mid-export: no bundle, the .partial removed by the next export", killed.ok, killed.detail)
+	// The file form, which migrate no longer uses: setup makes backups/ the
+	// operator's (0700), so the container's user (uid 999) cannot write it.
+	f := in.admin([]byte(key+"\n"), "migration", "export", "--out", "/backups/dry.bundle", "--digests", "--dry-run")
+	if f.code != 0 {
+		measure("item 1: export --out /backups/<file> (not migrate's form)", f.String())
+	}
+	// Killed mid-stream: no summary, so the reader knows the bundle is
+	// incomplete; the next export runs as before.
+	killed := killMidExport(t, in, key, full)
+	record(t, item, "killed mid-export: no summary line, the next export complete", killed.ok, killed.detail)
 }
 
 func lastLine(s string) string {
@@ -294,49 +307,48 @@ type outcome struct {
 	detail string
 }
 
-func killMidExport(t *testing.T, in *installation, key string) outcome {
-	backups := filepath.Join(in.dir, "backups")
-	done := make(chan ran, 1)
-	go func() {
-		done <- in.admin([]byte(key+"\n"), "migration", "export", "--out", "/backups/killed.bundle", "--digests", "--dry-run")
-	}()
-	killedAt := time.Duration(0)
+// killMidExport starts a stream export, kills its process inside the
+// container (SIGKILL) once the bundle is flowing, and checks what a reader
+// sees: fewer bytes than the full bundle and no summary line.
+func killMidExport(t *testing.T, in *installation, key string, full int) outcome {
+	cmd := exec.Command("docker", "compose", "exec", "-T", "varlatchd", "node", "dist/cli.js", "admin", "migration", "export", "--out", "-", "--digests", "--dry-run")
+	cmd.Dir = in.dir
+	cmd.Stdin = strings.NewReader(key + "\n")
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	began := time.Now()
-	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-		matches, _ := filepath.Glob(filepath.Join(backups, "killed.bundle*.partial"))
-		if len(matches) == 0 {
-			matches, _ = filepath.Glob(filepath.Join(backups, "*.partial"))
-		}
-		if len(matches) > 0 {
-			k := in.inside(`for (const d of require("fs").readdirSync("/proc")) { if (!/^\d+$/.test(d)) continue;
-				try { const c = require("fs").readFileSync("/proc/" + d + "/cmdline", "utf8"); if (c.includes("migration") && c.includes("export") && +d !== process.pid) process.kill(+d, "SIGKILL"); } catch {} }`)
-			killedAt = time.Since(began)
-			if k.code != 0 {
-				return outcome{false, "the kill failed: " + k.String()}
-			}
-			break
-		}
-		select {
-		case r := <-done:
-			_ = os.Remove(filepath.Join(backups, "killed.bundle"))
-			return outcome{false, fmt.Sprintf("not reached: the export finished in %s before a .partial was seen (%s); increase VL_RH_SEED_VALUES", r.took.Round(time.Millisecond), r.String())}
-		default:
-		}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
 	}
-	if killedAt == 0 {
-		r := <-done
-		_ = os.Remove(filepath.Join(backups, "killed.bundle"))
-		return outcome{false, fmt.Sprintf("not reached: no .partial was seen within 60s (%s)", r.String())}
+	// One byte, then nothing read until the kill: the export blocks on a
+	// full pipe, so it is still writing when it is killed.
+	first := make([]byte, 1)
+	if _, err := io.ReadFull(stdout, first); err != nil {
+		_ = cmd.Wait()
+		return outcome{false, fmt.Sprintf("not reached: no bundle byte before the export ended (%v; %s)", err, redact(lastLines(errb.String(), 3)))}
 	}
-	r := <-done
-	partials, _ := filepath.Glob(filepath.Join(backups, "*.partial"))
-	_, bundleErr := os.Stat(filepath.Join(backups, "killed.bundle"))
-	detail := fmt.Sprintf("killed after %s: exit %d, %d .partial left, bundle present %v", killedAt.Round(time.Millisecond), r.code, len(partials), bundleErr == nil)
-	next := in.admin([]byte(key+"\n"), "migration", "export", "--out", "/backups/killed.bundle", "--digests", "--dry-run")
-	partialsAfter, _ := filepath.Glob(filepath.Join(backups, "killed.bundle*.partial"))
-	_ = os.Remove(filepath.Join(backups, "killed.bundle"))
-	detail += fmt.Sprintf("; the next export: exit %d, .partial left %d", next.code, len(partialsAfter))
-	return outcome{r.code != 0 && bundleErr != nil && next.code == 0 && len(partialsAfter) == 0, detail}
+	k := in.inside(`for (const d of require("fs").readdirSync("/proc")) { if (!/^\d+$/.test(d)) continue;
+		try { const c = require("fs").readFileSync("/proc/" + d + "/cmdline", "utf8"); if (c.includes("migration") && c.includes("export") && +d !== process.pid) process.kill(+d, "SIGKILL"); } catch {} }`)
+	killedAt := time.Since(began)
+	rest, _ := io.ReadAll(stdout)
+	werr := cmd.Wait()
+	if k.code != 0 {
+		return outcome{false, "the kill failed: " + k.String()}
+	}
+	got := 1 + len(rest)
+	_, summarized := strings.CutPrefix(lastLine(errb.String()), exportSummary)
+	detail := fmt.Sprintf("killed after %s: exit %d, %d of %d bytes, a summary line %v", killedAt.Round(time.Millisecond), exitCode(werr), got, full, summarized)
+	if got >= full && full > 0 {
+		detail += "; the export had finished before the kill: increase VL_RH_SEED_VALUES"
+	}
+	next := in.admin([]byte(key+"\n"), "migration", "export", "--out", "-", "--digests", "--dry-run")
+	_, nextSummary := strings.CutPrefix(lastLine(next.stderr), exportSummary)
+	detail += fmt.Sprintf("; the next export: exit %d, %d bytes, a summary line %v", next.code, len(next.stdout), nextSummary)
+	return outcome{exitCode(werr) != 0 && !summarized && got < full && next.code == 0 && nextSummary && len(next.stdout) > 0, detail}
 }
 
 // --- items 2 and 3: the barrier, a restart behind it, its answers ---

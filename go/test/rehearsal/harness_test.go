@@ -341,13 +341,9 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	must(t, run("", nil, nil, "tar", "-xzf", bundle, "-C", in.dir, "--strip-components=1"), "unpack the release bundle")
 	_ = os.MkdirAll(filepath.Join(in.dir, "secrets"), 0o700)
 	_ = os.MkdirAll(filepath.Join(in.dir, "backups"), 0o700)
-	// As setup makes it: 0700, the operator's. The TypeScript container
-	// (uid 999) cannot write it, which the export migrate runs there needs
-	// (finding 1 of run r1); VL_RH_BACKUPS_WORKAROUND=1 opens it so the
-	// items after the export can run.
-	if os.Getenv("VL_RH_BACKUPS_WORKAROUND") == "1" {
-		_ = os.Chmod(filepath.Join(in.dir, "backups"), 0o777)
-	}
+	// As setup makes it: 0700, the operator's, which the TypeScript
+	// container (uid 999) cannot write (finding 1 of run r1). Nothing
+	// needs it to: migrate streams the export (--out -) since 0.23.0.
 	kek := filepath.Join(in.dir, "secrets", "varlatch-kek")
 	// varlatchd (uid 999) reads the KEK through the secret's bind mount.
 	if err := os.WriteFile(kek, []byte(hexBytes(32)+"\n"), 0o644); err != nil {
