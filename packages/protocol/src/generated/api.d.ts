@@ -2481,8 +2481,11 @@ export interface components {
         ObservedCheck: {
             /** @enum {string} */
             status: "pass" | "fail" | "unknown";
-            /** @enum {string} */
-            reason?: "NOT_CHECKED" | "NOT_LISTENING" | "NO_CERTIFICATE" | "LOCALAPI_UNAVAILABLE" | "NOT_RUNNING" | "OTHER_TAILNET" | "NAME_CHANGED";
+            /**
+             * @description Why the check fails. TAGS_DIFFER (node only): on a self-hosted control server, the node's tags (its pre-auth key's) are not tailnet_tags, so tailnet access is closed until they match; observed.warnings names both sets.
+             * @enum {string}
+             */
+            reason?: "NOT_CHECKED" | "NOT_LISTENING" | "NO_CERTIFICATE" | "LOCALAPI_UNAVAILABLE" | "NOT_RUNNING" | "OTHER_TAILNET" | "NAME_CHANGED" | "TAGS_DIFFER";
             /**
              * Format: date-time
              * @description browserTls only, when the certificate in use expires.

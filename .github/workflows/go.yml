@@ -416,7 +416,7 @@ jobs:
           go vet -tags conformance ./...
           go vet -tags crashpoint ./...
           go vet -tags g9a ./...
-          go vet -tags headscale ./server/tailnet/...
+          go vet -tags headscale ./server/tailnet/... ./server/daemon/...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -488,13 +488,16 @@ jobs:
       # Headscale 0.29.7 (by digest, in a container named for the run,
       # unprivileged, its embedded DERP only) on https at an IP address,
       # tagged by its pre-auth key, and is pinned to it; while Headscale is
-      # unreachable, no bootstrap DNS query. Its own build tag: it needs
-      # Docker.
+      # unreachable, no bootstrap DNS query. Its tags must be tailnet_tags,
+      # and the identity cases (tagged peer, user's device, self,
+      # unrecognized; StableID = Headscale's node id) hold, in the node and
+      # through varlatchd's tailnet listener and a handoff's node commands
+      # (step 7.5c c3). Its own build tag: it needs Docker.
       - name: Headscale, a self-hosted control server
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 -tags headscale -run '^TestHeadscale' -v ./server/tailnet/
+        run: go test -count=1 -tags headscale -run '^TestHeadscale' -v ./server/tailnet/ ./server/daemon/
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a

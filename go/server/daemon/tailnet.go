@@ -116,6 +116,12 @@ func startTailnet(cfg *config.Config, controlURL string, certs tailnet.CertSourc
 		_ = node.Close()
 		return nil, err
 	}
+	if t.ControlURL != "" {
+		// A self-hosted control server: the node's tags are its pre-auth
+		// key's, so they are checked; tailnet access opens only with
+		// exactly tailnet_tags (ADR-0059 amendment 11).
+		m.RequireTags(t.Tags)
+	}
 	// The read-back: a name the control plane suffixed keeps access closed.
 	// While a handoff holds the node, it is read back as the hold's name
 	// (open sets the configured one again).
@@ -539,7 +545,7 @@ func runTailnetProbe(cfg *config.Config, rest []string, stdout, stderr io.Writer
 	}
 	key := strings.TrimSpace(string(raw))
 	clear(raw)
-	res, err := tailnet.ProbeName(context.Background(), tailnet.ProbeConfig{Dir: cfg.DataDir, Hostname: t.Hostname, ControlURL: t.ControlURL, AuthKey: key, Tags: t.Tags})
+	res, err := tailnet.ProbeName(context.Background(), tailnet.ProbeConfig{Dir: cfg.DataDir, Hostname: t.Hostname, ControlURL: t.ControlURL, AuthKey: key, Tags: t.Tags, KeyTags: t.ControlURL != ""})
 	if err != nil {
 		return fail("%v", err)
 	}

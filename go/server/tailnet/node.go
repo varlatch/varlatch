@@ -186,6 +186,27 @@ func (n *TSNode) SelfID(ctx context.Context) (string, error) {
 	return st.SelfID, nil
 }
 
+// DERPHosts are the host names of the DERP servers the node's current
+// DERP map (its control server's) lists.
+func (n *TSNode) DERPHosts(ctx context.Context) ([]string, error) {
+	m, err := n.lc.CurrentDERPMap(ctx)
+	if err != nil || m == nil {
+		return nil, err
+	}
+	var hosts []string
+	for _, r := range m.Regions {
+		if r == nil {
+			continue
+		}
+		for _, nd := range r.Nodes {
+			if nd != nil && nd.HostName != "" {
+				hosts = append(hosts, nd.HostName)
+			}
+		}
+	}
+	return hosts, nil
+}
+
 // Status is the node's status, without its peers.
 func (n *TSNode) Status(ctx context.Context) (Status, error) {
 	st, err := n.lc.StatusWithoutPeers(ctx)

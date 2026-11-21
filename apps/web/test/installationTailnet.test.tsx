@@ -30,6 +30,7 @@ vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api }) }))
 import {
   LISTENERS_STALE_MS,
   NODE_PLACEHOLDER,
+  REASON_TEXT,
   checkRows,
   enableEndpointLines,
   endpointRule,
@@ -115,6 +116,11 @@ describe("guidance", () => {
       "Set VARLATCH_TAILNET_NODE to the node's new name and VARLATCH_TAILNET_ENDPOINT to https://<new name>.example.ts.net:8688, then redeploy",
     );
     expect(remedy("NO_CERTIFICATE", "coolify", ENDPOINT)).toMatch(/VARLATCH_TAILNET_CERT_UID must be 999/);
+    // A self-hosted control server's node without exactly tailnet_tags: the same remedy for either deployment.
+    for (const deployment of ["setup", "coolify"] as const) {
+      expect(remedy("TAGS_DIFFER", deployment, null)).toMatch(/^Give the node exactly tailnet_tags in Headscale \(headscale nodes tag/);
+    }
+    expect(REASON_TEXT.TAGS_DIFFER).toBe("The node's tags are not tailnet_tags");
   });
 
   it("never fixes the tailnet name without the endpoint URL that depends on it", () => {
