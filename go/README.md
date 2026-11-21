@@ -2006,28 +2006,52 @@ serves the tailnet listener on the node's own addresses
   binding is off (a userspace node has no TUN device). The node joins in
   the background: the ordinary listener serves at once, the tailnet
   listener once the node runs.
-- **Coordination server.** This release joins Tailscale's only:
-  `tailnet_control_url` other than Tailscale's is refused at startup, and
-  the node is always given Tailscale's control URL explicitly (an empty
-  one would let tsnet read `TS_CONTROL_URL`). varlatchd refuses to start
-  the node while any environment variable tsnet reads in place of its
-  settings is set (`TS_CONTROL_URL`, `TS_AUTHKEY`, `TS_AUTH_KEY`,
-  `TS_CLIENT_SECRET`, `TS_CLIENT_ID`, `TS_ID_TOKEN`, `TS_AUDIENCE`,
-  `TSNET_FORCE_LOGIN`): its control server and enrolment come from
-  `varlatchd.conf` alone.
-  Decision 5 requires a self-hosted (Headscale) control server's host name
-  never to reach Tailscale, and the tsnet release in use always keeps its
-  bootstrap DNS fallback (Tailscale's DERP servers resolve the control
-  host when the system resolver fails), with no way to turn it off. ADR-0059
-  lists a Headscale version as supported only once G10 shows no such
-  query, so none is yet. The plan's Headscale end-to-end tests (G10's step
-  4 cases against a Headscale 0.29.7 container: WhoIs, tagged peers, a
-  changed `base_domain`, a different control URL, and no bootstrap DNS
-  query while the control server is down) are deferred until a tsnet
-  release can turn the fallback off: the last of them cannot pass before
-  then, and the others would test a configuration varlatchd refuses. The
-  pin's Headscale rules are in place and unit-tested
-  (`TestHeadscalePin`) for that day.
+- **Coordination server.** Tailscale's by default (`tailnet_control_url`
+  unset, or Tailscale's own URL), and the node is always given its control
+  URL explicitly (an empty one would let tsnet read `TS_CONTROL_URL`).
+  varlatchd refuses to start the node while any environment variable
+  tsnet reads in place of its settings is set (`TS_CONTROL_URL`,
+  `TS_AUTHKEY`, `TS_AUTH_KEY`, `TS_CLIENT_SECRET`, `TS_CLIENT_ID`,
+  `TS_ID_TOKEN`, `TS_AUDIENCE`, `TSNET_FORCE_LOGIN`): its control server
+  and enrolment come from `varlatchd.conf` alone.
+  - **A self-hosted control server (Headscale)** is given as
+    `https://<its IP address>[:port]` only (step 7.5c; ADR-0059 Decision 5
+    as amended). Decision 5 requires a self-hosted server's host name
+    never to reach Tailscale. tsnet looks a control server's host name up
+    through Tailscale's DERP servers whenever the ordinary lookup fails
+    (its bootstrap DNS fallback), and no tailscale.com release can turn
+    that off (checked up to v1.105.0-pre: `controlclient/direct.go` and
+    `controlhttp/client.go` always install it). An IP address is never
+    looked up, so a host-name URL other than Tailscale's is refused, with
+    a message naming the IP form and why. The URL is kept canonical
+    (`https://192.0.2.10:8443`, `https://[2001:db8::10]`; `:443` dropped),
+    as the pin compares it; plain http, a user, a path, a query, an
+    unspecified, multicast, link-local, broadcast or zoned address
+    (judged after an IPv4-mapped address is unmapped) are refused. The server's
+    certificate must be valid for that address and trusted by the host
+    (the system's roots, or `SSL_CERT_FILE`).
+  - **Tags** come from the auth key there: Headscale refuses a node that
+    registers with a pre-auth key and advertises tags (0.29.7), so the
+    node advertises none, and its key must be a tagged pre-auth key
+    (`headscale preauthkeys create --tags <tailnet_tags>`). A node that
+    joined with no tags (an untagged key) keeps access open for now: it
+    is logged once and the listeners report carries a warning
+    (`observed.warnings`, shown in the dashboard's Tailnet tab); access
+    closes on tags other than `tailnet_tags` in a later slice.
+  - **No browser endpoint** with it: `tailnet_https_port` serves the
+    node's Tailscale certificate, which a self-hosted server does not
+    issue, so the two together are refused.
+  - The listeners report (`GET /v1/installation/listeners`, the
+    dashboard's Tailnet tab) names a self-hosted control server
+    (`configured.controlUrl`); it is absent for Tailscale's.
+  - Tested against Headscale 0.29.7 in a container (build tag
+    `headscale`, its own step in `go.yml`;
+    `server/tailnet/headscaletest`): the node joins on an IP address,
+    tagged by its key, is pinned to the control URL and `base_domain`
+    with no tailnet StableID, and while Headscale is unreachable makes no
+    bootstrap DNS query; another configured control URL closes access.
+    The handoff's Headscale cases (migrate's Headscale authority, the
+    restore handoff, StableID lookups) are step 7.5c's next slices.
 - **The pin** (`<data_dir>/tailnet-pin.json`, `server/tailnet/pin.go`)
   is the control URL, the tailnet's StableID (Tailscale) and its MagicDNS
   suffix (Headscale's `base_domain`), never the display name. It is taken
