@@ -109,8 +109,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if err := matches(); err != nil {
 			return fail("%v", err)
 		}
-		fmt.Fprintf(stdout, "%s holds: schema %d, compatible from %d, rollback-safe %v, previous %s\n",
-			*declPath, decl.SchemaVersion, decl.CompatibleFrom, decl.RollbackSafe, previousName(decl))
+		fmt.Fprintf(stdout, "%s holds: schema %d, compatible from %d, rollback-safe %v, previous %s, %s\n",
+			*declPath, decl.SchemaVersion, decl.CompatibleFrom, decl.RollbackSafe, previousName(decl), windowName(decl))
 		return exitOK
 
 	case "manifest":
@@ -175,6 +175,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exitOK
 	}
 	return exitUsage // not reached: the switch above took every command
+}
+
+// windowName is what the declaration says of a migration's rollback window
+// (go-step7.md decision 17).
+func windowName(d release.Declaration) string {
+	if d.EndsRollbackWindow {
+		return "ends the rollback window"
+	}
+	return "reversible to " + *d.ReversibleTo
 }
 
 func previousName(d release.Declaration) string {
