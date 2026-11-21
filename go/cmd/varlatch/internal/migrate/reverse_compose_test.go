@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build linux
+
 package migrate
 
 import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -54,9 +55,6 @@ func TestTheReverseWritesEnvWhole(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, ".env")); !strings.HasSuffix(string(b), "LONG="+long+"\nBIND_ADDRESS="+other+"\n") {
 		t.Error("the line was not replaced in place")
-	}
-	if runtime.GOOS == "windows" {
-		return
 	}
 	// A symbolic link: its target written, the link kept.
 	real := filepath.Join(t.TempDir(), "env.real")
