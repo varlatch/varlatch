@@ -157,6 +157,10 @@ type TailnetRecord struct {
 	RollbackOperation string             `json:"rollbackOperation,omitempty"`
 	// Checked is when the combined final check passed (decision 12).
 	Checked string `json:"checked,omitempty"`
+	// Recorded is set, in the source's journal, once the ledger's
+	// attempts are in Go's count; until then --finish, a finished
+	// migration's included, writes them again (issuances.go).
+	Recorded bool `json:"recorded,omitempty"`
 }
 
 // ErrNoTailnetAuthority is a source with a tailnet address and no
@@ -591,11 +595,18 @@ func (e *Engine) switchTailnet(ctx context.Context, j *Journal) error {
 // --finish writes them again, and the migration goes on either way.
 func (e *Engine) recordNow(ctx context.Context, j *Journal) {
 	rec := j.Tailnet
-	if rec == nil || !rec.Certificates {
+	if rec == nil || !rec.Certificates || rec.Recorded {
 		return
 	}
 	if err := e.recordIssuances(ctx, rec); err != nil {
-		e.say("Tailnet: the certificate issuance count is not in Go's installation yet (%v): %s keeps it, and varlatch migrate --finish writes it.", err, e.ledgerPath())
+		e.say("Tailnet: the certificate issuance count is not in Go's installation yet (%v): %s keeps it, and varlatch migrate --finish writes it (run it again once Go answers, even after the migration is finished).", err, e.ledgerPath())
+		return
+	}
+	// The source's journal only: beside a running varlatchd, Go's copy is
+	// not written past the switch, and this flag is the source's to keep.
+	rec.Recorded = true
+	if err := writeJournal(e.Source.Dir(), j); err != nil {
+		e.say("Tailnet: the certificate issuance count is in Go's installation, but the journal could not say so (%v): --finish writes it again, each attempt once.", err)
 	}
 }
 
@@ -909,7 +920,7 @@ func (l *fileLedger) Start(_ context.Context, name string, at time.Time) (string
 	if err != nil {
 		return "", err
 	}
-	entries = append(entries, ledgerEntry{ID: id, Name: strings.ToLower(name), StartedAt: at.UTC()})
+	entries = append(entries, ledgerEntry{ID: id, Name: strings.ToLower(name), StartedAt: attemptTime(at)})
 	return id, l.write(entries)
 }
 
@@ -922,7 +933,7 @@ func (l *fileLedger) End(_ context.Context, id string, outcome tailhandoff.Outco
 	if i < 0 {
 		return fmt.Errorf("the issuance count has no attempt %s", id)
 	}
-	t := at.UTC()
+	t := attemptTime(at)
 	entries[i].EndedAt, entries[i].Outcome = &t, outcome
 	return l.write(entries)
 }

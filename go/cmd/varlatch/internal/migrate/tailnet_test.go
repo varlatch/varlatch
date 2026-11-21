@@ -69,8 +69,11 @@ type tnTarget struct {
 	// into it answers.
 	count     []IssuanceAttempt
 	recordErr error
+	recorded  int // RecordIssuances calls that wrote
 }
 
+// Issuances and RecordIssuances keep the count as varlatchd's does: times
+// to the microsecond (time.UnixMicro), an attempt once by name and start.
 func (t *tnTarget) Issuances(context.Context) ([]IssuanceAttempt, error) {
 	return slices.Clone(t.count), nil
 }
@@ -79,8 +82,16 @@ func (t *tnTarget) RecordIssuances(_ context.Context, attempts []IssuanceAttempt
 	if t.recordErr != nil {
 		return t.recordErr
 	}
+	t.recorded++
 	for _, a := range attempts {
-		if !slices.ContainsFunc(t.count, func(x IssuanceAttempt) bool { return x.Name == a.Name && x.StartedAt.Equal(a.StartedAt) }) {
+		a.StartedAt = time.UnixMicro(a.StartedAt.UnixMicro()).UTC()
+		if a.EndedAt != nil {
+			end := time.UnixMicro(a.EndedAt.UnixMicro()).UTC()
+			a.EndedAt = &end
+		}
+		if !slices.ContainsFunc(t.count, func(x IssuanceAttempt) bool {
+			return x.Name == a.Name && x.StartedAt.UnixMicro() == a.StartedAt.UnixMicro()
+		}) {
 			t.count = append(t.count, a)
 		}
 	}
@@ -612,5 +623,81 @@ func TestTheImageUndoAfterTheNameMovedWaitsForTheOperator(t *testing.T) {
 	}
 	if n := w.names(); n["old"] != "vault" || !w.src.running || w.src.ingressDown {
 		t.Fatalf("names %v, sidecar running %v, ingress down %v", n, w.src.running, w.src.ingressDown)
+	}
+}
+
+// varlatchd keeps an attempt's start to the microsecond, and the ledger
+// was written to the nanosecond, so a rollback merged every attempt in
+// again and counted it twice. Through the real fileLedger: one written now
+// (nanoseconds given) and one an earlier release wrote (nanoseconds kept)
+// each count once over a forward, a rollback and a forward again.
+func TestAnAttemptCountsOnceAtAnyPrecision(t *testing.T) {
+	ctx := context.Background()
+	w := newTailnetWorld(t)
+	rec := &TailnetRecord{Name: "vault", Suffix: w.cp.Suffix, Certificates: true}
+	l := &fileLedger{path: w.eng.ledgerPath()}
+	at := time.Date(2026, 11, 21, 6, 0, 0, 123456789, time.UTC)
+	id, err := l.Start(ctx, "Vault", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.End(ctx, id, tailhandoff.Issued, at.Add(time.Second+987)); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := l.read()
+	if len(entries) != 1 || !entries[0].StartedAt.Equal(at.Truncate(time.Microsecond)) || entries[0].EndedAt.Nanosecond()%1000 != 0 {
+		t.Fatalf("the ledger keeps %+v, not microseconds", entries)
+	}
+	legacy := ledgerEntry{ID: "legacy", Name: "vault", StartedAt: at.Add(time.Hour + 321), Outcome: tailhandoff.Issued}
+	if err := l.write(append(entries, legacy)); err != nil {
+		t.Fatal(err)
+	}
+	since := at.Add(-time.Hour)
+	for i, step := range []func() error{
+		func() error { return w.eng.recordIssuances(ctx, rec) }, // forward
+		func() error { return w.eng.mergeIssuances(ctx, rec) },  // rollback
+		func() error { return w.eng.recordIssuances(ctx, rec) }, // forward again
+		func() error { return w.eng.mergeIssuances(ctx, rec) },
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := l.read(); len(got) != 2 {
+			t.Fatalf("step %d: the ledger holds %d attempts: %+v", i, len(got), got)
+		}
+		if n, _ := l.Count(ctx, "vault", since); n != 2 {
+			t.Fatalf("step %d: the ledger counts %d", i, n)
+		}
+		if len(w.tgt.count) != 2 {
+			t.Fatalf("step %d: Go's count holds %d: %+v", i, len(w.tgt.count), w.tgt.count)
+		}
+	}
+}
+
+// Once the attempts are in Go's count, the source's journal says so, and
+// no later run writes them again; until then, each run that reaches it
+// (the switch, --finish, a finished migration's --finish) tries again.
+func TestTheRecordIsJournalled(t *testing.T) {
+	ctx := context.Background()
+	w := newTailnetWorld(t)
+	w.src.info.HTTPS, w.src.expiry = true, time.Now().Add(80*24*time.Hour)
+	w.tgt.info.Tailnet.HTTPSPort = 8443
+	w.tgt.recordErr = errors.New("varlatchd does not answer")
+	j, err := w.eng.Run(ctx, false)
+	if err != nil || j.Phase != Open {
+		t.Fatalf("%v %+v", err, j)
+	}
+	if j.Tailnet.Recorded || w.tgt.recorded != 0 {
+		t.Fatalf("a failed write: recorded %v, %d writes", j.Tailnet.Recorded, w.tgt.recorded)
+	}
+	w.tgt.recordErr = nil
+	w.eng.recordNow(ctx, j)
+	saved, err := readJournal(w.src.dir)
+	if err != nil || saved == nil || !saved.Tailnet.Recorded || !j.Tailnet.Recorded || w.tgt.recorded != 1 {
+		t.Fatalf("after the write: journal %+v %v, %d writes", saved, err, w.tgt.recorded)
+	}
+	w.eng.recordNow(ctx, j)
+	if w.tgt.recorded != 1 {
+		t.Fatalf("written again: %d writes", w.tgt.recorded)
 	}
 }

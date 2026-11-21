@@ -106,4 +106,36 @@ if grep -q VARLATCH_CONFORMANCE_OUTBOUND_HOSTS "$dir/release"; then
 fi
 grep -qE "$override" "$dir/nm.conformance" || fail "the conformance binary holds no host override symbol: the check would not see it"
 grep -q VARLATCH_CONFORMANCE_OUTBOUND_HOSTS "$dir/conformance" || fail "the conformance binary does not name VARLATCH_CONFORMANCE_OUTBOUND_HOSTS: the check would not see it"
+
+# serve_cli's conformance release (server/daemon/servecli_conformance.go:
+# the harness's directory instead of github.com, and the command that signs
+# it with a test Sigstore): none of it in a release binary, all of it in the
+# conformance build. The same for the CLIs: the test trusted root the
+# conformance CLI links in (main.conformanceTrustedRoot, a constant "" in a
+# release), and self-update's test source (-tags selfupdatetest).
+servecli='server/daemon\.(signRelease|dirSource)|lib/release/releasetest\.'
+if grep -E "$servecli" "$dir/nm.release" > "$dir/found"; then
+  fail "the release binary holds serve_cli's conformance release: $(tr '\n' ' ' < "$dir/found")"
+fi
+grep -qE "$servecli" "$dir/nm.conformance" || fail "the conformance binary holds no serve_cli conformance symbol: the check would not see it"
+for name in conformance-sign-release VARLATCH_CONFORMANCE_CLI_RELEASE; do
+  if grep -q "$name" "$dir/release"; then
+    fail "the release binary names $name: serve_cli's conformance release is in it"
+  fi
+  grep -q "$name" "$dir/conformance" || fail "the conformance binary does not name $name: the check would not see it"
+done
+go build -o "$dir/cli-release" ./cmd/varlatch
+go build -tags conformance -o "$dir/cli-conformance" ./cmd/varlatch
+go build -tags selfupdatetest -o "$dir/cli-selfupdatetest" ./cmd/varlatch
+for b in cli-release cli-conformance; do
+  go tool nm "$dir/$b" > "$dir/nm.$b" || { echo "check-release.sh: go tool nm failed" >&2; exit 2; }
+done
+if grep -E ' main\.conformanceTrustedRoot$' "$dir/nm.cli-release" > "$dir/found"; then
+  fail "the release CLI holds a settable trusted root: $(tr '\n' ' ' < "$dir/found")"
+fi
+grep -qE ' main\.conformanceTrustedRoot$' "$dir/nm.cli-conformance" || fail "the conformance CLI holds no main.conformanceTrustedRoot: the check would not see it"
+if grep -q VARLATCH_TEST_SELFUPDATE_SOURCE "$dir/cli-release"; then
+  fail "the release CLI names VARLATCH_TEST_SELFUPDATE_SOURCE: self-update's test source is in it"
+fi
+grep -q VARLATCH_TEST_SELFUPDATE_SOURCE "$dir/cli-selfupdatetest" || fail "the selfupdatetest CLI does not name VARLATCH_TEST_SELFUPDATE_SOURCE: the check would not see it"
 exit "$status"

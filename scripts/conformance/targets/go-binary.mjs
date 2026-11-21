@@ -29,9 +29,16 @@
  *             `varlatchd admin bootstrap|recover`, whose output is the
  *             TypeScript admin CLI's (an admin command a varlatchd does not
  *             have answers NOT_IMPLEMENTED_YET, and so does this adapter)
- *   serveCli  restarts varlatchd with serve_cli set; until varlatchd knows
- *             the setting it refuses it (exit 78), and this adapter answers
- *             NOT_IMPLEMENTED_YET
+ *   serveCli  restarts varlatchd with serve_cli set. Turning it on the
+ *             first time prepares the release it serves (cliRelease): the
+ *             Go CLI of this checkout for this machine, built with
+ *             varlatchd's version and the conformance tag, and the
+ *             installers, signed by `varlatchd admin
+ *             conformance-sign-release` with a test Sigstore whose trusted
+ *             root that CLI's verify-release reads; varlatchd is pointed at
+ *             it (VARLATCH_CONFORMANCE_CLI_RELEASE). A varlatchd that does
+ *             not know the setting refuses it (exit 78), and this adapter
+ *             answers NOT_IMPLEMENTED_YET
  *   probe     device sign-in's probes (expire-pending-device-sign-ins,
  *             device-sign-in-addresses, proxy-addresses) and deletion's
  *             (deletion-due), through
@@ -58,9 +65,8 @@
  *             self-signed certificate among varlatchd's roots (SSL_CERT_FILE)
  *
  * Optional capabilities (targets/capabilities.json, their only source): the
- * device sign-in probes, go-server, webhook-receiver, object-store, host-admin and oidc-issuer. Maintenance and
- * serve-cli come with the operations that need them (expect/go-binary.json
- * lists them).
+ * device sign-in probes, go-server, webhook-receiver, object-store, host-admin and oidc-issuer;
+ * maintenance and serve-cli.
  * The only processes it signals are the ones it started, by the PID it
  * recorded, after checking that PID still runs this installation's
  * configuration.
@@ -159,6 +165,10 @@ export async function up({ argument, onState = () => {} }) {
     serverLog: join(dir, "varlatchd.log"),
     accessLog: join(dir, "access.log"),
     pidFile: join(dir, "varlatchd.pid"),
+    // The runner's process: a target operation run in a process of its
+    // own (serve-cli's restart) hands its supervisor to it.
+    ownerPid: process.pid,
+    ownerStart: processStart(process.pid),
     receiverPort,
     receiverPidFile: join(dir, "receiver.pid"),
     objectStorePort,
@@ -264,8 +274,14 @@ async function start(state) {
   const log = openSync(state.serverLog, "a");
   let child;
   try {
-    child = spawn(process.execPath, [SUPERVISOR, state.dir, state.pidFile, state.serverLog, state.binary, "serve", "--config", state.conf], {
-      stdio: ["pipe", log, log],
+    // Started from a process that is not the runner (a target operation
+    // of its own, which ends at once), the supervisor watches the runner
+    // instead of a pipe from this process.
+    const handedOver = state.ownerPid && state.ownerPid !== process.pid;
+    const owner = `${state.ownerPid}${state.ownerStart ? `:${state.ownerStart}` : ""}`;
+    child = spawn(process.execPath, [SUPERVISOR, ...(handedOver ? ["--owner", owner] : []), state.dir, state.pidFile, state.serverLog, state.binary, "serve", "--config", state.conf], {
+      stdio: [handedOver ? "ignore" : "pipe", log, log],
+      detached: Boolean(handedOver),
       // The system's roots, the oidc suite's issuer certificate and the
       // fake platforms'; and the conformance build's host override, which
       // leads the platforms' host names to the fakes (the allow list still
@@ -274,6 +290,8 @@ async function start(state) {
         ...process.env,
         ...(state.oidcDir ? { SSL_CERT_FILE: join(state.oidcDir, "roots.pem") } : {}),
         ...(state.fakesPort ? { VARLATCH_CONFORMANCE_OUTBOUND_HOSTS: PLATFORM_FAKE_HOSTS.map((h) => `${h}=127.0.0.1:${state.fakesPort}`).join(",") } : {}),
+        // The release serve_cli serves, once serveCli has prepared it.
+        ...(existsSync(join(cliReleaseDir(state), "SHA256SUMS")) ? { VARLATCH_CONFORMANCE_CLI_RELEASE: cliReleaseDir(state) } : {}),
       },
     });
   } finally {
@@ -284,9 +302,10 @@ async function start(state) {
   // Neither the supervisor nor its pipe keeps the runner alive; when the
   // runner ends, the pipe closes and the supervisor cleans up.
   child.unref();
-  child.stdin.unref?.();
-  child.stdin.on("error", () => {});
-  supervisors.set(state.dir, child);
+  child.stdin?.unref?.();
+  child.stdin?.on("error", () => {});
+  // A handed-over supervisor is stopped by its PID, as any other process's.
+  if (child.stdin) supervisors.set(state.dir, child);
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (exited) {
@@ -325,12 +344,15 @@ async function stop(state) {
       sup.kill("SIGKILL");
     }
     sup.stdin.destroy();
-    while (pid && alive(pid)) await sleep(50);
-    return;
+    // Its varlatchd has ended with it, unless the one running now is
+    // another supervisor's (a target operation's restart handed over):
+    // that one is stopped by its PID, below.
+    if (!pid || !alive(pid)) return;
   }
-  // No supervisor here (another process started it, or it ended): the
-  // recorded PID, if it still runs this installation.
-  if (!pid) return;
+  // No supervisor here (another process started it, or it ended), or a
+  // varlatchd it did not start: the recorded PID, if it still runs this
+  // installation.
+  if (!pid || !alive(pid)) return;
   process.kill(pid, "SIGTERM");
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (alive(pid) && Date.now() < deadline) await sleep(100);
@@ -469,6 +491,7 @@ export async function probe(state, probeName, ...args) {
  * put back, varlatchd started again, and the answer is NotImplementedYet.
  */
 export async function serveCli(state, on) {
+  if (on) prepareCliRelease(state);
   const before = readFileSync(state.conf, "utf8");
   await stop(state);
   writeFileSync(state.conf, config(state, `serve_cli = ${on ? "on" : "off"}`));
@@ -482,6 +505,69 @@ export async function serveCli(state, on) {
   appendFileSync(state.serverLog, "--- conformance: serve_cli is not a varlatchd setting yet; started again without it\n");
   await start(state);
   throw new NotImplementedYet("varlatchd has no serve_cli setting yet");
+}
+
+/**
+ * A process's start time on Linux (field 22 of /proc/<pid>/stat), null
+ * elsewhere: with its PID, it names the runner a handed-over supervisor
+ * watches, so a reused PID is not taken for it (go-binary-supervisor.mjs).
+ */
+function processStart(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The release serve_cli serves in a conformance run, once prepared. */
+const cliReleaseDir = (state) => join(state.dir, "cli-release");
+
+const GO_MODULE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "go");
+
+/**
+ * The release serve_cli serves (internal docs/design/go-step6.md, slice
+ * 6.8): this machine's Go CLI built from this checkout with varlatchd's
+ * version, the installers stamped with it, and SHA256SUMS signed by a test
+ * Sigstore that `varlatchd admin conformance-sign-release` makes, whose
+ * trusted root the CLI's verify-release reads (it is linked in, as
+ * main.conformanceTrustedRoot, in a conformance build only). Made once per
+ * installation. A varlatchd without the command leaves it unprepared.
+ */
+function prepareCliRelease(state) {
+  const dir = cliReleaseDir(state);
+  if (existsSync(join(dir, "SHA256SUMS"))) return;
+  const reported = spawnSync(state.binary, ["--version"], { encoding: "utf8" });
+  const version = /^varlatchd (\S+)$/m.exec(reported.stdout ?? "")?.[1];
+  if (reported.status !== 0 || !version) throw new Error(`varlatchd --version: ${reported.stderr || reported.stdout}`);
+  const goos = { linux: "linux", darwin: "darwin", win32: "windows" }[process.platform];
+  const goarch = { x64: "amd64", arm64: "arm64" }[process.arch];
+  if (!goos || !goarch) throw new Error(`no Go CLI for ${process.platform}/${process.arch}`);
+  const staging = `${dir}.staging`;
+  rmSync(staging, { recursive: true, force: true });
+  mkdirSync(staging, { recursive: true });
+  const cli = join(staging, `varlatch-${version}-${goos}-${goarch}${goos === "windows" ? ".exe" : ""}`);
+  const ldflags = `-X github.com/varlatch/varlatch/go/lib/buildinfo.Version=${version} -X main.conformanceTrustedRoot=${join(dir, "trusted_root.json")}`;
+  const build = spawnSync("go", ["build", "-tags", "conformance", "-trimpath", "-ldflags", ldflags, "-o", cli, "./cmd/varlatch"], {
+    cwd: GO_MODULE,
+    encoding: "utf8",
+    env: { ...process.env, CGO_ENABLED: "0" },
+  });
+  if (build.status !== 0) throw new Error(`building the Go CLI for serve_cli: ${build.stderr || build.error}`);
+  for (const name of ["install.sh", "install.ps1"]) {
+    writeFileSync(join(staging, name), readFileSync(join(GO_MODULE, "install", name), "utf8").replace("@VARLATCH_VERSION@", version));
+  }
+  const signed = spawnSync(state.binary, ["admin", "conformance-sign-release", staging, version], { encoding: "utf8" });
+  if (signed.status !== 0) {
+    rmSync(staging, { recursive: true, force: true });
+    if (/unknown command conformance-sign-release/.test(signed.stderr ?? "")) return;
+    throw new Error(`varlatchd admin conformance-sign-release: ${signed.stderr || signed.stdout}`);
+  }
+  // The CLI reads its trusted root where the release ends up.
+  rmSync(dir, { recursive: true, force: true });
+  cpSync(staging, dir, { recursive: true });
+  rmSync(staging, { recursive: true, force: true });
 }
 
 const PLATFORM_FAKES = join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "platform-fakes.cjs");

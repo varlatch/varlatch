@@ -255,7 +255,10 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   with a Compose installation (`/srv/varlatch` holds `varlatch-install.json`
   or `docker-compose.yml`), kept beside it as `varlatch-ts` for that
   installation's host commands; if the new one does not run there, the
-  TypeScript CLI is put back.
+  TypeScript CLI is put back. A serving installation (slice 6.8) stamps
+  its address in `ORIGIN`: the CLI then comes from `<origin>/cli/v<version>/`
+  over https (or plain http on this machine), with no redirect followed,
+  and is checked the same way; `--server` installs from github.com only.
 - `install/install.ps1`: the Windows installer (CLI for the current user,
   in `%LOCALAPPDATA%\Programs\Varlatch`, added to the user `PATH`), with
   the same checks as `install.sh` and its G8 tests under PowerShell 5.1 and
@@ -2288,6 +2291,38 @@ certificate (`server/tailnet/cert.go`, `cert.ts`; `listener.ts`'s
 The server's packages:
 
 - `server/config`: `varlatchd.conf`.
+- `server/servecli` (step 6.8; ADR-0058 Decision 3, internal
+  docs/design/go-step6.md decision 12): `serve_cli = on` serves this
+  release's `varlatch` for Linux, macOS and Windows and the installers,
+  stamped with the public URL's origin (required, without a path; https,
+  or http on this machine). Sigstore's TUF repository is read through the
+  policy's client, which follows no redirect: its CDN answers directly,
+  and a redirect makes the attempt fail and retry, never a stale root
+  used. `go/server/stages/check-release.sh` holds release binaries to none
+  of the conformance-only parts below. In the background, varlatchd downloads the release's
+  `SHA256SUMS` and its signature from github.com through the outbound
+  policy (`lib/release`'s `Downloader`: github.com and its storage hosts
+  only, sizes bounded; it follows github.com's redirect to storage
+  itself, each Location checked and fetched as a request of its own
+  through the policy, at most five), verifies the signature
+  for the release workflow's identity of its own version (Sigstore's
+  trusted root through its TUF repository, cached in `<data_dir>/sigstore`)
+  before anything else is downloaded, checks each file against its line,
+  and caches the set in `<data_dir>/cli/v<version>` only when all of it
+  checks; at every start the cache is verified again (signature and every
+  file) before anything is served, and other versions are removed. A
+  failure is retried (a minute, doubling to an hour); until a release is
+  ready, `/install.sh`, `/install.ps1` and `/cli/` answer 404 and
+  `/v1/meta` does not list `cli.download`. Requests name a file by its
+  exact name in the verified set, under `/cli/v<version>/` of this
+  version only: nothing of a request reaches the file system. Served on
+  the public listener only. With serving off, the paths answer as the
+  TypeScript server's. In a conformance build only,
+  `VARLATCH_CONFORMANCE_CLI_RELEASE` names a directory the harness signed
+  with a test Sigstore (`varlatchd admin conformance-sign-release`), and
+  the CLI built for it reads that Sigstore's trusted root
+  (`main.conformanceTrustedRoot`, set at link time); go-binary's
+  `cli-download-on` suite runs against it.
 - `server/clientaddr`: the client address behind trusted proxies, as the
   TypeScript server finds it (`trusted_proxies`).
 - `server/httpserver`: the HTTP layer, on the strict server generated

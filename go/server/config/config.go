@@ -101,6 +101,9 @@ type Config struct {
 	// (ADR-0059 Decision 5, step 6's decision 4); nil when off, which
 	// leaves every other listener exactly as it is.
 	PublicHTTPS *PublicHTTPS
+	// ServeCLI is serve_cli (ADR-0058 Decision 3): the installation serves
+	// its release's CLI and installers at its public URL.
+	ServeCLI bool
 }
 
 // PublicHTTPS is varlatchd's own public HTTPS: a certificate for the
@@ -192,7 +195,7 @@ var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "truste
 	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination",
 	"tailnet", "tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file",
 	"tailnet_https_port", "tailnet_browser_origins",
-	"listen_https", "listen_http_redirect", "acme_email", "acme_ca", "acme_ca_root"}
+	"listen_https", "listen_http_redirect", "acme_email", "acme_ca", "acme_ca_root", "serve_cli"}
 
 // Backup defaults: a day between backups, seven archives kept (the
 // TypeScript host backup's LOCAL_KEEP), the destination named offsite
@@ -326,6 +329,23 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 		c.Sync = false
 	default:
 		return nil, at("sync", "%q must be on or off", v)
+	}
+	switch v := values["serve_cli"]; v {
+	case "", "off":
+	case "on":
+		// The installers name the public URL, and it is what people
+		// trust to run code on their machines (https, or this machine).
+		if c.PublicURL == nil {
+			return nil, at("serve_cli", "on needs public_url: the installers it serves download from that address")
+		}
+		// The installers download from the origin; a path would be dropped,
+		// so the address they name would not be the one configured.
+		if p := c.PublicURL.EscapedPath(); p != "" && p != "/" {
+			return nil, at("serve_cli", "on needs a public_url without a path (%q has %q): the installers it serves name the origin alone", c.PublicURL.String(), p)
+		}
+		c.ServeCLI = true
+	default:
+		return nil, at("serve_cli", "%q must be on or off", v)
 	}
 	switch v := values["audit_export"]; v {
 	case "", "on":

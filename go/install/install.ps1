@@ -19,6 +19,12 @@
 # route, download the files and check them with cosign first:
 # https://docs.varlatch.com/operations/verify-release/
 #
+# An installation that serves this script (varlatchd's serve_cli; ADR-0058
+# Decision 3) stamps its own address in $Origin below: the CLI then comes
+# from it, and is checked the same way. Installing from an installation
+# trusts it, and whoever controls its host or its address, to run code on
+# this machine.
+#
 # Every line that runs is inside the & { ... } below, which ends the file.
 # PowerShell parses a whole script before it runs any of it, and a copy cut
 # off before the closing brace does not parse, so it runs nothing at all.
@@ -35,6 +41,11 @@
   # --version.
   $VarlatchRelease = '@VARLATCH_VERSION@'
   $Base = 'https://github.com/varlatch/varlatch/releases/download/v'
+  # The serving installation's address, stamped when it serves this script;
+  # empty in a release, which installs from github.com.
+  $Origin = ''
+  # https, or http when the installation is on this machine.
+  $Scheme = 'https'
 
   function Stop-Install([string]$Message) { throw "varlatch install: $Message" }
 
@@ -55,7 +66,7 @@
   function Get-File([string]$Uri, [string]$Path) {
     $Next = [Uri]$Uri
     for ($Hop = 0; $Hop -le 5; $Hop++) {
-      if ($Next.Scheme -ne 'https') { Stop-Install "refusing to download $($Next.AbsoluteUri): not HTTPS" }
+      if ($Next.Scheme -ne $Scheme) { Stop-Install "refusing to download $($Next.AbsoluteUri): not $($Scheme.ToUpperInvariant())" }
       $Request = [Net.HttpWebRequest]::Create($Next)
       $Request.AllowAutoRedirect = $false
       $Request.UserAgent = 'varlatch-install'
@@ -68,6 +79,7 @@
       try {
         $Code = [int]$Response.StatusCode
         if ($Code -ge 300 -and $Code -lt 400) {
+          if ($Origin) { Stop-Install "could not download $Uri (HTTP ${Code}: a redirect is never followed from an installation)" }
           $Location = $Response.Headers['Location']
           if (-not $Location) { Stop-Install "could not download $Uri (HTTP $Code without a location)" }
           $Next = [Uri]::new($Next, $Location)
@@ -167,6 +179,12 @@
     }
 
     $From = "$Base$Version"
+    if ($Origin) {
+      if ($Origin -cmatch '^https://[A-Za-z0-9.:\[\]-]+$') { $Scheme = 'https' }
+      elseif ($Origin -cmatch '^http://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?$') { $Scheme = 'http' }
+      else { Stop-Install "$Origin is neither https: nor http: on this machine" }
+      $From = "$Origin/cli/v$Version"
+    }
     $Name = "varlatch-$Version-windows-$Arch.exe"
     $Dir = Join-Path $env:LOCALAPPDATA 'Programs\Varlatch'
     $Target = Join-Path $Dir 'varlatch.exe'
@@ -278,7 +296,8 @@
     if ($First -and ($First.Source -ine $Target)) {
       Write-Host "Another varlatch comes first on your PATH: $($First.Source). Remove it, or put $Dir before it."
     }
-    Write-Host 'Next: varlatch login --server <your Varlatch address>'
+    if ($Origin) { Write-Host "Next: varlatch login --server $Origin" }
+    else { Write-Host 'Next: varlatch login --server <your Varlatch address>' }
   }
 
   # A failed check prints its one line and exits 1; nothing was installed.

@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -73,6 +74,54 @@ func (stdTB) Helper()                      {}
 func (stdTB) Fatal(args ...any)            { fmt.Fprintln(os.Stderr, args...); os.Exit(1) }
 func (stdTB) Fatalf(f string, args ...any) { fmt.Fprintf(os.Stderr, f+"\n", args...); os.Exit(1) }
 
+// cleanupDirs are package-wide temporary directories (shared binaries,
+// test CA) removed when the test run ends or is interrupted.
+var cleanupDirs struct {
+	mu   sync.Mutex
+	dirs []string
+}
+
+func registerCleanupDir(dir string) {
+	cleanupDirs.mu.Lock()
+	cleanupDirs.dirs = append(cleanupDirs.dirs, dir)
+	cleanupDirs.mu.Unlock()
+}
+
+func removeCleanupDirs() {
+	cleanupDirs.mu.Lock()
+	dirs := slices.Clone(cleanupDirs.dirs)
+	cleanupDirs.dirs = nil
+	cleanupDirs.mu.Unlock()
+	for _, d := range dirs {
+		_ = os.RemoveAll(d)
+	}
+}
+
+func runTestMain(m *testing.M) int {
+	defer removeCleanupDirs()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	defer func() {
+		close(done)
+		signal.Stop(sig)
+	}()
+	go func() {
+		select {
+		case s := <-sig:
+			removeCleanupDirs()
+			signal.Reset(s)
+			if ss, ok := s.(syscall.Signal); ok {
+				_ = syscall.Kill(os.Getpid(), ss)
+			} else {
+				os.Exit(1)
+			}
+		case <-done:
+		}
+	}()
+	return m.Run()
+}
+
 func TestMain(m *testing.M) {
 	switch filepath.Base(os.Args[0]) {
 	case "docker":
@@ -84,7 +133,7 @@ func TestMain(m *testing.M) {
 	case "g5-sidecar":
 		os.Exit(runSidecar())
 	}
-	os.Exit(m.Run())
+	os.Exit(runTestMain(m))
 }
 
 // state is the stand-ins' state directory (G5_STATE).
@@ -479,6 +528,7 @@ func setUpShared(t *testing.T) {
 			shared.err = err
 			return
 		}
+		registerCleanupDir(dir)
 		shared.dir = dir
 		root, _ := filepath.Abs(filepath.Join("..", "..", ".."))
 		bin := filepath.Join(dir, "bin")
