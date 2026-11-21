@@ -375,8 +375,9 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 	case info.HTTPS && tn.HTTPSPort == 0:
 		return errors.New("preflight: the source serves the tailnet browser endpoint over HTTPS (Tailscale certificates), and the target's configuration has no tailnet_https_port: set it; nothing was done")
 	case tn.Enrolled && tn.HeldAs == "" && (j.Tailnet == nil || j.Tailnet.Operation == ""):
-		// (A node this migration enrolled is held again by the undo that
-		// gives its name back (reholdTarget), so it never comes here.)
+		// (A node a migration enrolled is held again by whatever gives its
+		// name back, an undo past the switch or a completed reverse
+		// (reholdTarget), so it never comes here.)
 		return errors.New("preflight: the target's tailnet node is enrolled and not held for a handoff: a migration's target node joins under a temporary name; remove its state (the tailnet directory and pin in its data directory) and its device in the tailnet; nothing was done")
 	case !tn.AuthKey && !tn.Enrolled:
 		return fmt.Errorf("preflight: the target has no tailnet auth key: %w; nothing was done", ErrNoTailnetAuthority)
@@ -611,11 +612,17 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 // control plane names exactly that). A new migration to the same target
 // then goes on with it.
 func (e *Engine) reholdTarget(ctx context.Context, rec *TailnetRecord) error {
+	return e.reholdTargetAs(ctx, rec.Name, rec.Operation)
+}
+
+// reholdTargetAs holds the target's node again under the temporary name of
+// operation op (a reverse migration's own, after its return of the name).
+func (e *Engine) reholdTargetAs(ctx context.Context, name, op string) error {
 	_, tt, err := e.tailnetSides()
 	if err != nil {
 		return err
 	}
-	temp, err := tailcontrol.TempName(rec.Name, rec.Operation, tailcontrol.RoleNew)
+	temp, err := tailcontrol.TempName(name, op, tailcontrol.RoleNew)
 	if err != nil {
 		return err
 	}
@@ -637,7 +644,7 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 		return nil
 	}
 	if rec.Rollback != nil && rec.Rollback.Phase == tailhandoff.Done {
-		return nil
+		return e.reholdTargetAs(ctx, rec.Name, rec.RollbackOperation)
 	}
 	if e.Tailnet == nil || e.Tailnet.Control == nil {
 		return fmt.Errorf("%w: the reverse gives the tailnet name back; varlatch migrate --resume with them goes on", ErrNoTailnetAuthority)
@@ -689,7 +696,10 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 	if st == nil || st.Phase != tailhandoff.Done {
 		return fmt.Errorf("the tailnet name back ended %v, not done; varlatch migrate --resume goes on", st)
 	}
-	return nil
+	// Go's node carries the reverse's temporary name now, unheld (its
+	// open removed the hold): held again under it, a new migration to this
+	// target goes on with it.
+	return e.reholdTargetAs(ctx, rec.Name, rec.RollbackOperation)
 }
 
 func (e *Engine) rollbackTailnetFailed(ctx context.Context, j *Journal, err error) error {

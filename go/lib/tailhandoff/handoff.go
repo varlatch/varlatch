@@ -306,6 +306,9 @@ func (e *HandoffError) Error() string {
 	case Switching:
 		return fmt.Sprintf("the handoff was interrupted while opening the incoming installation and its name, certificate or reach could not be verified again: the incoming installation may be open, so it is not undone (an undo would take the name from an open listener); close the incoming installation, or run a reverse handoff, or resume it once the check holds: %v", e.Err)
 	case UndoPending:
+		if errors.Is(e.Err, tailcontrol.ErrNameTaken) {
+			return fmt.Sprintf("the handoff failed and its undo could not give a name back: another device holds it now, and neither installation is opened on the tailnet. Rename or delete that device in the tailnet's admin console, then resume: %v", e.Err)
+		}
 		return fmt.Sprintf("the handoff failed and its undo could not finish: neither installation is opened on the tailnet (the serving one closed, or closing when the failure came first); resume it once the control plane answers: %v", e.Err)
 	default:
 		return fmt.Sprintf("the handoff did not start: %v", e.Err)
@@ -762,6 +765,22 @@ func (e *Engine) restoreName(ctx context.Context, id, name string) error {
 		}
 	}
 	_, err = tailcontrol.RenameAndReadBack(ctx, e.Control, id, name)
+	if errors.Is(err, tailcontrol.ErrNameTaken) {
+		// Another device took the name while it was free: say which, so
+		// the operator can rename or delete it.
+		for _, d := range devices {
+			if d.ID != id && strings.EqualFold(d.Name, name) {
+				return fmt.Errorf("%w: it is held by %s now", err, d)
+			}
+		}
+		if again, lerr := e.Control.Devices(ctx); lerr == nil {
+			for _, d := range again {
+				if d.ID != id && strings.EqualFold(d.Name, name) {
+					return fmt.Errorf("%w: it is held by %s now", err, d)
+				}
+			}
+		}
+	}
 	return err
 }
 
