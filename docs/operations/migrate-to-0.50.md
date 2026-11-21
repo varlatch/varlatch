@@ -141,10 +141,15 @@ Its report:
 
 ```text
 Dry run: 41 tables, 182340 rows; checks passed true.
-Projected downtime 3m0s fits the budget of 10m0s: drain up to 1m0s,
-export 25s, import 20s, checks 15s, address transfer 1m0s (estimated for
-public ingress, the target's restart included; included in the projection).
+Projected downtime 3m0s fits the budget of 10m0s: drain up to 1m0s, export 25s, import 20s, checks 15s, address transfer 1m0s (estimated for public ingress, the target's restart included; included in the projection).
 ```
+
+A dry run does not move the address, so its transfer time is the
+ingress's estimate, and the report says so in the parenthesis. A
+migration that measured its transfer reports the time alone.
+
+<!-- pending #359: the transfer's estimate and its parenthesis in the
+     report, as #359 prints them. -->
 
 - **Checks passed** must be `true`. The checks compare both sides without
   showing any secret: every row, every encrypted item (by keyed digests,
@@ -439,11 +444,16 @@ The TypeScript release cannot read the 0.50 server's archives (format 3).
 The rollback's report lists every one made since the switch:
 
 ```text
-Go archive made since the switch, not deleted: <archive id> (release 0.50.0, <date>).
+2 Go archives were made since the switch; the TypeScript release cannot read them, so they restore through a Go varlatchd (setup --restore) or a later forward migration's installation only. migrate deletes none of them; their uploaded copies stay at Go's backup destination, and the local files follow Go's backup_keep (a later backup run, --finish --delete-old-data's final archive included, may remove the oldest):
+  <archive id> (release 0.50.0, <created at>)
+  <archive id> (release 0.50.0, <created at>)
 ```
 
-They are not deleted. Each can be restored only by a 0.50 server, onto a
-fresh host:
+`varlatch migrate` deletes none of them. The uploaded copies stay at the
+0.50 server's backup destination. The local files follow its
+`backup_keep`, so a later backup run may remove the oldest. Copy any you
+want to keep somewhere else. Each can be restored only by a 0.50 server,
+onto a fresh host:
 
 ```sh
 sudo varlatch setup --restore <archive> \
@@ -451,6 +461,9 @@ sudo varlatch setup --restore <archive> \
 ```
 
 or by the installation a later forward migration makes.
+
+<!-- pending #371: the report's wording, as #371 prints it (#370 says
+     "They are not deleted:" in its place). -->
 
 <!-- pending #341: setup --restore. -->
 
@@ -482,7 +495,8 @@ sudo varlatch migrate --finish --delete-old-data \
   to the destination, then downloaded back and verified. The backup
   options are this archive's.
 - Only once the journal records the verified archive are the old
-  PostgreSQL and Convex volumes removed.
+  PostgreSQL and Convex volumes removed, with the TypeScript
+  installation's `<project>_varlatch-state` volume.
 - After that, the old data can be restored only through that final
   archive (with the [converter](#old-archives-the-converter)).
 
@@ -500,7 +514,12 @@ In the tailnet shape (varlatchd with `network_mode: service:tailscale`),
 run `--finish --delete-old-data` straight away rather than a plain
 `--finish` first. After a plain `--finish`, `--delete-old-data` is
 refused, because its final archive would need the old Tailscale node
-running beside Go's; the data volumes are then removed by hand.
+running beside Go's; the data volumes are then removed by hand:
+
+1. Back them up by your own means, and test that the backup restores,
+   before you remove anything.
+2. Then remove them:
+   `docker volume rm <project>_postgres-data <project>_convex-data`.
 
 Until `--finish`, after a migration the old installation stays as it is:
 marked migrated out, refusing every request, its data untouched. After a
