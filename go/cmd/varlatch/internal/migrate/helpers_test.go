@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build linux
+
 package migrate
 
 import (
@@ -7,7 +9,7 @@ import (
 	"encoding/hex"
 )
 
-// Helpers every platform's tests use.
+// Helpers the Linux tests use.
 
 func randomBytes(n int) []byte { b := make([]byte, n); _, _ = rand.Read(b); return b }
 func hexOf(b []byte) string    { return hex.EncodeToString(b) }
