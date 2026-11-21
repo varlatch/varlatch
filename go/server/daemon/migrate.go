@@ -200,7 +200,12 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 				// transfer gate that still stands; with none, it is the
 				// journal's word alone (what it records of that phase:
 				// an upgrade ending the rollback window, decision 17).
-				inert = !(old.Phase == "open" && h.Phase == "open") || !transferGateStands(cfg.DataDir, h.ID)
+				inert = !(old.Phase == "open" && h.Phase == "open")
+				if !inert && !transferGateStands(cfg.DataDir, h.ID) {
+					// Only the window's end added, and nothing else.
+					oldRaw, rerr := os.ReadFile(filepath.Join(cfg.DataDir, JournalFile))
+					inert = rerr == nil && onlyEndsWindow(oldRaw, journalIn)
+				}
 			}
 		}
 	}

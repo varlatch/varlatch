@@ -144,11 +144,10 @@ func (r *Run) upgrade() error {
 	// Decision 17: a release that ends a migration's rollback window is
 	// upgraded to only once the operator confirms it, while the window is
 	// open (Go's migration journal, read as root on this host).
-	windowOpen, err := migrate.RollbackWindowOpen(inst.DataDir, time.Now())
+	endsWindow, err := windowEnding(inst.DataDir, rel.Version, rel.Manifest.EndsRollbackWindow(), time.Now())
 	if err != nil {
-		return Fail("varlatch upgrade: the migration journal in "+inst.DataDir+": "+err.Error()+". Nothing was changed.", ExitFailure)
+		return Fail("varlatch upgrade: "+err.Error()+" Nothing was changed.", ExitFailure)
 	}
-	endsWindow := windowOpen && rel.Manifest.EndsRollbackWindow()
 	lines := []string{
 		"",
 		"  varlatchd " + inst.Version + " -> " + rel.Version + " (schema version " + fmt.Sprint(inst.Schema) + " -> " + fmt.Sprint(rel.Manifest.SchemaVersion) + ")",
@@ -226,6 +225,32 @@ func (r *Run) upgrade() error {
 		return upgradeFailure(err)
 	}
 	return r.println("Upgraded to " + rel.Version + ". The pre-upgrade snapshot is kept 30 days with the upgrade.")
+}
+
+// windowEnding is whether upgrading to version (whose manifest ends the
+// rollback window when ends) ends an open migration's rollback window on
+// the installation whose data directory is dataDir. While a reverse is
+// under way it refuses: the window's end is recorded on an open journal
+// only, and a release that cannot reverse must not run mid-reverse.
+func windowEnding(dataDir, version string, ends bool, now time.Time) (bool, error) {
+	if !ends {
+		return false, nil
+	}
+	open, err := migrate.RollbackWindowOpen(dataDir, now)
+	if err != nil {
+		return false, fmt.Errorf("the migration journal in %s: %v.", dataDir, err)
+	}
+	if !open {
+		return false, nil
+	}
+	phase, err := migrate.ReverseUnderWay(dataDir)
+	if err != nil {
+		return false, fmt.Errorf("the migration journal in %s: %v.", dataDir, err)
+	}
+	if phase != "" {
+		return false, fmt.Errorf("a rollback is under way (the migration is in phase %s): %s ends its rollback window, so finish or abort the rollback first (varlatch migrate --resume, or --abort).", phase, version)
+	}
+	return true, nil
 }
 
 // upgradeCheck is `upgrade --check`: the newest release this host may go

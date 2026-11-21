@@ -351,3 +351,43 @@ func (s *cliService) Stop(context.Context) error {
 	s.cmd = nil
 	return nil
 }
+
+// windowEnding: a release that ends the window ends it only while one is
+// open (an open journal, switched within 30 days, not ended already), and
+// is refused while a reverse is under way, whose journal it could not
+// record the end in; a release that keeps the window asks nothing.
+func TestWindowEnding(t *testing.T) {
+	now := time.Now()
+	write := func(phase migrate.Phase, switched time.Time) string {
+		t.Helper()
+		dir := t.TempDir()
+		j := &migrate.Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: phase, Ingress: migrate.Proxy,
+			History: []migrate.Step{{Phase: migrate.Switched, At: switched.UTC().Format(time.RFC3339Nano)}}}
+		b, err := j.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, migrate.JournalFile), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	if ends, err := windowEnding(t.TempDir(), "0.50.1", true, now); err != nil || ends {
+		t.Errorf("never migrated: %v %v", ends, err)
+	}
+	open := write(migrate.Open, now.Add(-time.Hour))
+	if ends, err := windowEnding(open, "0.50.1", true, now); err != nil || !ends {
+		t.Errorf("open: %v %v", ends, err)
+	}
+	if ends, err := windowEnding(open, "0.50.1", false, now); err != nil || ends {
+		t.Errorf("a release that keeps the window: %v %v", ends, err)
+	}
+	if ends, err := windowEnding(write(migrate.Open, now.Add(-31*24*time.Hour)), "0.50.1", true, now); err != nil || ends {
+		t.Errorf("past 30 days: %v %v", ends, err)
+	}
+	for _, p := range []migrate.Phase{migrate.Rollback, migrate.RollbackChecked, migrate.RollbackTransfer} {
+		if ends, err := windowEnding(write(p, now.Add(-time.Hour)), "0.50.1", true, now); err == nil || ends || !strings.Contains(err.Error(), "a rollback is under way (the migration is in phase "+string(p)+")") {
+			t.Errorf("%s: %v %v", p, ends, err)
+		}
+	}
+}

@@ -131,6 +131,19 @@ func RollbackWindowOpen(dir string, now time.Time) (bool, error) {
 	return ok && now.Sub(at) <= RollbackWindow, nil
 }
 
+// ReverseUnderWay is whether dir's journal (Go's) says a reverse migration
+// is under way: its phase, or "" when none is.
+func ReverseUnderWay(dir string) (Phase, error) {
+	j, err := readJournal(dir)
+	if err != nil || j == nil {
+		return "", err
+	}
+	if slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer {
+		return j.Phase, nil
+	}
+	return "", nil
+}
+
 // EndRollbackWindow records in Go's journal (dataDir's, written through
 // h, beside its running varlatchd) that upgrading to release ends the
 // migration's rollback window, before the upgrade runs: from then
