@@ -727,3 +727,139 @@ func TestInstallServerProductionPath(t *testing.T) {
 	}
 	emptyTmp(t, res)
 }
+
+// --- the TypeScript CLI already on PATH (decision 11) ---
+
+// tsCLI stands in for the TypeScript CLI's single-file build, with its
+// banner as esbuild writes it.
+const tsCLI = "#!/usr/bin/env node\n/*! Varlatch CLI. Copyright 2026 Robotsson. SPDX-License-Identifier: Apache-2.0. */\nconsole.log('varlatch 0.22.4');\n"
+
+// overTypeScript puts tsCLI at dir/varlatch, and a stand-in for the store
+// both CLIs share under home, then installs into dir.
+func overTypeScript(t *testing.T, r *release, env ...string) (res run, dir, home string) {
+	t.Helper()
+	dir = filepath.Join(t.TempDir(), "bin")
+	home = t.TempDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "varlatch"), []byte(tsCLI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := filepath.Join(home, ".config", "varlatch")
+	if err := os.MkdirAll(store, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "config.json"), []byte(`{"server":"https://vault.example.invalid"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res = install(t, r, true, []string{"--dir", dir}, append([]string{"HOME=" + home}, env...)...)
+	return res, dir, home
+}
+
+// files lists dir's entries with their content.
+func files(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		b, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+		got[e.Name()] = string(b)
+	}
+	return got
+}
+
+func storeUnchanged(t *testing.T, home string) {
+	t.Helper()
+	if b, _ := os.ReadFile(filepath.Join(home, ".config", "varlatch", "config.json")); string(b) != `{"server":"https://vault.example.invalid"}`+"\n" {
+		t.Fatalf("the store changed: %q", b)
+	}
+}
+
+func TestInstallReplacesTheTypeScriptCLI(t *testing.T) {
+	res, dir, home := overTypeScript(t, newRelease())
+	if res.code != 0 || !strings.Contains(res.out, "Replaced the TypeScript CLI at "+filepath.Join(dir, "varlatch")) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if got := files(t, dir); len(got) != 1 || got["varlatch"] != stubCLI {
+		t.Fatalf("left %q", got)
+	}
+	storeUnchanged(t, home)
+	emptyTmp(t, res)
+}
+
+// On a host with a Compose installation the TypeScript CLI stays, as
+// varlatch-ts, for that installation's host commands.
+func TestInstallKeepsTheTypeScriptCLIForCompose(t *testing.T) {
+	for _, marker := range []string{"varlatch-install.json", "docker-compose.yml"} {
+		t.Run(marker, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, "srv", "varlatch"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "srv", "varlatch", marker), []byte("{}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			res, dir, home := overTypeScript(t, newRelease(), "ROOT="+root)
+			if res.code != 0 || !strings.Contains(res.out, "Kept the TypeScript CLI as "+filepath.Join(dir, "varlatch-ts")) {
+				t.Fatalf("exit %d: %s", res.code, res.out)
+			}
+			if got := files(t, dir); len(got) != 2 || got["varlatch"] != stubCLI || got["varlatch-ts"] != tsCLI {
+				t.Fatalf("left %q", got)
+			}
+			if fi, _ := os.Stat(filepath.Join(dir, "varlatch-ts")); fi.Mode().Perm() != 0o755 {
+				t.Fatalf("varlatch-ts mode %v", fi.Mode())
+			}
+			storeUnchanged(t, home)
+			emptyTmp(t, res)
+		})
+	}
+}
+
+// Nothing changes when the TypeScript CLI cannot be kept, or when the new
+// varlatch does not run where it was put.
+func TestInstallLeavesTheTypeScriptCLI(t *testing.T) {
+	t.Run("another varlatch-ts", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "srv", "varlatch"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "srv", "varlatch", "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r := newRelease()
+		dir := filepath.Join(t.TempDir(), "bin")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, content := range map[string]string{"varlatch": tsCLI, "varlatch-ts": "#!/bin/sh\necho mine\n"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		res := install(t, r, true, []string{"--dir", dir}, "ROOT="+root)
+		if res.code == 0 || !strings.Contains(res.out, "varlatch-ts exists and is not the TypeScript CLI") {
+			t.Fatalf("exit %d: %s", res.code, res.out)
+		}
+		if got := files(t, dir); len(got) != 2 || got["varlatch"] != tsCLI || got["varlatch-ts"] != "#!/bin/sh\necho mine\n" {
+			t.Fatalf("left %q", got)
+		}
+	})
+	t.Run("the new varlatch does not run there", func(t *testing.T) {
+		r := newRelease()
+		// Runs from the staging directory, fails from the target's.
+		r.files["varlatch-"+version+"-linux-"+goArch()] = []byte("#!/bin/sh\ncase \"$0\" in */bin/varlatch) exit 1 ;; esac\n" + strings.TrimPrefix(stubCLI, "#!/bin/sh\n"))
+		res, dir, home := overTypeScript(t, r)
+		if res.code == 0 || !strings.Contains(res.out, "the TypeScript CLI was put back") {
+			t.Fatalf("exit %d: %s", res.code, res.out)
+		}
+		if got := files(t, dir); len(got) != 1 || got["varlatch"] != tsCLI {
+			t.Fatalf("left %q", got)
+		}
+		storeUnchanged(t, home)
+		emptyTmp(t, res)
+	})
+}

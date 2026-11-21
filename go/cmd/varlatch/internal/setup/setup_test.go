@@ -53,6 +53,8 @@ type fakeHost struct {
 	// The tailnet probe's findings.
 	probeSeen      []string
 	probeSingleUse bool
+	// The restored certificate issuance count for the public host.
+	issued int
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -125,6 +127,14 @@ func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 		return []byte("Restore completed for inst_old from archive bak_old (created 2026-11-01T00:00:00.000Z): the database is restored and its canary verified.\n" +
 			"The archive's settings, to compare with this host's varlatchd.conf:\n  backup_interval = 24h\n  public_url = " + h.restoreURL + "\n" +
 			"Next: start varlatchd, then take and check a fresh archive (`varlatchd admin backup run`).\n"), nil
+	}
+	if args[0] == "certificate" && args[1] == "issuances" {
+		// Offline, before the unit: the restored records' count.
+		until := `,"until":"2026-11-25T08:00:00Z"`
+		if h.issued == 0 {
+			until = ""
+		}
+		return []byte(fmt.Sprintf(`{"name":"vault.example.com","limit":5,"window":"168h0m0s","attempts":%d%s,"full":%t}`, h.issued, until, h.issued >= 5)), nil
 	}
 	if args[0] == "tailnet" && args[1] == "probe-name" {
 		// Offline, before the unit: the probe's findings, as JSON.
@@ -1167,6 +1177,51 @@ func TestRestoreRefusals(t *testing.T) {
 // the name before the restored node first enrols: a name still held, or a
 // single-use key (the probe spent it), stops setup before the unit starts,
 // saying what to do; a name not seen goes on, and a rerun probes no more.
+// A restore with public HTTPS reads the restored records' certificate
+// issuance count before varlatchd first asks Let's Encrypt (decision 16):
+// at its five per name per week, it is refused before the unit starts and
+// says when to run setup again; with room, it goes on.
+func TestRestoreChecksTheIssuanceCount(t *testing.T) {
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	h.restoreURL, h.issued = "https://vault.example.com", 5
+	out := t.TempDir()
+	kek, bek := operatorKeys(t, out)
+	o := options(h, &recorder{}, out)
+	o.RootKEKOut, o.BackupKeyOut = "", ""
+	o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
+	o.Given = Answers{Ingress: Public, PublicURL: "https://vault.example.com", ACMEEmail: "ops@example.com", Backups: "host"}
+	err := Run(context.Background(), o)
+	if err == nil || !strings.Contains(err.Error(), "5 certificate requests for vault.example.com in the last 7 days, Let's Encrypt's limit of 5") ||
+		!strings.Contains(err.Error(), "Nothing has asked; the restored data stays. Run setup again after 2026-11-25T08:00:00Z") {
+		t.Fatalf("a full count: %v", err)
+	}
+	if slices.Contains(h.systemctl, "enable --now varlatchd.service") {
+		t.Error("the unit started with the count full")
+	}
+	// A week on, the count has room: setup goes on, the restore not done
+	// again.
+	h.issued = 3
+	said := &recorder{}
+	o.Say = said.say
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	restores := len(slices.DeleteFunc(slices.Clone(h.adminCalls), func(c string) bool { return !strings.HasPrefix(c, "backup restore ") }))
+	if restores != 1 || !slices.Contains(h.systemctl, "enable --now varlatchd.service") || !slices.Contains(said.lines, "Certificate requests for vault.example.com in the last 7 days, by the restored records: 3 of Let's Encrypt's 5.") {
+		t.Errorf("restores %d, systemctl %q, said %q", restores, h.systemctl, said.lines)
+	}
+	// Without public HTTPS, there is nothing to count.
+	h2 := newFakeHost(t)
+	h2.restoreURL, h2.issued = "http://localhost:8686", 5
+	o2 := options(h2, &recorder{}, t.TempDir())
+	o2.RootKEKOut, o2.BackupKeyOut = "", ""
+	o2.Restore, o2.RootKEKIn, o2.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
+	if err := Run(context.Background(), o2); err != nil || slices.Contains(h2.adminCalls, "certificate issuances --json") {
+		t.Errorf("a localhost restore: %v %q", err, h2.adminCalls)
+	}
+}
+
 func TestRestoreChecksTheTailnetName(t *testing.T) {
 	skipOffUnix(t)
 	tailnetRestore := func(h *fakeHost) Options {

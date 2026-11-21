@@ -80,6 +80,11 @@ type Options struct {
 	// return quickly and must not call into the DB (a non-blocking send on
 	// a channel, say). varlatchd publishes its realtime signals from it.
 	OnCommit func()
+	// DeferForeignKeys lets a job turn PRAGMA defer_foreign_keys on, the one
+	// assignment a job may then make (deferringForeignKeys): the migration's
+	// import, whose tables refer to each other in cycles. Off, as every
+	// other opener has it, a job's every PRAGMA assignment is refused.
+	DeferForeignKeys bool
 }
 
 func (o *Options) setDefaults() {
@@ -204,7 +209,7 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 
 	db := &DB{
 		opts:   opts,
-		ws:     &writerState{},
+		ws:     &writerState{deferFKs: opts.DeferForeignKeys},
 		jobs:   make(chan *job, opts.QueueSize),
 		ops:    make(chan *op, 16),
 		exited: make(chan struct{}),
