@@ -50,6 +50,14 @@ func commandTimeout(args []string) time.Duration {
 	if len(args) >= 2 && args[0] == "backup" && args[1] == "test-bucket" {
 		return time.Hour
 	}
+	// A tailnet certificate's obtain waits as long as it asked to try.
+	if len(args) >= 3 && args[0] == "tailnet" && args[1] == "certificate" && args[2] == "obtain" {
+		for i := 3; i+1 < len(args); i++ {
+			if d, err := time.ParseDuration(args[i+1]); args[i] == "--timeout" && err == nil && d+30*time.Second > controlTimeout {
+				return d + 30*time.Second
+			}
+		}
+	}
 	return controlTimeout
 }
 

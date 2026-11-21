@@ -100,6 +100,13 @@ function runRules(inventory, run) {
   const open = [];
   for (const { of, replacement } of replacements(inventory)) {
     if (typeof replacement === "string") {
+      // A go-server replacement runs only on the Go server: off it, the
+      // TypeScript check it replaces is the one that must pass.
+      if (inventory.checks[replacement]?.kind === "go-server" && !String(run.target).startsWith("go-binary")) {
+        const got = outcome.get(of);
+        if (got !== "pass") problems.push(`${of}: off the Go server it must pass itself, its replacement ${replacement} being the Go server's (${got ?? "not in the run"})`);
+        continue;
+      }
       const got = outcome.get(replacement);
       if (got !== "pass") problems.push(`${of}: its replacement ${replacement} must pass in this run (${got ?? "not in the run"})`);
     } else if (replacement && "open" in replacement) {

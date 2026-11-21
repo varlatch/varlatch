@@ -100,6 +100,8 @@ export const PLAN = [
   // OIDC workload identity, against the target's local issuer.
   { suite: "oidc", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "doctor", args: () => [] },
+  // The Go installation's doctor (go-server checks), on its own host.
+  { suite: "go-doctor", args: () => [] },
   { suite: "convex-down", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "cli-download-off", args: (ctx) => [ctx.origin] },
   { suite: "cli-download-on", args: (ctx) => [ctx.origin] },

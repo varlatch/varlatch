@@ -38,6 +38,8 @@ func TestMain(m *testing.M) {
 		slices.Sort(names)
 		envNames, _ := json.Marshal(names)
 		_ = os.WriteFile(filepath.Join(dir, "env.json"), envNames, 0o644)
+		// Where it was told the credentials are (a directory's name).
+		_ = os.WriteFile(filepath.Join(dir, "credentials-directory"), []byte(os.Getenv("CREDENTIALS_DIRECTORY")), 0o644)
 		if f, err := os.OpenFile(filepath.Join(dir, "calls.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644); err == nil {
 			_, _ = f.Write(append(args, '\n'))
 			_ = f.Close()
@@ -526,6 +528,38 @@ func TestHelpAdminIsTheGoUsage(t *testing.T) {
 		if code != 0 || stdout.String() != adminUsage+"\n" || stderr.String() != "" {
 			t.Errorf("%v: %d %q %q", args, code, stdout.String(), stderr.String())
 		}
+	}
+}
+
+// TestAdminFindsTheUnitsCredentials: outside the unit, a host command's
+// varlatchd gets CREDENTIALS_DIRECTORY = the configuration's directory
+// when the Root KEK is there (as setup writes it), so the configuration
+// loads as under the unit; not when it is not there, nor over one the run
+// set.
+func TestAdminFindsTheUnitsCredentials(t *testing.T) {
+	dir := fakeVarlatchd(t)
+	answer(t, dir, "", "", 0)
+	etc := t.TempDir()
+	conf := filepath.Join(etc, "varlatchd.conf")
+	got := func(env MapEnv) string {
+		t.Helper()
+		if code, _, errText := runAdminWith(t, env, "backup", "status", "--config", conf); code != 0 {
+			t.Fatalf("%d %q", code, errText)
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, "credentials-directory"))
+		return string(b)
+	}
+	if c := got(MapEnv{"PATH": dir}); c != "" {
+		t.Errorf("without a Root KEK there: %q", c)
+	}
+	if err := os.WriteFile(filepath.Join(etc, "root-kek"), []byte("not a key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c := got(MapEnv{"PATH": dir}); c != etc {
+		t.Errorf("with the Root KEK beside the configuration: %q, want %q", c, etc)
+	}
+	if c := got(MapEnv{"PATH": dir, "CREDENTIALS_DIRECTORY": "/run/credentials/varlatchd.service"}); c != "/run/credentials/varlatchd.service" {
+		t.Errorf("the run's own: %q", c)
 	}
 }
 

@@ -183,6 +183,18 @@ test("today no target can pass the gate: the doctor and lifecycle replacements a
   }
 });
 
+test("a ts-stack check replaced by a go-server check: on the Go server the replacement must pass, off it the check itself", () => {
+  const replaced = Object.entries(inventory.checks).filter(([, c]) => c.kind === "ts-stack" && typeof c.replacement === "string" && inventory.checks[c.replacement]?.kind === "go-server");
+  assert.ok(replaced.length > 0, "the doctor's checks are replaced by the Go installation's (step 6.5)");
+  const [of, { replacement }] = replaced[0];
+  const outcomes = (failing) => Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, id === failing ? "fail" : c.kind === "ts-stack" ? "pass" : c.kind === "go-server" ? "not-applicable" : "pass"]));
+  const ts = judgeGate({ inventory, run: run(outcomes(of), { target: "ts-source" }), walkthrough });
+  assert.ok(ts.problems.some((p) => p.startsWith(`${of}: off the Go server it must pass itself`)), ts.problems.join("\n"));
+  const goOutcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" ? "not-applicable" : id === replacement ? "fail" : "pass"]));
+  const go = judgeGate({ inventory, run: run(goOutcomes, { target: "go-binary:/opt/varlatchd" }), walkthrough });
+  assert.ok(go.problems.some((p) => p.startsWith(`${of}: its replacement ${replacement} must pass in this run`)), go.problems.join("\n"));
+});
+
 test("the hand-over's go-client checks may be not applicable only when the CLI under test is not the Go CLI", () => {
   const handover = Object.keys(inventory.checks).filter((id) => inventory.checks[id].kind === "go-client");
   assert.ok(handover.length > 0);

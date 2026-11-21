@@ -58,8 +58,13 @@ func CommandHelp(command string) (string, bool) {
 // installation's (adminUsage; go/README.md, the accepted difference
 // admin-usage).
 func commandHelp(command string) (string, bool) {
-	if command == "admin" {
+	switch command {
+	case "admin":
 		return adminUsage, true
+	case "doctor":
+		return doctorUsage, true
+	case "setup":
+		return setupUsage, true
 	}
 	return CommandHelp(command)
 }
