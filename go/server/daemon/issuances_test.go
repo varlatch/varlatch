@@ -72,4 +72,34 @@ func TestIssuanceCountSurvivesARestore(t *testing.T) {
 	if err != nil || row.N != 3 || row.Oldest != now.Add(-3*time.Hour).UnixMicro() {
 		t.Fatalf("the restored count: %+v %v, want 3 from %s", row, err, fmt.Sprint(now.Add(-3*time.Hour)))
 	}
+
+	// What setup --restore reads before varlatchd first asks (admin
+	// certificate issuances, offline): the public host's count, Let's
+	// Encrypt's limit, and when the oldest leaves the week.
+	target.write(t, "backup_key_file = "+filepath.Join(host, "bek")+"\nbackup_interval = off\npublic_url = https://vault.varlatch.test\nlisten_https = 127.0.0.1:5001\nacme_email = ops@varlatch.test\n")
+	oldest := time.UnixMicro(now.Add(-3 * time.Hour).UnixMicro()).UTC()
+	want := fmt.Sprintf(`{"name":"vault.varlatch.test","ca":"https://acme-v02.api.letsencrypt.org/directory","limit":5,"window":"168h0m0s","attempts":3,"oldest":%q,"until":%q,"full":false}`,
+		oldest.Format(time.RFC3339Nano), oldest.Add(7*24*time.Hour).Format(time.RFC3339Nano))
+	if code, out, errOut := runAdmin(t, "certificate", "issuances", "--json", "--config", target.conf); code != ExitOK || strings.TrimSpace(out) != want {
+		t.Fatalf("certificate issuances: %d %q %q\nwant %s", code, out, errOut, want)
+	}
+	add, err := sql.Open("sqlite", "file:"+filepath.Join(target.data, config.DatabaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2 {
+		if _, err := add.Exec(`INSERT INTO certificate_issuances (name, started_at, outcome) VALUES ('vault.varlatch.test', ?, 'issued')`, now.Add(-time.Duration(10+i)*time.Minute).UnixMicro()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add.Close()
+	if code, out, _ := runAdmin(t, "certificate", "issuances", "--json", "--config", target.conf); code != ExitOK || !strings.Contains(out, `"attempts":5,`) || !strings.Contains(out, `"full":true`) {
+		t.Fatalf("at the limit: %d %q", code, out)
+	}
+	if code, out, _ := runAdmin(t, "certificate", "issuances", "--config", target.conf); code != ExitOK || !strings.Contains(out, "Let's Encrypt's limit of 5: varlatchd asks for none until ") {
+		t.Fatalf("its text: %d %q", code, out)
+	}
+	if code, _, errOut := runAdmin(t, "certificate", "count", "--config", target.conf); code != 64 || !strings.Contains(errOut, "Usage: varlatchd admin certificate issuances") {
+		t.Fatalf("a wrong form: %d %q", code, errOut)
+	}
 }
