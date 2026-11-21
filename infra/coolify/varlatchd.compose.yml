@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Coolify Docker Compose file for the Varlatch 0.50+ Go service
+# (ghcr.io/varlatch/varlatchd, single container).
+#
+# Runs the published, signed image pinned by digest: set
+# VARLATCH_VARLATCHD_DIGEST in Coolify before deploying. A deploy without
+# it stops before anything starts, naming the variable.
+# VARLATCH_IMAGE_REGISTRY is optional and defaults to ghcr.io/varlatch.
+#
+# The image is distroless (gcr.io/distroless/static-debian12) and has no
+# shell, curl, or HTTP probe subcommand, so no container healthcheck is
+# defined here. Verify readiness externally at GET /readyz (this also
+# avoids marking the container unhealthy while it starts isolated behind
+# a migration barrier).
+#
+# Tailnet support runs in-process via tsnet with its state stored under
+# /var/lib/varlatch/tailnet; no Tailscale sidecar, /dev/net/tun device,
+# or extra Linux capabilities are needed.
+#
+# No ports are published on the host: Coolify's proxy routes the public
+# domain directly to varlatchd port 8686 over the Docker network. Set
+# `listen = 0.0.0.0:8686` and `trusted_proxies = coolify-proxy` in
+# varlatchd.conf. Keys never go in Coolify environment variables: mount
+# them as files under /keys (varlatchd refuses to start with exit 78 if
+# a key or key variable name is in its environment).
+
+services:
+  varlatchd:
+    image: ${VARLATCH_IMAGE_REGISTRY:-ghcr.io/varlatch}/varlatchd@${VARLATCH_VARLATCHD_DIGEST:?set VARLATCH_VARLATCHD_DIGEST to the release's varlatchd digest}
+    user: "65532:65532"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    volumes:
+      # Writable data directory: SQLite database, local backups, control
+      # socket, ACME cache, and in-process tsnet tailnet state. Owned by
+      # 65532:65532 (mode 0700).
+      - ${VARLATCH_DATA_DIR:-/srv/varlatch/data}:/var/lib/varlatch
+      # Keys directory (Root KEK, Backup Encryption Key, optional initial
+      # tailnet auth key), read-only. Owned by 65532:65532.
+      - ${VARLATCH_KEYS_DIR:-/srv/varlatch/keys}:/keys:ro
+      # Configuration file, read-only. Readable by 65532:65532.
+      - ${VARLATCH_CONFIG_FILE:-/srv/varlatch/varlatchd.conf}:/etc/varlatch/varlatchd.conf:ro

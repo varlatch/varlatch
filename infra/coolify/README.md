@@ -2,8 +2,11 @@
 
 Coolify is a first-class deployment target, but **not a second architecture**:
 a Coolify deployment is the canonical `infra/compose` contract
-deployed through Coolify's Docker Compose support. The topology, credential
-separation, upgrade semantics, and break-glass procedures are identical to
+deployed through Coolify's Docker Compose support. For Varlatch 0.50 and later
+(the single-container Go `varlatchd` image), see
+[Single-container Go service (0.50+)](#single-container-go-service-050) below.
+The topology, credential separation, upgrade semantics, and break-glass
+procedures for the multi-container TypeScript Compose stack are identical to
 the plain-Compose runbook in `infra/compose/README.md`. Only the UI clicks
 differ.
 
@@ -280,3 +283,111 @@ on the host, `varlatch doctor --dir <the resource's directory>` must report no
 mandatory failure. (`--gate`, which `varlatch upgrade` requires on plain
 Compose, also needs a release manifest; a source-built Coolify deployment has
 none, so its release consistency stays unknown there.)
+
+
+## Single-container Go service (0.50+)
+
+From 0.50.0, Varlatch runs as a single distroless container
+(`ghcr.io/varlatch/varlatchd`, see `go/image/README.md`) with its own embedded
+SQLite database and in-process Tailscale (`tsnet`) support. No PostgreSQL,
+Convex, nginx, or Tailscale sidecar containers are needed.
+
+Coolify deploys this service from `infra/coolify/varlatchd.compose.yml`, which
+pins the published image by digest using Coolify environment variables.
+
+### Creating the Coolify application
+
+1. Prepare the host bind paths owned by the image user (`65532:65532`,
+   distroless `nonroot`) and not writable by others:
+
+   ```sh
+   install -d -m 700 -o 65532 -g 65532 /srv/varlatch/data
+   install -d -m 700 -o 65532 -g 65532 /srv/varlatch/keys
+   ```
+
+   Write `/srv/varlatch/varlatchd.conf` (mode `0644` or `0640` readable by
+   `65532:65532`) with at least:
+
+   ```ini
+   listen = 0.0.0.0:8686
+   public_url = https://app.<your-domain>
+   trusted_proxies = coolify-proxy
+   data_dir = /var/lib/varlatch
+   root_kek_file = /keys/root-kek
+   backup_key_file = /keys/backup-key
+   ```
+
+   When migrating from 0.23.0 with `varlatch migrate --ingress coolify`, leave
+   `/srv/varlatch/data` empty and let `varlatch migrate` populate the bind
+   paths as `65532:65532`. For a fresh install, place the Root KEK
+   (`/srv/varlatch/keys/root-kek`) and Backup Encryption Key
+   (`/srv/varlatch/keys/backup-key`) in `/srv/varlatch/keys` with mode `0400`
+   and owner `65532:65532`.
+
+   **Keys never go in Coolify environment variables.** `varlatchd` refuses to
+   start (exit `78`) if any key value or key variable name is present in its
+   environment.
+
+2. Create a Coolify resource of type **Docker Compose** pointing at this
+   repository:
+   - Base Directory: `/`
+   - Docker Compose Location: `/infra/coolify/varlatchd.compose.yml`
+   - Disable automatic deployments.
+
+   If you are preparing the target for `varlatch migrate --ingress coolify`,
+   **leave the application in setup mode (do not click Deploy yet and do not
+   assign the production domain yet)**: nothing should listen on the target
+   until `varlatch migrate` stops (exit `75`) and asks you to **Deploy** it and
+   move the domain over.
+
+3. Set the Coolify environment variables:
+
+   ```sh
+   VARLATCH_VARLATCHD_DIGEST=sha256:<64-lowercase-hex-digest>
+   ```
+
+   - `VARLATCH_VARLATCHD_DIGEST` (required): the release's verified
+     `ghcr.io/varlatch/varlatchd` image digest (`sha256:` followed by 64
+     lowercase hex characters). A deploy without it stops before anything
+     starts, naming `VARLATCH_VARLATCHD_DIGEST`.
+   - `VARLATCH_IMAGE_REGISTRY` (optional, default `ghcr.io/varlatch`): override
+     only when pulling from another registry (for example, a lab rehearsal
+     registry).
+   - `VARLATCH_DATA_DIR` (optional, default `/srv/varlatch/data`): host path
+     mounted at `/var/lib/varlatch`.
+   - `VARLATCH_KEYS_DIR` (optional, default `/srv/varlatch/keys`): host path
+     mounted read-only at `/keys`.
+   - `VARLATCH_CONFIG_FILE` (optional, default `/srv/varlatch/varlatchd.conf`):
+     host file mounted read-only at `/etc/varlatch/varlatchd.conf`.
+
+4. Routing and readiness:
+   - Assign the public domain in Coolify to the `varlatchd` service on port
+     `8686`. The Compose file publishes no host ports; Coolify's Traefik proxy
+     reaches `varlatchd:8686` over the Docker network.
+   - `varlatchd.compose.yml` omits a Docker `healthcheck` because the image is
+     distroless (`gcr.io/distroless/static-debian12`) and contains no shell,
+     `curl`, or HTTP probe subcommand. Verify readiness externally at
+     `GET https://app.<your-domain>/readyz` (expect HTTP `200`).
+   - Tailnet listeners (`tailnet = on`, `tailnet_port`, `tailnet_https_port` in
+     `varlatchd.conf`) run in-process via `tsnet` and store node state under
+     `/var/lib/varlatch/tailnet`. No Tailscale sidecar container,
+     `/dev/net/tun` device, or elevated Linux capabilities are required.
+
+### Pinning and upgrading by digest
+
+Because the Compose file resolves the image through `VARLATCH_VARLATCHD_DIGEST`,
+upgrading to a new 0.50.x release changes that variable and redeploys the
+Coolify application without editing the Compose file.
+
+- **Manual upgrade:** update `VARLATCH_VARLATCHD_DIGEST` in Coolify to the
+  verified target release digest, deploy, and confirm `/readyz` answers `200`.
+  To roll back, restore the previous `VARLATCH_VARLATCHD_DIGEST` and redeploy.
+- **Guarded digest helper (`guarded.mjs` digest mode):** for automated
+  deployments where the Coolify API token is held in one helper process across
+  deploy, `/readyz` verification, and rollback, `guarded.mjs`'s digest mode
+  drives this application by its Coolify UUID: it records the current
+  `VARLATCH_VARLATCHD_DIGEST` via Coolify's `/applications/{uuid}/envs` API,
+  patches `VARLATCH_VARLATCHD_DIGEST` to the new verified digest (from `--set`
+  or a digest env file), verifies read-back, triggers a Coolify deploy, waits
+  for `/readyz` to return `200`, and re-pins the previous digest and redeploys
+  in the same process on any failure.
