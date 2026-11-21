@@ -40,6 +40,10 @@ func TestRehearsal(t *testing.T) {
 func mainCases(t *testing.T, rel release, s3 *s3Server) {
 	in := newInstallation(t, rel, s3, "main")
 	registerSecrets(in)
+	if os.Getenv("VL_RH_SEED") != "0" {
+		s := seed(t, in)
+		record(t, 9, "seeded through the real /v1", true, fmt.Sprintf("%d values, %d versions, identities, a Role, a Group, a Team, Grants, in %s (%d rate-limited answers waited out)", s.values, s.versions, s.took.Round(time.Millisecond), s.rateLimited))
+	}
 	if os.Getenv("VL_RH_ONLY") == "setup" {
 		t.Logf("set up %s in %s (VL_RH_ONLY=setup)", in.project, in.dir)
 		return
@@ -407,6 +411,7 @@ func migration(t *testing.T, in *installation, rel release, s3 *s3Server) {
 	r := in.migrateEnv(rel, true, rel.pin(), "--dry-run")
 	record(t, 4, "dry run: every check passes on the real export", r.code == 0 && strings.Contains(r.stdout, "checks passed true"), r.String()+" "+lastLines(r.stdout, 3))
 	measure("item 4: the dry run's report", lastLines(r.stdout, 4))
+	projected := regexp.MustCompile(`Projected downtime (\S+) fits`).FindStringSubmatch(r.stdout)
 	if r.code != 0 {
 		in.afterFailedDryRun(t, rel, 4)
 		return
@@ -430,6 +435,16 @@ func migration(t *testing.T, in *installation, rel release, s3 *s3Server) {
 	record(t, 6, "the migration opens on the target", r.code == 0, r.String()+" "+lastLines(r.stdout, 4))
 	mu.Lock()
 	measure("downtime as clients saw it (longest gap)", longest.Round(time.Millisecond).String())
+	// O7: the downtime budget is 10 minutes; the dry run's projection must
+	// cover what clients saw (a projection below it would let a migration
+	// past --max-downtime that then overruns it).
+	proj := "none"
+	if projected != nil {
+		proj = projected[1]
+	}
+	pd, perr := time.ParseDuration(proj)
+	record(t, 10, "downtime within O7's 10 minutes, and within the dry run's projection", longest < 10*time.Minute && perr == nil && longest <= pd,
+		fmt.Sprintf("clients saw %s; projected %s", longest.Round(time.Millisecond), proj))
 	measure("gaps", strings.Join(gaps, "; "))
 	mu.Unlock()
 	measure("migrate's own report", lastLines(r.stdout, 6))
