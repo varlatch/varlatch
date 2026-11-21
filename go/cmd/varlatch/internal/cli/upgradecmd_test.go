@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -107,11 +108,15 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 		cli, server, name := upgrade.Assets("0.50.0-rc.2", runtime.GOARCH)
 		srv.Publish("0.50.0-rc.2", &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\necho varlatch 0.50.0-rc.2\n"), server: varlatchd, name: manifest}})
 	}
-	prev := &release.Previous{Version: "0.50.0-rc.1", SchemaVersion: 1}
+	// The rc.1 build is on this checkout's schema; rc.2's G6 fixture step
+	// adds one.
+	fromSchema := checkoutSchema(t)
+	toSchema := fromSchema + 1
+	prev := &release.Previous{Version: "0.50.0-rc.1", SchemaVersion: fromSchema}
 
 	// Not rollback-safe: refused without --accept-not-rollback-safe.
 	h := newCLIHost(t, from)
-	publish(unsafe, release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, Previous: prev, ReversibleTo: &reversible})
+	publish(unsafe, release.Declaration{SchemaVersion: toSchema, CompatibleFrom: toSchema, Previous: prev, ReversibleTo: &reversible})
 	code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
 	if code != ExitFailure || !strings.Contains(out, "rollback:  NOT safe") || !strings.Contains(errs, "pass --accept-not-rollback-safe") {
 		t.Fatalf("not rollback-safe: %d %q %q", code, out, errs)
@@ -125,7 +130,7 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 
 	// Rollback-safe: --check records it, upgrade --yes upgrades.
 	h = newCLIHost(t, from)
-	publish(to, release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: prev, ReversibleTo: &reversible})
+	publish(to, release.Declaration{SchemaVersion: toSchema, CompatibleFrom: 1, RollbackSafe: true, Previous: prev, ReversibleTo: &reversible})
 	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--check", "--config", h.conf)
 	if code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.2 is available (this host runs 0.50.0-rc.1)") {
 		t.Fatalf("--check: %d %q %q", code, out, errs)
@@ -272,4 +277,21 @@ func (s *cliService) Stop(context.Context) error {
 	}
 	s.cmd = nil
 	return nil
+}
+
+// checkoutSchema is this checkout's schema version, as go/release/release.json
+// declares it (server/db/releasecheck holds it to server/db's).
+func checkoutSchema(t *testing.T) int64 {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "release", "release.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		SchemaVersion int64 `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(b, &d); err != nil || d.SchemaVersion < 1 {
+		t.Fatalf("go/release/release.json: schemaVersion %d, %v", d.SchemaVersion, err)
+	}
+	return d.SchemaVersion
 }
