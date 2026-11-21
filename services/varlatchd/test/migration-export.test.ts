@@ -322,6 +322,28 @@ describe.skipIf(!url)("the migration's export", () => {
     expect(readdirSync(dir).sort()).toEqual(before);
   }, 120_000);
 
+  it("as a command to standard output, consumer closes stdout before the final flush: non-zero exit, no summary", async () => {
+    const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+    if (!existsSync(cli)) return; // CI builds before it tests
+    const env = { PATH: process.env.PATH ?? "", VARLATCH_DATABASE_URL: databaseUrl, VARLATCH_STATE_DIR: dir };
+    const before = readdirSync(dir).sort();
+    const child = spawn(process.execPath, [cli, "admin", "migration", "export", "--out", "-", "--dry-run"], { env, cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (b: Buffer) => { stderr += b.toString("utf8"); });
+    // Close the consumer's read end as soon as the first bytes arrive so the
+    // remaining write or final flush hits EPIPE.
+    const first = await new Promise<Buffer>((resolve) => child.stdout.once("data", resolve));
+    expect(first.length).toBeGreaterThan(0);
+    child.stdout.destroy();
+    const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+      child.once("exit", (c, s) => resolve({ code: c, signal: s })),
+    );
+    expect(code === 0).toBe(false);
+    expect(signal === null ? (code ?? 0) : 1).not.toBe(0);
+    expect(stderr).not.toContain(EXPORT_SUMMARY_PREFIX);
+    expect(readdirSync(dir).sort()).toEqual(before);
+  }, 120_000);
+
   it("as a command: the run key only on a pipe, files only once complete (0600), nothing secret printed", () => {
     const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
     if (!existsSync(cli)) return; // CI builds before it tests

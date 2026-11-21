@@ -443,17 +443,18 @@ async function migrationImport(args: string[]): Promise<void> {
   // container varlatch migrate runs it in goes with its run (--rm), so a
   // killed import leaves nothing behind either.
   let spool: string | null = null;
-  let path = args[1]!;
-  if (fromStdin) {
-    const { mkdtempSync, createWriteStream } = await import("node:fs");
-    const { pipeline } = await import("node:stream/promises");
-    const { tmpdir } = await import("node:os");
-    spool = mkdtempSync(join(tmpdir(), "varlatch-import-"));
-    path = join(spool, "reverse.jsonl");
-    await pipeline(process.stdin, createWriteStream(path, { flags: "wx", mode: 0o600 }));
-  }
-  const db = createPgQuerier(config.databaseUrl);
+  let db: ReturnType<typeof createPgQuerier> | null = null;
   try {
+    let path = args[1]!;
+    if (fromStdin) {
+      const { mkdtempSync, createWriteStream } = await import("node:fs");
+      const { pipeline } = await import("node:stream/promises");
+      const { tmpdir } = await import("node:os");
+      spool = mkdtempSync(join(tmpdir(), "varlatch-import-"));
+      path = join(spool, "reverse.jsonl");
+      await pipeline(process.stdin, createWriteStream(path, { flags: "wx", mode: 0o600 }));
+    }
+    db = createPgQuerier(config.databaseUrl);
     const result = await importReverse(db, { path, rootKek });
     if (gate) new Maintenance(stateDir()).completeReverseMigration(gate.id);
     const b = result.bundle;
@@ -469,7 +470,7 @@ async function migrationImport(args: string[]): Promise<void> {
   } finally {
     rootKek.fill(0);
     if (spool) rmSync(spool, { recursive: true, force: true });
-    await db.end();
+    if (db) await db.end();
   }
 }
 
@@ -519,19 +520,35 @@ async function migrationExport(args: string[]): Promise<void> {
   // An export killed before it finished leaves its .partial: never a bundle, so it goes.
   removePartial();
   const out = toStdout ? process.stdout : createWriteStream(partial, { flags: "wx", mode: 0o600 });
-  // A write error is the bundle writer's to report; this keeps it from being unhandled meanwhile.
-  out.on("error", () => {});
+  // Capture any write error (e.g. EPIPE on stdout) so it is never lost before the final flush.
+  let streamError: unknown = null;
+  out.on("error", (err) => { streamError ??= err; });
   const closed = (w: typeof out) => new Promise<void>((resolve, reject) => {
-    w.once("error", reject);
+    if (streamError) { reject(streamError); return; }
+    if (w.errored) { reject(w.errored); return; }
+    if (w.destroyed) { reject(new Error("output stream closed before flush")); return; }
+    const onError = (err: unknown) => {
+      streamError ??= err;
+      reject(err);
+    };
+    w.once("error", onError);
+    const done = (err?: Error | null) => {
+      w.off("error", onError);
+      if (err) { streamError ??= err; reject(err); }
+      else if (streamError) reject(streamError);
+      else if (w.errored) reject(w.errored);
+      else resolve();
+    };
     // Standard output is never ended: what was written is flushed.
-    if (toStdout) w.write("", () => resolve());
-    else w.end(resolve);
+    if (toStdout) w.write("", done);
+    else w.end(() => done());
   });
   let ok = false;
   try {
     const gate = activeGate(stateDir());
     const result = await exportSource(db, { gate, dryRun: opts.dryRun, out, rootKek, runKey });
     await closed(out);
+    if (streamError) throw streamError;
     if (!toStdout) renameSync(partial, opts.out);
     ok = true;
     const summary = JSON.stringify({
