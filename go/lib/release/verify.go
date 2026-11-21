@@ -92,6 +92,20 @@ func LiveTrustedRoot(ctx context.Context, cacheDir string) (*root.TrustedRoot, e
 	return liveTrustedRoot(ctx, cacheDir, "", http.DefaultClient)
 }
 
+// LiveTrustedRootWith is LiveTrustedRoot through client (varlatchd's
+// outbound policy's, which never follows a redirect: Sigstore's TUF
+// repository answers its metadata and targets directly, and a redirect
+// makes the refresh fail, never a stale root used).
+func LiveTrustedRootWith(ctx context.Context, cacheDir string, client *http.Client) (*root.TrustedRoot, error) {
+	return liveTrustedRoot(ctx, cacheDir, "", client)
+}
+
+// LiveTrustedRootFrom is LiveTrustedRootWith from another TUF repository
+// (tests of a client's behaviour against a repository of their own).
+func LiveTrustedRootFrom(ctx context.Context, cacheDir, repositoryURL string, client *http.Client) (*root.TrustedRoot, error) {
+	return liveTrustedRoot(ctx, cacheDir, repositoryURL, client)
+}
+
 // liveTrustedRoot lets tests point at their own repository.
 func liveTrustedRoot(ctx context.Context, cacheDir, repositoryURL string, client *http.Client) (*root.TrustedRoot, error) {
 	if err := ctx.Err(); err != nil {
