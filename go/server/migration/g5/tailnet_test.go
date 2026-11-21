@@ -119,7 +119,7 @@ func newTailnetWorld(t *testing.T) (*world, *tailnetEnv) {
 			t.Fatal(err)
 		}
 	}
-	w.env = []string{"G5_TAILNET=1", "VARLATCH_TEST_HANDOFF_UNDO_WAIT=3s", "VARLATCH_TEST_HANDOFF_DEADLINE=8s", "G5_TAILNET_CONTROL=" + tn.control.BaseURL(), "VARLATCH_TEST_TAILNET_CONTROL=" + tn.control.BaseURL(),
+	w.env = []string{"G5_TAILNET=1", "VARLATCH_TEST_HANDOFF_UNDO_WAIT=3s", "G5_TAILNET_CONTROL=" + tn.control.BaseURL(), "VARLATCH_TEST_TAILNET_CONTROL=" + tn.control.BaseURL(),
 		"VARLATCH_TEST_TAILSCALE_API=" + tn.api.URL, "VARLATCH_TEST_TAILSCALE_CA=" + ca}
 	w.extraArgs = []string{"--tailscale-oauth-client-file", tn.oauthFile, "--tailnet-auth-key-file", keyFile}
 	w.secrets = [][]byte{[]byte(tn.secret), []byte("g5-reusable-auth-key")}
@@ -477,6 +477,14 @@ func (w *world) tailnetAt(t *testing.T, tn *tailnetEnv, sidecar string, want str
 // after the public address, the name is the target's node's, a client
 // node's map says so, the sidecar is stopped without logging out (its
 // node and StableID kept); the reverse gives it back to the sidecar.
+// shortHandoff gives the handoff an 8 s deadline (crashpoint builds
+// only), for the cases whose rename fails until the deadline ends. The
+// others keep the default: under load, a journal write near a short
+// deadline is the deadline's, not the case's.
+func (w *world) shortHandoff() {
+	w.env = append(w.env, "VARLATCH_TEST_HANDOFF_DEADLINE=8s")
+}
+
 func TestG5TailnetWhole(t *testing.T) {
 	w, tn := newTailnetWorld(t)
 	sidecar := sidecarID(t)
@@ -689,6 +697,7 @@ func TestG5TailnetForwardUndoSteps(t *testing.T) {
 			name := c.step + map[bool]string{false: ", resumed", true: ", aborted"}[abort]
 			t.Run(name, func(t *testing.T) {
 				w, tn := newTailnetWorld(t)
+				w.shortHandoff()
 				sidecar := sidecarID(t)
 				// The control plane fails the target's rename to the name;
 				// the sidecar may take it back.
@@ -782,6 +791,7 @@ func TestG5TailnetRollbackUndoSteps(t *testing.T) {
 				if code := w.run(""); code != 0 {
 					t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
 				}
+				w.shortHandoff()
 				// The control plane fails the sidecar's rename to the name;
 				// Go's node may take it back.
 				tn.set(func(tn *tailnetEnv) { tn.failName, tn.failNode, tn.downAfterFail = "vault", sidecar, c.down })
