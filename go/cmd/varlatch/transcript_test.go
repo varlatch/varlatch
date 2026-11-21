@@ -251,6 +251,14 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = cli.SetupHelp + "\n"
 		}
 	},
+	// `varlatch help move` (and `move --help`, `move -h`) prints a Go
+	// installation's move (slice 6.9); the TypeScript usage is a Compose
+	// installation's. The recording's usage becomes the Go one.
+	"move-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch move ") {
+			o.Stdout = cli.MoveHelp + "\n"
+		}
+	},
 	// `varlatch help self-update` (and `self-update --help`, `-h`) prints
 	// the Go CLI's forms: it replaces a native binary, always checks the
 	// signature, and takes --prerelease and --allow-downgrade (slice 6.7a).

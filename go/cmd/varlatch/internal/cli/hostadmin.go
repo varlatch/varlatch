@@ -42,6 +42,7 @@ const adminUsage = `Usage:
   varlatch admin maintenance begin --ttl <duration>
   varlatch admin maintenance end <lease id>
   varlatch admin maintenance status
+  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>]
                (a Go installation's host commands: each runs varlatchd admin with the same words on this host,
                 as root; each also takes --config <file>, the installation's varlatchd.conf, default
                 /etc/varlatch/varlatchd.conf. A Compose installation's are the TypeScript CLI's, varlatch-ts)`
@@ -71,12 +72,12 @@ var adminForms = []adminForm{
 	{words: []string{"maintenance", "status"}, json: true},
 }
 
-// adminCommand is `admin`'s partial: the forms above. `admin reenroll`
-// (slice 6.9) is not built yet; the TypeScript CLI's `backup create` and
+// adminCommand is `admin`'s partial: the forms above, and `admin
+// reenroll` (slice 6.9, move.go); the TypeScript CLI's `backup create` and
 // `backup verify` say what a Go installation runs instead.
 func adminCommand(r *Run) (bool, error) {
 	if len(r.Args) > 0 && r.Args[0] == "reenroll" {
-		return false, nil
+		return true, reenrollCommand(r)
 	}
 	if i := slices.Index(r.Args, "--dir"); i >= 0 {
 		return true, composeRefusal(r, "admin")

@@ -75,8 +75,12 @@ A bundle is UTF-8 text, one JSON value per line, each line ending in `\n`
      no two lines are the same item.
    - The classes and the items each covers are `../check/CHECKS.md`'s.
 
-   A reverse bundle's digest section is empty until the reverse checks
-   (slice 7.6) fill it.
+   A reverse bundle's digest section is empty (`{"digests":0}`), in
+   bundle-v1 for good: the reverse checks (slice 7.6a, `../check/CHECKS.md`,
+   "The reverse checks") take the TypeScript side's digests from its
+   export of the database it rebuilt, and compute Go's from the transformed
+   copy the reverse export kept. The TypeScript import (7.2c) reads the
+   section's form only.
 
 4. **The decision section** (decision 8): a line
    `{"decisions":<n>,"at":<Unix microseconds>}`, then `n` lines, each one
@@ -98,7 +102,9 @@ A bundle is UTF-8 text, one JSON value per line, each line ending in `\n`
      `TAILNET_CONTEXT_REQUIRED`, ...), `null` when allowed.
 
    Lines are in the writer's order. A reverse bundle's decision section
-   is empty until the reverse checks fill it.
+   is empty (`{"decisions":0,"at":<the export's moment>}`), for the same
+   reason: the TypeScript evaluator's table comes with its export of the
+   rebuilt database, and varlatchd's evaluator answers it on the kept copy.
 
 5. **The end line**:
 
