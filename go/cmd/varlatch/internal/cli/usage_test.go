@@ -98,6 +98,9 @@ func TestHelpIsTheUsageText(t *testing.T) {
 		case "setup":
 			help = setupUsage
 		}
+		if c.name == "move" {
+			help = moveUsage
+		}
 		for _, args := range [][]string{{c.name, "--help"}, {"help", c.name}} {
 			if code, out, errs := run(args...); code != ExitOK || out != help+"\n" || errs != "" {
 				t.Errorf("%q: exit %d, stdout\n%q\nwant\n%q (stderr %q)", args, code, out, help+"\n", errs)
