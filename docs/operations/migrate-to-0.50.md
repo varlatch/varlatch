@@ -288,13 +288,33 @@ is fixed: the domain first, checked through the public URL; then the
 tailnet name, checked from a client node; then both together. A failure
 undoes them in reverse order.
 
-<!-- pending: the handoff's engine (#365) and control plane (#360), both
-     open, and its wiring into varlatch migrate (not opened yet): the
-     options for the authority and the auth key, and the combined order. -->
+<!-- pending: the handoff's engine (#365, open) and its wiring into
+     varlatch migrate (not opened yet), and the combined order. -->
 
 #### The tailnet authority
 
-The rename needs authority over the tailnet, for the migration only.
+The rename needs authority over the tailnet, for the migration only. Both
+are given in files, never on the command line:
+
+- **The OAuth client** (`--tailscale-oauth-client-file <file>`): a
+  Tailscale OAuth client with the **`devices:core`** scope and no other,
+  generated in the Tailscale admin console, in a file holding
+  `{"clientId": "...", "clientSecret": "..."}`. The migration refuses a
+  client with any other scope. Each operation exchanges the client for a
+  token of its own, and no token is kept.
+- **The new node's auth key** (`--tailnet-auth-key-file <file>`): an auth
+  key with the node's tags, which the migration gives to the 0.50
+  server.
+
+Give both again with `--resume`, `--abort` and `--rollback`: a migration
+whose tailnet name is moving is refused without them, and changes
+nothing. Revoke the client once the migration has opened; a rollback
+needs one again, so create a new one then.
+
+If the old node's certificate cannot be renewed to last through the
+rollback window, the migration stops before the barrier.
+`--accept-rollback-certificate` goes on: a rollback after that
+certificate ends then needs a new one, about 40 s of downtime.
 
 Two things on the tailnet itself:
 
@@ -307,26 +327,17 @@ Two things on the tailnet itself:
   the name reaches the new node, so the transfer is undone; the message
   names the tags.
 
-<!-- pending: the 0.50 server's handoff commands (enroll, reaches; not
-     opened yet), whose probe needs the reusable key and the access rule. -->
+This prerelease moves a tailnet name on Tailscale only. On Headscale, the
+migration will run where the `headscale` CLI reaches the control server,
+or take an API key that expires within the hour (`headscale apikeys
+create --expiration 1h`), refusing a longer-lived one since a Headscale
+API key is a full administrator.
 
-- **Tailscale**: an OAuth client with the **`devices:core`** scope and no
-  other, generated in the Tailscale admin console. The migration refuses a
-  client with any other scope. Each operation exchanges the client for a
-  token of its own, and no token is kept. Also create an auth key for the
-  new node, with the node's tags, and give it to the migration. Revoke the
-  client once the migration has opened; a rollback needs one again, so
-  create a new one then.
-- **Headscale**: run the migration where the `headscale` CLI reaches the
-  control server, or give it an API key that expires within the hour
-  (`headscale apikeys create --expiration 1h`). A Headscale API key is a
-  full administrator, so a longer-lived one is refused, and the migration
-  expires the key when it ends.
-
-<!-- pending: the handoff's wiring into varlatch migrate (not opened yet):
-     the options that take the OAuth client, the API key and the auth key,
-     and how each is read (never an argument). Headscale support in the
-     0.50 server is still to come. -->
+<!-- pending: the handoff's wiring into varlatch migrate and the 0.50
+     server's handoff commands (both not opened yet): the options above,
+     --accept-rollback-certificate, the refusal without the authority, the
+     probe's reusable key and access rule. Headscale support (slice 7.5c,
+     not opened yet). -->
 
 ## The image target
 
@@ -376,15 +387,17 @@ since. It works while every release the installation has run since is
 reversible to 0.23.0: each 0.50 release says so in its `release.json`
 (`reversibleTo`), and is tested against 0.23.0 before it is published. A
 release that cannot keep the window says so instead
-(`endsRollbackWindow`), and `varlatch upgrade` asks before upgrading to it:
+(`endsRollbackWindow`); every release says exactly one of the two, or it
+is refused when it is built. `varlatch upgrade` asks before upgrading to a
+release that ends the window:
 
 > This release ends the migration's rollback window: after it, `varlatch
 > migrate --rollback` can no longer return this installation to the
 > TypeScript release (0.23.0). Its data stays; only the way back goes.
 
-<!-- pending #368: reversibleTo / endsRollbackWindow in release.json.
-     pending (not built yet): varlatch upgrade (#330) saying the notice and
-     asking. -->
+<!-- pending (not built yet): the release job's test of each release
+     against 0.23.0's image; varlatch upgrade (#330) saying the notice
+     and asking. -->
 
 ### Roll back
 
@@ -533,5 +546,5 @@ varlatch migrate --from-archive <archive> \
   has ended.
 
 <!-- pending #362: --from-archive, --ts-image, --out-bek-file, Linux and
-     macOS only. pending #356: the status listing TypeScript-format
-     archives apart, and their retainUntil date. -->
+     macOS only. pending (not built yet): the migration recording a
+     TypeScript archive's retain-until date. -->
