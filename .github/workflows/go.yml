@@ -1325,19 +1325,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # The version is above 0.15.0, as every Go release is: serve_cli
+      # refuses to serve a release of 0.15.0 or earlier as unsigned
+      # (go/lib/release ErrUnsigned), so the cli-download-on checks need one
+      # it would serve. No release uses it.
       - name: Build the release's Go assets
         env:
           CGO_ENABLED: "0"
         run: |
           (cd go && go generate ./server/web)
-          go/release/build-assets.sh --version "0.0.0-check.${GITHUB_RUN_NUMBER}" --out "$RUNNER_TEMP/release-assets"
+          go/release/build-assets.sh --version "0.50.0-check.${GITHUB_RUN_NUMBER}" --out "$RUNNER_TEMP/release-assets"
       # The image with varlatchd's conformance build beside the release's
       # CLI, which the conformance target needs.
       - name: Build the image with the conformance binaries
         env:
           CGO_ENABLED: "0"
         run: |
-          version="0.0.0-check.${GITHUB_RUN_NUMBER}"
+          version="0.50.0-check.${GITHUB_RUN_NUMBER}"
           mkdir "$RUNNER_TEMP/conformance-assets"
           (cd go && go build -trimpath -buildvcs=false -tags conformance \
             -ldflags "-s -w -buildid= -X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$version" \
