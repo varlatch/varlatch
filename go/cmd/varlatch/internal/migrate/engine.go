@@ -726,23 +726,42 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			return fmt.Errorf("%w; undoing could not start: %v", cause, err)
 		}
 	}
+	// In the transfer: the target stops first, then the barrier is lifted,
+	// then the source's ingress starts (returnAddress says why in that
+	// order). With the ingress stopped, nothing reaches the source between
+	// the two.
 	var problems []error
 	if from == Transfer {
-		problems = append(problems, e.returnAddress(ctx, j)...)
+		problems = append(problems, e.stopTargetForUndo(ctx)...)
 	}
-	released := false
+	// open: the source is behind no gate now. Otherwise closed says why its
+	// ingress is not started.
+	released, open, closed := false, false, ""
 	g, err := e.Source.Gate(ctx)
 	switch {
 	case err != nil:
 		problems = append(problems, fmt.Errorf("reading the source's gate: %w", err))
+		closed = "could not confirm the source's gate is lifted, so its %s is not started again"
 	case g != nil && g.Kind == "migration":
 		if err := e.Source.Release(ctx, g.ID); err != nil {
 			problems = append(problems, fmt.Errorf("lifting the barrier %s: %w", g.ID, err))
+			closed = "the source's %s is not started again while its barrier stands"
 		} else {
-			released = true
+			released, open = true, true
 		}
 	case g != nil:
 		problems = append(problems, fmt.Errorf("the source is behind a %s gate (%s), not a migration barrier: left as it is", g.Kind, g.ID))
+		closed = "the source's %s is not started again while its gate stands"
+	default:
+		open = true
+	}
+	if from == Transfer {
+		// Coolify's domain goes back by hand, whatever the gate.
+		if open || j.Ingress == Coolify {
+			problems = append(problems, e.returnAddress(ctx, j)...)
+		} else {
+			problems = append(problems, fmt.Errorf(closed, ingressPart(j.Ingress)))
+		}
 	}
 	if err := e.discard(ctx, j); err != nil {
 		problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
@@ -756,7 +775,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	if err := e.enter(ctx, j, Released); err != nil {
 		did := "the barrier lifted, the target's database discarded"
 		if from == Transfer {
-			did = "the address returned, " + did
+			did = "the target stopped, the barrier lifted, the address returned, the target's database discarded"
 		}
 		return fmt.Errorf("%w; it was undone (%s), but a journal could not say released: %v; varlatch migrate --resume finishes it", cause, did, err)
 	}
