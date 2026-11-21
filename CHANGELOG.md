@@ -27,7 +27,10 @@ as on 0.22.4.
     reads a consistent snapshot of a running installation instead, with
     no barrier, to check the export before the move.
   - `mark-migrated-out` marks an installation that moved: from then on it
-    answers no request, reads included.
+    answers no request, reads included. A backup of it can still be made
+    (`varlatch admin backup create`), since its data no longer changes:
+    the old installation's final archive. Behind the barrier, while the
+    data moves, a backup is refused.
   - `import` rebuilds the database of a stopped installation from a
     bundle the 0.50 line wrote (a file, or standard input with `--in -`), which moves an installation back; once it
     commits, the installation answers requests again.

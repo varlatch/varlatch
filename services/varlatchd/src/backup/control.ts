@@ -43,8 +43,14 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
         let result: unknown;
         switch (input.command) {
           // Online capture (ADR-0036): no gate, no pause, no Application Plane.
+          // It reads only (a READ ONLY snapshot), so behind the migrated-out
+          // marker, where the data is frozen and nothing is in flight, it is
+          // taken: the old installation's final archive (varlatch migrate
+          // --finish --delete-old-data, go-step7 decision 17). Behind every
+          // other gate it is refused: a capture or a restore, and the
+          // migration barrier, while the data moves to the target.
           case 'online-capture-begin': {
-            if (maintenance.gate) throw new Error('Installation maintenance is active; capture refused');
+            if (maintenance.gate && maintenance.gate.kind !== 'migrated-out') throw new Error('Installation maintenance is active; capture refused');
             result = await online.begin(input.ttlMs ?? 300_000); break;
           }
           case 'online-capture-finish': result = await online.finish(input.id ?? ''); break;
