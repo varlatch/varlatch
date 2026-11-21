@@ -128,6 +128,9 @@ type TailnetOptions struct {
 	// AcceptRollbackCertificate is tailhandoff's: a rollback after the old
 	// node's certificate ends needs a new one.
 	AcceptRollbackCertificate bool
+	// Server is the authority's server: Headscale's API URL (canonical,
+	// --headscale-url), cliAuthority(path) for its CLI, "" for Tailscale's.
+	Server string
 }
 
 // TailnetRecord is the handoff, as the journal holds it.
@@ -140,8 +143,11 @@ type TailnetRecord struct {
 	IncomingID   string `json:"incomingId"`
 	StableID     string `json:"stableId"`
 	// Control is the control plane's kind ("tailscale", "headscale") the
-	// handoff was planned on; a run resumed with another's is refused.
-	Control string `json:"control,omitempty"`
+	// handoff was planned on, and ControlServer its authority's server
+	// (TailnetOptions.Server); a run with another is refused
+	// (sameAuthority).
+	Control       string `json:"control,omitempty"`
+	ControlServer string `json:"controlServer,omitempty"`
 	// Handoff is the forward handoff's state; Reverse the one that undoes
 	// it, when it was done and the migration is undone before its switch;
 	// Rollback a reverse migration's (--rollback), under its own operation.
@@ -332,8 +338,8 @@ func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engin
 	if j.Tailnet == nil {
 		return nil, errors.New("the journal records no tailnet handoff")
 	}
-	if k := e.Tailnet.Control.Kind(); j.Tailnet.Control != "" && k != j.Tailnet.Control {
-		return nil, fmt.Errorf("the tailnet handoff was planned on %s's control plane, and the authority given is %s's: give %s's; nothing was done", j.Tailnet.Control, k, j.Tailnet.Control)
+	if err := sameAuthority(j.Tailnet, e.Tailnet); err != nil {
+		return nil, err
 	}
 	reverse := slot != slotForward
 	ts, tt, err := e.tailnetSides()
@@ -415,8 +421,11 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 	case !strings.EqualFold(tn.Hostname, info.Machine):
 		return fmt.Errorf("preflight: the target's tailnet_hostname is %s, the source's node %s: the name moves as it is, so set tailnet_hostname = %s; nothing was done", tn.Hostname, info.Machine, info.Machine)
 	}
-	if err := checkControlPlane(e.Tailnet.Control.Kind(), info, tn); err != nil {
+	if err := checkControlPlane(e.Tailnet.Control.Kind(), e.Tailnet.Server, info, tn); err != nil {
 		return err
+	}
+	if err := sameAuthority(j.Tailnet, e.Tailnet); err != nil {
+		return fmt.Errorf("preflight: %w", err)
 	}
 	switch {
 	case info.HTTPS && tn.HTTPSPort == 0:
@@ -485,7 +494,7 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 	}
 	rec.Name, rec.Suffix, rec.Operation, rec.Certificates = name, strings.ToLower(info.Suffix), op, info.HTTPS
 	rec.ServingID, rec.IncomingID, rec.StableID = serving[0].ID, incoming[0].ID, node.StableID
-	rec.Control = e.Tailnet.Control.Kind()
+	rec.Control, rec.ControlServer = e.Tailnet.Control.Kind(), e.Tailnet.Server
 	if rec.Handoff != nil && rec.Handoff.Phase != tailhandoff.Prepared {
 		// Only a handoff that changed nothing is prepared again.
 		return fmt.Errorf("preflight: the tailnet handoff %s is %s, not prepared: varlatch migrate --resume", op, rec.Handoff.Phase)

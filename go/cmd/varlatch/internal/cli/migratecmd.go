@@ -4,12 +4,11 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -42,8 +41,10 @@ const migrateUsage = `Usage:
                 it ends then needs a new one, about 40 s of downtime.
                 On a self-hosted control server (Headscale), its authority instead of the OAuth client: its API
                 at its IP address with a key from headscale apikeys create --expiration 1h (expired when the run
-                ends: each run takes a new one), or its CLI's absolute path when migrate runs on the control
-                server; the auth key is a reusable pre-auth key tagged with the node's tags; no HTTPS overlay)
+                ends: each run takes a new one; a run that is killed leaves its key live until it expires, up to
+                an hour: expire it with headscale apikeys expire --prefix <prefix>, which the next run names), or
+                its CLI's absolute path when migrate runs on the control server; the auth key is a reusable
+                pre-auth key tagged with the node's tags; no HTTPS overlay)
   varlatch migrate ... --to-data <dir> --to-keys <dir> --to-config <file> --to-image <ref:tag@sha256:...> --to-service <name>
                    (instead of --config and --unit: the Go image's service, created in setup mode with nothing listening,
                     its bind paths on this host; you start and stop it when migrate asks)
@@ -146,8 +147,8 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--headscale-url or --headscale-cli, not both: Headscale's API, or its CLI on the control server")
 	case o.oauthClientFile != "" && (o.headscaleURL != "" || o.headscaleCLI != ""):
 		return o, usage("one tailnet authority: --tailscale-oauth-client-file (Tailscale's) or --headscale-url/--headscale-cli (a self-hosted control server's)")
-	case o.headscaleURL != "" && !headscaleURLGiven(o.headscaleURL):
-		return o, usage("--headscale-url is https://<Headscale's IP address>[:port], such as https://192.0.2.10 or https://[2001:db8::10]:8443")
+	case o.headscaleURL != "" && headscaleURLRefusal(o.headscaleURL) != "":
+		return o, usage("--headscale-url " + shownArgument(o.headscaleURL) + ": " + headscaleURLRefusal(o.headscaleURL))
 	case o.headscaleCLI != "" && !filepath.IsAbs(o.headscaleCLI):
 		return o, usage("--headscale-cli is the headscale command's absolute path")
 	case o.deleteOldData && !o.finish:
@@ -230,27 +231,47 @@ func migrateCommand(r *Run) error {
 	var tailnetOptions *migrate.TailnetOptions
 	if o.oauthClientFile != "" || o.headscaleURL != "" || o.headscaleCLI != "" {
 		var cp tailcontrol.ControlPlane
+		server := ""
 		switch {
 		case o.oauthClientFile != "":
 			cp, err = tailscaleControl(o.oauthClientFile)
 		case o.headscaleURL != "":
-			cp, err = headscaleAPIControl(o.headscaleURL, o.headscaleKeyFile)
+			server, _ = tailcontrol.CanonicalControlURL(o.headscaleURL)
+			cp, err = headscaleAPIControl(server, o.headscaleKeyFile)
 		default:
+			server = migrate.CLIAuthority(o.headscaleCLI)
 			cp, err = headscaleCLIControl(o.headscaleCLI)
 		}
 		if err != nil {
 			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
+		}
+		api, _ := cp.(*tailcontrol.HeadscaleAPI)
+		if api != nil {
+			// A run killed before it closed its key left it live: said, with
+			// its prefix. This run's is recorded until it is closed.
+			if note := unclosedKeyNote(o.from); note != "" {
+				_ = r.warn(note)
+			}
+			markKeyOpen(o.from, api.KeyPrefix(), time.Now())
 		}
 		// The authority ends with the run, whatever its outcome: a
 		// Headscale API key is expired (a later run takes a new one).
 		defer func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
+			prefix := ""
+			if api != nil {
+				prefix = api.KeyPrefix()
+			}
 			if err := cp.Close(ctx); err != nil {
-				_ = r.warn("varlatch migrate: " + err.Error() + "; it expires on its own within the hour, or expire it now: headscale apikeys expire --prefix <its prefix>")
+				_ = r.warn("varlatch migrate: " + err.Error() + "; it expires on its own within the hour, or expire it now: headscale apikeys expire --prefix " + cmp.Or(prefix, "<its prefix>"))
+				return
+			}
+			if api != nil {
+				markKeyClosed(o.from)
 			}
 		}()
-		tailnetOptions = &migrate.TailnetOptions{Control: cp, AcceptRollbackCertificate: o.acceptRollbackCertificate}
+		tailnetOptions = &migrate.TailnetOptions{Control: cp, AcceptRollbackCertificate: o.acceptRollbackCertificate, Server: server}
 	}
 	var tailnetAuthKey []byte
 	if o.tailnetAuthKeyFile != "" {
@@ -469,16 +490,45 @@ func tailscaleControl(path string) (tailcontrol.ControlPlane, error) {
 		HTTP: tailscaleHTTPClient()})
 }
 
-// headscaleURLGiven is whether --headscale-url is https on an IP address,
-// as tailnet_control_url gives a self-hosted control server.
-func headscaleURLGiven(v string) bool {
-	u, err := url.Parse(v)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return false
-	}
-	_, err = netip.ParseAddr(u.Hostname())
-	return err == nil
+// headscaleURLRefusal is why --headscale-url is refused, "" when it is
+// not: lib/tailcontrol's rule, tailnet_control_url's, so the server is
+// spelled as varlatchd.conf spells it (https on an IP address).
+func headscaleURLRefusal(v string) string {
+	_, why := tailcontrol.CanonicalControlURL(v)
+	return why
 }
+
+// headscaleKeyMark is the Compose directory's record of the Headscale API
+// key a run opened and has not closed yet: its prefix and when, never the
+// key. A run killed before Close leaves its key live until the key
+// expires; the next run says so, naming the prefix to expire.
+const headscaleKeyMark = "migration-headscale-key.json"
+
+type keyMark struct {
+	Prefix   string    `json:"prefix"`
+	OpenedAt time.Time `json:"openedAt"`
+}
+
+// unclosedKeyNote is what to say about a key an earlier run left open.
+func unclosedKeyNote(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, headscaleKeyMark))
+	if err != nil {
+		return ""
+	}
+	var m keyMark
+	if json.Unmarshal(b, &m) != nil || m.Prefix == "" {
+		return ""
+	}
+	return fmt.Sprintf("varlatch migrate: an earlier run opened the Headscale API key %s at %s and did not close it (it was stopped): the key stays live until it expires, up to an hour after it was made. Expire it now: headscale apikeys expire --prefix %s",
+		m.Prefix, m.OpenedAt.UTC().Format(time.RFC3339), m.Prefix)
+}
+
+func markKeyOpen(dir, prefix string, at time.Time) {
+	b, _ := json.Marshal(keyMark{Prefix: prefix, OpenedAt: at.UTC()})
+	_ = os.WriteFile(filepath.Join(dir, headscaleKeyMark), append(b, '\n'), 0o600)
+}
+
+func markKeyClosed(dir string) { _ = os.Remove(filepath.Join(dir, headscaleKeyMark)) }
 
 // headscaleAPIControl is a self-hosted control server's API with the
 // operator's key, read from its file and checked (Headscale lists it, and

@@ -308,6 +308,13 @@ func (h *HeadscaleAPI) Rename(ctx context.Context, deviceID, name string) error 
 	return nil
 }
 
+// KeyPrefix is the key's prefix as `headscale apikeys expire --prefix`
+// takes it (never the secret); "" before Open.
+func (h *HeadscaleAPI) KeyPrefix() string {
+	p, _ := listedPrefix(h.prefix)
+	return strings.TrimSuffix(p, "-")
+}
+
 // Close expires the key, so the authority given for the work ends with it.
 // Closing twice, or after a failed Open, does nothing.
 func (h *HeadscaleAPI) Close(ctx context.Context) error {

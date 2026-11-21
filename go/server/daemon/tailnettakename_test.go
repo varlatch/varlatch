@@ -462,6 +462,11 @@ func TestTakeNameJudgesByTheControlPlanesClock(t *testing.T) {
 	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "within 5m0s") || !strings.Contains(errOut, "nothing was renamed") {
 		t.Fatalf("seen a minute ago by the control plane's clock: %d %q", code, errOut)
 	}
+	// A Date over an hour off this host's clock: neither is trusted.
+	set(2*time.Hour, false, time.Now().Add(-3*time.Hour))
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "more than 1h0m0s apart") || !strings.Contains(errOut, "nothing was renamed") {
+		t.Fatalf("a Date two hours ahead: %d %q", code, errOut)
+	}
 	set(0, true, time.Now().Add(-time.Hour))
 	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "no Date header") || !strings.Contains(errOut, "nothing was renamed") {
 		t.Fatalf("a listing without a Date: %d %q", code, errOut)

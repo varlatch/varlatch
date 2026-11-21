@@ -5,8 +5,10 @@ package cli
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // `varlatch migrate` is a Go-only command (outside the parity table): its
@@ -55,8 +57,10 @@ func TestMigrateCommand(t *testing.T) {
 		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-api-key-file", "/k"}, "--headscale-url and --headscale-api-key-file go together"},
 		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "https://192.0.2.10", "--headscale-api-key-file", "/k", "--headscale-cli", "/usr/bin/headscale"}, "--headscale-url or --headscale-cli, not both"},
 		{[]string{"migrate", "--resume", "--config", "/c", "--tailscale-oauth-client-file", "/o", "--headscale-cli", "/usr/bin/headscale"}, "one tailnet authority"},
-		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "https://headscale.example", "--headscale-api-key-file", "/k"}, "--headscale-url is https://<Headscale's IP address>[:port]"},
-		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "http://192.0.2.10", "--headscale-api-key-file", "/k"}, "--headscale-url is https://<Headscale's IP address>[:port]"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "https://headscale.example", "--headscale-api-key-file", "/k"}, "is given as https://<its IP address>[:port]"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "http://192.0.2.10", "--headscale-api-key-file", "/k"}, "is given as https://<its IP address>[:port]"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "https://[fe80::1%25eth0]", "--headscale-api-key-file", "/k"}, "a zoned address is not a control server's"},
+		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-url", "https://0.0.0.0", "--headscale-api-key-file", "/k"}, "not an address a control server listens on"},
 		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-cli", "headscale"}, "--headscale-cli is the headscale command's absolute path"},
 		{[]string{"migrate", "--resume", "--config", "/c", "--headscale-cli", "/usr/bin/headscale", "--accept-rollback-certificate"}, "--accept-rollback-certificate goes with --tailscale-oauth-client-file"},
 	} {
@@ -86,3 +90,28 @@ func TestMigrateCommand(t *testing.T) {
 }
 
 func writeEmpty(path string) error { return os.WriteFile(path, []byte("\n"), 0o600) }
+
+// A run killed before it closed its Headscale API key leaves a mark in
+// the Compose directory (the key's prefix and when, never the key); the
+// next run names the prefix to expire; a run that closed its key leaves
+// none.
+func TestAnUnclosedHeadscaleKeyIsNamed(t *testing.T) {
+	dir := t.TempDir()
+	if note := unclosedKeyNote(dir); note != "" {
+		t.Fatalf("no mark: %q", note)
+	}
+	at := time.Date(2026, 11, 21, 6, 0, 0, 0, time.UTC)
+	markKeyOpen(dir, "hskey-api-abcdefghijkl", at)
+	if st, err := os.Stat(filepath.Join(dir, headscaleKeyMark)); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("the mark: %v %v", st, err)
+	}
+	note := unclosedKeyNote(dir)
+	if !strings.Contains(note, "the Headscale API key hskey-api-abcdefghijkl at 2026-11-21T06:00:00Z and did not close it") ||
+		!strings.Contains(note, "headscale apikeys expire --prefix hskey-api-abcdefghijkl") {
+		t.Fatalf("the note: %q", note)
+	}
+	markKeyClosed(dir)
+	if note := unclosedKeyNote(dir); note != "" {
+		t.Fatalf("after close: %q", note)
+	}
+}

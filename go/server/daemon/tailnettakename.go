@@ -67,6 +67,11 @@ const (
 // take its name from under it.
 const deadGrace = 5 * time.Minute
 
+// clockSkewLimit is how far the control plane's Date may be from this
+// host's clock: the dead node is judged by the control plane's, but one
+// more than this apart is refused, not trusted.
+const clockSkewLimit = time.Hour
+
 // Test hooks: Tailscale's API and its certificate (a crashpoint build's
 // gate, tailnethook_crashpoint.go, or the package's tests); and the kill
 // points, each journalled step's.
@@ -304,6 +309,13 @@ func listedAt(ctx context.Context, cp tailcontrol.ControlPlane) ([]tailcontrol.D
 	}
 	if at.IsZero() {
 		return nil, time.Time{}, errors.New("the control plane's listing has no Date header (or one that does not parse): the old node's last-seen time is judged by the control plane's clock, never this host's; nothing was renamed")
+	}
+	// A Date far from this host's clock is not the control plane's own
+	// (something between rewrote it) or this host's clock is badly wrong:
+	// either way, neither can judge.
+	if now := time.Now(); at.Sub(now).Abs() > clockSkewLimit {
+		return nil, time.Time{}, fmt.Errorf("the control plane's listing is dated %s, and this host's clock says %s: more than %s apart, so one of them is wrong (a proxy rewriting the Date, or this host's clock); set this host's clock right, or reach the control plane directly, then run take-name again; nothing was renamed",
+			at.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339), clockSkewLimit)
 	}
 	return devices, at, nil
 }
