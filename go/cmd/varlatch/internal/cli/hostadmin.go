@@ -149,7 +149,12 @@ func (f adminForm) check(args []string) (config string, out []string, err error)
 
 // composeRefusal is decision 11's: a Compose installation keeps its
 // TypeScript CLI, installed beside the Go one as varlatch-ts.
-func composeRefusal(r *Run, command string) error {
+func composeRefusal(r *Run, command string) error { return composeRefusalOf(r, command, "--dir") }
+
+// composeRefusalOf is composeRefusal for the host command named command
+// and the Compose option given (--dir, or another of a Compose
+// installation's options), named as it was given.
+func composeRefusalOf(r *Run, command, option string) error {
 	ts := "varlatch-ts"
 	for _, dir := range filepath.SplitList(r.Getenv("PATH")) {
 		candidate := filepath.Join(dir, "varlatch-ts")
@@ -160,7 +165,11 @@ func composeRefusal(r *Run, command string) error {
 			}
 		}
 	}
-	return UsageError("varlatch " + command + ": --dir names a Compose installation, which the Go CLI does not manage; run this with the TypeScript CLI, " + ts + ", until `varlatch migrate` moves the installation (ADR-0059 step 7)")
+	what := option + " names a Compose installation"
+	if option != "--dir" {
+		what = option + " is an option of a Compose installation's " + command
+	}
+	return UsageError("varlatch " + command + ": " + what + ", which the Go CLI does not manage; run this with the TypeScript CLI, " + ts + ", until `varlatch migrate` moves the installation (ADR-0059 step 7)")
 }
 
 // findVarlatchd is the varlatchd the host commands run: the one installed
@@ -279,6 +288,29 @@ func varlatchdEnviron(r *Run) []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+// hostCredentials: the unit hands varlatchd its keys as credentials
+// (CREDENTIALS_DIRECTORY); a host command run as root, outside the unit,
+// finds them where setup wrote them, beside the configuration. So
+// CREDENTIALS_DIRECTORY is the configuration's directory when the run set
+// none and the Root KEK is there (a person who may not look there gets
+// none, and varlatchd says what it lacks). Only a directory's name: no
+// key goes into the environment.
+func hostCredentials(env []string, config string) []string {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "CREDENTIALS_DIRECTORY=") {
+			return env
+		}
+	}
+	if config == "" {
+		config = "/etc/varlatch/varlatchd.conf"
+	}
+	dir := filepath.Dir(config)
+	if _, err := os.Stat(filepath.Join(dir, "root-kek")); err != nil {
+		return env
+	}
+	return append(env, "CREDENTIALS_DIRECTORY="+dir)
 }
 
 // isCredentialVariable is whether name is a VARLATCH_* variable that holds

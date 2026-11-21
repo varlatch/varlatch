@@ -34,6 +34,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -78,6 +79,10 @@ type Options struct {
 	Outbound *outbound.Policy
 	// Version is the server version /v1/meta reports.
 	Version string
+	// ReleaseCheckDir holds the host's release check (release-check.json,
+	// ADR-0049), which `varlatch upgrade --check` records and
+	// getInstallationRelease reads; "" when there is none to read.
+	ReleaseCheckDir string
 	// PublicURL is the configured public URL; nil when not set.
 	PublicURL *url.URL
 	// Sync is the outbound sync installation switch; SyncAdapters narrows
@@ -453,6 +458,15 @@ type Admission interface {
 	Enter() (leave func(), ok bool)
 }
 
+// MetaAdmission is an Admission that, under a migration's gate, still
+// answers GET /v1/meta (go-step7 decision 12): `varlatch migrate` checks
+// the public URL answers with the migrated installation's id while the
+// installation admits nothing else. /v1/meta reads no data but the
+// installation's id and writes nothing.
+type MetaAdmission interface {
+	AdmitsMeta() bool
+}
+
 // BackupStatus is the backup status (server/backups), as JSON.
 type BackupStatus interface {
 	StatusJSON() ([]byte, error)
@@ -509,7 +523,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if v == http.ErrAbortHandler {
 				panic(v)
 			}
-			s.opts.Log.Error("a request handler panicked", "method", r.Method, "path", p, "requestId", id, "panic", fmt.Sprint(v))
+			// The panic's type and where it was, never its value: it can hold a request's or a row's data.
+			s.opts.Log.Error("a request handler panicked", "method", r.Method, "path", p, "requestId", id, "panic", fmt.Sprintf("%T", v), "stack", string(debug.Stack()))
 			if rec.status == 0 {
 				writeError(rec, r, http.StatusInternalServerError, "INTERNAL", "Internal error")
 			}
@@ -550,7 +565,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// maintenance screen.
 		if s.opts.Maintenance != nil && p != "/healthz" {
 			leave, ok := s.opts.Maintenance.Enter()
-			if !ok {
+			metaOnly := false
+			if m, isMeta := s.opts.Maintenance.(MetaAdmission); !ok && isMeta && p == "/v1/meta" && isGet(r) && m.AdmitsMeta() {
+				metaOnly = true
+			}
+			if !ok && !metaOnly {
 				if p == "/readyz" {
 					writeJS(rec, http.StatusServiceUnavailable, jsvalue.Object{
 						{Key: "ready", Value: false}, {Key: "checks", Value: jsvalue.Object{{Key: "maintenance", Value: false}}},
@@ -561,7 +580,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				writeError(rec, r, http.StatusServiceUnavailable, "MAINTENANCE", MaintenanceMessage)
 				return
 			}
-			defer leave()
+			if ok {
+				defer leave()
+			}
 		}
 		// Hono's bodyLimit, on every route, before the request window,
 		// authentication and any handler: a declared length is judged by

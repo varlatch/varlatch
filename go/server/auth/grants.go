@@ -44,6 +44,32 @@ type Grant struct {
 // (issueBootstrapGrant). An installation already bootstrapped refuses,
 // naming any enabled Installation Admin left without a passkey.
 func (s *Service) IssueBootstrapGrant(ctx context.Context) (Grant, error) {
+	return s.IssueBootstrapGrantRevoking(ctx, false)
+}
+
+// revokeUnused revokes, in the issuing job and before the new grant is
+// inserted, the bootstrap and recovery links issued before and never used
+// (setup's reissue). Their count goes into the issued event's metadata,
+// which records the revocation; -1 when not asked.
+func revokeUnused(ctx context.Context, q *query.Queries, now int64, revoke bool) (int64, error) {
+	if !revoke {
+		return -1, nil
+	}
+	return q.RevokeUnusedSetupLinks(ctx, sql.NullInt64{Int64: now, Valid: true})
+}
+
+// withRevoked is the issued event's metadata with the revoked count.
+func withRevoked(meta jsvalue.Object, revoked int64) jsvalue.Object {
+	if revoked < 0 {
+		return meta
+	}
+	return append(meta, jsvalue.Member{Key: "revokedUnused", Value: float64(revoked)})
+}
+
+// IssueBootstrapGrantRevoking is IssueBootstrapGrant that first revokes the
+// unused bootstrap and recovery links when revoke is set (`admin bootstrap
+// --revoke-unused`, which setup runs).
+func (s *Service) IssueBootstrapGrantRevoking(ctx context.Context, revoke bool) (Grant, error) {
 	var g Grant
 	err := s.store.Write(ctx, func(tx *storage.Tx) error {
 		q := query.New(tx)
@@ -67,6 +93,10 @@ func (s *Service) IssueBootstrapGrant(ctx context.Context) (Grant, error) {
 			return domainerr.New("VALIDATION_FAILED", "Installation is already bootstrapped; use recovery instead."+hint)
 		}
 		now := s.micros()
+		revoked, err := revokeUnused(ctx, q, now, revoke)
+		if err != nil {
+			return err
+		}
 		token := setupToken("vlt_setup_")
 		expires := (now/1000 + SetupGrantTTL.Milliseconds()) * 1000
 		if err := q.InsertSetupGrant(ctx, query.InsertSetupGrantParams{
@@ -75,8 +105,7 @@ func (s *Service) IssueBootstrapGrant(ctx context.Context) (Grant, error) {
 			return err
 		}
 		if _, err := audit.Record(ctx, tx, audit.Event{
-			Type: "bootstrap.grant_issued", Decision: audit.Info,
-			Metadata: jsvalue.Object{{Key: "expiresAt", Value: ISO(expires)}},
+			Type: "bootstrap.grant_issued", Decision: audit.Info, Metadata: withRevoked(jsvalue.Object{{Key: "expiresAt", Value: ISO(expires)}}, revoked),
 		}); err != nil {
 			return err
 		}
@@ -92,6 +121,9 @@ type Recovery struct {
 	IdentityID string
 	Enable     bool
 	NewAdmin   bool
+	// RevokeUnused first revokes the unused bootstrap and recovery links
+	// (`admin recover --revoke-unused`, which setup runs).
+	RevokeUnused bool
 }
 
 // IssueRecoveryGrant issues a break-glass recovery grant
@@ -141,6 +173,10 @@ func (s *Service) IssueRecoveryGrant(ctx context.Context, in Recovery) (Grant, e
 			subject = &row.ID
 		}
 		now := s.micros()
+		revoked, err := revokeUnused(ctx, q, now, in.RevokeUnused)
+		if err != nil {
+			return err
+		}
 		token := setupToken("vlt_recover_")
 		expires := (now/1000 + SetupGrantTTL.Milliseconds()) * 1000
 		if err := q.InsertSetupGrant(ctx, query.InsertSetupGrantParams{
@@ -155,7 +191,7 @@ func (s *Service) IssueRecoveryGrant(ctx context.Context, in Recovery) (Grant, e
 		}
 		if _, err := audit.Record(ctx, tx, audit.Event{
 			Type: "recovery.grant_issued", Decision: audit.Info, Resource: resource,
-			Metadata: jsvalue.Object{{Key: "expiresAt", Value: ISO(expires)}},
+			Metadata: withRevoked(jsvalue.Object{{Key: "expiresAt", Value: ISO(expires)}}, revoked),
 		}); err != nil {
 			return err
 		}

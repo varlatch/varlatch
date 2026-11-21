@@ -67,6 +67,11 @@ type FetchError struct {
 func (e *FetchError) Error() string { return e.Message }
 func (e *FetchError) Unwrap() error { return e.Cause }
 
+// ErrnoCode is the code libuv names for a system error, as Node reports
+// it on every platform (on Windows, a Winsock error: WSAECONNREFUSED is
+// ECONNREFUSED); ok is false for one it does not name.
+func ErrnoCode(errno syscall.Errno) (string, bool) { return errnoCode(errno) }
+
 func fetchFailed(code string, cause error) *FetchError {
 	return &FetchError{Message: "fetch failed", Code: code, Cause: cause}
 }

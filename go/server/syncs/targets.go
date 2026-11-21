@@ -84,6 +84,24 @@ var ErrStoredMapping = errors.New("the Sync Target's stored mapping is not one t
 
 func badMapping(what string) error { return fmt.Errorf("%w: %s", ErrStoredMapping, what) }
 
+// ErrStoredDestination is a stored destination this server cannot read.
+var ErrStoredDestination = errors.New("the Sync Target's stored destination is not one this server reads")
+
+// StoredDestination reads a stored destination: a JSON object, in
+// JavaScript's member order. Anything else is an ErrStoredDestination,
+// never a panic.
+func StoredDestination(text string) (jsvalue.Object, error) {
+	v, err := jsvalue.Parse([]byte(text))
+	if err != nil {
+		return nil, fmt.Errorf("%w: not JSON", ErrStoredDestination)
+	}
+	o, ok := jsvalue.JSOrder(v).(jsvalue.Object)
+	if !ok {
+		return nil, fmt.Errorf("%w: not an object", ErrStoredDestination)
+	}
+	return o, nil
+}
+
 // ParseMapping reads a stored mapping: a wildcard, with its exclusions, or
 // an explicit list of at least one item, each named. Anything else is an
 // ErrStoredMapping, never a panic.
@@ -551,15 +569,9 @@ func (s *Service) UpdateTarget(ctx context.Context, req Request, org authz.Organ
 		}
 		raw := patch.Destination
 		if !patch.HasDestination {
-			v, err := jsvalue.Parse([]byte(current.Destination))
-			if err != nil {
+			if raw, err = StoredDestination(current.Destination); err != nil {
 				return err
 			}
-			o, ok := jsvalue.JSOrder(v).(jsvalue.Object)
-			if !ok {
-				return errors.New("the Sync Target's stored destination is not an object")
-			}
-			raw = o
 		}
 		dest, err := adapter.CanonicalizeDestination(SyncObject(raw))
 		if err != nil {
@@ -572,9 +584,17 @@ func (s *Service) UpdateTarget(ctx context.Context, req Request, org authz.Organ
 				return err
 			}
 		}
+		// A stored mapping this server cannot read is repaired by a patch
+		// that gives a whole mapping: the previous one is then unknown, and
+		// the new one counts as widening (the caller ran the disclosure
+		// gate for it).
 		prev, err := ParseMapping(current.Mapping)
+		prevUnknown := false
 		if err != nil {
-			return err
+			if patch.Mapping == nil || !errors.Is(err, ErrStoredMapping) {
+				return err
+			}
+			prevUnknown = true
 		}
 		mapping := prev
 		if patch.Mapping != nil {
@@ -628,7 +648,7 @@ func (s *Service) UpdateTarget(ctx context.Context, req Request, org authz.Organ
 		md := jsvalue.Object{
 			{Key: "destination", Value: string(adapter.Platform()) + ":" + dest.Key}, {Key: "destinationChanged", Value: changed},
 			{Key: "connectionRepointed", Value: c.ID != target.ConnectionID}, {Key: "mapping", Value: mapping.summary()},
-			{Key: "widened", Value: MappingWidens(prev, mapping)},
+			{Key: "widened", Value: prevUnknown || MappingWidens(prev, mapping)},
 		}
 		e := audit.Event{
 			Type: "sync.target_updated", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &org.ID, Action: &action,

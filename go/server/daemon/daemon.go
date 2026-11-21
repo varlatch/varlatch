@@ -201,6 +201,11 @@ func serve(opts Options, h *hooks) int {
 		}
 		return fail(ExitFailure, "cannot read the configuration file", "file", opts.ConfigPath, "error", err)
 	}
+	// Mid-migration, the old installation may still reopen: the new one
+	// does not serve until `varlatch migrate` opens it (go-step7 decision 14).
+	if err := migrationGate(cfg.DataDir); err != nil {
+		return fail(ExitConfig, "varlatchd does not start: "+err.Error())
+	}
 	material, err := os.ReadFile(cfg.RootKEKFile)
 	if err != nil {
 		return fail(ExitFailure, "cannot read the Root KEK file", "file", cfg.RootKEKFile, "error", err)
@@ -330,7 +335,40 @@ func serve(opts Options, h *hooks) int {
 	} else if g != nil {
 		log.Warn("installation maintenance is active; varlatchd answers 503 MAINTENANCE until it ends", "kind", g.Kind, "lease", g.ID)
 	}
-	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups}
+	// Public HTTPS (step 6's decision 4), when listen_https is set: the
+	// certificate manager first, so the listeners report can show it.
+	var public *publictls.Manager
+	if p := cfg.PublicHTTPS; p != nil {
+		popts := publictls.Options{
+			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
+			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
+			// The issuance count, in the database: it survives a backup and
+			// a restore (step 6 decision 16).
+			Issuances: publictls.StoreIssuances{DB: store}, IssuanceLimit: publictls.LimitFor(p.CA),
+		}
+		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
+		if p.CARootFile != "" {
+			pem, err := os.ReadFile(p.CARootFile)
+			if err != nil {
+				return fail(ExitFailure, "cannot read acme_ca_root", "file", p.CARootFile, "error", err)
+			}
+			roots := x509.NewCertPool()
+			if !roots.AppendCertsFromPEM(pem) {
+				return fail(ExitConfig, "acme_ca_root holds no PEM certificate", "file", p.CARootFile)
+			}
+			popts.CARoots = roots
+		}
+		if h.publicTLS != nil {
+			h.publicTLS(&popts)
+		}
+		public, err = publictls.New(popts)
+		if err != nil {
+			return fail(ExitFailure, "public HTTPS", "error", err)
+		}
+		defer public.Close()
+	}
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public,
+		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready}
 	env.backups = newBackups(env)
 	// The tailnet listener (step 4.13b), when tailnet = on: its node starts
 	// now and joins its tailnet in the background; the ordinary listener
@@ -505,57 +543,26 @@ func serve(opts Options, h *hooks) int {
 	if u := cfg.PublicURL; u != nil && net.ParseIP(u.Hostname()) != nil {
 		log.Warn("public_url names an IP address, which browsers refuse as a passkey's relying party: the dashboard cannot sign in at it. Use a host name, such as http://localhost:8686 on this machine", "publicUrl", u.String())
 	}
-	// Public HTTPS (step 6's decision 4), when listen_https is set: the
-	// certificate manager first, so the listeners report can show it.
-	var public *publictls.Manager
-	if p := cfg.PublicHTTPS; p != nil {
-		popts := publictls.Options{
-			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
-			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
-			// The issuance count, in the database: it survives a backup and
-			// a restore (step 6 decision 16).
-			Issuances: publictls.StoreIssuances{DB: store}, IssuanceLimit: publictls.LimitFor(p.CA),
-		}
-		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
-		if p.CARootFile != "" {
-			pem, err := os.ReadFile(p.CARootFile)
-			if err != nil {
-				return fail(ExitFailure, "cannot read acme_ca_root", "file", p.CARootFile, "error", err)
-			}
-			roots := x509.NewCertPool()
-			if !roots.AppendCertsFromPEM(pem) {
-				return fail(ExitConfig, "acme_ca_root holds no PEM certificate", "file", p.CARootFile)
-			}
-			popts.CARoots = roots
-		}
-		if h.publicTLS != nil {
-			h.publicTLS(&popts)
-		}
-		public, err = publictls.New(popts)
-		if err != nil {
-			return fail(ExitFailure, "public HTTPS", "error", err)
-		}
-		defer public.Close()
-	}
 	hopts := httpserver.Options{
-		Outbound:       policy,
-		Version:        buildinfo.Version,
-		PublicURL:      cfg.PublicURL,
-		Sync:           cfg.Sync,
-		AuditExportOff: !cfg.AuditExport,
-		SyncAdapters:   cfg.SyncAdapters,
-		TrustedProxies: trusts,
-		AccessLog:      httpserver.NewAccessLog(accessOut),
-		Web:            web.FS(),
-		Backend:        &backend{store: store, rootKEK: rootKEK},
-		Auth:           approvals,
-		Realtime:       hub,
-		Values:         readPath,
-		Writer:         writer,
-		RootKEK:        rootKEK,
-		Maintenance:    admission,
-		Backups:        env.backups,
-		Log:            log,
+		Outbound:        policy,
+		Version:         buildinfo.Version,
+		ReleaseCheckDir: cfg.DataDir,
+		PublicURL:       cfg.PublicURL,
+		Sync:            cfg.Sync,
+		AuditExportOff:  !cfg.AuditExport,
+		SyncAdapters:    cfg.SyncAdapters,
+		TrustedProxies:  trusts,
+		AccessLog:       httpserver.NewAccessLog(accessOut),
+		Web:             web.FS(),
+		Backend:         &backend{store: store, rootKEK: rootKEK},
+		Auth:            approvals,
+		Realtime:        hub,
+		Values:          readPath,
+		Writer:          writer,
+		RootKEK:         rootKEK,
+		Maintenance:     admission,
+		Backups:         env.backups,
+		Log:             log,
 	}
 	if public != nil {
 		hopts.PublicListener = func() any { return public.Report() }
@@ -644,6 +651,7 @@ func serve(opts Options, h *hooks) int {
 	srv.RegisterOnShutdown(hub.Close)
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
+	env.serving.Store(true)
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)
 	var publicServers []*http.Server
 	publicDone := make(chan struct{})

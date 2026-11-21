@@ -416,6 +416,7 @@ jobs:
           go vet -tags conformance ./...
           go vet -tags crashpoint ./...
           go vet -tags g9a ./...
+          go vet -tags g5 ./server/migration/g5/
           go vet -tags headscale ./server/tailnet/...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
@@ -439,6 +440,23 @@ jobs:
 
       - name: Every timing test runs alone
         run: scripts/check-timing-tests.sh
+
+      # G5's damage gate (ADR-0059 G5; internal docs/design/go-step7.md
+      # slice 7.3c; go/server/migration/g5): the migration's Go path through
+      # the varlatchd binary on a seeded installation, every damage of the
+      # bundle stream, its check sections and the imported database failing
+      # at its stage and check, named, a killed import cleared by the next,
+      # and nothing secret printed; its interrupted half (7.4c) and its
+      # reverse half (7.6a: Go's barrier, the reverse export and checks, a
+      # second forward migration reproducing the state, after each kind of
+      # change on Go; varlatch migrate --rollback interrupted at every
+      # phase boundary; --finish and --delete-old-data). Its own step, so the gate's evidence is its own line
+      # in the run.
+      - name: G5, the migration's damage gate
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags g5 -run '^TestG5' -v ./server/migration/g5/
 
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's
@@ -562,8 +580,8 @@ jobs:
 
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
-      - name: install.sh, the G9a runner, the restore drill and G6 pass shellcheck
-        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh
+      - name: install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh go/install/test-setup.sh
 
       - name: The release's asset scripts pass shellcheck
         run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh
@@ -714,12 +732,40 @@ jobs:
       # varlatchd do what it needs and refuses the rest (unitprobe, run as
       # the unit's ExecStart; the runner is disposable, so the script may
       # install a unit and a system user).
+      # GitHub-hosted runners only, as the setup step below: it changes the
+      # machine's systemd and users.
       - name: The varlatchd unit verifies and its sandbox holds
+        if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
         env:
           CGO_ENABLED: "0"
         run: |
           (cd go && go build -o "$RUNNER_TEMP/unitprobe" ./install/unitprobe)
           sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 go/install/test-unit.sh "$RUNNER_TEMP/unitprobe"
+
+      # `varlatch setup` end to end (ADR-0059 step 6, slice 6.4a; the setup
+      # suite's replacement) on this disposable runner's own systemd, as
+      # the unit's check above: no container (the unit's sandbox needs
+      # namespaces an unprivileged container cannot give). For each ingress
+      # mode (localhost, own proxy, public against Pebble) one command from
+      # an empty host to a ready installation (the first administrator's
+      # passkey enrolled by enrollpasskey, a test tool, the custody attested,
+      # the first backup verified), a rerun changing nothing, setup stopped
+      # after each step and resumed, and no key in its output, its journal,
+      # the configuration, the unit's journal or a backup.
+      # GitHub-hosted runners only: it changes the machine's systemd, users
+      # and /etc, so it is skipped, never run, on a self-hosted varlatch-ci
+      # VM (long-lived, its systemd ours), whatever runner this job lands on.
+      - name: varlatch setup from an empty host, on this runner's systemd
+        if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go build -o "$RUNNER_TEMP/setup-bin/varlatch" ./cmd/varlatch && go build -o "$RUNNER_TEMP/setup-bin/varlatchd" ./cmd/varlatchd &&
+            go build -o "$RUNNER_TEMP/setup-bin/enrollpasskey" ./server/auth/authtest/enrollpasskey)
+          eval "$(go/server/publictls/testdata/pebble.sh start "$RUNNER_TEMP/setup-pebble")"
+          trap 'go/server/publictls/testdata/pebble.sh stop' EXIT
+          sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_PEBBLE="$VARLATCH_TEST_PEBBLE" VARLATCH_TEST_PEBBLE_ROOT="$VARLATCH_TEST_PEBBLE_ROOT" \
+            go/install/test-setup.sh "$RUNNER_TEMP/setup-bin"
 
       # ADR-0059 Order step 3: envelopes cross between the servers in both
       # directions. The Go tests open what TypeScript releases sealed

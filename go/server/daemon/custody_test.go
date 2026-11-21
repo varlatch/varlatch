@@ -169,3 +169,45 @@ func TestKeyCustodyCommands(t *testing.T) {
 		t.Errorf("status offline: %d %q", code, out)
 	}
 }
+
+// varlatchd admin run by hand outside the unit (what doctor's remedies and
+// the README give): the configuration names no key file, and the keys are
+// beside it, where the unit's LoadCredential reads them. Offline and
+// through the running daemon, the admin commands find them there; with no
+// Root KEK beside the configuration they say what is lacking.
+func TestAdminFindsTheKeysBesideTheConfiguration(t *testing.T) {
+	in := newInstall(t, "")
+	if err := os.WriteFile(filepath.Join(in.dir, "backup-key"), []byte(hex.EncodeToString(envelope.GenerateKey())+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conf := "listen = 127.0.0.1:0\ndata_dir = " + in.data + "\naccess_log = " + in.accessLog + "\nbackup_interval = off\n"
+	if err := os.WriteFile(in.conf, []byte(conf), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	if code, out, errOut := runAdmin(t, "bootstrap-status", "--config", in.conf); code != ExitOK {
+		t.Fatalf("bootstrap-status on a fresh host: %d %q %q", code, out, errOut)
+	}
+	// The daemon as its unit runs it, its credentials handed in.
+	t.Setenv("CREDENTIALS_DIRECTORY", in.dir)
+	r := start(t, in)
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	if code, out, errOut := runAdmin(t, "backup", "run", "--json", "--config", in.conf); code != ExitOK || !strings.Contains(out, `"keyMatch":true`) {
+		t.Fatalf("backup run: %d %q %q", code, out, errOut)
+	}
+	if code, out, errOut := runAdmin(t, "custody", "status", "--config", in.conf); code != ExitOK {
+		t.Fatalf("custody status: %d %q %q", code, out, errOut)
+	}
+	r.stop(t)
+	if code, out, errOut := runAdmin(t, "custody", "status", "--config", in.conf); code != ExitOK {
+		t.Fatalf("custody status offline: %d %q %q", code, out, errOut)
+	}
+
+	elsewhere := filepath.Join(t.TempDir(), "varlatchd.conf")
+	if err := os.WriteFile(elsewhere, []byte(conf), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "custody", "status", "--config", elsewhere); code != ExitConfig || !strings.Contains(errOut, "no Root KEK") {
+		t.Fatalf("no Root KEK beside the configuration: %d %q", code, errOut)
+	}
+}

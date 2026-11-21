@@ -213,6 +213,13 @@ func (c *checker) audit(ctx context.Context) error {
 	}
 	c.checked(Audit, int64(len(tail)))
 	c.revoked = map[string]int64{}
+	if c.o.Reverse {
+		// A rebuilt installation's log is the copy's, to its last event.
+		for _, e := range tail {
+			c.fail(Audit, "audit_events", "", "position %d after the frozen point holds %s (%s); the rebuilt installation's log ends where the copy's does", e.order, e.id, e.typ)
+		}
+		return c.cursorCheck(ctx)
+	}
 	if len(tail) == 0 || tail[len(tail)-1].typ != migratedEvent {
 		c.fail(Audit, "audit_events", "", "the log does not end in one %s event", migratedEvent)
 	}
