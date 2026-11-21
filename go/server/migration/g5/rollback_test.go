@@ -186,6 +186,22 @@ func volumeThere(name string) bool {
 		slices.Contains([]string{"postgres-data", "convex-data", "varlatch-state", "tailscale-state", "tailscale-socket", "caddy-data", "caddy-config"}, base)
 }
 
+// migrateRunsAgain reports whether `docker compose start|up` of these
+// services runs the one-off varlatch-migrate again: each of varlatchd,
+// the dashboard (on varlatchd) and Caddy (on the dashboard) depends on it
+// (infra/compose's depends_on), unless --no-deps.
+func migrateRunsAgain(args []string) bool {
+	if slices.Contains(args, "--no-deps") {
+		return false
+	}
+	for _, svc := range args {
+		if slices.Contains([]string{"varlatchd", "varlatch-web", "caddy"}, svc) {
+			return true
+		}
+	}
+	return false
+}
+
 // fakeDockerReverse answers the commands a reverse migration gives; ok is
 // false for the others (fakeDocker's).
 func fakeDockerReverse(args []string) (int, bool) {
@@ -193,6 +209,14 @@ func fakeDockerReverse(args []string) (int, bool) {
 	j := strings.Join(args, " ")
 	logCall(j)
 	switch {
+	case len(args) >= 3 && args[0] == "compose" && (args[1] == "start" || args[1] == "up") && migrateRunsAgain(args[2:]) && readGate() != nil:
+		// As the real Compose: starting a service that depends on the
+		// one-off varlatch-migrate (service_completed_successfully) runs it
+		// again, and the TypeScript migrate refuses behind any gate
+		// (services/varlatchd/src/cli.ts, migrateCommand), so the service
+		// does not start (run r8 of the 7.8b rehearsal).
+		return fail("Migration refused during installation maintenance\nOperator command failed; check configuration and maintenance status.\n" +
+			"service \"varlatch-migrate\" didn't complete successfully: exit 1")
 	case len(args) >= 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start"):
 		for _, svc := range args[2:] {
 			if err := setStopped(svc, args[1] == "stop"); err != nil {

@@ -455,7 +455,12 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 			return failure("the TypeScript release's migration mark-migrated-out", r)
 		}
 	}
-	return c.compose(ctx, "docker compose up -d varlatchd", "up", "-d", service)
+	// --no-deps: varlatchd's one-off dependency (varlatch-migrate,
+	// service_completed_successfully) would run again with it and refuse
+	// behind the migrated-out marker, so varlatchd would not start. Its
+	// own volume's schema is current already, Postgres was started above,
+	// and varlatchd restarts (unless-stopped) until Postgres answers.
+	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
 }
 
 // gateOffline is the installation's gate, read in a one-off container.
