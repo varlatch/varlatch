@@ -74,6 +74,9 @@ func verifyRelease(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	var trusted root.TrustedMaterial
+	if *trustedRoot == "" {
+		*trustedRoot = conformanceTrustedRoot // "" but in the conformance build
+	}
 	if *trustedRoot != "" {
 		if trusted, err = root.NewTrustedRootFromPath(*trustedRoot); err != nil {
 			return fail("reading the trusted root: %s", masked(err))

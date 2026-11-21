@@ -15,6 +15,12 @@
 # signature, which only means something when the download itself is
 # trusted, so no option or variable changes where they come from.
 #
+# An installation that serves this script (varlatchd's serve_cli; ADR-0058
+# Decision 3) stamps its own address in ORIGIN below: the CLI then comes
+# from it, and is checked the same way. Installing from an installation
+# trusts it, and whoever controls its host or its address, to run code on
+# this machine.
+#
 # What this trusts: HTTPS to github.com for the release files, which are
 # checked against the release's SHA256SUMS; then, before anything is put in
 # place, the downloaded varlatch checks that SHA256SUMS is signed by the
@@ -34,6 +40,9 @@ set -eu
 # --version.
 VARLATCH_RELEASE='@VARLATCH_VERSION@'
 REPOSITORY='varlatch/varlatch'
+# The serving installation's address, stamped when it serves this script;
+# empty in a release, which installs from github.com.
+ORIGIN=''
 
 say() { printf '%s\n' "$*"; }
 stop() { printf 'varlatch install: %s\n' "$*" >&2; exit 1; }
@@ -44,8 +53,19 @@ usage() {
 }
 
 # curl without ~/.curlrc (-q), HTTPS only, also after redirects (GitHub
-# serves release files from another host), failing on any HTTP error.
+# serves release files from another host), failing on any HTTP error. From
+# an installation: its own scheme (https, or http on this machine), and no
+# redirect is followed.
 fetch() {
+  if [ -n "$ORIGIN" ]; then
+    if [ "$scheme" = http ]; then
+      status=$(curl -q -sS --proto '=http' -w '%{http_code}' -o "$2" "$1") || stop "could not download $1"
+    else
+      status=$(curl -q -sS --proto '=https' --tlsv1.2 -w '%{http_code}' -o "$2" "$1") || stop "could not download $1"
+    fi
+    [ "$status" = 200 ] || stop "could not download $1 (HTTP $status; a redirect is never followed from an installation)"
+    return
+  fi
   curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 2 -o "$2" "$1" \
     || stop "could not download $1"
 }
@@ -170,6 +190,7 @@ main() {
     esac
   done
   [ "$server" = yes ] || [ $# -eq 0 ] || stop "setup flags after -- are for --server"
+  [ -z "$ORIGIN" ] || [ "$server" = no ] || stop "a server installs from github.com: use the release's install.sh (https://github.com/$REPOSITORY/releases)"
   case "$version" in
     @*) stop "this copy of install.sh is not from a release; pass --version <version>" ;;
   esac
@@ -211,6 +232,16 @@ main() {
   fi
 
   base=https://github.com/$REPOSITORY/releases/download/v$version
+  scheme=https
+  if [ -n "$ORIGIN" ]; then
+    case "$ORIGIN" in
+      *[!A-Za-z0-9.:/\[\]-]*) stop "$ORIGIN is not an address to install from" ;;
+      https://?*) ;;
+      http://localhost|http://localhost:[0-9]*|http://127.0.0.1|http://127.0.0.1:[0-9]*|'http://[::1]'|'http://[::1]:'[0-9]*) scheme=http ;;
+      *) stop "$ORIGIN is neither https: nor http: on this machine" ;;
+    esac
+    base=$ORIGIN/cli/v$version
+  fi
   cli=varlatch-$version-$os-$arch
   daemon=varlatchd-$version-linux-$arch
 
@@ -279,7 +310,11 @@ install_cli() {
       fi ;;
     *) say "$dir is not on your PATH. Add it, for example: echo 'export PATH=\"$dir:\$PATH\"' >> ~/.profile" ;;
   esac
-  say "Next: varlatch login --server <your Varlatch address>"
+  if [ -n "$ORIGIN" ]; then
+    say "Next: varlatch login --server $ORIGIN"
+  else
+    say "Next: varlatch login --server <your Varlatch address>"
+  fi
 }
 
 install_server() {

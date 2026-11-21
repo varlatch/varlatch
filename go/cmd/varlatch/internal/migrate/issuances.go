@@ -26,8 +26,18 @@ import (
 //   - a rollback merges Go's attempts for the name into the ledger before
 //     the name moves back, so attempts recorded on Go's side count too;
 //   - a forward migration after a rollback counts both again.
-// Each attempt is one by its name and start: written or merged twice, it
-// counts once.
+// Each attempt is one by its key (sameAttempt): its name, lower-cased, and
+// its start to the microsecond, as varlatchd's count keeps it. The ledger
+// writes its times so (attemptTime), and every comparison truncates too,
+// so an attempt written or merged twice counts once.
+
+// attemptTime is a time as the count keeps it: UTC, to the microsecond.
+func attemptTime(t time.Time) time.Time { return t.UTC().Truncate(time.Microsecond) }
+
+// sameAttempt is whether two attempts are one.
+func sameAttempt(nameA string, startA time.Time, nameB string, startB time.Time) bool {
+	return strings.EqualFold(nameA, nameB) && attemptTime(startA).Equal(attemptTime(startB))
+}
 
 // IssuanceAttempt is one certificate attempt for a name (its full domain,
 // <machine>.<tailnet suffix>, as the count keeps it).
@@ -109,9 +119,10 @@ func outcomeOf(o tailhandoff.Outcome) string {
 	return "started"
 }
 
-// recordIssuances writes the ledger's attempts into the target's count, once the forward migration is open. It changes
-// nothing in the migration: an attempt that cannot be written now is
-// written by the next run, the ledger being kept.
+// recordIssuances writes the ledger's attempts into the target's count,
+// once the forward handoff is checked. It changes nothing in the
+// migration: an attempt that cannot be written now is written by
+// --finish, the ledger being kept.
 func (e *Engine) recordIssuances(ctx context.Context, rec *TailnetRecord) error {
 	ti, ok := e.Target.(TailnetIssuances)
 	if !ok || rec == nil {
@@ -125,7 +136,12 @@ func (e *Engine) recordIssuances(ctx context.Context, rec *TailnetRecord) error 
 	// names' (each its own exact name to the CA).
 	var attempts []IssuanceAttempt
 	for _, x := range entries {
-		attempts = append(attempts, IssuanceAttempt{Name: domainOf(x.Name, rec.Suffix), StartedAt: x.StartedAt.UTC(), Outcome: outcomeOf(x.Outcome), EndedAt: x.EndedAt})
+		a := IssuanceAttempt{Name: domainOf(x.Name, rec.Suffix), StartedAt: attemptTime(x.StartedAt), Outcome: outcomeOf(x.Outcome)}
+		if x.EndedAt != nil {
+			end := attemptTime(*x.EndedAt)
+			a.EndedAt = &end
+		}
+		attempts = append(attempts, a)
 	}
 	if len(attempts) == 0 {
 		return nil
@@ -155,8 +171,8 @@ func (e *Engine) mergeIssuances(ctx context.Context, rec *TailnetRecord) error {
 		if a.Name != domain {
 			continue
 		}
-		at := a.StartedAt.UTC()
-		if slices.ContainsFunc(entries, func(x ledgerEntry) bool { return strings.EqualFold(x.Name, rec.Name) && x.StartedAt.Equal(at) }) {
+		at := attemptTime(a.StartedAt)
+		if slices.ContainsFunc(entries, func(x ledgerEntry) bool { return sameAttempt(x.Name, x.StartedAt, rec.Name, at) }) {
 			continue
 		}
 		id, err := newID()

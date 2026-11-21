@@ -156,6 +156,11 @@ func (e *Engine) Finish(ctx context.Context, deleteOldData bool) (*Journal, erro
 		if j.Finish.DoneAt == "" {
 			return j, e.finishRemove(ctx, j)
 		}
+		// Finished: the handoff's certificate attempts in Go's count, if
+		// no run could write them yet (recordNow; each attempt once).
+		if j.Finish.After == Open {
+			e.recordNow(ctx, j)
+		}
 		return j, nil
 	case j.Phase == Open || j.Phase == RolledBack:
 		if err := e.finishAgrees(ctx, j); err != nil {
