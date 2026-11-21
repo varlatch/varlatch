@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -46,22 +47,85 @@ func (s *scripted) Run(_ context.Context, dir, name string, args []string, stdin
 
 // Stream is Run on streams: what stdin gives is recorded (read to its
 // end), the answer goes to stdout, and only Said and Code come back.
-func (s *scripted) Stream(ctx context.Context, dir, name string, args []string, stdin io.Reader, stdout io.Writer) (Ran, error) {
-	var in []byte
-	if stdin != nil {
+func (s *scripted) Stream(ctx context.Context, dir, name string, args []string, in io.Reader, out io.Writer) (Ran, error) {
+	var input []byte
+	if in != nil {
 		var err error
-		if in, err = io.ReadAll(stdin); err != nil {
+		if input, err = io.ReadAll(in); err != nil {
 			return Ran{}, err
 		}
 	}
-	r, err := s.Run(ctx, dir, name, args, in)
+	r, err := s.Run(ctx, dir, name, args, input)
 	if err != nil {
 		return Ran{}, err
 	}
-	if _, err := stdout.Write(r.Answer); err != nil {
+	if _, err := out.Write(r.Answer); err != nil {
 		return Ran{}, err
 	}
 	return Ran{Said: r.Said, Code: r.Code}, nil
+}
+
+// failingWriter fails once more than limit bytes were written to it.
+type failingWriter struct{ n, limit int }
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	if w.n+len(p) > w.limit {
+		return 0, errors.New("the disk is full (the test's)")
+	}
+	w.n += len(p)
+	return len(p), nil
+}
+
+// ExecRunner.Stream, with real programs: the input is read to its end and
+// closed, the output arrives whole, stderr's tail is kept; a program that
+// writes more than the destination takes is killed, and Stream returns
+// (never waits on a pipe nobody reads); one that refuses before reading
+// its input is its exit status, not an error of the copy.
+func TestExecRunnerStream(t *testing.T) {
+	ctx := context.Background()
+	var x ExecRunner
+	input := randomBytes(3 << 20)
+	var got bytes.Buffer
+	r, err := x.Stream(ctx, t.TempDir(), "sh", []string{"-c", "cat; echo said >&2"}, bytes.NewReader(input), &got)
+	if err != nil || r.Code != 0 || !bytes.Equal(got.Bytes(), input) || string(r.Said) != "said\n" || r.Answer != nil {
+		t.Fatalf("cat: %d bytes, %+v, %v", got.Len(), r, err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := x.Stream(ctx, t.TempDir(), "sh", []string{"-c", "while :; do printf '%065536d' 0; done"}, nil, &failingWriter{limit: 1 << 20})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "the disk is full") {
+			t.Fatalf("a destination that fails: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Stream waited on a program whose output nobody reads")
+	}
+	r, err = x.Stream(ctx, t.TempDir(), "sh", []string{"-c", "echo refused >&2; exit 3"}, bytes.NewReader(input), io.Discard)
+	if err != nil || r.Code != 3 || string(r.Said) != "refused\n" {
+		t.Fatalf("a refusal before reading: %+v %v", r, err)
+	}
+}
+
+// tail keeps exactly the last n bytes, however they were written.
+func TestTail(t *testing.T) {
+	all := randomBytes(10_000)
+	for _, chunk := range []int{1, 7, 100, 999, 1000, 4000} {
+		tl := &tail{n: 1000}
+		for i := 0; i < len(all); i += chunk {
+			_, _ = tl.Write(all[i:min(i+chunk, len(all))])
+		}
+		if !bytes.Equal(tl.bytes(), all[len(all)-1000:]) || len(tl.b) > 2000 {
+			t.Errorf("chunk %d: kept %d bytes (held %d), not the last 1000", chunk, len(tl.bytes()), len(tl.b))
+		}
+	}
+	short := &tail{n: 1000}
+	_, _ = short.Write([]byte("abc"))
+	if string(short.bytes()) != "abc" {
+		t.Errorf("a short tail: %q", short.bytes())
+	}
 }
 
 // The arguments never hold a key: the run key and the keys go on stdin.

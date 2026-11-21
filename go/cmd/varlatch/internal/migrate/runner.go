@@ -20,30 +20,46 @@ type Runner interface {
 }
 
 // Streamer is a Runner that also runs a program on streams, for what is
-// too large to hold in memory (a migration bundle): stdin is read to its
-// end and then closed, as the program reads it; stdout goes to the writer
-// as the program writes it; only stderr is kept, its last saidLimit bytes,
-// in the Ran's Said (Answer is empty).
+// too large to hold in memory (a migration bundle): in is the program's
+// input, read to its end and then closed, as the program reads it; what
+// the program writes on its standard output goes to out as it writes it;
+// only its standard error is kept, its last saidLimit bytes, in the Ran's
+// Said (Answer is empty). These are the child's streams, never the CLI's
+// own: the CLI writes only through its fail-safe.
 type Streamer interface {
-	Stream(ctx context.Context, dir, name string, args []string, stdin io.Reader, stdout io.Writer) (Ran, error)
+	Stream(ctx context.Context, dir, name string, args []string, in io.Reader, out io.Writer) (Ran, error)
 }
 
 // saidLimit bounds what a streamed program's stderr keeps: its last lines
 // are what failure and a summary read.
 const saidLimit = 1 << 20
 
-// tail keeps the last n bytes written to it.
+// tail keeps the last n bytes written to it (bytes). It holds up to 2n
+// and trims back to n only then, so a long stream costs one copy of n
+// bytes per n written, never one per write.
 type tail struct {
 	n int
 	b []byte
 }
 
 func (t *tail) Write(p []byte) (int, error) {
+	if len(p) >= t.n {
+		t.b = append(t.b[:0], p[len(p)-t.n:]...)
+		return len(p), nil
+	}
 	t.b = append(t.b, p...)
-	if len(t.b) > t.n {
-		t.b = append([]byte(nil), t.b[len(t.b)-t.n:]...)
+	if len(t.b) > 2*t.n {
+		t.b = append(t.b[:0], t.b[len(t.b)-t.n:]...)
 	}
 	return len(p), nil
+}
+
+// bytes is the last n bytes written.
+func (t *tail) bytes() []byte {
+	if len(t.b) > t.n {
+		return t.b[len(t.b)-t.n:]
+	}
+	return t.b
 }
 
 // Ran is a program's outcome: its standard output, its standard error, its
@@ -115,10 +131,13 @@ func (x ExecRunner) Run(ctx context.Context, dir, name string, args []string, st
 	return r, nil
 }
 
-// Stream runs name with args in dir on streams (Streamer). A program that
-// stops reading stdin early (it refused before reading) is no error of the
-// copy: its exit status says why.
-func (x ExecRunner) Stream(ctx context.Context, dir, name string, args []string, stdin io.Reader, stdout io.Writer) (Ran, error) {
+// Stream runs name with args in dir on streams (Streamer). The child's
+// output is read from its pipes, as Run reads it. A program that stops
+// reading its input early (it refused before reading) is no error of the
+// copy: its exit status says why. A write to out that fails kills the
+// program, whose output is then drained, so Wait never waits on a pipe
+// nobody reads.
+func (x ExecRunner) Stream(ctx context.Context, dir, name string, args []string, in io.Reader, out io.Writer) (Ran, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = x.Env
@@ -127,13 +146,35 @@ func (x ExecRunner) Stream(ctx context.Context, dir, name string, args []string,
 			return Ran{}, err
 		}
 	}
-	said := &tail{n: saidLimit}
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, said
+	cmd.Stdin = in
+	outPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return Ran{}, err
+	}
+	errPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return Ran{}, err
+	}
 	if err := cmd.Start(); err != nil {
 		return Ran{}, fmt.Errorf("%s could not be started: %w", name, err)
 	}
-	err := cmd.Wait()
-	r := Ran{Said: said.b}
+	said := &tail{n: saidLimit}
+	saidDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(said, errPipe)
+		close(saidDone)
+	}()
+	_, copyErr := io.Copy(out, outPipe)
+	if copyErr != nil {
+		_ = cmd.Process.Kill()
+		_, _ = io.Copy(io.Discard, outPipe)
+	}
+	<-saidDone
+	err = cmd.Wait()
+	r := Ran{Said: said.bytes()}
+	if copyErr != nil {
+		return r, fmt.Errorf("%s's output could not be written: %w", name, copyErr)
+	}
 	var exit *exec.ExitError
 	switch {
 	case errors.As(err, &exit):

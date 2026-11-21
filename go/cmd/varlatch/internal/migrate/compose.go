@@ -66,12 +66,12 @@ func (c *Compose) dockerName() string {
 // stream runs docker on streams (Streamer): a bundle in or out, never
 // held in memory, and never in a directory the container's user must
 // share with the operator.
-func (c *Compose) stream(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) (Ran, error) {
+func (c *Compose) stream(ctx context.Context, args []string, in io.Reader, out io.Writer) (Ran, error) {
 	s, ok := c.Run.(Streamer)
 	if !ok {
 		return Ran{}, errors.New("this runner cannot stream a bundle")
 	}
-	return s.Stream(ctx, c.Directory, c.dockerName(), args, stdin, stdout)
+	return s.Stream(ctx, c.Directory, c.dockerName(), args, in, out)
 }
 
 // admin runs the source's `admin migration` (or another admin command)
@@ -462,7 +462,23 @@ func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix
 		_ = os.Remove(partial)
 		return "", err
 	}
+	// The rename made durable, as writeJournal's is: the bundle the
+	// journal will name is there after a crash.
+	if err := syncDir(backups); err != nil {
+		_ = os.Remove(host)
+		return "", err
+	}
 	return host, nil
+}
+
+// syncDir makes a directory's entries durable (a rename into it).
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // exportSummary is whether said (the export's standard error) ends with
@@ -480,14 +496,24 @@ func createOwned(path, dir string) (*os.File, error) {
 		return nil, err
 	}
 	if os.Getuid() == 0 {
-		if st, serr := os.Stat(dir); serr == nil {
-			if uid, gid, ok := ownerOf(st); ok {
-				if err := f.Chown(int(uid), int(gid)); err != nil {
-					_ = f.Close()
-					_ = os.Remove(path)
-					return nil, err
-				}
+		// As root the file must be the directory's owner's: a directory
+		// whose owner cannot be read is refused, never a root-owned file.
+		st, err := os.Stat(dir)
+		var uid, gid uint32
+		ok := false
+		if err == nil {
+			uid, gid, ok = ownerOf(st)
+			if !ok {
+				err = fmt.Errorf("the owner of %s cannot be read", dir)
 			}
+		}
+		if err == nil {
+			err = f.Chown(int(uid), int(gid))
+		}
+		if err != nil {
+			_ = f.Close()
+			_ = os.Remove(path)
+			return nil, err
 		}
 	}
 	return f, nil

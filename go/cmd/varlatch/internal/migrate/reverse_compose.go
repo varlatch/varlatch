@@ -333,7 +333,7 @@ func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRec
 		return TSImportRecord{}, failure("the TypeScript release's admin migration import", r)
 	}
 	var rec TSImportRecord
-	if err := json.Unmarshal(lastLine(answer.b), &rec); err != nil || rec.InstallationID == "" || rec.AuditPosition == "" {
+	if err := json.Unmarshal(lastLine(answer.bytes()), &rec); err != nil || rec.InstallationID == "" || rec.AuditPosition == "" {
 		return TSImportRecord{}, errors.New("the TypeScript release's admin migration import did not answer with the installation and its audit position")
 	}
 	return rec, nil
