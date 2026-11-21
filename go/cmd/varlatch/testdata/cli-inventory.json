@@ -160,8 +160,7 @@
       "of": "varlatch",
       "commands": [
         "org"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--after-context": {
       "sources": [
@@ -322,8 +321,7 @@
       "of": "varlatch",
       "commands": [
         "org"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--archive": {
       "sources": [
@@ -522,8 +520,7 @@
       "of": "varlatch",
       "commands": [
         "org"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--certificate-identity": {
       "sources": [
@@ -620,11 +617,7 @@
         "org",
         "project",
         "values"
-      ],
-      "commandSlices": {
-        "org": "5.7c",
-        "project": "5.7c"
-      }
+      ]
     },
     "--context": {
       "sources": [
@@ -722,8 +715,7 @@
       "of": "varlatch",
       "commands": [
         "audit"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--depth": {
       "sources": [
@@ -1971,8 +1963,7 @@
       "of": "varlatch",
       "commands": [
         "org"
-      ],
-      "slice": "5.7c"
+      ]
     },
     "--record": {
       "sources": [

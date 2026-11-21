@@ -975,6 +975,7 @@ it to the recording.
 | `upgrade-usage` | `varlatch help upgrade`, `upgrade --help` and `upgrade -h` print a Compose installation's `upgrade` form | a Go installation's: `[<version>] [--prerelease] [--accept-not-rollback-safe] [--yes]` and `--check [--prerelease] [--json]`, each with `--config` | The Go CLI upgrades a Go installation; a Compose installation's upgrade is `varlatch-ts upgrade` |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
 | `tailnet-repin`: `varlatch tailnet repin [--yes] [--adopt] [--json] [--config <file>]` (slice 6.2b) | no such command (`tailnet` has `require`, `requirements` and `remove`); the TypeScript server keeps no tailnet pin | runs `varlatchd admin tailnet repin --json [--yes [--adopt]] [--config <file>]` (as `host-admin`) and shows `varlatchd`'s text from its answer: the pinned and the observed tailnet, then what it did or offers, on stderr with `varlatchd`'s status when it refuses. On a terminal, without `--yes`, an offered re-pin (or, with `--adopt`, an adoption) is asked for (`[y/N]`), then done with `--yes --offer <the offer shown>`: `varlatchd` acts only while the pin and the observed tailnet are still what was shown, and otherwise changes nothing and answers `offer-changed` (status 1) with the new view, which is shown and asked about once more (a second change stops, nothing re-pinned). `varlatch tailnet repin --yes` (scripted use) passes no offer and acts on the observation at that moment. `--json` prints `varlatchd`'s answer. `varlatchd admin tailnet repin --json` gives stable names (the view's `pinned`, `observed`, `reason`, `closed`, `missing`, `offered`, `offer` (a value-free token: 128 bits of a SHA-256 over what is offered, the pin and the observation; empty when nothing is offered), and `pinnedText`, `observedText`, `outcome`, `message`, `pin`) with or without `--yes`; `varlatchd`'s 78 adds a line saying to run it as root (`sudo varlatch tailnet repin`; Unix), as `host-admin`'s; its text is unchanged | The tailnet pin is the Go server's (step 4.13); a re-pin changes what the tailnet listener trusts, so it is the host's and is confirmed. Pinned by `internal/cli`'s `TestTailnetRepinFront` and `daemon`'s `TestTailnetListener` |
+| `installation.migrated` (an audit event only Go records, until the last TypeScript release) | not recorded by v0.22 | appended by `varlatchd admin migrate import` and `export --reverse` (step 7.3a) after the source's events and the revocations of the sessions the migration ended: no Organization and no actor identity, metadata `direction`, `sourceRelease`, `manifestVersion`, `frozenPoint` (`auditPosition`, and `snapshot` for a forward import), `sessionsEnded`, `credentialsRevoked` | Decision 9's audit-append transformation (internal docs/design/go-step7.md decision 5); the last TypeScript release (0.23.0) records and lists it too (slice 7.2a). Pinned by `server/migration/migrate`'s `TestRoundTrip` |
 | `tailnet.repinned` (an audit event only Go records) | not recorded | each re-pin, reopening or adoption by `varlatchd admin tailnet repin --yes`: no Organization and no actor identity (the host operator: the control socket's peer is the data directory's owner or root), metadata `action` (`repinned`, `reopened`, `adopted`), `fromSuffix`, `toSuffix`, `tailnetId`, `reason` (what the re-pin's own check found), `operator: true`, never the control server's URL. Committed before the pin changes: a re-pin whose event cannot be recorded does not happen (`audit.GoOnlyEventTypes`) | The TypeScript server's event list is frozen; ADR-0059 step 6's G10 asks for the re-pin to be audited. Pinned by `daemon`'s `TestTailnetListener` (both events, read from the database) and `audit`'s `TestGoOnlyEventTypes` |
 | `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, a request for another `Host` is 421, no `X-Forwarded-For` is believed on it, and `listen` must then be a loopback address, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
@@ -2916,6 +2917,53 @@ Grants in whatever order its plan gives; the Go query orders by rowid
 the lists derived from them (`grantIds`, `groupIds`, `roleIds`,
 `applied`), as sets; the pure evaluator vectors check their order.
 
+### The tailnet's control plane (step 7, slice 7.5a)
+
+`lib/tailcontrol` is what a tailnet handoff asks of the control plane.
+The handoffs themselves (internal docs/design/go-step7.md decision 11) are
+slice 7.5b.
+
+- **One interface, two backends.** Each lists the devices, offline and
+  expired ones included, and renames one.
+  - `Tailscale` uses the API with an OAuth client that has the
+    `devices:core` scope and no other (O4); any other scope is refused
+    before a token is used. Each operation exchanges the client for a
+    token of its own, and nothing keeps one.
+  - `HeadscaleAPI` uses a key that `Open` checks expires within the hour
+    (every Headscale key is a full administrator); `Close` expires it.
+  - `HeadscaleCLI` runs `headscale` on the control server (an absolute
+    path when named), with the new name after `--`.
+  - Both APIs are https only, and are built with a constructor that
+    keeps the credential in a closure, so printing a control plane shows
+    none. The constructor requires the caller's `*http.Client` and never
+    makes one: `varlatch migrate` passes its own; varlatchd's restore
+    handoff (7.5b) passes the outbound policy's (`go/server/outbound`),
+    so the guard there needs no exception for `lib/tailcontrol`.
+- **Names.**
+  - `TempName` is a handoff's temporary name, `<name>-vl-<operation
+    id>-n|o`, in canonical form within 63 bytes; when too long, the name
+    is cut, never the operation id.
+  - `CheckNames` compares a plan with every device case-insensitively.
+    The name must be held by exactly the expected device, and every
+    temporary name must be free, whoever holds it, online, offline or
+    expired.
+  - Every backend refuses a name not in canonical form.
+    `RenameAndReadBack` counts a rename only once the control plane lists
+    the device under exactly that name, reading it again once, a second
+    later, before it calls a difference a failure.
+- **Errors** name the operation and the device. Every credential is
+  scrubbed from them before any cut, in every form an answer could echo
+  (as sent, escaped, base64), even when the control plane echoes it. A
+  transport error still answers `errors.Is` (a passed deadline stays
+  `context.DeadlineExceeded`).
+- **Testing.** `tailcontroltest` fakes both control planes, with the
+  behaviour ADR-0059 Decision 9 records:
+  - Tailscale rewrites non-canonical names and refuses a taken one;
+  - Headscale keeps a case variant and refuses only the exact name.
+
+  The real APIs are checked by hand against the owner's throwaway tailnet
+  and a Headscale server (O6) in 7.5b.
+
 ## The OpenAPI document
 
 The `/v1` contract is `packages/protocol/openapi.yaml` (OpenAPI 3.1),
@@ -3003,6 +3051,59 @@ migrations.
     rowid order, the order the migration inserts them in (the source's
     physical order). That order is now defined. The TypeScript server's
     heap order depended on PostgreSQL's planner.
+- The import and the reverse export (step 7, slice 7.3a; internal
+  docs/design/go-step7.md decisions 2 to 5 and 16):
+  - `server/migration/bundle` is the bundle (`BUNDLE.md`, bundle-v1): one
+    JSON Lines stream, a header (format, manifest, encoding, direction,
+    release, frozen point, an empty `sequences` list), each table the
+    manifest copies or transforms in its order with its canonical rows,
+    and an end line with the counts and the stream's SHA-256, so a stream
+    cut short or damaged is refused whole. `testdata/small.jsonl` and
+    `testdata/refused.json` are the shared vectors the TypeScript export
+    reproduces. Rows sort as SQLite does: NULL first, text by its bytes.
+  - `canonical.DecodeRow` reads a canonical row back into the forms
+    varlatchd writes, and accepts it only when writing it again gives the
+    same bytes: a value written any other way is refused, never
+    normalized.
+  - `varlatchd admin migrate import --in <bundle> [--json]` (offline, the
+    data directory held and empty, `server/migration/migrate`): the bundle
+    is read whole first (counts and SHA-256), then into a fresh database
+    under a temporary name in the data directory (`.migrate-import-*`,
+    renamed to `varlatch.db` once committed, synced; what an import or a
+    reverse export that was killed left under its temporary name is
+    removed by the next import, a look-alike refused) in one write job, foreign keys
+    deferred to the commit (`PRAGMA defer_foreign_keys`, ON only, the one
+    assignment a job may make, and only on a database opened with
+    `storage.Options.DeferForeignKeys`, as the import's is: the schema's
+    tables refer to each other in a cycle), every copied row inserted as it is (ciphertexts byte for
+    byte; a left-out column, the session's token, must be null: the
+    export never reads it), and before the commit every foreign key checked
+    (`foreign_key_check`, the broken ones named), no sequence present, and
+    the Root KEK checked against the installation's canary. Anything that
+    fails keeps nothing.
+  - The transformations: each source session is inserted and deleted at
+    once, so `session_end_revokes_browser_credentials` revokes its browser
+    credentials and writes their `credential.revoked` events exactly as a
+    sign-out does (CLI hand-off credentials stay); the session itself is
+    never kept. Then `installation.migrated` is appended, carrying the
+    direction, the source release, the manifest version, the frozen point
+    and how many sessions ended and credentials the trigger revoked
+    (counted from the `credential.revoked` events it wrote, so an expired
+    browser credential, which it leaves as it is, is not counted), which
+    attributes those revocations to the migration.
+  - `varlatchd admin migrate export --reverse --out <bundle> [--json]`
+    writes the reverse bundle for the last TypeScript release's import
+    from a snapshot copy of the database: every Go browser session ended
+    and `installation.migrated` appended on the copy only, the database
+    itself unchanged. The bundle is a new file, mode 0600.
+  - Round trip (`TestRoundTrip`): twelve v0.22.0 parity fixtures' TypeScript
+    rows (47 tables with rows, among them the audit log, audit export plans'
+    `bytea`, webhooks, platform connections, the sync cursor, passkeys and a
+    signing key) imported and exported back are the same rows, byte for
+    byte, but for the documented transformations.
+  - **Accepted difference:** `installation.migrated` is an audit event of
+    the Go server (`GoOnlyEventTypes`); the last TypeScript release
+    (0.23.0, slice 7.2a) knows it too.
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the
@@ -3024,7 +3125,7 @@ migrations.
   `go/release/release.json` says the schema version, `compatibleFrom`,
   whether the release is rollback-safe and the previous release it was
   checked against; `build-assets.sh` attaches it as `release.json` with
-  the version (`go/lib/release` `Manifest`, format 1).
+  the version (`go/lib/release` `Manifest`, format 2).
   `server/db/schemadiff` classifies every change from the previous
   release's schema as additive, review (an enumeration that only gains
   values) or breaking, and `server/db/releasecheck` fails CI when the
@@ -3035,6 +3136,20 @@ migrations.
   new release on what the previous one wrote. What the schema does not
   show (a value the previous release misreads, an envelope format, a
   restriction kept in code) is G6's run and the release checklist.
+- The migration's rollback window (step 7, slice 7.6b; internal
+  docs/design/go-step7.md decision 17): the declaration also says what the
+  release does to a migration's rollback window:
+  - `reversibleTo` names the last TypeScript release (`0.23.0`): a reverse
+    migration of this release's data returns to it;
+  - or `endsRollbackWindow` is true: after it, `varlatch migrate
+    --rollback` can no longer go back. `Manifest.EndsRollbackWindow` and
+    `release.RollbackWindowNotice` are what `varlatch upgrade` (6.6b)
+    checks and shows before upgrading to such a release.
+
+  Exactly one of the two. A declaration with neither fails `releasecheck`,
+  and the release job's `check-assets.sh` refuses such a `release.json`.
+  Format 1 (rc.1 and rc.2) predates migrations: it is still read, as
+  ending no window.
 - `query/`: typed queries generated by sqlc from `schema.sql` and
   `queries/*.sql` with `sqlc.json` (boolean columns as `bool`). sqlc is
   pinned by the `tool` directive in `go.mod` (v1.31.1, `go tool sqlc`);

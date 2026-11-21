@@ -317,7 +317,11 @@ export function predates(inventory, feature, cliVersion) {
  * PASS, FAIL, N/A, PREDATES-CLI (the runner adds N/A lines for a suite it
  * did not start because the target lacks what the suite needs), or
  * TARGET-LACKS or CLIENT-LACKS, which only the runner gives (`runner: true`).
- * `errors`: { suite, message } for anything outside a check.
+ * `errors`: { suite, message, cause? } for anything outside a check;
+ * `cause: true` marks one the suite itself gave (its own ERROR line, or
+ * the failure that stopped the run while it was being started), which a
+ * check of that suite that did not report names before any error the
+ * runner derived (its exit, its end marker).
  * `cliVersion`: the CLI's verified version, or null for a CLI built from
  * source (no `predates-cli` result is accepted then).
  * `lacking`: Map(check id → the lacking operations it needs), from
@@ -328,10 +332,12 @@ export function predates(inventory, feature, cliVersion) {
  */
 export function evaluate({ inventory, reports, errors = [], cliVersion = null, cliSpec = null, lacking = new Map(), clientLacking = new Map() }) {
   const problems = errors.map((e) => `${e.suite}: ${e.message}`);
-  // Why a check did not report, when the run knows: its suite's first error
-  // (a fixture that did not start, a crash), else the run's stop. A check
-  // left unreported then names the failure behind it.
+  // Why a check did not report, when the run knows: its own suite's first
+  // cause (a fixture that did not start, its setup's failure), else its
+  // suite's first error (a crash), else the run's stop. A check left
+  // unreported then names the failure behind it, never another suite's.
   const suiteError = new Map();
+  for (const e of errors.filter((e) => e.cause)) if (!suiteError.has(e.suite)) suiteError.set(e.suite, e.message);
   for (const e of errors) if (!suiteError.has(e.suite)) suiteError.set(e.suite, e.message);
   const stopped = errors.find((e) => e.suite === "runner" && e.message.startsWith("the run stopped"))?.message;
   const unreported = (suite) => {
