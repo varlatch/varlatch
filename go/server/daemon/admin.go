@@ -204,10 +204,13 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runCertificateIssuances(cfg, rest, time.Now(), stdout, stderr)
 	case sub == "tailnet" && rest[0] == "probe-name":
 		return runTailnetProbe(cfg, rest, stdout, stderr)
-	case sub == "tailnet" && (rest[0] == "enroll" || rest[0] == "reaches"):
+	case sub == "tailnet" && (rest[0] == "enroll" || rest[0] == "reaches" || rest[0] == "take-name"):
 		c, _ := nodeArgs(rest)
-		if c.op == "enroll" {
+		switch c.op {
+		case "enroll":
 			return runTailnetEnroll(cfg, c, stdout, stderr)
+		case "take-name":
+			return runTailnetTakeName(cfg, c, stdout, stderr)
 		}
 		return runTailnetReaches(cfg, c, stdout, stderr)
 	case sub == "bootstrap-status":

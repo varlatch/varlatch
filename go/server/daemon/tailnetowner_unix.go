@@ -20,10 +20,11 @@ func ownedByMe(st fs.FileInfo) bool {
 }
 
 // giveToOwner gives the node's files a node command created as root (its
-// state directory, the pin, the hold, the listeners report, the lock) to
-// the data directory's owner, so the varlatchd that later serves as that
-// user can read them. Nothing when not root, or when root owns the data
-// directory. Symbolic links are changed themselves, never followed.
+// state directory, the pin, the hold, the listeners report, the lock, and
+// a restore's takeover journal and issuance count) to the data directory's
+// owner, so the varlatchd that later serves as that user can read them.
+// Nothing when not root, or when root owns the data directory. Symbolic
+// links are changed themselves, never followed.
 func giveToOwner(dataDir string, owner int) {
 	if os.Getuid() != 0 || owner <= 0 {
 		return
@@ -37,7 +38,7 @@ func giveToOwner(dataDir string, owner int) {
 		return
 	}
 	gid := int(s.Gid)
-	for _, name := range []string{tailnet.PinFile, tailnet.HoldFile, tailnet.ListenersFile, LockFile} {
+	for _, name := range []string{tailnet.PinFile, tailnet.HoldFile, tailnet.ListenersFile, LockFile, TakeoverFile, IssuanceFile} {
 		_ = os.Lchown(filepath.Join(dataDir, name), owner, gid)
 	}
 	_ = filepath.WalkDir(filepath.Join(dataDir, tailnet.StateDir), func(path string, _ fs.DirEntry, err error) error {
