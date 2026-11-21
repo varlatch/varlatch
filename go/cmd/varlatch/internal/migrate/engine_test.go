@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build linux
+
 package migrate
 
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -314,8 +315,6 @@ type fakeClock struct{ t time.Time }
 func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 func newClock() *fakeClock                   { return &fakeClock{t: time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)} }
-func randomBytes(n int) []byte               { b := make([]byte, n); _, _ = rand.Read(b); return b }
-func hexOf(b []byte) string                  { return hex.EncodeToString(b) }
 func phasesOf(j *Journal) (out []Phase) {
 	for _, s := range j.History {
 		out = append(out, s.Phase)
