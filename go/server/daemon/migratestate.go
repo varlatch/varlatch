@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
 )
@@ -73,6 +75,11 @@ type journalHead struct {
 	Format int    `json:"format"`
 	ID     string `json:"id"`
 	Phase  string `json:"phase"`
+	// WindowEnded is an upgrade's record that it ended the migration's
+	// rollback window (decision 17): no reverse starts after it.
+	WindowEnded *struct {
+		Release string `json:"release"`
+	} `json:"windowEnded"`
 }
 
 func parseJournal(b []byte) (journalHead, error) {
@@ -211,6 +218,31 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		if err != nil {
 			return fail(ExitFailure, "the data directory's journal: %v; nothing was written", err)
 		}
+		// The window's end is the Go side's record: checked, never changed
+		// once written, and kept when a journal of the same migration
+		// comes without it (migrate's source journal does not carry it).
+		next, err := journalWindow(b)
+		if err != nil {
+			return fail(ExitFailure, "%v; nothing was written", errWindowRecord)
+		}
+		if ok && old.ID == h.ID {
+			oldRaw, err := os.ReadFile(filepath.Join(cfg.DataDir, JournalFile))
+			if err != nil {
+				return fail(ExitFailure, "the data directory's journal: %v; nothing was written", err)
+			}
+			prev, err := journalWindow(oldRaw)
+			if err != nil {
+				return fail(ExitFailure, "the data directory's journal: %v; nothing was written", errWindowRecord)
+			}
+			switch {
+			case prev != nil && next == nil:
+				if b, err = withWindow(b, *prev); err != nil {
+					return fail(ExitFailure, "%v; nothing was written", err)
+				}
+			case prev != nil && *next != *prev:
+				return fail(ExitFailure, "the migration %s's rollback window ended already, with varlatchd %s: that record does not change; nothing was written", h.ID, prev.Release)
+			}
+		}
 		// Another migration's journal is replaced once that one was undone
 		// (released), or reversed and its database discarded (rolled back,
 		// then finished with its old data deleted).
@@ -343,6 +375,85 @@ func writeTransferGate(dataDir, id string, owner int) error {
 		return err
 	}
 	return writeDurably(filepath.Join(dataDir, backup.GateFile), b, owner)
+}
+
+// windowEnded is a journal's record that an upgrade ended the migration's
+// rollback window (varlatch upgrade, go-step7 decision 17).
+type windowEnded struct {
+	Release string `json:"release"`
+	At      string `json:"at"`
+}
+
+// errWindowRecord is a windowEnded that is not a release and a time; the
+// record's text is never repeated.
+var errWindowRecord = errors.New("the journal's windowEnded is not a release version and a time")
+
+// journalWindow is b's windowEnded, checked: nil when it has none.
+func journalWindow(b []byte) (*windowEnded, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, err
+	}
+	v, ok := raw["windowEnded"]
+	if !ok || string(v) == "null" {
+		return nil, nil
+	}
+	var w windowEnded
+	dec := json.NewDecoder(bytes.NewReader(v))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&w); err != nil || !release.ValidVersion(w.Release) {
+		return nil, errWindowRecord
+	}
+	if _, err := time.Parse(time.RFC3339Nano, w.At); err != nil {
+		return nil, errWindowRecord
+	}
+	return &w, nil
+}
+
+// sameButWindow is whether two journals are the same document but for
+// windowEnded (compared as JSON values, not bytes).
+func sameButWindow(a, b []byte) bool {
+	var x, y map[string]any
+	da, db := json.NewDecoder(bytes.NewReader(a)), json.NewDecoder(bytes.NewReader(b))
+	da.UseNumber()
+	db.UseNumber()
+	if da.Decode(&x) != nil || db.Decode(&y) != nil {
+		return false
+	}
+	delete(x, "windowEnded")
+	delete(y, "windowEnded")
+	return reflect.DeepEqual(x, y)
+}
+
+// onlyEndsWindow is whether next is old with a valid windowEnded added, and
+// nothing else changed: the one write of an open journal that is the
+// journal's word alone beside the running varlatchd (an upgrade ending the
+// rollback window).
+func onlyEndsWindow(old, next []byte) bool {
+	ow, oerr := journalWindow(old)
+	nw, nerr := journalWindow(next)
+	return oerr == nil && nerr == nil && ow == nil && nw != nil && sameButWindow(old, next)
+}
+
+// transferGateStands is whether the migration id's transfer gate stands
+// in dataDir; an unreadable gate counts as standing.
+func transferGateStands(dataDir, id string) bool {
+	g, err := backup.ReadGate(dataDir)
+	return err != nil || g != nil && g.Kind == "migration" && g.ID == id && g.Phase == "transfer"
+}
+
+// withWindow is the journal b with windowEnded set to w.
+func withWindow(b []byte, w windowEnded) ([]byte, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, err
+	}
+	v, err := json.Marshal(w)
+	if err != nil {
+		return nil, err
+	}
+	raw["windowEnded"] = v
+	return json.Marshal(raw)
 }
 
 // removeTransferGate removes the migration's gate, when it is this one's.

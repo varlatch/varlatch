@@ -274,6 +274,7 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | --- | --- | --- | --- |
 | Go standard library and runtime | the release's Go toolchain | BSD-3-Clause | varlatch, varlatchd |
 | filippo.io/edwards25519 | v1.2.0 | BSD-3-Clause | varlatchd |
+| github.com/andybalholm/brotli | v1.1.0 | MIT | varlatch |
 | github.com/apapsch/go-jsonmerge/v2 | v2.0.0 | MIT | varlatchd |
 | github.com/asaskevich/govalidator | v0.0.0-20230301143203-a9d515a09cc2 | MIT | varlatch, varlatchd |
 | github.com/aws/aws-sdk-go-v2 | v1.48.0 | Apache-2.0 | varlatch, varlatchd |
@@ -5422,6 +5423,30 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+````
+
+### github.com/andybalholm/brotli@v1.1.0 (Go)
+
+````text
+Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ````
 
 ### github.com/apapsch/go-jsonmerge/v2@v2.0.0 (Go)
