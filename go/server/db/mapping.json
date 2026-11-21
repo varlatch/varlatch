@@ -1674,7 +1674,8 @@
   },
   "added": {
     "tables": {
-      "schema_version": "The schema's version (db.go): replaces varlatch_migrations."
+      "schema_version": "The schema's version (db.go): replaces varlatch_migrations.",
+      "certificate_issuances": "The public HTTPS name's certificate issuance count (ADR-0059 Decision 9, step 6 decision 16): Go only, schema version 2."
     },
     "triggers": {
       "audit_events_no_delete": "As audit_events_no_update.",

@@ -140,7 +140,8 @@ func TestTailnetListener(t *testing.T) {
 	}
 	bearer := m[2]
 	waitReport(t, r, bearer, `"checks":{"listener":{"status":"pass"},"localApi":{"status":"pass"},"node":{"status":"pass"}}`)
-	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":null}`)
+	// The control server is the test's own (not Tailscale's): named.
+	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":null,"controlUrl":"http://`)
 	if st, err := os.Stat(filepath.Join(in.data, tailnet.StateDir)); err != nil || st.Mode().Perm() != 0o700 {
 		t.Fatalf("the node's state directory: %v %v", st, err)
 	}
@@ -383,7 +384,7 @@ func TestBrowserEndpoint(t *testing.T) {
 	}
 	bearer := m[2]
 	const endpoint = "https://varlatch.corp.ts.net:8443"
-	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":"`+endpoint+`"}`)
+	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":"`+endpoint+`","controlUrl":"http://`)
 	waitReport(t, r, bearer, `"checks":{"listener":{"status":"pass"},"browserTls":{"status":"pass","certificateNotAfter":"`)
 	if len(ca.Requested()) == 0 || ca.Requested()[0].Domain != "varlatch.corp.ts.net" {
 		t.Fatalf("the certificate requests: %+v", ca.Requested())

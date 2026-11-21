@@ -187,6 +187,14 @@ type Capability struct {
 	Targets          sql.NullString
 }
 
+type CertificateIssuance struct {
+	ID        int64
+	Name      string
+	StartedAt int64
+	Outcome   string
+	EndedAt   sql.NullInt64
+}
+
 type ContractRevision struct {
 	ID          string
 	ProjectID   string

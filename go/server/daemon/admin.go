@@ -16,6 +16,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/config"
@@ -53,7 +54,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && !conformance && !operator && !backup && !keys {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && sub != "migrate" && !conformance && !operator && !backup && !keys {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -71,6 +72,20 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		rest = append(rest, args[i])
+	}
+	// In the single-container image, admin refuses a key in its
+	// environment as serve does (lib/keyenv): the keys the configuration
+	// names, as far as they can be read, and the key variable names.
+	if os.Getenv(keyenv.ImageMarker) != "" {
+		keys := keyenv.Configured(path)
+		why := keyenv.Refusal(os.Environ(), keys...)
+		for _, k := range keys {
+			clear(k.Bytes)
+		}
+		if why != "" {
+			fmt.Fprintln(stderr, "varlatchd admin: "+why)
+			return ExitConfig
+		}
 	}
 	switch {
 	case sub == "outbound":
@@ -95,6 +110,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		}
 	case sub == "schema":
 		if _, _, msg := schemaArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "migrate":
+		if _, msg := parseMigrate(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
@@ -140,6 +160,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
+	case sub == "migrate":
+		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
 	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
@@ -150,7 +172,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json]  (each with [--config <file>])\n", msg)
+		"varlatchd admin schema status|upgrade [--json] | varlatchd admin migrate import|check|export --reverse  (each with [--config <file>])\n", msg)
 	return 64
 }
 

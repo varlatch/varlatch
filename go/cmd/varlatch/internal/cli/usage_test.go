@@ -86,7 +86,7 @@ func TestHelpIsTheUsageText(t *testing.T) {
 		}
 	}
 	for _, c := range commands {
-		help, ok := CommandHelp(c.name)
+		help, ok := commandHelp(c.name) // the TypeScript text but for an accepted difference (self-update-usage)
 		if !ok {
 			continue
 		}

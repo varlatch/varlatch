@@ -27,6 +27,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auditexport"
@@ -204,6 +205,21 @@ func serve(opts Options, h *hooks) int {
 	clear(material)
 	if err != nil {
 		return fail(ExitConfig, "the Root KEK file does not hold a Root KEK", "file", cfg.RootKEKFile, "error", err)
+	}
+	// No key in the environment (lib/keyenv): checked before anything is
+	// opened, against the Root KEK and, when one is configured, the BEK.
+	keys := []keyenv.Key{{What: keyenv.RootKEK, Bytes: rootKEK}}
+	if cfg.BackupKeyFile != "" {
+		if raw, err := os.ReadFile(cfg.BackupKeyFile); err == nil {
+			if bek, err := backup.ParseKey(string(raw)); err == nil {
+				keys = append(keys, keyenv.Key{What: keyenv.BEK, Bytes: bek})
+				defer clear(bek)
+			}
+			clear(raw)
+		}
+	}
+	if why := keyenv.Refusal(os.Environ(), keys...); why != "" {
+		return fail(ExitConfig, why)
 	}
 	if st, err := os.Stat(cfg.DataDir); err != nil || !st.IsDir() {
 		return fail(ExitFailure, "the data directory is not there", "dir", cfg.DataDir, "error", err)
@@ -480,6 +496,11 @@ func serve(opts Options, h *hooks) int {
 		apps.RunSweepLoop(ctx, githubapps.SweepInterval, admission.Enter)
 	}()
 	defer func() { cancel(); <-sweepDone }()
+	// A passkey's relying party is the public URL's host, and browsers
+	// refuse an IP address as one: the dashboard cannot sign in there.
+	if u := cfg.PublicURL; u != nil && net.ParseIP(u.Hostname()) != nil {
+		log.Warn("public_url names an IP address, which browsers refuse as a passkey's relying party: the dashboard cannot sign in at it. Use a host name, such as http://localhost:8686 on this machine", "publicUrl", u.String())
+	}
 	// Public HTTPS (step 6's decision 4), when listen_https is set: the
 	// certificate manager first, so the listeners report can show it.
 	var public *publictls.Manager
@@ -487,6 +508,9 @@ func serve(opts Options, h *hooks) int {
 		popts := publictls.Options{
 			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
 			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
+			// The issuance count, in the database: it survives a backup and
+			// a restore (step 6 decision 16).
+			Issuances: publictls.StoreIssuances{DB: store}, IssuanceLimit: publictls.LimitFor(p.CA),
 		}
 		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
 		if p.CARootFile != "" {

@@ -75,11 +75,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { deadlineSpawnSync } from "../lib/deadline.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { accessSync, appendFileSync, chmodSync, closeSync, constants, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixtureStatus } from "../lib/fixture-status.mjs";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
+import { reservePort } from "../lib/ports.mjs";
 import { issuerCertificate, ISSUER_SOURCE, OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady, PLATFORM_FAKE_HOSTS, platformFakesCertificate } from "./compose-stack.mjs";
 
 export const name = "go-binary";
@@ -105,16 +106,9 @@ export class NotImplementedYet extends Error {
   }
 }
 
-async function freePort() {
-  const server = createServer();
-  await new Promise((res, rej) => {
-    server.once("error", rej);
-    server.listen(0, "127.0.0.1", res);
-  });
-  const { port } = server.address();
-  await new Promise((res) => server.close(res));
-  return port;
-}
+// Below the ephemeral range, so no client socket holds one by the time a
+// fixture binds it, minutes after the install (lib/ports.mjs).
+const freePort = () => reservePort();
 
 function config(state, extra = "") {
   return [
@@ -581,16 +575,51 @@ export async function webhookReceiver(state, action) {
   }
   if (action !== "url") throw new Error(`unknown webhook-receiver action ${action}`);
   if (!(await receiverRequests(state))) {
-    const child = spawn(process.execPath, [RECEIVER, state.dir, String(state.receiverPort)], { stdio: "ignore", detached: true });
-    writeFileSync(state.receiverPidFile, `${child.pid}\n`);
-    child.unref();
-    for (let i = 0; i < 50 && !(await receiverRequests(state)); i++) await sleep(100);
-    if (!(await receiverRequests(state))) throw new Error("the webhook receiver did not start");
+    await startFixture(state, {
+      name: "the webhook receiver",
+      args: [RECEIVER, state.dir, String(state.receiverPort)],
+      pidFile: state.receiverPidFile,
+      port: state.receiverPort,
+      ready: () => receiverRequests(state),
+    });
   }
   return { url: `http://127.0.0.1:${state.receiverPort}` };
 }
 
 const ISSUER = fileURLToPath(ISSUER_SOURCE);
+
+/** How long a fixture process (the OIDC issuer, the webhook receiver) may take to answer after it starts. */
+const FIXTURE_START_MS = 30_000;
+
+/**
+ * Starts a fixture as a process of its own (detached; it exits once the
+ * installation's directory is gone) and waits until `ready()` answers. Its
+ * output goes to <dir>/<file>.log, so a fixture that does not start says
+ * why: the error names its exit (or that it still runs), its port and the
+ * log's last lines, instead of only that it did not start.
+ */
+async function startFixture(state, { name, args, pidFile, port, ready }) {
+  const log = join(state.dir, `${basenameOf(args[0])}.log`);
+  const fd = openSync(log, "a");
+  let exit = null;
+  const child = spawn(process.execPath, args, { stdio: ["ignore", fd, fd], detached: true });
+  closeSync(fd);
+  child.on("exit", (code, signal) => {
+    exit = signal ? `killed by ${signal}` : `exited ${code}`;
+  });
+  writeFileSync(pidFile, `${child.pid}\n`);
+  child.unref();
+  const deadline = Date.now() + FIXTURE_START_MS;
+  while (Date.now() < deadline && exit === null) {
+    if (await ready()) return;
+    await sleep(100);
+  }
+  if (exit === null && (await ready())) return;
+  const tail = (existsSync(log) ? readFileSync(log, "utf8") : "").trim().split("\n").slice(-8).join(" | ");
+  throw new Error(`${name} did not start: ${fixtureStatus(exit, alive(child.pid), FIXTURE_START_MS)}, on 127.0.0.1:${port}; its log (${log}): ${tail || "(empty)"}`);
+}
+
+const basenameOf = (file) => file.split(/[\\/]/).pop().replace(/\.c?js$/, "");
 
 function issuerControl(state, method, path, body) {
   return spawnSync(process.execPath, [ISSUER, "control", join(state.oidcDir, "cert.pem"), String(state.oidcPort), method, path, ...(body ? [body] : [])],
@@ -620,11 +649,13 @@ export async function oidcIssuer(state, action, ...args) {
   const running = () => issuerControl(state, "GET", "/_conformance/counts").status === 0;
   if (action === "start") {
     if (!running()) {
-      const child = spawn(process.execPath, [ISSUER, "serve", state.dir, state.oidcDir, String(state.oidcPort)], { stdio: "ignore", detached: true });
-      writeFileSync(state.oidcPidFile, `${child.pid}\n`);
-      child.unref();
-      for (let i = 0; i < 50 && !running(); i++) await sleep(100);
-      if (!running()) throw new Error("the oidc issuer did not start");
+      await startFixture(state, {
+        name: "the oidc issuer",
+        args: [ISSUER, "serve", state.dir, state.oidcDir, String(state.oidcPort)],
+        pidFile: state.oidcPidFile,
+        port: state.oidcPort,
+        ready: async () => running(),
+      });
     }
     return { issuer: `https://127.0.0.1:${state.oidcPort}` };
   }

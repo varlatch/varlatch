@@ -6,7 +6,7 @@ import { skillFiles } from "../src/agents/skill.js";
 import { generateTypesModule } from "../src/typegen.js";
 import { generatePythonModule } from "../src/typegenPython.js";
 import { ITEMS, contractItem, revision } from "./fixtures.js";
-import type { Exchange, TranscriptCase } from "./goKit.js";
+import { type Exchange, PLATFORM_PUBLIC_KEY_WORD, type TranscriptCase } from "./goKit.js";
 
 /**
  * The transcript cases, by area (one file each under
@@ -25,11 +25,12 @@ const HELP_TOPICS = [
 
 /**
  * `admin`'s help is a Go installation's in the Go CLI (go/README.md, the
- * accepted difference `admin-usage`); this recording is the TypeScript
- * CLI's Compose usage.
+ * accepted difference `admin-usage`), and `self-update`'s is the Go CLI's
+ * own forms (the accepted difference `self-update-usage`); these
+ * recordings are the TypeScript CLI's.
  */
 const helpDifferences = (topic: string): { differences?: string[] } =>
-  topic === "admin" ? { differences: ["admin-usage"] } : {};
+  topic === "admin" ? { differences: ["admin-usage"] } : topic === "self-update" ? { differences: ["self-update-usage"] } : {};
 
 const framework: TranscriptCase[] = [
   { id: "usage.no-command", title: "no command prints the usage on stdout, status 0", args: [] },
@@ -2156,6 +2157,526 @@ const admin57a: TranscriptCase[] = [
   a({ id: "member.unknown-option", title: "member is parsed strictly", args: ["member", "list", "--all"] }),
 ];
 
+// ---------------------------------------------------------------------------
+// 5.8b: sync check and sync push, against the fake platforms (goKit.ts's
+// platformServer: api.github.com, coolify.conformance.test and
+// convex.conformance.test). Every request a platform receives is recorded;
+// a case that sends none says so with an empty script. A value a case
+// stores appears only in what a platform receives, never in the output.
+
+const SYNC_TOKEN = "platform-token-canary-0001";
+const OTHER_TOKEN = "platform-token-canary-0002";
+const GH_ENV = { GITHUB_TOKEN: "github-token-must-not-be-read", GH_TOKEN: "gh-token-must-not-be-read" };
+const syncItem = (name: string, sensitive: boolean, value: string | null) => ({ name, sensitive, source: "self", value: sensitive ? null : value });
+const SYNC_ITEMS = [syncItem("API_TOKEN", true, null), syncItem("DATABASE_URL", true, null), syncItem("LOG_LEVEL", false, "info"), syncItem("PIN", true, null)];
+const SECRET_VALUES: Record<string, string> = { API_TOKEN: "api-token-value-canary", DATABASE_URL: "postgres://app:db-canary@db.internal/app", PIN: "q7Zx2Kw" };
+const syncEffective = (items: unknown[] = SYNC_ITEMS, contract: unknown = null) => ok(`${ENV}/effective-configuration?include=values`, { environmentId: "env_dev", items, manifest: { manifestVersion: 1, contract } });
+const disclose = (names: string[] = Object.keys(SECRET_VALUES)) => exch("POST", `${ENV}/disclosures`, 200, { items: names.map((n) => ({ name: n, versionId: `ver_${n}`, value: SECRET_VALUES[n] })), withheld: [] });
+const SYNC = (sub: string, ...rest: string[]) => ["sync", sub, ...rest];
+const GH = ["--platform", "github-actions", "--base", "acme", "--repo", "web"];
+const COOLIFY = ["--platform", "coolify", "--base", "https://coolify.conformance.test", "--app", "app-uuid-0001"];
+const COOLIFY_SVC = ["--platform", "coolify", "--base", "https://coolify.conformance.test", "--service", "svc-uuid-0001"];
+const CONVEX = ["--platform", "convex", "--base", "https://convex.conformance.test"];
+const TOKEN_ENV = { VARLATCH_SYNC_TOKEN: SYNC_TOKEN, ...GH_ENV };
+const plat = (method: string, path: string, status: number, answer?: unknown): Exchange => ({ method, path, status, ...(answer === undefined ? { headers: {} } : { answer }) });
+const COOLIFY_ROWS = [
+  { uuid: "r1", key: "API_TOKEN", value: SECRET_VALUES.API_TOKEN, is_preview: false },
+  { uuid: "r2", key: "LOG_LEVEL", value: "debug", is_preview: false },
+  { uuid: "r3", key: "OLD_FLAG", value: "x", is_preview: false },
+  { uuid: "r4", key: "COOLIFY_FQDN", value: "https://app.example", is_preview: false },
+];
+const coolifyEnvs = (rows: unknown = COOLIFY_ROWS, status = 200) => plat("GET", "/api/v1/applications/app-uuid-0001/envs", status, rows);
+const CONVEX_VARS = [{ name: "API_TOKEN", value: "something-else" }, { name: "LOG_LEVEL", value: "info" }, { name: "PIN", value: SECRET_VALUES.PIN }];
+const convexQuery = (vars: unknown = CONVEX_VARS, status = 200) => plat("POST", "/api/query", status, status === 200 ? { status: "success", value: vars } : { code: "Unauthenticated" });
+const ghKey = (path = "/repos/acme/web/actions/secrets") => plat("GET", `${path}/public-key`, 200, { key_id: "key-1", key: PLATFORM_PUBLIC_KEY_WORD });
+const ghPut = (name: string, status = 201, path = "/repos/acme/web/actions/secrets") => plat("PUT", `${path}/${name}`, status);
+const SERVICE_ROWS = [
+  { uuid: "s1", key: "API_TOKEN", value: SECRET_VALUES.API_TOKEN },
+  { uuid: "s2", key: "LOG_LEVEL", value: "info" },
+  { uuid: "s3", key: "PIN" },
+];
+const SERVICE_COMPOSE = "services:\n  backend:\n    environment:\n      LOG_LEVEL: warn\n      API_TOKEN: ${API_TOKEN}\n  dashboard:\n    image: x\n";
+const CYCLIC_COMPOSE = "services:\n  backend: &loop\n    environment:\n      API_TOKEN: ${API_TOKEN}\n    extends: *loop\n";
+const serviceRecord = (compose: string) => ({ uuid: "svc-uuid-0001", name: "convex", compose_parsing_version: 5, docker_compose_raw: compose, docker_compose: "services:\n  backend:\n    env_file: [.env]\n" });
+const sy = (c: Omit<TranscriptCase, "differences" | "files" | "cwd"> & { files?: Record<string, string>; cwd?: string; differences?: string[] }): TranscriptCase => v(c);
+
+const sync58b: TranscriptCase[] = [
+  // the command line
+  sy({ id: "sync.none", title: "sync alone (64)", args: ["sync"] }),
+  sy({ id: "sync.unknown", title: "an unknown subcommand (64)", args: ["sync", "pull"] }),
+  sy({ id: "check.no-platform", title: "check without --platform (64), nothing sent", args: SYNC("check", "--base", "acme") }),
+  sy({ id: "check.no-base", title: "check without --base (64)", args: SYNC("check", "--platform", "github-actions") }),
+  sy({ id: "check.unknown-option", title: "check is strict: a push-only option (64)", args: SYNC("check", ...GH, "--build-time", "true") }),
+  sy({ id: "check.unknown-platform", title: "an unknown platform (64), nothing sent", args: SYNC("check", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "check.bad-base", title: "a Coolify base that is not https (64), nothing sent", args: SYNC("check", "--platform", "coolify", "--base", "http://coolify.conformance.test", "--app", "app-uuid-0001"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "check.no-repo", title: "GitHub without --repo (64), nothing sent", args: SYNC("check", "--platform", "github-actions", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "push.no-platform", title: "push without --platform (64, after the context)", args: SYNC("push", "--base", "acme") }),
+  sy({ id: "push.no-base", title: "push without --base (64)", args: SYNC("push", "--platform", "convex") }),
+  sy({ id: "push.unknown-platform", title: "push to an unknown platform (1), nothing sent", args: SYNC("push", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "push.bad-destination", title: "push to Coolify with both --app and --service (1), nothing sent", args: SYNC("push", ...COOLIFY, "--service", "svc-uuid-0001"), env: TOKEN_ENV, platform: [] }),
+
+  // sync check, GitHub Actions: write-only, nothing read or disclosed
+  sy({ id: "check.github", title: "GitHub Actions: values are write-only, so no key is compared (2); nothing is disclosed", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.github.json", title: "the same, --json", args: SYNC("check", ...GH, "--gh-environment", "prod", "--json"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.github.contract", title: "with an active Contract: its items are the keys", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [{ ...syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }) }, ok("/v1/organizations/acme/projects/web/contract", { id: "crv_1", contract: { items: [{ name: "API_TOKEN" }, { name: "NEW_ONE" }, { name: "VARLATCH_RUN_CONTEXT" }] } })], platform: [] }),
+  sy({ id: "check.github.contract-403", title: "a Contract this identity may not read: the stored items, said", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }), { ...ok("/v1/organizations/acme/projects/web/contract", apiError(403, "PERMISSION_DENIED")), status: 403 }], platform: [] }),
+
+  // sync check, Coolify: the platform first, then only the Secrets it holds are disclosed
+  sy({ id: "check.coolify", title: "Coolify: read first, then the one Secret it holds disclosed; drift (1), never a value", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.json", title: "the same, --json", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.map", title: "--map renames; only the mapped key is compared", args: SYNC("check", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN=OLD_FLAG"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.exclude", title: "--exclude a prefix", args: SYNC("check", ...COOLIFY, "--exclude", "API_*", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs()] }),
+  sy({ id: "check.map-unknown", title: "--map naming no stored item (64, after reading the Environment)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.map-and-exclude", title: "--map with --exclude (64)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.coolify.unauthorized", title: "Coolify refuses the token: not checked (2), nothing disclosed", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs({ message: "Unauthenticated." }, 401)] }),
+  sy({ id: "check.coolify.garbage", title: "an answer that is not JSON: not checked (2), the body never repeated", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [{ ...coolifyEnvs(`<html>${SECRET_VALUES.API_TOKEN}</html>`), headers: { "content-type": "text/html" } }] }),
+  sy({ id: "check.disclosure-denied", title: "the disclosure refused: said, the Secret not compared", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), { ...exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED")) }], platform: [coolifyEnvs()] }),
+
+  // the credential's variable: --token-env, VARLATCH_SYNC_TOKEN, never GITHUB_TOKEN or GH_TOKEN
+  sy({ id: "check.token-env.given", title: "--token-env names the variable read", args: SYNC("check", ...COOLIFY, "--token-env", "MY_COOLIFY"), env: { MY_COOLIFY: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.token-env.absent", title: "without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.token-env.empty", title: "--token-env naming an empty variable: not checked (2), GITHUB_TOKEN and GH_TOKEN not read, nothing sent to the platform", args: SYNC("check", ...COOLIFY, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.token-env.unset", title: "no VARLATCH_SYNC_TOKEN and no --token-env: not checked (2)", args: SYNC("check", ...COOLIFY, "--json"), env: GH_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "push.token-env.given", title: "push: --token-env names the variable GitHub gets", args: SYNC("push", ...GH, "--token-env", "MY_GITHUB", "--map", "LOG_LEVEL"), env: { MY_GITHUB: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.token-env.absent", title: "push without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.token-env.empty", title: "push with --token-env naming an empty variable (1): nothing read, disclosed or sent", args: SYNC("push", ...GH, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, platform: [] }),
+
+  // sync check, Convex
+  sy({ id: "check.convex", title: "Convex: read, the Secrets it holds disclosed, compared", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
+  sy({ id: "check.convex.json", title: "the same, --json", args: SYNC("check", ...CONVEX, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
+  sy({ id: "check.convex.unauthorized", title: "Convex refuses the key: not checked (2)", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective()], platform: [convexQuery(null, 401)] }),
+
+  // sync push, GitHub Actions: the public key, then one sealed value per secret
+  sy({ id: "push.github", title: "GitHub Actions: every readable value, sealed to the repository's key", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("DATABASE_URL"), ghPut("LOG_LEVEL"), ghPut("PIN")] }),
+  sy({ id: "push.github.environment", title: "--gh-environment: the environment's secrets", args: SYNC("push", ...GH, "--gh-environment", "prod", "--map", "API_TOKEN=deploy_token"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey("/repos/acme/web/environments/prod/secrets"), ghPut("DEPLOY_TOKEN", 201, "/repos/acme/web/environments/prod/secrets")] }),
+  sy({ id: "push.github.skipped", title: "a name GitHub reserves and one not readable are skipped (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN=GITHUB_TOKEN", "--map", "MISSING", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.github.nothing", title: "nothing readable to push (1): the platform never reached", args: SYNC("push", ...GH, "--map", "MISSING"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
+  sy({ id: "push.github.exclude", title: "--exclude without --map", args: SYNC("push", ...GH, "--exclude", "PIN", "--exclude", "DATABASE_*"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.map-and-exclude", title: "--map with --exclude (1), after the disclosure, nothing sent to the platform", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
+  sy({ id: "push.github.put-fails", title: "one secret refused: failed, the rest pushed (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN", 422), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.disclosure-denied", title: "the disclosure refused: non-sensitive values only", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED"))], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.github.key-refused", title: "the public key refused: the adapter's error stops the push (TypeScript lets it escape)", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("GET", "/repos/acme/web/actions/secrets/public-key", 401, { message: "Bad credentials" })], differences: ["uncaught"] }),
+
+  // sync push, Coolify and Convex
+  sy({ id: "push.coolify", title: "Coolify application: read, then each value written", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" }), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r1" })] }),
+  sy({ id: "push.coolify.refused", title: "Coolify refuses a write: failed (1), the platform's words masked", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 422, { message: `token ${SYNC_TOKEN} may not write` })] }),
+  sy({ id: "check.coolify.service", title: "a Coolify service: its compose file's use of each name, said", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
+  sy({ id: "check.coolify.service.json", title: "the same, --json", args: SYNC("check", ...COOLIFY_SVC, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
+  sy({ id: "check.coolify.service.cycle", title: "a compose file with an alias inside its own anchor (step 4 defect 6): Go reports usage unchecked", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(CYCLIC_COMPOSE))], differences: ["compose-usage-unchecked"] }),
+  sy({ id: "check.github.environment-flag", title: "-e names the Environment compared", args: SYNC("check", ...GH, "-e", "dev"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "push.coolify.build-time", title: "Coolify application: --build-time and --platform-expands go with each write", args: SYNC("push", ...COOLIFY, "--build-time", "true", "--platform-expands", "SERVICE_URL_API,SERVICE_FQDN_API", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
+  // A disclosed item without a string value: none is withheld in check and not readable in push; a number never matches the platform's text
+  // (TypeScript throws pushing a number, so that push is pinned by internal/cli's TestPushReadsOnlyStringValues, not a transcript)
+  sy({ id: "check.coolify.value-absent", title: "a disclosed Secret without a value: withheld (2), never compared as text", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "undefined", is_preview: false }])] }),
+  sy({ id: "check.coolify.value-null", title: "a disclosed Secret whose value is null: withheld (2)", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: null }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "null", is_preview: false }])] }),
+  sy({ id: "check.coolify.value-number", title: "a disclosed Secret that is a number: differs (1) from the same digits on the platform", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: 12345 }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "12345", is_preview: false }])] }),
+  sy({ id: "push.coolify.value-absent", title: "a disclosed Secret without a value is not readable: not pushed (1)", args: SYNC("push", ...COOLIFY, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
+  // A push to a Coolify service: its compose file read first; a name Coolify sets is skipped, a value with $ the compose file copies is refused
+  sy({
+    id: "push.coolify.service",
+    title: "Coolify service: usage read before any write; MY_URL skipped (Coolify sets it), API_TOKEN refused ($ copied into the compose file), LOG_LEVEL written (1)",
+    args: SYNC("push", ...COOLIFY_SVC, "--map", "LOG_LEVEL", "--map", "API_TOKEN", "--map", "MY_URL"),
+    env: TOKEN_ENV,
+    server: [syncEffective([...SYNC_ITEMS, syncItem("MY_URL", false, "https://my.example")]), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: "tok$en-canary-value" }], withheld: [] })],
+    platform: [
+      plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord("services:\n  backend:\n    environment:\n      LOG_LEVEL: ${LOG_LEVEL}\n      API_TOKEN: ''\n      MY_URL: ${SERVICE_URL_BACKEND}\n")),
+      plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS),
+      plat("PATCH", "/api/v1/services/svc-uuid-0001/envs", 201, { uuid: "s2" }),
+    ],
+  }),
+  sy({ id: "push.convex", title: "Convex: one batch", args: SYNC("push", ...CONVEX, "--map", "LOG_LEVEL", "--map", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("POST", "/api/update_environment_variables", 200, {})] }),
+];
+
+// ---------------------------------------------------------------------------
+// 5.7b: Security (security status, report, controls and set). Times that
+// `ago` and `until` word are in 2100 ("just now") or in 2020 ("within a
+// day"), so the recording reads the same on any day; the process tests
+// hold the other wordings.
+
+const SEC = `${ORG}/security`;
+const SEC_CAPS = ["security.controls", "security.report", "security.approval-keys", "security.credential-review", "security.refused-destinations", "organizations.permissions", "organizations.incident-freeze", "audit.storage-export"];
+const META_SEC = { ...META, capabilities: SEC_CAPS };
+const META_CONTROLS = { ...META, capabilities: ["security.controls"] };
+const META_REVIEW = { ...META, capabilities: ["security.credential-review"] };
+const META_BARE = { serverVersion: "0.19.0", apiVersion: 1, capabilities: [] as string[] };
+const ctl = (control: string, extra: Record<string, unknown> = {}) => ({ control, mode: "off", config: null, version: 0, changedAt: null, changedBy: null, ...extra });
+const LIFETIME = ctl("credential-lifetime", { mode: "report", config: { defaultTtlSeconds: 43200, maxTtlSeconds: 2592000 }, version: 3, changedAt: "2026-11-10T09:00:00Z", changedBy: { id: ADA, name: "Ada" } });
+const STEP_UP = ctl("admin-step-up", { availableModes: ["off", "report", "enforce"], mode: "report", version: 1, changedAt: "2026-11-11T09:00:00.000Z" });
+const PASSKEY = ctl("passkey-verification", { availableModes: ["off", "report", "enforce"] });
+const PROTECTION = ctl("requirement-protection", { changedBy: { id: BOB, name: null } });
+const CONTROLS = { availableModes: ["off", "report"], items: [LIFETIME, STEP_UP, PASSKEY, PROTECTION] };
+const PLAIN_CONTROLS = { availableModes: ["off", "report"], items: [ctl("requirement-protection"), ctl("admin-step-up"), ctl("passkey-verification"), ctl("credential-lifetime")] };
+const metaAt = (meta: unknown) => ok("/v1/meta", meta);
+const controlsAt = (list: unknown = CONTROLS) => ok(`${SEC}/controls`, list);
+const patch = (control: string, status: number, answer: unknown) => exch("PATCH", `${SEC}/controls/${control}`, status, answer);
+const changed = (control: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ control, changed: true, loosened: false, ...extra });
+const SET = (...rest: string[]) => ["security", "set", ...rest];
+const SEC_APPROVAL = { ...APPROVAL, summary: { title: "Change credential-lifetime in Acme", changes: [{ field: "mode", from: "report", to: "off", loosens: true }] } };
+const loosening = (control: string) => patch(control, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }));
+const secPoll = (state: string) => ({ ...ok("/v1/me/approvals/apr_1", { ...SEC_APPROVAL, state }) });
+
+const FUTURE = "2100-01-01T00:00:00.000Z";
+const PAST = "2020-01-01T00:00:00.000Z";
+const reviewed = (id: string, extra: Record<string, unknown> = {}) => ({
+  id, name: null, createdAt: FUTURE, lastUsedAt: null, expiresAt: null, issuedBy: null, reasons: [] as string[],
+  identity: { id: SVC, name: "deployer", kind: "service", state: "live", disabledReason: null }, ...extra,
+});
+const CRED_REVIEW = {
+  idleDays: 30,
+  summary: { reviewed: 5, listed: 3 },
+  items: [
+    reviewed("crd_deploy", { name: "deployer credential", reasons: ["never-used", "no-expiry"], issuedBy: { id: ADA, name: "Ada" } }),
+    reviewed("crd_old", { name: "nightly", lastUsedAt: FUTURE, expiresAt: "2027-06-01T00:00:00Z", reasons: ["idle"], identity: { id: "idn_runner", name: "runner", kind: "workload", state: "disabled", disabledReason: null } }),
+    reviewed("crd_doomed", { createdAt: "not a time", lastUsedAt: FUTURE, reasons: ["no-expiry"], identity: { id: "idn_doomed", name: "doomed", kind: "broker", state: "disabled", disabledReason: "organization-deletion" } }),
+  ],
+  expiry: {
+    warningDays: 7,
+    summary: { soon: 1, expired: 1 },
+    items: [
+      { ...reviewed("crd_soon", { name: "ci" }), expiresAt: PAST, state: "soon" },
+      { ...reviewed("crd_gone"), expiresAt: FUTURE, state: "expired" },
+    ],
+  },
+};
+const QUIET_REVIEW = { idleDays: 30, summary: { reviewed: 1, listed: 0 }, items: [], expiry: { warningDays: 7, summary: { soon: 0, expired: 0 }, items: [] } };
+const OLD_REVIEW = { idleDays: 30, summary: { reviewed: 0, listed: 0 }, items: [] };
+const ONE_REVIEW = { idleDays: 14, summary: { reviewed: 1, listed: 1 }, items: [reviewed("crd_one", { reasons: ["never-used"] })], expiry: { warningDays: 7, summary: { soon: 2, expired: 0 }, items: [] } };
+const REFUSED = {
+  sinceDays: 30,
+  checked: 4,
+  unresolved: 1,
+  items: [
+    { kind: "webhook", name: "Deploy hook", id: "whk_1", scheme: "http", host: "10.0.0.5", port: 80, reason: "private_address", since: FUTURE },
+    { kind: "oidc-issuer", name: null, id: "oidc_1", scheme: "https", host: "issuer.internal", port: 443, reason: "mixed_answers", since: null },
+    { kind: "coolify", name: "", id: "conn_1", scheme: "https", host: "coolify.lan", port: 8443, reason: "port", since: null },
+  ],
+};
+const reviewAt = (review: unknown = CRED_REVIEW) => ok(`${SEC}/credential-review`, review);
+const refusedAt = (answer: unknown = REFUSED, status = 200) => ({ ...ok(`${SEC}/refused-destinations`, answer), status });
+const REPORT = ["security", "report"];
+
+const PERMS_ADMIN = { role: "admin", actions: ["organization.read", "organization.manage", "identity.manage", "policy.read"] };
+const PERMS_MEMBER = { role: "member", actions: ["organization.read"] };
+const entry = (operation: string, n: number, actor: Record<string, unknown> = { id: ADA, name: "Ada", kind: "human" }) => ({ operation, reason: "no-approval", actor, count: n });
+const CONTROL_REPORT = {
+  days: 30, since: "2026-10-20T00:00:00.000Z", generatedAt: "2026-11-19T00:00:00.000Z",
+  controls: [
+    { control: "admin-step-up", total: 7, currentHour: 2, pending: 0, entries: [entry("grant.create", 3), entry("identity.create", 2, { id: SVC, name: null, kind: "service" }), entry("role.update", 1), entry("team.delete", 1)] },
+    { control: "passkey-verification", total: 0, currentHour: 0, pending: 0, entries: [] },
+    { control: "credential-lifetime", total: 4, currentHour: 0, pending: 1, entries: [entry("credential.issue", 4, { id: BOB, name: "Bob" })] },
+  ],
+};
+const KEYS = { summary: { admins: 2, withoutTrustedKey: 1 }, items: [{ identity: { id: ADA, name: "Ada" }, trusted: 2, unconfirmed: 0 }, { identity: { id: BOB, name: "Bob" }, trusted: 0, unconfirmed: 1 }] };
+const REQUIREMENTS = { items: [{ id: "req_1", kind: "tailnet", target: { tier: "production" }, selector: { tailnet: "example.ts.net" } }] };
+const FROZEN = { freeze: { frozenAt: "2026-11-18T08:00:00Z", frozenBy: { id: ADA, name: "Ada" }, reason: "Laptop stolen\u0007 call Bob" } };
+const AUDIT_ACTIVE = {
+  enabled: true,
+  export: {
+    state: "active", destination: { endpoint: "https://s3.eu-central-1.example.com:9000/x", region: "eu-central-1", bucket: "audit", prefix: "", pathStyle: true },
+    retention: { mode: "compliance", days: 400 }, objectLock: "verified", streamId: "st_1", cursor: 42, lag: { pending: 1, oldestPendingAt: "2026-11-19T00:00:00.000Z" },
+    lastSuccessAt: "2026-11-19T01:00:00.000Z", lastAttemptAt: "2026-11-19T01:05:00.000Z", lastHeartbeatAt: "2026-11-19T01:00:00.000Z", lastError: "SlowDown: reduce your request rate",
+    failingSince: "2026-11-19T01:05:00.000Z", stoppedReason: null, unsupportedPlanFormat: null, keyCanRead: false, retentionReadable: null, version: 3, drainDeadline: null,
+  },
+};
+const AUDIT_DRAINING = {
+  enabled: false,
+  export: {
+    ...AUDIT_ACTIVE.export, state: "draining", drainDeadline: "2026-11-20T00:00:00.000Z", destination: { endpoint: "not a url", region: "x", bucket: "b", prefix: "logs/", pathStyle: false },
+    retention: null, objectLock: "not-set", lag: null, lastSuccessAt: null, lastAttemptAt: null, lastHeartbeatAt: null, lastError: null, stoppedReason: "object_conflict", unsupportedPlanFormat: 2, keyCanRead: null,
+  },
+};
+const AUDIT_OFF = { enabled: false, export: { ...AUDIT_ACTIVE.export, state: "removed" } };
+const AUDIT_NONE = { enabled: true, export: null };
+const statusAt = (o: { meta?: unknown; perms?: unknown; freeze?: unknown; list?: unknown; report?: Exchange | null; keys?: Exchange | null; review?: Exchange | null; reqs?: Exchange | null; audit?: Exchange | null } = {}): Exchange[] => [
+  metaAt(o.meta ?? META_SEC),
+  ...(o.perms === null ? [] : [ok(`${ORG}/me/permissions`, o.perms ?? PERMS_ADMIN)]),
+  ...(o.freeze === null ? [] : [ok(`${ORG}/incident-freeze`, o.freeze ?? { freeze: null })]),
+  controlsAt(o.list ?? CONTROLS),
+  ...(o.report === null ? [] : [o.report ?? ok(`${SEC}/control-report?days=30`, CONTROL_REPORT)]),
+  ...(o.keys === null ? [] : [o.keys ?? ok(`${SEC}/approval-keys`, KEYS)]),
+  ...(o.review === null ? [] : [o.review ?? reviewAt()]),
+  ...(o.reqs === null ? [] : [o.reqs ?? ok(`${ORG}/requirements`, REQUIREMENTS)]),
+  ...(o.audit === null ? [] : [o.audit ?? ok(`${ORG}/audit-export`, AUDIT_ACTIVE)]),
+];
+const STATUS = ["security", "status"];
+const UNCAUGHT = ["uncaught"];
+
+const security57b: TranscriptCase[] = [
+  // security controls
+  a({ id: "controls.human", title: "security controls: each control's mode, settings, version and last change", args: ["security", "controls"], server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.json", title: "security controls --json: the organization, then the server's list", args: ["security", "controls", "--json"], server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.no-enforce", title: "a server that enforces nothing yet", args: ["security", "controls"], server: [metaAt(META_CONTROLS), controlsAt(PLAIN_CONTROLS)] }),
+  a({ id: "controls.empty", title: "a server listing no control", args: ["security", "controls"], server: [metaAt(META_CONTROLS), controlsAt({ availableModes: ["off"], items: [] })] }),
+  a({ id: "controls.no-capability", title: "a server without security controls: its version and the capability named (1)", args: ["security", "controls"], server: [metaAt(META_BARE)] }),
+  a({ id: "controls.odd-version", title: "a server version that is not a version: an older release", args: ["security", "controls"], server: [metaAt({ ...META_BARE, serverVersion: "dev build" })] }),
+  a({ id: "controls.refused", title: "the list refused: the server's error", args: ["security", "controls"], server: [metaAt(META_SEC), { ...controlsAt(apiError(403, "PERMISSION_DENIED")), status: 403 }] }),
+  a({ id: "controls.outside", title: "outside a repository: --org and --server", args: ["security", "controls", "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.outside-default", title: "outside a repository, the only credential's server and --org", args: ["security", "controls", "--org", "acme"], ...OUTSIDE, server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "controls.outside-no-org", title: "outside a repository without --org (64)", args: ["security", "controls"], ...OUTSIDE }),
+  a({ id: "controls.org-flag", title: "--org names another organization inside a repository", args: ["security", "controls", "--org", "other"], server: [metaAt(META_SEC), ok("/v1/organizations/other/security/controls", CONTROLS)] }),
+  a({ id: "controls.bad-option", title: "an unknown option (64)", args: ["security", "controls", "--jsno"] }),
+  a({ id: "controls.extra", title: "an extra argument (64)", args: ["security", "controls", "now"] }),
+  a({ id: "controls.not-signed-in", title: "no credential (77)", args: ["security", "controls"], files: NOT_SIGNED_IN }),
+  a({ id: "controls.items-not-a-list", title: "items of another shape stops controls (TypeScript throws a TypeError)", args: ["security", "controls"], server: [metaAt(META_SEC), controlsAt({ availableModes: ["off"], items: { a: 1 } })], differences: UNCAUGHT }),
+
+  // security set: the command line, before any request
+  a({ id: "set.usage.none", title: "set without a control and a mode (64)", args: SET() }),
+  a({ id: "set.usage.mode-missing", title: "set without a mode (64)", args: SET("admin-step-up") }),
+  a({ id: "set.usage.control", title: "an unknown control: the controls listed (64)", args: SET("mfa", "report") }),
+  a({ id: "set.usage.mode", title: "an unknown mode: the modes listed (64)", args: SET("admin-step-up", "strict") }),
+  a({ id: "set.usage.ttl-zero", title: "--default-ttl 0 (64)", args: SET("credential-lifetime", "report", "--default-ttl", "0") }),
+  a({ id: "set.usage.ttl-word", title: "--max-ttl that is not a number (64)", args: SET("credential-lifetime", "report", "--max-ttl", "1d") }),
+  a({ id: "set.usage.ttl-long", title: "--max-ttl of eleven digits (64)", args: SET("credential-lifetime", "report", "--max-ttl", "12345678901") }),
+  a({ id: "set.usage.ttl-other-control", title: "lifetimes with another control (64)", args: SET("admin-step-up", "report", "--max-ttl", "60") }),
+  a({ id: "set.usage.clear-other-control", title: "--clear-config with another control (64)", args: SET("passkey-verification", "off", "--clear-config") }),
+  a({ id: "set.usage.clear-and-ttl", title: "--clear-config with a lifetime (64)", args: SET("credential-lifetime", "off", "--clear-config", "--default-ttl", "60") }),
+  a({ id: "set.usage.default-over-max", title: "--default-ttl above --max-ttl (64)", args: SET("credential-lifetime", "report", "--default-ttl", "7200", "--max-ttl", "3600") }),
+  a({ id: "set.usage.extra", title: "a third argument (64)", args: SET("admin-step-up", "report", "now") }),
+  a({ id: "set.usage.outside", title: "outside a repository without --org (64, after the arguments are checked)", args: SET("admin-step-up", "report"), ...OUTSIDE }),
+
+  // security set: changes
+  a({ id: "set.tighten", title: "turning a control up: applied at once", args: SET("passkey-verification", "report"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "report", version: 1, changedAt: "2026-11-19T10:00:00.000Z", changedBy: { id: ADA, name: "Ada" } }))] }),
+  a({ id: "set.tighten.json", title: "the same, --json: the organization, then the server's change", args: SET("passkey-verification", "report", "--json"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "report", version: 1 }))] }),
+  a({ id: "set.already", title: "the mode it already has: nothing changed", args: SET("credential-lifetime", "report"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, { control: LIFETIME, changed: false, loosened: false })] }),
+  a({ id: "set.already.plain", title: "the same without settings", args: SET("admin-step-up", "report"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 200, { control: STEP_UP, changed: false, loosened: false })] }),
+  a({ id: "set.default-ttl", title: "--default-ttl keeps the maximum the control has", args: SET("credential-lifetime", "report", "--default-ttl", "3600"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, changed({ ...LIFETIME, config: { defaultTtlSeconds: 3600, maxTtlSeconds: 2592000 }, version: 4 }))] }),
+  a({ id: "set.max-ttl.odd", title: "--max-ttl of 90 seconds; a lifetime in minutes", args: SET("credential-lifetime", "report", "--default-ttl", "60", "--max-ttl", "90"), server: [metaAt(META_SEC), controlsAt(), patch("credential-lifetime", 200, changed({ ...LIFETIME, config: { defaultTtlSeconds: 60, maxTtlSeconds: 90 }, version: 4 }))] }),
+  a({ id: "set.ttl-without-lifetimes", title: "one lifetime for a control with none yet (64, after reading it)", args: SET("credential-lifetime", "report", "--max-ttl", "3600"), server: [metaAt(META_SEC), controlsAt(PLAIN_CONTROLS)] }),
+  a({ id: "set.default-over-current-max", title: "--default-ttl above the control's maximum (64, after reading it)", args: SET("credential-lifetime", "report", "--default-ttl", "9999999"), server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "set.enforce-step-up", title: "admin-step-up to enforce: what it means from now on", args: SET("admin-step-up", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "enforce", version: 2 }))] }),
+  a({ id: "set.enforce-passkey", title: "passkey-verification to enforce: what it means from now on", args: SET("passkey-verification", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("passkey-verification", 200, changed({ ...PASSKEY, mode: "enforce", version: 1 }))] }),
+  a({ id: "set.not-offered", title: "a mode this server does not offer for the control (1, nothing sent)", args: SET("credential-lifetime", "enforce"), server: [metaAt(META_SEC), controlsAt()] }),
+  a({ id: "set.no-such-control", title: "a control this server does not list (1, nothing sent)", args: SET("passkey-verification", "report"), server: [metaAt(META_SEC), controlsAt({ ...CONTROLS, items: [LIFETIME] })] }),
+  a({ id: "set.no-capability", title: "a server without security controls (1)", args: SET("admin-step-up", "report"), server: [metaAt(META_BARE)] }),
+  a({ id: "set.mode-unavailable", title: "the server refuses the mode: its words, nothing changed (1)", args: SET("admin-step-up", "enforce"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 409, apiError(409, "CONTROL_MODE_UNAVAILABLE", "enforce is not available for admin-step-up"))] }),
+  a({ id: "set.version-conflict", title: "the control changed meanwhile: run it again (1)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 409, apiError(409, "VERSION_CONFLICT", "version 1 is not current"))] }),
+  a({ id: "set.refused", title: "another error: the server's error", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), patch("admin-step-up", 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "set.clear-config.assisted", title: "loosening in assisted mode: the approval to give, the command to run again (75)", args: ["--assisted", ...SET("credential-lifetime", "off", "--clear-config")], server: [metaAt(META_SEC), controlsAt(), loosening("credential-lifetime")] }),
+  a({ id: "set.loosen.approved", title: "loosening: waits for the approval, then sends the change again with it", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), loosening("admin-step-up"), secPoll("approved"), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "off", version: 2 }, { loosened: true }))] }),
+  a({ id: "set.loosen.cancelled", title: "loosening: the approval cancelled (77)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt(), loosening("admin-step-up"), secPoll("closed")] }),
+  a({ id: "set.resume", title: "--approval <id>: waits for it before the change, then sends it with the approval", args: ["--approval", "apr_1", ...SET("admin-step-up", "off", "--json")], server: [metaAt(META_SEC), controlsAt(), secPoll("approved"), patch("admin-step-up", 200, changed({ ...STEP_UP, mode: "off", version: 2 }, { loosened: true }))] }),
+  a({ id: "set.list-not-a-list", title: "items of another shape stops set before any change (TypeScript throws a TypeError)", args: SET("admin-step-up", "off"), server: [metaAt(META_SEC), controlsAt({ availableModes: ["off"], items: null })], differences: UNCAUGHT }),
+
+  // security report
+  a({ id: "report.human", title: "security report: the review by reason, the expiry warnings and the refused destinations", args: REPORT, server: [metaAt(META_SEC), reviewAt(), refusedAt()] }),
+  a({ id: "report.json", title: "security report --json", args: [...REPORT, "--json"], server: [metaAt(META_SEC), reviewAt(), refusedAt()] }),
+  a({ id: "report.review-only", title: "a server without refused destinations: the review alone", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(ONE_REVIEW)] }),
+  a({ id: "report.review-only.json", title: "the same, --json: no refusedDestinations", args: [...REPORT, "--json"], server: [metaAt(META_REVIEW), reviewAt(ONE_REVIEW)] }),
+  a({ id: "report.quiet", title: "nothing to look at", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(QUIET_REVIEW)] }),
+  a({ id: "report.before-expiry", title: "a server before expiry warnings: no expiry line", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(OLD_REVIEW)] }),
+  a({ id: "report.refused-403", title: "refused destinations not permitted: said, and null in --json", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(403, "PERMISSION_DENIED"), 403)] }),
+  a({ id: "report.refused-404.json", title: "hidden (404): refusedDestinations null", args: [...REPORT, "--json"], server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(404, "RESOURCE_NOT_FOUND"), 404)] }),
+  a({ id: "report.refused-500", title: "refused destinations failing otherwise: the server's error", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt(apiError(500, "INTERNAL"), 500)] }),
+  a({ id: "report.refused-none", title: "every destination checked, none refused", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 3, unresolved: 0, items: [] })] }),
+  a({ id: "report.refused-no-destinations", title: "no destinations configured", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 0, unresolved: 0, items: [] })] }),
+  a({ id: "report.refused-unresolved", title: "none refused of those checked; one name did not resolve", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, checked: 2, unresolved: 1, items: [] })] }),
+  a({ id: "report.refused-unresolved-old", title: "the same from a server that does not count what it checked", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, unresolved: 2, items: [] })] }),
+  a({ id: "report.refused-old-server", title: "a server that sends neither count: all clear", args: REPORT, server: [metaAt(META_SEC), reviewAt(QUIET_REVIEW), refusedAt({ sinceDays: 30, items: [] })] }),
+  a({ id: "report.no-capability", title: "a server without the credential review (1)", args: REPORT, server: [metaAt(META_CONTROLS)] }),
+  a({ id: "report.outside", title: "outside a repository: --org and --server", args: [...REPORT, "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: [metaAt(META_REVIEW), reviewAt(QUIET_REVIEW)] }),
+  a({ id: "report.outside-no-org", title: "outside a repository without --org (64)", args: REPORT, ...OUTSIDE }),
+  a({ id: "report.usage.bare", title: "security alone (64)", args: ["security"] }),
+  a({ id: "report.usage.unknown", title: "an unknown subcommand (64)", args: ["security", "audit"] }),
+  a({ id: "report.usage.extra", title: "report with an extra argument (64)", args: [...REPORT, "extra"] }),
+  a({ id: "report.usage.option", title: "report with an unknown option (64)", args: [...REPORT, "--jsno"] }),
+  a({ id: "report.not-signed-in", title: "no credential (77)", args: REPORT, files: NOT_SIGNED_IN }),
+  a({ id: "report.review-null", title: "a review of another shape stops report (TypeScript throws a TypeError)", args: REPORT, server: [metaAt(META_REVIEW), reviewAt(null)], differences: UNCAUGHT }),
+
+  // security status
+  a({ id: "status.full", title: "security status: the freeze, controls with counts, keys, credentials, requirements, the audit export, the checklist", args: STATUS, server: statusAt({ freeze: FROZEN }) }),
+  a({ id: "status.full.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ freeze: FROZEN }) }),
+  a({ id: "status.member", title: "a member: only the controls; what needs more is named, never asked for", args: STATUS, server: statusAt({ perms: PERMS_MEMBER, report: null, keys: null, review: null, reqs: null, audit: null }) }),
+  a({ id: "status.member.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ perms: PERMS_MEMBER, report: null, keys: null, review: null, reqs: null, audit: null }) }),
+  a({ id: "status.old-server", title: "a server with only the controls: the rest not offered; Requirements still asked", args: STATUS, server: statusAt({ meta: META_CONTROLS, perms: null, freeze: null, report: null, keys: null, review: null, audit: null, list: PLAIN_CONTROLS }) }),
+  a({ id: "status.refused", title: "a server that cannot say what the caller holds: refusals turn into not shown", args: STATUS, server: statusAt({ meta: { ...META, capabilities: SEC_CAPS.filter((c) => c !== "organizations.permissions") }, perms: null, report: { ...ok(`${SEC}/control-report?days=30`, apiError(403, "PERMISSION_DENIED")), status: 403 }, keys: null, review: { ...reviewAt(apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }, audit: { ...ok(`${ORG}/audit-export`, apiError(403, "PERMISSION_DENIED")), status: 403 } }) }),
+  a({ id: "status.refused.json", title: "the same, --json", args: [...STATUS, "--json"], server: statusAt({ meta: { ...META, capabilities: SEC_CAPS.filter((c) => c !== "organizations.permissions") }, perms: null, report: { ...ok(`${SEC}/control-report?days=30`, apiError(403, "PERMISSION_DENIED")), status: 403 }, keys: null, review: { ...reviewAt(apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }, audit: { ...ok(`${ORG}/audit-export`, apiError(403, "PERMISSION_DENIED")), status: 403 } }) }),
+  a({ id: "status.audit-off", title: "the audit export stopped by the host operator, and removed", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_OFF), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.audit-none", title: "no audit export yet", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_NONE), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.audit-draining", title: "a draining export: its deadline, the conflict and the plan format it cannot upload", args: STATUS, server: statusAt({ audit: ok(`${ORG}/audit-export`, AUDIT_DRAINING), review: reviewAt(QUIET_REVIEW) }) }),
+  a({ id: "status.all-off", title: "every control off, no counts", args: STATUS, server: statusAt({ list: PLAIN_CONTROLS, report: ok(`${SEC}/control-report?days=30`, { days: 7, since: PAST, generatedAt: PAST, controls: [] }), keys: ok(`${SEC}/approval-keys`, { summary: { admins: 1, withoutTrustedKey: 0 }, items: [{ identity: { id: ADA, name: "Ada" }, trusted: 1, unconfirmed: 0 }] }), review: reviewAt(QUIET_REVIEW), reqs: ok(`${ORG}/requirements`, { items: [] }), audit: ok(`${ORG}/audit-export`, AUDIT_NONE) }) }),
+  a({ id: "status.audit-error", title: "the audit export failing otherwise: the server's error", args: STATUS, server: statusAt({ audit: { ...ok(`${ORG}/audit-export`, apiError(500, "INTERNAL")), status: 500 } }) }),
+  a({ id: "status.no-capability", title: "a server without security controls (1)", args: STATUS, server: [metaAt(META_BARE)] }),
+  a({ id: "status.outside", title: "outside a repository: --org and --server", args: [...STATUS, "--org", "acme", "--server", "{{server}}"], ...OUTSIDE, server: statusAt({ meta: META_CONTROLS, perms: null, freeze: null, report: null, keys: null, review: null, audit: null, list: PLAIN_CONTROLS }) }),
+  a({ id: "status.outside-no-org", title: "outside a repository without --org (64)", args: STATUS, ...OUTSIDE }),
+  a({ id: "status.bad-option", title: "an unknown option (64)", args: [...STATUS, "--all"] }),
+  a({ id: "status.not-signed-in", title: "no credential (77)", args: STATUS, files: NOT_SIGNED_IN }),
+  a({ id: "status.items-not-a-list", title: "a list of another shape stops status (TypeScript throws a TypeError)", args: STATUS, server: statusAt({ list: { availableModes: ["off"], items: "x" }, report: null, keys: null, review: null, reqs: null, audit: null, perms: { actions: [] } }), differences: UNCAUGHT }),
+];
+
+// ---------------------------------------------------------------------------
+// 5.7c: the audit export, deletion and freezes (audit-export, audit export
+// [--deleted-org], project delete, org delete/deletion, org
+// freeze/unfreeze). Every refusal before the write is recorded with the
+// requests it sent (none, for a command line that is wrong).
+
+const META_DESTROY = { ...META, capabilities: ["projects.delete", "organizations.delete", "organizations.incident-freeze", "audit.storage-export"] };
+const META_DELETE_ONLY = { ...META, capabilities: ["organizations.delete"] };
+const metaOf = (meta: unknown = META_DESTROY) => ok("/v1/meta", meta);
+const DELETED = { projectId: "prj_1", slug: "web", environments: 3, values: 12, versionsErased: 40, capabilitiesRevoked: 2, targetsRevoked: 1, teamLinksRemoved: 4 };
+const PD = (...rest: string[]) => ["project", "delete", ...rest];
+const OD = (...rest: string[]) => ["org", "delete", ...rest];
+const deletionOf = (extra: Record<string, unknown> = {}) => ({ id: "del_1", scheduledAt: "2026-11-19T10:00:00.000Z", requestedBy: "Ada", runAfter: FUTURE, approvalRequired: true, approvedBy: null, approvedAt: null, ...extra });
+const ORG_ROW = { id: "org_acme", slug: "acme", name: "Acme" };
+const scheduleAt = (body: unknown = deletionOf()) => exch("POST", `${ORG}/deletion`, 201, body);
+const auditAt = (answer: unknown = AUDIT_ACTIVE, status = 200) => ({ ...ok(`${ORG}/audit-export`, answer), status });
+const FROZEN_AT = { id: "frz_1", frozenAt: "2026-11-19T09:00:00Z", frozenBy: { id: ADA, name: "Ada" }, reason: "Laptop stolen" };
+const FZ = (...rest: string[]) => ["org", "freeze", "acme", ...rest];
+const UNFZ = (...rest: string[]) => ["org", "unfreeze", "acme", ...rest];
+const freezeState = (extra: Record<string, unknown> = {}) => ok(`${ORG}/incident-freeze`, { freeze: FROZEN_AT, resumingTargets: [], ...extra });
+const liftAt = (status: number, answer: unknown) => exch("POST", `${ORG}/incident-freeze/frz_1/lift`, status, answer);
+const LIFTED = { freeze: { ...FROZEN_AT, liftedAt: "2026-11-19T11:00:00.000Z" }, resumingTargets: [{ id: "stg_1", projectSlug: "web", environmentName: "prod", platform: "coolify", destination: "app-1" }] };
+const LIFT_APPROVAL = { ...APPROVAL, summary: { title: "Lift the incident freeze of Acme", changes: [{ field: "freeze", from: "frozen", to: "lifted", loosens: true }] } };
+const liftPoll = (state: string) => ok("/v1/me/approvals/apr_1", { ...LIFT_APPROVAL, state });
+
+const AE = (...rest: string[]) => ["audit-export", ...rest];
+const SECRET_FILE = { "secret.txt": "fake-secret-access-key-0001\n" };
+const DEST = ["--endpoint", "https://s3.example.com", "--region", "eu-west-1", "--bucket", "audit"];
+const KEY = ["--access-key-id", "AKIAFAKE0001", "--secret-file", "{{dir}}/secret.txt"];
+const withSecret = (files: Record<string, string> = SIGNED_IN) => ({ ...files, ...SECRET_FILE });
+const EXPORT = AUDIT_ACTIVE.export;
+const changedExport = (extra: Record<string, unknown> = {}) => ({ changed: true, loosened: false, export: { ...EXPORT, version: 4, ...extra } });
+const CHECK_OK = { ok: true, objectLock: "accepted", keyCanRead: true, message: null };
+const NDJSON = '{"id":"evt_1","eventType":"organization.created"}\n{"id":"evt_2","eventType":"project.created"}\n';
+
+const audit57c: TranscriptCase[] = [
+  // project delete
+  a({ id: "pd.no-slug", title: "project delete without a slug (64)", args: PD() }),
+  a({ id: "pd.no-confirm", title: "without --confirm: what it erases and the command to confirm, nothing sent (64)", args: PD("web") }),
+  a({ id: "pd.no-confirm.server", title: "the same with --server: the command repeats it", args: PD("web", "--server", "{{server}}") }),
+  a({ id: "pd.no-confirm.outside", title: "outside a repository: <org> in the command (64)", args: PD("web"), ...OUTSIDE }),
+  a({ id: "pd.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...PD("web")] }),
+  a({ id: "pd.wrong-confirm", title: "--confirm naming another Project (64), nothing sent", args: PD("web", "--confirm", "api") }),
+  a({ id: "pd.extra", title: "an extra argument (64)", args: PD("web", "api", "--confirm", "web") }),
+  a({ id: "pd.deleted", title: "--confirm: deleted, with what was erased and what deletion does not reach", args: PD("web", "--confirm", "web"), server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.assisted-confirmed", title: "assisted mode with --confirm deletes", args: ["--assisted", ...PD("web", "--confirm", "web")], server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.outside", title: "outside a repository with --org and --server", args: PD("web", "--confirm", "web", "--org", "acme", "--server", "{{server}}"), ...OUTSIDE, server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.outside-no-org", title: "outside a repository with --confirm but no --org (64), nothing sent", args: PD("web", "--confirm", "web"), ...OUTSIDE }),
+  a({ id: "pd.no-capability", title: "a server that cannot delete projects (1), nothing deleted", args: PD("web", "--confirm", "web"), server: [metaOf(META_BARE)] }),
+  a({ id: "pd.refused", title: "the deletion refused: the server's error", args: PD("web", "--confirm", "web"), server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "pd.not-signed-in", title: "no credential (77), nothing sent", args: PD("web", "--confirm", "web"), files: NOT_SIGNED_IN }),
+
+  // org delete and org deletion: the command line
+  a({ id: "od.no-slug", title: "org delete without a slug (64)", args: OD() }),
+  a({ id: "od.no-confirm", title: "scheduling without --confirm: what it does and the command (64), nothing sent", args: OD("acme") }),
+  a({ id: "od.no-confirm.after", title: "the same with --after: the command keeps it", args: OD("acme", "--after", "7", "--server", "{{server}}") }),
+  a({ id: "od.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...OD("acme")] }),
+  a({ id: "od.wrong-confirm", title: "--confirm naming another Organization (64)", args: OD("acme", "--confirm", "other") }),
+  a({ id: "od.approve-and-cancel", title: "--approve with --cancel (64)", args: OD("acme", "--approve", "del_1", "--cancel", "del_1") }),
+  a({ id: "od.cancel-confirm", title: "a cancel with --confirm (64)", args: OD("acme", "--cancel", "del_1", "--confirm", "acme") }),
+  a({ id: "od.cancel-after", title: "--after with --cancel (64)", args: OD("acme", "--cancel", "del_1", "--after", "3") }),
+  a({ id: "od.approve-after", title: "--after with --approve (64)", args: OD("acme", "--approve", "del_1", "--after", "3") }),
+  a({ id: "od.after-zero", title: "--after 0 (64)", args: OD("acme", "--confirm", "acme", "--after", "0") }),
+  a({ id: "od.after-31", title: "--after 31 (64)", args: OD("acme", "--confirm", "acme", "--after", "31") }),
+  a({ id: "od.after-word", title: "--after that is not a number (64)", args: OD("acme", "--confirm", "acme", "--after", "1w") }),
+  a({ id: "od.approve-assisted", title: "approving in assisted mode without --confirm (78), nothing sent", args: ["--assisted", ...OD("acme", "--approve", "del_1")] }),
+
+  // org delete: requests
+  a({ id: "od.schedule", title: "scheduled: the request, what it suspends, the tombstone export, the limits, the audit export's key", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt()] }),
+  a({ id: "od.schedule.after", title: "--after 7 is sent; a server without audit export says nothing of it", args: OD("acme", "--confirm", "acme", "--after", "7"), server: [metaOf(META_DELETE_ONLY), ok(ORG, ORG_ROW), { ...scheduleAt(deletionOf({ approvalRequired: false })), path: `${ORG}/deletion` }] }),
+  a({ id: "od.schedule.no-export", title: "no audit export: nothing about its key", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt(AUDIT_NONE)] }),
+  a({ id: "od.schedule.export-unreadable", title: "the audit export's state unreadable: said, never left out", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt(apiError(500, "INTERNAL"), 500)] }),
+  a({ id: "od.schedule.step-up", title: "scheduling under admin step-up in assisted mode: the approval to give (75)", args: ["--assisted", ...OD("acme", "--confirm", "acme")], server: [metaOf(), ok(ORG, ORG_ROW), exch("POST", `${ORG}/deletion`, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }))] }),
+  a({ id: "od.schedule.refused", title: "the schedule refused: the server's error", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), exch("POST", `${ORG}/deletion`, 409, apiError(409, "CONFLICT", "a deletion is already scheduled"))] }),
+  a({ id: "od.approve", title: "approved: the request as it stands", args: OD("acme", "--approve", "del_1"), server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/approve`, 200, deletionOf({ approvedBy: "Bob", approvedAt: "2026-11-19T10:30:00Z" }))] }),
+  a({ id: "od.approve.assisted-confirmed", title: "approving in assisted mode with --confirm", args: ["--assisted", ...OD("acme", "--approve", "del_1", "--confirm", "acme")], server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/approve`, 200, deletionOf({ approvedBy: "Bob", approvedAt: "not a time" }))] }),
+  a({ id: "od.cancel", title: "cancelled", args: OD("acme", "--cancel", "del_1"), server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/cancel`, 200, deletionOf())] }),
+  a({ id: "od.no-capability", title: "a server that cannot delete organizations (1), nothing sent but meta", args: OD("acme", "--confirm", "acme"), server: [metaOf(META_BARE)] }),
+  a({ id: "deletion.open", title: "org deletion: an overdue request waiting for approval never runs without it", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: deletionOf({ runAfter: PAST }) })] }),
+  a({ id: "deletion.open.json", title: "org deletion --json", args: ["org", "deletion", "acme", "--json"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: deletionOf() })] }),
+  a({ id: "deletion.none", title: "no deletion scheduled", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: null })] }),
+  a({ id: "deletion.none.json", title: "the same, --json: deletion null", args: ["org", "deletion", "acme", "--json"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: null })] }),
+  a({ id: "deletion.confirm-option", title: "org deletion takes no --confirm (64)", args: ["org", "deletion", "acme", "--confirm", "acme"] }),
+  a({ id: "deletion.answer-null", title: "an answer of another shape stops org deletion (TypeScript throws a TypeError)", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, null)], differences: UNCAUGHT }),
+
+  // org freeze and unfreeze
+  a({ id: "fz.no-slug", title: "org freeze without a slug (64)", args: ["org", "freeze"] }),
+  a({ id: "fz.no-reason", title: "without --reason (64), nothing sent", args: FZ("--confirm", "acme") }),
+  a({ id: "fz.blank-reason", title: "a reason of spaces only (64)", args: FZ("--reason", "   ", "--confirm", "acme") }),
+  a({ id: "fz.long-reason", title: "a reason over 200 characters (64)", args: FZ("--reason", "x".repeat(201), "--confirm", "acme") }),
+  a({ id: "fz.no-confirm", title: "without --confirm: what it stops and the command (64), nothing sent", args: FZ("--reason", "laptop stolen") }),
+  a({ id: "fz.wrong-confirm", title: "--confirm naming another Organization: the same prompt (64)", args: FZ("--reason", "it's stolen", "--confirm", "other", "--server", "{{server}}") }),
+  a({ id: "fz.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...FZ("--reason", "laptop stolen")] }),
+  a({ id: "fz.frozen", title: "frozen: what it stops and how to lift it", args: FZ("--reason", "  laptop stolen  ", "--confirm", "acme"), server: [metaOf(), exch("POST", `${ORG}/incident-freeze`, 201, FROZEN_AT)] }),
+  a({ id: "fz.no-capability", title: "a server without the incident freeze (1)", args: FZ("--reason", "x", "--confirm", "acme"), server: [metaOf(META_BARE)] }),
+  a({ id: "fz.refused", title: "the freeze refused: the server's error", args: FZ("--reason", "x", "--confirm", "acme"), server: [metaOf(), exch("POST", `${ORG}/incident-freeze`, 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "unfz.not-frozen", title: "unfreeze an Organization that is not frozen", args: UNFZ(), server: [metaOf(), ok(`${ORG}/incident-freeze`, { freeze: null, resumingTargets: null })] }),
+  a({ id: "unfz.not-frozen.json", title: "the same, --json: freeze null", args: UNFZ("--json"), server: [metaOf(), ok(`${ORG}/incident-freeze`, { freeze: null })] }),
+  a({ id: "unfz.assisted", title: "unfreezing in assisted mode: what the lift does, then the approval to give (75)", args: ["--assisted", ...UNFZ()], server: [metaOf(), freezeState({ resumingTargets: null }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL }))] }),
+  a({ id: "unfz.approved", title: "unfreezing: waits for the approval, then lifts; resuming Sync Targets listed", args: UNFZ(), server: [metaOf(), freezeState({ resumingTargets: LIFTED.resumingTargets }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("approved"), liftAt(200, LIFTED)] }),
+  a({ id: "unfz.approved.json", title: "the same, --json: no confirmation lines", args: UNFZ("--json"), server: [metaOf(), freezeState(), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("approved"), liftAt(200, { ...LIFTED, resumingTargets: [] })] }),
+  a({ id: "unfz.cancelled", title: "the lift's approval cancelled (77): still frozen", args: UNFZ(), server: [metaOf(), freezeState(), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("closed")] }),
+  a({ id: "unfz.reason-escaped", title: "a reason with a control character: escaped", args: ["--assisted", ...UNFZ()], server: [metaOf(), freezeState({ freeze: { ...FROZEN_AT, reason: "bell\u0007 here", frozenBy: { id: BOB, name: null } } }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL }))] }),
+  a({ id: "unfz.reason-option", title: "unfreeze takes no --reason (64)", args: UNFZ("--reason", "x") }),
+
+  // audit-export: the command line, before any request
+  a({ id: "ae.none", title: "audit-export alone (64)", args: AE() }),
+  a({ id: "ae.unknown", title: "an unknown subcommand (64)", args: AE("list") }),
+  a({ id: "ae.create.no-bucket", title: "create without --bucket (64)", args: AE("create", "--endpoint", "https://s3.example.com", "--region", "eu", ...KEY), files: withSecret() }),
+  a({ id: "ae.create.no-key", title: "create without --access-key-id (64)", args: AE("create", ...DEST) }),
+  a({ id: "ae.create.no-retention", title: "create with --no-retention (64)", args: AE("create", ...DEST, ...KEY, "--no-retention"), files: withSecret() }),
+  a({ id: "ae.create.no-path-style", title: "create with --no-path-style (64)", args: AE("create", ...DEST, ...KEY, "--no-path-style"), files: withSecret() }),
+  a({ id: "ae.create.from", title: "--from that is neither (64)", args: AE("create", ...DEST, ...KEY, "--from", "yesterday"), files: withSecret() }),
+  a({ id: "ae.create.retention", title: "--retention of another form (64)", args: AE("create", ...DEST, ...KEY, "--retention", "compliance:3651"), files: withSecret() }),
+  a({ id: "ae.create.both-sources", title: "--secret-stdin and --secret-file (64)", args: AE("create", ...DEST, ...KEY, "--secret-stdin"), files: withSecret() }),
+  a({ id: "ae.change.secret-alone", title: "a secret source without --access-key-id (64)", args: AE("change", "--secret-stdin") }),
+  a({ id: "ae.change.nothing", title: "change naming nothing (64)", args: AE("change") }),
+  a({ id: "ae.change.key-and-settings", title: "a key with a setting (64): each change is approved separately", args: AE("change", "--bucket", "b", ...KEY), files: withSecret() }),
+  a({ id: "ae.change.both-retentions", title: "--retention with --no-retention (64)", args: AE("change", "--retention", "governance:30", "--no-retention") }),
+  a({ id: "ae.change.both-styles", title: "--path-style with --no-path-style (64)", args: AE("change", "--path-style", "--no-path-style") }),
+  a({ id: "ae.check.retention", title: "check with a malformed --retention (64)", args: AE("check", "--retention", "forever") }),
+  a({ id: "ae.create.no-source", title: "a key without a secret source off a terminal (64), nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001") }),
+  a({ id: "ae.create.no-source.assisted", title: "the same in assisted mode: it never prompts (64)", args: ["--assisted", ...AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001")] }),
+  a({ id: "ae.create.secret-missing", title: "a --secret-file that does not exist (1), nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-file", "{{dir}}/nope.txt") }),
+  a({ id: "ae.create.secret-empty", title: "an empty secret on standard input, nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-stdin"), stdin: "" }),
+  a({ id: "ae.extra", title: "an extra argument (64)", args: AE("show", "now") }),
+
+  // audit-export: requests
+  a({ id: "ae.show", title: "show: the export's status", args: AE("show"), server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.json", title: "show --json", args: AE("show", "--json"), server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.none", title: "show with no export", args: AE("show"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.show.stopped", title: "show with the export stopped by the host operator", args: AE("show"), server: [metaOf(), auditAt(AUDIT_OFF)] }),
+  a({ id: "ae.show.no-capability", title: "a server without audit export (1)", args: AE("show"), server: [metaOf(META_BARE)] }),
+  a({ id: "ae.show.outside", title: "outside a repository with --org and --server", args: AE("show", "--org", "acme", "--server", "{{server}}"), ...OUTSIDE, server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.outside-no-org", title: "outside a repository without --org (64), nothing sent", args: AE("show"), ...OUTSIDE }),
+  a({ id: "ae.create", title: "create from a secret file: what it copies and the status without its first line", args: AE("create", ...DEST, ...KEY, "--retention", "compliance:400"), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export`, 201, EXPORT)] }),
+  a({ id: "ae.create.json", title: "create --json, from standard input, starting now", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-stdin", "--from", "now", "--prefix", "logs/", "--path-style", "--json"), stdin: "fake-secret-access-key-0002\n", server: [metaOf(), exch("POST", `${ORG}/audit-export`, 201, { ...EXPORT, state: "active" })] }),
+  a({ id: "ae.create.echoed", title: "a server echoing the key in its error: masked", args: AE("create", ...DEST, ...KEY), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export`, 400, apiError(400, "VALIDATION_FAILED", "key fake-secret-access-key-0001 refused"))] }),
+  a({ id: "ae.change", title: "change the bucket at the current version", args: AE("change", "--bucket", "audit-2"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport())] }),
+  a({ id: "ae.change.stream", title: "a change that starts a new stream, with approval", args: AE("change", "--endpoint", "https://other.example.com", "--no-retention"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport({ streamId: "st_2", cursor: 0 }))] }),
+  a({ id: "ae.change.loosened", title: "a loosening change: your approval was used", args: AE("change", "--retention", "governance:30"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, { ...changedExport(), loosened: true })] }),
+  a({ id: "ae.change.same", title: "the settings it already has: nothing changed", args: AE("change", "--prefix", ""), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, { changed: false, loosened: false, export: EXPORT })] }),
+  a({ id: "ae.change.json", title: "change --json", args: AE("change", "--path-style", "--json"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport())] }),
+  a({ id: "ae.change.key", title: "a new key on its own: replaced", args: AE("change", ...KEY), files: withSecret(), server: [metaOf(), auditAt(), exch("PUT", `${ORG}/audit-export/credential`, 200, { ...EXPORT, version: 4 })] }),
+  a({ id: "ae.change.none", title: "change with no export (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.change.removed", title: "change of a removed export (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(AUDIT_OFF)] }),
+  a({ id: "ae.change.conflict", title: "the export changed meanwhile: run it again (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 409, apiError(409, "VERSION_CONFLICT", "version 3 is not current"))] }),
+  a({ id: "ae.change.step-up", title: "a change needing approval in assisted mode: the approval to give (75)", args: ["--assisted", ...AE("change", "--endpoint", "https://other.example.com")], server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }))] }),
+  a({ id: "ae.remove.no-confirm", title: "remove without --confirm: what it stops and the command (64), nothing sent", args: AE("remove") }),
+  a({ id: "ae.remove.no-confirm.outside", title: "the same outside a repository: <organization>", args: AE("remove"), ...OUTSIDE }),
+  a({ id: "ae.remove.wrong-confirm", title: "--confirm naming another Organization (64)", args: AE("remove", "--confirm", "other") }),
+  a({ id: "ae.remove.assisted", title: "assisted mode without --confirm (78), nothing sent", args: ["--assisted", ...AE("remove")] }),
+  a({ id: "ae.remove", title: "removed at the current version", args: AE("remove", "--confirm", "acme"), server: [metaOf(), auditAt(), exch("DELETE", `${ORG}/audit-export?expectedVersion=3`, 200, { ...EXPORT, state: "removed", version: 4 })] }),
+  a({ id: "ae.remove.json", title: "remove --json", args: AE("remove", "--confirm", "acme", "--json"), server: [metaOf(), auditAt(), exch("DELETE", `${ORG}/audit-export?expectedVersion=3`, 200, { ...EXPORT, state: "removed", version: 4 })] }),
+  a({ id: "ae.remove.none", title: "remove with no export (1)", args: AE("remove", "--confirm", "acme"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.check", title: "check the export's own destination with its stored key", args: AE("check"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, CHECK_OK)] }),
+  a({ id: "ae.check.named", title: "check a named destination with a new key: no status read", args: AE("check", ...DEST, ...KEY, "--retention", "governance:7"), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export/check`, 200, { ...CHECK_OK, objectLock: null, keyCanRead: null })] }),
+  a({ id: "ae.check.prefix", title: "check with only --prefix: the export's destination, the prefix named", args: AE("check", "--prefix", "new/", "--json"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ...CHECK_OK, objectLock: "verified", keyCanRead: false })] }),
+  a({ id: "ae.check.failed", title: "a failed check: its reason, exit 1", args: AE("check"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ok: false, message: "AccessDenied\u0007", objectLock: null, keyCanRead: null })] }),
+  a({ id: "ae.check.failed-silent", title: "a failed check without a reason, --json: exit 1", args: AE("check", "--json"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ok: false, message: null })] }),
+  a({ id: "ae.check.nothing", title: "no export and no destination named (1)", args: AE("check"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.check.key-no-destination", title: "a key but no destination (64, after the meta)", args: AE("check", ...KEY), files: withSecret(), server: [metaOf()] }),
+
+  // audit export, NDJSON
+  a({ id: "export.ndjson", title: "audit export: the log as NDJSON, as the server sent it", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.refused", title: "audit export refused: the server's error", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, apiError(403, "PERMISSION_DENIED")), status: 403 }] }),
+  a({ id: "export.not-json-error", title: "an error that is not a Varlatch error: HTTP <status>", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, "<html>bad gateway</html>"), status: 502, headers: { "content-type": "text/html" } }] }),
+  a({ id: "export.deleted", title: "audit export --deleted-org: a deleted Organization's log", args: ["audit", "export", "--deleted-org", "org_gone", "--server", "{{server}}"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.deleted.default-server", title: "--deleted-org with the only credential's server", args: ["audit", "export", "--deleted-org", "org_gone"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.deleted.no-value", title: "--deleted-org without a value (64)", args: ["audit", "export", "--deleted-org"], ...OUTSIDE }),
+  a({ id: "export.deleted.extra", title: "--deleted-org with an extra argument (64)", args: ["audit", "export", "now", "--deleted-org", "org_gone"], ...OUTSIDE }),
+  a({ id: "export.deleted.not-found", title: "an unknown deleted Organization: the server's 404", args: ["audit", "export", "--deleted-org", "org_gone", "--server", "{{server}}"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }] }),
+];
+
 // ---- 5.8a: guided init, and what it never does off a terminal ---------------
 //
 // Guided `init` runs only with a terminal on both ends, outside assisted
@@ -2191,5 +2712,8 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,
   "5.7a-admin": admin57a,
+  "5.7b-security": security57b,
+  "5.7c-audit": audit57c,
   "5.8a-guided-init": guided58a,
+  "5.8b-sync": sync58b,
 };

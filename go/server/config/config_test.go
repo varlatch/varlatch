@@ -105,7 +105,7 @@ func TestParseErrors(t *testing.T) {
 		"tailnet tag without tag:":         kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = varlatch\ntailnet_port = 8687\n",
 		"tailnet on without a port":        kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\n",
 		"tailnet port too large":           kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 65536\n",
-		"self-hosted control server":       kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://hs.example.com\n",
+		"control server by host name":      kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://hs.example.com\n",
 		"relative tailnet auth key file":   kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_auth_key_file = key\n",
 	} {
 		_, err := Parse(strings.NewReader(file), env(nil))
@@ -122,7 +122,9 @@ func TestParseErrors(t *testing.T) {
 
 // tailnet = on starts varlatchd's tailnet node (ADR-0059 Decision 5); off,
 // the default, leaves every tailnet setting unset. Tailscale's control
-// server is the only one this release joins, given or not.
+// server, given or not, is "" for the pin; a self-hosted one (Headscale) is
+// https with an IP address for its host, canonical, and never a host name
+// (tsnet's bootstrap DNS fallback would send it to Tailscale).
 func TestParseTailnet(t *testing.T) {
 	c, err := Parse(strings.NewReader("root_kek_file = /k\n"), env(nil))
 	if err != nil || c.Tailnet != nil {
@@ -147,9 +149,55 @@ func TestParseTailnet(t *testing.T) {
 	if c, err = Parse(strings.NewReader(on), env(nil)); err != nil || c.Tailnet.AuthKeyFile != "" {
 		t.Errorf("no key file and no credentials directory: %+v, %v", c.Tailnet, err)
 	}
-	_, err = Parse(strings.NewReader(on+"tailnet_control_url = https://hs.example.com\n"), env(nil))
-	if err == nil || !strings.Contains(err.Error(), "a self-hosted one (Headscale) is not supported yet") {
-		t.Errorf("a self-hosted control server: %v", err)
+	for given, want := range map[string]string{
+		"https://192.0.2.10":               "https://192.0.2.10",
+		"https://192.0.2.10/":              "https://192.0.2.10",
+		"https://192.0.2.10:443":           "https://192.0.2.10",
+		"https://192.0.2.10:8443":          "https://192.0.2.10:8443",
+		"https://[2001:db8::10]":           "https://[2001:db8::10]",
+		"https://[2001:DB8:0::10]:8443":    "https://[2001:db8::10]:8443",
+		"https://[::ffff:192.0.2.10]:8443": "https://192.0.2.10:8443",
+		"https://127.0.0.1:8443":           "https://127.0.0.1:8443",
+	} {
+		c, err := Parse(strings.NewReader(on+"tailnet_control_url = "+given+"\n"), env(nil))
+		if err != nil || c.Tailnet.ControlURL != want {
+			t.Errorf("%s: %+v, %v; want %s", given, c, err, want)
+		}
+	}
+	for given, why := range map[string]string{
+		"https://hs.example.com":           "an IP address is never looked up",
+		"https://headscale:8443":           "an IP address is never looked up",
+		"http://192.0.2.10":                "https://<its IP address>",
+		"https://user@192.0.2.10":          "https://<its IP address>",
+		"https://192.0.2.10/headscale":     "https://<its IP address>",
+		"https://192.0.2.10?x=1":           "https://<its IP address>",
+		"https://192.0.2.10#x":             "https://<its IP address>",
+		"https://0.0.0.0":                  "unspecified",
+		"https://[::]:8443":                "unspecified",
+		"https://224.0.0.1":                "multicast",
+		"https://[fe80::1%25eth0]":         "zoned",
+		"https://[::ffff:0.0.0.0]":         "unspecified",
+		"https://[::ffff:224.0.0.1]":       "multicast",
+		"https://[fe80::1]":                "link-local",
+		"https://169.254.10.1":             "link-local",
+		"https://[::ffff:169.254.10.1]":    "link-local",
+		"https://255.255.255.255":          "broadcast",
+		"https://[::ffff:255.255.255.255]": "broadcast",
+		"https://192.0.2.10:0":             "port is not 1 to 65535",
+		"https://010.0.2.10":               "an IP address is never looked up",
+		"https://192.0.2.10:99999":         "https://<its IP address>",
+	} {
+		_, err := Parse(strings.NewReader(on+"tailnet_control_url = "+given+"\n"), env(nil))
+		var cerr *Error
+		if !errors.As(err, &cerr) || !strings.Contains(err.Error(), why) || !strings.Contains(err.Error(), "Leave tailnet_control_url unset for Tailscale's") {
+			t.Errorf("%s: %v, want a configuration error naming %q", given, err, why)
+		}
+	}
+	// A self-hosted control server issues no Tailscale certificate: no
+	// browser endpoint with it.
+	_, err = Parse(strings.NewReader(on+"tailnet_control_url = https://192.0.2.10\ntailnet_https_port = 8688\npublic_url = https://varlatch.example.test\n"), env(nil))
+	if err == nil || !strings.Contains(err.Error(), "does not issue") {
+		t.Errorf("the browser endpoint with a self-hosted control server: %v", err)
 	}
 }
 
@@ -265,6 +313,14 @@ func TestParsePublicHTTPS(t *testing.T) {
 	if c, err := parse("public_url = https://vault.example.com\nlisten_https = 10.0.0.1:443\n"); err != nil || c.PublicHTTPS.RedirectListen != "10.0.0.1:80" {
 		t.Errorf("the redirect's default address: %+v %v", c, err)
 	}
+	for _, listen := range []string{"127.0.0.1:8686", "127.0.0.2:8686", "[::1]:8686"} {
+		if _, err := parse("listen = " + listen + "\npublic_url = https://vault.example.com\nlisten_https = :443\n"); err != nil {
+			t.Errorf("loopback listen %s with listen_https: %v", listen, err)
+		}
+	}
+	if c, err := parse("listen = 0.0.0.0:8686\npublic_url = https://vault.example.com\n"); err != nil || c.PublicHTTPS != nil {
+		t.Errorf("a non-loopback plain listener without public HTTPS, as before: %+v %v", c, err)
+	}
 	if c, err := parse("public_url = https://vault.example.com\n"); err != nil || c.PublicHTTPS != nil {
 		t.Errorf("off: %+v %v", c, err)
 	}
@@ -284,6 +340,9 @@ func TestParsePublicHTTPS(t *testing.T) {
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca = http://ca.example/directory\n", "is not an https ACME directory URL"},
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca = https://u:p@ca.example/directory\n", "is not an https ACME directory URL"},
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca_root = ca.pem\n", "is not an absolute path"},
+		{"listen = 0.0.0.0:8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
+		{"listen = 192.0.2.5:8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
+		{"listen = :8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
 		{"acme_email = ops@example.com\n", "listen_https is not"},
 		{"listen_http_redirect = :80\n", "listen_https is not"},
 		{"acme_ca = https://ca.example/d\n", "listen_https is not"},

@@ -298,7 +298,19 @@ test("the Go tests a none replacement names exist, by their package", () => {
   const testRun = testStep.slice(0, testStep.indexOf("\n      - ", 1));
   assert.match(testRun, /working-directory: go\n/);
   // -count=1 only (no cached results); -run, -list or -tags would narrow it.
-  assert.match(testRun, /go test (-count=1 )?\.\/\.\.\.[ \t]*$/m);
+  // -skip "$TIMING_TESTS" sets the timing tests aside for the step right
+  // after it, which runs exactly those, alone, over the same packages; so
+  // between the two steps every test under go/ still runs.
+  assert.match(testRun, /go test (-count=1 )?(-skip "\$TIMING_TESTS" )?\.\/\.\.\.[ \t]*$/m);
+  if (testRun.includes('-skip "$TIMING_TESTS"')) {
+    const rest = testStep.slice(testRun.length);
+    assert.ok(rest.startsWith("\n\n      # ") || rest.startsWith("\n      - "), "a step follows 'Test'");
+    const alone = rest.slice(rest.indexOf("      - name: "));
+    const aloneRun = alone.slice(0, alone.indexOf("\n      - ", 1));
+    assert.match(aloneRun, /^      - name: Timing tests, alone\n/);
+    assert.match(aloneRun, /working-directory: go\n/);
+    assert.match(aloneRun, /go test -count=1 -p 1 -run "\$TIMING_TESTS" \.\/\.\.\.[ \t]*$/m);
+  }
   // The S3 step runs the S3 tests named, in their package, without skipping.
   const s3 = workflow.slice(workflow.indexOf("- name: G13, the S3 client"));
   const run = s3.slice(0, s3.indexOf("\n      - ", 1));
