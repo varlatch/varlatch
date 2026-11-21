@@ -36,7 +36,7 @@ var commands = []command{
 	{name: "scan", slice: "5.4d", run: scanCommand},
 	{name: "values", slice: "5.3a", run: valuesCommand},
 	{name: "mcp", slice: "5.6b", run: mcpCommand},
-	{name: "request", slice: "5.5b"},
+	{name: "request", slice: "5.5b", run: requestCommand},
 	{name: "import", slice: "5.3a", run: importCommand},
 	{name: "sync", slice: "5.8b", run: syncCommand},
 	{name: "contract", slice: "5.3b", run: contractCommand},
@@ -61,7 +61,7 @@ var commands = []command{
 	{name: "version", slice: "5.1a", run: versionCommand},
 	{name: "--version", slice: "5.1a", run: versionCommand},
 	{name: "self-update", slice: "step 6", partial: selfUpdateCommand},
-	{name: "upgrade", slice: "step 6"},
+	{name: "upgrade", slice: "step 6", partial: upgradeCommand},
 }
 
 func lookup(name string) *command {

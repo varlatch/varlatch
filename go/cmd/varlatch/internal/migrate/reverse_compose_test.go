@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -117,5 +118,56 @@ func TestTheProjectIsCompose(t *testing.T) {
 		if _, err := c.RebuildPlan(t.Context(), j); err == nil {
 			t.Errorf("%q: no refusal", bad.Answer)
 		}
+	}
+}
+
+// The reverse undone starts the TypeScript varlatchd without its one-off
+// dependency (varlatch-migrate, which refuses behind the migrated-out
+// marker). Where varlatchd runs in the Tailscale sidecar's network and the
+// sidecar is not running, nothing of varlatchd's is started: the step to
+// take is said, the sidecar never started by migrate.
+func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
+	for _, c := range []struct {
+		name, config, running, why string
+	}{
+		{"its own network", `{"name":"varlatch","services":{"varlatchd":{}}}`, "postgres\nconvex-backend\n", ""},
+		{"the sidecar's, running", `{"name":"varlatch","services":{"varlatchd":{"network_mode":"service:tailscale"}}}`, "postgres\ntailscale\n", ""},
+		{"the sidecar's, stopped", `{"name":"varlatch","services":{"varlatchd":{"network_mode":"service:tailscale"}}}`, "postgres\n",
+			"start it by hand (docker compose up -d --no-deps tailscale"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("VARLATCH_PUBLIC_URL=https://vault.example.test\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			run := &scripted{t: t, answers: map[string]Ran{
+				"docker compose stop ":                                 {},
+				"docker compose up -d postgres convex-backend":         {},
+				"docker ps -a --filter volume=":                        {},
+				"docker volume rm -f ":                                 {},
+				"docker compose config --no-interpolate --format json": {Answer: []byte(c.config)},
+				"docker compose ps --status running --services":        {Answer: []byte(c.running)},
+				"docker compose run --rm -T --no-deps varlatchd node dist/cli.js admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)},
+				"docker compose up -d --no-deps varlatchd":                                               {},
+			}}
+			cmp := &Compose{Directory: dir, Run: run}
+			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}})
+			started := slices.Contains(run.ran, "docker compose up -d --no-deps varlatchd")
+			for _, r := range run.ran {
+				if r == "docker compose up -d varlatchd" || strings.HasPrefix(r, "docker compose up -d --no-deps tailscale") || strings.HasPrefix(r, "docker compose start") {
+					t.Errorf("ran %q", r)
+				}
+			}
+			if c.why == "" {
+				if err != nil || !started {
+					t.Fatalf("%v, started %v: %v", err, started, run.ran)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.why) || !strings.Contains(err.Error(), "varlatch migrate --resume") || started ||
+				slices.ContainsFunc(run.ran, func(r string) bool { return strings.Contains(r, "admin migration") }) {
+				t.Fatalf("%v, started %v: %v", err, started, run.ran)
+			}
+		})
 	}
 }

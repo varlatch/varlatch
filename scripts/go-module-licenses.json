@@ -5,6 +5,10 @@
       "license": "BSD-3-Clause",
       "sha256": "4214d8afcc3620b7fb7aa9c7695e8f659a90011a830caf0e0c72a385d7d3b2a5"
     },
+    "github.com/andybalholm/brotli": {
+      "license": "MIT",
+      "sha256": "2a57418d6b10947fe0dfbec3a600269e2745136c125cbf15b256e5ae18af23cb"
+    },
     "github.com/apapsch/go-jsonmerge/v2": {
       "license": "MIT",
       "sha256": "53ffb5e05d28d94f385c3161a61e18df094219f19437e3762bfd1bca094ff955"
