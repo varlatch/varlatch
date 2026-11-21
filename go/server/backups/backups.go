@@ -663,17 +663,17 @@ func (s *Service) upload(ctx context.Context, id, archive string) (*backup.Deliv
 // ErrNoDestination refuses a remote verification with no destination.
 var ErrNoDestination = errors.New("No backup destination is configured (backup_destinations_file, backup_destination): there is no remote copy to verify")
 
+// HasDestination is whether a backup destination is configured.
+func (s *Service) HasDestination() bool {
+	return s.o.Config.BackupDestinationsFile != "" && s.o.Config.BackupDestination != ""
+}
+
 // VerifyRemote downloads the archive id's uploaded copy from the
 // configured destination, opens it and checks it as the run checked the
 // local one (integrity, this release restores it, the Root KEK opens its
 // canaries), and records the result as its delivery's remote
 // verification. The download is removed after. An archive with no
 // recorded upload is refused.
-// HasDestination is whether a backup destination is configured.
-func (s *Service) HasDestination() bool {
-	return s.o.Config.BackupDestinationsFile != "" && s.o.Config.BackupDestination != ""
-}
-
 func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verification, error) {
 	if !s.HasDestination() {
 		return backup.Verification{}, ErrNoDestination
@@ -731,8 +731,14 @@ func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verificat
 	return v, nil
 }
 
-// retain keeps the newest backup_keep archives (by their status record's
-// creation time, else the file's), and removes the others' files.
+// retain keeps the newest backup_keep of Go's own archives (by their status
+// record's creation time) and removes the others' files. It counts and
+// removes only an archive whose status record names a Go release: never a
+// TypeScript-format archive (go-step7 decision 18: restorable through the
+// converter, its retention the bucket's lifecycle rule or the operator's),
+// and never an archive without a readable record: one Go did not make, or
+// did not finish publishing (a run renames its archive into place before it
+// writes the record, and a failed write leaves none), is kept.
 func (s *Service) retain(backups string) []string {
 	type local struct {
 		id string
@@ -745,19 +751,17 @@ func (s *Service) retain(backups string) []string {
 		if !ok || !e.Type().IsRegular() || len(id) != 36 {
 			continue
 		}
-		at := time.Time{}
-		if info, err := e.Info(); err == nil {
-			at = info.ModTime()
+		raw, err := os.ReadFile(filepath.Join(backups, id+".json"))
+		if err != nil {
+			continue
 		}
-		if raw, err := os.ReadFile(filepath.Join(backups, id+".json")); err == nil {
-			var r struct {
-				CreatedAt string `json:"createdAt"`
-			}
-			if json.Unmarshal(raw, &r) == nil {
-				if t, err := time.Parse(time.RFC3339Nano, r.CreatedAt); err == nil {
-					at = t
-				}
-			}
+		var r backup.StatusRecord
+		if json.Unmarshal(raw, &r) != nil || !r.Go() {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, r.CreatedAt)
+		if err != nil {
+			continue
 		}
 		archives = append(archives, local{id, at})
 	}
