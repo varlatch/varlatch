@@ -196,8 +196,17 @@ func TestTheHandoffNode(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte("hermetic\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "joined as "+temp+"-1.corp.ts.net") {
-		t.Fatalf("a suffixed temporary name: %d %q", code, errOut)
+	// The control plane's new name reaches the node with its next map.
+	var suffixed string
+	for i := 0; i < 20; i++ {
+		var code int
+		if code, _, suffixed = runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--config", in.conf); code == ExitFailure {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if !strings.Contains(suffixed, "joined as "+temp+"-1.corp.ts.net") {
+		t.Fatalf("a suffixed temporary name: %q", suffixed)
 	}
 	if pin, err := tailnet.LoadPin(filepath.Join(in.data, tailnet.PinFile)); err != nil || pin == nil || pin.Closed != nil {
 		t.Fatalf("a suffixed temporary name latched the pin: %+v %v", pin, err)
