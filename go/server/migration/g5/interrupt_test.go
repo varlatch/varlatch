@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -73,6 +74,54 @@ func (stdTB) Helper()                      {}
 func (stdTB) Fatal(args ...any)            { fmt.Fprintln(os.Stderr, args...); os.Exit(1) }
 func (stdTB) Fatalf(f string, args ...any) { fmt.Fprintf(os.Stderr, f+"\n", args...); os.Exit(1) }
 
+// cleanupDirs are package-wide temporary directories (shared binaries,
+// test CA) removed when the test run ends or is interrupted.
+var cleanupDirs struct {
+	mu   sync.Mutex
+	dirs []string
+}
+
+func registerCleanupDir(dir string) {
+	cleanupDirs.mu.Lock()
+	cleanupDirs.dirs = append(cleanupDirs.dirs, dir)
+	cleanupDirs.mu.Unlock()
+}
+
+func removeCleanupDirs() {
+	cleanupDirs.mu.Lock()
+	dirs := slices.Clone(cleanupDirs.dirs)
+	cleanupDirs.dirs = nil
+	cleanupDirs.mu.Unlock()
+	for _, d := range dirs {
+		_ = os.RemoveAll(d)
+	}
+}
+
+func runTestMain(m *testing.M) int {
+	defer removeCleanupDirs()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	defer func() {
+		close(done)
+		signal.Stop(sig)
+	}()
+	go func() {
+		select {
+		case s := <-sig:
+			removeCleanupDirs()
+			signal.Reset(s)
+			if ss, ok := s.(syscall.Signal); ok {
+				_ = syscall.Kill(os.Getpid(), ss)
+			} else {
+				os.Exit(1)
+			}
+		case <-done:
+		}
+	}()
+	return m.Run()
+}
+
 func TestMain(m *testing.M) {
 	switch filepath.Base(os.Args[0]) {
 	case "docker":
@@ -81,8 +130,10 @@ func TestMain(m *testing.M) {
 		os.Exit(fakeTSCLI(os.Args[1:]))
 	case "systemctl":
 		os.Exit(fakeSystemctl(os.Args[1:]))
+	case "g5-sidecar":
+		os.Exit(runSidecar())
 	}
-	os.Exit(m.Run())
+	os.Exit(runTestMain(m))
 }
 
 // state is the stand-ins' state directory (G5_STATE).
@@ -168,6 +219,11 @@ func writeGate(g *gateDoc) error {
 // fakeDocker answers as Docker and the TypeScript CLI in its container.
 func fakeDocker(args []string) int {
 	fail := func(f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1 }
+	if os.Getenv("G5_TAILNET") != "" {
+		if code, ok := fakeDockerTailnet(args); ok {
+			return code
+		}
+	}
 	if code, ok := fakeDockerReverse(args); ok {
 		return code
 	}
@@ -434,6 +490,12 @@ type world struct {
 	origin, listen    string
 	outputs           [][]byte
 	installationID    string
+	// env and extraArgs are a world's own, for every run (the tailnet's).
+	env       []string
+	extraArgs []string
+	// secrets are a world's own, scanned for too (the tailnet's OAuth
+	// client secret and auth key).
+	secrets [][]byte
 }
 
 // shared is built once: the binaries, the seed and its decision table.
@@ -446,10 +508,56 @@ var shared struct {
 	err                    error
 }
 
+// ownerFile names, in a run's shared directory, the process that made it.
+const ownerFile = "g5-owner.pid"
+
+// sweepAbandoned removes the temporary directories of earlier runs whose
+// process is gone: one killed (SIGKILL, or go test's -timeout panic) runs
+// none of its cleanup. Only this user's; a shared directory only when the
+// process its owner file names is dead; one without an owner file (a
+// scratch directory, or a run of a branch from before owner files) only
+// once it is older than abandonedAfter, longer than any G5 run, so a live
+// run's is never removed.
+func sweepAbandoned() {
+	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*"} {
+		dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
+		for _, d := range dirs {
+			st, err := os.Lstat(d)
+			if err != nil || !st.IsDir() {
+				continue
+			}
+			if sys, ok := st.Sys().(*syscall.Stat_t); !ok || int(sys.Uid) != os.Getuid() {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(d, ownerFile))
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				if time.Since(st.ModTime()) > abandonedAfter {
+					_ = os.RemoveAll(d)
+				}
+			case err == nil:
+				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 && !alive(pid) {
+					_ = os.RemoveAll(d)
+				}
+			}
+		}
+	}
+}
+
+// abandonedAfter is the age past which a G5 directory without an owner
+// file is no live run's.
+const abandonedAfter = 6 * time.Hour
+
 func setUpShared(t *testing.T) {
 	shared.once.Do(func() {
+		sweepAbandoned()
 		dir, err := os.MkdirTemp("", "g5-interrupt-")
 		if err != nil {
+			shared.err = err
+			return
+		}
+		registerCleanupDir(dir)
+		if err := os.WriteFile(filepath.Join(dir, ownerFile), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 			shared.err = err
 			return
 		}
@@ -457,7 +565,10 @@ func setUpShared(t *testing.T) {
 		root, _ := filepath.Abs(filepath.Join("..", "..", ".."))
 		bin := filepath.Join(dir, "bin")
 		_ = os.Mkdir(bin, 0o755)
-		for _, b := range []struct{ out, pkg, tags string }{{"varlatchd", "./cmd/varlatchd", ""}, {"varlatch", "./cmd/varlatch", "crashpoint"}} {
+		// varlatchd with the crashpoint tag too: its tailnet node joins the
+		// gate's control server (tailnethook_crashpoint.go); without
+		// VARLATCH_TEST_TAILNET_CONTROL it is as a release builds it.
+		for _, b := range []struct{ out, pkg, tags string }{{"varlatchd", "./cmd/varlatchd", "crashpoint"}, {"varlatch", "./cmd/varlatch", "crashpoint"}} {
 			args := []string{"build", "-o", filepath.Join(bin, b.out)}
 			if b.tags != "" {
 				args = append(args, "-tags", b.tags)
@@ -473,7 +584,7 @@ func setUpShared(t *testing.T) {
 		shared.fakebin = filepath.Join(dir, "fakebin")
 		_ = os.Mkdir(shared.fakebin, 0o755)
 		self, _ := os.Executable()
-		for _, n := range []string{"docker", "varlatch-ts", "systemctl"} {
+		for _, n := range []string{"docker", "varlatch-ts", "systemctl", "g5-sidecar"} {
 			if err := os.Symlink(self, filepath.Join(shared.fakebin, n)); err != nil {
 				shared.err = err
 				return
@@ -649,7 +760,7 @@ func (w *world) args(extra ...string) []string {
 	} else {
 		a = append(a, "--config", w.conf)
 	}
-	return append(a, extra...)
+	return append(append(a, w.extraArgs...), extra...)
 }
 
 // run runs varlatch migrate; with pause, it is killed (SIGKILL) where it
@@ -669,6 +780,7 @@ func (w *world) runArgs(pause string, args []string) int {
 	cmd.Env = append(os.Environ(), "PATH="+shared.fakebin+":"+os.Getenv("PATH"), "G5_STATE="+w.stateDir, "VARLATCH_MIGRATE_PIN="+shared.pin,
 		"VARLATCH_MIGRATE_LOG="+log, "VARLATCH_MIGRATE_PAUSE="+pause, "TMPDIR="+w.stateDir,
 		fmt.Sprintf("VARLATCH_MIGRATE_IMAGE_USER=%d:%d", os.Getuid(), os.Getgid()))
+	cmd.Env = append(cmd.Env, w.env...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
@@ -809,7 +921,7 @@ func (w *world) noSecrets() {
 	t := w.t
 	t.Helper()
 	bek, _ := os.ReadFile(filepath.Join(w.compose, "bek"))
-	secrets := [][]byte{shared.source.RootKEK, bytes.TrimSpace(bek)}
+	secrets := append([][]byte{shared.source.RootKEK, bytes.TrimSpace(bek)}, w.secrets...)
 	if b, err := os.ReadFile(filepath.Join(w.stateDir, "runkeys")); err == nil {
 		for _, l := range strings.Fields(string(b)) {
 			k, _ := hex.DecodeString(l)

@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Crash points for G5's interruption gate (go test -tags g5, which builds
@@ -36,7 +37,11 @@ import (
 //     reverse, the source's alone) say it; "finish containers removed"
 //     after docker compose down; "finish volume removed" between a
 //     volume's removal and its journal entry; "finish go discarded" once
-//     Go's copy is discarded after a reverse.
+//     Go's copy is discarded after a reverse;
+//   - the tailnet handoff: "tailnet <forward|undo|rollback> <step>" once
+//     it has journalled a step (prepared, switching, serving closed,
+//     serving renamed, incoming renamed, opening, done, undoing, undone,
+//     undo-pending), before its act.
 //
 // The gate's stand-in source and target need two more of this build only:
 // VARLATCH_MIGRATE_PIN=<repository>@<digest> pins the stand-in's image (a
@@ -60,6 +65,16 @@ func init() {
 		cp.log = f
 	}
 	cp.pause = os.Getenv("VARLATCH_MIGRATE_PAUSE")
+	// The tailnet handoff's undo wait, shortened for the gate's undo cases
+	// (an undo cut short by a control plane gone).
+	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_UNDO_WAIT")); err == nil && d > 0 {
+		testHandoffUndoWait = d
+	}
+	// Its deadline, shortened for the cases where a control plane failing
+	// on one device's rename runs it out.
+	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_DEADLINE")); err == nil && d > 0 {
+		testHandoffDeadline = d
+	}
 	if m := pinText.FindStringSubmatch(os.Getenv("VARLATCH_MIGRATE_PIN")); m != nil {
 		testPin = &imagePin{Repository: m[1], Digest: m[2]}
 	}

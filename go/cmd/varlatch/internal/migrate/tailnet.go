@@ -3,6 +3,7 @@
 package migrate
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -203,7 +204,31 @@ func (h handoffJournal) Load(_ context.Context, op string) (*tailhandoff.State, 
 func (h handoffJournal) Save(ctx context.Context, s *tailhandoff.State) error {
 	c := *s
 	*h.at() = &c
-	return h.e.save(ctx, h.j)
+	if err := h.e.save(ctx, h.j); err != nil {
+		return err
+	}
+	// G5 kills the run at each step the handoff journals (crashpoint.go).
+	crashPoint("tailnet " + [...]string{"forward", "undo", "rollback"}[h.slot] + " " + handoffStep(s))
+	return nil
+}
+
+// handoffStep names what a saved handoff state says was decided last:
+// each is journalled before its act.
+func handoffStep(s *tailhandoff.State) string {
+	if s.Phase != tailhandoff.Switching {
+		return string(s.Phase)
+	}
+	switch {
+	case s.IncomingOpened:
+		return "opening"
+	case s.IncomingRenamed:
+		return "incoming renamed"
+	case s.ServingRenamed:
+		return "serving renamed"
+	case s.ServingClosed:
+		return "serving closed"
+	}
+	return "switching"
 }
 
 // handoffCerts are the certificates on either node: the sidecar's
@@ -287,6 +312,10 @@ func (r handoffResolver) Reaches(ctx context.Context, name, nodeID string) (bool
 	return r.tgt.TailnetReaches(ctx, name, nodeID, wait)
 }
 
+// testHandoffUndoWait is the handoff's undo wait in a crashpoint build's
+// gate (crashpoint.go); zero in every other build.
+var testHandoffUndoWait, testHandoffDeadline time.Duration
+
 // handoffEngine is tailhandoff's engine for this migration.
 func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engine, error) {
 	// Every handoff needs the tailnet's authority: a run resumed without
@@ -315,8 +344,8 @@ func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engin
 		Endpoints:  handoffEndpoints{src: ts, tgt: tt, target: e.Target, reverse: reverse},
 		Resolver:   handoffResolver{tgt: tt},
 		Journal:    handoffJournal{e: e, j: j, slot: slot},
-		Deadline:   o.Deadline,
-		UndoWait:   o.UndoWait,
+		Deadline:   cmp.Or(testHandoffDeadline, o.Deadline),
+		UndoWait:   cmp.Or(testHandoffUndoWait, o.UndoWait),
 		RetryEvery: o.RetryEvery,
 		// Real time, never the migration's clock: the handoff's deadlines
 		// are contexts', and its issuance count's week is the CA's.

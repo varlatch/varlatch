@@ -370,7 +370,7 @@ func (w *world) rollbackArgs(extra ...string) []string {
 	} else {
 		a = append(a, "--config", w.conf)
 	}
-	return append(a, extra...)
+	return append(append(a, w.extraArgs...), extra...)
 }
 
 func (w *world) rollback(pause string, extra ...string) int {

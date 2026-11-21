@@ -138,6 +138,11 @@ func nodeArgs(rest []string) (nodeCmd, string) {
 	return c, ""
 }
 
+// testTailnetControl is the tailnet control server a crashpoint build's
+// G5 gate points varlatchd's node at (tailnethook_crashpoint.go); empty in
+// every other build, where nothing sets it.
+var testTailnetControl string
+
 // Test hooks: the control server the node commands join (testcontrol), and
 // how the node obtains a certificate (a test CA, which writes the node's
 // cache as tsnet does).
