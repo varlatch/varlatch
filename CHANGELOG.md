@@ -80,11 +80,32 @@ Compose set and CLI do not change.
 
 Changes since 0.50.0-rc.1, by pull request:
 
+<!-- rc.2 slots: fill from `git log --first-parent v0.50.0-rc.1..origin/main`
+     once the queue has drained; remove the slots of PRs that did not merge.
+     Queued when this was written: #327, #330, #310, #344, #328, #345, #374. -->
+
 - **Organization administration in the Go CLI (#290).** `varlatch org`,
   `project`, `env-create`, `env-delete`, `identity`, `member`,
   `credential`, `invite`, `tailnet` and `audit` run in the Go CLI, as in
   the TypeScript CLI. A subcommand the Go CLI does not have yet says so
   and exits 1.
+- **`varlatch security` (#299).** `varlatch security status`, `report`,
+  `controls` and `set` run in the Go CLI, as in the TypeScript CLI.
+- **Deletion, freezes and the audit export in the Go CLI (#302).**
+  `varlatch project delete`, `org delete` (scheduled, approved or
+  cancelled), `org deletion`, `org freeze`, `org unfreeze`, `audit-export`
+  and `audit export` run in the Go CLI, as in the TypeScript CLI: each
+  destructive command asks for the target's name again before it writes,
+  and the audit export's secret key is read from standard input, a file
+  or a hidden prompt, never the command line.
+- **`varlatch scan` (#301).** Looks for the values of your Secrets in
+  files or staged changes, in every encoded form, and reports each finding
+  by path, line and item, never the value; `varlatch:allow` markers, a
+  baseline and `--json` as in the TypeScript CLI.
+- **`varlatch run --strict` (#306).** One strict retrieval; every value is
+  checked as the command will receive it, and any violation (names and
+  reasons, never a value) stops the run with exit 78 before the command
+  starts.
 - **The local Broker in the Go CLI (#308).** The Broker's placement and
   streaming rules, as the TypeScript CLI has them. No command of this
   prerelease uses it.
@@ -93,6 +114,9 @@ Changes since 0.50.0-rc.1, by pull request:
   security reset`, `admin unfreeze`, `admin outbound check` and `admin
   maintenance` run `varlatchd admin` on the installation's host. A Compose
   installation's host commands stay the TypeScript CLI's.
+- **`varlatch tailnet repin` (#319).** Shows the tailnet `varlatchd` has
+  pinned and the one it observes, and re-pins with `--yes`; a re-pin is
+  recorded in the audit log as `tailnet.repinned`.
 - **Public HTTPS (#323).** `varlatchd` can serve HTTPS itself with a
   certificate it obtains and renews over ACME (Let's Encrypt by default):
   `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca` and
@@ -103,49 +127,33 @@ Changes since 0.50.0-rc.1, by pull request:
   rollback-safe, and the release it was checked against. `varlatchd admin
   schema status` reports a database's schema, and `admin schema upgrade`
   brings it to the release's, offline.
+- **The migration's rollback window in the manifest (#368).** A release's
+  `release.json` (now format 2) also says what it does to a migration's
+  rollback window: reversible to the last TypeScript release, or ending
+  the window. A release that says neither is refused when it is built.
 - **One relying party, whatever the ingress (#326).** Passkey sign-in and
   registration, like every browser request that changes something, are
   accepted only from the exact origin of `public_url`, on this machine,
   behind your own reverse proxy or with public HTTPS. A client's address
   comes from `X-Forwarded-For` only behind a trusted proxy.
-- **`varlatch self-update` (#327).** Replaces the Go CLI with its
-  platform's asset of a newer release, after checking the release's
-  signature and the asset's checksum, never with an older one unless
-  asked. It refuses inside a package manager's install and names the
-  command to use. The installers now replace a TypeScript CLI on `PATH`;
-  on a host with a Compose installation they keep it as `varlatch-ts`.
-- **`varlatch upgrade` (#330).** Upgrades a Go installation on its Linux
-  host, as root: the release is verified first, the database snapshotted
-  and its schema upgraded on a copy, then the new binaries start and must
-  pass their health checks, or the previous release starts again on the
-  untouched database. `varlatch upgrade --check` records whether a newer
-  release exists, for the release notice. A Compose installation is
-  upgraded with `varlatch-ts upgrade`.
-- **`varlatch run --strict` (#306).** One strict retrieval; every value is
-  checked as the command will receive it, and any violation (names and
-  reasons, never a value) stops the run with exit 78 before the command
-  starts.
-- **`varlatch scan` (#301).** Looks for the values of your Secrets in
-  files or staged changes, in every encoded form, and reports each finding
-  by path, line and item, never the value; `varlatch:allow` markers, a
-  baseline and `--json` as in the TypeScript CLI.
-- **`varlatch tailnet repin` (#319).** Shows the tailnet `varlatchd` has
-  pinned and the one it observes, and re-pins with `--yes`; a re-pin is
-  recorded in the audit log as `tailnet.repinned`.
-- **`varlatch security` (#299).** `varlatch security status`, `report`,
-  `controls` and `set` run in the Go CLI, as in the TypeScript CLI.
 - **A URL's path is not masked (#335).** The CLI's masking of credentials
   in URLs no longer masks an at-sign in a URL's path, such as
   `/@scope/package`; anything that could be a URL's credentials is still
   masked.
-- **Certificate issuance count, schema version 2 (#344).** `varlatchd`
-  records every certificate it requests for a name, kept in its database
-  and its backups. The schema step is rollback-safe: an 0.50.0-rc.1
-  `varlatchd` still opens the upgraded database.
-- **Migration groundwork (#342).** The manifest of every table a
-  TypeScript installation holds, and the canonical encoding a migration
-  will compare them in. No command uses it yet, and there is no migration
-  from a TypeScript installation in this prerelease.
+- **A Sync Target with an unreadable mapping (#366).** A Sync Target whose
+  stored mapping cannot be read fails its own runs, said in its status,
+  instead of stopping `varlatchd`.
+- **TypeScript-format archives kept apart (#356).** `varlatchd`'s backup
+  retention never deletes an archive the TypeScript server made, and
+  `varlatchd admin backup status` lists those archives apart, as
+  restorable through the coming backup converter.
+- **Migration groundwork (#342, #348, #360).** The manifest of every table
+  a TypeScript installation holds and the canonical encoding a migration
+  compares them in (#342); `varlatchd admin migrate import` and `export
+  --reverse`, which build a Go database from a TypeScript installation's
+  export and write one back (#348); and the tailnet control plane's
+  operations a migration's tailnet handoff will use (#360). There is no
+  migration from a TypeScript installation in this prerelease.
 - **The container image's definition (#338).** `go/image` builds
   `varlatchd` and `varlatch` from the release's own assets into a
   distroless image that runs as a non-root user. The image is not
@@ -168,6 +176,18 @@ Changes since 0.50.0-rc.1, by pull request:
 - **Conformance reliability (#358).** Test fixtures use ports outside the
   ephemeral range, and a fixture that does not start is named on its
   checks. No change to what is shipped.
+
+<!-- SLOT #327 (queued): `varlatch self-update`, and the installers over
+     the TypeScript CLI. -->
+<!-- SLOT #330 (queued): `varlatch upgrade` and `upgrade --check`. -->
+<!-- SLOT #310 (queued): `varlatch sync check` and `sync push` in the Go
+     CLI. -->
+<!-- SLOT #344 (being fixed): the certificate issuance count, schema
+     version 2 (rollback-safe). -->
+<!-- SLOT #328 (being fixed): `varlatch doctor` for a Go installation;
+     also update the "Prerelease only" paragraph's "no ... doctor yet". -->
+<!-- SLOT #345 (being fixed): moving a Go installation (`varlatch move`). -->
+<!-- SLOT #374 (queued): conformance reliability, the #358 review's P3s. -->
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release, so nothing that follows the latest release
