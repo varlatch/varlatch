@@ -108,12 +108,12 @@ var loopbackHosts = map[string]bool{"127.0.0.1": true, "[::1]": true, "localhost
 // it: the capabilities less the ones this installation does not offer
 // (sync.targets with sync off; auth.device without an https public URL, or
 // plain http on loopback; tailnet.browser-reads without a browser
-// endpoint; cli.download without serving the CLI, which this build does
-// not), the sync adapters while sync is on, and the installation's ID once
+// endpoint; cli.download until serve_cli serves a release), the sync
+// adapters while sync is on, and the installation's ID once
 // it exists.
 func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (api.GetMetaResponseObject, error) {
 	s := o.s
-	hidden := map[string]bool{"tailnet.browser-reads": s.opts.browserEndpoint() == "", "cli.download": true}
+	hidden := map[string]bool{"tailnet.browser-reads": s.opts.browserEndpoint() == "", "cli.download": s.opts.CLI == nil || s.opts.CLI() == nil}
 	if !s.opts.Sync {
 		hidden["sync.targets"] = true
 	}

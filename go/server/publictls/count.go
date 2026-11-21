@@ -26,6 +26,12 @@ import (
 // IssuanceWindow is the period the count covers (Let's Encrypt's week).
 const IssuanceWindow = 7 * 24 * time.Hour
 
+// IssuanceSlack is how long past the week varlatchd holds a name at its
+// limit: the CA's own window may end a little after this installation's
+// clock says. A check made before varlatchd asks (setup --restore) counts
+// over the window and this slack together.
+const IssuanceSlack = time.Hour
+
 // LetsEncryptLimit is Let's Encrypt's duplicate certificate limit: five
 // certificates for the same exact set of names per week.
 const LetsEncryptLimit = 5
