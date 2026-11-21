@@ -183,6 +183,14 @@ func TestFailingChecks(t *testing.T) {
 		{"a closed tailnet pin", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
 			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "suffix-changed"
 		}, "tailnet access is closed: suffix-changed", "varlatch tailnet repin"},
+		{"the node's tags not tailnet_tags", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://192.0.2.10\n", func(f *fixture) {
+			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "tags-differ"
+			f.in.Live.TailnetDetail = "The node's tags (none) are not tailnet_tags (tag:varlatch): on a self-hosted control server they are its pre-auth key's."
+		}, "tailnet access is closed: The node's tags (none) are not tailnet_tags (tag:varlatch)", "headscale nodes tag"},
+		{"Tailscale's DERP servers in a self-hosted DERP map", "tailnet.control", Advisory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://192.0.2.10\n", func(f *fixture) {
+			f.in.Live.Tailnet = true
+			f.in.Live.TailnetWarnings = []string{"The control server's DERP map lists Tailscale's DERP servers (derp1f.tailscale.com)."}
+		}, "lists Tailscale's DERP servers (derp1f.tailscale.com)", "derp.urls"},
 		{"a WAL past its bound", "storage.wal", Mandatory, "", func(f *fixture) {
 			f.in.Live.Storage.WALBytes, f.in.Live.Storage.TruncatesDelayed = 200<<20, 2
 		}, "the WAL is 200.0 MiB; its bound is 64.0 MiB (more than 2 times", "long reader"},

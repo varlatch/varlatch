@@ -40,6 +40,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/custody"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/tailnet/closed"
 )
 
 // Status of a check.
@@ -123,6 +124,12 @@ type Live struct {
 	// tailnet access ("" when it is open).
 	Tailnet       bool   `json:"tailnet"`
 	TailnetClosed string `json:"tailnetClosed,omitempty"`
+	// TailnetDetail says why the node's tags close access (TailnetClosed
+	// tags-differ: both sets named); TailnetWarnings what the last check
+	// found that closes nothing (a self-hosted control server's DERP map
+	// listing Tailscale's DERP servers).
+	TailnetDetail   string   `json:"tailnetDetail,omitempty"`
+	TailnetWarnings []string `json:"tailnetWarnings,omitempty"`
 	// Custody is the attestations, CustodyError why they could not be read.
 	Custody      *custody.Status `json:"custody,omitempty"`
 	CustodyError string          `json:"custodyError,omitempty"`
@@ -222,6 +229,7 @@ func Run(ctx context.Context, in Inputs) Report {
 	}
 	if cfg.Tailnet != nil {
 		add(tailnetPin(in.Live))
+		add(tailnetControl(in))
 	}
 	add(backupsStatus(in))
 	add(custodyCheck(in))
@@ -650,11 +658,37 @@ func tailnetPin(live *Live) Check {
 		c.Status, c.Detail, c.Remedy = Unknown, notRunning, startIt
 	case !live.Tailnet:
 		c.Status, c.Detail = Unknown, "varlatchd runs no tailnet listener"
+	case live.TailnetClosed == closed.TagsDiffer:
+		// The node's tags, not its pin: a self-hosted control server's
+		// pre-auth key gave it others than tailnet_tags.
+		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetDetail
+		c.Remedy = "Give the node exactly tailnet_tags in Headscale (headscale nodes tag -i <node id> -t <tailnet_tags>), or enrol it again with a pre-auth key tagged with them; access reopens at the next check"
 	case live.TailnetClosed != "":
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetClosed
 		c.Remedy = "Run `sudo varlatch tailnet repin` on this host: it shows the pinned and the observed tailnet, and offers what can be re-pinned"
 	default:
 		c.Status, c.Detail = Pass, "the node is on its pinned tailnet"
+	}
+	return c
+}
+
+// tailnetControl is the coordination server's: Tailscale's, or a
+// self-hosted one (tailnet_control_url), whose DERP map should list only
+// its own DERP servers (ADR-0059 amendment 11): one listing Tailscale's is
+// said, as the operator's to change; nothing closes for it.
+func tailnetControl(in Inputs) Check {
+	c := Check{ID: "tailnet.control", Title: "Tailnet control server", Class: Advisory}
+	t := in.Config.Tailnet
+	switch {
+	case t.ControlURL == "":
+		c.Status, c.Detail = Pass, "Tailscale's coordination server"
+	case in.Live == nil:
+		c.Status, c.Detail, c.Remedy = Unknown, "a self-hosted control server ("+t.ControlURL+"); "+notRunning, startIt
+	case len(in.Live.TailnetWarnings) > 0:
+		c.Status, c.Detail = Fail, strings.Join(in.Live.TailnetWarnings, " ")
+		c.Remedy = "Set Headscale's derp.urls and derp.paths to your own DERP servers only (its embedded DERP server, or yours), then restart Headscale"
+	default:
+		c.Status, c.Detail = Pass, "a self-hosted control server ("+t.ControlURL+"), its DERP map naming none of Tailscale's DERP servers"
 	}
 	return c
 }
