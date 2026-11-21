@@ -28,6 +28,17 @@ func base() Outcome {
 	}
 }
 
+// TestCaseCollision: two names differing only in case are found (a case
+// Windows cannot give), one name of each is not.
+func TestCaseCollision(t *testing.T) {
+	if a, b, ok := caseCollision(map[string]string{"PATH": "", "no_proxy": "", "NO_PROXY": "", "HOME": ""}); !ok || a != "NO_PROXY" || b != "no_proxy" {
+		t.Errorf("%q %q %v", a, b, ok)
+	}
+	if _, _, ok := caseCollision(map[string]string{"PATH": "", "NO_PROXY": "", "HTTPS_PROXY": ""}); ok {
+		t.Error("no two names differ only in case")
+	}
+}
+
 func TestCompareAgreesWithItself(t *testing.T) {
 	if p := Compare(base(), base()); p != nil {
 		t.Fatalf("%q", p)

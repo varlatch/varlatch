@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/apiclient"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/jsval"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/secretinput"
@@ -409,8 +410,16 @@ func latin1Header(name, value string) (string, error) {
 	return string(out), nil
 }
 
-// dialCode is Node's code for a connection that failed.
+// dialCode is Node's code for a connection that failed: libuv's name for
+// the system error first (on Windows a Winsock error, which the syscall
+// constants below are not), then the errors Go reports itself.
 func dialCode(err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		if code, ok := apiclient.ErrnoCode(errno); ok {
+			return code
+		}
+	}
 	for _, c := range []struct {
 		errno syscall.Errno
 		code  string

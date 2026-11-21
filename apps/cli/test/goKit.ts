@@ -20,11 +20,11 @@ import { EMBEDDED_RELEASE } from "@varlatch/backup";
  * (go/cmd/varlatch/internal/transcript).
  *
  * A case gives the arguments, the environment (added to a clean one: PATH,
- * HOME and VARLATCH_CONFIG_DIR inside the case's own directory, and
- * VARLATCH_NODE_CHECK=off, less any the case unsets; nothing
- * from this process, so a coding agent's markers never leak in), a file
- * tree, standard input, and the fake server's script: each request it
- * expects, in order, and its answer. It records standard output, standard
+ * HOME and VARLATCH_CONFIG_DIR inside the case's own directory,
+ * VARLATCH_NODE_CHECK=off and NODE_NO_WARNINGS=1, less any the case
+ * unsets; nothing from this process, so a coding agent's markers never
+ * leak in), a file tree, standard input, and the fake server's script:
+ * each request it expects, in order, and its answer. It records standard output, standard
  * error, the exit status, every request the server received, and the case
  * directory's whole final tree (listTree): every file, directory and
  * symbolic link with its mode, the inputs included, so a deleted input or a
@@ -613,6 +613,9 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       // The Node.js version warning (nodeRuntime.ts) depends on the Node.js
       // that records, and the Go CLI has none: never part of a recording.
       VARLATCH_NODE_CHECK: "off",
+      // A Node.js child's own warnings (an experimental API, say) depend on
+      // the Node.js that runs it: never part of a recording.
+      NODE_NO_WARNINGS: "1",
     };
     // On Windows the home directory is USERPROFILE (os.homedir()), as the
     // Go replay sets it.

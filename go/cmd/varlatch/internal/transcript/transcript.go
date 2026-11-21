@@ -317,6 +317,9 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		"HOME":                filepath.Join(dir, "home"),
 		"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config"),
 		"VARLATCH_NODE_CHECK": "off",
+		// A Node.js child's own warnings (an experimental API, say) depend
+		// on the Node.js that runs it: never part of a recording.
+		"NODE_NO_WARNINGS": "1",
 	}
 	if runtime.GOOS == "windows" {
 		env["USERPROFILE"] = env["HOME"]
@@ -327,6 +330,14 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	}
 	for k, v := range c.Env {
 		env[k] = fill(v)
+	}
+	// Windows's environment names are case-insensitive: a case that sets
+	// two names differing only in case (NO_PROXY and no_proxy) cannot be
+	// given there.
+	if runtime.GOOS == "windows" {
+		if a, b, ok := caseCollision(env); ok {
+			return Outcome{}, nil, fmt.Errorf("%w: %s and %s are one variable on Windows", ErrUnsupported, a, b)
+		}
 	}
 	// Not part of the case's environment: how the CLI under test reaches the fake platforms.
 	if platforms != nil {
@@ -1051,3 +1062,21 @@ func (s *server) received() []Request {
 }
 
 func (s *server) close() { _ = s.srv.Close() }
+
+// caseCollision gives two names of env that differ only in case, the first
+// in sorted order.
+func caseCollision(env map[string]string) (string, string, bool) {
+	names := make([]string, 0, len(env))
+	for k := range env {
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	seen := map[string]string{}
+	for _, n := range names {
+		if other, ok := seen[strings.ToUpper(n)]; ok {
+			return other, n, true
+		}
+		seen[strings.ToUpper(n)] = n
+	}
+	return "", "", false
+}
