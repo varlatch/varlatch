@@ -406,6 +406,18 @@ func (s *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>no</Message></Error>`)
 		return
 	}
+	if r.Method == http.MethodGet && (r.URL.RawQuery == "" || strings.HasPrefix(r.URL.RawQuery, "x-id=GetObject")) {
+		b, ok := s.objects[r.URL.Path]
+		if !ok {
+			w.WriteHeader(404)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>NoSuchKey</Code><Message>no</Message></Error>`)
+			return
+		}
+		w.Header().Set("ETag", `"etag"`)
+		w.WriteHeader(200)
+		_, _ = w.Write(b)
+		return
+	}
 	if r.Method != http.MethodPut || r.URL.RawQuery != "" && !strings.HasPrefix(r.URL.RawQuery, "x-id=PutObject") {
 		w.WriteHeader(400)
 		return
@@ -793,5 +805,74 @@ func TestRunLeavesTheACMEStoreOut(t *testing.T) {
 	}
 	if _, ok := conf.Settings["acme_ca_root"]; ok {
 		t.Error("acme_ca_root, a path on this host, is in the archive")
+	}
+}
+
+// The uploaded copy downloaded back and checked (varlatch migrate
+// --finish's final archive): passed and recorded as the delivery's remote
+// verification; a damaged remote copy fails integrity; refused with no
+// destination, and for an archive never uploaded.
+func TestVerifyRemote(t *testing.T) {
+	f := newFixture(t)
+	fake := &fakeS3{objects: map[string][]byte{}}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	s := f.service(nil)
+	res, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.VerifyRemote(context.Background(), res.ArchiveID); !errors.Is(err, ErrNoDestination) {
+		t.Fatalf("no destination: %v", err)
+	}
+	conf := filepath.Join(f.dir, "conf")
+	os.Mkdir(conf, 0o700)
+	os.WriteFile(filepath.Join(conf, "destinations.json"), []byte(`{"offsite":{"endpoint":"`+srv.URL+`","region":"us-east-1","bucket":"b","writeCredentialsFile":"write.json"}}`), 0o600)
+	os.WriteFile(filepath.Join(conf, "write.json"), []byte(`{"accessKeyId":"AKIDTEST","secretAccessKey":"not-a-secret"}`), 0o600)
+	f.cfg.BackupDestinationsFile = filepath.Join(conf, "destinations.json")
+	s = f.service(nil)
+	if _, err := s.VerifyRemote(context.Background(), res.ArchiveID); err == nil || !strings.Contains(err.Error(), "no recorded upload") {
+		t.Fatalf("never uploaded: %v", err)
+	}
+	// A killed verification's download directory: the next run removes it.
+	killed := filepath.Join(f.dir, Dir, ".remote-"+res.ArchiveID)
+	if err := os.MkdirAll(killed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	up, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(killed); !os.IsNotExist(err) {
+		t.Errorf("a killed verification's directory after a run: %v", err)
+	}
+	v, err := s.VerifyRemote(context.Background(), up.ArchiveID)
+	if err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {
+		t.Fatalf("the remote copy: %+v %v", v, err)
+	}
+	st, _ := s.Status()
+	found := false
+	for _, a := range st.Archives {
+		if a.ArchiveID == up.ArchiveID && a.Delivery != nil && a.Delivery.RemoteVerification != nil && a.Delivery.RemoteVerification.Integrity {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the remote verification was not recorded")
+	}
+	key := "/b/varlatch/" + up.ArchiveID + ".vltbak"
+	fake.mu.Lock()
+	b := fake.objects[key]
+	b[len(b)/2] ^= 0xff
+	fake.mu.Unlock()
+	if v, err := s.VerifyRemote(context.Background(), up.ArchiveID); err != nil || v.Integrity {
+		t.Errorf("a damaged remote copy: %+v %v", v, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(f.dir, Dir)); len(entries) > 0 {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".remote-") {
+				t.Errorf("the download is left: %s", e.Name())
+			}
+		}
 	}
 }

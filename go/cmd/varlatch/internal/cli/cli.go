@@ -220,6 +220,9 @@ func (r *Run) dispatch(hasCommand bool) error {
 		return r.println(Usage)
 	}
 	c := lookup(r.Command)
+	if run, ok := goOnlyCommands[r.Command]; c == nil && ok {
+		return run(r)
+	}
 	if c == nil {
 		shown := shownArgument(r.Command)
 		if clientctx.HasAtSign(shown) {

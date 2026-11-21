@@ -201,6 +201,11 @@ func serve(opts Options, h *hooks) int {
 		}
 		return fail(ExitFailure, "cannot read the configuration file", "file", opts.ConfigPath, "error", err)
 	}
+	// Mid-migration, the old installation may still reopen: the new one
+	// does not serve until `varlatch migrate` opens it (go-step7 decision 14).
+	if err := migrationGate(cfg.DataDir); err != nil {
+		return fail(ExitConfig, "varlatchd does not start: "+err.Error())
+	}
 	material, err := os.ReadFile(cfg.RootKEKFile)
 	if err != nil {
 		return fail(ExitFailure, "cannot read the Root KEK file", "file", cfg.RootKEKFile, "error", err)

@@ -114,6 +114,9 @@ func (c *checker) authenticationEnd(ctx context.Context) error {
 			c.fail(Authentication, s, "", "%d rows the source does not have", n-c.authnSeen[s])
 		}
 	}
+	if c.o.Reverse && len(c.sessions) > 0 {
+		c.fail(Authentication, "session", "", "the rebuilt installation holds %d browser sessions; it starts with none", len(c.sessions))
+	}
 	var sessions int
 	if err := c.db.QueryRowContext(ctx, "SELECT count(*) FROM auth_sessions").Scan(&sessions); err != nil {
 		return err

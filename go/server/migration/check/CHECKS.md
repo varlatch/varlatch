@@ -133,9 +133,45 @@ session, unexpired at `installation.migrated`'s moment, is revoked. A
 fault names the table, the row by its id (or its key's columns where the
 key is a hash) and the changed columns.
 
+## The reverse checks
+
+A reverse migration (internal docs/design/go-step7.md decision 16, slice
+7.6a) runs the same five checks the other way round, with `--reverse`:
+
+```
+varlatchd admin migrate export --reverse --out <reverse bundle> --keep <dir>
+  (the TypeScript release imports the reverse bundle onto a fresh database,
+   then exports that database: admin migration export --dry-run --digests)
+varlatchd admin migrate check --reverse --in <its export> --scratch <dir>
+```
+
+- The **target** is the transformed copy the reverse export kept (`--keep`):
+  the Go installation at the barrier's frozen point with the reverse's two
+  transformations applied, its browser sessions ended and
+  `installation.migrated` appended. It is the state the reverse bundle
+  carries.
+- The **bundle** is the TypeScript release's export of the database it
+  rebuilt from the reverse bundle: its rows as that database holds them,
+  its digests (its own decryption of every item, under the run key) and its
+  evaluator's decision table. It is a forward bundle, by its header.
+- The rebuilt database holds the copy's state exactly, so nothing comes
+  between the two: the rows are compared byte for byte, as above; no event
+  follows the frozen point (the bundle's last position is the copy's
+  last); the bundle holds no browser session; every cursor is where the
+  copy left it; every item's plaintext is the same on both sides; every
+  decision of the TypeScript evaluator's table is varlatchd's on the copy;
+  the authentication state is the same row for row.
+- A check of a scratch directory runs beside a running varlatchd: it reads
+  that directory only, so the Go installation keeps running behind its
+  barrier while the reverse is checked.
+
+The reverse bundle's own digest and decision sections stay empty
+(`../bundle/BUNDLE.md`): the TypeScript side's digests and decisions arrive
+with its export, and varlatchd computes its own from the copy.
+
 ## The report
 
-`--json` prints one object: `passed`, the bundle's counts and, per check,
+`--json` prints one object: `passed`, `reverse` for the reverse checks, the bundle's counts and, per check,
 `passed`, how many items it `checked`, its `failures` (each with its
 `table` or `class` and `what`; at most 50, `more` counting the rest).
 Without it, one line per check and its faults. Both name checks, tables,
