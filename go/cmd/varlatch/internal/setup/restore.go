@@ -210,13 +210,13 @@ func (r *run) issuanceCheck(ctx context.Context) error {
 		if c.Until != nil {
 			until = c.Until.UTC().Format(time.RFC3339)
 		}
-		return fmt.Errorf("setup: the restored installation's records show %d certificate requests for %s in the last 7 days, Let's Encrypt's limit of %d per name per week: varlatchd's first request would be refused. Nothing has asked; the restored data stays. Run setup again after %s",
+		return fmt.Errorf("setup: the restored installation's records show %d certificate requests for %s in the last 7 days and an hour, Let's Encrypt's limit of %d per name per week: varlatchd's first request would be refused. Nothing has asked; the restored data stays. Run setup again after %s",
 			c.Attempts, c.Name, c.Limit, until)
 	}
 	if c.Limit == 0 {
 		return nil
 	}
-	return r.o.Say(fmt.Sprintf("Certificate requests for %s in the last 7 days, by the restored records: %d of Let's Encrypt's %d.", c.Name, c.Attempts, c.Limit))
+	return r.o.Say(fmt.Sprintf("Certificate requests for %s in the last 7 days and an hour, by the restored records: %d of Let's Encrypt's %d.", c.Name, c.Attempts, c.Limit))
 }
 
 // probeResult is `varlatchd admin tailnet probe-name --json`.
