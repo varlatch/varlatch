@@ -52,11 +52,25 @@ import (
 // "(run context)"; reason never holds a value.
 type violation struct{ name, kind, reason string }
 
-// strictPlan is StrictPlan without its agent-safe parts.
+// strictPlan is StrictPlan.
 type strictPlan struct {
 	env             *orderedEnv
+	mediated        []string
 	violations      []violation
 	outsideContract int
+}
+
+// agentFact is one item's Broker issuance preflight fact.
+type agentFact struct {
+	present    bool
+	authorized bool
+	reason     string
+}
+
+// agentSafeFacts is AgentSafeFacts: non-nil for an agent-safe strict run;
+// agent is nil during preliminary planning before Capability issuance.
+type agentSafeFacts struct {
+	agent map[string]agentFact
 }
 
 // contractItemOf is one item of a Contract a server sent, read as
@@ -100,12 +114,18 @@ func templateText(v any, key string) string {
 }
 
 // checkAllowances is checkAllowances: --allow-inherited names must be
-// Contract items; a typo is an error, never ignored.
-func checkAllowances(contractDoc any, allowInherited []string) error {
+// Contract items; a typo is an error, never ignored. In an agent-safe run
+// it may not name a Secret, which would put plaintext into the Agent's
+// environment.
+func checkAllowances(contractDoc any, allowInherited []string, agentSafe bool) error {
 	byName := map[string]bool{}
+	sensitive := map[string]bool{}
 	for _, item := range listOf(contractDoc, "items") {
 		if name, ok := stringField(item, "name"); ok {
 			byName[name] = true
+			if jsjson.Truthy(fieldOf(item, "sensitive")) {
+				sensitive[name] = true
+			}
 		}
 	}
 	var unknown []string
@@ -114,11 +134,23 @@ func checkAllowances(contractDoc any, allowInherited []string) error {
 			unknown = append(unknown, n)
 		}
 	}
-	if len(unknown) == 0 {
-		return nil
+	if len(unknown) > 0 {
+		slices.SortFunc(unknown, jsval.CompareUTF16)
+		return UsageError("varlatch: --allow-inherited names must be Contract items; not in the Contract: " + Printable(strings.Join(unknown, ", ")) + ". Nothing was started.")
 	}
-	slices.SortFunc(unknown, jsval.CompareUTF16)
-	return UsageError("varlatch: --allow-inherited names must be Contract items; not in the Contract: " + Printable(strings.Join(unknown, ", ")) + ". Nothing was started.")
+	if agentSafe {
+		var secrets []string
+		for _, n := range allowInherited {
+			if sensitive[n] && !slices.Contains(secrets, n) {
+				secrets = append(secrets, n)
+			}
+		}
+		if len(secrets) > 0 {
+			slices.SortFunc(secrets, jsval.CompareUTF16)
+			return UsageError("varlatch: --allow-inherited cannot name a Secret in an agent-safe run, which would put plaintext into the Agent's environment: " + Printable(strings.Join(secrets, ", ")) + ". Nothing was started.")
+		}
+	}
+	return nil
 }
 
 // withheldReason is withheldReason.
@@ -144,10 +176,10 @@ func joinedReferences(references any) string {
 	return strings.Join(parts, ", ")
 }
 
-// planStrictRun is planStrictRun for a run that is not agent-safe: env
-// starts as the parent's environment (parent, read as process.env reads
-// it), without an inherited run context or an omitted item.
-func planStrictRun(retrieval any, env *orderedEnv, parent parentVars, allowInherited, omitted map[string]bool) strictPlan {
+// planStrictRun is planStrictRun: env starts as the parent's environment
+// (parent, read as process.env reads it), without an inherited run context
+// or an omitted item. agentSafe is non-nil for `--agent-safe --strict`.
+func planStrictRun(retrieval any, env *orderedEnv, parent parentVars, allowInherited, omitted map[string]bool, agentSafe *agentSafeFacts) strictPlan {
 	plan := strictPlan{env: env}
 	env.Delete(runContextName)
 	for name := range omitted {
@@ -216,15 +248,40 @@ func planStrictRun(retrieval any, env *orderedEnv, parent parentVars, allowInher
 		}
 	}
 
-	// Items outside the Contract are delivered as a default run delivers them.
+	// Items outside the Contract are delivered as a default run delivers them
+	// (in an agent-safe run, a stored Secret as a Placeholder).
 	for _, item := range listOf(retrieval, "items") {
 		name, _ := stringField(item, "name")
 		if contracted[name] || slices.Contains(contract.ReservedItemNames, name) || omitted[name] {
 			continue
 		}
-		if value, ok := fieldOf(item, "value").(string); ok {
+		if agentSafe != nil && jsjson.Truthy(fieldOf(item, "sensitive")) {
+			plan.mediated = append(plan.mediated, name)
+			plan.outsideContract++
+		} else if value, ok := fieldOf(item, "value").(string); ok {
 			env.Set(name, value)
 			plan.outsideContract++
+		}
+	}
+
+	// Server verdicts for Secrets in an agent-safe strict run.
+	validation := fieldOf(retrieval, "validation")
+	invalidVerdicts := map[string]string{}
+	for _, v := range listOf(validation, "invalid") {
+		if name, ok := stringField(v, "name"); ok {
+			invalidVerdicts[name] = jsjson.String(fieldOf(v, "reason"))
+		}
+	}
+	unresolvedVerdicts := map[string]bool{}
+	for _, v := range listOf(validation, "unresolved") {
+		if name, ok := stringField(v, "name"); ok {
+			unresolvedVerdicts[name] = true
+		}
+	}
+	notEvaluatedVerdicts := map[string]string{}
+	for _, v := range listOf(validation, "notEvaluated") {
+		if name, ok := stringField(v, "name"); ok {
+			notEvaluatedVerdicts[name] = jsjson.String(fieldOf(v, "reason"))
 		}
 	}
 
@@ -234,9 +291,64 @@ func planStrictRun(retrieval any, env *orderedEnv, parent parentVars, allowInher
 			add(it.Name, "invalid", source+" "+problem)
 		}
 	}
+	planAgentSecret := func(it contract.Item, required bool) jsjson.Object {
+		_, stored := items[it.Name]
+		if stored && omitted[it.Name] {
+			env.Delete(it.Name)
+			if required {
+				add(it.Name, "omitted", "required in this environment, and --omit leaves it out of the run")
+			}
+			return jsjson.Object{{Key: "server", Value: "delivered"}, {Key: "delivery", Value: "absent"}}
+		}
+		if !stored {
+			if _, isSet := parent.lookup(it.Name); isSet {
+				add(it.Name, "inherited", "a Secret set only in the parent environment would reach the Agent as plaintext; store it in Varlatch")
+				return jsjson.Object{{Key: "server", Value: "notStored"}, {Key: "delivery", Value: "absent"}}
+			}
+			if it.DefaultValue != nil {
+				env.Set(it.Name, *it.DefaultValue)
+				validate(it, *it.DefaultValue, "the Contract default")
+				return jsjson.Object{{Key: "server", Value: "notStored"}, {Key: "delivery", Value: "default"}}
+			}
+			if required {
+				add(it.Name, "missing", "required in this environment and not stored")
+			}
+			return jsjson.Object{{Key: "server", Value: "notStored"}, {Key: "delivery", Value: "absent"}}
+		}
+		if reason, ok := notEvaluatedVerdicts[it.Name]; ok {
+			if reason == "requirement" {
+				add(it.Name, "not-evaluated", "validating Secrets needs secret.reveal, and a Requirement (such as a Tailnet Constraint) is not met")
+			} else {
+				add(it.Name, "not-evaluated", "validating Secrets in an agent-safe strict run needs secret.reveal for the operator")
+			}
+		} else if reason, ok := invalidVerdicts[it.Name]; ok && reason != "" {
+			add(it.Name, "invalid", "the stored value "+reason)
+		} else if unresolvedVerdicts[it.Name] {
+			add(it.Name, "unresolved-reference", "a reference stays literal for the operator")
+		}
+		if agentSafe.agent != nil {
+			if fact, ok := agentSafe.agent[it.Name]; ok {
+				if !fact.present {
+					add(it.Name, "missing", "no longer stored when the Capability was issued")
+				} else if !fact.authorized {
+					if fact.reason == "requirement" {
+						add(it.Name, "agent-unauthorized", "the Agent's secret.use Requirement (such as a Tailnet Constraint) is not met at issuance")
+					} else {
+						add(it.Name, "agent-unauthorized", "the Agent lacks secret.use here")
+					}
+				}
+			}
+		}
+		plan.mediated = append(plan.mediated, it.Name)
+		return jsjson.Object{{Key: "server", Value: "delivered"}, {Key: "delivery", Value: "varlatch"}}
+	}
 	for _, raw := range listOf(contractDoc, "items") {
 		it := contractItemOf(raw)
 		if slices.Contains(contract.ReservedItemNames, it.Name) {
+			continue
+		}
+		if agentSafe != nil && it.Sensitive {
+			contextItems = contextItems.Set(it.Name, planAgentSecret(it, semantics.RequiredApplies(it, envCtx)))
 			continue
 		}
 		got, stored := items[it.Name]
@@ -394,7 +506,7 @@ func (r *Run) strictRun(ctx *clientctx.Context, c *apiclient.Client, pre []strin
 	contractDoc := fieldOf(retrieval, "contract")
 	allowInherited := flagValues(pre, "--allow-inherited")
 	if jsjson.Truthy(contractDoc) {
-		if err := checkAllowances(contractDoc, allowInherited); err != nil {
+		if err := checkAllowances(contractDoc, allowInherited, false); err != nil {
 			return err
 		}
 	}
@@ -426,7 +538,7 @@ func (r *Run) strictRun(ctx *clientctx.Context, c *apiclient.Client, pre []strin
 		allowed[n] = true
 	}
 	parent := r.parentVars()
-	plan := planStrictRun(retrieval, r.parentEnv(), parent, allowed, omitted)
+	plan := planStrictRun(retrieval, r.parentEnv(), parent, allowed, omitted, nil)
 	if len(plan.violations) > 0 {
 		for _, line := range formatViolations(plan.violations) {
 			r.eprintln(line)
