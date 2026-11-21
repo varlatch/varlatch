@@ -1855,6 +1855,48 @@ const strict54f: TranscriptCase[] = [
   s({ id: "refused.short-assisted", title: "assisted mode: a Secret too short to mask still stops the run", env: ASSISTED, server: strictRun({ stored: [{ name: "API_KEY", sensitive: true, value: "1234" }, STORED[1] as Stored] }) }),
 ];
 
+// varlatch run --agent-safe --strict (5.5b, recorded here, after 5.4f's
+// strict retrieval): the operator's preflight retrieval (no Secret values;
+// the server's verdict per Secret), then the Capability bound to that state,
+// and 78 with every violation before the Agent starts. A Secret's verdict
+// refuses it by precedence (not-evaluated, then invalid, then an unresolved
+// reference); the issuance's report adds missing, or else agent-unauthorized.
+const STRICT_SAFE_META = ok("/v1/meta", { ...META, capabilities: ["capabilities.targets", "retrieval.strict", "retrieval.preflight"] });
+const PREFLIGHT_STORED: Stored[] = [{ name: "API_KEY", sensitive: true, value: null }, STORED[1] as Stored];
+const preflight = (validation: Record<string, unknown[]> = {}, o: { stored?: Stored[]; contract?: unknown } = {}): Exchange => {
+  const e = strictRetrieval({ stored: o.stored ?? PREFLIGHT_STORED, contract: o.contract });
+  return { ...e, answer: { ...(e.answer as Record<string, unknown>), validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [], ...validation } } };
+};
+const agentReport = (extra: Record<string, unknown> = {}) => ({ preflightItems: [{ name: "API_KEY", present: true, authorized: true, ...extra }] });
+const STRICT_SAFE = (...flags: string[]) => SAFE("--strict", ...TARGET, ...HOST, ...flags, ...agentChild());
+const strictSafeStart = (validation?: Record<string, unknown[]>): Exchange[] => [STRICT_SAFE_META, AGENT_IDENTITIES, preflight(validation)];
+const NOT_EVALUATED = (reason: string) => ({ notEvaluated: [{ name: "API_KEY", reason }] });
+const INVALID = { invalid: [{ name: "API_KEY", reason: "is not a valid string" }] };
+const UNRESOLVED = { unresolved: [{ name: "API_KEY", references: ["OTHER_KEY"] }] };
+const NO_SECRETS = { stored: [STORED[1] as Stored], contract: strictContract(STRICT_ITEMS.filter((i) => i.name !== "API_KEY")) };
+const agentSafeStrict55b: TranscriptCase[] = [
+  // The verdicts, by precedence: the Capability issued, then revoked, 78
+  agentSafe({ id: "strict.not-evaluated", title: "strict: not-evaluated before invalid and an unresolved reference", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart({ ...NOT_EVALUATED("permission"), ...INVALID, ...UNRESOLVED }), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.not-evaluated-requirement", title: "strict: not-evaluated, a Requirement not met", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(NOT_EVALUATED("requirement")), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.invalid", title: "strict: invalid before an unresolved reference, the value never shown", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart({ ...INVALID, ...UNRESOLVED }), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.unresolved-reference", title: "strict: a reference left literal for the operator", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(UNRESOLVED), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.missing", title: "strict: no longer stored at issuance, before agent-unauthorized", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ present: false, authorized: false })), capRevoked()] }),
+  agentSafe({ id: "strict.agent-unauthorized", title: "strict: the Agent lacks secret.use", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ authorized: false, reason: "permission" })), capRevoked()] }),
+  agentSafe({ id: "strict.agent-unauthorized-requirement", title: "strict: the Agent's Requirement not met at issuance", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ authorized: false, reason: "requirement" })), capRevoked()] }),
+  agentSafe({ id: "strict.verdict-and-agent", title: "strict: a verdict and the issuance's report, both named", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(INVALID), issued(agentReport({ authorized: false })), capRevoked()] }),
+  // Allowed
+  agentSafe({
+    id: "strict.run",
+    title: "strict: allowed, a Placeholder through the Broker, the Capability revoked afterwards",
+    args: SAFE("--strict", ...TARGET, ...HOST, ...agentChild("x")),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy", VARLATCH_TOKEN: "vlt_cli_operatorFAKE" },
+    server: [...strictSafeStart(), issued(agentReport()), capRevoked()],
+  }),
+  // Nothing to mediate: no Broker, no Capability
+  agentSafe({ id: "strict.nothing", title: "strict: no Secret to mediate, the Agent started without a Broker", args: SAFE("--strict", ...agentChild()), env: BROKER_ENV, server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, NO_SECRETS)] }),
+  agentSafe({ id: "strict.nothing-no-broker-credential", title: "strict: the Broker credential is needed even with nothing to mediate", args: SAFE("--strict", ...agentChild()), server: [STRICT_SAFE_META, AGENT_IDENTITIES] }),
+];
+
 // ---- 5.6b: varlatch mcp ----------------------------------------------------------
 //
 // The server as an MCP host runs it: JSON-RPC lines on stdin, all sent at
@@ -2861,7 +2903,7 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.4d-scan": scan54d,
   "5.4e-find-files": findFiles54e,
   "5.4f-strict": strict54f,
-  "5.5b-agent-run": agentRun55b,
+  "5.5b-agent-run": [...agentRun55b, ...agentSafeStrict55b],
   "5.5b-request": request55b,
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,
