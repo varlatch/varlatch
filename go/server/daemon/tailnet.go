@@ -82,7 +82,9 @@ func startTailnet(cfg *config.Config, controlURL string, certs tailnet.CertSourc
 	}
 	tslog := log.With("component", "tsnet")
 	node, err := tailnet.StartNode(tailnet.NodeConfig{
-		Dir: dir, Hostname: t.Hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags,
+		// On a self-hosted control server (configured, not a test's), the
+		// tags are the tagged pre-auth key's.
+		Dir: dir, Hostname: t.Hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: t.ControlURL != "",
 		Logf: func(format string, args ...any) { tslog.Debug(fmt.Sprintf(format, args...)) },
 	})
 	if err != nil {

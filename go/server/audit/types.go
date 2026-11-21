@@ -7,6 +7,11 @@ package audit
 // server's list is frozen. Record accepts them beside EventTypes; the
 // vectors check none is in AUDIT_EVENT_TYPES.
 var GoOnlyEventTypes = []string{
+	// An installation migrated from the TypeScript server (or back): after
+	// the source's events and the revocations of the sessions it ended
+	// (`varlatchd admin migrate import`, `export --reverse`; step 7.3a).
+	// The last TypeScript release (0.23.0) knows it too.
+	"installation.migrated",
 	// The host re-pinned the tailnet, reopened tailnet access on its pin,
 	// or adopted the tailnet an enrolled node without a pin is on
 	// (`varlatchd admin tailnet repin --yes`, step 6.2b).
