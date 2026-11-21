@@ -1871,8 +1871,8 @@ const strict54f: TranscriptCase[] = [
 // reference); the issuance's report adds missing, or else agent-unauthorized.
 const STRICT_SAFE_META = ok("/v1/meta", { ...META, capabilities: ["capabilities.targets", "retrieval.strict", "retrieval.preflight"] });
 const PREFLIGHT_STORED: Stored[] = [{ name: "API_KEY", sensitive: true, value: null }, STORED[1] as Stored];
-const preflight = (validation: Record<string, unknown[]> = {}, o: { stored?: Stored[]; contract?: unknown } = {}): Exchange => {
-  const e = strictRetrieval({ stored: o.stored ?? PREFLIGHT_STORED, contract: o.contract });
+const preflight = (validation: Record<string, unknown[]> = {}, o: { stored?: Stored[]; contract?: unknown; withheld?: unknown[] } = {}): Exchange => {
+  const e = strictRetrieval({ stored: o.stored ?? PREFLIGHT_STORED, contract: o.contract, withheld: o.withheld });
   return { ...e, answer: { ...(e.answer as Record<string, unknown>), validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [], ...validation } } };
 };
 const agentReport = (extra: Record<string, unknown> = {}) => ({ preflightItems: [{ name: "API_KEY", present: true, authorized: true, ...extra }] });
@@ -1882,7 +1882,28 @@ const NOT_EVALUATED = (reason: string) => ({ notEvaluated: [{ name: "API_KEY", r
 const INVALID = { invalid: [{ name: "API_KEY", reason: "is not a valid string" }] };
 const UNRESOLVED = { unresolved: [{ name: "API_KEY", references: ["OTHER_KEY"] }] };
 const NO_SECRETS = { stored: [STORED[1] as Stored], contract: strictContract(STRICT_ITEMS.filter((i) => i.name !== "API_KEY")) };
+const MULTI_SECRET_STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: null },
+  { name: "PIN", sensitive: true, value: null },
+  { name: "LEGACY_KEY", sensitive: true, value: null },
+  STORED[1] as Stored,
+];
+const MULTI_SECRET_CONTRACT = strictContract([
+  ...STRICT_ITEMS,
+  item("PIN", ALWAYS),
+  item("LEGACY_KEY", ALWAYS),
+]);
+const OPTIONAL_PIN_STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: null },
+  { name: "PIN", sensitive: true, value: null },
+  STORED[1] as Stored,
+];
+const OPTIONAL_PIN_CONTRACT = strictContract([...STRICT_ITEMS, item("PIN")]);
 const agentSafeStrict55b: TranscriptCase[] = [
+  // Server capability gating: fail closed (78) without starting anything
+  agentSafe({ id: "strict.no-preflight", title: "strict: server without retrieval.preflight fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [META_TARGETS] }),
+  agentSafe({ id: "strict.no-targets", title: "strict: server without capabilities.targets fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [ok("/v1/meta", { capabilities: ["retrieval.strict", "retrieval.preflight"] })] }),
+  agentSafe({ id: "strict.no-strict", title: "strict: server without retrieval.preflight or retrieval.strict fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [ok("/v1/meta", { ...META, capabilities: ["capabilities.targets"] })] }),
   // The verdicts, by precedence: the Capability issued, then revoked, 78
   agentSafe({ id: "strict.not-evaluated", title: "strict: not-evaluated before invalid and an unresolved reference", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart({ ...NOT_EVALUATED("permission"), ...INVALID, ...UNRESOLVED }), issued(agentReport()), capRevoked()] }),
   agentSafe({ id: "strict.not-evaluated-requirement", title: "strict: not-evaluated, a Requirement not met", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(NOT_EVALUATED("requirement")), issued(agentReport()), capRevoked()] }),
@@ -1892,6 +1913,64 @@ const agentSafeStrict55b: TranscriptCase[] = [
   agentSafe({ id: "strict.agent-unauthorized", title: "strict: the Agent lacks secret.use", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ authorized: false, reason: "permission" })), capRevoked()] }),
   agentSafe({ id: "strict.agent-unauthorized-requirement", title: "strict: the Agent's Requirement not met at issuance", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ authorized: false, reason: "requirement" })), capRevoked()] }),
   agentSafe({ id: "strict.verdict-and-agent", title: "strict: a verdict and the issuance's report, both named", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(INVALID), issued(agentReport({ authorized: false })), capRevoked()] }),
+  // Multi-Secret with mixed verdicts (one valid, one invalid at preflight, one agent-unauthorized at issuance)
+  agentSafe({
+    id: "strict.multi-mixed-verdicts",
+    title: "strict: multiple Secrets with mixed verdicts, only failing Secrets named in Contract order",
+    args: SAFE("--strict", ...TARGET, "--target", "PIN=query:pin", "--target", "LEGACY_KEY=header:x-legacy", ...HOST, ...agentChild()),
+    env: BROKER_ENV,
+    server: [
+      STRICT_SAFE_META,
+      AGENT_IDENTITIES,
+      preflight({ invalid: [{ name: "PIN", reason: "is not a valid string" }] }, { stored: MULTI_SECRET_STORED, contract: MULTI_SECRET_CONTRACT }),
+      issued({
+        targets: { API_KEY: ["header:authorization"], PIN: ["query:pin"], LEGACY_KEY: ["header:x-legacy"] },
+        preflightItems: [
+          { name: "API_KEY", present: true, authorized: true },
+          { name: "PIN", present: true, authorized: true },
+          { name: "LEGACY_KEY", present: true, authorized: false, reason: "permission" },
+        ],
+      }),
+      capRevoked(),
+    ],
+  }),
+  // Withheld Secret at preflight: mediated as a Placeholder, Run Context records delivered/varlatch
+  agentSafe({
+    id: "strict.withheld-secret",
+    title: "strict: a Secret listed in callerView.withheld at preflight is still mediated as a Placeholder",
+    args: STRICT_SAFE(),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy" },
+    server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, withheldKey()), issued(agentReport()), capRevoked()],
+  }),
+  // --allow-inherited and --omit under agent-safe strict
+  agentSafe({
+    id: "strict.allow-inherited",
+    title: "strict: --allow-inherited accepts a non-sensitive Contract item from the parent environment",
+    args: STRICT_SAFE("--allow-inherited", "REGION"),
+    env: { ...BROKER_ENV, REGION: "eu-west" },
+    server: [...strictSafeStart(), issued(agentReport()), capRevoked()],
+  }),
+  agentSafe({
+    id: "strict.allow-inherited-secret",
+    title: "strict: --allow-inherited naming a Secret is refused before issuance",
+    args: STRICT_SAFE("--allow-inherited", "API_KEY"),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy" },
+    server: strictSafeStart(),
+  }),
+  agentSafe({
+    id: "strict.omit-optional-secret",
+    title: "strict: --omit leaves an optional stored Secret off the Capability and out of the Agent's environment",
+    args: STRICT_SAFE("--omit", "PIN"),
+    env: { ...BROKER_ENV, PIN: "inherited-pin" },
+    server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, { stored: OPTIONAL_PIN_STORED, contract: OPTIONAL_PIN_CONTRACT }), issued(agentReport()), capRevoked()],
+  }),
+  agentSafe({
+    id: "strict.omit-required-secret",
+    title: "strict: --omit of a required stored Secret refuses with 78 without issuing a Capability",
+    args: SAFE("--strict", "--omit", "API_KEY", ...HOST, ...agentChild()),
+    env: BROKER_ENV,
+    server: strictSafeStart(),
+  }),
   // Allowed
   agentSafe({
     id: "strict.run",
