@@ -247,6 +247,14 @@ var differences = map[string]transcript.Difference{
 	// the Go CLI's forms: it replaces a native binary, always checks the
 	// signature, and takes --prerelease and --allow-downgrade (slice 6.7a).
 	// The recording's usage becomes the Go one.
+	// `varlatch help upgrade` (and `upgrade --help`, `-h`) prints a Go
+	// installation's forms (slice 6.6b); the TypeScript usage is a Compose
+	// installation's. The recording's usage becomes the Go one.
+	"upgrade-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch upgrade ") {
+			o.Stdout = cli.UpgradeHelp + "\n"
+		}
+	},
 	"self-update-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
 		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch self-update ") {
 			o.Stdout = cli.SelfUpdateHelp + "\n"
