@@ -29,6 +29,10 @@ RUN mkdir -p /out/data /out/conf /out/keys
 FROM gcr.io/distroless/static-debian12@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 ARG VERSION
 ARG TARGETARCH
+# The SHA-256 of the release's SHA256SUMS, which lists these binaries: set
+# by release.yml (empty in a local or pull request build), it binds the
+# image to the signed release it was built from.
+ARG RELEASE_SUMS=
 COPY --from=assets --chmod=0555 varlatchd-${VERSION}-linux-${TARGETARCH} /opt/varlatch/varlatchd
 COPY --from=assets --chmod=0555 varlatch-${VERSION}-linux-${TARGETARCH} /opt/varlatch/varlatch
 COPY --chmod=0444 LICENSE THIRD-PARTY-NOTICES.md /usr/share/doc/varlatch/
@@ -43,7 +47,8 @@ COPY --from=dirs --chmod=0755 /out/keys /keys
 LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later AND Apache-2.0" \
       org.opencontainers.image.source="https://github.com/varlatch/varlatch" \
       org.opencontainers.image.title="varlatchd" \
-      org.opencontainers.image.version="${VERSION}"
+      org.opencontainers.image.version="${VERSION}" \
+      com.varlatch.release.sha256sums="${RELEASE_SUMS}"
 ENV PATH=/opt/varlatch:/usr/local/bin:/usr/bin:/bin \
     VARLATCH_IMAGE=varlatchd
 USER 65532:65532

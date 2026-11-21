@@ -109,6 +109,87 @@ the digests its manifest pins, for known vulnerabilities with
 OSV-Scanner, and lists what it finds in the run's summary. It only
 reports: it never changes a published release or holds back the next one.
 
+## The Go line (0.50.0 and later)
+
+From 0.50.0, and its `0.50.0-rc.N` prereleases, a release is the Go
+binaries and the Go container image. It is always signed, by the same
+workflow identity (`IDENTITY` above, for its tag). Check its assets as
+[release assets](#release-assets) shows: `SHA256SUMS` lists every binary,
+the installers, the systemd unit and its example configuration. The
+installers make the same check before installing anything, and so does
+`varlatch verify-release`.
+
+### The Go container image
+
+The image is `ghcr.io/varlatch/varlatchd`, tagged with the version alone
+(never `latest`; the TypeScript releases' tags of the same image are all
+below 0.50.0). The release notes name it by digest; pin it by that digest.
+The release workflow pushes it, checks that it holds the release's own
+binaries and passes the conformance suites, and only then signs it and
+publishes the release. If the workflow stops partway, a version's image can
+be in the registry, signed or not, with no published release: such an
+image is unverified. Take an image's digest only from a published
+release's notes, never from the registry's tags.
+
+```sh
+IMAGE=$(gh release view "v$V" -R "$REPO" --json body -q .body \
+  | grep -o 'ghcr\.io/varlatch/varlatchd:[^`@ ]*@sha256:[0-9a-f]\{64\}' | head -1)
+export COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures
+cosign verify "${IMAGE%%:*}@${IMAGE##*@}" \
+  --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null \
+  && echo "verified $IMAGE"
+```
+
+As for the TypeScript images, the signature is in
+`ghcr.io/varlatch/varlatch-signatures`, so cosign needs
+`COSIGN_REPOSITORY`. The signature covers the multi-platform index, and
+through it each platform's image.
+
+Its provenance names the tag's commit and the release workflow, for both
+platforms, and each platform has an SBOM:
+
+```sh
+COMMIT=$(gh api "repos/$REPO/commits/v$V" -q .sha)
+for platform in linux/amd64 linux/arm64; do
+  provenance=$(docker buildx imagetools inspect "$IMAGE" --format "{{ json (index .Provenance \"$platform\") }}")
+  built=$(jq -r '[.. | objects | .["vcs:revision"]? // empty] | unique | join(" ")' <<<"$provenance")
+  by=$(jq -r '.SLSA.buildDefinition.internalParameters.github_workflow_ref' <<<"$provenance")
+  [ "$built" = "$COMMIT" ] && [ "$by" = "${REPO}/.github/workflows/release.yml@refs/tags/v${V}" ] \
+    && echo "$platform: built from $COMMIT by release.yml"
+  docker buildx imagetools inspect "$IMAGE" --format "{{ json (index .SBOM \"$platform\") }}" \
+    | jq -e '.SPDX.packages | length > 0' >/dev/null && echo "$platform: SBOM present"
+done
+```
+
+The image names the release it was built from: its label
+`com.varlatch.release.sha256sums` is the SHA-256 of that release's
+`SHA256SUMS`. The label is part of the signed image, so this ties the
+signed image to the signed assets:
+
+```sh
+sums=$(sha256sum SHA256SUMS | cut -d' ' -f1)
+for platform in linux/amd64 linux/arm64; do
+  label=$(docker buildx imagetools inspect "$IMAGE" --format "{{ json (index .Image \"$platform\") }}" \
+    | jq -r '.config.Labels["com.varlatch.release.sha256sums"]')
+  [ "$label" = "$sums" ] && echo "$platform: built for this release's SHA256SUMS"
+done
+```
+
+Its binaries are the release's, byte for byte, which you can check against
+the `SHA256SUMS` you verified above (repeat with `arm64`):
+
+```sh
+arch=amd64
+digest=$(docker buildx imagetools inspect "$IMAGE" --raw \
+  | jq -r --arg a "$arch" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest')
+docker create --name varlatch-verify "${IMAGE%%:*}@$digest" >/dev/null
+for cmd in varlatchd varlatch; do
+  docker cp "varlatch-verify:/opt/varlatch/$cmd" "./image-$cmd"
+  grep " $cmd-$V-linux-$arch\$" SHA256SUMS | sed "s| $cmd-$V-linux-$arch| image-$cmd|" | sha256sum --check
+done
+docker rm varlatch-verify >/dev/null
+```
+
 ## Unsigned releases
 
 These checks are for 0.15.0 and earlier, which are not signed. They show
