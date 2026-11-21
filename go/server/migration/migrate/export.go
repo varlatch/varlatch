@@ -112,6 +112,14 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 		res.Rows += int64(n)
 		res.PerTable[t.Source] = n
 	}
+	// The check sections stay empty until the reverse checks fill them
+	// (slice 7.6).
+	if err := w.Digests(0); err != nil {
+		return res, err
+	}
+	if err := w.Decisions(0, o.now()().UnixMicro()); err != nil {
+		return res, err
+	}
 	return res, w.Close()
 }
 

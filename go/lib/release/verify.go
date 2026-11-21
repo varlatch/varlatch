@@ -44,6 +44,9 @@ var firstSigned = [3]int{0, 15, 1}
 // suffix. Nothing in it can change what the identity below points to.
 var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$`)
 
+// IsVersion reports whether v is a release version (without the v).
+func IsVersion(v string) bool { return versionPattern.MatchString(v) }
+
 var (
 	// ErrVersion means the version is not a release version.
 	ErrVersion = errors.New("release: not a release version")
