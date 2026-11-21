@@ -63,6 +63,118 @@ fixes.
   `--cpu-shares` in its custom run options is overridden, and that a
   Compose resource needs `cpu_shares` in its Compose file.
 
+## 0.50.0-rc.2 (2026-11-20)
+
+The second prerelease of the Go line (ADR-0059), published to test more of
+the Go CLI and server against real installations. **It is not for
+production.** The TypeScript line (0.22.x) is unaffected: its images,
+Compose set and CLI do not change.
+
+- **What it contains.** As in 0.50.0-rc.1: `varlatch`, the CLI, for Linux,
+  macOS and Windows on amd64 and arm64; `varlatchd`, the server, for Linux
+  on amd64 and arm64; `install.sh` and `install.ps1` for this version; the
+  `varlatchd` systemd unit and its example configuration. New:
+  `release.json`, the release's manifest (#324). `SHA256SUMS` lists every
+  asset and is signed keyless by the release workflow; the installers
+  check the signature before they install anything.
+
+Changes since 0.50.0-rc.1, by pull request:
+
+- **Organization administration in the Go CLI (#290).** `varlatch org`,
+  `project`, `env-create`, `env-delete`, `identity`, `member`,
+  `credential`, `invite`, `tailnet` and `audit` run in the Go CLI, as in
+  the TypeScript CLI. A subcommand the Go CLI does not have yet says so
+  and exits 1.
+- **The local Broker in the Go CLI (#308).** The Broker's placement and
+  streaming rules, as the TypeScript CLI has them. No command of this
+  prerelease uses it.
+- **Host commands of a Go installation (#316).** `varlatch admin backup
+  run`, `backup status`, `backup test-bucket`, `backup restore`, `admin
+  security reset`, `admin unfreeze`, `admin outbound check` and `admin
+  maintenance` run `varlatchd admin` on the installation's host. A Compose
+  installation's host commands stay the TypeScript CLI's.
+- **Public HTTPS (#323).** `varlatchd` can serve HTTPS itself with a
+  certificate it obtains and renews over ACME (Let's Encrypt by default):
+  `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca` and
+  `acme_ca_root` in `varlatchd.conf`. Off by default.
+- **The release manifest and schema upgrades (#324).** Each release
+  carries `release.json`: the database schema it writes, the oldest
+  schema whose `varlatchd` can still open its database, whether it is
+  rollback-safe, and the release it was checked against. `varlatchd admin
+  schema status` reports a database's schema, and `admin schema upgrade`
+  brings it to the release's, offline.
+- **One relying party, whatever the ingress (#326).** Passkey sign-in and
+  registration, like every browser request that changes something, are
+  accepted only from the exact origin of `public_url`, on this machine,
+  behind your own reverse proxy or with public HTTPS. A client's address
+  comes from `X-Forwarded-For` only behind a trusted proxy.
+- **`varlatch self-update` (#327).** Replaces the Go CLI with its
+  platform's asset of a newer release, after checking the release's
+  signature and the asset's checksum, never with an older one unless
+  asked. It refuses inside a package manager's install and names the
+  command to use. The installers now replace a TypeScript CLI on `PATH`;
+  on a host with a Compose installation they keep it as `varlatch-ts`.
+- **`varlatch upgrade` (#330).** Upgrades a Go installation on its Linux
+  host, as root: the release is verified first, the database snapshotted
+  and its schema upgraded on a copy, then the new binaries start and must
+  pass their health checks, or the previous release starts again on the
+  untouched database. `varlatch upgrade --check` records whether a newer
+  release exists, for the release notice. A Compose installation is
+  upgraded with `varlatch-ts upgrade`.
+- **`varlatch run --strict` (#306).** One strict retrieval; every value is
+  checked as the command will receive it, and any violation (names and
+  reasons, never a value) stops the run with exit 78 before the command
+  starts.
+- **`varlatch scan` (#301).** Looks for the values of your Secrets in
+  files or staged changes, in every encoded form, and reports each finding
+  by path, line and item, never the value; `varlatch:allow` markers, a
+  baseline and `--json` as in the TypeScript CLI.
+- **`varlatch tailnet repin` (#319).** Shows the tailnet `varlatchd` has
+  pinned and the one it observes, and re-pins with `--yes`; a re-pin is
+  recorded in the audit log as `tailnet.repinned`.
+- **`varlatch security` (#299).** `varlatch security status`, `report`,
+  `controls` and `set` run in the Go CLI, as in the TypeScript CLI.
+- **A URL's path is not masked (#335).** The CLI's masking of credentials
+  in URLs no longer masks an at-sign in a URL's path, such as
+  `/@scope/package`; anything that could be a URL's credentials is still
+  masked.
+- **Certificate issuance count, schema version 2 (#344).** `varlatchd`
+  records every certificate it requests for a name, kept in its database
+  and its backups. The schema step is rollback-safe: an 0.50.0-rc.1
+  `varlatchd` still opens the upgraded database.
+- **Migration groundwork (#342).** The manifest of every table a
+  TypeScript installation holds, and the canonical encoding a migration
+  will compare them in. No command uses it yet, and there is no migration
+  from a TypeScript installation in this prerelease.
+- **The container image's definition (#338).** `go/image` builds
+  `varlatchd` and `varlatch` from the release's own assets into a
+  distroless image that runs as a non-root user. The image is not
+  published with this prerelease.
+- **The Secret matcher holds less (#298).** The CLI's matcher keeps no
+  reference to output it has already passed on.
+- **Published releases checked as people install them (#334).** Each
+  published Go release is installed and its signature checked on Linux,
+  macOS and Windows by CI.
+- **Test reliability (#336).** The CLI's masking timing tests measure
+  longer runs. No change to what is shipped.
+- **Test reliability (#347).** The CLI's timing tests run with the
+  collector off, best of five. No change to what is shipped.
+- **Test reliability (#349).** CI runs the timing tests on their own,
+  after the other tests. No change to what is shipped.
+- **Test reliability (#350).** `varlatch scan`'s timing test sizes itself
+  by its measured run. No change to what is shipped.
+- **Conformance reliability (#355).** The access suite waits for the
+  server's answer before its next step. No change to what is shipped.
+- **Conformance reliability (#358).** Test fixtures use ports outside the
+  ephemeral range, and a fixture that does not start is named on its
+  checks. No change to what is shipped.
+
+- **Prerelease only.** It is published as a GitHub prerelease and never
+  becomes the latest release, so nothing that follows the latest release
+  (`varlatch upgrade`, the release notice, `varlatch self-update`) offers
+  it. The Go server has no published container image, `setup` or `doctor`
+  yet, and there is no migration from a TypeScript installation.
+
 ## 0.50.0-rc.1 (2026-11-20)
 
 A prerelease of the Go line (ADR-0059): the first release built from the
