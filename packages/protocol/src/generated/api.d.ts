@@ -2320,9 +2320,16 @@ export interface components {
                 uploadedAt: string;
                 remoteVerification?: components["schemas"]["BackupVerification"];
             };
+            /**
+             * Format: date-time
+             * @description When a TypeScript-format archive's retention ends, when it is known (an Object Lock retain-until date, or the operator's). Without it, the bucket's lifecycle rule decides.
+             */
+            retainUntil?: string;
         };
         InstallationBackups: {
             archives: components["schemas"]["BackupArchiveStatus"][];
+            /** @description A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive) and never removed by its retention. None of the warnings about Go's own archives counts them; the Root KEK's does, since converting one needs its key. Absent when there are none; the TypeScript server never sends it. */
+            typescriptArchives?: components["schemas"]["BackupArchiveStatus"][];
             warnings: string[];
         };
         /**

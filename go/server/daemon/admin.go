@@ -25,6 +25,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -53,12 +54,17 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return adminUsage(stderr, "no command")
 	}
 	sub := args[0]
+	if conformanceSignRelease != nil {
+		if code, handled := conformanceSignRelease(args, stdout, stderr); handled {
+			return code
+		}
+	}
 	conformance := sub == "conformance-probe" && conformanceProbe != nil ||
 		sub == "conformance-fixture" && conformanceFixture != nil
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "config-check" && sub != "bootstrap-status" && sub != "schema" && !conformance && !operator && !backup && !keys {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "config-check" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && !conformance && !operator && !backup && !keys {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -132,6 +138,16 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
+	case sub == "migrate":
+		if _, msg := parseMigrate(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "certificate":
+		if _, msg := certificateArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case sub == "custody":
 		if _, _, msg := custodyArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
@@ -170,6 +186,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":
 		return runCustodyStatus(cfg, stdout, stderr)
+	case sub == "certificate":
+		return runCertificateIssuances(cfg, rest, time.Now(), stdout, stderr)
 	case sub == "tailnet" && rest[0] == "probe-name":
 		return runTailnetProbe(cfg, rest, stdout, stderr)
 	case sub == "tailnet" && (rest[0] == "enroll" || rest[0] == "reaches"):
@@ -192,6 +210,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
+	case sub == "migrate":
+		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
 	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
@@ -202,7 +222,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] | varlatchd admin doctor [--json] | varlatchd admin config-check  (each with [--config <file>])\n", msg)
+		"varlatchd admin schema status|upgrade [--json] | varlatchd admin doctor [--json] | varlatchd admin config-check | varlatchd admin certificate issuances [--json] | varlatchd admin migrate import|check|export --reverse  (each with [--config <file>])\n", msg)
 	return 64
 }
 
@@ -472,6 +492,17 @@ var conformanceProbe func(ctx context.Context, env *hostEnv, args []string, stdo
 // conformanceWarnings logs a conformance build's warnings at startup
 // (redirect_conformance.go); nil in a release.
 var conformanceWarnings func(log *slog.Logger)
+
+// conformanceCLIRelease, set only in a conformance build, points
+// serve_cli at a release the harness signed with a test Sigstore
+// (VARLATCH_CONFORMANCE_CLI_RELEASE) instead of github.com's.
+var conformanceCLIRelease func(o *servecli.Options, log *slog.Logger)
+
+// conformanceSignRelease is `varlatchd admin conformance-sign-release`,
+// in a conformance build only (servecli_conformance.go): it needs no
+// installation. It answers whether args name it (the command's name is
+// the conformance file's alone, so a release binary does not hold it).
+var conformanceSignRelease func(args []string, stdout, stderr io.Writer) (code int, handled bool)
 
 // conformanceFixture is `varlatchd admin conformance-fixture`, in a build
 // with the conformance tag only (fixture_conformance.go); nil otherwise.

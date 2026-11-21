@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // A restore onto a fresh host (slice 6.4c; ADR-0059's G13, through setup):
@@ -174,6 +175,48 @@ func (r *run) restore(ctx context.Context) error {
 		return err
 	}
 	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").")
+}
+
+// issuances is `varlatchd admin certificate issuances --json`.
+type issuances struct {
+	Name     string     `json:"name"`
+	Limit    int        `json:"limit"`
+	Attempts int        `json:"attempts"`
+	Until    *time.Time `json:"until"`
+	Full     bool       `json:"full"`
+}
+
+// issuanceCheck: a restore with public HTTPS reads the restored
+// installation's certificate issuance count (decision 16; every request
+// for the name it started, restores and renewals included) before
+// varlatchd first asks the CA. At Let's Encrypt's five per exact name per
+// week, the restore is refused before it asks, and says when the oldest
+// request leaves the week; the restored data stays, and setup run again
+// then goes on from here.
+func (r *run) issuanceCheck(ctx context.Context) error {
+	if r.j.Restore == nil || r.j.Answers.Ingress != Public {
+		return nil
+	}
+	out, err := r.h.Admin(ctx, "certificate", "issuances", "--json")
+	if err != nil {
+		return err
+	}
+	var c issuances
+	if err := json.Unmarshal(out, &c); err != nil {
+		return errors.New("setup: varlatchd admin certificate issuances gave no count")
+	}
+	if c.Full {
+		until := "the oldest request leaves the week"
+		if c.Until != nil {
+			until = c.Until.UTC().Format(time.RFC3339)
+		}
+		return fmt.Errorf("setup: the restored installation's records show %d certificate requests for %s in the last 7 days and an hour, Let's Encrypt's limit of %d per name per week: varlatchd's first request would be refused. Nothing has asked; the restored data stays. Run setup again after %s",
+			c.Attempts, c.Name, c.Limit, until)
+	}
+	if c.Limit == 0 {
+		return nil
+	}
+	return r.o.Say(fmt.Sprintf("Certificate requests for %s in the last 7 days and an hour, by the restored records: %d of Let's Encrypt's %d.", c.Name, c.Attempts, c.Limit))
 }
 
 // probeResult is `varlatchd admin tailnet probe-name --json`.
