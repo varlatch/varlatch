@@ -290,6 +290,29 @@ func varlatchdEnviron(r *Run) []string {
 	return out
 }
 
+// hostCredentials: the unit hands varlatchd its keys as credentials
+// (CREDENTIALS_DIRECTORY); a host command run as root, outside the unit,
+// finds them where setup wrote them, beside the configuration. So
+// CREDENTIALS_DIRECTORY is the configuration's directory when the run set
+// none and the Root KEK is there (a person who may not look there gets
+// none, and varlatchd says what it lacks). Only a directory's name: no
+// key goes into the environment.
+func hostCredentials(env []string, config string) []string {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "CREDENTIALS_DIRECTORY=") {
+			return env
+		}
+	}
+	if config == "" {
+		config = "/etc/varlatch/varlatchd.conf"
+	}
+	dir := filepath.Dir(config)
+	if _, err := os.Stat(filepath.Join(dir, "root-kek")); err != nil {
+		return env
+	}
+	return append(env, "CREDENTIALS_DIRECTORY="+dir)
+}
+
 // isCredentialVariable is whether name is a VARLATCH_* variable that holds
 // a credential: VARLATCH_TOKEN, VARLATCH_OIDC_TOKEN,
 // VARLATCH_KEK_PASSPHRASE and any other named for a token, passphrase,
