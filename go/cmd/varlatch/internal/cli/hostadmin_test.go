@@ -534,15 +534,20 @@ func TestHelpAdminIsTheGoUsage(t *testing.T) {
 }
 
 // TestAdminFindsTheUnitsCredentials: outside the unit, a host command's
-// varlatchd gets CREDENTIALS_DIRECTORY = the configuration's directory
-// when the Root KEK is there (as setup writes it), so the configuration
-// loads as under the unit; not when it is not there, nor over one the run
-// set.
+// varlatchd run as root gets CREDENTIALS_DIRECTORY = the configuration's
+// directory when the Root KEK is there (as setup writes it), so the
+// configuration loads as under the unit; not when it is not there, nor
+// over one the run set, nor for another user (who may see root-kek in
+// /etc/varlatch as a member of the varlatch group, never read it).
 func TestAdminFindsTheUnitsCredentials(t *testing.T) {
 	dir := fakeVarlatchd(t)
 	answer(t, dir, "", "", 0)
 	etc := t.TempDir()
 	conf := filepath.Join(etc, "varlatchd.conf")
+	// Through the command, not as root: the fake varlatchd is on PATH,
+	// which only a run as root refuses.
+	defer func(was func() bool) { asRoot = was }(asRoot)
+	asRoot = func() bool { return false }
 	got := func(env MapEnv) string {
 		t.Helper()
 		if code, _, errText := runAdminWith(t, env, "backup", "status", "--config", conf); code != 0 {
@@ -551,17 +556,42 @@ func TestAdminFindsTheUnitsCredentials(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(dir, "credentials-directory"))
 		return string(b)
 	}
-	if c := got(MapEnv{"PATH": dir}); c != "" {
-		t.Errorf("without a Root KEK there: %q", c)
-	}
 	if err := os.WriteFile(filepath.Join(etc, "root-kek"), []byte("not a key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if c := got(MapEnv{"PATH": dir}); c != etc {
-		t.Errorf("with the Root KEK beside the configuration: %q, want %q", c, etc)
+	if c := got(MapEnv{"PATH": dir}); c != "" {
+		t.Errorf("not as root, with the Root KEK beside the configuration: %q", c)
 	}
 	if c := got(MapEnv{"PATH": dir, "CREDENTIALS_DIRECTORY": "/run/credentials/varlatchd.service"}); c != "/run/credentials/varlatchd.service" {
 		t.Errorf("the run's own: %q", c)
+	}
+	// As root.
+	cred := func(env []string, config string) string {
+		for _, kv := range hostCredentials(env, config, true) {
+			if v, ok := strings.CutPrefix(kv, "CREDENTIALS_DIRECTORY="); ok {
+				return v
+			}
+		}
+		return ""
+	}
+	if c := cred([]string{"PATH=/usr/bin"}, conf); c != etc {
+		t.Errorf("as root, with the Root KEK beside the configuration: %q, want %q", c, etc)
+	}
+	if c := cred([]string{"CREDENTIALS_DIRECTORY=/run/credentials/varlatchd.service"}, conf); c != "/run/credentials/varlatchd.service" {
+		t.Errorf("as root, the run's own: %q", c)
+	}
+	if c := cred(nil, filepath.Join(t.TempDir(), "varlatchd.conf")); c != "" {
+		t.Errorf("as root, without a Root KEK there: %q", c)
+	}
+	// An empty CREDENTIALS_DIRECTORY is none: replaced, never doubled.
+	env := hostCredentials([]string{"CREDENTIALS_DIRECTORY=", "PATH=/usr/bin"}, conf, true)
+	if n := strings.Count(strings.Join(env, "\n"), "CREDENTIALS_DIRECTORY="); n != 1 || cred(env, conf) != etc {
+		t.Errorf("as root, an empty CREDENTIALS_DIRECTORY: %q", env)
+	}
+	// A relative --config: the directory made absolute, as varlatchd's.
+	t.Chdir(etc)
+	if c := cred(nil, "varlatchd.conf"); c != etc {
+		t.Errorf("as root, a relative --config: %q, want %q", c, etc)
 	}
 }
 
