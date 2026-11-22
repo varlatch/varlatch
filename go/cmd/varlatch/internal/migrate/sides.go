@@ -14,11 +14,12 @@ const LastTypeScriptRelease = "0.23.0"
 
 // The last TypeScript release's published image: a migration starts from
 // that image only, by its registry digest (decision 20). The digest is
-// filled in when 0.23.0 is published (the release's Step 7 items); while
-// it is empty this varlatch refuses to migrate.
+// v0.23.0's varlatchd multi-arch image index (linux/amd64 and
+// linux/arm64), as its release published it (varlatch-release.json and
+// coolify-image-digests.env, signed by release.yml@refs/tags/v0.23.0).
 const (
 	LastTypeScriptRepository = "ghcr.io/varlatch/varlatchd"
-	LastTypeScriptDigest     = ""
+	LastTypeScriptDigest     = "sha256:6d9b9a6742d9269da511736164a9b2cff78bca415f7a1a5d73b9a93290f1e3b6"
 )
 
 // imagePin is the image a migration starts from: the constants above, or
