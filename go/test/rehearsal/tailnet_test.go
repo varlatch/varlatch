@@ -605,10 +605,22 @@ func tailnetCase(t *testing.T, rel release, s3 *s3Server) {
 	record(t, item, "the migration with the name handoff opens", r.code == 0, r.String()+" "+lastLines(r.stdout, 6))
 	if r.code != 0 {
 		measure("item 14: migrate's stdout", lastLines(r.stdout, 20))
-		measure("item 14: the nodes", w.nodeNames())
-		return
+		measure("item 14: the nodes after the failed migration", w.nodeNames())
+		measure("item 14: the source's containers after the failed migration", strings.TrimSpace(in.compose("ps", "-a", "--format", "{{.Service}} {{.State}} {{.Status}}").stdout))
+		measure("item 14: the source's varlatchd log after the failed migration", lastLines(in.compose("logs", "--no-color", "--tail", "15", "varlatchd").stdout, 15))
+	} else {
+		forwardAndBack(t, w, in, rel, machine, sidecar)
 	}
-	id, meta, ok = w.served(machine, 180*time.Second, func(id, meta string) bool { return id != "" && id != sidecar && isTarget(in, meta) })
+	// The first installation's containers and target go before the
+	// second starts (its cleanup runs again, finding nothing).
+	in.remove()
+	abortMidHandoff(t, w, rel, s3)
+}
+
+// forwardAndBack checks the name after the switch, then rolls back.
+func forwardAndBack(t *testing.T, w *tailnetWorld, in *installation, rel release, machine, sidecar string) {
+	const item = tailnetItem
+	id, meta, ok := w.served(machine, 180*time.Second, func(id, meta string) bool { return id != "" && id != sidecar && isTarget(in, meta) })
 	record(t, item, "after the switch: the name is the target's node, and the client reaches the Go server", ok,
 		fmt.Sprintf("the name's node %q (the sidecar's %q); /v1/meta over the tailnet: %s", id, sidecar, trim(meta)))
 	_, pub := in.get("/v1/meta")
@@ -637,13 +649,13 @@ func tailnetCase(t *testing.T, rel release, s3 *s3Server) {
 	if w.headscale {
 		record(t, item, "every finished run's Headscale API key expired", w.liveAPIKeys() == 0, fmt.Sprintf("%d live", w.liveAPIKeys()))
 	}
-	// The first installation's containers and target go before the
-	// second starts (its cleanup runs again, finding nothing).
-	in.remove()
+}
 
-	// 2. A migration killed mid-handoff (the sidecar's node renamed away,
-	// the target's not yet named), then --abort: the name goes back to the
-	// sidecar's node, which serves again.
+// abortMidHandoff: a migration killed mid-handoff (the sidecar's node
+// renamed away, the target's not yet named), then --abort: the name goes
+// back to the sidecar's node, which serves again.
+func abortMidHandoff(t *testing.T, w *tailnetWorld, rel release, s3 *s3Server) {
+	const item = tailnetItem
 	in2 := newInstallation(t, rel, s3, "tailnet-abort", w.extra("tailnet-abort"))
 	registerSecrets(in2)
 	machine2 := w.machine("tailnet-abort")
@@ -688,7 +700,7 @@ func tailnetCase(t *testing.T, rel release, s3 *s3Server) {
 	measure("item 14: the nodes at the kill", w.nodeNames())
 	ab := in2.migrateEnv(rel, true, rel.pin(), append([]string{"--abort"}, w.authority()...)...)
 	record(t, item, "--abort after the kill mid-handoff", ab.code == 0, ab.String()+" "+lastLines(ab.stdout, 4))
-	id, meta, ok = w.served(machine2, 180*time.Second, func(id, meta string) bool { return id == sidecar2 && isSource(in2, meta) })
+	id, meta, ok := w.served(machine2, 180*time.Second, func(id, meta string) bool { return id == sidecar2 && isSource(in2, meta) })
 	record(t, item, "after --abort: the name is the sidecar's again, and the client reaches the TypeScript server", ok && in2.sidecarRunning(),
 		fmt.Sprintf("the name's node %q (the sidecar's %q), sidecar running %v; /v1/meta over the tailnet: %s", id, sidecar2, in2.sidecarRunning(), trim(meta)))
 	code, pub := in2.get("/v1/meta")
