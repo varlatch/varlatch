@@ -699,11 +699,54 @@ func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 	if err := e.enter(ctx, j, Switched); err != nil {
 		return err
 	}
-	if err := e.migratedOut(ctx, j); err != nil {
+	if err := e.switchSource(ctx, j); err != nil {
 		return err
 	}
 	e.say("Switched: the source refuses writes from now on.")
 	return e.open(ctx, j)
+}
+
+// switchSource marks the source migrated out (migratedOut). A source whose
+// varlatchd runs in its Tailscale sidecar's network lost that network when
+// the forward handoff stopped the sidecar (sidecarOwned): its varlatchd
+// exits so (it reaches Postgres through that network too), and the mark,
+// a command in its container, cannot run. The sidecar is started for the
+// mark, and varlatchd with it, then stopped again. Its node comes up under
+// its temporary name (the name is the target's node's from the handoff),
+// as the reverse starts it. Marking the source before the handoff instead
+// would leave a failed handoff no undo: a migrated-out gate is not lifted.
+// Each step holds when it is done again, so --resume from switched runs
+// them all again.
+func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
+	ts, ok := e.Source.(TailnetSource)
+	owned := ok && sidecarOwned(j)
+	if owned {
+		temp := "its temporary name"
+		if j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.ServingTemp != "" {
+			temp = j.Tailnet.Handoff.ServingTemp
+		}
+		e.say("Tailnet: the source's sidecar starts again (its node under %s), so that its varlatchd, which shares its network, is marked migrated out; then it stops.", temp)
+		if err := ts.StartTailnet(ctx); err != nil {
+			return fmt.Errorf("starting the source's tailnet sidecar to mark the source migrated out: %w; varlatch migrate --resume goes on", err)
+		}
+		crashPoint("switch sidecar started")
+	}
+	if err := e.migratedOut(ctx, j); err != nil {
+		if owned {
+			// As the handoff left it: the old node off the tailnet.
+			if serr := ts.StopTailnet(ctx); serr != nil {
+				return fmt.Errorf("%w; stopping the source's tailnet sidecar again: %v", err, serr)
+			}
+		}
+		return err
+	}
+	crashPoint("switch marked")
+	if owned {
+		if err := ts.StopTailnet(ctx); err != nil {
+			return fmt.Errorf("stopping the source's tailnet sidecar after the source was marked migrated out: %w; varlatch migrate --resume goes on", err)
+		}
+	}
+	return nil
 }
 
 // open restarts the target out of the transfer's isolation: stopped, its
@@ -999,7 +1042,7 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 		return j, e.switchAndOpen(ctx, j)
 	case j.Phase == Switched:
 		e.say("The migration %s was switched: it goes on to open.", j.ID)
-		if err := e.migratedOut(ctx, j); err != nil {
+		if err := e.switchSource(ctx, j); err != nil {
 			return j, err
 		}
 		return j, e.open(ctx, j)

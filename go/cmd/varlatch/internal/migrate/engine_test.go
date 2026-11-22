@@ -42,6 +42,12 @@ func (s *fakeSource) call(name string) error {
 	return s.fail[name]
 }
 
+// callErr records the call, failing with err.
+func (s *fakeSource) callErr(name string, err error) error {
+	s.calls = append(s.calls, name)
+	return err
+}
+
 func (s *fakeSource) Dir() string { return s.dir }
 func (s *fakeSource) CleanLeftovers() error {
 	return s.call("clean")
