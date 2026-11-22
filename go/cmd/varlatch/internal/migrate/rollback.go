@@ -484,8 +484,10 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 			problems = append(problems, fmt.Errorf("putting the TypeScript installation back: %w", err))
 		}
 	}
-	// The TypeScript side as the forward migration left it: starting its
-	// varlatchd started its tailnet sidecar (they share its network); the
+	// The TypeScript side as the forward migration left it: the reverse
+	// started its tailnet sidecar for its one-off commands
+	// (StartNetworkOwner, before Rebuild and again before UndoRebuild),
+	// and starting its varlatchd needs it (they share its network); the
 	// name is Go's node's, so the old node is stopped again (not logged
 	// out), its state kept for the window.
 	if ts, ok := e.Source.(TailnetSource); ok && sidecarOwned(j) {
