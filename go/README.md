@@ -3616,6 +3616,57 @@ migrations.
   the stated end, a second `--resume` changing nothing; the Coolify shape
   and the image's operator steps too. Every output, journal and log is
   scanned for the keys and the run keys.
+- The host target `varlatch migrate` makes (step 7, slice 7.4e; decision
+  20): with `--config /etc/varlatch/varlatchd.conf` not there, migrate (as
+  root, on a systemd host) makes the Go installation with setup's steps
+  (`internal/setup` `PrepareTarget`):
+  - **The answers:** the source's public URL and ingress, and for an own
+    proxy the dashboard's address; `--acme-email` and `--listen` for what
+    the source cannot say.
+  - **Checked first:** nothing changes until the unit file is installed
+    and not running, an existing user passes, and an `/etc/varlatch` or
+    data directory there already is as a target needs (then used as it
+    is, never chmodded or chowned; refused otherwise).
+  - **What it makes:**
+    - the varlatch user (an existing one judged as setup judges it,
+      supplementary groups included, unless `--accept-existing-user`);
+    - `/etc/varlatch` and the data directory;
+    - the unit enabled but not started;
+    - the configuration, checked by varlatchd, last: a configuration
+      there is a target ready, so a run killed before it makes the rest
+      again.
+  - **Never keys:** they are the source's, which `admin migrate keys`
+    writes where the unit loads them (`CREDENTIALS_DIRECTORY`: the
+    configuration names no key file).
+  - **Journalled first:** each item goes in the source's journal before
+    it is made (`created`), the keys' files too, but only a key file not
+    there before (one there is never migrate's, so never removed).
+  - **Undone:** an undo before the switch removes exactly those, after
+    both journals say released (`UndoTarget`), as does `--abort` of a
+    run killed while making it. Until the removal is done the migration
+    is not released for good: `--abort` (or `--resume`) goes on removing
+    it, and no new migration starts over it. Should it keep failing,
+    `--status` names each item's place: removed by hand, then
+    `--abort --forget-target` clears the record (it removes nothing, and
+    refuses while any item recorded is still there, each checked as the
+    undo removes it, the user's own group too). The unit's undo is done
+    again harmlessly (nothing to disable once its file is gone, or in a
+    state systemctl names as not enabled; any other state is disabled).
+    The journal's record is checked as it is read (plain item names, and
+    setup's configuration as where it was made).
+  - **Root:** whenever the target may change (its configuration missing
+    or unreadable, or one migrate made and has not removed, before the
+    switch), migrate refuses to run without root.
+  - **Never on a tailnet:** setup's answers for a made target are public
+    or own proxy (`tailnet = off`), so a source serving a tailnet address,
+    or the tailnet's authority given, is refused before anything is made
+    or backed up: prepare the configuration with `tailnet = on` first.
+    Tailnet on a made target is backlog.
+  - **A prepared target** (another `--config`, or one already there) is
+    used as it is.
+  - **Tests:** G5's `maketarget_test.go` runs it under a test root
+    (the crashpoint build's seam); go.yml's runner-only step makes and
+    undoes it on a real systemd.
 - `varlatch migrate --rollback` (step 7, slice 7.6a; decisions 16 and
   17): the reverse migration, within 30 days of the switch, back to the
   last TypeScript release. Its phases are journalled in both places, as
