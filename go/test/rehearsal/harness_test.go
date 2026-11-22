@@ -108,6 +108,9 @@ func startService(bin, conf string) error {
 	}
 	defer log.Close()
 	cmd := exec.Command(bin, "serve", "--config", conf)
+	// The case's own environment for the target (its trust roots), as a
+	// unit's Environment= lines would give it.
+	cmd.Env = append(os.Environ(), serviceEnv(state("service.env"))...)
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -135,6 +138,24 @@ func startService(bin, conf string) error {
 		}
 	}
 	return errors.New("varlatchd did not start within 30 s")
+}
+
+// serviceEnv is a service.env file's KEY=VALUE lines (none when it is
+// missing), blank lines and # comments left out.
+func serviceEnv(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") || !strings.Contains(l, "=") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 func stopService() error {
@@ -315,10 +336,20 @@ type installation struct {
 	client             *http.Client // the public URL's client (TLS for public ingress)
 }
 
+// installExtra is what a case adds to an installation: .env variables, a
+// Compose overlay (a file name and its text, added to COMPOSE_FILE), lines
+// for the target's configuration, and the target varlatchd's environment.
+type installExtra struct {
+	env                      map[string]string
+	composeFile, composeText string
+	conf                     string
+	serviceEnv               []string
+}
+
 // newInstallation is a fresh installation of the release, up and serving,
 // with its own public URL (a loopback proxy to its dashboard's port), its
 // target's host-install configuration, and its backup destination.
-func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *installation {
+func newInstallation(t *testing.T, rel release, s3 *s3Server, name string, extras ...installExtra) *installation {
 	t.Helper()
 	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: prof.ingress}
 	base := filepath.Join(workDir, name)
@@ -378,6 +409,21 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 		env["VARLATCH_HTTPS_PORT"] = net.JoinHostPort(prof.publicBind, "443")
 		env["VARLATCH_ACME_CA"] = "https://pebble:14000/dir"
 	}
+	for _, x := range extras {
+		for k, v := range x.env {
+			env[k] = v
+		}
+		if x.composeFile != "" {
+			if err := os.WriteFile(filepath.Join(in.dir, x.composeFile), []byte(x.composeText), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			files := env["COMPOSE_FILE"]
+			if files == "" {
+				files = "docker-compose.yml"
+			}
+			env["COMPOSE_FILE"] = files + ":" + x.composeFile
+		}
+	}
 	var text strings.Builder
 	for k, v := range env {
 		fmt.Fprintf(&text, "%s=%s\n", k, v)
@@ -411,6 +457,16 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 		host = fmt.Sprintf("listen = 127.0.0.1:%s\nlisten_https = %s\nlisten_http_redirect = %s\nacme_ca = %s\nacme_ca_root = %s\npublic_url = %s\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\n",
 			freePort(t), net.JoinHostPort(prof.publicBind, "443"), net.JoinHostPort(prof.publicBind, "80"), in.acme.hostDirectory, in.acme.apiRoot,
 			in.publicURL, in.data, filepath.Join(in.keys, "root-kek"), filepath.Join(in.keys, "backup-key"))
+	}
+	var service []string
+	for _, x := range extras {
+		host += x.conf
+		service = append(service, x.serviceEnv...)
+	}
+	if len(service) > 0 {
+		if err := os.WriteFile(filepath.Join(in.state, "service.env"), []byte(strings.Join(service, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	in.conf = filepath.Join(target, "varlatchd.conf")
 	for _, p := range []string{in.conf, filepath.Join(in.state, "service.conf")} {

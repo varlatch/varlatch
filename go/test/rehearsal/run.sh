@@ -21,6 +21,10 @@
 # systemd and the box's cases (VL_RH_INGRESS=public|coolify, ...). It never
 # stops, removes or rebinds anything that is not this run's; the run's
 # files are handed back to the user who ran sudo.
+#
+# VL_RH_SYNC=fakes (a workstation): the sync case, Sync Targets to the
+# conformance suites' platform stand-ins, migrated and then pushed from Go
+# (VL_RH_ONLY=sync runs it alone).
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: run.sh <typescript-checkout> <run> [<release-dir>]" >&2; exit 64; }
 profile=${VL_RH_PROFILE:-workstation}
@@ -150,6 +154,9 @@ docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e
     go build -tags rehearsal,crashpoint -o /out/varlatch ./cmd/varlatch &&
     go build -o /out/varlatchd ./cmd/varlatchd &&
     go test -c -tags rehearsal -o /out/rehearsal.test ./test/rehearsal/'
+# The sync case's platform stand-ins (VL_RH_SYNC=fakes), beside the
+# binaries: the runner sees the run's directory, not this checkout.
+cp "$gomod/../scripts/conformance/lib/platform-fakes.cjs" "$root/bin/platform-fakes.cjs"
 release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
