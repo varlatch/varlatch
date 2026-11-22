@@ -20,11 +20,11 @@ import { EMBEDDED_RELEASE } from "@varlatch/backup";
  * (go/cmd/varlatch/internal/transcript).
  *
  * A case gives the arguments, the environment (added to a clean one: PATH,
- * HOME and VARLATCH_CONFIG_DIR inside the case's own directory, and
- * VARLATCH_NODE_CHECK=off, less any the case unsets; nothing
- * from this process, so a coding agent's markers never leak in), a file
- * tree, standard input, and the fake server's script: each request it
- * expects, in order, and its answer. It records standard output, standard
+ * HOME and VARLATCH_CONFIG_DIR inside the case's own directory,
+ * VARLATCH_NODE_CHECK=off and NODE_NO_WARNINGS=1, less any the case
+ * unsets; nothing from this process, so a coding agent's markers never
+ * leak in), a file tree, standard input, and the fake server's script:
+ * each request it expects, in order, and its answer. It records standard output, standard
  * error, the exit status, every request the server received, and the case
  * directory's whole final tree (listTree): every file, directory and
  * symbolic link with its mode, the inputs included, so a deleted input or a
@@ -87,7 +87,8 @@ export interface TranscriptCase {
    * release, `varlatch <version>` in the output (the Generator lines and
    * literals of a module `varlatch types` writes), written as
    * `varlatch {{release}}`, and `{{release}}` in the case's files, given
-   * as that version (releasePattern).
+   * as that version (releasePattern); "agent-run": an agent-safe run's
+   * identifier, Placeholders and Broker port (agentRunPattern).
    */
   patterns?: string[];
   /**
@@ -179,8 +180,12 @@ export async function bundleCli(dir: string): Promise<string> {
   return outfile;
 }
 
-const fill = (text: string, server: string, dir: string): string => text.split("{{server}}").join(server).split("{{dir}}").join(dir);
-const unfill = (text: string, server: string, dir: string): string => unfillDir(text.split(server).join("{{server}}"), dir);
+/** The fake server's host and port: `{{server-host}}`, as an agent-safe run's proxy address names it. */
+const hostOf = (server: string): string => server.replace(/^http:\/\//, "");
+const fill = (text: string, server: string, dir: string): string =>
+  text.split("{{server}}").join(server).split("{{server-host}}").join(hostOf(server)).split("{{dir}}").join(dir);
+const unfill = (text: string, server: string, dir: string): string =>
+  unfillDir(text.split(server).join("{{server}}").split(hostOf(server)).join("{{server-host}}"), dir);
 
 /**
  * The case directory as {{dir}}, both as it is printed and as a JSON string
@@ -391,6 +396,19 @@ export function callbackPattern(text: string): string {
   return text.replace(CALLBACK_PORT, "$1{{port}}$2");
 }
 
+/**
+ * The "agent-run" pattern: what an agent-safe run makes at random, each as
+ * a name: the run's identifier as run_{{id}}, a Placeholder as
+ * {{placeholder}}, and the Broker's loopback port as 127.0.0.1:{{port}}
+ * (the fake server's own address is {{server}} or {{server-host}} by then).
+ */
+export function agentRunPattern(text: string): string {
+  return text
+    .replace(/run_[0-9a-f]{16}(?![0-9a-f])/g, "run_{{id}}")
+    .replace(/vlch_ph_v1_[0-9a-f]{32}/g, "{{placeholder}}")
+    .replace(/127\.0\.0\.1:\d+/g, "127.0.0.1:{{port}}");
+}
+
 /** The patterns a case names, applied in order to a recorded text. */
 export function applyPatterns(patterns: readonly string[], text: string, start: number, end: number): string {
   let out = text;
@@ -399,6 +417,7 @@ export function applyPatterns(patterns: readonly string[], text: string, start: 
     if (name === "now") out = nowPattern(out, start, end);
     else if (later) out = laterPattern(out, start, end, Number(later[1]));
     else if (name === "callback") out = callbackPattern(out);
+    else if (name === "agent-run") out = agentRunPattern(out);
     else if (name === "release") out = releasePattern(EMBEDDED_RELEASE.version).unfill(out);
     else if (name !== "generated") throw new Error(`no pattern ${name}`); // generated applies to request bodies (generatedPattern)
   }
@@ -594,6 +613,9 @@ export async function recordCase(bundle: string, c: TranscriptCase): Promise<Rec
       // The Node.js version warning (nodeRuntime.ts) depends on the Node.js
       // that records, and the Go CLI has none: never part of a recording.
       VARLATCH_NODE_CHECK: "off",
+      // A Node.js child's own warnings (an experimental API, say) depend on
+      // the Node.js that runs it: never part of a recording.
+      NODE_NO_WARNINGS: "1",
     };
     // On Windows the home directory is USERPROFILE (os.homedir()), as the
     // Go replay sets it.

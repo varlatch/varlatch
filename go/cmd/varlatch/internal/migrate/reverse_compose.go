@@ -10,11 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -77,6 +76,10 @@ type ReverseSource interface {
 	// UndoRebuild puts the installation back as the forward migration
 	// left it.
 	UndoRebuild(ctx context.Context, plan RebuildRecord) error
+	// ReverseReady refuses, with the step to take, a reverse whose
+	// one-off commands could not start (varlatchd in a stopped sidecar's
+	// network), before anything of it is done.
+	ReverseReady(ctx context.Context) error
 }
 
 // projectName is the installation's Compose project, as Compose itself
@@ -311,25 +314,24 @@ func (c *Compose) Rebuild(ctx context.Context, plan RebuildRecord) error {
 	return c.compose(ctx, "docker compose up -d postgres", "up", "-d", "postgres")
 }
 
-// leftoverReverse is the reverse bundle's copy in the backups directory.
-var leftoverReverse = regexp.MustCompile(`^migration-reverse-[0-9a-f]{12}\.jsonl$`)
+// importAnswerLimit bounds what the import's standard output keeps: its
+// one JSON line.
+const importAnswerLimit = 1 << 20
 
-// ImportReverse copies the bundle into the installation's backups
-// directory (given to that directory's owner, so the container's user
-// reads it), runs the import's one-off service, and removes the copy.
+// ImportReverse runs the import's one-off service with the reverse bundle
+// on its standard input (--in -): no copy of it in the installation's
+// backups directory, which the container's user cannot read. The import's
+// refusals (varlatchd running, a gate) come before it reads its input: its
+// exit status and standard error say why.
 func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRecord, error) {
-	suffix := make([]byte, 6)
-	if _, err := rand.Read(suffix); err != nil {
+	in, err := os.Open(bundle)
+	if err != nil {
 		return TSImportRecord{}, err
 	}
-	name := "migration-reverse-" + hex.EncodeToString(suffix) + ".jsonl"
-	host := filepath.Join(c.Directory, "backups", name)
-	if err := copyOwned(bundle, host, filepath.Join(c.Directory, "backups")); err != nil {
-		return TSImportRecord{}, fmt.Errorf("the reverse bundle into the installation's backups directory: %w", err)
-	}
-	defer os.Remove(host)
-	r, err := c.docker(ctx, []string{"compose", "--profile", reverseProfile, "run", "--rm", "-T", "varlatch-reverse-import",
-		"node", "dist/cli.js", "admin", "migration", "import", "--in", "/backups/" + name}, nil)
+	defer in.Close()
+	answer := &tail{n: importAnswerLimit}
+	r, err := c.stream(ctx, []string{"compose", "--profile", reverseProfile, "run", "--rm", "-T", "varlatch-reverse-import",
+		"node", "dist/cli.js", "admin", "migration", "import", "--in", "-"}, in, answer)
 	if err != nil {
 		return TSImportRecord{}, err
 	}
@@ -337,42 +339,10 @@ func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRec
 		return TSImportRecord{}, failure("the TypeScript release's admin migration import", r)
 	}
 	var rec TSImportRecord
-	if err := json.Unmarshal(lastLine(r.Answer), &rec); err != nil || rec.InstallationID == "" || rec.AuditPosition == "" {
+	if err := json.Unmarshal(lastLine(answer.bytes()), &rec); err != nil || rec.InstallationID == "" || rec.AuditPosition == "" {
 		return TSImportRecord{}, errors.New("the TypeScript release's admin migration import did not answer with the installation and its audit position")
 	}
 	return rec, nil
-}
-
-// copyOwned copies from to a new file to, mode 0600, given to dir's owner
-// when this process is root.
-func copyOwned(from, to, dir string) error {
-	in, err := os.Open(from)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(out, in)
-	if err == nil {
-		err = out.Sync()
-	}
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		if st, serr := os.Stat(dir); serr == nil {
-			if uid, gid, ok := ownerOf(st); ok && os.Getuid() == 0 {
-				err = os.Chown(to, int(uid), int(gid))
-			}
-		}
-	}
-	if err != nil {
-		_ = os.Remove(to)
-	}
-	return err
 }
 
 // ResetConvex: Convex on its fresh volume and database, its functions
@@ -459,6 +429,11 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 			return failure("docker volume rm "+v, r)
 		}
 	}
+	// The one-off commands below and varlatchd itself run in varlatchd's
+	// network, without their dependencies.
+	if err := c.networkOwnerRunning(ctx, "varlatch migrate --resume"); err != nil {
+		return err
+	}
 	g, err := c.gateOffline(ctx)
 	if err != nil {
 		return err
@@ -491,7 +466,46 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 			return failure("the TypeScript release's migration mark-migrated-out", r)
 		}
 	}
-	return c.compose(ctx, "docker compose up -d varlatchd", "up", "-d", service)
+	// --no-deps: varlatchd's one-off dependency (varlatch-migrate,
+	// service_completed_successfully) would run again with it and refuse
+	// behind the migrated-out marker, so varlatchd would not start. Its
+	// own volume's schema is current already, Postgres was started above,
+	// and varlatchd restarts (unless-stopped) until Postgres answers.
+	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
+}
+
+// networkOwnerRunning refuses, with the step to take, when varlatchd runs
+// in another service's network (network_mode: service:tailscale) and that
+// service is not running: without their dependencies, neither varlatchd
+// nor a one-off container of its starts there. That service is not started
+// here: it is the old Tailscale node, which must not come back beside Go's
+// unasked (as ServeForArchive refuses to).
+func (c *Compose) networkOwnerRunning(ctx context.Context, then string) error {
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return err
+	}
+	owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:")
+	if !ok {
+		return nil
+	}
+	running, err := c.running(ctx)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(running, owner) {
+		return nil
+	}
+	return fmt.Errorf("the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), which is not running, so neither it nor its one-off commands can start: "+
+		"start it by hand (docker compose up -d --no-deps %s, in %s; it brings the old Tailscale node back), then %s", owner, owner, owner, c.Directory, then)
+}
+
+// ReverseReady: the reverse's one-off commands (the rebuilt database's
+// export for the checks among them) run in varlatchd's network, so a
+// stopped sidecar it shares refuses the reverse before Go's barrier, not
+// after the rebuild.
+func (c *Compose) ReverseReady(ctx context.Context) error {
+	return c.networkOwnerRunning(ctx, "varlatch migrate --rollback again")
 }
 
 // gateOffline is the installation's gate, read in a one-off container.

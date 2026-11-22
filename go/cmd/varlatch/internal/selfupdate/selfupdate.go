@@ -120,13 +120,6 @@ func failed(prefix string, err error) error {
 	return &Error{Message: prefix + err.Error(), Unreachable: errors.As(err, &ue)}
 }
 
-// notInstalled wraps err from a release file's download into an Error
-// that says nothing was installed.
-func notInstalled(err error) error {
-	var ue *unreachableError
-	return &Error{Message: err.Error() + "; nothing was installed", Unreachable: errors.As(err, &ue)}
-}
-
 // Options is what was asked.
 type Options struct {
 	// Version is the release asked for, "" for the newest.
@@ -220,19 +213,28 @@ const maxPages = 10
 // at most maxPages, so a patch release created after a later minor's is
 // still compared with it.
 func newestRelease(ctx context.Context, src Source, prereleases bool) (string, error) {
-	newest := ""
+	newest, _, err := Newest(ctx, src, prereleases)
+	return newest, err
+}
+
+// Newest is the newest release of the Go line (prereleases only if asked)
+// and when it was published ("" when GitHub did not say), as Choose finds
+// it; `varlatch upgrade --check` records both (ADR-0049).
+func Newest(ctx context.Context, src Source, prereleases bool) (version, publishedAt string, err error) {
+	newest, published := "", ""
 	page := src.API + "/releases?per_page=100"
 	for n := 0; n < maxPages && page != ""; n++ {
 		body, header, err := src.getWithHeader(ctx, page, maxListing, "application/vnd.github+json")
 		if err != nil {
-			return "", failed("looking up the newest release: ", err)
+			return "", "", failed("looking up the newest release: ", err)
 		}
 		var listed []struct {
-			Tag   string `json:"tag_name"`
-			Draft bool   `json:"draft"`
+			Tag       string `json:"tag_name"`
+			Draft     bool   `json:"draft"`
+			Published string `json:"published_at"`
 		}
 		if err := json.Unmarshal(body, &listed); err != nil {
-			return "", fail("looking up the newest release: GitHub's answer is not a list of releases")
+			return "", "", fail("looking up the newest release: GitHub's answer is not a list of releases")
 		}
 		improved := false
 		for _, r := range listed {
@@ -241,7 +243,7 @@ func newestRelease(ctx context.Context, src Source, prereleases bool) (string, e
 				continue
 			}
 			if newest == "" || older(newest, v) {
-				newest, improved = v, true
+				newest, published, improved = v, r.Published, true
 			}
 		}
 		if !improved && newest != "" {
@@ -251,11 +253,11 @@ func newestRelease(ctx context.Context, src Source, prereleases bool) (string, e
 	}
 	if newest == "" {
 		if prereleases {
-			return "", fail("no release of the Go line (%s or later) is published yet", FirstGoRelease)
+			return "", "", fail("no release of the Go line (%s or later) is published yet", FirstGoRelease)
 		}
-		return "", fail("no release of the Go line (%s or later) is published yet; pass --prerelease to install a prerelease", FirstGoRelease)
+		return "", "", fail("no release of the Go line (%s or later) is published yet; pass --prerelease to install a prerelease", FirstGoRelease)
 	}
-	return newest, nil
+	return newest, published, nil
 }
 
 // Download is a release's binary for this platform, verified.
@@ -269,26 +271,51 @@ type Download struct {
 // Fetch downloads and verifies the plan's release for the platform: the
 // signature on SHA256SUMS first, then the binary against it.
 func Fetch(ctx context.Context, src Source, plan Plan, goos, goarch string) (*Download, error) {
-	version := plan.Latest
-	asset := Asset(version, goos, goarch)
+	asset := Asset(plan.Latest, goos, goarch)
+	files, err := fetchVerified(ctx, src, plan.Latest, plan.ReleaseURL, []string{asset}, "nothing was installed")
+	if err != nil {
+		return nil, err
+	}
+	return &Download{Version: plan.Latest, Asset: asset, Identity: release.Identity(plan.Latest), Binary: files[asset]}, nil
+}
+
+// FetchAssets downloads the named assets of release version and verifies
+// them as Fetch does: the signature on SHA256SUMS as the release workflow's
+// for the tag, then each asset against its line. Any failure is an *Error
+// ending in nothing (what was not done), and no asset is returned.
+// `varlatch upgrade` fetches a server release's binaries and manifest with
+// it.
+func FetchAssets(ctx context.Context, src Source, version string, names []string, nothing string) (map[string][]byte, error) {
+	return fetchVerified(ctx, src, version, src.Pages+"/v"+version, names, nothing)
+}
+
+func fetchVerified(ctx context.Context, src Source, version, releaseURL string, names []string, nothing string) (map[string][]byte, error) {
+	notDone := func(err error) error {
+		var e *Error
+		if errors.As(err, &e) {
+			return err
+		}
+		var unreachable *unreachableError
+		return &Error{Message: err.Error() + "; " + nothing, Unreachable: errors.As(err, &unreachable)}
+	}
 	base := src.Download + "/v" + url.PathEscape(version) + "/"
 	sums, err := src.get(ctx, base+"SHA256SUMS", maxSums, "")
 	if errors.Is(err, errNotFound) {
-		return nil, fail("no release %s with a SHA256SUMS: %s", version, plan.ReleaseURL)
+		return nil, fail("no release %s with a SHA256SUMS: %s", version, releaseURL)
 	}
 	if err != nil {
-		return nil, notInstalled(err)
+		return nil, notDone(err)
 	}
 	bundle, err := src.get(ctx, base+"SHA256SUMS.sigstore.json", maxBundle, "")
 	if errors.Is(err, errNotFound) {
-		return nil, fail("release %s has no signature (SHA256SUMS.sigstore.json); nothing was installed", version)
+		return nil, fail("release %s has no signature (SHA256SUMS.sigstore.json); %s", version, nothing)
 	}
 	if err != nil {
-		return nil, notInstalled(err)
+		return nil, notDone(err)
 	}
 	trusted, err := src.Trusted(ctx)
 	if err != nil {
-		return nil, &Error{Message: err.Error() + "; nothing was installed", Unreachable: true}
+		return nil, &Error{Message: err.Error() + "; " + nothing, Unreachable: true}
 	}
 	verifier, err := release.NewVerifier(trusted)
 	if err != nil {
@@ -303,18 +330,22 @@ func Fetch(ctx context.Context, src Source, plan Plan, goos, goarch string) (*Do
 		if text := err.Error(); !strings.Contains(text, "@") {
 			detail = " (" + text + ")"
 		}
-		return nil, fail("the signature on SHA256SUMS does NOT verify as the release workflow of %s for the tag v%s%s; nothing was installed", release.Repository, version, detail)
+		return nil, fail("the signature on SHA256SUMS does NOT verify as the release workflow of %s for the tag v%s%s; %s", release.Repository, version, detail, nothing)
 	}
-	want, ok := checked[asset]
-	if !ok {
-		return nil, fail("SHA256SUMS of %s does not list %s; nothing was installed", version, asset)
+	files := map[string][]byte{}
+	for _, name := range names {
+		want, ok := checked[name]
+		if !ok {
+			return nil, fail("SHA256SUMS of %s does not list %s; %s", version, name, nothing)
+		}
+		body, err := src.get(ctx, base+url.PathEscape(name), maxBinary, "")
+		if err != nil {
+			return nil, notDone(err)
+		}
+		if sha256.Sum256(body) != want {
+			return nil, fail("%s does not match SHA256SUMS; %s", name, nothing)
+		}
+		files[name] = body
 	}
-	binary, err := src.get(ctx, base+url.PathEscape(asset), maxBinary, "")
-	if err != nil {
-		return nil, notInstalled(err)
-	}
-	if sha256.Sum256(binary) != want {
-		return nil, fail("%s does not match SHA256SUMS; nothing was installed", asset)
-	}
-	return &Download{Version: version, Asset: asset, Identity: release.Identity(version), Binary: binary}, nil
+	return files, nil
 }

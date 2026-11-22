@@ -261,17 +261,20 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	// What a migration interrupted before the barrier built is discarded
 	// (decision 14); a new migration's target holds no database.
 	if err := e.discard(ctx, j); err != nil {
-		return j, err
+		return j, e.stopBefore(ctx, j, err)
 	}
 	if err := e.preflight(ctx, j); err != nil {
-		return j, err
+		return j, e.stopBefore(ctx, j, err)
 	}
 	if err := e.prepareTailnet(ctx, j); err != nil {
-		return j, err
+		if errors.Is(err, errHandoffUnderway) {
+			return j, err
+		}
+		return j, e.stopBefore(ctx, j, err)
 	}
 	report, err := e.dryRun(ctx, j)
 	if err != nil {
-		return j, err
+		return j, e.stopBefore(ctx, j, err)
 	}
 	if dryRunOnly || !report.Fits {
 		j.Stopped = true
@@ -284,6 +287,19 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 		return j, nil
 	}
 	return e.cutover(ctx, j)
+}
+
+// stopBefore records a migration that failed before the barrier (its
+// discard, preflight or dry run: nothing was frozen or switched) as
+// stopped, as a dry run that ends is: the next run starts it again, on the
+// same id, instead of finding it interrupted (--resume or --abort only).
+// A run killed there is still interrupted; --resume says what to do.
+func (e *Engine) stopBefore(ctx context.Context, j *Journal, cause error) error {
+	j.Stopped = true
+	if err := e.save(ctx, j); err != nil {
+		return fmt.Errorf("%w; recording it as stopped: %v", cause, err)
+	}
+	return fmt.Errorf("%w (recorded as stopped: varlatch migrate starts it again once that is fixed)", cause)
 }
 
 // pinned refuses a source that is not the last TypeScript release's
@@ -304,7 +320,10 @@ func (e *Engine) pinned(src SourceInfo) error {
 	case src.Digest == "":
 		return errors.New("the source's image is not pinned by a registry digest: a migration starts from the last TypeScript release's published image only")
 	case src.DigestRepository != pin.Repository || src.Digest != pin.Digest:
-		return fmt.Errorf("the source's image is %s@%s, not the published %s image %s@%s", src.DigestRepository, src.Digest, LastTypeScriptRelease, pin.Repository, pin.Digest)
+		// Repository and digest apart, never joined by "@": the CLI's
+		// fail-safe reads what comes before an "@" as possible credentials.
+		return fmt.Errorf("the source's image is repository %s, digest %s, not the published %s image: repository %s, digest %s",
+			src.DigestRepository, src.Digest, LastTypeScriptRelease, pin.Repository, pin.Digest)
 	}
 	return nil
 }
@@ -719,7 +738,14 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			return fmt.Errorf("%w; undoing could not start: %v", cause, err)
 		}
 	}
+	// In the transfer: the tailnet name goes back first, then the target
+	// stops, then the barrier is lifted, then the source's ingress starts
+	// (returnAddress says why in that order). With the ingress stopped,
+	// nothing reaches the source between the two. While the name is not
+	// back, neither the target nor the address moves: --resume goes on.
 	var problems []error
+	// nameBack: the tailnet name is back with the source, or none moved.
+	nameBack := true
 	if from == Transfer {
 		// The tailnet name first, then the address (decision 12's reverse
 		// order); an address is never given back while the name is not.
@@ -729,26 +755,46 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			return fmt.Errorf("%w; undoing waits: %w", cause, err)
 		} else if err != nil {
 			problems = append(problems, err)
+			nameBack = false
 		} else {
-			problems = append(problems, e.returnAddress(ctx, j)...)
+			problems = append(problems, e.stopTargetForUndo(ctx)...)
 		}
 	}
-	released := false
+	// open: the source is behind no gate now. Otherwise closed says why its
+	// ingress is not started.
+	released, open, closed := false, false, ""
 	g, err := e.Source.Gate(ctx)
 	switch {
 	case err != nil:
 		problems = append(problems, fmt.Errorf("reading the source's gate: %w", err))
+		closed = "could not confirm the source's gate is lifted, so its %s is not started again"
 	case g != nil && g.Kind == "migration":
 		if err := e.Source.Release(ctx, g.ID); err != nil {
 			problems = append(problems, fmt.Errorf("lifting the barrier %s: %w", g.ID, err))
+			closed = "the source's %s is not started again while its barrier stands"
 		} else {
-			released = true
+			released, open = true, true
 		}
 	case g != nil:
 		problems = append(problems, fmt.Errorf("the source is behind a %s gate (%s), not a migration barrier: left as it is", g.Kind, g.ID))
+		closed = "the source's %s is not started again while its gate stands"
+	default:
+		open = true
 	}
-	if err := e.discard(ctx, j); err != nil {
-		problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
+	if from == Transfer && nameBack {
+		// Coolify's domain goes back by hand, whatever the gate.
+		if open || j.Ingress == Coolify {
+			problems = append(problems, e.returnAddress(ctx, j)...)
+		} else {
+			problems = append(problems, fmt.Errorf(closed, ingressPart(j.Ingress)))
+		}
+	}
+	// The target's database is discarded once the name is back: while it
+	// is not, a --resume may start the target again, which needs it.
+	if nameBack {
+		if err := e.discard(ctx, j); err != nil {
+			problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
+		}
 	}
 	if len(problems) > 0 {
 		// Not released: the journal stays where it was, for --resume.
@@ -759,7 +805,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	if err := e.enter(ctx, j, Released); err != nil {
 		did := "the barrier lifted, the target's database discarded"
 		if from == Transfer {
-			did = "the address returned, " + did
+			did = "the target stopped, the barrier lifted, the address returned, the target's database discarded"
 		}
 		return fmt.Errorf("%w; it was undone (%s), but a journal could not say released: %v; varlatch migrate --resume finishes it", cause, did, err)
 	}

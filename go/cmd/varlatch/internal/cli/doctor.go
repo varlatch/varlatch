@@ -136,7 +136,7 @@ func (r *Run) varlatchdDoctor(config string) (doctorReport, error) {
 		args = append(args, "--config", config)
 	}
 	cmd := exec.Command(path, args...)
-	cmd.Env = hostCredentials(varlatchdEnviron(r), config)
+	cmd.Env = hostCredentials(varlatchdEnviron(r), config, asRoot())
 	answer, said, err := runChild(cmd)
 	code := 0
 	if err != nil {
@@ -204,7 +204,7 @@ func doctorCLIChecks(report doctorReport) []doctorCheck {
 		// It may well run: this user could not ask it (varlatchd said why
 		// on stderr).
 		running.Status, running.Detail = "unknown", "this user could not ask varlatchd on its control socket"
-		running.Remedy = "Run doctor as root (sudo varlatch doctor) or as the user varlatchd runs as"
+		running.Remedy = "Run doctor as root (sudo varlatch doctor), or as the user varlatchd runs as where the configuration names root_kek_file"
 	default:
 		running.Status, running.Detail = "fail", "varlatchd did not answer on its control socket"
 		running.Remedy = "Start varlatchd: sudo systemctl start varlatchd (journalctl -u varlatchd says why it stopped)"

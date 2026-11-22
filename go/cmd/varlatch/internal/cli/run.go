@@ -26,8 +26,8 @@ import (
 // the delivered Secrets outside assisted mode too, and refuses when stdout
 // or stderr is a terminal or the run is agent-safe; --strict (5.4f,
 // strictrun.go) validates the whole environment against the Contract
-// first. --agent-safe and a run inside an agent-safe run (5.5b) say they
-// are not built yet.
+// first; --agent-safe (with or without --strict, agentrun.go) and a run
+// inside an agent-safe run (nestedrun.go) are slice 5.5b's.
 
 const runUsage = "Usage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]... " +
 	"[--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]"
@@ -43,10 +43,6 @@ var runOptions = OptionSpec{
 
 // strictExit is STRICT_EXIT (EX_CONFIG).
 const strictExit = 78
-
-func runNotBuilt(what, slice string) error {
-	return UsageError("varlatch run: " + what + " is not in this build of the Go CLI yet (slice " + slice + "); use the TypeScript CLI for it until then")
-}
 
 // flagValues is main.ts's flags(): every value given after name.
 func flagValues(args []string, name string) []string {
@@ -187,8 +183,8 @@ func runCommand(r *Run) error {
 	if err != nil {
 		return err
 	}
-	if clientctx.AgentRunOf(r.Env) != "" {
-		return runNotBuilt("a run inside an agent-safe run", "5.5b")
+	if agentRun := clientctx.AgentRunOf(r.Env); agentRun != "" {
+		return r.nestedRun(agentRun, pre, command, commandArgs, omit)
 	}
 	agentSafe, noRedact, redact := hasArg(pre, "--agent-safe"), hasArg(pre, "--no-redact"), hasArg(pre, "--redact")
 	allowUnmasked, _ := allowUnmaskedNames(pre)
@@ -245,9 +241,6 @@ func runCommand(r *Run) error {
 			return UsageError("varlatch: " + refusal + ". Nothing was started.")
 		}
 	}
-	if agentSafe {
-		return runNotBuilt("--agent-safe", "5.5b")
-	}
 	if humanOverride {
 		r.eprintln("varlatch: showing " + strings.Join(allowUnmasked, ", ") + " unmasked in this run only, if too short to mask; every other known Secret stays masked.")
 	}
@@ -256,6 +249,21 @@ func runCommand(r *Run) error {
 		return contextError(err)
 	}
 	api := r.client(ctx)
+	if hasArg(pre, "--strict") && agentSafe {
+		opts, err := agentRunFlags(pre)
+		if err != nil {
+			return err
+		}
+		return agentSafeFailure(r.runAgentSafeStrict(ctx, api, opts, flagValues(pre, "--allow-inherited"), command, commandArgs))
+	}
+	if agentSafe {
+		// ADR-0022: Placeholders and a local Broker; the Agent gets no bearer.
+		opts, err := agentRunFlags(pre)
+		if err != nil {
+			return err
+		}
+		return agentSafeFailure(r.runAgentSafe(ctx, api, opts, command, commandArgs))
+	}
 	c, err := api.get()
 	if err != nil {
 		return err

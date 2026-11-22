@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { canonicalTargets } from "@varlatch/protocol";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cliCommand } from "./cliUnderTest.js";
 import { CONTROL_VERSION, controlCli } from "./controlCli.js";
 
 /**
@@ -112,6 +113,8 @@ const AGENT = `
 const { spawnSync } = require("child_process");
 const fs = require("fs");
 const e = process.env;
+// The CLI under test (the TypeScript bundle run by Node.js, or a Go binary), or the control.
+const [cli, ...cliArgs] = JSON.parse(e.CLI_CMD);
 const record = {
   startedAt: Date.now(),
   agentRun: e.VARLATCH_AGENT_RUN ?? null,
@@ -123,7 +126,7 @@ const record = {
 };
 const print = [process.execPath, "-e", "process.stdout.write('nested=' + process.env.STRIPE_KEY + '\\\\n')"];
 function probe(name, args, env) {
-  const r = spawnSync(process.execPath, [e.CLI_BUNDLE, ...args], { cwd: e.REPO, env, encoding: "utf8", timeout: 20000 });
+  const r = spawnSync(cli, [...cliArgs, ...args], { cwd: e.REPO, env, encoding: "utf8", timeout: 20000 });
   record.probes[name] = { code: r.status, out: (r.stdout ?? "") + (r.stderr ?? "") };
 }
 const withoutToken = { ...e };
@@ -183,15 +186,15 @@ interface Record {
   unmanaged: string | null;
 }
 
-/** One agent-safe run by `cli`, with the operator's credential in the default store (HOME), and the agent's record. */
-async function agentSafeRun(cli: string, metadata: boolean): Promise<{ code: number | null; output: string; record: Record }> {
+/** One agent-safe run by the CLI `[command, args]`, with the operator's credential in the default store (HOME), and the agent's record. */
+async function agentSafeRun([command, before]: [string, string[]], metadata: boolean): Promise<{ code: number | null; output: string; record: Record }> {
   requests = [];
   const home = mkdtempSync(join(dir, "home-"));
   mkdirSync(join(home, ".config", "varlatch"), { recursive: true });
   writeFileSync(join(home, ".config", "varlatch", "credentials.json"), JSON.stringify({ servers: { [origin]: { token: OPERATOR } } }));
   const out = join(home, "record.json");
   const args = [
-    cli,
+    ...before,
     "run",
     "--agent-safe",
     "--agent",
@@ -206,9 +209,9 @@ async function agentSafeRun(cli: string, metadata: boolean): Promise<{ code: num
     join(dir, "agent.cjs"),
   ];
   // UNMANAGED_KEY: an inherited secret Varlatch does not know, which an agent-safe run passes as it is.
-  const env = { PATH: process.env.PATH, HOME: home, VARLATCH_BROKER_CREDENTIAL: BROKER, CLI_BUNDLE: cli, REPO: repo, OUT: out, UNMANAGED_KEY: UNMANAGED };
+  const env = { PATH: process.env.PATH, HOME: home, VARLATCH_BROKER_CREDENTIAL: BROKER, CLI_CMD: JSON.stringify([command, ...before]), REPO: repo, OUT: out, UNMANAGED_KEY: UNMANAGED };
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, args, { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", (d: Buffer) => (output += d.toString()));
     child.stderr.on("data", (d: Buffer) => (output += d.toString()));
@@ -228,7 +231,7 @@ describe.each([
   ["with --agent-metadata", true],
 ])("agent-safe run %s", { timeout: 60_000 }, (_mode, metadata) => {
   it("gives the Agent its own configuration directory and run id, and removes the directory at exit", async () => {
-    const { code, output, record } = await agentSafeRun(bundle, metadata);
+    const { code, output, record } = await agentSafeRun(cliCommand(bundle, []), metadata);
     expect(code, output).toBe(0);
     expect(record.agentRun).toMatch(/^run_[0-9a-f]{16}$/);
     expect(record.configDir).toMatch(/varlatch-agent-run-/);
@@ -239,7 +242,7 @@ describe.each([
   });
 
   it("the skill's Placeholder check: context lists only the run's Placeholders, the listed one shows its Placeholder, and nested runs mask the run's credentials", async () => {
-    const { code, output, record } = await agentSafeRun(bundle, metadata);
+    const { code, output, record } = await agentSafeRun(cliCommand(bundle, []), metadata);
     expect(code, output).toBe(0);
     const { context, printPlaceholder, printToken, printProxy } = record.probes;
     expect(context!.code, context!.out).toBe(0);
@@ -265,7 +268,7 @@ describe.each([
   });
 
   it("nested varlatch commands never disclose and never use the operator's stored credential", async () => {
-    const { code, output, record } = await agentSafeRun(bundle, metadata);
+    const { code, output, record } = await agentSafeRun(cliCommand(bundle, []), metadata);
     expect(code, output).toBe(0);
     const { run, values, runWithoutToken, valuesWithoutToken, valuesWithoutConfigDir } = record.probes;
     for (const probe of [run, values, runWithoutToken, valuesWithoutToken, valuesWithoutConfigDir]) expect(probe!.out).not.toContain(CANARY);
@@ -293,7 +296,7 @@ describe.each([
   });
 
   it(`negative control: the same run and probes with the ${CONTROL_VERSION} CLI reach the operator's credential and leak`, async () => {
-    const { code, output, record } = await agentSafeRun(control, metadata);
+    const { code, output, record } = await agentSafeRun([process.execPath, [control]], metadata);
     expect(code, output).toBe(0);
     expect(record.agentRun).toBeNull();
     // Without the metadata credential the plain nested run falls back to the store; with it,

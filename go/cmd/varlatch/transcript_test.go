@@ -251,10 +251,26 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = cli.SetupHelp + "\n"
 		}
 	},
+	// `varlatch help move` (and `move --help`, `move -h`) prints a Go
+	// installation's move (slice 6.9); the TypeScript usage is a Compose
+	// installation's. The recording's usage becomes the Go one.
+	"move-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch move ") {
+			o.Stdout = cli.MoveHelp + "\n"
+		}
+	},
 	// `varlatch help self-update` (and `self-update --help`, `-h`) prints
 	// the Go CLI's forms: it replaces a native binary, always checks the
 	// signature, and takes --prerelease and --allow-downgrade (slice 6.7a).
 	// The recording's usage becomes the Go one.
+	// `varlatch help upgrade` (and `upgrade --help`, `-h`) prints a Go
+	// installation's forms (slice 6.6b); the TypeScript usage is a Compose
+	// installation's. The recording's usage becomes the Go one.
+	"upgrade-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch upgrade ") {
+			o.Stdout = cli.UpgradeHelp + "\n"
+		}
+	},
 	"self-update-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
 		if strings.HasPrefix(o.Stdout, "Usage:\n  varlatch self-update ") {
 			o.Stdout = cli.SelfUpdateHelp + "\n"
@@ -310,6 +326,20 @@ var differences = map[string]transcript.Difference{
 	// A command `run` cannot start: TypeScript lets Node's error escape
 	// (its stack), Go prints Node's own message, `spawn <command> <code>`.
 	// Accepted only where Go says exactly the recorded error.
+	// `varlatch request` prints a reply the Broker generated itself once;
+	// TypeScript prints its text twice (step 5 defect 44, go/README.md).
+	// Accepted only where the recording's stderr is that text twice and
+	// the closing line, and Go's is the text once and the same line.
+	"broker-reply-once": func(o *transcript.Outcome, got transcript.Outcome) {
+		lines := strings.Split(strings.TrimSuffix(o.Stderr, "\n"), "\n")
+		n := len(lines) - 1
+		if n < 2 || n%2 != 0 || !slices.Equal(lines[:n/2], lines[n/2:n]) {
+			return
+		}
+		if once := strings.Join(append(slices.Clone(lines[:n/2]), lines[n]), "\n") + "\n"; once == got.Stderr {
+			o.Stderr = got.Stderr
+		}
+	},
 	"spawn-error": func(o *transcript.Outcome, got transcript.Outcome) {
 		if m := recordedSpawnError.FindStringSubmatch(o.Stderr); m != nil && o.Status == 1 && got.Stderr == "varlatch: "+m[1]+"\n" {
 			o.Stderr = got.Stderr
@@ -870,6 +900,26 @@ func TestValueFreeUsageIsExact(t *testing.T) {
 	} {
 		want := transcript.Outcome{Stderr: recorded}
 		differences["value-free-usage"](&want, transcript.Outcome{Stderr: got})
+		if (want.Stderr == got) != accepted {
+			t.Errorf("%q: accepted %v, want %v", got, want.Stderr == got, accepted)
+		}
+	}
+}
+
+// TestBrokerReplyOnceIsExact: broker-reply-once accepts only the
+// recording's text once, with the same closing line.
+func TestBrokerReplyOnceIsExact(t *testing.T) {
+	const closing = "varlatch request: the Broker refused the request (403); nothing reached the destination unless it says so above\n"
+	recorded := "varlatch-broker: a\nvarlatch-broker: b\nvarlatch-broker: a\nvarlatch-broker: b\n" + closing
+	for got, accepted := range map[string]bool{
+		"varlatch-broker: a\nvarlatch-broker: b\n" + closing:                                         true,
+		"varlatch-broker: a\n" + closing:                                                             false,
+		"varlatch-broker: a\nvarlatch-broker: b\nvarlatch-broker: a\nvarlatch-broker: b\n" + closing: true, // as recorded
+		"varlatch-broker: b\nvarlatch-broker: a\n" + closing:                                         false,
+		"varlatch-broker: a\nvarlatch-broker: b\n" + strings.Replace(closing, "403", "407", 1):       false,
+	} {
+		want := transcript.Outcome{Stderr: recorded}
+		differences["broker-reply-once"](&want, transcript.Outcome{Stderr: got})
 		if (want.Stderr == got) != accepted {
 			t.Errorf("%q: accepted %v, want %v", got, want.Stderr == got, accepted)
 		}

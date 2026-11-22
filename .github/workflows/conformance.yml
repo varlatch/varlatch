@@ -7,11 +7,15 @@ name: Conformance
 #   targets  ts-source (this checkout, built) and ts-release:0.22.0 (the
 #            signed release, verified and pulled by digest), each with every
 #            CLI; go-binary (the Go varlatchd, built here with its
-#            dashboard) with the CLI built from source, its missing
-#            operations declared in scripts/conformance/expect/go-binary.json
+#            dashboard) with the CLI built from source and with the cutover
+#            published TypeScript CLIs pinned in scripts/conformance/clients.json
+#            (ADR-0059 G2: 0.22.4 and 0.23.0; any future entry marked pending
+#            in clients.json is skipped with a clear notice until published),
+#            its missing operations declared in scripts/conformance/expect/go-binary.json
 #            (ADR-0059 step 3)
-#   CLIs     source (this checkout), 0.21.0 and 0.22.0 (pinned in
-#            scripts/conformance/clients.json, verified before use); go (the
+#   CLIs     source (this checkout), 0.21.0, 0.22.0, 0.22.4, and 0.23.0 (pinned
+#            in scripts/conformance/clients.json, verified before use; future
+#            pending entries are skipped until tagged and pinned); go (the
 #            Go CLI, built here) against both TypeScript targets, its
 #            missing features declared in scripts/conformance/client-go.json
 #            (internal docs/design/go-cli.md, decision 3). go.yml runs
@@ -25,7 +29,8 @@ name: Conformance
 # default branch; it can then run on any branch that has it). A dispatch
 # runs every cell, or the one its `cell` input names: a Go CLI slice links a
 # dispatched `ts-release:0.22.0 x go` run (gh workflow run conformance.yml
-# --ref <branch> -f "cell=ts-release:0.22.0 x go"). Hosted runners only; no
+# --ref <branch> -f "cell=ts-release:0.22.0 x go"), and G2 runs
+# `go-binary x 0.22.4` and `go-binary x 0.23.0`. Hosted runners only; no
 # secret beyond the read-only job token.
 on:
   schedule:
@@ -47,6 +52,8 @@ on:
           - ts-release:0.22.0 x 0.22.0
           - ts-release:0.22.0 x go
           - go-binary x source
+          - go-binary x 0.22.4
+          - go-binary x 0.23.0
 
 permissions:
   contents: read
@@ -57,13 +64,20 @@ concurrency:
 
 jobs:
   # The cells of this run: every one, or the one a dispatch names.
+  # Any versioned CLI marked pending in scripts/conformance/clients.json is
+  # skipped with a notice so future unreleased pins activate automatically
+  # once their commit and sha256 replace pending.
   cells:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.cells.outputs.matrix }}
+      has_cells: ${{ steps.cells.outputs.has_cells }}
       images: ${{ steps.cells.outputs.images }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Choose the cells
         id: cells
         env:
@@ -71,15 +85,53 @@ jobs:
         run: |
           all=$(jq -cn '
             [(["ts-source", "ts-release:0.22.0"][] as $t | ["source", "0.21.0", "0.22.0", "go"][] | {target: $t, cli: .}),
-             {target: "go-binary", cli: "source"}]')
+             (["source", "0.22.4", "0.23.0"][] | {target: "go-binary", cli: .})]')
           if [ "$CELL" = all ]; then
-            cells=$all
+            selected=$all
           else
-            cells=$(jq -c --arg cell "$CELL" '[.[] | select("\(.target) x \(.cli)" == $cell)]' <<< "$all")
+            selected=$(jq -c --arg cell "$CELL" '[.[] | select("\(.target) x \(.cli)" == $cell)]' <<< "$all")
           fi
-          [ "$cells" != "[]" ] || { echo "::error::No cell is named $CELL."; exit 1; }
+          [ "$selected" != "[]" ] || { echo "::error::No cell is named $CELL."; exit 1; }
+
+          missing=$(jq -r --slurpfile clients scripts/conformance/clients.json '
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select(($clients[0].cli | has($cell.cli)) | not)
+            | "\(.target) x \(.cli)"' <<< "$selected")
+          if [ -n "$missing" ]; then
+            while IFS= read -r m; do
+              echo "::error::Cell $m names a CLI not listed in scripts/conformance/clients.json."
+            done <<< "$missing"
+            exit 1
+          fi
+
+          invalid=$(jq -r --slurpfile clients scripts/conformance/clients.json '
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select(($clients[0].cli[$cell.cli] | has("pending")) and (($clients[0].cli[$cell.cli] | has("commit")) or ($clients[0].cli[$cell.cli] | has("sha256"))))
+            | "\(.target) x \(.cli)"' <<< "$selected")
+          if [ -n "$invalid" ]; then
+            while IFS= read -r inv; do
+              echo "::error::Cell $inv has both pending and commit/sha256 in scripts/conformance/clients.json."
+            done <<< "$invalid"
+            exit 1
+          fi
+
+          skipped=$(jq -r --slurpfile clients scripts/conformance/clients.json '
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select($clients[0].cli[$cell.cli] | has("pending"))
+            | "\(.target) x \(.cli)\t\($clients[0].cli[$cell.cli].pending)"' <<< "$selected")
+          if [ -n "$skipped" ]; then
+            while IFS=$'\t' read -r label reason; do
+              echo "::notice::Skipping ${label}: ${reason}"
+              echo "- Skipped \`${label}\`: ${reason}" >> "$GITHUB_STEP_SUMMARY"
+            done <<< "$skipped"
+          fi
+
+          cells=$(jq -c --slurpfile clients scripts/conformance/clients.json '
+            [.[] | . as $cell | select(.cli == "source" or .cli == "go" or (($clients[0].cli[$cell.cli] | has("pending")) | not))]' <<< "$selected")
           jq -r '.[] | "\(.target) x CLI \(.cli)"' <<< "$cells"
+          has_cells=$(jq 'length > 0' <<< "$cells")
           echo "matrix={\"include\":$cells}" >> "$GITHUB_OUTPUT"
+          echo "has_cells=$has_cells" >> "$GITHUB_OUTPUT"
           echo "images=$(jq 'any(.[]; .target == "ts-source")' <<< "$cells")" >> "$GITHUB_OUTPUT"
 
   images:
@@ -110,8 +162,9 @@ jobs:
 
   cell:
     needs: [cells, images]
-    # images is skipped when no ts-source cell runs.
-    if: always() && needs.cells.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped')
+    # images is skipped when no ts-source cell runs; cell is skipped when the
+    # dispatched cell is a pending CLI release.
+    if: always() && needs.cells.result == 'success' && needs.cells.outputs.has_cells == 'true' && (needs.images.result == 'success' || needs.images.result == 'skipped')
     name: ${{ matrix.target }} x CLI ${{ matrix.cli }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -141,6 +194,17 @@ jobs:
         with:
           go-version: 1.27.4
           cache: false
+      - name: Restore Go's caches
+        if: matrix.target == 'go-binary' || matrix.cli == 'go'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-conformance-
       # The dashboard first (go generate ./server/web, with the Node and pnpm
       # set up above), then varlatchd, which embeds it.
       - name: Build varlatchd

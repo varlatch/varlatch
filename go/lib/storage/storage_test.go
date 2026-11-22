@@ -223,6 +223,10 @@ func TestJobErrorIsIsolated(t *testing.T) {
 			t.Fatalf("job %d: %v, want its own error", i, res[i])
 		}
 	}
+	// A panic's error names its type, never its value (which can hold a row's data).
+	if res[4] == nil || res[4].Error() != "storage: job panicked (string)" || strings.Contains(res[4].Error(), "boom") {
+		t.Fatalf("panicking job: %v", res[4])
+	}
 	if n := count(t, db, "WHERE name IN ('a','d')"); n != 2 {
 		t.Fatalf("committed %d of the good jobs", n)
 	}

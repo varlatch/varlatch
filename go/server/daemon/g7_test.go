@@ -585,18 +585,21 @@ func serveRequest(h http.Handler, method, path, token string) *httptest.Response
 // startWith serves in with hooks, as start serves with none.
 func startWith(t *testing.T, in install, h *hooks) *running {
 	t.Helper()
-	r := &running{signals: make(chan os.Signal, 1), done: make(chan int, 1), stderr: &syncBuffer{}}
+	r := &running{signals: make(chan os.Signal, 1), done: make(chan int, 1), exited: make(chan struct{}), stderr: &syncBuffer{}}
 	ready := make(chan string, 1)
 	go func() {
+		defer close(r.exited)
 		r.done <- serve(Options{ConfigPath: in.conf, Stderr: r.stderr, Signals: r.signals, Ready: func(a net.Addr) { ready <- a.String() }}, h)
 	}()
 	select {
 	case r.addr = <-ready:
 	case code := <-r.done:
+		<-r.exited
 		t.Fatalf("exited %d before serving: %s", code, r.stderr.String())
 	case <-time.After(30 * time.Second):
 		t.Fatal("not serving after 30 s")
 	}
+	r.stopOnCleanup(t)
 	return r
 }
 

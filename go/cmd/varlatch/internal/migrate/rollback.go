@@ -97,7 +97,8 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 	case j.Phase != Open:
 		return j, fmt.Errorf("the migration %s is in phase %s: --rollback reverses an open migration only", j.ID, j.Phase)
 	}
-	if _, _, err := e.reverseSides(); err != nil {
+	rs, _, err := e.reverseSides()
+	if err != nil {
 		return j, err
 	}
 	at, ok := switchedAt(j)
@@ -114,8 +115,16 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 	if st.Journal == nil || st.Journal.ID != j.ID || st.Journal.Phase != Open {
 		return j, fmt.Errorf("the target's journal says %v, not the migration %s open: nothing was done", st.Journal, j.ID)
 	}
+	if w := st.Journal.WindowEnded; w != nil {
+		return j, fmt.Errorf("the migration %s's rollback window ended when varlatchd %s was installed (%s, varlatch upgrade): that release's data does not go back to the TypeScript release; nothing was done", j.ID, w.Release, w.At)
+	}
 	if !st.Running {
 		return j, errors.New("the Go installation does not run: a reverse migration starts from the installation that serves (start it; it stays running until the address moves)")
+	}
+	// Refused here, before Go's barrier and anything journalled, rather
+	// than at the rebuilt database's export after the rebuild.
+	if err := rs.ReverseReady(ctx); err != nil {
+		return j, err
 	}
 	// What a killed run left on this host (the bundles in the
 	// installation's backups directory, the export's directories), under
