@@ -534,7 +534,8 @@ func (m *Manager) checkLocked(ctx context.Context) {
 	// until they match (ADR-0059 amendment 11, step 7.5c c3).
 	tags := slices.Clone(st.Tags)
 	slices.Sort(tags)
-	differ := m.requireTags != nil && st.BackendState == "Running" && !slices.Equal(slices.Compact(tags), m.requireTags)
+	tags = slices.Compact(tags)
+	differ := m.requireTags != nil && st.BackendState == "Running" && !slices.Equal(tags, m.requireTags)
 	switch {
 	case differ && !m.tagsDiffer:
 		m.log.Error("the tailnet node's tags are not tailnet_tags: tailnet access is closed until they match (give the node tailnet_tags in Headscale, or enrol it again with a tagged pre-auth key)",
