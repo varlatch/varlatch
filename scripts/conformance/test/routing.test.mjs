@@ -106,8 +106,18 @@ function reached(packageDirs) {
   const inventory = JSON.parse(readFileSync(join(REPO, "scripts/conformance/inventory.json"), "utf8"));
   const roots = Object.values(inventory.suites).map((s) => s.script).filter(Boolean);
   roots.push("scripts/conformance/run.mjs", "scripts/conformance/suite-kit.mjs", "scripts/conformance/lacks-probe.mjs", "scripts/conformance/target-op.mjs");
-  // go-binary's G3 steps: vitest in services/varlatchd on each go-* file go.yml names.
-  for (const m of GO_YML.matchAll(/pnpm --filter @varlatch\/varlatchd exec vitest run (test\/\S+)/g)) roots.push(`services/varlatchd/${m[1]}`);
+  // go-binary's G3 steps: vitest in services/varlatchd on each go-* file
+  // go.yml names. Any other vitest call there is the nightly converter's,
+  // in its release/0.22 checkout (working-directory: ts), whose files are
+  // not this checkout's: never a root here.
+  for (const m of GO_YML.matchAll(/pnpm --filter @varlatch\/varlatchd exec vitest run (test\/\S+)/g)) {
+    if (m[1].startsWith("test/go-")) {
+      roots.push(`services/varlatchd/${m[1]}`);
+      continue;
+    }
+    const step = GO_YML.slice(GO_YML.lastIndexOf("\n      - ", m.index), m.index);
+    assert.match(step, /\n        working-directory: ts\n/, `go.yml runs ${m[1]} outside the release checkout, and it is no go-* G3 test`);
+  }
   roots.push("services/varlatchd/vitest.config.ts");
   const seen = new Set();
   const queue = [...roots];
