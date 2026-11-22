@@ -104,28 +104,50 @@ func registerSecrets(in *installation) {
 
 func imagePin(t *testing.T, in *installation, rel release) {
 	const item = 8
-	// The constants (no override): 0.23.0 is not published, so every
-	// source is refused.
+	// The constants (no override): the release pins 0.23.0's published
+	// image (ghcr.io/varlatch/varlatchd by its digest, #402), so this
+	// run's own build of it, from its own registry, is refused as another
+	// image, the published one named.
 	r := in.migrateEnv(rel, false, "", "--dry-run")
-	record(t, item, "no pin: refused as unpublished", r.code != 0 && strings.Contains(r.stderr, "not yet published"), r.String())
+	record(t, item, "no pin: refused as not the published image", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image: repository ghcr.io/varlatch/varlatchd"), r.String())
 	// Another digest than the source's.
 	other := rel.pin()[:strings.Index(rel.pin(), "@")] + "@sha256:" + strings.Repeat("0", 64)
 	r = in.migrateEnv(rel, true, other, "--dry-run")
 	// The message names both images; the CLI's fail-safe masks a registry
 	// with a port as a URL's user name and password (finding of run r1).
-	record(t, item, "another digest: refused", r.code != 0 && !strings.Contains(r.stderr, "not yet published"), r.String())
+	// The override took effect: the refusal names its digest as the one
+	// wanted.
+	record(t, item, "another digest: refused", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image") && strings.Contains(r.stderr, "sha256:"+strings.Repeat("0", 64)), r.String())
 	if strings.Contains(r.stderr, "[redacted]@") {
 		differs(item, "G5's pin is ghcr.io/varlatch/varlatchd@sha256:..., a repository without a port.",
 			"with a registry that has a port (a mirror, a private registry, this harness's), the refusal's image references read [redacted]@sha256:...: the fail-safe takes host:port/repo before the at-sign for a URL's credentials",
 			"migrate's diagnostics: the operator cannot read which image was found or wanted")
 	}
-	// An image built here, never pushed: no registry digest of its own.
-	local := "vl-rh-" + runID + "-local/varlatchd:0.23.0"
-	must(t, run("", nil, nil, "docker", "tag", rel.Images["varlatchd"][:strings.Index(rel.Images["varlatchd"], "@")], local), "tag a local image")
+	// An image built here, never pushed. A new image ID (a label added),
+	// not a tag of the pushed one, which would keep the pushed image's
+	// RepoDigests.
+	localRepo := "vl-rh-" + runID + "-local/varlatchd"
+	local := localRepo + ":0.23.0"
+	base := rel.Images["varlatchd"][:strings.Index(rel.Images["varlatchd"], "@")]
+	must(t, run("", nil, []byte("FROM "+base+"\nLABEL org.varlatch.rehearsal.local="+runID+"\n"), "docker", "build", "-q", "-t", local, "-"), "build a local image")
 	t.Cleanup(func() { run("", nil, nil, "docker", "image", "rm", local) })
+	digests := strings.TrimSpace(run("", nil, nil, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", local).stdout)
+	measure("item 8: the local image's RepoDigests", digests)
 	in.swapImage(t, local)
 	r = in.migrateEnv(rel, true, rel.pin(), "--dry-run")
-	record(t, item, "a locally built image: refused (no registry digest)", r.code != 0 && !strings.Contains(r.stderr, "not yet published"), r.String())
+	if digests == "[]" {
+		// The classic image store: no RepoDigests, the no-digest refusal.
+		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "not pinned by a registry digest"), r.String())
+	} else {
+		// The containerd image store (Docker's default since 29) lists a
+		// digest under the local name too, which migrate cannot tell from
+		// a registry's: the image is refused as another repository than
+		// the pin, the no-digest branch unreachable here.
+		differs(item, "G5's stand-in source has no RepoDigests for an image built and never pushed.",
+			fmt.Sprintf("Docker lists %s for an image built here and never pushed (the containerd image store gives a local name a digest), so migrate reads it as that repository's registry digest", digests),
+			"the \"not pinned by a registry digest\" refusal is unreachable on such a host; the image is still refused, as another repository and digest than the pin")
+		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "the source's image is repository "+localRepo+",") && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
+	}
 	in.swapImage(t, rel.Images["varlatchd"])
 }
 
@@ -613,9 +635,25 @@ func collisionCase(t *testing.T, rel release, s3 *s3Server) {
 	}
 	ab := in.migrateEnv(rel, true, rel.pin(), "--abort")
 	measure("item 6: --abort once the port is free", ab.String()+" "+lastLines(ab.stdout, 3))
-	code, body := in.get("/v1/meta")
-	record(t, item, "after --abort the source answers again", code == 200 && strings.Contains(body, `"serverVersion":"0.23.0"`), fmt.Sprintf("%d %s", code, trim(body)))
+	// As a client would: the source is polled until it answers as itself
+	// (0.23.0 and this installation's id), never judged on one request
+	// (r12 read once, right after --abort). --abort exits 0 only once the
+	// source answers (its undo waits for it), so the check passes only if
+	// it answers within sourceAnswerBound of --abort's exit; the poll goes
+	// on to sourceAnswerDeadline so a late answer is still measured.
+	a := answersWithin(func() (int, string) { return in.get("/v1/meta") }, sourceAnswers(in.installationID), sourceAnswerDeadline, 250*time.Millisecond)
+	measure("item 6: the source's first answer after --abort", fmt.Sprintf("%v after %d requests (answered %v)", a.took.Round(time.Millisecond), a.tries, a.ok))
+	record(t, item, "after --abort the source answers again", a.ok && a.took <= sourceAnswerBound,
+		fmt.Sprintf("%d %s; first answer %v after --abort exited (%d requests; bound %v, polled up to %v)", a.code, trim(a.body), a.took.Round(time.Millisecond), a.tries, sourceAnswerBound, sourceAnswerDeadline))
 }
+
+// Item 6's bounds after --abort exits: the source must answer within
+// sourceAnswerBound (the undo waited for it, so a regression shows as a
+// late answer); the poll goes on to sourceAnswerDeadline, for the report.
+const (
+	sourceAnswerBound    = 5 * time.Second
+	sourceAnswerDeadline = 60 * time.Second
+)
 
 // afterFailedDryRun: a dry run that fails after its journal is written
 // leaves the migration "interrupted in phase started", which refuses the
