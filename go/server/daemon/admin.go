@@ -65,7 +65,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
 	move := isMoveCommand(sub) || sub == "config"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "config-check" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && !conformance && !operator && !backup && !keys && !move {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && !conformance && !operator && !backup && !keys && !move {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -84,11 +84,15 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		}
 		rest = append(rest, args[i])
 	}
+	// Run by hand outside the unit, as root: the keys beside the
+	// configuration, as the unit hands them (config.HostEnv).
+	env := config.HostEnv(os.Getenv, path, adminAsRoot())
 	// In the single-container image, admin refuses a key in its
 	// environment as serve does (lib/keyenv): the keys the configuration
-	// names, as far as they can be read, and the key variable names.
+	// loads, as far as they can be read (those it names, and the
+	// credentials directory's), and the key variable names.
 	if os.Getenv(keyenv.ImageMarker) != "" {
-		keys := keyenv.Configured(path)
+		keys := keyenv.Configured(path, env("CREDENTIALS_DIRECTORY"))
 		why := keyenv.Refusal(os.Environ(), keys...)
 		for _, k := range keys {
 			clear(k.Bytes)
@@ -117,11 +121,6 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	case sub == "tailnet":
 		if _, msg := tailnetArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
-			return 64
-		}
-	case sub == "config-check":
-		if len(rest) != 0 {
-			fmt.Fprintln(stderr, "Usage: varlatchd admin config-check [--config <file>]")
 			return 64
 		}
 	case sub == "bootstrap-status":
@@ -191,9 +190,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			return adminUsage(stderr, msg)
 		}
 	}
-	// Outside the unit, the keys beside the configuration, as the unit
-	// hands them (config.LoadHost).
-	cfg, err := config.LoadHost(path)
+	cfg, err := config.LoadHost(path, env)
 	if err != nil {
 		var cerr *config.Error
 		if errors.As(err, &cerr) {
@@ -212,17 +209,18 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":
 		return runCustodyStatus(cfg, stdout, stderr)
-	case sub == "certificate":
+	case sub == "certificate" && rest[0] == "issuances":
 		return runCertificateIssuances(cfg, rest, time.Now(), stdout, stderr)
 	case sub == "tailnet" && rest[0] == "probe-name":
 		return runTailnetProbe(cfg, rest, stdout, stderr)
+	case sub == "tailnet" && (rest[0] == "enroll" || rest[0] == "reaches"):
+		c, _ := nodeArgs(rest)
+		if c.op == "enroll" {
+			return runTailnetEnroll(cfg, c, stdout, stderr)
+		}
+		return runTailnetReaches(cfg, c, stdout, stderr)
 	case sub == "bootstrap-status":
 		return runBootstrapStatus(cfg, stdout, stderr)
-	case sub == "config-check":
-		// The configuration parses and holds together (what setup checks
-		// before it starts the unit); nothing else is read or written.
-		fmt.Fprintf(stdout, "The configuration file %s is valid.\n", path)
-		return ExitOK
 	case sub == "doctor":
 		asJSON, _ := doctorArgs(rest)
 		return runDoctor(cfg, path, asJSON, stdout, stderr)
@@ -245,13 +243,17 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
 
+// adminAsRoot is whether admin runs as root (never on Windows, where
+// os.Geteuid is -1); a variable so the tests can be root.
+var adminAsRoot = func() bool { return os.Geteuid() == 0 }
+
 func adminUsage(stderr io.Writer, msg string) int {
 	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] [--revoke-unused] | varlatchd admin bootstrap-status | "+
 		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] [--revoke-unused] | "+
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin config-check | varlatchd admin certificate issuances [--json] | "+
+		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin certificate issuances [--all] [--json]|record --attempts <json> | "+
 		"varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
 		"varlatchd admin status [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | "+
 		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
@@ -413,7 +415,9 @@ func writes(sub string) bool {
 // refused, as the TypeScript admin CLI refuses it.
 func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int {
 	sub, rest := args[0], args[1:]
-	if writes(sub) && env.admission != nil {
+	// The node's handoff commands write no installation data, and run under
+	// the migration's gate, which they are part of.
+	if writes(sub) && !isNodeCmd(rest) && env.admission != nil {
 		leave, ok := env.admission.Enter()
 		if !ok {
 			fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, MaintenanceRefusal)
@@ -434,6 +438,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runCustodyAttest(ctx, env, rest, stdout, stderr)
 	case sub == "audit-export":
 		return runAuditExport(ctx, env, rest, stdout, stderr)
+	case sub == "tailnet" && isNodeCmd(rest):
+		return runTailnetNode(ctx, env, rest, stdout, stderr)
 	case sub == "tailnet":
 		return runTailnetRepin(ctx, env, rest, stdout, stderr)
 	case sub == "doctor":
@@ -446,6 +452,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runMigrateRelease(env, rest, stdout, stderr)
 	case sub == "migrate":
 		return runMigrateOpen(env, rest, stdout, stderr)
+	case sub == "certificate":
+		return runCertificateRecord(ctx, env, rest, stdout, stderr)
 	case isMoveCommand(sub):
 		return runMoveCommand(ctx, env, sub, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":

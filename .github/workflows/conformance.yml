@@ -7,11 +7,15 @@ name: Conformance
 #   targets  ts-source (this checkout, built) and ts-release:0.22.0 (the
 #            signed release, verified and pulled by digest), each with every
 #            CLI; go-binary (the Go varlatchd, built here with its
-#            dashboard) with the CLI built from source, its missing
-#            operations declared in scripts/conformance/expect/go-binary.json
+#            dashboard) with the CLI built from source and with the cutover
+#            published TypeScript CLIs pinned in scripts/conformance/clients.json
+#            (ADR-0059 G2: 0.22.4 and 0.23.0; any future entry marked pending
+#            in clients.json is skipped with a clear notice until published),
+#            its missing operations declared in scripts/conformance/expect/go-binary.json
 #            (ADR-0059 step 3)
-#   CLIs     source (this checkout), 0.21.0 and 0.22.0 (pinned in
-#            scripts/conformance/clients.json, verified before use); go (the
+#   CLIs     source (this checkout), 0.21.0, 0.22.0, 0.22.4, and 0.23.0 (pinned
+#            in scripts/conformance/clients.json, verified before use; future
+#            pending entries are skipped until tagged and pinned); go (the
 #            Go CLI, built here) against both TypeScript targets, its
 #            missing features declared in scripts/conformance/client-go.json
 #            (internal docs/design/go-cli.md, decision 3). go.yml runs
@@ -25,15 +29,20 @@ name: Conformance
 # default branch; it can then run on any branch that has it). A dispatch
 # runs every cell, or the one its `cell` input names: a Go CLI slice links a
 # dispatched `ts-release:0.22.0 x go` run (gh workflow run conformance.yml
-# --ref <branch> -f "cell=ts-release:0.22.0 x go"). Hosted runners only; no
-# secret beyond the read-only job token.
+# --ref <branch> -f "cell=ts-release:0.22.0 x go"), and G2 runs
+# `go-binary x 0.22.4` and `go-binary x 0.23.0`. Passing `-f gate=true`
+# runs ship gate G1 (`scripts/conformance/run.mjs --gate`) against
+# `gate_target` (`go-binary` by default, or `go-container`) at `gate_ref`
+# instead of the matrix, uploads the gate report artifact, writes every
+# open/failing gate entry to the job summary, and fails if the gate fails.
+# Hosted runners only; no secret beyond the read-only job token.
 on:
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
     inputs:
       cell:
-        description: The cell to run (target x CLI), or all
+        description: The cell to run (target x CLI), or all (ignored when gate is true)
         type: choice
         default: all
         options:
@@ -47,23 +56,59 @@ on:
           - ts-release:0.22.0 x 0.22.0
           - ts-release:0.22.0 x go
           - go-binary x source
+          - go-binary x 0.22.4
+          - go-binary x 0.23.0
+      gate:
+        description: Run ship gate G1 (scripts/conformance/run.mjs --gate) instead of matrix cells
+        type: boolean
+        default: false
+      gate_target:
+        description: Target for the G1 gate run (go-binary or go-container)
+        type: choice
+        default: go-binary
+        options:
+          - go-binary
+          - go-container
+      gate_cli:
+        description: CLI for the G1 gate run (source or go)
+        type: choice
+        default: source
+        options:
+          - source
+          - go
+      gate_ref:
+        description: Git ref (branch, tag, or SHA) for the G1 gate run (empty uses this ref)
+        type: string
+        default: ""
+      walkthrough:
+        description: Browser-walkthrough evidence path under docs/evidence/ (required for G1 to pass)
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: conformance-${{ github.ref }}
+  group: conformance-${{ github.event_name == 'workflow_dispatch' && inputs.gate && format('gate-{0}-{1}-{2}', inputs.gate_target, inputs.gate_cli, inputs.gate_ref || github.ref) || github.ref }}
   cancel-in-progress: false
 
 jobs:
   # The cells of this run: every one, or the one a dispatch names.
+  # Any versioned CLI marked pending in scripts/conformance/clients.json is
+  # skipped with a notice so future unreleased pins activate automatically
+  # once their commit and sha256 replace pending.
   cells:
+    if: github.event_name != 'workflow_dispatch' || !inputs.gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.cells.outputs.matrix }}
+      has_cells: ${{ steps.cells.outputs.has_cells }}
       images: ${{ steps.cells.outputs.images }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Choose the cells
         id: cells
         env:
@@ -71,15 +116,53 @@ jobs:
         run: |
           all=$(jq -cn '
             [(["ts-source", "ts-release:0.22.0"][] as $t | ["source", "0.21.0", "0.22.0", "go"][] | {target: $t, cli: .}),
-             {target: "go-binary", cli: "source"}]')
+             (["source", "0.22.4", "0.23.0"][] | {target: "go-binary", cli: .})]')
           if [ "$CELL" = all ]; then
-            cells=$all
+            selected=$all
           else
-            cells=$(jq -c --arg cell "$CELL" '[.[] | select("\(.target) x \(.cli)" == $cell)]' <<< "$all")
+            selected=$(jq -c --arg cell "$CELL" '[.[] | select("\(.target) x \(.cli)" == $cell)]' <<< "$all")
           fi
-          [ "$cells" != "[]" ] || { echo "::error::No cell is named $CELL."; exit 1; }
+          [ "$selected" != "[]" ] || { echo "::error::No cell is named $CELL."; exit 1; }
+
+          missing=$(jq -r --slurpfile clients scripts/conformance/clients.json '
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select(($clients[0].cli | has($cell.cli)) | not)
+            | "\(.target) x \(.cli)"' <<< "$selected")
+          if [ -n "$missing" ]; then
+            while IFS= read -r m; do
+              echo "::error::Cell $m names a CLI not listed in scripts/conformance/clients.json."
+            done <<< "$missing"
+            exit 1
+          fi
+
+          invalid=$(jq -r --slurpfile clients scripts/conformance/clients.json '
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select(($clients[0].cli[$cell.cli] | has("pending")) and (($clients[0].cli[$cell.cli] | has("commit")) or ($clients[0].cli[$cell.cli] | has("sha256"))))
+            | "\(.target) x \(.cli)"' <<< "$selected")
+          if [ -n "$invalid" ]; then
+            while IFS= read -r inv; do
+              echo "::error::Cell $inv has both pending and commit/sha256 in scripts/conformance/clients.json."
+            done <<< "$invalid"
+            exit 1
+          fi
+
+          skipped=$(jq -r --slurpfile clients scripts/conformance/clients.json '
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select($clients[0].cli[$cell.cli] | has("pending"))
+            | "\(.target) x \(.cli)\t\($clients[0].cli[$cell.cli].pending)"' <<< "$selected")
+          if [ -n "$skipped" ]; then
+            while IFS=$'\t' read -r label reason; do
+              echo "::notice::Skipping ${label}: ${reason}"
+              echo "- Skipped \`${label}\`: ${reason}" >> "$GITHUB_STEP_SUMMARY"
+            done <<< "$skipped"
+          fi
+
+          cells=$(jq -c --slurpfile clients scripts/conformance/clients.json '
+            [.[] | . as $cell | select(.cli == "source" or .cli == "go" or (($clients[0].cli[$cell.cli] | has("pending")) | not))]' <<< "$selected")
           jq -r '.[] | "\(.target) x CLI \(.cli)"' <<< "$cells"
+          has_cells=$(jq 'length > 0' <<< "$cells")
           echo "matrix={\"include\":$cells}" >> "$GITHUB_OUTPUT"
+          echo "has_cells=$has_cells" >> "$GITHUB_OUTPUT"
           echo "images=$(jq 'any(.[]; .target == "ts-source")' <<< "$cells")" >> "$GITHUB_OUTPUT"
 
   images:
@@ -110,8 +193,9 @@ jobs:
 
   cell:
     needs: [cells, images]
-    # images is skipped when no ts-source cell runs.
-    if: always() && needs.cells.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped')
+    # images is skipped when no ts-source cell runs; cell is skipped when the
+    # dispatched cell is a pending CLI release.
+    if: always() && needs.cells.result == 'success' && needs.cells.outputs.has_cells == 'true' && (needs.images.result == 'success' || needs.images.result == 'skipped')
     name: ${{ matrix.target }} x CLI ${{ matrix.cli }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -141,6 +225,17 @@ jobs:
         with:
           go-version: 1.27.4
           cache: false
+      - name: Restore Go's caches
+        if: matrix.target == 'go-binary' || matrix.cli == 'go'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-conformance-
       # The dashboard first (go generate ./server/web, with the Node and pnpm
       # set up above), then varlatchd, which embeds it.
       - name: Build varlatchd
@@ -189,4 +284,228 @@ jobs:
           name: ${{ steps.name.outputs.artifact }}
           path: conformance-report.json
           retention-days: 30
+          if-no-files-found: warn
+
+  # Ship gate G1 (ADR-0059): manual dispatch only (`-f gate=true`), never
+  # per-PR. Runs the complete unsharded inventory in gate mode against
+  # go-binary (default) or go-container at the chosen ref, writes every open
+  # or failing entry with its reason to the job summary, uploads the report
+  # artifact, and fails if the gate fails.
+  gate:
+    if: github.event_name == 'workflow_dispatch' && inputs.gate
+    name: G1 gate (${{ inputs.gate_target }} x CLI ${{ inputs.gate_cli }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.gate_ref || github.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-conformance-
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - name: Build varlatchd (go-binary)
+        if: inputs.gate_target == 'go-binary'
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          cd go
+          go generate ./server/web
+          go build -tags conformance -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        if: inputs.gate_target == 'go-container'
+      - name: Build the release's Go assets (go-container)
+        if: inputs.gate_target == 'go-container'
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go generate ./server/web)
+          go/release/build-assets.sh --version "0.50.0-gate.${GITHUB_RUN_NUMBER}" --out "$RUNNER_TEMP/release-assets"
+      - name: Build varlatchd image (go-container)
+        if: inputs.gate_target == 'go-container'
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          version="0.50.0-gate.${GITHUB_RUN_NUMBER}"
+          mkdir -p "$RUNNER_TEMP/conformance-assets"
+          (cd go && go build -trimpath -buildvcs=false -tags conformance \
+            -ldflags "-s -w -buildid= -X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$version" \
+            -o "$RUNNER_TEMP/conformance-assets/varlatchd-$version-linux-amd64" ./cmd/varlatchd)
+          cp "$RUNNER_TEMP/release-assets/varlatch-$version-linux-amd64" "$RUNNER_TEMP/conformance-assets/"
+          go/image/build.sh --version "$version" --assets "$RUNNER_TEMP/conformance-assets" \
+            --tag varlatchd-image:conformance --platforms linux/amd64 --load
+      - name: Build the Go CLI
+        if: inputs.gate_cli == 'go'
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          cd go
+          go build -o "$RUNNER_TEMP/varlatch" ./cmd/varlatch
+      - name: Install Chromium
+        run: scripts/ci-install-chromium.sh
+      - name: Run ship gate G1
+        env:
+          TARGET: ${{ inputs.gate_target }}
+          CLI: ${{ inputs.gate_cli }}
+          WALKTHROUGH: ${{ inputs.walkthrough }}
+        run: |
+          if [ "$TARGET" = go-binary ]; then
+            TARGET_ARG="go-binary:$RUNNER_TEMP/varlatchd"
+          else
+            TARGET_ARG="go-container:varlatchd-image:conformance"
+          fi
+          CLI_ARG="$CLI"
+          if [ "$CLI" = go ]; then
+            CLI_ARG="go:$RUNNER_TEMP/varlatch"
+          fi
+          set -- --target "$TARGET_ARG" --cli "$CLI_ARG" --gate --report conformance-report.json
+          if [ -n "$WALKTHROUGH" ]; then
+            set -- "$@" --walkthrough "$WALKTHROUGH"
+          fi
+          node scripts/conformance/run.mjs "$@"
+      - name: Write G1 gate job summary
+        if: always()
+        env:
+          GATE_REF: ${{ inputs.gate_ref || github.ref }}
+          GATE_TARGET: ${{ inputs.gate_target }}
+          GATE_CLI: ${{ inputs.gate_cli }}
+        run: |
+          COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+          export COMMIT
+          node --input-type=module - <<'NODE'
+          import { appendFileSync, existsSync, readFileSync } from "node:fs";
+
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+          if (!summaryPath) process.exit(0);
+          const lines = [];
+          const esc = (s) => String(s ?? "").replaceAll("`", "'").replaceAll("|", "\\|").replaceAll("\n", " ");
+
+          if (!existsSync("conformance-report.json")) {
+            lines.push("## Ship Gate G1 Conformance Run: FAILED (no report produced)");
+            lines.push("");
+            lines.push(`- **Ref:** \`${esc(process.env.GATE_REF)}\` (\`${esc(process.env.COMMIT)}\`)`);
+            lines.push(`- **Target:** \`${esc(process.env.GATE_TARGET)}\` | **CLI:** \`${esc(process.env.GATE_CLI)}\``);
+            lines.push("- **Detail:** `conformance-report.json` was not written (a build, setup, or usage step failed before reporting).");
+            appendFileSync(summaryPath, `${lines.join("\n")}\n`);
+            process.exit(0);
+          }
+
+          const report = JSON.parse(readFileSync("conformance-report.json", "utf8"));
+          const gate = report.gate ?? { passed: false, problems: ["gate verdict missing from report"], open: [] };
+          const checks = Array.isArray(report.checks) ? report.checks : [];
+          const count = (o) => checks.filter((c) => c.outcome === o).length;
+          const verdict = report.ok && gate.passed ? "PASSED" : "FAILED";
+
+          lines.push(`## Ship Gate G1 Conformance Run: ${verdict}`);
+          lines.push("");
+          lines.push("| Field | Value |");
+          lines.push("| --- | --- |");
+          lines.push(`| Ref | \`${esc(process.env.GATE_REF)}\` (\`${esc(process.env.COMMIT)}\`) |`);
+          lines.push(`| Target | \`${esc(process.env.GATE_TARGET)}\` (\`${esc(report.target)}\`) |`);
+          lines.push(`| CLI | \`${esc(report.cli?.spec)}\`${report.cli?.version ? ` (${esc(report.cli.version)})` : ""} |`);
+          lines.push(`| Implementation | \`${esc(JSON.stringify(report.implementation ?? null))}\` |`);
+          lines.push(`| Walkthrough evidence | ${gate.walkthrough ? `\`${esc(gate.walkthrough.path)}\` (sha256 \`${esc(gate.walkthrough.sha256)}\`)` : "none supplied"} |`);
+          lines.push(`| Conformance run | ${report.ok ? "PASS" : "FAIL"} (${checks.length} checks: ${count("pass")} pass, ${count("fail")} fail, ${count("expected-fail")} expected-fail, ${count("not-applicable")} N/A, ${count("target-lacks")} target-lacks, ${count("client-lacks")} client-lacks, ${count("predates-cli")} predates-cli) |`);
+          lines.push(`| Gate verdict | ${gate.passed ? "PASSED" : "FAILED"} |`);
+          lines.push("");
+
+          const openEntries = Array.isArray(gate.open) ? gate.open : [];
+          lines.push(`### Open inventory entries (${openEntries.length})`);
+          if (openEntries.length === 0) {
+            lines.push("None.");
+          } else {
+            lines.push("| Entry | Open reason |");
+            lines.push("| --- | --- |");
+            for (const entry of openEntries) {
+              const idx = entry.indexOf(": ");
+              const name = idx >= 0 ? entry.slice(0, idx) : entry;
+              const reason = idx >= 0 ? entry.slice(idx + 2) : "";
+              lines.push(`| \`${esc(name)}\` | ${esc(reason)} |`);
+            }
+          }
+          lines.push("");
+
+          const otherGateProblems = (gate.problems ?? []).filter((p) => !/^\d+ replacements are still open:/.test(p));
+          lines.push(`### Other gate problems (${otherGateProblems.length})`);
+          if (otherGateProblems.length === 0) {
+            lines.push("None.");
+          } else {
+            for (const p of otherGateProblems) lines.push(`- ${esc(p)}`);
+          }
+          lines.push("");
+
+          const failed = checks.filter((c) => c.outcome === "fail");
+          lines.push(`### Failed checks (${failed.length})`);
+          if (failed.length === 0) {
+            lines.push("None.");
+          } else {
+            lines.push("| Check | Suite | Reason |");
+            lines.push("| --- | --- | --- |");
+            for (const c of failed) lines.push(`| \`${esc(c.id)}\` | \`${esc(c.suite)}\` | ${esc(c.why)} |`);
+          }
+          lines.push("");
+
+          const expectedFail = checks.filter((c) => c.outcome === "expected-fail");
+          if (expectedFail.length > 0) {
+            lines.push(`### Expected failures in force (${expectedFail.length})`);
+            lines.push("| Check | Reason | Removed by |");
+            lines.push("| --- | --- | --- |");
+            for (const c of expectedFail) {
+              lines.push(`| \`${esc(c.id)}\` | ${esc(c.expected?.reason)} | ${esc(c.expected?.removedBy)} |`);
+            }
+            lines.push("");
+          }
+
+          const targetLacks = checks.filter((c) => c.outcome === "target-lacks");
+          const clientLacks = checks.filter((c) => c.outcome === "client-lacks");
+          if (targetLacks.length > 0 || clientLacks.length > 0) {
+            lines.push(`### Declared gaps (${targetLacks.length} target-lacks, ${clientLacks.length} client-lacks)`);
+            for (const [op, info] of Object.entries(report.lacks?.declared ?? {})) {
+              lines.push(`- target lacks \`${esc(op)}\`: ${esc(info?.reason)} (${esc(info?.step)})`);
+            }
+            for (const [feat, info] of Object.entries(report.clientLacks?.declared ?? {})) {
+              lines.push(`- client lacks \`${esc(feat)}\`: ${esc(info?.reason)} (${esc(info?.slice)})`);
+            }
+            lines.push("");
+          }
+
+          const runProblems = Array.isArray(report.problems) ? report.problems : [];
+          if (runProblems.length > 0) {
+            lines.push(`### Runner and suite problems (${runProblems.length})`);
+            for (const p of runProblems) lines.push(`- ${esc(p)}`);
+            lines.push("");
+          }
+
+          appendFileSync(summaryPath, `${lines.join("\n")}\n`);
+          NODE
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: conformance-gate-report-${{ inputs.gate_target }}-cli-${{ inputs.gate_cli }}
+          path: conformance-report.json
+          retention-days: 90
           if-no-files-found: warn

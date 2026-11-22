@@ -98,7 +98,8 @@ func (c *Compose) projectName(ctx context.Context) (string, error) {
 type composeConfig struct {
 	Name     string `json:"name"`
 	Services map[string]struct {
-		NetworkMode string `json:"network_mode"`
+		NetworkMode string             `json:"network_mode"`
+		Environment map[string]*string `json:"environment"`
 	} `json:"services"`
 }
 
@@ -374,7 +375,7 @@ func (c *Compose) StartServing(ctx context.Context, kind Ingress) error {
 	if kind == Coolify {
 		return nil
 	}
-	return c.StartIngress(ctx, kind)
+	return c.StartIngress(ctx, kind, false)
 }
 
 // StopServing: the shape's ingress, then varlatchd.

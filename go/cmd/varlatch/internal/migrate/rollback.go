@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"slices"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 )
 
 // `varlatch migrate --rollback` (go-step7 decisions 16 and 17, slice
@@ -302,7 +304,19 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 			return err
 		}
 	}
+	// The tailnet name after the address (decision 12's order).
+	if err := e.rollbackTailnet(ctx, j); err != nil {
+		return err
+	}
 	return e.rolledBack(ctx, j)
+}
+
+// tailnetReturn is the reverse's tailnet handoff (nil for none).
+func tailnetReturn(j *Journal) *tailhandoff.State {
+	if j.Tailnet == nil {
+		return nil
+	}
+	return j.Tailnet.Rollback
 }
 
 func originOf(j *Journal) string {
@@ -315,6 +329,17 @@ func originOf(j *Journal) string {
 // waitForSource probes the public URL until it answers with the
 // installation's id and the TypeScript release's version.
 func (e *Engine) waitForSource(ctx context.Context, j *Journal) error {
+	want := ""
+	if j.Rollback.Export != nil {
+		want = j.Rollback.Export.InstallationID
+	}
+	return e.waitForTypeScript(ctx, j, want)
+}
+
+// waitForTypeScript probes the public URL until it answers from the
+// TypeScript release: its version, and the installation id want when one
+// is known. It waits up to the transfer's timeout.
+func (e *Engine) waitForTypeScript(ctx context.Context, j *Journal, want string) error {
 	timeout := e.Options.TransferTimeout
 	if timeout <= 0 {
 		timeout = DefaultTransferTimeout
@@ -327,10 +352,6 @@ func (e *Engine) waitForSource(ctx context.Context, j *Journal) error {
 	if sleep == nil {
 		sleep = time.Sleep
 	}
-	want := ""
-	if j.Rollback.Export != nil {
-		want = j.Rollback.Export.InstallationID
-	}
 	deadline := e.now().Add(timeout)
 	var last error
 	for {
@@ -338,7 +359,11 @@ func (e *Engine) waitForSource(ctx context.Context, j *Journal) error {
 		switch {
 		case err != nil:
 			last = err
-		case id != want:
+		case id == "":
+			// The TypeScript server omits it while its database does not
+			// answer: not yet the installation serving.
+			last = errors.New("it answers without an installation id")
+		case want != "" && id != want:
 			last = fmt.Errorf("it answers as the installation %s, not %s", orNone(id), want)
 		case version != j.Source.Release:
 			last = fmt.Errorf("it answers with release %s, not the TypeScript release %s", orNone(version), j.Source.Release)
@@ -403,6 +428,12 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		return errors.Join(cause, err)
 	}
 	from := j.Phase
+	// Once the name's return has opened, the TypeScript release holds the
+	// name: the reverse goes forward only. Refused before anything is
+	// marked, so --resume still finishes it.
+	if rb := tailnetReturn(j); rb != nil && (rb.Phase == tailhandoff.Done || rb.IncomingOpened) {
+		return fmt.Errorf("%w; the tailnet name is the TypeScript release's again: the reverse cannot be undone now; varlatch migrate --resume finishes it", cause)
+	}
 	e.say("Undoing the reverse: %v.", cause)
 	if !j.Rollback.Undoing {
 		j.Rollback.Undoing = true
@@ -412,6 +443,10 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	}
 	var problems []error
 	if from == RollbackTransfer {
+		// The tailnet name back to Go's node first, then the address.
+		if err := e.unwindRollbackTailnet(ctx, j); err != nil {
+			return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, err)
+		}
 		if err := rs.StopServing(ctx, j.Ingress); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release: %w", err))
 		}
@@ -431,6 +466,15 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	if j.Rollback.Rebuild != nil {
 		if err := rs.UndoRebuild(ctx, *j.Rollback.Rebuild); err != nil {
 			problems = append(problems, fmt.Errorf("putting the TypeScript installation back: %w", err))
+		}
+	}
+	// The TypeScript side as the forward migration left it: starting its
+	// varlatchd started its tailnet sidecar (they share its network); the
+	// name is Go's node's, so the old node is stopped again (not logged
+	// out), its state kept for the window.
+	if ts, ok := e.Source.(TailnetSource); ok && j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.Phase == tailhandoff.Done {
+		if err := ts.StopTailnet(ctx); err != nil {
+			problems = append(problems, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", err))
 		}
 	}
 	if len(problems) > 0 {

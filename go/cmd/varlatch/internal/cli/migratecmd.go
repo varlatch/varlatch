@@ -5,6 +5,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,8 +17,10 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/secretinput"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/setup"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 )
 
 // `varlatch migrate` (ADR-0059 Decision 9; internal docs/design/
@@ -31,6 +34,12 @@ const migrateUsage = `Usage:
                    --backup-destination <name> --read-credentials-file <file> [--from <compose directory>]
                    [--dry-run] [--max-downtime <duration>] [--drain <duration>] [--transfer-timeout <duration>]
                    [--unit <systemd unit>] [--kek-file <file>] [--destinations-file <file>] [--ts-cli <program>] [--json]
+                   [--tailscale-oauth-client-file <file> --tailnet-auth-key-file <file> [--accept-rollback-certificate]]
+               (a source serving a tailnet address: the name moves to the target's node; the OAuth client has the
+                devices:core scope only, the file {"clientId": ..., "clientSecret": ...}; the auth key is reusable,
+                with the node's tags; both from files, never an argument; --accept-rollback-certificate goes on
+                when the old node's certificate cannot be renewed to last the rollback window: a rollback after
+                it ends then needs a new one, about 40 s of downtime)
   varlatch migrate ... --config /etc/varlatch/varlatchd.conf, not there yet: migrate makes the target with setup's steps
                    (as root; the varlatch user, the data directory, the configuration from the source's answers, the
                    unit enabled; never keys: they are the source's), removed again if the migration is undone:
@@ -65,9 +74,11 @@ var goOnlyCommands = map[string]func(*Run) error{
 
 type migrateOptions struct {
 	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI, ingress, unit string
+	oauthClientFile, tailnetAuthKeyFile                                                                  string
 	toData, toKeys, toConfig, toImage, toService, acmeEmail, listen                                      string
 	maxDowntime, drain, transferTimeout                                                                  time.Duration
 	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData, acceptExistingUser, forget   bool
+	acceptRollbackCertificate                                                                            bool
 }
 
 func parseMigrateOptions(args []string) (migrateOptions, error) {
@@ -75,9 +86,10 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 	values := map[string]*string{"--from": &o.from, "--config": &o.config, "--bek-file": &o.bekFile, "--backup-destination": &o.destination,
 		"--read-credentials-file": &o.readCredentials, "--destinations-file": &o.destinationsFile, "--kek-file": &o.kekFile, "--ts-cli": &o.tsCLI,
 		"--ingress": &o.ingress, "--unit": &o.unit, "--to-data": &o.toData, "--to-keys": &o.toKeys, "--to-config": &o.toConfig,
-		"--to-image": &o.toImage, "--to-service": &o.toService, "--acme-email": &o.acmeEmail, "--listen": &o.listen}
+		"--to-image": &o.toImage, "--to-service": &o.toService, "--acme-email": &o.acmeEmail, "--listen": &o.listen,
+		"--tailscale-oauth-client-file": &o.oauthClientFile, "--tailnet-auth-key-file": &o.tailnetAuthKeyFile}
 	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
-	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback,
+	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback, "--accept-rollback-certificate": &o.acceptRollbackCertificate,
 		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData, "--accept-existing-user": &o.acceptExistingUser, "--forget-target": &o.forget}
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch migrate: "+msg, "\n"+migrateUsage) }
 	for i := 0; i < len(args); i++ {
@@ -129,6 +141,10 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--forget-target goes with --abort and --config only: it clears the record of a target migrate made, once you removed what was left of it by hand")
 	case (o.acmeEmail != "" || o.listen != "" || o.acceptExistingUser) && (o.config == "" || o.rollback || o.finish || o.status):
 		return o, usage("--acme-email, --listen and --accept-existing-user are the answers of a host target migrate makes (--config): not with --rollback, --finish, --status or --to-*")
+	case o.acceptRollbackCertificate && o.oauthClientFile == "":
+		return o, usage("--accept-rollback-certificate goes with --tailscale-oauth-client-file: it is the tailnet handoff's")
+	case (o.status || o.finish) && (o.oauthClientFile != "" || o.tailnetAuthKeyFile != ""):
+		return o, usage("--tailscale-oauth-client-file and --tailnet-auth-key-file go with a migration, its --resume and --abort, and --rollback")
 	case o.deleteOldData && !o.finish:
 		return o, usage("--delete-old-data goes with --finish only: it removes the old side's data, after a verified final archive")
 	case o.finish && (o.resume || o.abort || o.rollback || o.dryRun || o.status || o.ingress != "" || o.maxDowntime != 0 || o.drain != 0 || o.transferTimeout != 0):
@@ -204,6 +220,26 @@ func migrateCommand(r *Run) error {
 			return Fail("varlatch migrate: the Backup Encryption Key file "+Printable(o.bekFile)+" is empty: a migration copies the source's BEK, so give its file", ExitFailure)
 		}
 	}
+	// The tailnet handoff's authority and the new node's auth key, from
+	// files only (never an argument or the environment).
+	var tailnetOptions *migrate.TailnetOptions
+	if o.oauthClientFile != "" {
+		cp, err := tailscaleControl(o.oauthClientFile)
+		if err != nil {
+			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
+		}
+		defer func() { _ = cp.Close(context.Background()) }()
+		tailnetOptions = &migrate.TailnetOptions{Control: cp, AcceptRollbackCertificate: o.acceptRollbackCertificate}
+	}
+	var tailnetAuthKey []byte
+	if o.tailnetAuthKeyFile != "" {
+		key, err := secretinput.ReadFile(o.tailnetAuthKeyFile)
+		if err != nil {
+			return Fail("varlatch migrate: the tailnet auth key file: "+err.Error(), ExitFailure)
+		}
+		tailnetAuthKey = []byte(strings.TrimSpace(key))
+		defer clear(tailnetAuthKey)
+	}
 	varlatchd, err := r.locateVarlatchd("varlatch migrate")
 	if err != nil {
 		return err
@@ -215,9 +251,11 @@ func migrateCommand(r *Run) error {
 		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: targetCredentials(varlatchdEnviron(r), o.config)}, Unit: o.unit},
 		Options: migrate.Options{MaxDowntime: o.maxDowntime, Drain: o.drain, TransferTimeout: o.transferTimeout, Ingress: migrate.Ingress(o.ingress),
 			Say: func(s string) { _ = r.warn(s) }},
-		BEK:    bek,
-		Prober: migrate.HTTPProber{},
+		BEK:     bek,
+		Prober:  migrate.HTTPProber{},
+		Tailnet: tailnetOptions,
 	}
+	e.Target.(*migrate.Host).TailnetAuthKey = tailnetAuthKey
 	if o.config != "" {
 		if err := r.targetMaker(e, o, varlatchd); err != nil {
 			return err
@@ -235,6 +273,7 @@ func migrateCommand(r *Run) error {
 		if err != nil {
 			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
 		}
+		img.Host.TailnetAuthKey = tailnetAuthKey
 		e.Target = img
 		e.Options.Stage, e.Options.StageBase, e.Options.StageKeep = &migrate.ImageUser, base, filepath.Dir(img.Host.Config)
 	}
@@ -413,6 +452,27 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		b.WriteString("\n")
 	}
 	return r.out(b.String())
+}
+
+// tailscaleControl is the tailnet's control plane from the operator's
+// OAuth client file ({"clientId": ..., "clientSecret": ...}; O4: the
+// devices:core scope only, checked at every token exchange), with this
+// CLI's own client.
+func tailscaleControl(path string) (tailcontrol.ControlPlane, error) {
+	text, err := secretinput.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("the Tailscale OAuth client file: %w", err)
+	}
+	var c struct {
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+		Tailnet      string `json:"tailnet"`
+	}
+	if err := json.Unmarshal([]byte(text), &c); err != nil || c.ClientID == "" || c.ClientSecret == "" {
+		return nil, fmt.Errorf("the Tailscale OAuth client file %s is not {\"clientId\": ..., \"clientSecret\": ...}", Printable(path))
+	}
+	return tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: tailscaleAPIOverride, Tailnet: c.Tailnet, ClientID: c.ClientID, ClientSecret: c.ClientSecret,
+		HTTP: tailscaleHTTPClient()})
 }
 
 func ms(n int64) string { return (time.Duration(n) * time.Millisecond).Round(time.Second).String() }
