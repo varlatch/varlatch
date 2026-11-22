@@ -122,6 +122,21 @@ orders disagree: its build moves the cursor past the setup's events, and
 the fixture test checks that every tick leaves the cursor at the highest
 event it read.
 
+## A run that panics
+
+A bug in a Target's run (rendering, an adapter's code) panics in the
+engine's own goroutine. As the TypeScript engine's per-Target
+try/catch does, the run fails that Target only: `reconcile` recovers the
+panic, records the failure (`failure`, counted and backed off, so the
+disable budget applies) with a last result that says the engine failed,
+then releases the lease and removes the run's row (C25, C26), and the
+pass goes on to the next Target. The log names the Target, the panic's
+type and its stack, never its value. A panic outside every Target's run
+(the trigger scan, the selection) ends that pass, logged; the next pass
+runs. A write job's own panic is the storage writer's: it rolls the job
+back and is the job's error. A test's `Crash` is the one panic re-raised:
+it stops the engine as a process that died would (the G7 crash tests).
+
 ## TypeScript defect 9, fixed in Go
 
 A forced run that reads back a name it has an earlier run's `intent-write`

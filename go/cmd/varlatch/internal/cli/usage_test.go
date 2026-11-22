@@ -90,8 +90,13 @@ func TestHelpIsTheUsageText(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if c.name == "admin" {
+		switch c.name {
+		case "admin":
 			help = adminUsage
+		case "doctor":
+			help = doctorUsage
+		case "setup":
+			help = setupUsage
 		}
 		if c.name == "move" {
 			help = moveUsage

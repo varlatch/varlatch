@@ -2,17 +2,9 @@
   "schema": 1,
   "description": "The CLI features the Go CLI does not have yet (internal docs/design/go-cli.md, decision 3), for --cli go:<path>: a check that needs one reports client-lacks, from the runner (lib/client-lacks.mjs). The pull request that builds a feature removes its entry; a lacking check that passes fails the run as stale.",
   "lacksFeatures": {
-    "agent-safe-run": {
-      "reason": "varlatch run --agent-safe with --target and --omit, and --agent-metadata: not ported to the Go CLI yet",
-      "slice": "5.5b"
-    },
     "doctor": {
       "reason": "varlatch doctor: not ported to the Go CLI yet",
       "slice": "step 6"
-    },
-    "run-strict-agent-safe": {
-      "reason": "varlatch run --strict --agent-safe: not ported to the Go CLI yet",
-      "slice": "5.5b"
     }
   }
 }

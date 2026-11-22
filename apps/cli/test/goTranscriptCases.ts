@@ -24,13 +24,21 @@ const HELP_TOPICS = [
 ];
 
 /**
- * `admin`'s and `move`'s help are a Go installation's in the Go CLI
- * (go/README.md, the accepted differences `admin-usage` and `move-usage`),
- * `self-update`'s is the Go CLI's own forms (the accepted difference
- * `self-update-usage`), and `upgrade`'s a Go installation's (the accepted
- * difference `upgrade-usage`); these recordings are the TypeScript CLI's.
+ * `admin`'s, `doctor`'s, `move`'s, `setup`'s and `upgrade`'s help are a Go
+ * installation's in the Go CLI (go/README.md, the accepted differences
+ * `admin-usage`, `doctor-usage`, `move-usage`, `setup-usage` and
+ * `upgrade-usage`), and `self-update`'s is the Go CLI's own forms (the
+ * accepted difference `self-update-usage`); these recordings are the
+ * TypeScript CLI's.
  */
-const HELP_DIFFERENCES: Record<string, string> = { admin: "admin-usage", move: "move-usage", "self-update": "self-update-usage", upgrade: "upgrade-usage" };
+const HELP_DIFFERENCES: Record<string, string> = {
+  admin: "admin-usage",
+  doctor: "doctor-usage",
+  move: "move-usage",
+  setup: "setup-usage",
+  "self-update": "self-update-usage",
+  upgrade: "upgrade-usage",
+};
 const helpDifferences = (topic: string): { differences?: string[] } =>
   HELP_DIFFERENCES[topic] ? { differences: [HELP_DIFFERENCES[topic]] } : {};
 
@@ -1616,6 +1624,156 @@ const hook56a: TranscriptCase[] = [
   { id: "hook.assisted", title: "the same under --assisted", args: ["--assisted", ...HOOK("claude")], stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
 ];
 
+// ---- 5.5b: agent-safe runs and varlatch request ---------------------------------
+//
+// `run --agent-safe` against the fake server: the Agent is `node -e
+// AGENT_PRINT`, which prints what it was given (names, fake values, and
+// whether each proxy variable names a Broker), never the proxy credential.
+// The "agent-run" pattern records the run's identifier, Placeholders and the
+// Broker's port by name (goKit.ts). A nested run is a `varlatch run` with
+// VARLATCH_AGENT_RUN set; `varlatch request` sends to the fake server as its
+// Broker ({{server-host}}), which answers as the Broker or as the
+// destination would.
+
+const AGENT_PRINT =
+  "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};" +
+  "for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];" +
+  "const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];" +
+  "o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');" +
+  "const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';" +
+  "console.log(JSON.stringify(o))";
+const agentChild = (...args: string[]) => ["--", "node", "-e", AGENT_PRINT, ...args];
+const SAFE = (...flags: string[]) => ["run", "--agent-safe", "--agent", "coder", ...flags];
+const BROKER_FILE = { ...SIGNED_IN, "repo/broker.txt": "vlt_brk_fakeBROKER\n" };
+const BROKER_ENV = { VARLATCH_BROKER_CREDENTIAL: "vlt_brk_fakeBROKER" };
+const META_TARGETS = ok("/v1/meta", { ...META, capabilities: ["capabilities.targets", "retrieval.strict"] });
+const NO_CONTRACT = { ...MANIFEST, contract: null };
+const safeEffective = (items: unknown[] = runItems(), manifest: unknown = NO_CONTRACT): Exchange => effectiveAt(ENV, items, { manifest });
+const AGENT_IDENTITIES = ok("/v1/organizations/acme/identities", { items: [{ id: "idn_human", kind: "human", name: "coder" }, { id: "idn_agent", kind: "agent", name: "coder" }] });
+const CAPS = `${ENV}/capabilities`;
+const issued = (extra: Record<string, unknown> = {}): Exchange => ({
+  method: "POST",
+  path: CAPS,
+  status: 201,
+  answer: { id: "cap_1", secret: "capsecret-fake-value", destinations: ["api.example.com:443"], targets: { API_KEY: ["header:authorization"] }, expiresAt: "2100-01-01T00:00:00.000Z", ...extra },
+});
+const capRevoked = (status = 204): Exchange => ({ method: "DELETE", path: `${CAPS}/cap_1`, status, ...(status === 204 ? {} : { answer: apiError(status, "RESOURCE_NOT_FOUND") }) });
+const MINT = "/v1/organizations/acme/identities/idn_agent/credentials";
+const minted: Exchange = { method: "POST", path: MINT, status: 201, answer: { id: "crd_1", token: "vlt_agr_fakeMINTED", expiresAt: "2100-01-01T00:00:00.000Z" } };
+const mintRevoked: Exchange = { method: "DELETE", path: `${MINT}/crd_1`, status: 204 };
+const SAFE_START = [META_TARGETS, safeEffective(), AGENT_IDENTITIES];
+const AGENT_RUN = ["agent-run"];
+const agentSafe = (c: Parameters<typeof v>[0]): TranscriptCase => v({ ...c, patterns: [...AGENT_RUN, ...(c.patterns ?? [])] });
+const TARGET = ["--target", "API_KEY=header:authorization"];
+const HOST = ["--allow-host", "api.example.com"];
+
+const agentRun55b: TranscriptCase[] = [
+  // The command line, before anything is read
+  agentSafe({ id: "usage.agent-missing", title: "--agent-safe without --agent", args: ["run", "--agent-safe", ...HOST, ...agentChild()] }),
+  agentSafe({ id: "usage.target-no-name", title: "--target without a name", args: SAFE("--target", "=header:authorization", ...agentChild()) }),
+  agentSafe({ id: "usage.target-transport-header", title: "--target naming a header the transport owns", args: SAFE("--target", "API_KEY=header:Host", ...agentChild()) }),
+  agentSafe({ id: "usage.target-kind", title: "--target of an unknown kind", args: SAFE("--target", "API_KEY=cookie:session", ...agentChild()) }),
+  agentSafe({ id: "usage.redact", title: "--redact does not apply to --agent-safe", args: SAFE("--redact", ...agentChild()) }),
+  agentSafe({ id: "usage.no-redact", title: "--no-redact does not apply to --agent-safe", args: SAFE("--no-redact", ...agentChild()) }),
+  agentSafe({ id: "usage.export-context", title: "--export-context does not apply to --agent-safe", args: SAFE("--export-context", ...agentChild()) }),
+  agentSafe({ id: "usage.not-signed-in", title: "no credential: 77 before anything is read", args: SAFE(...TARGET, ...HOST, ...agentChild()), files: NOT_SIGNED_IN }),
+  // What the server and the flags must agree on, before anything is issued
+  agentSafe({ id: "server.too-old", title: "a server without substitution targets: refused, nothing started", args: SAFE(...TARGET, ...HOST, ...agentChild()), server: [ok("/v1/meta", { ...META, serverVersion: "0.10.0" })] }),
+  agentSafe({ id: "server.no-manifest", title: "an answer without a manifest: refused", args: SAFE(...TARGET, ...HOST, ...agentChild()), server: [META_TARGETS, effectiveAt(ENV, runItems())] }),
+  agentSafe({ id: "targets.untargeted", title: "every stored Secret needs a target or an omit: each named, with the flags", args: SAFE(...HOST, ...agentChild()), server: [META_TARGETS, safeEffective(runItems([PIN_ITEM]))] }),
+  agentSafe({ id: "targets.unknown", title: "--target and --omit naming items not stored: refused", args: SAFE(...TARGET, "--target", "NOPE=query:key", "--omit", "ALSO_NOPE", ...HOST, ...agentChild()), server: [META_TARGETS, safeEffective()] }),
+  agentSafe({ id: "targets.both", title: "an item both targeted and omitted", args: SAFE(...TARGET, "--omit", "API_KEY", ...HOST, ...agentChild()), server: [META_TARGETS, safeEffective()] }),
+  agentSafe({ id: "contract.denied", title: "an active Contract without contract.read: refused", args: SAFE(...TARGET, ...HOST, ...agentChild()), server: [META_TARGETS, safeEffective(runItems(), MANIFEST), denied(CONTRACT_PATH)] }),
+  agentSafe({ id: "agent.missing", title: "no agent identity of that name", args: ["run", "--agent-safe", "--agent", "nobody", ...TARGET, ...HOST, ...agentChild()], server: [META_TARGETS, safeEffective(), AGENT_IDENTITIES] }),
+  // Nothing to mediate: no Broker
+  agentSafe({ id: "none.omitted", title: "every Secret omitted: no Broker, the plain values, no proxy, an own configuration directory", args: SAFE("--omit", "API_KEY", ...agentChild()), env: { API_KEY: "inherited-copy", HTTPS_PROXY: "http://proxy.example:3128", VARLATCH_TOKEN: "vlt_cli_operatorFAKE" }, files: SIGNED_IN, server: SAFE_START }),
+  agentSafe({ id: "none.metadata", title: "--agent-metadata: a read-only agent-run credential, revoked afterwards", args: SAFE("--omit", "API_KEY", "--agent-metadata", ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, minted, mintRevoked] }),
+  agentSafe({ id: "none.metadata-no-broker-credential", title: "--agent-metadata needs the Broker credential", args: SAFE("--omit", "API_KEY", "--agent-metadata", ...agentChild()), server: SAFE_START }),
+  // A mediated run
+  agentSafe({ id: "mediated.no-allow-host", title: "Secrets to mediate and no --allow-host: refused", args: SAFE(...TARGET, ...agentChild()), env: BROKER_ENV, server: SAFE_START }),
+  agentSafe({ id: "mediated.no-broker-credential", title: "no Broker credential: refused", args: SAFE(...TARGET, ...HOST, ...agentChild()), server: SAFE_START }),
+  agentSafe({ id: "mediated.credential-file-missing", title: "--broker-credential-file naming no file", args: SAFE(...TARGET, ...HOST, "--broker-credential-file", "nosuch.txt", ...agentChild()), server: SAFE_START }),
+  agentSafe({
+    id: "mediated.run",
+    title: "a Placeholder, the plain value, every proxy variable naming the Broker, no bearer; the Capability revoked afterwards",
+    args: SAFE(...TARGET, ...HOST, "--broker-credential-file", "broker.txt", ...agentChild("x")),
+    env: { API_KEY: "inherited-copy", NO_PROXY: "localhost, * ,.internal", no_proxy: "0.0.0.0/0", VARLATCH_TOKEN: "vlt_cli_operatorFAKE", HTTPS_PROXY: "http://proxy.example:3128", ...BROKER_ENV },
+    files: BROKER_FILE,
+    server: [...SAFE_START, issued(), capRevoked()],
+  }),
+  agentSafe({ id: "mediated.metadata-strict", title: "--agent-metadata and --agent-network strict: the credential issued after the Broker starts", args: SAFE(...TARGET, ...HOST, "--agent-network", "strict", "--agent-metadata", ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued(), minted, mintRevoked, capRevoked()] }),
+  agentSafe({ id: "mediated.canonical", title: "targets as given, sent in their canonical form; --ttl", args: SAFE("--target", "API_KEY=header:Authorization", "--target", "API_KEY=query:key", "--ttl", "60", ...HOST, "--allow-host", "api.example.com:8443", ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued({ targets: { API_KEY: ["query:key", "header:authorization"] }, destinations: ["api.example.com:443", "api.example.com:8443"] }), capRevoked()] }),
+  agentSafe({ id: "mediated.ttl-nan", title: "a --ttl that is not a number is sent as null", args: SAFE(...TARGET, "--ttl", "soon", ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, { ...issued(), status: 400, answer: apiError(400, "VALIDATION_FAILED", "ttlSeconds must be a number") }] }),
+  agentSafe({ id: "mediated.exit-status", title: "the Agent's own status", args: SAFE(...TARGET, ...HOST, "--", "node", "-e", "process.exit(5)"), env: BROKER_ENV, server: [...SAFE_START, issued(), capRevoked()] }),
+  agentSafe({ id: "mediated.no-command", title: "a command that does not exist: its error, the Capability revoked", args: SAFE(...TARGET, ...HOST, "--", "varlatch-no-such-command-5-5b"), env: BROKER_ENV, server: [...SAFE_START, issued(), capRevoked()] }),
+  agentSafe({ id: "mediated.targets-differ", title: "the server recorded other targets: revoked, nothing started", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued({ targets: { API_KEY: ["query:key"] } }), capRevoked()] }),
+  agentSafe({ id: "mediated.targets-missing", title: "the server recorded no targets: revoked, nothing started", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued({ targets: undefined }), capRevoked()] }),
+  agentSafe({ id: "mediated.preflight", title: "the agent has no secret.use Grant here: a warning, and the run starts", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued({ preflight: "agent-lacks-secret-use" }), capRevoked()] }),
+  agentSafe({ id: "mediated.revoke-refused", title: "the revocation refused: the Capability's lifetime ends it", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued(), capRevoked(404)] }),
+  agentSafe({ id: "mediated.issue-denied", title: "issuance denied: the API's error and status", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, { ...issued(), status: 403, answer: apiError(403, "PERMISSION_DENIED") }] }),
+  agentSafe({
+    id: "mediated.contract",
+    title: "an active Contract: inherited copies of its Secrets removed and named",
+    args: SAFE(...TARGET, ...HOST, ...agentChild()),
+    env: { ...BROKER_ENV, LEGACY_KEY: "inherited-legacy", API_KEY: "inherited-copy" },
+    server: [META_TARGETS, safeEffective(runItems(), MANIFEST), contractAnswer({ ...ACTIVE, contract: { ...RUN_CONTRACT, items: [...RUN_CONTRACT.items, item("LEGACY_KEY")] } }), AGENT_IDENTITIES, issued(), capRevoked()],
+  }),
+  // A run inside an agent-safe run
+  agentSafe({ id: "nested.refused", title: "inside an agent-safe run, --agent-safe cannot run", args: SAFE(...TARGET, ...agentChild()), env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef" } }),
+  agentSafe({ id: "nested.refused-two", title: "inside an agent-safe run, --strict and --export-context cannot run", args: ["run", "--strict", "--export-context", ...agentChild()], env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef" } }),
+  agentSafe({
+    id: "nested.run",
+    title: "a nested run: this run's environment, its credentials masked in the output, nothing read",
+    args: ["run", "--omit", "PORT", "--", "node", "-e", "console.log(JSON.stringify({t:process.env.VARLATCH_TOKEN,p:new URL(process.env.HTTPS_PROXY).password,port:process.env.PORT??null,key:process.env.API_KEY}))"],
+    env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef", VARLATCH_TOKEN: "vlt_agr_fakeNESTEDTOKEN", HTTPS_PROXY: "http://vlt:proxyCredentialFake123@127.0.0.1:9", PORT: "8080", API_KEY: "vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  }),
+];
+
+const REQUEST_ENV = { VARLATCH_AGENT_RUN: "run_0123456789abcdef", HTTPS_PROXY: "http://vlt:proxyCredentialFake123@{{server-host}}" };
+const PH = "vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const REQUEST_DEST = "https://api.example.com/v1/charges";
+const r = (c: TranscriptCase): TranscriptCase => ({ files: {}, ...c, env: { ...REQUEST_ENV, ...(c.env ?? {}) } });
+const atDest = (method: string, status: number, answer: unknown, headers?: Record<string, string>): Exchange => ({ method, path: REQUEST_DEST, status, answer, ...(headers ? { headers } : {}) });
+const BROKER_SAYS = (status: number, text: string): Exchange => ({ method: "GET", path: REQUEST_DEST, status, answer: text, headers: { "content-type": "text/plain", "varlatch-broker": "refused" } });
+
+const request55b: TranscriptCase[] = [
+  // The command line
+  r({ id: "usage.no-url", title: "no URL", args: ["request", "-i"] }),
+  r({ id: "usage.two-urls", title: "two URLs", args: ["request", REQUEST_DEST, "--", REQUEST_DEST] }),
+  r({ id: "usage.method", title: "-X with something that is not a method", args: ["request", "-X", "GET X", REQUEST_DEST] }),
+  r({ id: "usage.request-last", title: "--request without a value", args: ["request", REQUEST_DEST, "--request"] }),
+  r({ id: "usage.header", title: "-H without a colon", args: ["request", "-H", "Authorization", REQUEST_DEST] }),
+  r({ id: "usage.header-break", title: "--header with a line break in its value", args: ["request", "--header", "X-A: one\ntwo", REQUEST_DEST] }),
+  r({ id: "usage.body-twice", title: "-d and --data: the body once", args: ["request", "-d", "a=1", "--data", "b=2", REQUEST_DEST] }),
+  r({ id: "usage.json-file-missing", title: "--json @file naming no file", args: ["request", "--json", "@nosuch.json", REQUEST_DEST] }),
+  r({ id: "usage.unknown-option", title: "an unknown option", args: ["request", "--insecure", REQUEST_DEST] }),
+  r({ id: "usage.not-absolute", title: "not an absolute URL", args: ["request", "/v1/charges"] }),
+  r({ id: "usage.not-http", title: "not an HTTP URL", args: ["request", "ftp://api.example.com/x"] }),
+  r({ id: "usage.credentials", title: "credentials in the URL are not sent", args: ["request", "https://user:pw@api.example.com/x"] }),
+  r({ id: "usage.output-last", title: "-o without a value", args: ["request", REQUEST_DEST, "-o"] }),
+  // No Broker to send through
+  { id: "broker.not-agent-run", title: "outside an agent-safe run: refused", args: ["request", REQUEST_DEST] },
+  r({ id: "broker.no-proxy", title: "an agent-safe run without a Broker", args: ["request", REQUEST_DEST], env: { HTTPS_PROXY: "" } }),
+  r({ id: "broker.not-url", title: "a proxy that is not a URL", args: ["request", REQUEST_DEST], env: { HTTPS_PROXY: "not a url" } }),
+  r({ id: "broker.not-loopback", title: "a proxy that is not this run's Broker", args: ["request", REQUEST_DEST], env: { HTTPS_PROXY: "http://vlt:x@proxy.example:3128" } }),
+  { id: "broker.http-proxy", title: "HTTP_PROXY names the Broker when no HTTPS_PROXY is set", args: ["request", REQUEST_DEST], files: {}, env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef", HTTP_PROXY: "http://vlt:x@127.0.0.1:9" } },
+  r({ id: "broker.node-proxy", title: "NODE_USE_ENV_PROXY does not send the request to the Broker through itself", args: ["request", REQUEST_DEST], env: { NODE_USE_ENV_PROXY: "1" }, server: [atDest("GET", 200, "direct\n", { "content-type": "text/plain" })] }),
+  r({ id: "broker.unreachable", title: "nothing listens at the Broker's address: 69", args: ["request", REQUEST_DEST], env: { HTTPS_PROXY: "http://vlt:x@127.0.0.1:9" } }),
+  // Through the Broker
+  r({ id: "send.get", title: "a GET: the destination's body on stdout, 0", args: ["request", "-H", `Authorization: Bearer ${PH}`, REQUEST_DEST], server: [atDest("GET", 200, "charged\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.json", title: "--json: POST, JSON content type and accept", args: ["request", "--json", '{"amount":5}', REQUEST_DEST], server: [atDest("POST", 200, { ok: true })] }),
+  r({ id: "send.form-stdin", title: "-d @-: the body from stdin, a form", args: ["request", "-X", "PUT", "-d", "@-", REQUEST_DEST], stdin: "a=1&b=2", server: [atDest("PUT", 200, "done\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.data-file", title: "--data @file, a content type given", args: ["request", "--data", "@body.json", "--header", "Content-Type: application/json", REQUEST_DEST], files: { "body.json": '{"from":"file"}' }, server: [atDest("POST", 200, "ok\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.output", title: "-o: the body written to the file, nothing on stdout", args: ["request", "-o", "out.txt", REQUEST_DEST], server: [atDest("GET", 200, "to the file\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.output-long", title: "--output and --request DELETE", args: ["request", "--request", "DELETE", "--output", "out.txt", REQUEST_DEST], server: [atDest("DELETE", 200, "deleted\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.destination-error", title: "a destination's error status is relayed: 0", args: ["request", REQUEST_DEST], server: [atDest("GET", 500, "varlatch-broker: not the Broker's\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.query-fragment", title: "the URL as written: a query, a fragment, and an empty query", args: ["request", "https://api.example.com/a b?q=1 2#frag ment"], server: [{ method: "GET", path: "https://api.example.com/a%20b?q=1%202#frag%20ment", status: 200, answer: "ok\n", headers: { "content-type": "text/plain" } }] }),
+  // The Broker's own replies
+  r({ id: "refused.blocked", title: "the Broker refuses: its text, 1", args: ["request", "--include", REQUEST_DEST], differences: ["broker-reply-once"], server: [BROKER_SAYS(403, "varlatch-broker: API_KEY: placeholder at header \"x-debug\", which is not a target\n")] }),
+  r({ id: "refused.credential", title: "the proxy credential refused: 77", args: ["request", REQUEST_DEST], differences: ["broker-reply-once"], server: [BROKER_SAYS(407, "")] }),
+  r({ id: "refused.maintenance", title: "the installation in maintenance: 69", args: ["request", REQUEST_DEST], differences: ["broker-reply-once"], server: [BROKER_SAYS(503, "varlatch-broker: the Varlatch installation is in maintenance (restore or upgrade); retry later\n")] }),
+];
+
 // varlatch run --strict (5.4f): one strict retrieval, the environment the
 // command would receive resolved and validated against its Contract
 // Revision, and 78 with every violation (names, classes and reasons, never a
@@ -1703,6 +1861,127 @@ const strict54f: TranscriptCase[] = [
   s({ id: "refused.omit-unknown", title: "--omit of a name neither stored nor in the Contract: 64", options: ["--omit", "NOPE"], server: strictRun() }),
   s({ id: "refused.retrieval-denied", title: "the retrieval refused: the error's status", server: [STRICT_META, denied(RETRIEVALS, "POST")] }),
   s({ id: "refused.short-assisted", title: "assisted mode: a Secret too short to mask still stops the run", env: ASSISTED, server: strictRun({ stored: [{ name: "API_KEY", sensitive: true, value: "1234" }, STORED[1] as Stored] }) }),
+];
+
+// varlatch run --agent-safe --strict (5.5b, recorded here, after 5.4f's
+// strict retrieval): the operator's preflight retrieval (no Secret values;
+// the server's verdict per Secret), then the Capability bound to that state,
+// and 78 with every violation before the Agent starts. A Secret's verdict
+// refuses it by precedence (not-evaluated, then invalid, then an unresolved
+// reference); the issuance's report adds missing, or else agent-unauthorized.
+const STRICT_SAFE_META = ok("/v1/meta", { ...META, capabilities: ["capabilities.targets", "retrieval.strict", "retrieval.preflight"] });
+const PREFLIGHT_STORED: Stored[] = [{ name: "API_KEY", sensitive: true, value: null }, STORED[1] as Stored];
+const preflight = (validation: Record<string, unknown[]> = {}, o: { stored?: Stored[]; contract?: unknown; withheld?: unknown[] } = {}): Exchange => {
+  const e = strictRetrieval({ stored: o.stored ?? PREFLIGHT_STORED, contract: o.contract, withheld: o.withheld });
+  return { ...e, answer: { ...(e.answer as Record<string, unknown>), validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [], ...validation } } };
+};
+const agentReport = (extra: Record<string, unknown> = {}) => ({ preflightItems: [{ name: "API_KEY", present: true, authorized: true, ...extra }] });
+const STRICT_SAFE = (...flags: string[]) => SAFE("--strict", ...TARGET, ...HOST, ...flags, ...agentChild());
+const strictSafeStart = (validation?: Record<string, unknown[]>): Exchange[] => [STRICT_SAFE_META, AGENT_IDENTITIES, preflight(validation)];
+const NOT_EVALUATED = (reason: string) => ({ notEvaluated: [{ name: "API_KEY", reason }] });
+const INVALID = { invalid: [{ name: "API_KEY", reason: "is not a valid string" }] };
+const UNRESOLVED = { unresolved: [{ name: "API_KEY", references: ["OTHER_KEY"] }] };
+const NO_SECRETS = { stored: [STORED[1] as Stored], contract: strictContract(STRICT_ITEMS.filter((i) => i.name !== "API_KEY")) };
+const MULTI_SECRET_STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: null },
+  { name: "PIN", sensitive: true, value: null },
+  { name: "LEGACY_KEY", sensitive: true, value: null },
+  STORED[1] as Stored,
+];
+const MULTI_SECRET_CONTRACT = strictContract([
+  ...STRICT_ITEMS,
+  item("PIN", ALWAYS),
+  item("LEGACY_KEY", ALWAYS),
+]);
+const OPTIONAL_PIN_STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: null },
+  { name: "PIN", sensitive: true, value: null },
+  STORED[1] as Stored,
+];
+const OPTIONAL_PIN_CONTRACT = strictContract([...STRICT_ITEMS, item("PIN")]);
+const agentSafeStrict55b: TranscriptCase[] = [
+  // Server capability gating: fail closed (78) without starting anything
+  agentSafe({ id: "strict.no-preflight", title: "strict: server without retrieval.preflight fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [META_TARGETS] }),
+  agentSafe({ id: "strict.no-targets", title: "strict: server without capabilities.targets fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [ok("/v1/meta", { capabilities: ["retrieval.strict", "retrieval.preflight"] })] }),
+  agentSafe({ id: "strict.no-strict", title: "strict: server without retrieval.preflight or retrieval.strict fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [ok("/v1/meta", { ...META, capabilities: ["capabilities.targets"] })] }),
+  // The verdicts, by precedence: the Capability issued, then revoked, 78
+  agentSafe({ id: "strict.not-evaluated", title: "strict: not-evaluated before invalid and an unresolved reference", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart({ ...NOT_EVALUATED("permission"), ...INVALID, ...UNRESOLVED }), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.not-evaluated-requirement", title: "strict: not-evaluated, a Requirement not met", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(NOT_EVALUATED("requirement")), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.invalid", title: "strict: invalid before an unresolved reference, the value never shown", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart({ ...INVALID, ...UNRESOLVED }), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.unresolved-reference", title: "strict: a reference left literal for the operator", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(UNRESOLVED), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.missing", title: "strict: no longer stored at issuance, before agent-unauthorized", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ present: false, authorized: false })), capRevoked()] }),
+  agentSafe({ id: "strict.agent-unauthorized", title: "strict: the Agent lacks secret.use", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ authorized: false, reason: "permission" })), capRevoked()] }),
+  agentSafe({ id: "strict.agent-unauthorized-requirement", title: "strict: the Agent's Requirement not met at issuance", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ authorized: false, reason: "requirement" })), capRevoked()] }),
+  agentSafe({ id: "strict.verdict-and-agent", title: "strict: a verdict and the issuance's report, both named", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(INVALID), issued(agentReport({ authorized: false })), capRevoked()] }),
+  // Multi-Secret with mixed verdicts (one valid, one invalid at preflight, one agent-unauthorized at issuance)
+  agentSafe({
+    id: "strict.multi-mixed-verdicts",
+    title: "strict: multiple Secrets with mixed verdicts, only failing Secrets named in Contract order",
+    args: SAFE("--strict", ...TARGET, "--target", "PIN=query:pin", "--target", "LEGACY_KEY=header:x-legacy", ...HOST, ...agentChild()),
+    env: BROKER_ENV,
+    server: [
+      STRICT_SAFE_META,
+      AGENT_IDENTITIES,
+      preflight({ invalid: [{ name: "PIN", reason: "is not a valid string" }] }, { stored: MULTI_SECRET_STORED, contract: MULTI_SECRET_CONTRACT }),
+      issued({
+        targets: { API_KEY: ["header:authorization"], PIN: ["query:pin"], LEGACY_KEY: ["header:x-legacy"] },
+        preflightItems: [
+          { name: "API_KEY", present: true, authorized: true },
+          { name: "PIN", present: true, authorized: true },
+          { name: "LEGACY_KEY", present: true, authorized: false, reason: "permission" },
+        ],
+      }),
+      capRevoked(),
+    ],
+  }),
+  // Withheld Secret at preflight: mediated as a Placeholder, Run Context records delivered/varlatch
+  agentSafe({
+    id: "strict.withheld-secret",
+    title: "strict: a Secret listed in callerView.withheld at preflight is still mediated as a Placeholder",
+    args: STRICT_SAFE(),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy" },
+    server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, withheldKey()), issued(agentReport()), capRevoked()],
+  }),
+  // --allow-inherited and --omit under agent-safe strict
+  agentSafe({
+    id: "strict.allow-inherited",
+    title: "strict: --allow-inherited accepts a non-sensitive Contract item from the parent environment",
+    args: STRICT_SAFE("--allow-inherited", "REGION"),
+    env: { ...BROKER_ENV, REGION: "eu-west" },
+    server: [...strictSafeStart(), issued(agentReport()), capRevoked()],
+  }),
+  agentSafe({
+    id: "strict.allow-inherited-secret",
+    title: "strict: --allow-inherited naming a Secret is refused before issuance",
+    args: STRICT_SAFE("--allow-inherited", "API_KEY"),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy" },
+    server: strictSafeStart(),
+  }),
+  agentSafe({
+    id: "strict.omit-optional-secret",
+    title: "strict: --omit leaves an optional stored Secret off the Capability and out of the Agent's environment",
+    args: STRICT_SAFE("--omit", "PIN"),
+    env: { ...BROKER_ENV, PIN: "inherited-pin" },
+    server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, { stored: OPTIONAL_PIN_STORED, contract: OPTIONAL_PIN_CONTRACT }), issued(agentReport()), capRevoked()],
+  }),
+  agentSafe({
+    id: "strict.omit-required-secret",
+    title: "strict: --omit of a required stored Secret refuses with 78 without issuing a Capability",
+    args: SAFE("--strict", "--omit", "API_KEY", ...HOST, ...agentChild()),
+    env: BROKER_ENV,
+    server: strictSafeStart(),
+  }),
+  // Allowed
+  agentSafe({
+    id: "strict.run",
+    title: "strict: allowed, a Placeholder through the Broker, the Capability revoked afterwards",
+    args: SAFE("--strict", ...TARGET, ...HOST, ...agentChild("x")),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy", VARLATCH_TOKEN: "vlt_cli_operatorFAKE" },
+    server: [...strictSafeStart(), issued(agentReport()), capRevoked()],
+  }),
+  // Nothing to mediate: no Broker, no Capability
+  agentSafe({ id: "strict.nothing", title: "strict: no Secret to mediate, the Agent started without a Broker", args: SAFE("--strict", ...agentChild()), env: BROKER_ENV, server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, NO_SECRETS)] }),
+  agentSafe({ id: "strict.nothing-no-broker-credential", title: "strict: the Broker credential is needed even with nothing to mediate", args: SAFE("--strict", ...agentChild()), server: [STRICT_SAFE_META, AGENT_IDENTITIES] }),
 ];
 
 // ---- 5.6b: varlatch mcp ----------------------------------------------------------
@@ -2711,6 +2990,8 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.4d-scan": scan54d,
   "5.4e-find-files": findFiles54e,
   "5.4f-strict": strict54f,
+  "5.5b-agent-run": [...agentRun55b, ...agentSafeStrict55b],
+  "5.5b-request": request55b,
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,
   "5.7a-admin": admin57a,

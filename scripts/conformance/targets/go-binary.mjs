@@ -430,6 +430,24 @@ export async function hostAdmin(state, ...args) {
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
+/**
+ * The go-host capability (the go-doctor suite, ADR-0059 step 6.5): the Go
+ * installation's own host commands, run on its host as `varlatch doctor`
+ * runs them. `doctor` is `varlatchd admin doctor --json`: its exit status
+ * and its report.
+ */
+export async function goHost(state, operation) {
+  if (operation !== "doctor") throw new Error(`go-host: unknown operation ${operation}`);
+  const r = deadlineSpawnSync(state.binary, ["admin", "doctor", "--json", "--config", state.conf], { encoding: "utf8", timeout: 120_000 });
+  let report = null;
+  try {
+    report = JSON.parse(r.stdout ?? "");
+  } catch {
+    report = null;
+  }
+  return { status: r.status ?? 1, report, stderr: (r.stderr ?? "").slice(0, 2000) };
+}
+
 export async function bootstrap(state) {
   return admin(state, ["bootstrap"]);
 }
@@ -462,7 +480,7 @@ export async function maintenance(state, ttlMs) {
 
 /** A fixed, named probe of server state (the target contract): `varlatchd admin conformance-probe`. */
 export async function probe(state, probeName, ...args) {
-  if (!["expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due", "sync-repair-due", "sync-trigger-position", "github-app-pending-expired", "audit-export-drain-due", "deletion-teardown", "sync-runs"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
+  if (!["audit-event-count", "expire-pending-device-sign-ins", "device-sign-in-addresses", "proxy-addresses", "deletion-due", "sync-repair-due", "sync-trigger-position", "github-app-pending-expired", "audit-export-drain-due", "deletion-teardown", "sync-runs"].includes(probeName)) throw new Error(`unknown probe ${probeName}`);
   return JSON.parse(admin(state, ["conformance-probe", probeName, ...args]));
 }
 

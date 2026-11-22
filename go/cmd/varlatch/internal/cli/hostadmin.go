@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 )
 
 // The host commands of a Go installation that are fronts for `varlatchd
@@ -288,6 +289,42 @@ func varlatchdEnviron(r *Run) []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+// hostCredentials: the unit hands varlatchd its keys as credentials
+// (CREDENTIALS_DIRECTORY); a host command run as root, outside the unit,
+// finds them where setup wrote them, beside the configuration. So
+// CREDENTIALS_DIRECTORY is the one keyenv.CredentialsDir gives (the rule
+// varlatchd admin applies itself): the run's own when it set one (an empty
+// value is none), else, as root (root), the configuration's directory,
+// made absolute, when the Root KEK is there. Only a directory's name: no
+// key goes into the environment.
+func hostCredentials(env []string, config string, root bool) []string {
+	if config == "" {
+		config = "/etc/varlatch/varlatchd.conf"
+	}
+	set := ""
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "CREDENTIALS_DIRECTORY="); ok {
+			set = v
+		}
+	}
+	dir := keyenv.CredentialsDir(func(name string) string {
+		if name == "CREDENTIALS_DIRECTORY" {
+			return set
+		}
+		return ""
+	}, config, root)
+	if dir == set {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "CREDENTIALS_DIRECTORY=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "CREDENTIALS_DIRECTORY="+dir)
 }
 
 // isCredentialVariable is whether name is a VARLATCH_* variable that holds

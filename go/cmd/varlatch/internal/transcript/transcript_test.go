@@ -28,6 +28,17 @@ func base() Outcome {
 	}
 }
 
+// TestCaseCollision: two names differing only in case are found (a case
+// Windows cannot give), one name of each is not.
+func TestCaseCollision(t *testing.T) {
+	if a, b, ok := caseCollision(map[string]string{"PATH": "", "no_proxy": "", "NO_PROXY": "", "HOME": ""}); !ok || a != "NO_PROXY" || b != "no_proxy" {
+		t.Errorf("%q %q %v", a, b, ok)
+	}
+	if _, _, ok := caseCollision(map[string]string{"PATH": "", "NO_PROXY": "", "HTTPS_PROXY": ""}); ok {
+		t.Error("no two names differ only in case")
+	}
+}
+
 func TestCompareAgreesWithItself(t *testing.T) {
 	if p := Compare(base(), base()); p != nil {
 		t.Fatalf("%q", p)
@@ -231,6 +242,24 @@ func TestGeneratedPatternIsExact(t *testing.T) {
 	got := GeneratedPattern([]string{"--generate", "hex:32"}, []Request{{Body: body(value)}}, "shown: "+value+"\n")
 	if string(got[0].Body) != `{"value":"{{generated value shown in the output}}"}` {
 		t.Errorf("a value shown on stdout: recorded %s", got[0].Body)
+	}
+}
+
+// TestAgentRunPattern: the "agent-run" pattern names exactly a run's
+// identifier, a Placeholder and a loopback port, as goKit.ts's does.
+func TestAgentRunPattern(t *testing.T) {
+	for in, want := range map[string]string{
+		"agent-safe run run_0123456789abcdef \u2014 broker on 127.0.0.1:41234": "agent-safe run run_{{id}} \u2014 broker on 127.0.0.1:{{port}}",
+		`{"runId":"run_0123456789abcdef"}`:                                     `{"runId":"run_{{id}}"}`,
+		"run_0123456789abcdef0":                                                "run_0123456789abcdef0",
+		"run_0123456789ABCDEF":                                                 "run_0123456789ABCDEF",
+		"API_KEY=vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":                  "API_KEY={{placeholder}}",
+		"vlch_ph_v1_short":                                                     "vlch_ph_v1_short",
+		"http://10.0.0.1:8080":                                                 "http://10.0.0.1:8080",
+	} {
+		if got := AgentRunPattern(in); got != want {
+			t.Errorf("AgentRunPattern(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

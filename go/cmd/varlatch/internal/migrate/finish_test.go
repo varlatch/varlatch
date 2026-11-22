@@ -9,17 +9,22 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // RollbackWindowOpen is varlatch upgrade's question (decision 17, #368's
-// endsRollbackWindow): open while the Go installation's journal is open or
-// a reverse is under way; closed for an installation never migrated, or
-// once --finish ended the window (or a reverse rolled it back).
+// endsRollbackWindow): open while the Go installation's journal is open,
+// switched within RollbackWindow, and not ended by an upgrade; or while a
+// reverse is under way. Closed for an installation never migrated, once
+// --finish ended the window (or a reverse rolled it back), past 30 days,
+// and once an upgrade recorded it ended.
 func TestRollbackWindowOpen(t *testing.T) {
 	dir := t.TempDir()
-	if open, err := RollbackWindowOpen(dir); err != nil || open {
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	if open, err := RollbackWindowOpen(dir, now); err != nil || open {
 		t.Fatalf("no migration: %v %v", open, err)
 	}
+	switched := []Step{{Phase: Switched, At: now.Add(-24 * time.Hour).Format(time.RFC3339Nano)}}
 	for _, c := range []struct {
 		phase Phase
 		open  bool
@@ -27,11 +32,29 @@ func TestRollbackWindowOpen(t *testing.T) {
 		{Started, false}, {Transfer, false}, {Switched, false}, {Open, true}, {Rollback, true}, {RollbackChecked, true},
 		{RollbackTransfer, true}, {RolledBack, false}, {Finished, false}, {Released, false},
 	} {
-		if err := writeJournal(dir, &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: c.phase, History: []Step{}}); err != nil {
+		if err := writeJournal(dir, &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: c.phase, History: switched}); err != nil {
 			t.Fatal(err)
 		}
-		if open, err := RollbackWindowOpen(dir); err != nil || open != c.open {
+		if open, err := RollbackWindowOpen(dir, now); err != nil || open != c.open {
 			t.Errorf("%s: %v %v, want %v", c.phase, open, err, c.open)
+		}
+	}
+	for name, c := range map[string]struct {
+		j    Journal
+		open bool
+	}{
+		"no switch recorded":                  {Journal{Phase: Open, History: []Step{}}, false},
+		"switched 30 days ago, to the second": {Journal{Phase: Open, History: []Step{{Phase: Switched, At: now.Add(-RollbackWindow).Format(time.RFC3339Nano)}}}, true},
+		"switched 31 days ago":                {Journal{Phase: Open, History: []Step{{Phase: Switched, At: now.Add(-31 * 24 * time.Hour).Format(time.RFC3339Nano)}}}, false},
+		"ended by an upgrade":                 {Journal{Phase: Open, History: switched, WindowEnded: &WindowEndedRecord{Release: "0.50.1", At: now.Format(time.RFC3339Nano)}}, false},
+		"a reverse under way past 30 days":    {Journal{Phase: Rollback, History: []Step{{Phase: Switched, At: now.Add(-40 * 24 * time.Hour).Format(time.RFC3339Nano)}}}, true},
+	} {
+		c.j.Format, c.j.ID = 1, "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+		if err := writeJournal(dir, &c.j); err != nil {
+			t.Fatal(err)
+		}
+		if open, err := RollbackWindowOpen(dir, now); err != nil || open != c.open {
+			t.Errorf("%s: %v %v, want %v", name, open, err, c.open)
 		}
 	}
 }

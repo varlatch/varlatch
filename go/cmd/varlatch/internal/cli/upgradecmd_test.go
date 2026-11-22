@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate/fakerelease"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
@@ -150,6 +151,86 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	if code, out, _ = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf); code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.2 is up to date") {
 		t.Fatalf("again: %d %q", code, out)
 	}
+
+	// A release that ends the migration's rollback window (decision 17):
+	// while the window is open, refused with --yes alone; with
+	// --end-rollback-window, recorded in Go's journal (through the running
+	// varlatchd) before the upgrade, which then goes through.
+	ends := release.Declaration{SchemaVersion: toSchema, CompatibleFrom: 1, RollbackSafe: true, Previous: prev, EndsRollbackWindow: true}
+	h = newCLIHost(t, from)
+	h.migrated(t, time.Now().Add(-time.Hour))
+	publish(to, ends)
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
+	if code != ExitFailure || !strings.Contains(out, "migration: "+release.RollbackWindowNotice) || !strings.Contains(errs, "pass --end-rollback-window") {
+		t.Fatalf("a window-ending release with --yes alone: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.1")
+	if j := h.journal(t); j.WindowEnded != nil {
+		t.Fatalf("the window recorded ended after a refusal: %+v", j.WindowEnded)
+	}
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--end-rollback-window", "--config", h.conf)
+	if code != ExitOK || !strings.Contains(out, "The migration's rollback window ends") || !strings.Contains(out, "Upgraded to 0.50.0-rc.2") {
+		t.Fatalf("--end-rollback-window: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.2")
+	if j := h.journal(t); j.WindowEnded == nil || j.WindowEnded.Release != "0.50.0-rc.2" || j.Phase != migrate.Open {
+		t.Fatalf("the journal after the upgrade: %+v", j)
+	}
+	if open, err := migrate.RollbackWindowOpen(h.data, time.Now()); err != nil || open {
+		t.Errorf("the window after the upgrade: %v %v", open, err)
+	}
+
+	// The same release with no window open (never migrated, or switched
+	// more than 30 days ago): no question.
+	for name, switched := range map[string]time.Time{"never migrated": {}, "past the window": time.Now().Add(-31 * 24 * time.Hour)} {
+		h = newCLIHost(t, from)
+		if !switched.IsZero() {
+			h.migrated(t, switched)
+		}
+		publish(to, ends)
+		code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
+		if code != ExitOK || strings.Contains(out, "migration:") || !strings.Contains(out, "Upgraded to 0.50.0-rc.2") {
+			t.Fatalf("%s: %d %q %q", name, code, out, errs)
+		}
+		h.serves(t, "0.50.0-rc.2")
+	}
+}
+
+// migrated gives the host's data directory a migration's journal, open
+// and switched at switched, as varlatch migrate leaves it; varlatchd is
+// restarted on it.
+func (h *cliHost) migrated(t *testing.T, switched time.Time) {
+	t.Helper()
+	j := &migrate.Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: migrate.Open, Ingress: migrate.Proxy,
+		History: []migrate.Step{{Phase: migrate.Switched, At: switched.UTC().Format(time.RFC3339Nano)}, {Phase: migrate.Open, At: switched.UTC().Format(time.RFC3339Nano)}}}
+	b, err := j.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.data, migrate.JournalFile), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.serves(t, "0.50.0-rc.1")
+}
+
+// journal is Go's migration journal on the host.
+func (h *cliHost) journal(t *testing.T) *migrate.Journal {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(h.data, migrate.JournalFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var j migrate.Journal
+	if err := json.Unmarshal(b, &j); err != nil {
+		t.Fatal(err)
+	}
+	return &j
 }
 
 var (
@@ -277,6 +358,46 @@ func (s *cliService) Stop(context.Context) error {
 	}
 	s.cmd = nil
 	return nil
+}
+
+// windowEnding: a release that ends the window ends it only while one is
+// open (an open journal, switched within 30 days, not ended already), and
+// is refused while a reverse is under way, whose journal it could not
+// record the end in; a release that keeps the window asks nothing.
+func TestWindowEnding(t *testing.T) {
+	now := time.Now()
+	write := func(phase migrate.Phase, switched time.Time) string {
+		t.Helper()
+		dir := t.TempDir()
+		j := &migrate.Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: phase, Ingress: migrate.Proxy,
+			History: []migrate.Step{{Phase: migrate.Switched, At: switched.UTC().Format(time.RFC3339Nano)}}}
+		b, err := j.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, migrate.JournalFile), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	if ends, err := windowEnding(t.TempDir(), "0.50.1", true, now); err != nil || ends {
+		t.Errorf("never migrated: %v %v", ends, err)
+	}
+	open := write(migrate.Open, now.Add(-time.Hour))
+	if ends, err := windowEnding(open, "0.50.1", true, now); err != nil || !ends {
+		t.Errorf("open: %v %v", ends, err)
+	}
+	if ends, err := windowEnding(open, "0.50.1", false, now); err != nil || ends {
+		t.Errorf("a release that keeps the window: %v %v", ends, err)
+	}
+	if ends, err := windowEnding(write(migrate.Open, now.Add(-31*24*time.Hour)), "0.50.1", true, now); err != nil || ends {
+		t.Errorf("past 30 days: %v %v", ends, err)
+	}
+	for _, p := range []migrate.Phase{migrate.Rollback, migrate.RollbackChecked, migrate.RollbackTransfer} {
+		if ends, err := windowEnding(write(p, now.Add(-time.Hour)), "0.50.1", true, now); err == nil || ends || !strings.Contains(err.Error(), "a rollback is under way (the migration is in phase "+string(p)+")") {
+			t.Errorf("%s: %v %v", p, ends, err)
+		}
+	}
 }
 
 // checkoutSchema is this checkout's schema version, as go/release/release.json
