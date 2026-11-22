@@ -28,8 +28,8 @@ type imagePin struct {
 	Repository, Digest string
 }
 
-// testPin replaces the constants in a crashpoint build only (G5's
-// interruption gate, crashpoint.go); nil in a release.
+// testPin replaces the constants in a crashpoint or rehearsal build only
+// (testonly.go); nil in a release.
 var testPin *imagePin
 
 // Source is the old installation, driven as processes (go-step7 decision
