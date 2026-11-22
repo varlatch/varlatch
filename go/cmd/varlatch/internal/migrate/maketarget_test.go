@@ -367,4 +367,48 @@ func TestTheTargetMigrateMakes(t *testing.T) {
 			}
 		}
 	})
+	t.Run("a source on a tailnet, or the tailnet's authority, is refused before anything is made", func(t *testing.T) {
+		// The source serves a tailnet address, the authority given.
+		tn := newTailnetWorld(t)
+		m := &fakeMaker{missing: true, dir: tn.world.src.dir}
+		tn.eng.Maker = m
+		_, err := tn.eng.Run(context.Background(), true)
+		if err == nil || !strings.Contains(err.Error(), "is never on a tailnet") || !strings.Contains(err.Error(), "nothing was done") {
+			t.Fatalf("a tailnet source: %v", err)
+		}
+		if len(m.journals) != 0 || len(tn.world.tgt.keys) != 0 || containsCall(tn.world.src.calls, "backup") || containsCall(tn.world.src.calls, "kek") {
+			t.Fatalf("something was made or backed up: journals %d, keys %d, source calls %v", len(m.journals), len(tn.world.tgt.keys), tn.world.src.calls)
+		}
+		if j, _ := Status(tn.world.src.dir); j != nil {
+			t.Fatalf("a journal was written: %+v", j)
+		}
+		// The authority given alone, the source on no tailnet.
+		w := newWorld(t)
+		m = &fakeMaker{missing: true, dir: w.src.dir}
+		w.eng.Maker, w.eng.Tailnet = m, &TailnetOptions{}
+		if _, err := w.eng.Run(context.Background(), true); err == nil || !strings.Contains(err.Error(), "the tailnet's authority or auth key was given") {
+			t.Fatalf("the authority given: %v", err)
+		}
+		if len(m.journals) != 0 || containsCall(w.src.calls, "backup") {
+			t.Fatalf("something was made or backed up: journals %d, source calls %v", len(m.journals), w.src.calls)
+		}
+	})
+	t.Run("a made target whose configuration went missing is undone the ordinary way", func(t *testing.T) {
+		w := newWorld(t)
+		m := &fakeMaker{missing: true, dir: w.src.dir}
+		w.eng.Maker = m
+		j, err := w.eng.Run(context.Background(), true)
+		if err != nil || j.Target.Config == "" {
+			t.Fatalf("the dry run: %v (target %+v)", err, j.Target)
+		}
+		// Its configuration removed by someone else, mid-migration.
+		m.missing = true
+		if _, err := w.eng.Abort(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		// The ordinary undo: the target's own journal says released too.
+		if w.tgt.journal == nil || w.tgt.journal.Phase != Released {
+			t.Fatalf("the target's journal after the undo: %+v", w.tgt.journal)
+		}
+	})
 }

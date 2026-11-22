@@ -311,8 +311,43 @@ func (e *Engine) strikeKeys(j *Journal, added []string, kekState, bekState strin
 }
 
 // targetUnmade is whether the target migrate was making is not there (not
-// made yet, or removed again: its configuration missing): nothing was
-// imported into it, and it has no journal of its own.
+// made yet, or removed again: its configuration missing) and the journal
+// never described it (no target recorded): nothing was imported into it,
+// and it has no journal of its own. A target the journal describes whose
+// configuration went missing later is undone the ordinary way.
 func (e *Engine) targetUnmade(j *Journal) bool {
-	return j.Created != nil && e.Maker != nil && e.Maker.Missing()
+	return j.Created != nil && j.Target.Config == "" && e.Maker != nil && e.Maker.Missing()
+}
+
+// refuseTailnetMade refuses a migration that would make its target while
+// the source serves a tailnet address, or the tailnet's authority was
+// given: the target migrate makes is never on a tailnet (setup's answers
+// for it are public or own proxy, so its configuration says tailnet =
+// off), and `admin migrate keys` would refuse its tailnet auth key only
+// after a full backup, leaving the target made. Refused first, before
+// anything is made or backed up. (Since a made target is never on a
+// tailnet, no tailnet-auth-key is written into one, and Created.Made and
+// UndoTarget need not track it.) Tailnet on a target migrate makes is
+// backlog: a prepared target with tailnet = on is the way today.
+func (e *Engine) refuseTailnetMade(ctx context.Context) error {
+	if e.Maker == nil || !e.Maker.Missing() {
+		return nil
+	}
+	why := ""
+	if h, ok := e.Target.(*Host); e.Tailnet != nil || ok && len(h.TailnetAuthKey) > 0 {
+		why = "the tailnet's authority or auth key was given"
+	} else if ts, ok := e.Source.(TailnetSource); ok {
+		info, err := ts.Tailnet(ctx)
+		if err != nil {
+			return fmt.Errorf("the source's tailnet: %w", err)
+		}
+		if info.Enabled {
+			why = "the source serves a tailnet address (its Tailscale sidecar)"
+		}
+	}
+	if why == "" {
+		return nil
+	}
+	return fmt.Errorf("%s, and the target migrate makes at %s is never on a tailnet: write %s with tailnet = on and the tailnet settings first (a prepared target, which migrate uses as it is), then run varlatch migrate again; nothing was done",
+		why, e.Maker.Where(), e.Maker.Where())
 }

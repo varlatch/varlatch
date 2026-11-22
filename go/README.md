@@ -3657,6 +3657,11 @@ migrations.
   - **Root:** whenever the target may change (its configuration missing
     or unreadable, or one migrate made and has not removed, before the
     switch), migrate refuses to run without root.
+  - **Never on a tailnet:** setup's answers for a made target are public
+    or own proxy (`tailnet = off`), so a source serving a tailnet address,
+    or the tailnet's authority given, is refused before anything is made
+    or backed up: prepare the configuration with `tailnet = on` first.
+    Tailnet on a made target is backlog.
   - **A prepared target** (another `--config`, or one already there) is
     used as it is.
   - **Tests:** G5's `maketarget_test.go` runs it under a test root

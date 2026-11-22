@@ -231,6 +231,11 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	} else if id, err = newID(); err != nil {
 		return prev, err
 	}
+	// A target migrate makes is never on a tailnet: refused before
+	// anything is made or backed up (refuseTailnetMade).
+	if err := e.refuseTailnetMade(ctx); err != nil {
+		return prev, err
+	}
 	// The target, made when it is not there (slice 7.4e).
 	created, err := e.makeTarget(ctx, prev, id, src, ing, dryRunOnly)
 	if err != nil {
