@@ -311,7 +311,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   nothing. `.github/workflows/published-release.yml` (step 6.1b) checks a
   published release of the Go line as people install it, on Linux, macOS
   and Windows (`install/published_test.go`, G8's published-asset half):
-  after the Release workflow publishes a prerelease, or by hand for any.
+  after the Release workflow publishes a release (a prerelease or a final
+  one), or by hand for any.
 - `image/` (step 6, slice 6.10a): the single-container image, varlatchd
   and the CLI in one distroless image for linux/amd64 and arm64, built by
   `image/build.sh` from the release's own Linux binaries. See "The
@@ -2160,11 +2161,24 @@ serves the tailnet listener on the node's own addresses
   - **Tags** come from the auth key there: Headscale refuses a node that
     registers with a pre-auth key and advertises tags (0.29.7), so the
     node advertises none, and its key must be a tagged pre-auth key
-    (`headscale preauthkeys create --tags <tailnet_tags>`). A node that
-    joined with no tags (an untagged key) keeps access open for now: it
-    is logged once and the listeners report carries a warning
-    (`observed.warnings`, shown in the dashboard's Tailnet tab); access
-    closes on tags other than `tailnet_tags` in a later slice.
+    (`headscale preauthkeys create --tags <tailnet_tags>`). The node's
+    tags must then be exactly `tailnet_tags` (step 7.5c c3): any other
+    set, none included (an untagged key), closes tailnet access (fail
+    closed, never latched) until they match. The listeners report says
+    `TAGS_DIFFER` with both sets in `observed.warnings` (the dashboard's
+    Tailnet tab), and doctor's `tailnet.pin` names them, with the remedy:
+    give the node `tailnet_tags` in Headscale (`headscale nodes tag -i
+    <node id> -t <tailnet_tags>`), or enrol it again with a tagged key;
+    access opens at the next check (60 seconds). `admin tailnet enroll`
+    refuses such a node before the handoff goes on (the node stays held,
+    so enroll runs again once it is tagged).
+  - **DERP.** The node uses the DERP map its control server sends. One
+    that lists Tailscale's DERP servers (Headscale's default `derp.urls`)
+    sends the node's netcheck, STUN and relayed traffic to Tailscale:
+    doctor's advisory `tailnet.control` fails, naming them, and the
+    listeners report's `observed.warnings` carries the same; access stays
+    open (Headscale's configuration is the operator's). Keep `derp.urls`
+    and `derp.paths` to your own DERP servers.
   - **No browser endpoint** with it: `tailnet_https_port` serves the
     node's Tailscale certificate, which a self-hosted server does not
     issue, so the two together are refused.
@@ -2177,8 +2191,16 @@ serves the tailnet listener on the node's own addresses
     tagged by its key, is pinned to the control URL and `base_domain`
     with no tailnet StableID, and while Headscale is unreachable makes no
     bootstrap DNS query; another configured control URL closes access.
-    The handoff's Headscale cases (migrate's Headscale authority, the
-    restore handoff, StableID lookups) are step 7.5c's next slices.
+    The identity cases (c3): a node's StableID on Headscale is its node id
+    (`headscale nodes list`'s, a number per database, never a pin); over
+    the tailnet listener a tagged peer is known by its tags and Headscale
+    node id, a user's device by its user's login (Headscale's user name),
+    the node itself is refused (self) and an address no device has
+    (unrecognized); the node retagged in Headscale closes access and
+    reopens once tagged again; a handoff's node enrols, is held, is shown
+    reaching its name from a probe, and opens (`server/daemon`'s
+    `TestHeadscaleHandoffNode`). Migrate's Headscale authority and the
+    restore handoff are step 7.5c's other slices.
 - **The pin** (`<data_dir>/tailnet-pin.json`, `server/tailnet/pin.go`)
   is the control URL, the tailnet's StableID (Tailscale) and its MagicDNS
   suffix (Headscale's `base_domain`), never the display name. It is taken
@@ -3516,6 +3538,11 @@ migrations.
     freeing its port, and the target starts on it. Coolify: the target
     starts, and `migrate` stops (exit 75) with the exact domain move to
     make; `--resume` checks it.
+  - Every check of the address (the transfer's, the reverse's and an
+    undo's) asks for `/v1/meta` with `Cache-Control: no-cache` and
+    `Pragma: no-cache`, and Go answers `/v1/meta` with `Cache-Control:
+    no-store` (a deliberate difference: the TypeScript route sets none),
+    so a proxy's cached answer never stands for the installation serving.
   - The check: `<origin>/v1/meta` must answer with the migrated
     installation's id and the target's release, within
     `--transfer-timeout` (3 minutes). Then the source is marked migrated
@@ -3653,6 +3680,47 @@ migrations.
   stopped one by writing its journal and starting it. A switch is the
   journal's word alone, written beside the varlatchd serving under the
   transfer's gate.
+- `varlatch migrate --from-archive`, the backup converter (step 7, slice
+  7.7b; go-step7 decision 18; `cmd/varlatch/internal/migrate` archive.go):
+  a TypeScript archive (format 1 or 2) to a format 3 archive of the same
+  installation (`--out`), by the migration's own path, on a host with
+  Docker. It opens the archive with the BEK (`--bek-file`, a key or a
+  passphrase; a passphrase needs `--out-bek-file`, the key file the output
+  is sealed with) and checks the Root KEK (`--kek-file`) against its
+  canaries, refusing a wrong key, a varlatchd archive, an output that
+  exists or an image not pinned by digest before any container starts.
+  Then an isolated restore: a throwaway PostgreSQL 17.6 (by digest) with
+  `--network none` takes the Secret Plane's dump as the TypeScript
+  restore does, and the last TypeScript release's image (by default the
+  one `LastTypeScriptDigest` pins, v0.23.0's; `--ts-image` gives another
+  by registry digest, and a local image ID only with
+  `VARLATCH_ALLOW_LOCAL_TS_IMAGE=1`, for the tests, with a warning) runs
+  in its namespace, read-only, as this
+  user, with no capability: `migrate` (an older schema brought forward),
+  `admin migration backfill` (the exposure index an archive from before
+  0.20.0 lacks) and `admin migration export --dry-run --digests`, the run
+  key on its stdin. Never a daemon. Then varlatchd, as a process, on a
+  scratch data directory: `admin migrate import`, `admin migrate check`
+  (every check passes) and `admin backup run`, whose archive is placed at
+  `--out` once its installation and key versions are the source's. Both
+  containers and the scratch directory are removed, on an interrupt too
+  (SIGINT, SIGTERM, SIGHUP end it through its context), and when a
+  removal fails it says the cleanup is incomplete. One conversion runs at
+  a time per host, whoever runs it (an flock on
+  /run/lock/varlatch-convert.lock, or /tmp's, whatever TMPDIR says), and
+  each starts by sweeping what a killed one left: the converter's
+  labelled containers, by ID, its working directories in the scratch
+  root and the copy it was placing beside `--out` (directories or regular
+  files of its own names, never a symbolic link; one it may not remove is
+  warned about). Linux and macOS only. PostgreSQL's own
+  messages (psql, pg_restore) are not shown: they can quote the
+  archive's data. Its tests: the
+  refusals before any program runs and the conversion's sequence, with
+  fakes; the isolation per pull request in go.yml
+  (`TestArchiveIsolationHasNoNetwork`, Docker); the conversions of
+  release/0.22's generated archives (format 1 and 2 of the seeded
+  installation, format 1 of a 0.7.0 installation), each restored after,
+  in the nightly converter job (`TestConvertArchives`).
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

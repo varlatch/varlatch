@@ -264,10 +264,12 @@ test("today no target can pass the gate: doctor's pending-upgrade check and the 
   }
   assert.ok(open.some((r) => r.of.startsWith("doctor.") && /step 6/.test(r.replacement.open)));
   // An external suite is open until its Go counterpart lands; the backup
-  // suites', the Compose recovery gate's (the image test, step 6.10a) and
-  // the move's (step 6.9) run in the Go workflow, so they name none.
+  // suites', the Compose recovery gate's (the image test, step 6.10a), the
+  // move's (step 6.9), setup's and its public ingress' (step 6.4a, with 6.3's
+  // listener), the installers' (step 6.1) and the sidecar's (none: the Go
+  // node is in process) run in the Go workflow, so they name none.
   for (const [name, suite] of Object.entries(inventory.externalSuites)) {
-    if (["backup-e2e", "backup-s3", "backup-compose", "move"].includes(name)) assert.match(suite.replacement.none, /go\.yml/, name);
+    if (["backup-e2e", "backup-s3", "backup-compose", "move", "setup", "ingress-public", "installers", "sidecar-restart"].includes(name)) assert.match(suite.replacement.none, /go\.yml/, name);
     // The Coolify live checks' Go counterparts are manual too (step 4.9e:
     // build tag coolifylive, run by hand on the lab, with their evidence).
     else if (["coolify-live", "coolify-live-expands"].includes(name)) assert.match(suite.replacement.none, /TestCoolifyLive\w+ \(build tag coolifylive/, name);
