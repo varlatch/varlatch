@@ -195,6 +195,10 @@ type TargetState struct {
 	Gate    bool
 	Barrier string
 	Running bool
+	// ImportRefusal is why the target's import into its data directory
+	// would be refused now (varlatchd's check, the import's own), empty
+	// when it would not: the preflight refuses it before the barrier.
+	ImportRefusal string
 }
 
 // JournalHead is what the target's journal says.

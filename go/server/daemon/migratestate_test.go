@@ -584,3 +584,52 @@ func TestAdminMigrateKeysAsCredentials(t *testing.T) {
 		t.Errorf("a BEK with no place: %d %q", code, errOut)
 	}
 }
+
+// `admin migrate state` says why an import into the data directory would
+// be refused now, with the import's own words (importableDataDir, which
+// both run): Go's backups/ is no reason, another name is. varlatch
+// migrate's preflight refuses on it, before the barrier.
+func TestStateSaysWhatTheImportWouldRefuse(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	refusal := func() string {
+		t.Helper()
+		code, out, errOut := migrateWith(t, in.conf, nil, "state")
+		var s struct {
+			ImportRefusal *string `json:"importRefusal"`
+		}
+		if code != ExitOK || json.Unmarshal([]byte(out), &s) != nil {
+			t.Fatalf("state: %d %q %q", code, out, errOut)
+		}
+		if s.ImportRefusal == nil {
+			return ""
+		}
+		if *s.ImportRefusal == "" {
+			t.Fatal("importRefusal present but empty")
+		}
+		return *s.ImportRefusal
+	}
+	if r := refusal(); r != "" {
+		t.Fatalf("an empty data directory: %q", r)
+	}
+	if err := os.MkdirAll(filepath.Join(in.data, "backups"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(in.data, "backups", "final.vltbak"), []byte("an archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := refusal(); r != "" {
+		t.Fatalf("Go's backups/: %q", r)
+	}
+	if err := os.WriteFile(filepath.Join(in.data, "notes.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := refusal()
+	if !strings.Contains(r, "is not empty (notes.txt)") {
+		t.Fatalf("a stray name: %q", r)
+	}
+	// The import refuses it in the same words, before it reads its bundle.
+	code, _, errOut := migrateWith(t, in.conf, nil, "import", "--in", filepath.Join(t.TempDir(), "no-bundle.jsonl"))
+	if code != ExitFailure || !strings.Contains(errOut, r+"; nothing was imported") {
+		t.Fatalf("the import: %d %q, want %q", code, errOut, r)
+	}
+}
