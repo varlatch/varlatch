@@ -110,6 +110,9 @@ type Journal struct {
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	// Finish is --finish's record.
 	Finish *FinishRecord `json:"finish,omitempty"`
+	// Tailnet is the tailnet handoff's (tailnet.go), when the source
+	// serves a tailnet address.
+	Tailnet *TailnetRecord `json:"tailnet,omitempty"`
 	// WindowEnded is the rollback window ended early, on the Go side: an
 	// upgrade to a release that ends it (decision 17, release.json's
 	// endsRollbackWindow), recorded in Go's journal before the upgrade.
