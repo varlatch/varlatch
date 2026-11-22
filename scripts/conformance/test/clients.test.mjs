@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -29,10 +29,11 @@ const repoRoot = join(here, "..", "..", "..");
 const clientsJson = JSON.parse(readFileSync(join(here, "..", "clients.json"), "utf8"));
 const H = (c) => c.repeat(64);
 
-test("clients.json is valid and pins 0.21.0, 0.22.0, 0.22.4 (and tracks 0.23.0)", () => {
+test("clients.json is valid and pins 0.21.0, 0.22.0, 0.22.4, and 0.23.0 by version, commit and hash", () => {
   assert.deepEqual(validateClients(clientsJson), []);
   assert.deepEqual(Object.keys(clientsJson.cli).sort(), ["0.21.0", "0.22.0", "0.22.4", "0.23.0"]);
   assert.equal(isPendingCli(clientsJson.cli["0.22.4"]), false);
+  assert.equal(isPendingCli(clientsJson.cli["0.23.0"]), false);
   assert.equal(clientsJson.repository, "varlatch/varlatch");
 });
 
@@ -77,21 +78,30 @@ test("conformance.yml pairs go-binary with 0.22.4 and 0.23.0 and only lists CLIs
   const chooseStep = wf.jobs.cells.steps.find((s) => s.id === "cells");
   assert.ok(chooseStep?.run, "missing cells step script");
   if (spawnSync("jq", ["--version"]).status === 0) {
-    const runCells = (cell) => {
+    const runCells = (cell, { clientsOverride = null, expectStatus = 0 } = {}) => {
       const dir = mkdtempSync(join(tmpdir(), "conformance-cells-test-"));
       try {
+        let cwd = repoRoot;
+        if (clientsOverride) {
+          cwd = join(dir, "work");
+          mkdirSync(join(cwd, "scripts", "conformance"), { recursive: true });
+          writeFileSync(join(cwd, "scripts", "conformance", "clients.json"), JSON.stringify(clientsOverride));
+        }
         const out = join(dir, "output");
         const summary = join(dir, "summary");
         writeFileSync(out, "");
         writeFileSync(summary, "");
         const r = spawnSync("bash", ["-e", "-c", chooseStep.run], {
-          cwd: repoRoot,
+          cwd,
           encoding: "utf8",
           env: { ...process.env, CELL: cell, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: summary },
         });
-        assert.equal(r.status, 0, `cells step failed for ${cell}: ${r.stderr}\n${r.stdout}`);
-        const outputs = Object.fromEntries(readFileSync(out, "utf8").trim().split("\n").map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
-        return { stdout: r.stdout, summary: readFileSync(summary, "utf8"), outputs };
+        assert.equal(r.status, expectStatus, `cells step status for ${cell}: ${r.stderr}\n${r.stdout}`);
+        const rawOut = readFileSync(out, "utf8").trim();
+        const outputs = rawOut
+          ? Object.fromEntries(rawOut.split("\n").map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]))
+          : {};
+        return { stdout: r.stdout, stderr: r.stderr, summary: readFileSync(summary, "utf8"), outputs };
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -100,20 +110,36 @@ test("conformance.yml pairs go-binary with 0.22.4 and 0.23.0 and only lists CLIs
     assert.equal(allRun.outputs.has_cells, "true");
     const allMatrix = JSON.parse(allRun.outputs.matrix).include;
     assert.ok(allMatrix.some((c) => c.target === "go-binary" && c.cli === "0.22.4"));
-    assert.ok(!allMatrix.some((c) => c.target === "go-binary" && c.cli === "0.23.0"));
-    assert.match(allRun.stdout, /::notice::Skipping go-binary x 0\.23\.0:/);
-    assert.match(allRun.summary, /Skipped `go-binary x 0\.23\.0`/);
+    assert.ok(allMatrix.some((c) => c.target === "go-binary" && c.cli === "0.23.0"));
+    assert.doesNotMatch(allRun.stdout, /::notice::Skipping/);
 
-    const cutoverRun = runCells("go-binary x 0.22.4");
-    assert.equal(cutoverRun.outputs.has_cells, "true");
-    assert.equal(cutoverRun.outputs.images, "false");
-    assert.deepEqual(JSON.parse(cutoverRun.outputs.matrix).include, [{ target: "go-binary", cli: "0.22.4" }]);
+    const cutover224 = runCells("go-binary x 0.22.4");
+    assert.equal(cutover224.outputs.has_cells, "true");
+    assert.equal(cutover224.outputs.images, "false");
+    assert.deepEqual(JSON.parse(cutover224.outputs.matrix).include, [{ target: "go-binary", cli: "0.22.4" }]);
 
-    const pendingRun = runCells("go-binary x 0.23.0");
-    assert.equal(pendingRun.outputs.has_cells, "false");
-    assert.equal(pendingRun.outputs.images, "false");
-    assert.deepEqual(JSON.parse(pendingRun.outputs.matrix).include, []);
-    assert.match(pendingRun.stdout, /::notice::Skipping go-binary x 0\.23\.0:/);
+    const cutover230 = runCells("go-binary x 0.23.0");
+    assert.equal(cutover230.outputs.has_cells, "true");
+    assert.equal(cutover230.outputs.images, "false");
+    assert.deepEqual(JSON.parse(cutover230.outputs.matrix).include, [{ target: "go-binary", cli: "0.23.0" }]);
+
+    // Pending machinery still skips an unreleased entry cleanly.
+    const withPending = structuredClone(clientsJson);
+    withPending.cli["0.23.0"] = { pending: "awaiting future release" };
+    const pendingAll = runCells("all", { clientsOverride: withPending });
+    assert.ok(!JSON.parse(pendingAll.outputs.matrix).include.some((c) => c.target === "go-binary" && c.cli === "0.23.0"));
+    assert.match(pendingAll.stdout, /::notice::Skipping go-binary x 0\.23\.0: awaiting future release/);
+    assert.match(pendingAll.summary, /Skipped `go-binary x 0\.23\.0`: awaiting future release/);
+
+    const pendingOnly = runCells("go-binary x 0.23.0", { clientsOverride: withPending });
+    assert.equal(pendingOnly.outputs.has_cells, "false");
+    assert.deepEqual(JSON.parse(pendingOnly.outputs.matrix).include, []);
+
+    // A stray pending key on a pinned entry fails closed instead of silently skipping.
+    const withBoth = structuredClone(clientsJson);
+    withBoth.cli["0.23.0"].pending = "stale";
+    const bothFailed = runCells("go-binary x 0.23.0", { clientsOverride: withBoth, expectStatus: 1 });
+    assert.match(bothFailed.stdout, /::error::Cell go-binary x 0\.23\.0 has both pending and commit\/sha256/);
   }
 });
 

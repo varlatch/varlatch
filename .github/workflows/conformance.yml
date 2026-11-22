@@ -9,13 +9,13 @@ name: Conformance
 #            CLI; go-binary (the Go varlatchd, built here with its
 #            dashboard) with the CLI built from source and with the cutover
 #            published TypeScript CLIs pinned in scripts/conformance/clients.json
-#            (ADR-0059 G2: 0.22.4 and 0.23.0; any entry still marked pending
+#            (ADR-0059 G2: 0.22.4 and 0.23.0; any future entry marked pending
 #            in clients.json is skipped with a clear notice until published),
 #            its missing operations declared in scripts/conformance/expect/go-binary.json
 #            (ADR-0059 step 3)
 #   CLIs     source (this checkout), 0.21.0, 0.22.0, 0.22.4, and 0.23.0 (pinned
-#            in scripts/conformance/clients.json, verified before use; pending
-#            entries are skipped until tagged and pinned); go (the
+#            in scripts/conformance/clients.json, verified before use; future
+#            pending entries are skipped until tagged and pinned); go (the
 #            Go CLI, built here) against both TypeScript targets, its
 #            missing features declared in scripts/conformance/client-go.json
 #            (internal docs/design/go-cli.md, decision 3). go.yml runs
@@ -65,8 +65,8 @@ concurrency:
 jobs:
   # The cells of this run: every one, or the one a dispatch names.
   # Any versioned CLI marked pending in scripts/conformance/clients.json is
-  # skipped with a notice so unreleased cutover pins (e.g. 0.23.0) activate
-  # automatically as soon as their commit and sha256 are pinned.
+  # skipped with a notice so future unreleased pins activate automatically
+  # once their commit and sha256 replace pending.
   cells:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -101,6 +101,17 @@ jobs:
             while IFS= read -r m; do
               echo "::error::Cell $m names a CLI not listed in scripts/conformance/clients.json."
             done <<< "$missing"
+            exit 1
+          fi
+
+          invalid=$(jq -r --slurpfile clients scripts/conformance/clients.json '
+            .[] | . as $cell | select(.cli != "source" and .cli != "go")
+            | select(($clients[0].cli[$cell.cli] | has("pending")) and (($clients[0].cli[$cell.cli] | has("commit")) or ($clients[0].cli[$cell.cli] | has("sha256"))))
+            | "\(.target) x \(.cli)"' <<< "$selected")
+          if [ -n "$invalid" ]; then
+            while IFS= read -r inv; do
+              echo "::error::Cell $inv has both pending and commit/sha256 in scripts/conformance/clients.json."
+            done <<< "$invalid"
             exit 1
           fi
 
