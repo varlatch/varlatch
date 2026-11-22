@@ -530,6 +530,18 @@ func TestAHolderBackOnlineBeforeTheRename(t *testing.T) {
 		!strings.Contains(errOut, "planned for the node nOTHER, not this node ("+ours+")") || w.api.renameCount() != 0 {
 		t.Fatalf("a journal planned for another node: %d %q, %d renames", code, errOut, w.api.renameCount())
 	}
+	// A journal that records no node (from before take-name recorded it):
+	// on Tailscale the plan's id is the device's, not the node's StableID,
+	// so it cannot be told to be this node's, and is refused.
+	rec.IncomingStableID = ""
+	none, _ := json.Marshal(rec)
+	if err := os.WriteFile(j.path, none, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure ||
+		!strings.Contains(errOut, "records no node (a journal from before take-name recorded it), so it is not known to be planned for this node ("+ours+")") || w.api.renameCount() != 0 {
+		t.Fatalf("a journal that records no node: %d %q, %d renames", code, errOut, w.api.renameCount())
+	}
 	rec.IncomingStableID = ours
 	back, _ := json.Marshal(rec)
 	if err := os.WriteFile(j.path, back, 0o600); err != nil {
@@ -808,6 +820,9 @@ func TestHeadscaleTakeNameFakes(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := "began against " + controlName(recorded) + ", not this tailnet_control_url (" + f.URL + ")"
+			if recorded == "" {
+				want = "records no control server (Tailscale's, or a journal from before take-name recorded it), so it is not known to have begun against this tailnet_control_url (" + f.URL + ")"
+			}
 			code, _, errOut := runAdmin(t, "tailnet", "take-name", "--headscale-url", f.URL, "--headscale-api-key-file", keyFile, "--config", in.conf)
 			takeNameTLS = prevTLS
 			if code != ExitFailure || !strings.Contains(errOut, want) || strings.Contains(errOut, f.Key) {

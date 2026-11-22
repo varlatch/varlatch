@@ -387,7 +387,10 @@ func TestHeadscaleTakeNameHolderReturnsBeforeRename(t *testing.T) {
 	if live := w.hs.LiveAPIKeys(t); live != 0 {
 		t.Fatalf("%d Headscale API keys live after the refusal, want 0", live)
 	}
-	rec.IncomingStableID = planned
+	// A journal that records no node, on Headscale: the plan's node id is
+	// the node's StableID, so this node is told and stamped, and it goes
+	// on (checked by the run below finishing).
+	rec.IncomingStableID = ""
 	writeRecord(rec)
 
 	_ = w.freshKey(t)
@@ -397,6 +400,9 @@ func TestHeadscaleTakeNameHolderReturnsBeforeRename(t *testing.T) {
 	}
 	if n := w.names(t); n[ours] != "vault" || n[w.deadID] == "vault" {
 		t.Fatalf("names after completion: %v", n)
+	}
+	if rec, err := j.readRecord(); err != nil || rec == nil || rec.IncomingStableID != planned || planned != ours {
+		t.Fatalf("the node not stamped in the journal: %+v %v", rec, err)
 	}
 	if live := w.hs.LiveAPIKeys(t); live != 0 {
 		t.Fatalf("%d Headscale API keys live after completion, want 0", live)

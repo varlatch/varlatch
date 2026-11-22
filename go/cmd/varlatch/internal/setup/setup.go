@@ -353,7 +353,8 @@ func (r *run) answers() error {
 
 // secretFileMode checks a credential file as varlatchd reads one, without
 // reading it: there, a regular file and no symbolic link, readable by its
-// owner alone (0600 or tighter).
+// owner alone (0600 or tighter). Setup runs on Linux only (host_other.go's
+// SystemHost refuses everything elsewhere), so the mode is a Unix one.
 func secretFileMode(p string) error {
 	st, err := os.Lstat(p)
 	switch {

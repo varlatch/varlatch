@@ -178,7 +178,15 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 		// A handoff under way goes on against the control server it began
 		// on only: a node's id there means nothing on another (Headscale's
 		// are small integers two servers share).
-		if prev.Phase != tailhandoff.Done && prev.Phase != tailhandoff.Undone && rec.ControlURL != t.ControlURL {
+		underWay := prev.Phase != tailhandoff.Done && prev.Phase != tailhandoff.Undone
+		switch {
+		case underWay && rec.ControlURL == "" && t.ControlURL != "":
+			// No control server recorded: Tailscale's, or a journal written
+			// before the control server was recorded. Either way not known
+			// to be this one.
+			return fail("the handoff under way (%s) records no control server (Tailscale's, or a journal from before take-name recorded it), so it is not known to have begun against this tailnet_control_url (%s): nothing was done",
+				takeoverStep(prev), t.ControlURL)
+		case underWay && rec.ControlURL != t.ControlURL:
 			return fail("the handoff under way (%s) began against %s, not this tailnet_control_url (%s): set tailnet_control_url back to finish it; nothing was done",
 				takeoverStep(prev), controlName(rec.ControlURL), controlName(t.ControlURL))
 		}
@@ -269,9 +277,18 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	// A handoff under way goes on for the node it planned for only (by its
 	// StableID, recorded with the journal: the plan's ids are the control
 	// plane's own).
-	if rec != nil && prev.Plan.Operation == op && prev.Phase != tailhandoff.Done && prev.Phase != tailhandoff.Undone &&
-		rec.IncomingStableID != "" && rec.IncomingStableID != st.SelfID {
-		return fail("the handoff under way planned for the node %s, not this node (%s): nothing was done", rec.IncomingStableID, st.SelfID)
+	if rec != nil && prev.Plan.Operation == op && prev.Phase != tailhandoff.Done && prev.Phase != tailhandoff.Undone {
+		switch {
+		case st.SelfID == "":
+			return fail("this node reports no StableID, so the handoff under way cannot be checked as planned for it: nothing was done")
+		case rec.IncomingStableID == "" && !(isHeadscale && prev.Plan.IncomingID == st.SelfID):
+			// A journal from before the node was recorded: on Headscale the
+			// plan's node id is the node's StableID, so it is stamped below
+			// when they are the same; elsewhere it cannot be told.
+			return fail("the handoff under way records no node (a journal from before take-name recorded it), so it is not known to be planned for this node (%s): nothing was done", st.SelfID)
+		case rec.IncomingStableID != "" && rec.IncomingStableID != st.SelfID:
+			return fail("the handoff under way planned for the node %s, not this node (%s): nothing was done", rec.IncomingStableID, st.SelfID)
+		}
 	}
 	journal.incomingStableID = st.SelfID
 	var state *tailhandoff.State
