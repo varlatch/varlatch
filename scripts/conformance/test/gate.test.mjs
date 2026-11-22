@@ -58,6 +58,7 @@ const run = (outcomes, extra = {}) => ({
   checks: Object.entries(outcomes).map(([id, outcome]) => ({ id, outcome })),
   expectedInForce: [],
   implementation,
+  commit: candidateCommit,
   ...extra,
 });
 const passing = { "a.new": "pass", "a.old": "not-applicable", "a.gone": "not-applicable" };
@@ -99,20 +100,33 @@ test("the browser-walkthrough evidence must be named, under docs/evidence/, pres
   assert.match(problem({ ...walkthrough, exists: false }), /does not exist/);
   assert.match(problem({ ...walkthrough, size: 0 }), /is empty/);
   assert.match(problem({ ...walkthrough, content: undefined }), /no readable content/);
-  // Template sentinel, unchecked checklist rows, and unreplaced placeholders fail the gate.
+  // Template sentinel (tolerant whitespace/case), unchecked checklist rows, and unreplaced placeholders fail the gate.
   assert.match(problem({ ...walkthrough, content: `${TEMPLATE_SENTINEL}\n${signedWalkthroughContent()}` }), /still the template/);
+  assert.match(problem({ ...walkthrough, content: `<!--  G1-WALKTHROUGH:   template -->\n${signedWalkthroughContent()}` }), /still the template/);
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| 2 | [ ] | Audit |` }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| 3 | [ ] not done |` }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| x | [ ]` }), /unchecked checklist rows/);
   assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace("PASS", "PENDING") }), /unreplaced placeholders/);
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Commit | \`<commit-sha>\` |` }), /unreplaced placeholders/);
-  // Candidate commit must be 40 hex and match implementation.commit when present.
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Hash | \`<sha256>\` |` }), /unreplaced placeholders/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Date | \`YYYY-MM-DD HH:MM UTC\` |` }), /unreplaced placeholders/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Owner | \`<name / handle>\` |` }), /unreplaced placeholders/);
+  // Verdict must be PASS (backticks optional).
+  assert.equal(problem({ ...walkthrough, content: signedWalkthroughContent().replace("`PASS`", "PASS") }), "");
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace("`PASS`", "`FAIL`") }), /\*\*Verdict:\*\* PASS/);
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(/Verdict.*\n?/, "") }), /\*\*Verdict:\*\* PASS/);
+  // Candidate commit must be 40 hex and match the run's commit, including on go-binary fingerprints (which carry no commit).
   assert.match(problem({ ...walkthrough, content: signedWalkthroughContent("deadbeef") }), /40-hex Candidate commit/);
   assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(/Candidate commit.*\n/, "") }), /40-hex Candidate commit/);
   const otherCommit = "f".repeat(40);
+  assert.match(problem(walkthrough, { implementation, commit: otherCommit }), /does not match the run's commit/);
+  assert.match(problem(walkthrough, { implementation, commit: null }), /recorded no expected commit/);
+  assert.equal(problem(walkthrough, { implementation, commit: candidateCommit }), "");
   assert.match(
-    problem(walkthrough, { implementation: { target: "ts-source", commit: otherCommit } }),
-    /does not match the run's implementation commit/,
+    problem(walkthrough, { implementation: { target: "ts-source", commit: otherCommit }, commit: null }),
+    /does not match the run's commit/,
   );
-  assert.equal(problem(walkthrough, { implementation: { target: "ts-source", commit: candidateCommit } }), "");
+  assert.equal(problem(walkthrough, { implementation: { target: "ts-source", commit: candidateCommit }, commit: null }), "");
 });
 
 test("the shipped g1-walkthrough-template.md fails the gate on its own", () => {
@@ -127,6 +141,7 @@ test("the shipped g1-walkthrough-template.md fails the gate on its own", () => {
   assert.match(joined, /still the template/);
   assert.match(joined, /unchecked checklist rows/);
   assert.match(joined, /unreplaced placeholders/);
+  assert.match(joined, /\*\*Verdict:\*\* PASS/);
   assert.match(joined, /40-hex Candidate commit/);
 });
 

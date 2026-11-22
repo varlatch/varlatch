@@ -29,10 +29,20 @@ running suites for an hour). After the run, `judgeGate`
 2. The file must exist as a regular, non-empty, non-symlink file (`lstat`).
 3. The file must not contain the template sentinel
    (`<!-- g1-walkthrough: TEMPLATE -->`), any unchecked checklist row
-   (`| [ ] |`), or unreplaced placeholders (`PENDING`, `<commit-sha>`).
-4. The Owner Sign-Off section must name a valid 40-hex `Candidate commit`,
-   which must equal `report.implementation.commit` when the implementation
-   fingerprint records a commit.
+   (`| [ ] |`, `| 3 | [ ] not done |`, or trailing `| x | [ ]`), or unreplaced
+   placeholders (`PENDING`, `<commit-sha>`, `<sha256>`, `YYYY-MM-DD HH:MM UTC`,
+   `<name / handle>`).
+4. The Owner Sign-Off section must record both a `PASS` verdict and a 40-hex
+   `Candidate commit` matching the checkout's commit (`run.mjs` passes
+   `git rev-parse HEAD` to `judgeGate`; a missing comparison commit fails the
+   gate):
+
+   ```markdown
+   - **Candidate commit:** `<40-hex-commit-sha>`
+   - **Verdict:** `PASS`
+   ```
+
+   (Backticks around the commit SHA and `PASS` are optional.)
 5. `run.mjs` records `{ path, exists, size, sha256 }` under
    `report.gate.walkthrough`.
 6. When any check reports `predates-cli` (G2, `--recent-cli-report`), the

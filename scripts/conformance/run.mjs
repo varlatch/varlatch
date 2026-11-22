@@ -78,6 +78,7 @@ import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
 import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
 import { loadTarget } from "./targets/index.mjs";
+import { checkoutCommit } from "./targets/ts-source.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -669,6 +670,7 @@ async function main() {
           expectedInForce: [...inForce.keys()],
           lacksInForce: [...lacks.keys()],
           implementation: report.implementation ?? null,
+          commit: checkoutCommit(REPO_ROOT),
         },
         walkthrough,
         recentCli,
