@@ -81,21 +81,68 @@ func TestConfigured(t *testing.T) {
 		}
 	}
 	write("# keys\nlisten = 127.0.0.1:8686\nroot_kek_file = " + filepath.Join(dir, "root-kek") + "\n  backup_key_file=" + filepath.Join(dir, "backup-key") + "  \n")
-	got := Configured(conf)
+	got := Configured(conf, "")
 	if len(got) != 2 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) || got[1].What != BEK || hex.EncodeToString(got[1].Bytes) != hex.EncodeToString(bek) {
 		t.Fatalf("both keys: %d", len(got))
 	}
 	// A byte order mark before the first line, as config.Parse allows.
 	write("\uFEFFroot_kek_file = " + filepath.Join(dir, "root-kek") + "\n")
-	if got := Configured(conf); len(got) != 1 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) {
+	if got := Configured(conf, ""); len(got) != 1 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) {
 		t.Fatalf("after a byte order mark: %d", len(got))
 	}
 	// A key file it cannot read, or that holds no key, is left out.
 	write("root_kek_file = " + filepath.Join(dir, "missing") + "\nbackup_key_file = " + conf + "\n")
-	if got := Configured(conf); len(got) != 0 {
+	if got := Configured(conf, ""); len(got) != 0 {
 		t.Fatalf("unreadable keys: %d", len(got))
 	}
-	if got := Configured(filepath.Join(dir, "no-such.conf")); got != nil {
+	if got := Configured(filepath.Join(dir, "no-such.conf"), dir); got != nil {
 		t.Fatal("a missing configuration")
+	}
+	// A configuration that names no key file loads the credentials
+	// directory's (as varlatchd admin finds them beside the configuration);
+	// one it names wins.
+	write("listen = 127.0.0.1:8686\n")
+	if got := Configured(conf, ""); len(got) != 0 {
+		t.Fatalf("no key named, no credentials directory: %d", len(got))
+	}
+	got = Configured(conf, dir)
+	if len(got) != 2 || got[0].What != RootKEK || hex.EncodeToString(got[0].Bytes) != hex.EncodeToString(kek) || got[1].What != BEK || hex.EncodeToString(got[1].Bytes) != hex.EncodeToString(bek) {
+		t.Fatalf("the credentials directory's keys: %d", len(got))
+	}
+	write("root_kek_file = " + filepath.Join(dir, "missing") + "\n")
+	if got := Configured(conf, dir); len(got) != 1 || got[0].What != BEK {
+		t.Fatalf("root_kek_file named wins over the credential: %d", len(got))
+	}
+}
+
+// CredentialsDir: the run's own CREDENTIALS_DIRECTORY (an empty one is
+// none); else, as root only, the configuration's directory, made
+// absolute, when root-kek is there.
+func TestCredentialsDir(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "varlatchd.conf")
+	env := func(vars map[string]string) func(string) string { return func(k string) string { return vars[k] } }
+	none := env(nil)
+	if got := CredentialsDir(none, conf, true); got != "" {
+		t.Errorf("no root-kek there: %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "root-kek"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := CredentialsDir(none, conf, true); got != dir {
+		t.Errorf("as root, root-kek beside the configuration: %q", got)
+	}
+	if got := CredentialsDir(none, conf, false); got != "" {
+		t.Errorf("not as root: %q", got)
+	}
+	if got := CredentialsDir(env(map[string]string{"CREDENTIALS_DIRECTORY": ""}), conf, true); got != dir {
+		t.Errorf("an empty CREDENTIALS_DIRECTORY is none: %q", got)
+	}
+	if got := CredentialsDir(env(map[string]string{"CREDENTIALS_DIRECTORY": "/run/credentials/x"}), conf, false); got != "/run/credentials/x" {
+		t.Errorf("the run's own: %q", got)
+	}
+	t.Chdir(dir)
+	if got := CredentialsDir(none, "varlatchd.conf", true); got != dir {
+		t.Errorf("a relative path: %q", got)
 	}
 }

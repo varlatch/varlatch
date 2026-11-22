@@ -101,6 +101,11 @@ type Journal struct {
 	Undone      *UndoneRecord    `json:"undone,omitempty"`
 	// Undoing is an undo begun and not finished: --resume goes on with it.
 	Undoing bool `json:"undoing,omitempty"`
+	// UndoUnanswered is that undo's wait for the source at its address
+	// timed out: the next try recreates the source's ingress, whatever its
+	// container reports (it can run with no network, or be caught running
+	// between restarts).
+	UndoUnanswered bool `json:"undoUnanswered,omitempty"`
 	// Ingress is the source's ingress, which the transfer moves: public,
 	// proxy or coolify (decision 12).
 	Ingress Ingress `json:"ingress"`
@@ -110,6 +115,11 @@ type Journal struct {
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	// Finish is --finish's record.
 	Finish *FinishRecord `json:"finish,omitempty"`
+	// Created is the target migrate made, when it made it (slice 7.4e).
+	Created *CreatedRecord `json:"created,omitempty"`
+	// Tailnet is the tailnet handoff's (tailnet.go), when the source
+	// serves a tailnet address.
+	Tailnet *TailnetRecord `json:"tailnet,omitempty"`
 	// WindowEnded is the rollback window ended early, on the Go side: an
 	// upgrade to a release that ends it (decision 17, release.json's
 	// endsRollbackWindow), recorded in Go's journal before the upgrade.
@@ -292,6 +302,9 @@ func readJournal(dir string) (*Journal, error) {
 	}
 	if j.Format != 1 || !slices.Contains(Phases, j.Phase) {
 		return nil, fmt.Errorf("%s is a journal of another format (%d) or phase (%q)", filepath.Join(dir, JournalFile), j.Format, j.Phase)
+	}
+	if err := j.Created.valid(); err != nil {
+		return nil, fmt.Errorf("%s is not a migration journal: %v", filepath.Join(dir, JournalFile), err)
 	}
 	return &j, nil
 }

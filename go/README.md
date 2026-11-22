@@ -311,7 +311,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   nothing. `.github/workflows/published-release.yml` (step 6.1b) checks a
   published release of the Go line as people install it, on Linux, macOS
   and Windows (`install/published_test.go`, G8's published-asset half):
-  after the Release workflow publishes a prerelease, or by hand for any.
+  after the Release workflow publishes a release (a prerelease or a final
+  one), or by hand for any.
 - `image/` (step 6, slice 6.10a): the single-container image, varlatchd
   and the CLI in one distroless image for linux/amd64 and arm64, built by
   `image/build.sh` from the release's own Linux binaries. See "The
@@ -1019,10 +1020,10 @@ it to the recording.
 | `admin-usage` | `varlatch help admin`, `admin --help` and `admin -h` print a Compose installation's `admin` forms (`backup create\|verify\|restore\|status`, `reenroll`, `security reset`, `unfreeze`, `outbound check`, each with `--dir`) | a Go installation's: `backup run\|status\|test-bucket\|restore`, `security reset`, `unfreeze`, `outbound check`, `maintenance begin\|end\|status`, `reenroll`, each also taking `--config` (the text a usage error adds); `varlatch --help` keeps the full TypeScript usage | The Go CLI runs a Go installation's host commands (`host-admin`); a Compose installation's stay the TypeScript CLI's (decision 11). Transcript cases `help.admin`, `help.admin.option` and `help.admin.short` name it; pinned by `TestHelpAdminIsTheGoUsage` |
 | `doctor-usage` | `varlatch help doctor`, `doctor --help` and `doctor -h` print a Compose installation's doctor (`--dir`, `--wait`, `--gate`) | a Go installation's: `varlatch doctor [--json] [--config <file>]` | The Go CLI runs a Go installation's doctor (`doctor`); a Compose installation's stays the TypeScript CLI's (decision 11). Transcript cases `help.doctor`, `help.doctor.option` and `help.doctor.short` name it |
 | `setup-usage` | `varlatch help setup`, `setup --help` and `setup -h` print a Compose installation's setup (`--dir`, `--escrow`, Docker) | a Go installation's: `sudo varlatch setup` with every question's flag (`--name value` or `--name=value`), `--answers`, `--root-kek-out`/`--backup-key-out`, `--accept-slow-disk` and `--accept-existing-user` | The Go CLI sets up a Go installation (`setup`); a Compose installation's stays the TypeScript CLI's (decision 11). Transcript cases `help.setup`, `help.setup.option` and `help.setup.short` name it |
-| `setup`: `sudo varlatch setup [flags]` (slices 6.4a, 6.4b and 6.4c of internal docs/design/go-step6.md) | a Compose installation: `.env`, images, Convex, the first administrator, escrow, `doctor`, in the `--dir` directory | a Go installation on a systemd host (as root, said before anything): the questions (ingress public, proxy, localhost or tailnet, with what each needs, localhost refusing a non-loopback `--listen` and any `--trusted-proxies`; where backups go: this host, or a bucket through a destinations file; Varlatch's hosted backups shown as not available yet), each with its flag and the answers file's name (`--answers <file>`, a JSON object: a flag that disagrees with it is refused); the `varlatch` system user (one that exists already must be a system account, a `nologin` or `false` shell and a uid within `SYS_UID_MAX`, or setup refuses, saying what it found, unless `--accept-existing-user`; uid 0 always refused); `/var/lib/varlatch` (0700, the user's) and the fsync probe of its disk before the database is placed (a slow disk said with its p99; setup goes on only when accepted: `--accept-slow-disk` or the question); the Root KEK and the backup key made with crypto/rand and written straight into `/etc/varlatch` (root, 0600, linked into place, never replaced; one there that no run in the journal made is kept and said; the temporary files a run that ended mid-write left in `/etc/varlatch`, exactly setup's own `.<name>.<12 hex>.tmp`, are removed and counted), never in an argument, the environment, the journal, a log or a temporary file outside `/etc/varlatch`, shown once on a terminal or, without one, written to `--root-kek-out`/`--backup-key-out` (0600, never over another file); `varlatchd.conf` (0640, root:varlatch, in `/etc/varlatch` 0750 root:varlatch), naming no key (the unit's credentials are the keys: `backup_key_file` now defaults to the `backup-key` credential as `root_kek_file` does), checked by `varlatchd admin config-check` before it is put in place, an existing one kept; the unit enabled and started; `/readyz` awaited. A journal (`/etc/varlatch/setup.json`, 0600: the answers, the steps done, the probe's measure, never a key) makes a rerun continue where setup stopped and change nothing once done (no file written, nothing restarted); an answer given differently is refused (moving is `varlatch move`). `--dir` names `varlatch-ts setup`; (6.4c) `setup --restore <archive> --root-kek-file <file> --backup-key-file <file>` onto a fresh host (G13 through setup; refused onto a host whose setup has steps done, or for another archive than the journal's): the operator's two keys checked as keys, different from each other, and installed in `/etc/varlatch` in place of new ones (root, 0600, linked into place, never over another key, never shown, copied or said), then `varlatchd admin backup restore` before the unit first starts (the archive, its release and the Root KEK checked by varlatchd; resumable), the archive's `public_url` required to be the answers' (its passkeys belong to it: refused before the unit starts, with what to do), the restored files made the unit's; with tailnet ingress, before the restored node first enrols, `varlatchd admin tailnet probe-name --json` (decision 16): a short-lived ephemeral probe node joins with the auth key under a name of its own, reads the peers it can see, logs out (an ephemeral node logged out is deleted) and leaves no state, then a second one joins to show the key is reusable; a peer under the configured name (any case) stops setup before enrolment (delete the old node first), and so does a single-use key, which the probe spent (setup says how to make a reusable one with the node's tags; the probe uses the key twice more than the enrolment, and the operator can revoke it after the restore); a name not seen is not taken as free (the tailnet's access rules may hide nodes): varlatchd reads its name back after enrolment, and a name the control plane suffixed (`<hostname>-<n>`) keeps tailnet access closed, latched as `name-suffixed`, with the remedy in the log (delete the old node, rename this one, then re-pin; a re-pin is refused while the suffix stays); step 7's OAuth client (`devices:core`, O4) may later replace the probe where present; the restored administrators keep their passkeys, so no link is issued, and the first backup proves the restored installation; then (6.4b) the first administrator's passkey: `varlatchd admin bootstrap` (or `recover` for an administrator made but never enrolled, as `admin bootstrap-status` says) gives a one-time link with `--revoke-unused` (the links setup issued before and never used are revoked in the same write job, counted in the issued event's `revokedUnused`), shown on a terminal or, without one, written to `--admin-link-out` (0600, a new file or an earlier link's, never through a symbolic link; never in the output or the journal; removed once the passkey is in), and setup waits `--admin-wait` (default 15m; `0s` stops, exit 75, for a rerun); the keys shown once on a terminal, each pasted back without echo and checked (a wrong copy refused, three tries a key, what was typed never shown), or without one written to `--root-kek-out`/`--backup-key-out`; the Custody Attestation (`varlatchd admin custody attest`, method `copy`, for both keys), asked on a terminal or `--attest` without one (without it, exit 75); the first backup (`varlatchd admin backup run --json`) verified (integrity, compatibility, the Root KEK; with a bucket, delivered) and its id journaled; then `varlatch doctor`'s report (a failing mandatory check: exit 1, setup otherwise done, and a rerun runs doctor again). Host commands run as root outside the unit (`varlatch admin ...`, and `varlatchd admin ...` by hand, as doctor's remedies give them) read the keys where the unit's `LoadCredential` does: with no `CREDENTIALS_DIRECTORY` and no `root_kek_file`, the configuration's directory stands for it when the Root KEK is there, so the configuration loads as under the unit (the keys read in place under their own modes, never copied, no key put in the environment) | Decision 7 and ADR-0059 Decision 8. Pinned by `internal/setup`'s tests (a fake host under a temporary root: every step, the modes, a rerun changing nothing, stopped after each step and resumed, answers final, missing answers named before anything changes, the slow disk, keys never replaced and never anywhere but their files, an existing user, an interrupted run's leftovers), `internal/setup`'s `TestRestore`, `TestRestoreRefusals`, `TestRestoreChecksTheTailnetName`, `server/tailnet`'s `TestTheProbeSeesAHeldName`, `TestTheProbeFindsASingleUseKey`, `TestASuffixedNameKeepsAccessClosed` and `TestTheReadBackOnTheControlPlane` (testcontrol), `TestFirstAdministrator`, `TestPasteBack`, `TestCustodyAttestation`, `TestFirstBackup` and `TestDoctorStep`, `server/daemon`'s `TestBootstrapStatus` and `TestAdminFindsTheKeysBesideTheConfiguration`, `server/config`'s `TestLoadHost`, `internal/cli`'s `TestSetupRefusals`, `TestSetupFlagValueForms` and `TestAdminFindsTheUnitsCredentials`, and `go/install/test-setup.sh` on go.yml's runner (its own systemd, no container: localhost, own proxy and public against Pebble, the passkey enrolled from the link's file by `enrollpasskey`, a test tool with `authtest`'s software authenticator, the custody attested and the first backup verified, G13: the localhost installation's archive and its two keys restored by `setup --restore` onto the host emptied again, the administrator and their passkey back, no link, a backup verified, stopped after each step and resumed, no key in setup's output, its journal, the configuration, the unit's journal or a backup) |
+| `setup`: `sudo varlatch setup [flags]` (slices 6.4a, 6.4b and 6.4c of internal docs/design/go-step6.md) | a Compose installation: `.env`, images, Convex, the first administrator, escrow, `doctor`, in the `--dir` directory | a Go installation on a systemd host (as root, said before anything): the questions (ingress public, proxy, localhost or tailnet, with what each needs, localhost refusing a non-loopback `--listen` and any `--trusted-proxies`; where backups go: this host, or a bucket through a destinations file; Varlatch's hosted backups shown as not available yet), each with its flag and the answers file's name (`--answers <file>`, a JSON object: a flag that disagrees with it is refused); the `varlatch` system user (one that exists already must be a system account, a `nologin` or `false` shell and a uid within `SYS_UID_MAX`, or setup refuses, saying what it found, unless `--accept-existing-user`; uid 0 always refused); `/var/lib/varlatch` (0700, the user's) and the fsync probe of its disk before the database is placed (a slow disk said with its p99; setup goes on only when accepted: `--accept-slow-disk` or the question); the Root KEK and the backup key made with crypto/rand and written straight into `/etc/varlatch` (root, 0600, linked into place, never replaced; one there that no run in the journal made is kept and said; the temporary files a run that ended mid-write left in `/etc/varlatch`, exactly setup's own `.<name>.<12 hex>.tmp`, are removed and counted), never in an argument, the environment, the journal, a log or a temporary file outside `/etc/varlatch`, shown once on a terminal or, without one, written to `--root-kek-out`/`--backup-key-out` (0600, never over another file); `varlatchd.conf` (0640, root:varlatch, in `/etc/varlatch` 0750 root:varlatch), naming no key (the unit's credentials are the keys: `backup_key_file` now defaults to the `backup-key` credential as `root_kek_file` does), checked by `varlatchd admin config check` before it is put in place, an existing one kept; the unit enabled and started; `/readyz` awaited. A journal (`/etc/varlatch/setup.json`, 0600: the answers, the steps done, the probe's measure, never a key) makes a rerun continue where setup stopped and change nothing once done (no file written, nothing restarted); an answer given differently is refused (moving is `varlatch move`). `--dir` names `varlatch-ts setup`; (6.4c) `setup --restore <archive> --root-kek-file <file> --backup-key-file <file>` onto a fresh host (G13 through setup; refused onto a host whose setup has steps done, or for another archive than the journal's): the operator's two keys checked as keys, different from each other, and installed in `/etc/varlatch` in place of new ones (root, 0600, linked into place, never over another key, never shown, copied or said), then `varlatchd admin backup restore` before the unit first starts (the archive, its release and the Root KEK checked by varlatchd; resumable), the archive's `public_url` required to be the answers' (its passkeys belong to it: refused before the unit starts, with what to do), the restored files made the unit's; with tailnet ingress, before the restored node first enrols, `varlatchd admin tailnet probe-name --json` (decision 16): a short-lived ephemeral probe node joins with the auth key under a name of its own, reads the peers it can see, logs out (an ephemeral node logged out is deleted) and leaves no state, then a second one joins to show the key is reusable; a peer under the configured name (any case) stops setup before enrolment (delete the old node first), and so does a single-use key, which the probe spent (setup says how to make a reusable one with the node's tags; the probe uses the key twice more than the enrolment, and the operator can revoke it after the restore); a name not seen is not taken as free (the tailnet's access rules may hide nodes): varlatchd reads its name back after enrolment, and a name the control plane suffixed (`<hostname>-<n>`) keeps tailnet access closed, latched as `name-suffixed`, with the remedy in the log (delete the old node, rename this one, then re-pin; a re-pin is refused while the suffix stays); step 7's OAuth client (`devices:core`, O4) may later replace the probe where present; the restored administrators keep their passkeys, so no link is issued, and the first backup proves the restored installation; then (6.4b) the first administrator's passkey: `varlatchd admin bootstrap` (or `recover` for an administrator made but never enrolled, as `admin bootstrap-status` says) gives a one-time link with `--revoke-unused` (the links setup issued before and never used are revoked in the same write job, counted in the issued event's `revokedUnused`), shown on a terminal or, without one, written to `--admin-link-out` (0600, a new file or an earlier link's, never through a symbolic link; never in the output or the journal; removed once the passkey is in), and setup waits `--admin-wait` (default 15m; `0s` stops, exit 75, for a rerun); the keys shown once on a terminal, each pasted back without echo and checked (a wrong copy refused, three tries a key, what was typed never shown), or without one written to `--root-kek-out`/`--backup-key-out`; the Custody Attestation (`varlatchd admin custody attest`, method `copy`, for both keys), asked on a terminal or `--attest` without one (without it, exit 75); the first backup (`varlatchd admin backup run --json`) verified (integrity, compatibility, the Root KEK; with a bucket, delivered) and its id journaled; then `varlatch doctor`'s report (a failing mandatory check: exit 1, setup otherwise done, and a rerun runs doctor again). Host commands run as root outside the unit (`varlatch admin ...`, and `varlatchd admin ...` by hand, as doctor's remedies give them) read the keys where the unit's `LoadCredential` does: with no `CREDENTIALS_DIRECTORY` and no `root_kek_file`, the configuration's directory stands for it when the Root KEK is there, so the configuration loads as under the unit (the keys read in place under their own modes, never copied, no key put in the environment); only as root, since a member of the `varlatch` group can see that `root-kek` is there; without a Root KEK, a run by hand is told to set `root_kek_file` or run as root with `root-kek` beside the configuration; in the single-container image, the keys found so are among those `lib/keyenv` refuses in the environment | Decision 7 and ADR-0059 Decision 8. Pinned by `internal/setup`'s tests (a fake host under a temporary root: every step, the modes, a rerun changing nothing, stopped after each step and resumed, answers final, missing answers named before anything changes, the slow disk, keys never replaced and never anywhere but their files, an existing user, an interrupted run's leftovers), `internal/setup`'s `TestRestore`, `TestRestoreRefusals`, `TestRestoreChecksTheTailnetName`, `server/tailnet`'s `TestTheProbeSeesAHeldName`, `TestTheProbeFindsASingleUseKey`, `TestASuffixedNameKeepsAccessClosed` and `TestTheReadBackOnTheControlPlane` (testcontrol), `TestFirstAdministrator`, `TestPasteBack`, `TestCustodyAttestation`, `TestFirstBackup` and `TestDoctorStep`, `server/daemon`'s `TestBootstrapStatus`, `TestAdminFindsTheKeysBesideTheConfiguration` and `TestAdminRefusesAKeyFoundBesideTheConfigurationInTheImage`, `lib/keyenv`'s `TestConfigured`, `server/config`'s `TestLoadHost`, `internal/cli`'s `TestSetupRefusals`, `TestSetupFlagValueForms` and `TestAdminFindsTheUnitsCredentials`, and `go/install/test-setup.sh` on go.yml's runner (its own systemd, no container: localhost, own proxy and public against Pebble, the passkey enrolled from the link's file by `enrollpasskey`, a test tool with `authtest`'s software authenticator, the custody attested and the first backup verified, G13: the localhost installation's archive and its two keys restored by `setup --restore` onto the host emptied again, the administrator and their passkey back, no link, a backup verified, stopped after each step and resumed, no key in setup's output, its journal, the configuration, the unit's journal or a backup) |
 | `doctor`: `varlatch doctor [--json] [--config <file>]` (slice 6.5 of internal docs/design/go-step6.md) | a Compose installation's (`--dir`, Docker, Convex): the TypeScript CLI's checks and the server's (`varlatchd admin doctor --wait` in the container) | a Go installation's: runs `varlatchd admin doctor --json` (as `host-admin`), which reads the host itself (the configuration; the data directory's and the key files' modes, by `stat` only, never opening a key file; free space against the database plus a snapshot; the disk's fsync p99 against Decision 2's 10 ms, through a file without a name (`O_TMPFILE`) that never appears in the data directory; the clock; the backups' status files) and asks the running varlatchd through its control socket for the rest (readiness, the WAL against twice its bound, the TRUNCATE checkpoints against 1 s, the public certificate, the tailnet pin, custody attestations); without a running varlatchd those are unknown, and nothing takes the lock or opens the database. The CLI adds `services.running` (varlatchd answered) and `release.pending-upgrade` (one release). Each check is pass, fail or unknown, mandatory or advisory, with what to do; exit 1 on a mandatory failure; `--json` for scripts; a URL's user name and password never shown. `--dir` is refused (64) naming `varlatch-ts doctor` | Decision 8: doctor reads, never writes. Pinned by `server/doctor`'s tests (a case for each failing check), `daemon`'s `TestDoctorNeverWrites` (the data directory and the configuration's directory unchanged, daemon running and stopped, no audit event), `TestDoctorShowsNoKey`, `internal/cli`'s `TestDoctor*` (the real varlatchd too), and the conformance suite `go-doctor` (the TypeScript doctor suite's replacements) |
 | `move-usage` | `varlatch help move`, `move --help` and `move -h` print a Compose installation's `move` (`--dir`, `--bek-file`, `--kek-file`) | a Go installation's: `--public-url`, `--ingress public\|external`, `--listen-https`, `--reenroll-hours`, `--yes`, `--no-wait`, `--abandon`, each with `--config`; `varlatch --help` keeps the full TypeScript usage | A Go installation's move rewrites `varlatchd.conf` and restarts `varlatchd.service` (slice 6.9); a Compose installation's stays the TypeScript CLI's (decision 11). Transcript cases `help.move`, `help.move.option` and `help.move.short` name it |
-| `upgrade`: `varlatch upgrade [<version>]` and `upgrade --check` (slice 6.6b of internal docs/design/go-step6.md) | a Compose installation's: pulls the release set's images, backs up, restarts the stack, gates on `doctor --gate`; `--check` records the newest release through the backup control | a Go installation's, on its host, as root (`--check` as anyone who may write the data directory): the release's `varlatch`, `varlatchd` and `release.json` verified against its signed `SHA256SUMS` (fail closed); a release whose manifest's `compatibleFrom` is above the installed schema is refused unless `--accept-not-rollback-safe` (or yes at a prompt); then decision 6's steps, journaled in `/etc/varlatch/upgrade.json` (`go/lib/upgradejournal`): the encrypted snapshot (`admin backup run`, kept 30 days in `<data>/upgrades/<id>`), stop, the schema update on a copy (`admin schema upgrade --database`), the swap of the database and binaries (the previous ones kept in `lib/varlatch/releases/<version>` beside the binaries), start, and the health checks (`admin status`: the release, its schema, serving, schema, Root KEK and installation ready); any failure stops varlatchd and puts the original database and binaries back, and the next run finishes (after the checks) or undoes (before) an interrupted one. `--check` records the newest release in `release-check.json` (`admin release-check record`), which `GET /v1/installation/release` reads. `--dir` and the Compose options are refused (64), naming `varlatch-ts upgrade` | ADR-0059 Decision 8 for a Go installation; a Compose installation's upgrade stays the TypeScript CLI's. Pinned by `internal/upgrade`'s tests (two prereleases built from this checkout, a kill at each step and in the undo, a full disk, a failed health check, a bad signature, a wrong identity, the snapshot restored) and `internal/cli`'s `TestUpgrade*` |
+| `upgrade`: `varlatch upgrade [<version>]` and `upgrade --check` (slice 6.6b of internal docs/design/go-step6.md) | a Compose installation's: pulls the release set's images, backs up, restarts the stack, gates on `doctor --gate`; `--check` records the newest release through the backup control | a Go installation's, on its host, as root (`--check` as root, or as the user varlatchd runs as where the configuration names `root_kek_file`: outside the unit, only root finds the Root KEK beside the configuration): the release's `varlatch`, `varlatchd` and `release.json` verified against its signed `SHA256SUMS` (fail closed); a release whose manifest's `compatibleFrom` is above the installed schema is refused unless `--accept-not-rollback-safe` (or yes at a prompt); then decision 6's steps, journaled in `/etc/varlatch/upgrade.json` (`go/lib/upgradejournal`): the encrypted snapshot (`admin backup run`, kept 30 days in `<data>/upgrades/<id>`), stop, the schema update on a copy (`admin schema upgrade --database`), the swap of the database and binaries (the previous ones kept in `lib/varlatch/releases/<version>` beside the binaries), start, and the health checks (`admin status`: the release, its schema, serving, schema, Root KEK and installation ready); any failure stops varlatchd and puts the original database and binaries back, and the next run finishes (after the checks) or undoes (before) an interrupted one. `--check` records the newest release in `release-check.json` (`admin release-check record`), which `GET /v1/installation/release` reads. `--dir` and the Compose options are refused (64), naming `varlatch-ts upgrade` | ADR-0059 Decision 8 for a Go installation; a Compose installation's upgrade stays the TypeScript CLI's. Pinned by `internal/upgrade`'s tests (two prereleases built from this checkout, a kill at each step and in the undo, a full disk, a failed health check, a bad signature, a wrong identity, the snapshot restored) and `internal/cli`'s `TestUpgrade*` |
 | `upgrade-usage` | `varlatch help upgrade`, `upgrade --help` and `upgrade -h` print a Compose installation's `upgrade` form | a Go installation's: `[<version>] [--prerelease] [--accept-not-rollback-safe] [--end-rollback-window] [--yes]` and `--check [--prerelease] [--json]`, each with `--config` | The Go CLI upgrades a Go installation; a Compose installation's upgrade is `varlatch-ts upgrade` |
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
 | `tailnet-repin`: `varlatch tailnet repin [--yes] [--adopt] [--json] [--config <file>]` (slice 6.2b) | no such command (`tailnet` has `require`, `requirements` and `remove`); the TypeScript server keeps no tailnet pin | runs `varlatchd admin tailnet repin --json [--yes [--adopt]] [--config <file>]` (as `host-admin`) and shows `varlatchd`'s text from its answer: the pinned and the observed tailnet, then what it did or offers, on stderr with `varlatchd`'s status when it refuses. On a terminal, without `--yes`, an offered re-pin (or, with `--adopt`, an adoption) is asked for (`[y/N]`), then done with `--yes --offer <the offer shown>`: `varlatchd` acts only while the pin and the observed tailnet are still what was shown, and otherwise changes nothing and answers `offer-changed` (status 1) with the new view, which is shown and asked about once more (a second change stops, nothing re-pinned). `varlatch tailnet repin --yes` (scripted use) passes no offer and acts on the observation at that moment. `--json` prints `varlatchd`'s answer. `varlatchd admin tailnet repin --json` gives stable names (the view's `pinned`, `observed`, `reason`, `closed`, `missing`, `offered`, `offer` (a value-free token: 128 bits of a SHA-256 over what is offered, the pin and the observation; empty when nothing is offered), and `pinnedText`, `observedText`, `outcome`, `message`, `pin`) with or without `--yes`; `varlatchd`'s 78 adds a line saying to run it as root (`sudo varlatch tailnet repin`; Unix), as `host-admin`'s; its text is unchanged | The tailnet pin is the Go server's (step 4.13); a re-pin changes what the tailnet listener trusts, so it is the host's and is confirmed. Pinned by `internal/cli`'s `TestTailnetRepinFront` and `daemon`'s `TestTailnetListener` |
@@ -2160,11 +2161,24 @@ serves the tailnet listener on the node's own addresses
   - **Tags** come from the auth key there: Headscale refuses a node that
     registers with a pre-auth key and advertises tags (0.29.7), so the
     node advertises none, and its key must be a tagged pre-auth key
-    (`headscale preauthkeys create --tags <tailnet_tags>`). A node that
-    joined with no tags (an untagged key) keeps access open for now: it
-    is logged once and the listeners report carries a warning
-    (`observed.warnings`, shown in the dashboard's Tailnet tab); access
-    closes on tags other than `tailnet_tags` in a later slice.
+    (`headscale preauthkeys create --tags <tailnet_tags>`). The node's
+    tags must then be exactly `tailnet_tags` (step 7.5c c3): any other
+    set, none included (an untagged key), closes tailnet access (fail
+    closed, never latched) until they match. The listeners report says
+    `TAGS_DIFFER` with both sets in `observed.warnings` (the dashboard's
+    Tailnet tab), and doctor's `tailnet.pin` names them, with the remedy:
+    give the node `tailnet_tags` in Headscale (`headscale nodes tag -i
+    <node id> -t <tailnet_tags>`), or enrol it again with a tagged key;
+    access opens at the next check (60 seconds). `admin tailnet enroll`
+    refuses such a node before the handoff goes on (the node stays held,
+    so enroll runs again once it is tagged).
+  - **DERP.** The node uses the DERP map its control server sends. One
+    that lists Tailscale's DERP servers (Headscale's default `derp.urls`)
+    sends the node's netcheck, STUN and relayed traffic to Tailscale:
+    doctor's advisory `tailnet.control` fails, naming them, and the
+    listeners report's `observed.warnings` carries the same; access stays
+    open (Headscale's configuration is the operator's). Keep `derp.urls`
+    and `derp.paths` to your own DERP servers.
   - **No browser endpoint** with it: `tailnet_https_port` serves the
     node's Tailscale certificate, which a self-hosted server does not
     issue, so the two together are refused.
@@ -2177,8 +2191,16 @@ serves the tailnet listener on the node's own addresses
     tagged by its key, is pinned to the control URL and `base_domain`
     with no tailnet StableID, and while Headscale is unreachable makes no
     bootstrap DNS query; another configured control URL closes access.
-    The handoff's Headscale cases (migrate's Headscale authority, the
-    restore handoff, StableID lookups) are step 7.5c's next slices.
+    The identity cases (c3): a node's StableID on Headscale is its node id
+    (`headscale nodes list`'s, a number per database, never a pin); over
+    the tailnet listener a tagged peer is known by its tags and Headscale
+    node id, a user's device by its user's login (Headscale's user name),
+    the node itself is refused (self) and an address no device has
+    (unrecognized); the node retagged in Headscale closes access and
+    reopens once tagged again; a handoff's node enrols, is held, is shown
+    reaching its name from a probe, and opens (`server/daemon`'s
+    `TestHeadscaleHandoffNode`). Migrate's Headscale authority and the
+    restore handoff are step 7.5c's other slices.
 - **The pin** (`<data_dir>/tailnet-pin.json`, `server/tailnet/pin.go`)
   is the control URL, the tailnet's StableID (Tailscale) and its MagicDNS
   suffix (Headscale's `base_domain`), never the display name. It is taken
@@ -2246,6 +2268,73 @@ serves the tailnet listener on the node's own addresses
   a missing pin, lookups and contexts across a closure, the admission) are
   unit tests in `pin_test.go`. The live checks on a real tailnet are run
   by hand (the PR lists them).
+- **The node's side of a tailnet handoff** (step 7, slice 7.5b part 2;
+  internal docs/design/go-step7.md decision 11; `daemon/tailnetnode.go`,
+  `tailnet/hold.go`). These host commands are what `varlatch migrate` and
+  the restore ask of this installation's node.
+  - **None opens the database.** So they run on the empty data directory a
+    migration imports into, and under the migration's gate: the
+    maintenance admission does not refuse them.
+  - **Files made as root.** The node's files a command creates as root go
+    to the data directory's owner: the state directory, the pin, the
+    hold, the listeners report and the lock.
+  - `varlatchd admin tailnet enroll --hostname <temporary name>
+    [--certificate] [--timeout <d>] [--json]` runs offline, under the
+    data directory's lock, before varlatchd first starts:
+    - it writes the hold first (`tailnet-handoff.json`, 0600), so a crash
+      after the join leaves the node held;
+    - the node then joins with the auth key under the temporary name, and
+      its tailnet is pinned from what it observes;
+    - with `--certificate`, it gets a certificate for that name, which
+      proves issuance works now;
+    - it reports the node's StableID, MagicDNS name, suffix, tailnet and
+      control server.
+
+    It refuses the configured name, a name shaped like the control
+    plane's collision suffix of it (`vault-1` for `vault`, which would
+    latch the tailnet closed), a name the control plane changed, a data
+    directory setup has not made, and a name other than the one a hold
+    already names, enrolled or not. Run again for the same name, it
+    reports the same node; an enrolled node no handoff holds is held again
+    only while the control plane names it exactly the temporary name.
+  - **A varlatchd started under the hold** joins under the hold's
+    temporary name, never announcing the configured one, which another
+    node holds, and reads its name back as the hold's (open sets the
+    configured one again). Nothing listens on the tailnet until `varlatchd admin
+    tailnet open [--json]`, which:
+    - removes the hold first;
+    - then, through the control socket, starts the tailnet listener and
+      waits for it. An error means it is not listening.
+
+    Offline, `open` only removes the hold. With no hold it does nothing:
+    a resumed handoff calls it again.
+  - `varlatchd admin tailnet certificate obtain|expiry --name <name>
+    [--json]` works on `<name>.<pinned suffix>`:
+    - `obtain` is one attempt, through the running varlatchd's node or
+      offline through the enrolled node, started for it. A refusal for the
+      authority's rate limit is answered as `refusal: "rate-limited"`.
+    - `expiry` reads the node's cached certificate (`tailnet/certs/`,
+      tsnet's ACME store) and never issues one.
+  - `varlatchd admin tailnet reaches --name <name> --stable-id <id>
+    [--wait <d>] [--json]` is the final check, from a client node:
+    - an ephemeral probe node joins with the auth key, as the restore's
+      probe does, so the key must be reusable;
+    - it looks among its peers, every second until `--wait` has passed,
+      for the name to be held by exactly the node with that StableID;
+    - it logs out and leaves no state, on SIGINT or SIGTERM too; a
+      killed probe's directory (`varlatchd-reach-*` in the system's
+      temporary directory, this user's, older than 10 minutes) is swept
+      by the next probe.
+
+    The tailnet's access rules must let the node's tags see each other,
+    or the probe sees nothing and the check fails closed: the answer then
+    says so and names the tags.
+  - **Tests.** `daemon`'s `TestTheHandoffNode` uses testcontrol and a
+    test CA: enrolment, held, pinned and certified, run again, refusals,
+    the expiry read without an issuance, varlatchd started held, silent on
+    the tailnet, the reach check, obtain through the running node, and the
+    live open answering at once. `tailnet`'s `TestReaches`, `TestTheHold`
+    and `TestCachedNotAfter` cover the rest.
 
 ### The browser endpoint over HTTPS (step 4.13c)
 
@@ -3399,8 +3488,8 @@ migrations.
   `varlatchd admin migrate`.
   - The phases: preflight (the source is 0.23.0 by its image's version,
     and its image is the published one by its registry digest of
-    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, filled in when
-    0.23.0 is published: until then `migrate` refuses every source; it is
+    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, v0.23.0's
+    varlatchd image index as its release published it; it is
     behind no gate; what an interrupted run left, its scratch directories
     and bundles by their exact names, is removed; a fresh backup made, uploaded,
     downloaded and verified; the target's key files given the source's
@@ -3449,6 +3538,11 @@ migrations.
     freeing its port, and the target starts on it. Coolify: the target
     starts, and `migrate` stops (exit 75) with the exact domain move to
     make; `--resume` checks it.
+  - Every check of the address (the transfer's, the reverse's and an
+    undo's) asks for `/v1/meta` with `Cache-Control: no-cache` and
+    `Pragma: no-cache`, and Go answers `/v1/meta` with `Cache-Control:
+    no-store` (a deliberate difference: the TypeScript route sets none),
+    so a proxy's cached answer never stands for the installation serving.
   - The check: `<origin>/v1/meta` must answer with the migrated
     installation's id and the target's release, within
     `--transfer-timeout` (3 minutes). Then the source is marked migrated
@@ -3522,6 +3616,57 @@ migrations.
   the stated end, a second `--resume` changing nothing; the Coolify shape
   and the image's operator steps too. Every output, journal and log is
   scanned for the keys and the run keys.
+- The host target `varlatch migrate` makes (step 7, slice 7.4e; decision
+  20): with `--config /etc/varlatch/varlatchd.conf` not there, migrate (as
+  root, on a systemd host) makes the Go installation with setup's steps
+  (`internal/setup` `PrepareTarget`):
+  - **The answers:** the source's public URL and ingress, and for an own
+    proxy the dashboard's address; `--acme-email` and `--listen` for what
+    the source cannot say.
+  - **Checked first:** nothing changes until the unit file is installed
+    and not running, an existing user passes, and an `/etc/varlatch` or
+    data directory there already is as a target needs (then used as it
+    is, never chmodded or chowned; refused otherwise).
+  - **What it makes:**
+    - the varlatch user (an existing one judged as setup judges it,
+      supplementary groups included, unless `--accept-existing-user`);
+    - `/etc/varlatch` and the data directory;
+    - the unit enabled but not started;
+    - the configuration, checked by varlatchd, last: a configuration
+      there is a target ready, so a run killed before it makes the rest
+      again.
+  - **Never keys:** they are the source's, which `admin migrate keys`
+    writes where the unit loads them (`CREDENTIALS_DIRECTORY`: the
+    configuration names no key file).
+  - **Journalled first:** each item goes in the source's journal before
+    it is made (`created`), the keys' files too, but only a key file not
+    there before (one there is never migrate's, so never removed).
+  - **Undone:** an undo before the switch removes exactly those, after
+    both journals say released (`UndoTarget`), as does `--abort` of a
+    run killed while making it. Until the removal is done the migration
+    is not released for good: `--abort` (or `--resume`) goes on removing
+    it, and no new migration starts over it. Should it keep failing,
+    `--status` names each item's place: removed by hand, then
+    `--abort --forget-target` clears the record (it removes nothing, and
+    refuses while any item recorded is still there, each checked as the
+    undo removes it, the user's own group too). The unit's undo is done
+    again harmlessly (nothing to disable once its file is gone, or in a
+    state systemctl names as not enabled; any other state is disabled).
+    The journal's record is checked as it is read (plain item names, and
+    setup's configuration as where it was made).
+  - **Root:** whenever the target may change (its configuration missing
+    or unreadable, or one migrate made and has not removed, before the
+    switch), migrate refuses to run without root.
+  - **Never on a tailnet:** setup's answers for a made target are public
+    or own proxy (`tailnet = off`), so a source serving a tailnet address,
+    or the tailnet's authority given, is refused before anything is made
+    or backed up: prepare the configuration with `tailnet = on` first.
+    Tailnet on a made target is backlog.
+  - **A prepared target** (another `--config`, or one already there) is
+    used as it is.
+  - **Tests:** G5's `maketarget_test.go` runs it under a test root
+    (the crashpoint build's seam); go.yml's runner-only step makes and
+    undoes it on a real systemd.
 - `varlatch migrate --rollback` (step 7, slice 7.6a; decisions 16 and
   17): the reverse migration, within 30 days of the switch, back to the
   last TypeScript release. Its phases are journalled in both places, as
@@ -3586,6 +3731,47 @@ migrations.
   stopped one by writing its journal and starting it. A switch is the
   journal's word alone, written beside the varlatchd serving under the
   transfer's gate.
+- `varlatch migrate --from-archive`, the backup converter (step 7, slice
+  7.7b; go-step7 decision 18; `cmd/varlatch/internal/migrate` archive.go):
+  a TypeScript archive (format 1 or 2) to a format 3 archive of the same
+  installation (`--out`), by the migration's own path, on a host with
+  Docker. It opens the archive with the BEK (`--bek-file`, a key or a
+  passphrase; a passphrase needs `--out-bek-file`, the key file the output
+  is sealed with) and checks the Root KEK (`--kek-file`) against its
+  canaries, refusing a wrong key, a varlatchd archive, an output that
+  exists or an image not pinned by digest before any container starts.
+  Then an isolated restore: a throwaway PostgreSQL 17.6 (by digest) with
+  `--network none` takes the Secret Plane's dump as the TypeScript
+  restore does, and the last TypeScript release's image (by default the
+  one `LastTypeScriptDigest` pins, v0.23.0's; `--ts-image` gives another
+  by registry digest, and a local image ID only with
+  `VARLATCH_ALLOW_LOCAL_TS_IMAGE=1`, for the tests, with a warning) runs
+  in its namespace, read-only, as this
+  user, with no capability: `migrate` (an older schema brought forward),
+  `admin migration backfill` (the exposure index an archive from before
+  0.20.0 lacks) and `admin migration export --dry-run --digests`, the run
+  key on its stdin. Never a daemon. Then varlatchd, as a process, on a
+  scratch data directory: `admin migrate import`, `admin migrate check`
+  (every check passes) and `admin backup run`, whose archive is placed at
+  `--out` once its installation and key versions are the source's. Both
+  containers and the scratch directory are removed, on an interrupt too
+  (SIGINT, SIGTERM, SIGHUP end it through its context), and when a
+  removal fails it says the cleanup is incomplete. One conversion runs at
+  a time per host, whoever runs it (an flock on
+  /run/lock/varlatch-convert.lock, or /tmp's, whatever TMPDIR says), and
+  each starts by sweeping what a killed one left: the converter's
+  labelled containers, by ID, its working directories in the scratch
+  root and the copy it was placing beside `--out` (directories or regular
+  files of its own names, never a symbolic link; one it may not remove is
+  warned about). Linux and macOS only. PostgreSQL's own
+  messages (psql, pg_restore) are not shown: they can quote the
+  archive's data. Its tests: the
+  refusals before any program runs and the conversion's sequence, with
+  fakes; the isolation per pull request in go.yml
+  (`TestArchiveIsolationHasNoNetwork`, Docker); the conversions of
+  release/0.22's generated archives (format 1 and 2 of the seeded
+  installation, format 1 of a 0.7.0 installation), each restored after,
+  in the nightly converter job (`TestConvertArchives`).
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

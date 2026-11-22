@@ -264,7 +264,7 @@ func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
 		}
 		e.say("The address goes back by hand: in Coolify, move the domain of %s back to the TypeScript application.", origin)
 	default:
-		if err := e.Source.StartIngress(ctx, j.Ingress); err != nil {
+		if err := e.Source.StartIngress(ctx, j.Ingress, j.UndoUnanswered); err != nil {
 			return []error{fmt.Errorf("starting the source's %s again: %w", ingressPart(j.Ingress), err)}
 		}
 	}
@@ -287,6 +287,10 @@ func (p HTTPProber) Probe(ctx context.Context, origin string) (string, string, e
 	if err != nil {
 		return "", "", err
 	}
+	// An operator's proxy or CDN must not answer from a cached /v1/meta:
+	// the pre-migration answer has the same installation id.
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
 	res, err := c.Do(req)
 	if err != nil {
 		return "", "", err

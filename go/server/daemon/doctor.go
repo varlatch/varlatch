@@ -147,6 +147,7 @@ func runDoctorLive(ctx context.Context, env *hostEnv, rest []string, stdout, std
 	}
 	if env.tailnet != nil {
 		live.Tailnet, live.TailnetClosed = true, env.tailnet.Closed()
+		live.TailnetDetail, live.TailnetWarnings = env.tailnet.Explain()
 	}
 	if st, err := custody.StatusOf(ctx, env.store.Reader()); err != nil {
 		live.CustodyError = err.Error()

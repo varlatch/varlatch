@@ -23,12 +23,23 @@ import (
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/tailnet/closed"
 )
 
 // StatusNode is the part of a node the manager reads.
 type StatusNode interface {
 	Status(ctx context.Context) (Status, error)
 }
+
+// DERPNode is a node that says which DERP servers its control server's
+// DERP map lists (their host names).
+type DERPNode interface {
+	DERPHosts(ctx context.Context) ([]string, error)
+}
+
+// TagsDiffer is why tailnet access is closed while a node on a self-hosted
+// control server does not carry exactly tailnet_tags (RequireTags).
+const TagsDiffer = closed.TagsDiffer
 
 // Files of the tailnet in the data directory.
 const (
@@ -79,17 +90,26 @@ type Manager struct {
 	verdict   string // Pin.Check's on observed, "" while it holds
 	status    *Status
 	statusErr bool
-	// untagged is whether the last check found a node on a self-hosted
-	// control server running with no tags (logged once as it starts).
-	untagged  bool
-	listening *bool
-	checkedAt *time.Time
+	// requireTags are tailnet_tags, which a node on a self-hosted control
+	// server must carry exactly (RequireTags); nil: not required.
+	requireTags []string
+	// nodeTags are the tags the last check found; tagsDiffer is whether
+	// they are not requireTags (access closed while so).
+	nodeTags   []string
+	tagsDiffer bool
+	// tailscaleDERP are the DERP servers of Tailscale's that the control
+	// server's DERP map lists (a self-hosted one's should list none).
+	tailscaleDERP []string
+	listening     *bool
+	checkedAt     *time.Time
 	// The browser endpoint (step 4.13c), when configured: the node's
 	// configured host name, the port, its certificate, and whether it
 	// bound its port.
 	browser *browserEndpoint
-	// hostname is the configured name, for the read-back (NameSuffixed).
+	// hostname is the configured name, for the read-back (NameSuffixed);
+	// held, the temporary name a handoff holds the node under.
 	hostname  string
+	held      bool
 	persisted struct {
 		json string
 		at   time.Time
@@ -110,18 +130,22 @@ type Manager struct {
 
 type admission struct{ cancel context.CancelFunc }
 
-// PinMissing is why access is closed for an enrolled node without a pin.
-const PinMissing = "pin-missing"
-
-// NameSuffixed is why access is closed for a node the control plane named
-// its configured hostname with a suffix (varlatch-1): the name is still held
-// by another node, as after a restore while the old installation's node is
-// not deleted (internal docs/design/go-step6.md decision 16).
-const NameSuffixed = "name-suffixed"
+// PinMissing is why access is closed for an enrolled node without a pin;
+// NameSuffixed for a node the control plane named with a suffix (package
+// closed says more).
+const (
+	PinMissing   = closed.PinMissing
+	NameSuffixed = closed.NameSuffixed
+)
 
 // ErrNameSuffixed: a re-pin while the node's name still carries the
 // control plane's suffix.
 var ErrNameSuffixed = errors.New("tailnet: the node's name still carries a suffix the control plane added (its configured name is held by another node): delete that node in the tailnet's admin console and rename this one to its configured name, then re-pin")
+
+// SuffixedName is suffixedName: whether a name would read back as the
+// control plane's collision suffix of hostname (a handoff's temporary name
+// must never).
+func SuffixedName(dnsName, hostname string) bool { return suffixedName(dnsName, hostname) }
 
 // suffixedName is whether dnsName's first label is hostname with the
 // control plane's collision suffix (-1, -2, ...), case-insensitively. A
@@ -147,7 +171,15 @@ func suffixedName(dnsName, hostname string) bool {
 // its name after enrolment (NameSuffixed).
 func (m *Manager) SetHostname(hostname string) {
 	m.mu.Lock()
-	m.hostname = hostname
+	m.hostname, m.held = hostname, false
+	m.mu.Unlock()
+}
+
+// SetHeldName gives the temporary name a handoff holds the node under, for
+// the read-back while the hold stands.
+func (m *Manager) SetHeldName(name string) {
+	m.mu.Lock()
+	m.hostname, m.held = name, true
 	m.mu.Unlock()
 }
 
@@ -178,7 +210,20 @@ func NewManager(node StatusNode, controlURL, dataDir string, port int, log *slog
 
 // openLocked is whether tailnet access is open now.
 func (m *Manager) openLocked() bool {
-	return m.pin != nil && !m.pin.Enrolling && m.pin.Closed == nil && !m.missing && m.observed != nil && m.verdict == ""
+	return m.pin != nil && !m.pin.Enrolling && m.pin.Closed == nil && !m.missing && m.observed != nil && m.verdict == "" && !m.tagsDiffer
+}
+
+// RequireTags makes tags (tailnet_tags) the exact set the node must carry
+// for tailnet access to open: on a self-hosted control server, where the
+// node's tags are its pre-auth key's and not the ones it advertises
+// (ADR-0059 amendment 11). Another set, none included, closes access until
+// they match (fail closed), checked at each check; never latched.
+func (m *Manager) RequireTags(tags []string) {
+	want := slices.Clone(tags)
+	slices.Sort(want)
+	m.mu.Lock()
+	m.requireTags = slices.Compact(want)
+	m.mu.Unlock()
 }
 
 // settleLocked starts a new open period when access opened or closed: the
@@ -295,8 +340,57 @@ func (m *Manager) Closed() string {
 		return m.pin.Closed.Reason
 	case m.observed == nil:
 		return PinUnknown
+	case m.verdict == "" && m.tagsDiffer:
+		return TagsDiffer
 	}
 	return m.verdict
+}
+
+// Explain is what the last check found that a status line names: why the
+// tags close access (detail, "" when they do not), and the warnings that
+// close nothing (Tailscale's DERP servers in a self-hosted control
+// server's DERP map).
+func (m *Manager) Explain() (detail string, warnings []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.tagsDetailLocked(), m.warningsLocked()
+}
+
+func (m *Manager) tagsDetailLocked() string {
+	if !m.tagsDiffer {
+		return ""
+	}
+	return fmt.Sprintf("The node's tags (%s) are not tailnet_tags (%s): on a self-hosted control server they are its pre-auth key's. Tailnet access is closed until they match: "+
+		"give the node tailnet_tags in Headscale (headscale nodes tag -i <node id> -t %s), or enrol it again with a tagged pre-auth key.",
+		tagList(m.nodeTags), tagList(m.requireTags), strings.Join(m.requireTags, ","))
+}
+
+func (m *Manager) warningsLocked() []string {
+	if len(m.tailscaleDERP) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("The control server's DERP map lists Tailscale's DERP servers (%s): the node's relayed and STUN traffic can go to Tailscale. "+
+		"Keep Headscale's DERP map (derp.urls, derp.paths) to your own servers (ADR-0059 amendment 11).", strings.Join(m.tailscaleDERP, ", "))}
+}
+
+func tagList(tags []string) string {
+	if len(tags) == 0 {
+		return "none"
+	}
+	return strings.Join(tags, ", ")
+}
+
+// tailscaleDERPHosts are those of hosts that are Tailscale's DERP servers.
+func tailscaleDERPHosts(hosts []string) []string {
+	var out []string
+	for _, h := range hosts {
+		h = strings.ToLower(strings.TrimSuffix(h, "."))
+		if (h == "tailscale.com" || strings.HasSuffix(h, ".tailscale.com")) && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 type browserEndpoint struct {
@@ -409,6 +503,17 @@ func (m *Manager) checkLocked(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	st, err := m.node.Status(cctx)
 	cancel()
+	// A self-hosted control server's DERP map, read beside the status (an
+	// error reads as nothing to warn of).
+	var derp []string
+	if dn, ok := m.node.(DERPNode); ok && m.controlURL != "" && err == nil && st.BackendState == "Running" {
+		dctx, dcancel := context.WithTimeout(ctx, lookupTimeout)
+		hosts, derr := dn.DERPHosts(dctx)
+		dcancel()
+		if derr == nil {
+			derp = tailscaleDERPHosts(hosts)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
@@ -425,14 +530,24 @@ func (m *Manager) checkLocked(ctx context.Context) {
 	}
 	m.status, m.statusErr = &st, false
 	// On a self-hosted control server the node's tags are its pre-auth
-	// key's: an untagged key leaves it untagged, which is said (the
-	// listeners report's warning), not refused (step 7.5c c1; c3 closes
-	// access when the tags are not tailnet_tags).
-	untagged := m.controlURL != "" && st.BackendState == "Running" && len(st.Tags) == 0
-	if untagged && !m.untagged {
-		m.log.Warn("the tailnet node joined its self-hosted control server with no tags: its tags are its pre-auth key's, which must carry tailnet_tags (headscale preauthkeys create --tags)", "controlUrl", m.controlURL)
+	// key's: any other set than tailnet_tags (none included) closes access
+	// until they match (ADR-0059 amendment 11, step 7.5c c3).
+	tags := slices.Clone(st.Tags)
+	slices.Sort(tags)
+	tags = slices.Compact(tags)
+	differ := m.requireTags != nil && st.BackendState == "Running" && !slices.Equal(tags, m.requireTags)
+	switch {
+	case differ && !m.tagsDiffer:
+		m.log.Error("the tailnet node's tags are not tailnet_tags: tailnet access is closed until they match (give the node tailnet_tags in Headscale, or enrol it again with a tagged pre-auth key)",
+			"tags", tagList(tags), "tailnetTags", tagList(m.requireTags))
+	case !differ && m.tagsDiffer:
+		m.log.Info("the tailnet node carries tailnet_tags again", "tags", tagList(tags))
 	}
-	m.untagged = untagged
+	m.nodeTags, m.tagsDiffer = tags, differ
+	if len(derp) > 0 && !slices.Equal(derp, m.tailscaleDERP) {
+		m.log.Warn("the self-hosted control server's DERP map lists Tailscale's DERP servers: the node's relayed and STUN traffic can go to Tailscale", "servers", strings.Join(derp, ", "))
+	}
+	m.tailscaleDERP = derp
 	if st.BackendState != "Running" || st.Suffix == "" {
 		m.persistLocked()
 		return
@@ -458,6 +573,9 @@ func (m *Manager) checkLocked(ctx context.Context) {
 		m.verdict = NameSuffixed
 	}
 	switch {
+	case m.verdict == NameSuffixed && m.pin.Closed == nil && m.held:
+		m.log.Error("the control plane named this node with a suffix: its temporary name, under which a handoff holds it, is another node's; tailnet access is closed. Delete that node in the tailnet's admin console, rename this one to its temporary name, then re-pin on the host (varlatch tailnet repin --yes)",
+			"name", st.DNSName, "temporaryName", m.hostname)
 	case m.verdict == NameSuffixed && m.pin.Closed == nil:
 		m.log.Error("the control plane named this node with a suffix: its configured name is held by another node (after a restore, the old installation's); tailnet access is closed. Delete that node in the tailnet's admin console, rename this one to its configured name, then re-pin on the host (varlatch tailnet repin --yes)",
 			"name", st.DNSName, "hostname", m.hostname)
@@ -650,10 +768,6 @@ func (m *Manager) Repin(ctx context.Context, adopt bool, offer string, record fu
 	return old, next, nil
 }
 
-// UntaggedWarning is the listeners report's warning for a node on a
-// self-hosted control server that joined with no tags.
-const UntaggedWarning = "The node joined its self-hosted control server with no tags: its tags are its pre-auth key's, which must carry tailnet_tags. Enrol it again with a tagged key (headscale preauthkeys create --tags <tailnet_tags>)."
-
 // Report is the listeners report (TailnetListenerReport), as GET
 // /v1/installation/listeners answers it.
 func (m *Manager) Report() any {
@@ -715,6 +829,9 @@ func (m *Manager) reportLocked() jsvalue.Object {
 		switch {
 		case st.BackendState != "Running":
 			node = check("fail", "NOT_RUNNING")
+		case m.tagsDiffer && m.verdict == "" && m.pin != nil && m.pin.Closed == nil:
+			// On its tailnet, but not with tailnet_tags.
+			node = check("fail", "TAGS_DIFFER")
 		case !m.open:
 			node = check("fail", "OTHER_TAILNET")
 		case m.browser != nil && st.DNSName != m.browserHostLocked():
@@ -737,8 +854,15 @@ func (m *Manager) reportLocked() jsvalue.Object {
 	if len(details) > 0 {
 		observed = append(observed, jsvalue.Member{Key: "node", Value: details})
 	}
-	if m.untagged {
-		observed = append(observed, jsvalue.Member{Key: "warnings", Value: []any{UntaggedWarning}})
+	var warnings []any
+	if d := m.tagsDetailLocked(); d != "" {
+		warnings = append(warnings, d)
+	}
+	for _, w := range m.warningsLocked() {
+		warnings = append(warnings, w)
+	}
+	if len(warnings) > 0 {
+		observed = append(observed, jsvalue.Member{Key: "warnings", Value: warnings})
 	}
 	return jsvalue.Object{{Key: "configured", Value: configured}, {Key: "observed", Value: observed}}
 }

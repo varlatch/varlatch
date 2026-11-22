@@ -27,6 +27,7 @@ import {
   assetProblems,
   cliAsset,
   cosignBinaryFor,
+  isPendingCli,
   parseSha256Sums,
   releaseAssetUrl,
   releaseIdentity,
@@ -214,6 +215,11 @@ export async function resolveCli(spec, { repoRoot, workDir, cacheDir = defaultCa
   const pinned = Object.hasOwn(clients.cli, spec) ? clients.cli[spec] : undefined;
   if (!pinned) {
     const error = new Error(`--cli ${spec}: not a pinned CLI; clients.json pins ${Object.keys(clients.cli).join(", ")} (or use --cli source)`);
+    error.usage = true;
+    throw error;
+  }
+  if (isPendingCli(pinned)) {
+    const error = new Error(`--cli ${spec}: pending release (${pinned.pending}); pin its commit and sha256 in scripts/conformance/clients.json once published`);
     error.usage = true;
     throw error;
   }

@@ -468,7 +468,7 @@ judged:
 
 ```sh
 node scripts/conformance/run.mjs --target go-binary:<path> --cli source \
-  --gate --walkthrough docs/evidence/<walkthrough record> [--recent-cli-report <report.json>]
+  --gate [--walkthrough docs/evidence/<walkthrough record>] [--recent-cli-report <report.json>]
 ```
 
 Besides passing as an ordinary run, a gate run must have:
@@ -480,8 +480,10 @@ Besides passing as an ordinary run, a gate run must have:
   with its reason. An `open` replacement fails the gate;
 - the browser-walkthrough evidence file (G1's full browser walkthrough,
   done by hand and kept under `docs/evidence/`), named with
-  `--walkthrough`. The run stops before the target starts when it is
-  missing; the report records its path and hash;
+  `--walkthrough`. Passing a missing file stops before the target starts;
+  omitting `--walkthrough` still runs every suite and fails the gate on
+  missing walkthrough evidence alongside any open entries. The report
+  records its path and hash;
 - every suite (no `--suite`);
 - the target's record of what it ran (`implementation` in the report):
   for `ts-source` the commit, whether the tree was exactly that commit, and
@@ -525,21 +527,26 @@ shows this on the inventory as it stands.
 (`gh workflow run conformance.yml --ref <branch>`), on GitHub-hosted
 runners with only the read-only job token:
 
-| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` |
-| --- | --- | --- | --- |
-| `ts-source` | ✓ | ✓ | ✓ |
-| `ts-release:0.22.0` | ✓ | ✓ | ✓ |
-| `go-binary` | ✓ | | |
+| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` | CLI `0.22.4` | CLI `0.23.0` | CLI `go` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ts-source` | ✓ | ✓ | ✓ | | | ✓ |
+| `ts-release:0.22.0` | ✓ | ✓ | ✓ | | | ✓ |
+| `go-binary` | ✓ | | | ✓ | ✓ | |
 
 The `images` job builds the source images once (`source-images.mjs`) and
-passes them to the `ts-source` cells as an artifact. The `go-binary` cell
-builds the dashboard and `varlatchd` from the checkout. Each cell is its own
-job, with its own stack (or server) on its own free ports, at most three at
-a time and 60 minutes each, and uploads its `conformance-report.json`
-(`conformance-report-<target>-cli-<cli>`, tokens masked as in the logs).
-`go.yml` also runs the `go-binary` target with the source CLI on every pull
-request that changes `go/` or the harness's `go-binary` pieces, in three
-shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
+passes them to the `ts-source` cells as an artifact. The `go-binary` cells
+build the dashboard and `varlatchd` from the checkout; the `0.22.4` and
+`0.23.0` cells cover ADR-0059 gate G2 (the last two TypeScript CLI releases
+against the Go server). Any future CLI entry marked `pending` in
+`clients.json` (without `commit` or `sha256`) is skipped in `cells` with a
+notice and activates automatically once its commit and hash are pinned. Each
+cell is its own job, with its own stack (or server) on its own free ports, at
+most three at a time and 60 minutes each, and uploads its
+`conformance-report.json` (`conformance-report-<target>-cli-<cli>`, tokens
+masked as in the logs). `go.yml` also runs the `go-binary` target with the
+source CLI and the Go CLI on every pull request that changes `go/` or the
+harness's `go-binary` pieces, in three shards ([Shards](#shards)), as
+`ci.yml`'s `e2e` job runs `ts-source`.
 
 ## Clients
 
@@ -548,9 +555,13 @@ shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
 checkout: `cd go && go build -o <path> ./cmd/varlatch`), or a
 released TypeScript CLI pinned in `clients.json` by version, release commit
 and the hash of `varlatch-cli-<version>.cjs`, never "latest". The pins now
-are 0.21.0 and 0.22.0; a later release is added by hand (its commit from
-`gh api repos/varlatch/varlatch/commits/v<V> --jq .sha`, its hash from the
-verified `SHA256SUMS`).
+are 0.21.0, 0.22.0, 0.22.4, and 0.23.0; a later release is added by hand (its
+commit from `gh api repos/varlatch/varlatch/commits/v<V> --jq .sha`, its hash
+from the verified `SHA256SUMS`). An unreleased future entry may temporarily
+use `{ "pending": "<reason>" }` (with no `commit` or `sha256`) so the weekly
+matrix skips it with a notice; selecting a `pending` version directly with
+`run.mjs --cli <version>` fails closed with a usage error and never downloads
+anything.
 
 Before the target starts, a pinned CLI is downloaded from its GitHub release
 into a new, empty directory and verified as

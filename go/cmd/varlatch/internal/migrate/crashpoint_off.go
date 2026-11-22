@@ -8,3 +8,6 @@ package migrate
 // at (crashpoint.go, a build with the crashpoint tag); in every other build
 // it does nothing, and the compiler removes the calls.
 func crashPoint(string) {}
+
+// seamPaths: a release makes a host target at setup's place only.
+const seamPaths = false

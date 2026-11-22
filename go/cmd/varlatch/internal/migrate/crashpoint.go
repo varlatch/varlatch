@@ -7,9 +7,6 @@ package migrate
 import (
 	"fmt"
 	"os"
-	"regexp"
-	"strconv"
-	"strings"
 )
 
 // Crash points for G5's interruption gate (go test -tags g5, which builds
@@ -38,18 +35,14 @@ import (
 //     volume's removal and its journal entry; "finish go discarded" once
 //     Go's copy is discarded after a reverse.
 //
-// The gate's stand-in source and target need two more of this build only:
-// VARLATCH_MIGRATE_PIN=<repository>@<digest> pins the stand-in's image (a
-// release pins 0.23.0's, and refuses every source until it is published),
-// and VARLATCH_MIGRATE_IMAGE_USER=<uid>:<gid> is the image's user (the gate
-// does not run as root). A release has none of this.
+// The gate's stand-in source and target also take testonly.go's overrides
+// (the image pin and the image's user), which this build has too. A
+// release has none of this.
 
 var cp struct {
 	log   *os.File
 	pause string
 }
-
-var pinText = regexp.MustCompile(`^([^@\s]+)@(sha256:[0-9a-f]{64})$`)
 
 func init() {
 	if path := os.Getenv("VARLATCH_MIGRATE_LOG"); path != "" {
@@ -60,22 +53,15 @@ func init() {
 		cp.log = f
 	}
 	cp.pause = os.Getenv("VARLATCH_MIGRATE_PAUSE")
-	if m := pinText.FindStringSubmatch(os.Getenv("VARLATCH_MIGRATE_PIN")); m != nil {
-		testPin = &imagePin{Repository: m[1], Digest: m[2]}
-	}
-	if u := os.Getenv("VARLATCH_MIGRATE_IMAGE_USER"); u != "" {
-		a, b, _ := strings.Cut(u, ":")
-		uid, err1 := strconv.ParseUint(a, 10, 32)
-		gid, err2 := strconv.ParseUint(b, 10, 32)
-		if err1 != nil || err2 != nil {
-			panic("VARLATCH_MIGRATE_IMAGE_USER is <uid>:<gid>")
-		}
-		ImageUser = Owner{UID: uint32(uid), GID: uint32(gid)}
-	}
 }
 
 // crashPoint logs point, and blocks for good when it is the one to pause
 // at.
+// seamPaths: the crashpoint build makes a host target under a test root
+// (the CLI's VARLATCH_MIGRATE_TARGET_ROOT), so a journal may name its
+// configuration there.
+const seamPaths = true
+
 func crashPoint(point string) {
 	if cp.log == nil {
 		return

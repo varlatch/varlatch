@@ -343,11 +343,35 @@ func fakeTSCLI(args []string) int {
 // fakeSystemctl starts and stops the target's varlatchd (G5_STATE's
 // service.conf and varlatchd), as its unit would.
 func fakeSystemctl(args []string) int {
+	if len(args) == 1 && args[0] == "daemon-reload" {
+		return 0
+	}
 	if len(args) != 2 {
 		return 1
 	}
 	pid := readPID()
 	switch args[0] {
+	case "enable":
+		return okOr(os.WriteFile(state("unit-enabled"), nil, 0o600))
+	case "disable":
+		if err := os.Remove(state("unit-enabled")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return okOr(err)
+		}
+		return 0
+	case "is-enabled":
+		if _, err := os.Stat(state("unit-enabled")); err == nil {
+			fmt.Println("enabled")
+			return 0
+		}
+		fmt.Println("disabled")
+		return 1
+	case "is-active":
+		if pid > 0 && alive(pid) {
+			fmt.Println("active")
+			return 0
+		}
+		fmt.Println("inactive")
+		return 3
 	case "start":
 		if pid > 0 && alive(pid) {
 			return 0
@@ -386,6 +410,10 @@ func startService(bin, conf string) error {
 	defer log.Close()
 	cmd := exec.Command(bin, "serve", "--config", conf)
 	cmd.Stdout, cmd.Stderr = log, log
+	// The unit hands a target made setup's way its keys as credentials.
+	if b, err := os.ReadFile(state("credentials-dir")); err == nil {
+		cmd.Env = append(os.Environ(), "CREDENTIALS_DIRECTORY="+strings.TrimSpace(string(b)))
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return err
@@ -444,6 +472,12 @@ type world struct {
 	origin, listen    string
 	outputs           [][]byte
 	installationID    string
+	// extraEnv is the CLI's added environment (a target made under a test
+	// root, maketarget_test.go).
+	extraEnv []string
+	// client asks the public URL (http.DefaultClient when nil; a TLS
+	// origin's own client in maketarget_test.go).
+	client *http.Client
 }
 
 // shared is built once: the binaries, the seed and its decision table.
@@ -631,6 +665,25 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(http.StatusBadGateway)
 		return
 	}
+	// A container a failed start left without a network (web-netless): its
+	// nginx cannot resolve varlatchd, 502 until it is recreated.
+	if _, err := os.Stat(filepath.Join(w.stateDir, "web-netless")); err == nil {
+		rw.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	// In a crash loop (web-restarting): 502 until it is recreated.
+	if _, err := os.Stat(filepath.Join(w.stateDir, "web-restarting")); err == nil {
+		rw.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	// Started, not yet listening (G5_WEB_LATE): 502, a request fewer each time.
+	if b, err := os.ReadFile(filepath.Join(w.stateDir, "web-late")); err == nil {
+		if n, _ := strconv.Atoi(strings.TrimSpace(string(b))); n > 0 {
+			_ = os.WriteFile(filepath.Join(w.stateDir, "web-late"), []byte(strconv.Itoa(n-1)), 0o600)
+			rw.WriteHeader(http.StatusBadGateway)
+			return
+		}
+	}
 	b, _ := os.ReadFile(filepath.Join(w.stateDir, "gate.json"))
 	if len(b) > 0 {
 		rw.WriteHeader(http.StatusServiceUnavailable)
@@ -679,6 +732,7 @@ func (w *world) runArgs(pause string, args []string) int {
 	cmd.Env = append(os.Environ(), "PATH="+shared.fakebin+":"+os.Getenv("PATH"), "G5_STATE="+w.stateDir, "VARLATCH_MIGRATE_PIN="+shared.pin,
 		"VARLATCH_MIGRATE_LOG="+log, "VARLATCH_MIGRATE_PAUSE="+pause, "TMPDIR="+w.stateDir,
 		fmt.Sprintf("VARLATCH_MIGRATE_IMAGE_USER=%d:%d", os.Getuid(), os.Getgid()))
+	cmd.Env = append(cmd.Env, w.extraEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
@@ -763,7 +817,11 @@ func (w *world) phases() (string, string) {
 // (the target's /v1/meta, every other route 503), "target-open", or "none".
 func (w *world) answers() string {
 	get := func(p string) (int, string) {
-		res, err := http.Get(w.origin + p)
+		c := w.client
+		if c == nil {
+			c = http.DefaultClient
+		}
+		res, err := c.Get(w.origin + p)
 		if err != nil {
 			return 0, ""
 		}
@@ -942,6 +1000,76 @@ func TestG5Interruptions(t *testing.T) {
 				w.noSecrets()
 			})
 		}
+	}
+}
+
+// An abort in the transfer whose dashboard listens a little after it is
+// started (7.8b rehearsal, run r12): one --abort, and the old installation
+// answers at its address as soon as it says it was reopened.
+func TestG5AnAbortWaitsForTheDashboard(t *testing.T) {
+	w := newWorld(t, false)
+	w.useState()
+	before := w.sourceHash()
+	if code := w.run("transfer started"); code != -1 {
+		t.Fatalf("not killed: %d", code)
+	}
+	w.expect("killed at transfer started", "transfer", "transfer", "target-gated", "migration")
+	t.Setenv("G5_WEB_LATE", "3")
+	if code := w.run("", "--abort"); code != 0 {
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expect("aborted", "released", "released", "source", "")
+	if after := w.sourceHash(); after != before {
+		t.Error("the source's data changed")
+	}
+	w.noSecrets()
+}
+
+// An abort in the transfer after the dashboard's start failed (its port
+// held, 7.8b rehearsal run r13): Docker leaves that container without a
+// network, so starting it again serves nothing; migrate recreates it, and
+// the old installation answers.
+func TestG5AnAbortRecreatesANetworklessDashboard(t *testing.T) {
+	w := newWorld(t, false)
+	w.useState()
+	if code := w.run("transfer started"); code != -1 {
+		t.Fatalf("not killed: %d", code)
+	}
+	if err := os.WriteFile(filepath.Join(w.stateDir, "web-netless"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.run("", "--abort"); code != 0 {
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expect("aborted", "released", "released", "source", "")
+	w.noSecrets()
+}
+
+// An abort in the transfer whose dashboard runs but serves nothing: left
+// without a network by a failed start and started since (its container
+// "running"), or caught running in a crash loop. Started as it is, it
+// would answer 502 at every --resume; migrate recreates it.
+func TestG5AnAbortRecreatesARunningBrokenDashboard(t *testing.T) {
+	for _, broken := range []string{"web-netless", "web-restarting"} {
+		t.Run(broken, func(t *testing.T) {
+			w := newWorld(t, false)
+			w.useState()
+			if code := w.run("transfer started"); code != -1 {
+				t.Fatalf("not killed: %d", code)
+			}
+			// Started again by hand while the target still runs.
+			if err := os.WriteFile(filepath.Join(w.stateDir, broken), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(w.stateDir, "web-stopped")); err != nil {
+				t.Fatal(err)
+			}
+			if code := w.run("", "--abort"); code != 0 {
+				t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			w.expect("aborted", "released", "released", "source", "")
+			w.noSecrets()
+		})
 	}
 }
 

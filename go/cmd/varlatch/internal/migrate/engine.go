@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -96,6 +97,12 @@ type Engine struct {
 	BEK []byte
 	// Prober asks the public URL which installation serves it.
 	Prober Prober
+	// Maker makes a host target that is not there (slice 7.4e); nil: the
+	// target must be there.
+	Maker TargetMaker
+	// Tailnet is the tailnet handoff's authority (tailnet.go); nil when
+	// the source serves no tailnet address.
+	Tailnet *TailnetOptions
 	// pin replaces the published image's (the tests' fakes only).
 	pin *imagePin
 	// sleep waits between probes (time.Sleep; the tests' clock).
@@ -180,6 +187,9 @@ func (e *Engine) Run(ctx context.Context, dryRunOnly bool) (*Journal, error) {
 		return nil, err
 	}
 	switch {
+	case j != nil && j.Phase == Released && j.CleanupPending():
+		return j, fmt.Errorf("the migration %s was undone, but what migrate made of the target (%s) is not all removed: varlatch migrate --abort removes it before a new migration (%s)",
+			j.ID, strings.Join(j.Created.Made, ", "), e.removalHelp(j))
 	case j == nil, j.Phase == Released, j.Stopped && slices.Contains(beforeBarrier, j.Phase):
 	case j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is open: this installation was migrated (varlatch migrate --status)", j.ID)
@@ -211,6 +221,26 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if err := e.pinned(src); err != nil {
 		return prev, err
 	}
+	ing, err := e.Source.Ingress(ctx)
+	if err != nil {
+		return prev, err
+	}
+	id := ""
+	if reuse {
+		id = prev.ID
+	} else if id, err = newID(); err != nil {
+		return prev, err
+	}
+	// A target migrate makes is never on a tailnet: refused before
+	// anything is made or backed up (refuseTailnetMade).
+	if err := e.refuseTailnetMade(ctx); err != nil {
+		return prev, err
+	}
+	// The target, made when it is not there (slice 7.4e).
+	created, err := e.makeTarget(ctx, prev, id, src, ing, dryRunOnly)
+	if err != nil {
+		return prev, err
+	}
 	tgt, st, err := e.Target.Describe(ctx)
 	if err != nil {
 		return prev, err
@@ -219,30 +249,26 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if head == nil && st.Database {
 		return prev, fmt.Errorf("the target's data directory %s holds a database and no migration journal: a migration imports into an empty one only", tgt.DataDir)
 	}
-	ing, err := e.Source.Ingress(ctx)
-	if err != nil {
-		return prev, err
-	}
 	origin, err := e.sameAddress(ing, tgt)
 	if err != nil {
 		return prev, err
 	}
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
-		Drain: int64(e.drain() / time.Second), Ingress: e.Options.Ingress, Transfer: &TransferRecord{Origin: origin}, History: []Step{}}
+		Drain: int64(e.drain() / time.Second), Ingress: e.Options.Ingress, Transfer: &TransferRecord{Origin: origin}, History: []Step{}, Created: created}
 	if e.Options.Ingress == Proxy {
 		j.Transfer.Publish = ing.WebAddress
 	}
 	if reuse {
 		// The same migration goes on only to the same target.
-		if prev.Target.Config != tgt.Config || prev.Target.DataDir != tgt.DataDir {
+		// (A journal of a run killed while it made the target records none
+		// yet.)
+		if prev.Target.Config != "" && (prev.Target.Config != tgt.Config || prev.Target.DataDir != tgt.DataDir) {
 			return prev, fmt.Errorf("the migration %s's target is %s (data directory %s), not %s (data directory %s): it goes on to its own target only",
 				prev.ID, prev.Target.Config, prev.Target.DataDir, tgt.Config, tgt.DataDir)
 		}
-		j.ID = prev.ID
 		j.History = prev.History
-	} else if j.ID, err = newID(); err != nil {
-		return prev, err
 	}
+	j.ID = id
 	// Another migration's journal: one undone (released), or reversed with
 	// its database discarded (rolled back, then finished with its old
 	// data deleted), gives way to a new one.
@@ -261,6 +287,12 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 		return j, e.stopBefore(ctx, j, err)
 	}
 	if err := e.preflight(ctx, j); err != nil {
+		return j, e.stopBefore(ctx, j, err)
+	}
+	if err := e.prepareTailnet(ctx, j); err != nil {
+		if errors.Is(err, errHandoffUnderway) {
+			return j, err
+		}
 		return j, e.stopBefore(ctx, j, err)
 	}
 	report, err := e.dryRun(ctx, j)
@@ -294,20 +326,14 @@ func (e *Engine) stopBefore(ctx context.Context, j *Journal, cause error) error 
 }
 
 // pinned refuses a source that is not the last TypeScript release's
-// published image: its registry digest, of its own repository, must be the
-// pinned one. While no digest is pinned (0.23.0 not published yet), every
-// source is refused.
+// published image: its registry digest, of the pinned repository, must be
+// the pinned one.
 func (e *Engine) pinned(src SourceInfo) error {
-	pin := imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
-	if testPin != nil {
-		pin = *testPin
-	}
+	pin := releasePin()
 	if e.pin != nil {
 		pin = *e.pin
 	}
 	switch {
-	case pin.Digest == "":
-		return fmt.Errorf("%s is not yet published; this varlatch cannot migrate yet (it pins the release's image by its digest)", LastTypeScriptRelease)
 	case src.Digest == "":
 		return errors.New("the source's image is not pinned by a registry digest: a migration starts from the last TypeScript release's published image only")
 	case src.DigestRepository != pin.Repository || src.Digest != pin.Digest:
@@ -381,10 +407,17 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 		return fmt.Errorf("preflight: the source's Root KEK: %w", err)
 	}
 	defer clear(kek)
+	// The keys' files, in a target migrate made, are journalled as its
+	// before they are written (struck after, when found the same there).
+	added, err := e.recordKeys(j)
+	if err != nil {
+		return err
+	}
 	kekState, bekState, err := e.Target.Keys(ctx, kek, e.BEK)
 	if err != nil {
 		return fmt.Errorf("preflight: the target's keys: %w", err)
 	}
+	e.strikeKeys(j, added, kekState, bekState)
 	j.Preflight = &PreflightRecord{ArchiveID: archive, VerifiedAt: e.now().UTC().Format(time.RFC3339Nano), RootKEK: kekState, BEK: bekState}
 	return e.enter(ctx, j, Preflight)
 }
@@ -492,7 +525,7 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 	r := &DryRunReport{At: checked.UTC().Format(time.RFC3339Nano), ExportMs: exportedAt.Sub(start).Milliseconds(),
 		ImportMs: imported.Sub(exportedAt).Milliseconds(), CheckMs: checked.Sub(imported).Milliseconds(),
 		DrainMs: e.drain().Milliseconds(), MaxDowntimeMs: e.maxDowntime().Milliseconds(), Copy: cp, Checks: &checks,
-		TransferMs: transferEstimate(j.Ingress).Milliseconds(), Ingress: j.Ingress}
+		TransferMs: (transferEstimate(j.Ingress) + tailnetEstimate(j.Tailnet)).Milliseconds(), Ingress: j.Ingress}
 	r.ProjectedMs = r.DrainMs + r.ExportMs + r.ImportMs + r.CheckMs + r.TransferMs
 	r.Fits = r.ProjectedMs <= r.MaxDowntimeMs
 	j.DryRun = r
@@ -589,6 +622,9 @@ func (e *Engine) cutover(ctx context.Context, j *Journal) (*Journal, error) {
 		return j, e.undo(ctx, j, err)
 	}
 	if err := e.transfer(ctx, j); err != nil {
+		return j, err
+	}
+	if err := e.switchTailnet(ctx, j); err != nil {
 		return j, err
 	}
 	return j, e.switchAndOpen(ctx, j)
@@ -722,17 +758,40 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	// failed) is resumed as an undo, never as what it undid.
 	if !j.Undoing {
 		j.Undoing = true
-		if err := e.save(ctx, j); err != nil {
-			return fmt.Errorf("%w; undoing could not start: %v", cause, err)
+		var save error
+		if e.targetUnmade(j) {
+			save = writeJournal(e.Source.Dir(), j)
+		} else {
+			save = e.save(ctx, j)
+		}
+		if save != nil {
+			return fmt.Errorf("%w; undoing could not start: %v", cause, save)
 		}
 	}
-	// In the transfer: the target stops first, then the barrier is lifted,
-	// then the source's ingress starts (returnAddress says why in that
-	// order). With the ingress stopped, nothing reaches the source between
-	// the two.
+	// In the transfer: the tailnet name goes back first, then the target
+	// stops, then the barrier is lifted, then the source's ingress starts
+	// (returnAddress says why in that order). With the ingress stopped,
+	// nothing reaches the source between the two. While the name is not
+	// back, neither the target nor the address moves: --resume goes on.
 	var problems []error
+	// nameBack: the tailnet name is back with the source, or none moved.
+	// stopped: the target is stopped, or nothing of it was asked to stop.
+	nameBack, stopped := true, true
 	if from == Transfer {
-		problems = append(problems, e.stopTargetForUndo(ctx)...)
+		// The tailnet name first, then the address (decision 12's reverse
+		// order); an address is never given back while the name is not.
+		if err := e.unwindTailnet(ctx, j); errors.Is(err, ErrAwaitingOperator) {
+			// The operator's step first (exit 75); --resume goes on with
+			// the undo.
+			return fmt.Errorf("%w; undoing waits: %w", cause, err)
+		} else if err != nil {
+			problems = append(problems, err)
+			nameBack = false
+		} else {
+			stop := e.stopTargetForUndo(ctx)
+			stopped = len(stop) == 0
+			problems = append(problems, stop...)
+		}
 	}
 	// open: the source is behind no gate now. Otherwise closed says why its
 	// ingress is not started.
@@ -755,29 +814,87 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	default:
 		open = true
 	}
-	if from == Transfer {
-		// Coolify's domain goes back by hand, whatever the gate.
-		if open || j.Ingress == Coolify {
+	if from == Transfer && nameBack {
+		switch {
+		case j.Ingress == Coolify:
+			// Coolify's domain goes back by hand, whatever the gate or the
+			// target: there is nothing of this host's to start or wait for.
 			problems = append(problems, e.returnAddress(ctx, j)...)
-		} else {
+		case !stopped:
+			// The target may still hold the address (an image's service
+			// the operator stops, a unit that would not stop): the source's
+			// ingress would collide with it or race it, and a wait would
+			// probe the target. Left for --resume once it is stopped.
+			problems = append(problems, fmt.Errorf("the source's %s is not started again while the target may still serve the address", ingressPart(j.Ingress)))
+		case !open:
 			problems = append(problems, fmt.Errorf(closed, ingressPart(j.Ingress)))
+		default:
+			back := e.returnAddress(ctx, j)
+			problems = append(problems, back...)
+			// The old installation is reopened only once it answers at its
+			// address: its ingress started is not yet its dashboard
+			// listening (7.8b rehearsal, run r12). A journal that records
+			// no address (one from before the transfer record) has none to
+			// check.
+			switch {
+			case len(back) > 0:
+			case j.Transfer == nil || j.Transfer.Origin == "":
+				e.say("The source's %s was started again; the journal records no address to check it at.", ingressPart(j.Ingress))
+			default:
+				want := ""
+				if j.Copy != nil {
+					want = j.Copy.InstallationID
+				}
+				if err := e.waitForTypeScript(ctx, j, want); err != nil {
+					problems = append(problems, fmt.Errorf("the source's %s was started again, but %w", ingressPart(j.Ingress), err))
+					if !j.UndoUnanswered {
+						j.UndoUnanswered = true
+						if err := e.save(ctx, j); err != nil {
+							problems = append(problems, fmt.Errorf("recording that the source did not answer: %w", err))
+						}
+					}
+				}
+			}
 		}
 	}
-	if err := e.discard(ctx, j); err != nil {
-		problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
+	// The target's database is discarded once the name is back: while it
+	// is not, a --resume may start the target again, which needs it. A
+	// target that may still run keeps it too: discarding it would only say
+	// to stop the target first, again. A target migrate was making and is
+	// not there has none.
+	unmade := e.targetUnmade(j)
+	if !unmade && nameBack && stopped {
+		if err := e.discard(ctx, j); err != nil {
+			problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
+		}
 	}
 	if len(problems) > 0 {
 		// Not released: the journal stays where it was, for --resume.
 		return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, errors.Join(problems...))
 	}
 	j.Undone = &UndoneRecord{From: from, Why: cause.Error(), Released: released, At: e.now().UTC().Format(time.RFC3339Nano)}
-	j.Undoing = false
+	j.Undoing, j.UndoUnanswered = false, false
+	if unmade {
+		// The target was being made: only the source's journal.
+		j.enter(Released, e.now())
+		if err := writeJournal(e.Source.Dir(), j); err != nil {
+			return err
+		}
+		if err := e.undoMade(j); err != nil {
+			return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --abort (or --resume) finishes it (%s)", cause, err, e.removalHelp(j))
+		}
+		return fmt.Errorf("%w; what migrate made of the target is removed, and the old installation runs unchanged", cause)
+	}
 	if err := e.enter(ctx, j, Released); err != nil {
 		did := "the barrier lifted, the target's database discarded"
 		if from == Transfer {
 			did = "the target stopped, the barrier lifted, the address returned, the target's database discarded"
 		}
 		return fmt.Errorf("%w; it was undone (%s), but a journal could not say released: %v; varlatch migrate --resume finishes it", cause, did, err)
+	}
+	// The target migrate made goes too, once both journals say released.
+	if err := e.undoMade(j); err != nil {
+		return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --abort (or --resume) finishes it (%s)", cause, err, e.removalHelp(j))
 	}
 	return fmt.Errorf("%w; the barrier was lifted and the old installation reopened unchanged", cause)
 }
@@ -859,6 +976,9 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 		if err := e.transfer(ctx, j); err != nil {
 			return j, err
 		}
+		if err := e.switchTailnet(ctx, j); err != nil {
+			return j, err
+		}
 		return j, e.switchAndOpen(ctx, j)
 	case j.Phase == Switched:
 		e.say("The migration %s was switched: it goes on to open.", j.ID)
@@ -869,7 +989,7 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	case j.Phase == Open:
 		return j, e.finishOpen(ctx, j)
 	case j.Phase == Released:
-		return j, e.finishReleased(ctx, j)
+		return j, e.removalFailed(j, e.finishReleased(ctx, j))
 	}
 	return j, nil
 }
@@ -936,19 +1056,26 @@ func (e *Engine) waitForHuman(err error, then string) error {
 // finishReleased finishes an undo the source's journal records: the
 // target's journal released (which removes the transfer's gate).
 func (e *Engine) finishReleased(ctx context.Context, j *Journal) error {
-	_, st, err := e.Target.Describe(ctx)
-	if err != nil {
-		return err
+	if j.Created != nil && j.Created.Undone != "" {
+		return nil // the target migrate made is gone
 	}
-	if st.Journal == nil || st.Journal.ID != j.ID || (st.Journal.Phase == Released && !st.Gate) {
-		return nil
-	}
-	if st.Running {
-		if err := e.Target.Stop(ctx); err != nil {
-			return e.waitForHuman(err, "Then run varlatch migrate --resume (or --abort) again.")
+	if j.Created == nil || e.Maker == nil || !e.Maker.Missing() {
+		_, st, err := e.Target.Describe(ctx)
+		if err != nil {
+			return err
+		}
+		if st.Journal != nil && st.Journal.ID == j.ID && !(st.Journal.Phase == Released && !st.Gate) {
+			if st.Running {
+				if err := e.Target.Stop(ctx); err != nil {
+					return e.waitForHuman(err, "Then run varlatch migrate --resume (or --abort) again.")
+				}
+			}
+			if err := e.Target.WriteJournal(ctx, j); err != nil {
+				return err
+			}
 		}
 	}
-	return e.Target.WriteJournal(ctx, j)
+	return e.undoMade(j)
 }
 
 // Abort is `varlatch migrate --abort`: a migration not yet switched
@@ -968,6 +1095,10 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 	switch {
 	case j == nil:
 		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to abort", e.Source.Dir())
+	case j.Phase == Released && j.CleanupPending():
+		// Undone, but what migrate made of the target is not all removed:
+		// removing it goes on.
+		return j, e.removalFailed(j, e.finishReleased(ctx, j))
 	case j.Phase == Released:
 		return j, nil
 	case slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer:
@@ -987,7 +1118,7 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("the migration %s is %s: past its switch it goes forward only (varlatch migrate --resume)", j.ID, j.Phase)
 	}
 	err = e.undo(ctx, j, errors.New("aborted by the operator"))
-	if j.Phase == Released {
+	if j.Phase == Released && !j.CleanupPending() {
 		return j, nil
 	}
 	return j, err

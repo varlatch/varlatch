@@ -187,6 +187,29 @@ func volumeThere(name string) bool {
 		slices.Contains([]string{"postgres-data", "convex-data", "varlatch-state", "tailscale-state", "tailscale-socket", "caddy-data", "caddy-config"}, base)
 }
 
+// webLate: as a real dashboard, started it listens a little later
+// (G5_WEB_LATE requests answered 502 first).
+func webLate() error {
+	if late := os.Getenv("G5_WEB_LATE"); late != "" {
+		return os.WriteFile(state("web-late"), []byte(late), 0o600)
+	}
+	return nil
+}
+
+// containerFormat is what varlatch migrate inspects of an ingress
+// container (internal/migrate, containerServes).
+const containerFormat = "{{.State.Status}} {{.State.Restarting}} {{.RestartCount}} {{len .NetworkSettings.Networks}}"
+
+// brokenContainer names the state files of a service's container left
+// without a network and in a crash loop: the dashboard's web-netless and
+// web-restarting, <svc>-netless and <svc>-restarting otherwise.
+func brokenContainer(svc string) [2]string {
+	if svc == "varlatch-web" {
+		svc = "web"
+	}
+	return [2]string{svc + "-netless", svc + "-restarting"}
+}
+
 // migrateRunsAgain reports whether `docker compose start|up` of these
 // services runs the one-off varlatch-migrate again: each of varlatchd,
 // the dashboard (on varlatchd) and Caddy (on the dashboard) depends on it
@@ -203,12 +226,28 @@ func migrateRunsAgain(args []string) bool {
 	return false
 }
 
+// sharedNetworkDown reports whether these docker arguments start varlatchd,
+// or a one-off container of its, without its dependencies while it runs in
+// the Tailscale sidecar's network (G5_SHARED_NAMESPACE) and the sidecar is
+// stopped.
+func sharedNetworkDown(args []string) bool {
+	if os.Getenv("G5_SHARED_NAMESPACE") == "" || !stopped("tailscale") || len(args) < 3 || args[0] != "compose" || !slices.Contains(args, "--no-deps") {
+		return false
+	}
+	return (args[1] == "run" || args[1] == "up") && slices.Contains(args, "varlatchd")
+}
+
 // fakeDockerReverse answers the commands a reverse migration gives; ok is
 // false for the others (fakeDocker's).
 func fakeDockerReverse(args []string) (int, bool) {
 	fail := func(f string, a ...any) (int, bool) { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1, true }
 	j := strings.Join(args, " ")
 	logCall(j)
+	if sharedNetworkDown(args) {
+		// As Docker: a container in a stopped container's network
+		// namespace does not start.
+		return fail("Error response from daemon: cannot join network namespace of a non running container: g5-installation-tailscale-1")
+	}
 	switch {
 	case len(args) >= 3 && args[0] == "compose" && (args[1] == "start" || args[1] == "up") && migrateRunsAgain(args[2:]) && readGate() != nil:
 		// As the real Compose: starting a service that depends on the
@@ -222,6 +261,13 @@ func fakeDockerReverse(args []string) (int, bool) {
 		for _, svc := range args[2:] {
 			if err := setStopped(svc, args[1] == "stop"); err != nil {
 				return fail("%v", err)
+			}
+			// `start` reuses the stopped container: one a failed start
+			// left without a network (web-netless) stays so.
+			if svc == "varlatch-web" && args[1] == "start" {
+				if err := webLate(); err != nil {
+					return fail("%v", err)
+				}
 			}
 		}
 		return 0, true
@@ -246,6 +292,20 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 			if err := setStopped(svc, false); err != nil {
 				return fail("%v", err)
+			}
+			if slices.Contains(args, "--force-recreate") {
+				// A new container: its network attached again, its crash
+				// loop (and restart count) gone.
+				for _, f := range brokenContainer(svc) {
+					if err := os.Remove(state(f)); err != nil && !errors.Is(err, os.ErrNotExist) {
+						return fail("%v", err)
+					}
+				}
+			}
+			if svc == "varlatch-web" {
+				if err := webLate(); err != nil {
+					return fail("%v", err)
+				}
 			}
 		}
 		return 0, true
@@ -299,11 +359,37 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 		}
 		return 0, true
+	case len(args) == 5 && args[0] == "compose" && args[1] == "ps" && args[2] == "-a" && args[3] == "-q":
+		// A service's one container, running or not.
+		fmt.Println("g5-" + args[4] + "-1")
+		return 0, true
+	case len(args) == 4 && args[0] == "inspect" && args[1] == "--format" && args[2] == containerFormat:
+		// As Docker: a container a failed start left without a network
+		// (<svc>-netless) runs with none, and one in a crash loop
+		// (<svc>-restarting) is caught running, its restart count up.
+		svc := strings.TrimSuffix(strings.TrimPrefix(args[3], "g5-"), "-1")
+		status, networks, restarts := "running", 1, 0
+		if stopped(svc) {
+			status = "exited"
+		}
+		files := brokenContainer(svc)
+		if _, err := os.Stat(state(files[0])); err == nil {
+			networks = 0
+		}
+		if _, err := os.Stat(state(files[1])); err == nil {
+			restarts = 7
+		}
+		fmt.Printf("%s false %d %d\n", status, restarts, networks)
+		return 0, true
 	case j == "compose ps --status running --services":
 		services := []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"}
 		if os.Getenv("G5_SHARED_NAMESPACE") != "" {
 			// The Tailscale topology: the sidecar varlatchd shares.
 			services = append(services, "tailscale")
+		}
+		if env, _ := os.ReadFile(".env"); bytes.Contains(env, []byte("docker-compose.caddy.yml")) {
+			// The public-ingress topology: Caddy in front.
+			services = append(services, "caddy")
 		}
 		for _, svc := range services {
 			if !stopped(svc) {
@@ -724,6 +810,50 @@ func TestG5RollbackWhole(t *testing.T) {
 		}
 		w.expectReverse("undone", undoneState)
 		w.noSecrets()
+	})
+	// varlatchd in the Tailscale sidecar's network (network_mode:
+	// service:tailscale), its one-off commands too. With the sidecar
+	// running, a reverse whose checks fail is undone as anywhere else
+	// (the TypeScript varlatchd started without its dependencies). With
+	// it stopped (the old node, after a tailnet handoff), --rollback is
+	// refused before anything, with the step to take: no barrier, no
+	// one-off container, no start.
+	t.Run("shared ns, the sidecar running", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		t.Setenv("G5_SHARED_NAMESPACE", "1")
+		if err := os.WriteFile(filepath.Join(w.stateDir, "corrupt-import"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone: Go serves again") {
+			t.Fatalf("--rollback with a faulty import: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if !slices.Contains(w.calls("docker-calls"), "compose up -d --no-deps varlatchd") {
+			t.Errorf("the TypeScript varlatchd was not started without its dependencies: %v", w.calls("docker-calls"))
+		}
+		w.expectReverse("undone", undoneState)
+		w.noSecrets()
+	})
+	t.Run("shared ns, the sidecar stopped", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		t.Setenv("G5_SHARED_NAMESPACE", "1")
+		if err := os.WriteFile(filepath.Join(w.stateDir, "stopped-tailscale"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := len(w.calls("docker-calls"))
+		code := w.rollback("", "--rollback")
+		out := string(w.outputs[len(w.outputs)-1])
+		if code != 1 || !strings.Contains(out, "start it by hand (docker compose up -d --no-deps tailscale") || !strings.Contains(out, "then varlatch migrate --rollback again") {
+			t.Fatalf("--rollback with the sidecar stopped: %d\n%s", code, out)
+		}
+		for _, c := range w.calls("docker-calls")[before:] {
+			if strings.HasPrefix(c, "compose run") || strings.HasPrefix(c, "compose up") || strings.HasPrefix(c, "compose start") || strings.HasPrefix(c, "compose stop") {
+				t.Errorf("ran %q", c)
+			}
+		}
+		if !w.stopped("tailscale") {
+			t.Error("the old node was started")
+		}
+		w.expect("refused", "open", "open", "target-open", "migrated-out")
 	})
 	// The undo puts the installation back on its own volumes, then asks
 	// Docker who uses each fresh one: a container still holding one (not

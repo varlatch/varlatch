@@ -1801,6 +1801,7 @@ const (
 	NOTLISTENING        ObservedCheckReason = "NOT_LISTENING"
 	NOTRUNNING          ObservedCheckReason = "NOT_RUNNING"
 	OTHERTAILNET        ObservedCheckReason = "OTHER_TAILNET"
+	TAGSDIFFER          ObservedCheckReason = "TAGS_DIFFER"
 )
 
 // Valid indicates whether the value is a known member of the ObservedCheckReason enum.
@@ -1819,6 +1820,8 @@ func (e ObservedCheckReason) Valid() bool {
 	case NOTRUNNING:
 		return true
 	case OTHERTAILNET:
+		return true
+	case TAGSDIFFER:
 		return true
 	default:
 		return false
@@ -4790,12 +4793,14 @@ type NextCursor = string
 // ObservedCheck defines model for ObservedCheck.
 type ObservedCheck struct {
 	// CertificateNotAfter browserTls only, when the certificate in use expires.
-	CertificateNotAfter *time.Time           `json:"certificateNotAfter,omitempty"`
-	Reason              *ObservedCheckReason `json:"reason,omitempty"`
-	Status              ObservedCheckStatus  `json:"status"`
+	CertificateNotAfter *time.Time `json:"certificateNotAfter,omitempty"`
+
+	// Reason Why the check fails. TAGS_DIFFER (node only): on a self-hosted control server, the node's tags (its pre-auth key's) are not tailnet_tags, so tailnet access is closed until they match; observed.warnings names both sets.
+	Reason *ObservedCheckReason `json:"reason,omitempty"`
+	Status ObservedCheckStatus  `json:"status"`
 }
 
-// ObservedCheckReason defines model for ObservedCheck.Reason.
+// ObservedCheckReason Why the check fails. TAGS_DIFFER (node only): on a self-hosted control server, the node's tags (its pre-auth key's) are not tailnet_tags, so tailnet access is closed until they match; observed.warnings names both sets.
 type ObservedCheckReason string
 
 // ObservedCheckStatus defines model for ObservedCheck.Status.
