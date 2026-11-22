@@ -72,8 +72,8 @@ behalf.
    `docs/evidence/g1-walkthrough-v0.50.0.md`.
 2. Run the walkthrough against the release candidate's `varlatchd` binary or
    container image (not an earlier commit).
-3. Remove the template banner and top sentinel comment, fill in all candidate
-   metadata (full 40-hex commit SHA, `varlatchd` SHA-256, CLI SHA-256,
+3. Remove the template banner and sentinel comment below the title, fill in all
+   candidate metadata (full 40-hex commit SHA, `varlatchd` SHA-256, CLI SHA-256,
    browser/OS, date in UTC), check off every row (`[x]`), record any
    findings, and complete the Owner Sign-Off block.
 4. Commit the signed record file on the release candidate branch and dispatch

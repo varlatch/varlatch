@@ -1,15 +1,16 @@
-<!-- g1-walkthrough: TEMPLATE -->
 # Gate G1 Browser Walkthrough Evidence (TEMPLATE)
+
+<!-- g1-walkthrough: TEMPLATE -->
 
 > **TEMPLATE ONLY (NOT CANDIDATE EVIDENCE)**
 >
 > Do **not** pass this template file to `--walkthrough` for a G1 or G2 gate
-> run; `judgeGate` rejects files carrying the top template sentinel, any
+> run; `judgeGate` rejects files carrying the template sentinel comment, any
 > unchecked checklist row, or unreplaced placeholders. Copy this file to
 > `docs/evidence/g1-walkthrough-v0.50.0.md` (or the target release candidate
 > identifier), complete the walkthrough against the release candidate's
-> `varlatchd`, delete this notice and the top HTML comment sentinel, and
-> complete Owner Sign-Off below.
+> `varlatchd`, delete this notice and the HTML comment sentinel below the
+> title, and complete Owner Sign-Off below.
 
 ## 1. Candidate and Environment Metadata
 
