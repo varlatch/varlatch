@@ -318,6 +318,8 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	controlURL := nodeControl(cfg)
+	// On a self-hosted control server the node's tags are its pre-auth
+	// key's (it advertises none: Headscale refuses a key's node that does).
 	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: c.hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: keyTags(cfg)})
 	authKey = ""
 	if err != nil {

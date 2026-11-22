@@ -335,6 +335,9 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		PublicURL   string          `json:"publicUrl"`
 		Listen      string          `json:"listen"`
 		ListenHTTPS string          `json:"listenHttps"`
+		// OutboundAllow is the configuration's outbound_allow, as written
+		// ("" for none): what migrate compares with the source's.
+		OutboundAllow string `json:"outboundAllow"`
 		// MigrationGate is whether the transfer's gate stands (an
 		// unreadable gate counts: it isolates as well); Barrier a reverse
 		// migration's barrier's phase (draining, paused), when one
@@ -346,10 +349,22 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		// Tailnet is the tailnet listener's settings and its node's handoff
 		// state (go-step7 decision 11), null when tailnet = off.
 		Tailnet *tailnetState `json:"tailnet"`
-	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https,
-		gerr != nil || (gate != nil && gate.Kind == "migration" && gate.Phase == "transfer"), barrierPhase(gate), running, readTailnetState(cfg)})
+		// ImportRefusal is why an import into the data directory would be
+		// refused now (importableDataDir, the import's own check), empty
+		// when it would not: varlatch migrate's preflight refuses it before
+		// the barrier.
+		ImportRefusal string `json:"importRefusal,omitempty"`
+	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https, cfg.OutboundAllow,
+		gerr != nil || (gate != nil && gate.Kind == "migration" && gate.Phase == "transfer"), barrierPhase(gate), running, readTailnetState(cfg), importRefusal(cfg.DataDir)})
 	fmt.Fprintln(stdout, string(out))
 	return ExitOK
+}
+
+func importRefusal(dataDir string) string {
+	if err := importableDataDir(dataDir); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // tailnetState is `admin migrate state`'s tailnet: what `varlatch migrate`
@@ -608,6 +623,14 @@ func runMigrateKeys(cfg *config.Config, stdin io.Reader, stdout io.Writer, fail 
 	defer clear(kek)
 	var bekMaterial []byte
 	if len(in.BEK) > 0 {
+		if cfg.BackupKeyFile == "" {
+			// Under its unit varlatchd reads the backup-key credential
+			// beside the Root KEK's when it is there (config.Parse): a
+			// target setup's way, whose keys this writes, gets it there.
+			if dir := os.Getenv("CREDENTIALS_DIRECTORY"); dir != "" && cfg.RootKEKFile == filepath.Join(dir, "root-kek") {
+				cfg.BackupKeyFile = filepath.Join(dir, "backup-key")
+			}
+		}
 		if cfg.BackupKeyFile == "" {
 			return fail(ExitConfig, "a Backup Encryption Key was given and the configuration names no backup_key_file; nothing was written")
 		}

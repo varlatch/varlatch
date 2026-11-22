@@ -28,14 +28,23 @@ running suites for an hour). After the run, `judgeGate`
    checkout (no `..` path traversal).
 2. The file must exist as a regular, non-empty, non-symlink file (`lstat`).
 3. The file must not contain the template sentinel
-   (`<!-- g1-walkthrough: TEMPLATE -->`), any unchecked checklist row
-   (`| [ ] |`, `| 3 | [ ] not done |`, or trailing `| x | [ ]`), or unreplaced
-   placeholders (`PENDING`, `<commit-sha>`, `<sha256>`, `YYYY-MM-DD HH:MM UTC`,
-   `<name / handle>`).
-4. The Owner Sign-Off section must record both a `PASS` verdict and a 40-hex
-   `Candidate commit` matching the checkout's commit (`run.mjs` passes
-   `git rev-parse HEAD` to `judgeGate`; a missing comparison commit fails the
-   gate):
+   (`<!-- g1-walkthrough: TEMPLATE -->`), any HTML comment (`<!--`), raw HTML
+   block (`<details>`, `<pre>`, `<style>`, `<script>`, `<textarea>`,
+   `<template>`, `<noscript>`, `<xmp>`, `<iframe>`, `<table>` or `<div>`), or
+   fenced code block (three backticks or tildes, at the margin or opened
+   inside a list item or a blockquote): the gate reads
+   the evidence as plain lines, not rendered Markdown, so it refuses what it
+   would read differently from a reader. Nor may it contain an unchecked
+   checklist row (a row whose Done cell is not `[x]`, with or without its
+   outer pipes; in a table without a Done column, a cell starting with
+   `[ ]`), or unreplaced placeholders (`PENDING`, `<commit-sha>`, `<sha256>`,
+   `<version / sha256>`, `<e.g. ...>`, `<GitHub Actions run URL / ID>`,
+   `<summary of sign-off>`, `YYYY-MM-DD HH:MM UTC`, `<name / handle>`).
+4. The Owner Sign-Off section must record exactly one `**Verdict:**` line,
+   which says `PASS`, and a 40-hex
+   `Candidate commit` matching the checkout's commit (`run.mjs` reads
+   `git rev-parse HEAD` as the run starts and passes it to `judgeGate`; a
+   missing comparison commit fails the gate):
 
    ```markdown
    - **Candidate commit:** `<40-hex-commit-sha>`

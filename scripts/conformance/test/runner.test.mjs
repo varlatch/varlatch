@@ -554,3 +554,16 @@ test("the runner: the end-of-suite nonce is never in the environment, even for a
   // The suite itself still ended through finish() with the runner's nonce.
   assert.equal(outcomeOf(r.report, "stub.scanned"), "client-lacks");
 });
+
+// Gate mode compares the walkthrough's Candidate commit with the checkout's
+// commit as the run starts, read once before the scratch directory, the
+// clients and the target, never after the run.
+test("a gate run reads the checkout's commit before it starts", () => {
+  const source = readFileSync(join(repoRoot, "scripts/conformance/run.mjs"), "utf8");
+  const reads = source.split("checkoutCommit(REPO_ROOT)").length - 1;
+  assert.equal(reads, 1, "checkoutCommit(REPO_ROOT) is read once");
+  const read = source.indexOf("checkoutCommit(REPO_ROOT)");
+  const starts = source.indexOf('mkdtempSync(join(tmpdir(), "conformance-run-"))');
+  assert.ok(starts > 0 && read < starts, "the commit is read before the run's scratch directory is made");
+  assert.match(source, /commit: gateCommit,/);
+});

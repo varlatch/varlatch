@@ -27,18 +27,23 @@ import (
 // recorded, the unit's state kept, the probe's answer and the
 // configuration's check chosen by the test.
 type fakeHost struct {
-	root      string
-	users     map[string][2]int
-	shells    map[string]string
-	groups    map[string][]string
-	chowns    map[string][2]int
-	systemctl []string
-	active    bool
-	probe     diskprobe.Result
-	probeErr  error
-	checkMsg  string
-	readyErr  error
-	failUnit  bool
+	root   string
+	users  map[string][2]int
+	shells map[string]string
+	groups map[string][]string
+	chowns map[string][2]int
+	// leftGroups are groups there without their user.
+	leftGroups map[string]bool
+	// unknownState: is-enabled prints no state (an error on stderr only).
+	unknownState bool
+	systemctl    []string
+	enabled      bool
+	active       bool
+	probe        diskprobe.Result
+	probeErr     error
+	checkMsg     string
+	readyErr     error
+	failUnit     bool
 	// The fake varlatchd's admin commands: the first administrator, the
 	// links issued, the attestations, the backups.
 	admin                 string
@@ -62,7 +67,7 @@ type fakeHost struct {
 
 func newFakeHost(t *testing.T) *fakeHost {
 	t.Helper()
-	h := &fakeHost{root: t.TempDir(), users: map[string][2]int{}, shells: map[string]string{}, groups: map[string][]string{}, chowns: map[string][2]int{}}
+	h := &fakeHost{root: t.TempDir(), users: map[string][2]int{}, shells: map[string]string{}, groups: map[string][]string{}, chowns: map[string][2]int{}, leftGroups: map[string]bool{}}
 	s := diskprobe.Stats{Samples: 250, P50: time.Millisecond, P99: 3 * time.Millisecond}
 	h.probe = diskprobe.Result{Append: s, Rewrite: s, Limit: diskprobe.DefaultLimit, Pass: true}
 	if err := os.MkdirAll(filepath.Dir(h.Path(UnitFile)), 0o755); err != nil {
@@ -84,6 +89,11 @@ func (h *fakeHost) CreateUser(name string) error {
 	h.shells[name] = "/usr/sbin/nologin"
 	return nil
 }
+func (h *fakeHost) DeleteUser(name string) error {
+	delete(h.users, name)
+	delete(h.shells, name)
+	return nil
+}
 func (h *fakeHost) LoginShell(name string) (string, error) { return h.shells[name], nil }
 func (h *fakeHost) SupplementaryGroups(name string) ([]string, error) {
 	return h.groups[name], nil
@@ -93,6 +103,22 @@ func (h *fakeHost) Chown(path string, uid, gid int) error {
 	rel, _ := filepath.Rel(h.root, path)
 	h.chowns["/"+rel] = [2]int{uid, gid}
 	return nil
+}
+
+func (h *fakeHost) SystemctlStdout(args ...string) (string, error) { return h.Systemctl(args...) }
+
+// LookupGroup: a user's own group is there while the user is, or while
+// the test leaves it (leftGroups).
+func (h *fakeHost) LookupGroup(name string) (bool, error) {
+	_, ok := h.users[name]
+	return ok || h.leftGroups[name], nil
+}
+
+// Owner is what Chown made it, else root's.
+func (h *fakeHost) Owner(path string) (int, int, error) {
+	rel, _ := filepath.Rel(h.root, path)
+	ids := h.chowns["/"+rel]
+	return ids[0], ids[1], nil
 }
 func (h *fakeHost) Systemctl(args ...string) (string, error) {
 	h.systemctl = append(h.systemctl, strings.Join(args, " "))
@@ -106,7 +132,24 @@ func (h *fakeHost) Systemctl(args ...string) (string, error) {
 		if h.failUnit {
 			return "Job failed", errors.New("exit status 1")
 		}
-		h.active = true
+		h.enabled = true
+		if slices.Contains(args, "--now") {
+			h.active = true
+		}
+	case "disable":
+		// systemctl refuses a unit whose file is gone.
+		if _, err := os.Stat(h.Path(UnitFile)); err != nil {
+			return "Failed to disable unit: Unit file " + Unit + " does not exist.", errors.New("exit status 1")
+		}
+		h.enabled = false
+	case "is-enabled":
+		if h.unknownState {
+			return "", errors.New("exit status 1")
+		}
+		if h.enabled {
+			return "enabled\n", nil
+		}
+		return "disabled\n", errors.New("exit status 1")
 	}
 	return "", nil
 }

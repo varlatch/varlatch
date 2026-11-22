@@ -90,10 +90,14 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		PublicURL   string         `json:"publicUrl"`
 		Listen      string         `json:"listen"`
 		ListenHTTPS string         `json:"listenHttps"`
+		Outbound    string         `json:"outboundAllow"`
 		Gate        *bool          `json:"migrationGate"`
 		Barrier     string         `json:"barrier"`
 		Running     bool           `json:"running"`
 		Tailnet     *TargetTailnet `json:"tailnet"`
+		// ImportRefusal: why an import into the data directory would be
+		// refused now (varlatchd's own check), empty when it would not.
+		ImportRefusal string `json:"importRefusal"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &s); err != nil || s.DataDir == "" {
 		return info, TargetState{}, errors.New("varlatchd admin migrate state did not answer in JSON")
@@ -103,7 +107,8 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 	}
 	info.DataDir, info.Release, info.PublicURL, info.Listen, info.ListenHTTPS = s.DataDir, s.Release, s.PublicURL, s.Listen, s.ListenHTTPS
 	info.Tailnet = s.Tailnet
-	return info, TargetState{Journal: s.Journal, Database: s.Database, Gate: *s.Gate, Barrier: s.Barrier, Running: s.Running}, nil
+	info.OutboundAllow = s.Outbound
+	return info, TargetState{Journal: s.Journal, Database: s.Database, Gate: *s.Gate, Barrier: s.Barrier, Running: s.Running, ImportRefusal: s.ImportRefusal}, nil
 }
 
 // Keys is `admin migrate keys`, the keys on its stdin as JSON, each

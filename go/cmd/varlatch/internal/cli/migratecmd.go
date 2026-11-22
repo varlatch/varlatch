@@ -9,14 +9,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/secretinput"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/setup"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 )
@@ -45,11 +48,17 @@ const migrateUsage = `Usage:
                 an hour: expire it with headscale apikeys expire --prefix <prefix>, which the next run names), or
                 its CLI's absolute path when migrate runs on the control server; the auth key is a reusable
                 pre-auth key tagged with the node's tags; no HTTPS overlay)
+  varlatch migrate ... --config /etc/varlatch/varlatchd.conf, not there yet: migrate makes the target with setup's steps
+                   (as root; the varlatch user, the data directory, the configuration from the source's answers, the
+                   unit enabled; never keys: they are the source's), removed again if the migration is undone:
+                   [--acme-email <address>] [--listen <host:port>] [--accept-existing-user]
   varlatch migrate ... --to-data <dir> --to-keys <dir> --to-config <file> --to-image <ref:tag@sha256:...> --to-service <name>
                    (instead of --config and --unit: the Go image's service, created in setup mode with nothing listening,
                     its bind paths on this host; you start and stop it when migrate asks)
   varlatch migrate --resume (the same options)
   varlatch migrate --abort (the same options): undo a migration not yet switched, or a reverse not yet rolled back
+  varlatch migrate --abort --forget-target (the same options): after an undo whose removal of the target migrate made
+                   kept failing and you removed what was left by hand (--status names each item), clear its record
   varlatch migrate --rollback [--from <compose directory>] (--config <varlatchd.conf> | --to-data ... as above)
                    [--drain <duration>] [--transfer-timeout <duration>]
                (within 30 days of the switch: back to the last TypeScript release, rebuilt on a fresh database
@@ -60,6 +69,7 @@ const migrateUsage = `Usage:
                 after a rollback Go's copy kept; --delete-old-data, never implied, removes the old data too, after a
                 final archive of it is made and verified: the backup options above are the final archive's)
   varlatch migrate --status [--from <compose directory>] [--json]
+  varlatch migrate --from-archive <archive> ... (the backup converter: varlatch migrate --from-archive --help)
                (on the installation's host, as root: --from is the Compose installation of the last
                 TypeScript release, the current directory by default; --config the target's varlatchd.conf;
                 --ingress the source's: its own Caddy (public), your reverse proxy (proxy), or Coolify's)`
@@ -74,9 +84,9 @@ var goOnlyCommands = map[string]func(*Run) error{
 type migrateOptions struct {
 	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI, ingress, unit string
 	oauthClientFile, tailnetAuthKeyFile, headscaleURL, headscaleKeyFile, headscaleCLI                    string
-	toData, toKeys, toConfig, toImage, toService                                                         string
+	toData, toKeys, toConfig, toImage, toService, acmeEmail, listen                                      string
 	maxDowntime, drain, transferTimeout                                                                  time.Duration
-	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData                               bool
+	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData, acceptExistingUser, forget   bool
 	acceptRollbackCertificate                                                                            bool
 }
 
@@ -85,12 +95,12 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 	values := map[string]*string{"--from": &o.from, "--config": &o.config, "--bek-file": &o.bekFile, "--backup-destination": &o.destination,
 		"--read-credentials-file": &o.readCredentials, "--destinations-file": &o.destinationsFile, "--kek-file": &o.kekFile, "--ts-cli": &o.tsCLI,
 		"--ingress": &o.ingress, "--unit": &o.unit, "--to-data": &o.toData, "--to-keys": &o.toKeys, "--to-config": &o.toConfig,
-		"--to-image": &o.toImage, "--to-service": &o.toService,
+		"--to-image": &o.toImage, "--to-service": &o.toService, "--acme-email": &o.acmeEmail, "--listen": &o.listen,
 		"--tailscale-oauth-client-file": &o.oauthClientFile, "--tailnet-auth-key-file": &o.tailnetAuthKeyFile,
 		"--headscale-url": &o.headscaleURL, "--headscale-api-key-file": &o.headscaleKeyFile, "--headscale-cli": &o.headscaleCLI}
 	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
 	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback, "--accept-rollback-certificate": &o.acceptRollbackCertificate,
-		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData}
+		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData, "--accept-existing-user": &o.acceptExistingUser, "--forget-target": &o.forget}
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch migrate: "+msg, "\n"+migrateUsage) }
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -137,6 +147,10 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--resume does what the interrupted run was asked, --abort undoes it; neither takes --dry-run")
 	case o.resume && o.abort:
 		return o, usage("--resume or --abort, not both")
+	case o.forget && (!o.abort || o.config == ""):
+		return o, usage("--forget-target goes with --abort and --config only: it clears the record of a target migrate made, once you removed what was left of it by hand")
+	case (o.acmeEmail != "" || o.listen != "" || o.acceptExistingUser) && (o.config == "" || o.rollback || o.finish || o.status):
+		return o, usage("--acme-email, --listen and --accept-existing-user are the answers of a host target migrate makes (--config): not with --rollback, --finish, --status or --to-*")
 	case o.acceptRollbackCertificate && o.oauthClientFile == "":
 		return o, usage("--accept-rollback-certificate goes with --tailscale-oauth-client-file: it is the tailnet handoff's")
 	case (o.status || o.finish) && (o.oauthClientFile != "" || o.tailnetAuthKeyFile != "" || o.headscaleURL != "" || o.headscaleKeyFile != "" || o.headscaleCLI != ""):
@@ -181,6 +195,9 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 }
 
 func migrateCommand(r *Run) error {
+	if fromArchive(r.Args) {
+		return migrateArchiveCommand(r)
+	}
 	for _, a := range r.Args {
 		if a == "--help" || a == "-h" {
 			return r.println(migrateUsage)
@@ -290,7 +307,7 @@ func migrateCommand(r *Run) error {
 	e := &migrate.Engine{
 		Source: &migrate.Compose{Directory: o.from, Run: run, TSCLI: o.tsCLI, KEKFile: o.kekFile, BEKFile: o.bekFile,
 			Destination: o.destination, DestinationsFile: o.destinationsFile, ReadCredentialsFile: o.readCredentials},
-		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: varlatchdEnviron(r)}, Unit: o.unit},
+		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: targetCredentials(varlatchdEnviron(r), o.config)}, Unit: o.unit},
 		Options: migrate.Options{MaxDowntime: o.maxDowntime, Drain: o.drain, TransferTimeout: o.transferTimeout, Ingress: migrate.Ingress(o.ingress),
 			Say: func(s string) { _ = r.warn(s) }},
 		BEK:     bek,
@@ -298,6 +315,11 @@ func migrateCommand(r *Run) error {
 		Tailnet: tailnetOptions,
 	}
 	e.Target.(*migrate.Host).TailnetAuthKey = tailnetAuthKey
+	if o.config != "" {
+		if err := r.targetMaker(e, o, varlatchd); err != nil {
+			return err
+		}
+	}
 	if o.toData != "" {
 		img := &migrate.Image{Host: &migrate.Host{Varlatchd: varlatchd, Run: migrate.ExecRunner{Env: varlatchdEnviron(r), As: &migrate.ImageUser}},
 			Service: o.toService, Ref: o.toImage, DataDir: o.toData, KeysDir: o.toKeys, ServiceConfig: o.toConfig, User: migrate.ImageUser}
@@ -318,6 +340,8 @@ func migrateCommand(r *Run) error {
 	switch {
 	case o.resume:
 		j, err = e.Resume(context.Background())
+	case o.abort && o.forget:
+		j, err = e.ForgetTarget(context.Background())
 	case o.abort:
 		j, err = e.Abort(context.Background())
 	case o.rollback:
@@ -436,6 +460,26 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		b.WriteString("\n")
 		for _, a := range rb.Archives {
 			fmt.Fprintf(&b, "Go archive made since the switch (migrate deletes none; its local file follows backup_keep): %s (release %s, %s).\n", a.ArchiveID, a.Release, a.CreatedAt)
+		}
+	}
+	if c := j.Created; c != nil {
+		state := "kept"
+		switch {
+		case c.Forgotten:
+			state = "removed by hand, its record cleared " + Printable(c.Undone)
+		case c.Undone != "":
+			state = "removed again " + Printable(c.Undone)
+		case j.Phase == migrate.Released:
+			state = "removal pending: varlatch migrate --abort removes it"
+		}
+		fmt.Fprintf(&b, "Target made by migrate: %s (%s).\n", Printable(strings.Join(c.Made, ", ")), state)
+		if c.Undone == "" && j.Phase == migrate.Released {
+			// Each item's place, for removing it by hand (the journal's
+			// config is setup's, or a test root's: checked as it is read).
+			root := strings.TrimSuffix(c.Config, setup.ConfigFile)
+			for _, item := range c.Made {
+				fmt.Fprintf(&b, "  %s: %s\n", Printable(item), Printable(setup.ItemPlace(func(p string) string { return root + p }, item)))
+			}
 		}
 	}
 	if f := j.Finish; f != nil {
@@ -565,3 +609,43 @@ func headscaleCLIControl(path string) (tailcontrol.ControlPlane, error) {
 }
 
 func ms(n int64) string { return (time.Duration(n) * time.Millisecond).Round(time.Second).String() }
+
+// targetNeedsRoot is why migrate may change the host target at setup's
+// place ("" when it will not): its configuration is missing (migrate makes
+// it) or cannot be read (it may be missing), or the journal records a
+// target migrate made and has not removed, before its switch (an undo
+// removes it, a run goes on making it; from the switch on it is kept).
+func targetNeedsRoot(statErr error, j *migrate.Journal) string {
+	switch {
+	case errors.Is(statErr, fs.ErrNotExist):
+		return setup.ConfigFile + " does not exist: migrate makes the target there"
+	case statErr != nil:
+		return setup.ConfigFile + " cannot be read (" + Printable(statErr.Error()) + "): migrate may make the target there"
+	case j != nil && j.TargetMayChange():
+		return "the migration " + j.ID + " made the target at " + setup.ConfigFile + " and has not removed it: migrate may change it"
+	}
+	return ""
+}
+
+// targetMaker sets the engine's maker of the host target (slice 7.4e) when
+// --config is setup's place: migrate makes the target there when it is
+// missing (as root, on a systemd host), and undoes what it made. Another
+// place must be a prepared target.
+func (r *Run) targetMaker(e *migrate.Engine, o migrateOptions, varlatchd string) error {
+	host, seam := targetHost(varlatchd, varlatchdEnviron(r))
+	_, statErr := os.Stat(o.config)
+	missing := errors.Is(statErr, fs.ErrNotExist)
+	if filepath.Clean(o.config) != host.Path(setup.ConfigFile) {
+		if missing {
+			return Fail("varlatch migrate: --config "+Printable(o.config)+" does not exist: migrate makes the target at setup's place only ("+setup.ConfigFile+"), or give a prepared target's configuration", ExitFailure)
+		}
+		return nil
+	}
+	j, _ := migrate.Status(e.Source.Dir()) // unreadable: the engine says so
+	if why := targetNeedsRoot(statErr, j); why != "" && !seam && (runtime.GOOS != "linux" || os.Geteuid() != 0) {
+		return Fail("varlatch migrate: "+why+", which needs root on a systemd host (sudo varlatch migrate ...)", ExitFailure)
+	}
+	e.Maker = &setupMaker{host: host, given: setup.Answers{ACMEEmail: o.acmeEmail, Listen: o.listen}, accept: o.acceptExistingUser,
+		say: func(s string) error { return r.warn(s) }}
+	return nil
+}

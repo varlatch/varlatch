@@ -1,0 +1,7 @@
+name: outprobe
+services:
+  varlatchd:
+    image: busybox
+    environment:
+      VARLATCH_PUBLIC_URL: ${VARLATCH_PUBLIC_URL:-}
+      VARLATCH_OUTBOUND_ALLOW: ${VARLATCH_OUTBOUND_ALLOW:-}

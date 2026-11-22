@@ -364,6 +364,11 @@ func TestHealthReadyMeta(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("meta: %d %s", w.Code, w.Body.String())
 	}
+	// varlatch migrate reads it to tell which installation serves the
+	// address: no cache may answer for it.
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("meta's Cache-Control: %q", cc)
+	}
 	var m struct {
 		ApiMajor          int      `json:"apiMajor"`
 		ServerVersion     string   `json:"serverVersion"`

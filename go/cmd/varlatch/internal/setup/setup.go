@@ -66,12 +66,22 @@ type Host interface {
 	// (primary) group, as the name service sees them: systemd gives
 	// varlatchd every one of them.
 	SupplementaryGroups(name string) ([]string, error)
+	// DeleteUser removes the user (and its own group): a migration's
+	// target undone removes the user it made.
+	DeleteUser(name string) error
 	// SysUIDMax is the top of the system accounts' uids (login.defs'
 	// SYS_UID_MAX, 999 when it says none).
 	SysUIDMax() int
 	Chown(path string, uid, gid int) error
+	// Owner is path's owner and group.
+	Owner(path string) (uid, gid int, err error)
 	// Systemctl runs systemctl with args.
 	Systemctl(args ...string) (string, error)
+	// SystemctlStdout runs systemctl with args: its standard output alone
+	// (a state it prints, without its warnings).
+	SystemctlStdout(args ...string) (string, error)
+	// LookupGroup is whether the group is there.
+	LookupGroup(name string) (bool, error)
 	// Probe measures dir's disk (diskprobe, with files without a name).
 	Probe(ctx context.Context, dir string) (diskprobe.Result, error)
 	// CheckConfig is `varlatchd admin config check --config path`: "" when
@@ -101,6 +111,10 @@ type Asker interface {
 // Options are a run's.
 type Options struct {
 	Host Host
+	// OutboundAllow is a migration target's outbound_allow: the source's
+	// VARLATCH_OUTBOUND_ALLOW, carried as it is (the entries are the same
+	// on both lines). PrepareTarget only; setup asks no such question.
+	OutboundAllow string
 	// Given are the answers from the flags and the answers file.
 	Given Answers
 	// Ask is nil without a terminal: every answer must be given.
@@ -138,6 +152,10 @@ type Options struct {
 	// AcceptExistingUser uses a varlatch user that exists already and is
 	// not a system account.
 	AcceptExistingUser bool
+	// Ours are the items an earlier run of the same migration made of its
+	// target (PrepareTarget only): migrate's, so made again where needed,
+	// never judged as what was there.
+	Ours []string
 	// StopAfter ends the run once that step is done (tests of resuming).
 	StopAfter string
 	Now       func() time.Time
@@ -198,6 +216,12 @@ type run struct {
 	o Options
 	h Host
 	j JournalDoc
+	// configExtra is appended to the configuration setup writes: a
+	// migration's target under a test root names its data directory there.
+	configExtra string
+	// keepEtc: /etc/varlatch was there before a migration's target was
+	// made in it, and is used as it is (never chmodded or chowned).
+	keepEtc bool
 }
 
 // Run runs setup, continuing where an earlier run stopped.
@@ -736,14 +760,16 @@ func (r *run) config() error {
 	if err != nil {
 		return err
 	}
-	etc := r.path(EtcDir)
-	if err := os.Chmod(etc, 0o750); err != nil {
-		return err
+	if !r.keepEtc {
+		etc := r.path(EtcDir)
+		if err := os.Chmod(etc, 0o750); err != nil {
+			return err
+		}
+		if err := r.h.Chown(etc, 0, gid); err != nil {
+			return err
+		}
 	}
-	if err := r.h.Chown(etc, 0, gid); err != nil {
-		return err
-	}
-	want := RenderConfig(r.j.Answers)
+	want := append(RenderConfig(r.j.Answers), r.configExtra...)
 	p := r.path(ConfigFile)
 	got, err := os.ReadFile(p)
 	switch {

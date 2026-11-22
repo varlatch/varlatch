@@ -86,6 +86,13 @@ func registerCleanupDir(dir string) {
 	cleanupDirs.mu.Unlock()
 }
 
+// unregisterCleanupDir forgets dir once its test removed it itself.
+func unregisterCleanupDir(dir string) {
+	cleanupDirs.mu.Lock()
+	cleanupDirs.dirs = slices.DeleteFunc(cleanupDirs.dirs, func(d string) bool { return d == dir })
+	cleanupDirs.mu.Unlock()
+}
+
 func removeCleanupDirs() {
 	cleanupDirs.mu.Lock()
 	dirs := slices.Clone(cleanupDirs.dirs)
@@ -233,6 +240,33 @@ func fakeDocker(args []string) int {
 		return 0
 	case j == "image inspect --format {{json .}} sha256:g5image":
 		fmt.Printf(`{"RepoDigests":["%s"],"Config":{"Labels":{"org.opencontainers.image.version":"0.23.0"}}}`+"\n", os.Getenv("VARLATCH_MIGRATE_PIN"))
+		return 0
+	case j == "compose ps -q varlatchd":
+		// The running service's container, as migrate reads its
+		// environment (the outbound allow list).
+		if !stopped("varlatchd") {
+			fmt.Println("g5-varlatchd-1")
+		}
+		return 0
+	case j == "inspect --format {{json .Config.Env}} g5-varlatchd-1", j == "compose config --format json":
+		// The value Compose gives varlatchd: .env's VARLATCH_OUTBOUND_ALLOW
+		// (the Compose file's ${VARLATCH_OUTBOUND_ALLOW:-}), as the
+		// running container has it or, stopped, docker compose config.
+		allow := ""
+		env, _ := os.ReadFile(".env")
+		for _, l := range strings.Split(string(env), "\n") {
+			if v, ok := strings.CutPrefix(l, "VARLATCH_OUTBOUND_ALLOW="); ok {
+				allow = v
+			}
+		}
+		vars := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "VARLATCH_OUTBOUND_ALLOW=" + allow}
+		if args[0] == "inspect" {
+			out, _ := json.Marshal(vars)
+			fmt.Println(string(out))
+			return 0
+		}
+		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{"varlatchd": map[string]any{"environment": map[string]string{"VARLATCH_OUTBOUND_ALLOW": allow}}}})
+		fmt.Println(string(out))
 		return 0
 	case len(args) == 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start") && args[2] == "varlatch-web":
 		if args[1] == "stop" {
@@ -399,11 +433,35 @@ func fakeTSCLI(args []string) int {
 // fakeSystemctl starts and stops the target's varlatchd (G5_STATE's
 // service.conf and varlatchd), as its unit would.
 func fakeSystemctl(args []string) int {
+	if len(args) == 1 && args[0] == "daemon-reload" {
+		return 0
+	}
 	if len(args) != 2 {
 		return 1
 	}
 	pid := readPID()
 	switch args[0] {
+	case "enable":
+		return okOr(os.WriteFile(state("unit-enabled"), nil, 0o600))
+	case "disable":
+		if err := os.Remove(state("unit-enabled")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return okOr(err)
+		}
+		return 0
+	case "is-enabled":
+		if _, err := os.Stat(state("unit-enabled")); err == nil {
+			fmt.Println("enabled")
+			return 0
+		}
+		fmt.Println("disabled")
+		return 1
+	case "is-active":
+		if pid > 0 && alive(pid) {
+			fmt.Println("active")
+			return 0
+		}
+		fmt.Println("inactive")
+		return 3
 	case "start":
 		if pid > 0 && alive(pid) {
 			return 0
@@ -442,6 +500,10 @@ func startService(bin, conf string) error {
 	defer log.Close()
 	cmd := exec.Command(bin, "serve", "--config", conf)
 	cmd.Stdout, cmd.Stderr = log, log
+	// The unit hands a target made setup's way its keys as credentials.
+	if b, err := os.ReadFile(state("credentials-dir")); err == nil {
+		cmd.Env = append(os.Environ(), "CREDENTIALS_DIRECTORY="+strings.TrimSpace(string(b)))
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return err
@@ -519,6 +581,12 @@ type world struct {
 	// beforeRun runs before every varlatch migrate (Headscale's world
 	// writes a new API key: each run expires its own).
 	beforeRun func()
+	// extraEnv is the CLI's added environment (a target made under a test
+	// root, maketarget_test.go).
+	extraEnv []string
+	// client asks the public URL (http.DefaultClient when nil; a TLS
+	// origin's own client in maketarget_test.go).
+	client *http.Client
 }
 
 // shared is built once: the binaries, the seed and its decision table.
@@ -544,8 +612,15 @@ const ownerFile = "g5-owner.pid"
 // by its pid, so this assumes one PID namespace for every run (a run in
 // another container would look dead).
 func sweepAbandoned() {
+	var globs []string
 	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*", "g5-headscale-ca-*"} {
-		dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
+		globs = append(globs, filepath.Join(os.TempDir(), pattern))
+	}
+	// The worlds' short target directories (shortTarget), in shortRoot
+	// whatever TMPDIR is: each holds its run's owner file.
+	globs = append(globs, filepath.Join(shortRoot, "g5s*"))
+	for _, glob := range globs {
+		dirs, _ := filepath.Glob(glob)
 		for _, d := range dirs {
 			st, err := os.Lstat(d)
 			if err != nil || !st.IsDir() {
@@ -572,6 +647,10 @@ func sweepAbandoned() {
 // abandonedAfter is the age past which a G5 directory without an owner
 // file is no live run's.
 const abandonedAfter = 6 * time.Hour
+
+// shortRoot is where shortTarget makes the worlds' short directories
+// (/tmp; a variable so the sweep's test can use its own).
+var shortRoot = "/tmp"
 
 func setUpShared(t *testing.T) {
 	shared.once.Do(func() {
@@ -660,13 +739,98 @@ func randomBytes(n int) []byte {
 	return b
 }
 
+// freePort is a free port for a server the world starts later (the
+// target's varlatchd), chosen below the kernel's ephemeral range: a port
+// taken from :0 and released could be handed again to any listener a
+// world starts on :0 meanwhile (testcontrol's DERP server took one, and
+// the target then failed with "address already in use"). No :0 listener
+// is ever given a port outside that range.
 func freePort(t *testing.T) string {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	low := 32768
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range"); err == nil {
+		if f := strings.Fields(string(b)); len(f) == 2 {
+			if n, err := strconv.Atoi(f[0]); err == nil {
+				low = n
+			}
+		}
+	}
+	const from = 10000
+	if low <= from+100 {
+		t.Fatalf("the ephemeral port range starts at %d: no room below it for the target's port", low)
+	}
+	for range 200 {
+		b := randomBytes(2)
+		addr := "127.0.0.1:" + strconv.Itoa(from+(int(b[0])<<8|int(b[1]))%(low-from))
+		if !reservePort(t, addr) {
+			continue
+		}
+		if l, err := net.Listen("tcp", addr); err == nil {
+			l.Close()
+			return addr
+		}
+	}
+	t.Fatal("no free port below the ephemeral range")
+	return ""
+}
+
+// reservedPorts are the ports freePort handed to a test still running: a
+// port is free once it is bound by no one, which another world's freePort
+// in this process could also see before the first target binds it.
+var reservedPorts struct {
+	mu    sync.Mutex
+	addrs map[string]bool
+}
+
+// reservePort reserves addr for t until its cleanup; false when another
+// test holds it.
+func reservePort(t *testing.T, addr string) bool {
+	reservedPorts.mu.Lock()
+	defer reservedPorts.mu.Unlock()
+	if reservedPorts.addrs[addr] {
+		return false
+	}
+	if reservedPorts.addrs == nil {
+		reservedPorts.addrs = map[string]bool{}
+	}
+	reservedPorts.addrs[addr] = true
+	t.Cleanup(func() {
+		reservedPorts.mu.Lock()
+		delete(reservedPorts.addrs, addr)
+		reservedPorts.mu.Unlock()
+	})
+	return true
+}
+
+// shortTarget is where a world's target lives as varlatchd sees it: a short
+// path (/tmp/g5s<n>/t, a link to dir) so its data directory's control
+// socket stays within a Unix socket's 107 bytes whatever TMPDIR is (a long
+// TMPDIR and a long test name pushed it past, and the target varlatchd
+// would not start). The files stay in dir, under t.TempDir(); varlatchd
+// follows the link (an ancestor of the data directory, owned by this user
+// in a directory of its own) and refuses only a data directory that is
+// itself a link.
+//
+// The short directory carries the run's owner file and is a cleanup
+// directory too, so an interrupted run (SIGINT, SIGTERM) removes it, and
+// the next run's sweepAbandoned removes a killed run's.
+func shortTarget(t *testing.T, dir string) string {
+	short, err := os.MkdirTemp(shortRoot, "g5s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
-	return l.Addr().String()
+	registerCleanupDir(short)
+	t.Cleanup(func() {
+		_ = os.RemoveAll(short)
+		unregisterCleanupDir(short)
+	})
+	if err := os.WriteFile(filepath.Join(short, ownerFile), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(short, "t")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	return link
 }
 
 // newWorld is a fresh source and target, the public URL's proxy serving
@@ -705,7 +869,10 @@ func newWorld(t *testing.T, image bool) *world {
 			t.Fatal(err)
 		}
 	}
-	target := filepath.Join(base, "target")
+	if err := os.Mkdir(filepath.Join(base, "target"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := shortTarget(t, filepath.Join(base, "target"))
 	w.data, w.keys = filepath.Join(target, "data"), filepath.Join(target, "keys")
 	for _, d := range []string{w.data, w.keys} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -756,6 +923,25 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 		// The dashboard runs, its varlatchd does not.
 		rw.WriteHeader(http.StatusBadGateway)
 		return
+	}
+	// A container a failed start left without a network (web-netless): its
+	// nginx cannot resolve varlatchd, 502 until it is recreated.
+	if _, err := os.Stat(filepath.Join(w.stateDir, "web-netless")); err == nil {
+		rw.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	// In a crash loop (web-restarting): 502 until it is recreated.
+	if _, err := os.Stat(filepath.Join(w.stateDir, "web-restarting")); err == nil {
+		rw.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	// Started, not yet listening (G5_WEB_LATE): 502, a request fewer each time.
+	if b, err := os.ReadFile(filepath.Join(w.stateDir, "web-late")); err == nil {
+		if n, _ := strconv.Atoi(strings.TrimSpace(string(b))); n > 0 {
+			_ = os.WriteFile(filepath.Join(w.stateDir, "web-late"), []byte(strconv.Itoa(n-1)), 0o600)
+			rw.WriteHeader(http.StatusBadGateway)
+			return
+		}
 	}
 	b, _ := os.ReadFile(filepath.Join(w.stateDir, "gate.json"))
 	if len(b) > 0 {
@@ -809,6 +995,7 @@ func (w *world) runArgs(pause string, args []string) int {
 		"VARLATCH_MIGRATE_LOG="+log, "VARLATCH_MIGRATE_PAUSE="+pause, "TMPDIR="+w.stateDir,
 		fmt.Sprintf("VARLATCH_MIGRATE_IMAGE_USER=%d:%d", os.Getuid(), os.Getgid()))
 	cmd.Env = append(cmd.Env, w.env...)
+	cmd.Env = append(cmd.Env, w.extraEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
@@ -893,7 +1080,11 @@ func (w *world) phases() (string, string) {
 // (the target's /v1/meta, every other route 503), "target-open", or "none".
 func (w *world) answers() string {
 	get := func(p string) (int, string) {
-		res, err := http.Get(w.origin + p)
+		c := w.client
+		if c == nil {
+			c = http.DefaultClient
+		}
+		res, err := c.Get(w.origin + p)
 		if err != nil {
 			return 0, ""
 		}
@@ -1072,6 +1263,76 @@ func TestG5Interruptions(t *testing.T) {
 				w.noSecrets()
 			})
 		}
+	}
+}
+
+// An abort in the transfer whose dashboard listens a little after it is
+// started (7.8b rehearsal, run r12): one --abort, and the old installation
+// answers at its address as soon as it says it was reopened.
+func TestG5AnAbortWaitsForTheDashboard(t *testing.T) {
+	w := newWorld(t, false)
+	w.useState()
+	before := w.sourceHash()
+	if code := w.run("transfer started"); code != -1 {
+		t.Fatalf("not killed: %d", code)
+	}
+	w.expect("killed at transfer started", "transfer", "transfer", "target-gated", "migration")
+	t.Setenv("G5_WEB_LATE", "3")
+	if code := w.run("", "--abort"); code != 0 {
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expect("aborted", "released", "released", "source", "")
+	if after := w.sourceHash(); after != before {
+		t.Error("the source's data changed")
+	}
+	w.noSecrets()
+}
+
+// An abort in the transfer after the dashboard's start failed (its port
+// held, 7.8b rehearsal run r13): Docker leaves that container without a
+// network, so starting it again serves nothing; migrate recreates it, and
+// the old installation answers.
+func TestG5AnAbortRecreatesANetworklessDashboard(t *testing.T) {
+	w := newWorld(t, false)
+	w.useState()
+	if code := w.run("transfer started"); code != -1 {
+		t.Fatalf("not killed: %d", code)
+	}
+	if err := os.WriteFile(filepath.Join(w.stateDir, "web-netless"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.run("", "--abort"); code != 0 {
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expect("aborted", "released", "released", "source", "")
+	w.noSecrets()
+}
+
+// An abort in the transfer whose dashboard runs but serves nothing: left
+// without a network by a failed start and started since (its container
+// "running"), or caught running in a crash loop. Started as it is, it
+// would answer 502 at every --resume; migrate recreates it.
+func TestG5AnAbortRecreatesARunningBrokenDashboard(t *testing.T) {
+	for _, broken := range []string{"web-netless", "web-restarting"} {
+		t.Run(broken, func(t *testing.T) {
+			w := newWorld(t, false)
+			w.useState()
+			if code := w.run("transfer started"); code != -1 {
+				t.Fatalf("not killed: %d", code)
+			}
+			// Started again by hand while the target still runs.
+			if err := os.WriteFile(filepath.Join(w.stateDir, broken), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(w.stateDir, "web-stopped")); err != nil {
+				t.Fatal(err)
+			}
+			if code := w.run("", "--abort"); code != 0 {
+				t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			w.expect("aborted", "released", "released", "source", "")
+			w.noSecrets()
+		})
 	}
 }
 

@@ -7,10 +7,6 @@ package migrate
 import (
 	"fmt"
 	"os"
-	"regexp"
-	"strconv"
-	"strings"
-	"time"
 )
 
 // Crash points for G5's interruption gate (go test -tags g5, which builds
@@ -24,7 +20,10 @@ import (
 //     journalled in both places; "barrier held" once the source's barrier
 //     is up and recorded; "transfer started" once the target serves under
 //     the transfer's gate; "open source" when the source's journal says
-//     open but the live open has not run yet;
+//     open but the live open has not run yet; "switch sidecar started"
+//     once the sidecar the tailnet handoff stopped runs again for the
+//     source's mark, and "switch marked" once the source is marked
+//     migrated out, before the sidecar stops again;
 //   - the reverse (--rollback): "rollback barrier held" once Go's barrier
 //     is up; "rollback rebuilt" once the TypeScript side runs on its fresh
 //     volumes; "rollback go stopped" and "rollback transfer started" in
@@ -43,18 +42,14 @@ import (
 //     serving renamed, incoming renamed, opening, done, undoing, undone,
 //     undo-pending), before its act.
 //
-// The gate's stand-in source and target need two more of this build only:
-// VARLATCH_MIGRATE_PIN=<repository>@<digest> pins the stand-in's image (a
-// release pins 0.23.0's, and refuses every source until it is published),
-// and VARLATCH_MIGRATE_IMAGE_USER=<uid>:<gid> is the image's user (the gate
-// does not run as root). A release has none of this.
+// The gate's stand-in source and target also take testonly.go's overrides
+// (the image pin and the image's user), which this build has too. A
+// release has none of this.
 
 var cp struct {
 	log   *os.File
 	pause string
 }
-
-var pinText = regexp.MustCompile(`^([^@\s]+)@(sha256:[0-9a-f]{64})$`)
 
 func init() {
 	if path := os.Getenv("VARLATCH_MIGRATE_LOG"); path != "" {
@@ -65,32 +60,15 @@ func init() {
 		cp.log = f
 	}
 	cp.pause = os.Getenv("VARLATCH_MIGRATE_PAUSE")
-	// The tailnet handoff's undo wait, shortened for the gate's undo cases
-	// (an undo cut short by a control plane gone).
-	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_UNDO_WAIT")); err == nil && d > 0 {
-		testHandoffUndoWait = d
-	}
-	// Its deadline, shortened for the cases where a control plane failing
-	// on one device's rename runs it out.
-	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_DEADLINE")); err == nil && d > 0 {
-		testHandoffDeadline = d
-	}
-	if m := pinText.FindStringSubmatch(os.Getenv("VARLATCH_MIGRATE_PIN")); m != nil {
-		testPin = &imagePin{Repository: m[1], Digest: m[2]}
-	}
-	if u := os.Getenv("VARLATCH_MIGRATE_IMAGE_USER"); u != "" {
-		a, b, _ := strings.Cut(u, ":")
-		uid, err1 := strconv.ParseUint(a, 10, 32)
-		gid, err2 := strconv.ParseUint(b, 10, 32)
-		if err1 != nil || err2 != nil {
-			panic("VARLATCH_MIGRATE_IMAGE_USER is <uid>:<gid>")
-		}
-		ImageUser = Owner{UID: uint32(uid), GID: uint32(gid)}
-	}
 }
 
 // crashPoint logs point, and blocks for good when it is the one to pause
 // at.
+// seamPaths: the crashpoint build makes a host target under a test root
+// (the CLI's VARLATCH_MIGRATE_TARGET_ROOT), so a journal may name its
+// configuration there.
+const seamPaths = true
+
 func crashPoint(point string) {
 	if cp.log == nil {
 		return
