@@ -40,6 +40,8 @@ const migrateUsage = `Usage:
                     its bind paths on this host; you start and stop it when migrate asks)
   varlatch migrate --resume (the same options)
   varlatch migrate --abort (the same options): undo a migration not yet switched, or a reverse not yet rolled back
+  varlatch migrate --abort --forget-target (the same options): after an undo whose removal of the target migrate made
+                   kept failing and you removed what was left by hand (--status names each item), clear its record
   varlatch migrate --rollback [--from <compose directory>] (--config <varlatchd.conf> | --to-data ... as above)
                    [--drain <duration>] [--transfer-timeout <duration>]
                (within 30 days of the switch: back to the last TypeScript release, rebuilt on a fresh database
@@ -65,7 +67,7 @@ type migrateOptions struct {
 	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI, ingress, unit string
 	toData, toKeys, toConfig, toImage, toService, acmeEmail, listen                                      string
 	maxDowntime, drain, transferTimeout                                                                  time.Duration
-	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData, acceptExistingUser           bool
+	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData, acceptExistingUser, forget   bool
 }
 
 func parseMigrateOptions(args []string) (migrateOptions, error) {
@@ -76,7 +78,7 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		"--to-image": &o.toImage, "--to-service": &o.toService, "--acme-email": &o.acmeEmail, "--listen": &o.listen}
 	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
 	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback,
-		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData, "--accept-existing-user": &o.acceptExistingUser}
+		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData, "--accept-existing-user": &o.acceptExistingUser, "--forget-target": &o.forget}
 	usage := func(msg string) error { return UsageErrorWithUsage("varlatch migrate: "+msg, "\n"+migrateUsage) }
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -123,6 +125,8 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--resume does what the interrupted run was asked, --abort undoes it; neither takes --dry-run")
 	case o.resume && o.abort:
 		return o, usage("--resume or --abort, not both")
+	case o.forget && (!o.abort || o.config == ""):
+		return o, usage("--forget-target goes with --abort and --config only: it clears the record of a target migrate made, once you removed what was left of it by hand")
 	case (o.acmeEmail != "" || o.listen != "" || o.acceptExistingUser) && (o.config == "" || o.rollback || o.finish || o.status):
 		return o, usage("--acme-email, --listen and --accept-existing-user are the answers of a host target migrate makes (--config): not with --rollback, --finish, --status or --to-*")
 	case o.deleteOldData && !o.finish:
@@ -238,6 +242,8 @@ func migrateCommand(r *Run) error {
 	switch {
 	case o.resume:
 		j, err = e.Resume(context.Background())
+	case o.abort && o.forget:
+		j, err = e.ForgetTarget(context.Background())
 	case o.abort:
 		j, err = e.Abort(context.Background())
 	case o.rollback:
@@ -360,10 +366,22 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 	}
 	if c := j.Created; c != nil {
 		state := "kept"
-		if c.Undone != "" {
+		switch {
+		case c.Forgotten:
+			state = "removed by hand, its record cleared " + c.Undone
+		case c.Undone != "":
 			state = "removed again " + c.Undone
+		case j.Phase == migrate.Released:
+			state = "removal pending: varlatch migrate --abort removes it"
 		}
 		fmt.Fprintf(&b, "Target made by migrate: %s (%s).\n", strings.Join(c.Made, ", "), state)
+		if c.Undone == "" && j.Phase == migrate.Released {
+			// Each item's place, for removing it by hand.
+			root := strings.TrimSuffix(c.Config, setup.ConfigFile)
+			for _, item := range c.Made {
+				fmt.Fprintf(&b, "  %s: %s\n", item, Printable(setup.ItemPlace(func(p string) string { return root + p }, item)))
+			}
+		}
 	}
 	if f := j.Finish; f != nil {
 		data := "the old data kept"
@@ -401,15 +419,15 @@ func ms(n int64) string { return (time.Duration(n) * time.Millisecond).Round(tim
 // targetNeedsRoot is why migrate may change the host target at setup's
 // place ("" when it will not): its configuration is missing (migrate makes
 // it) or cannot be read (it may be missing), or the journal records a
-// target migrate made and has not removed (an undo removes it, a run goes
-// on making it).
+// target migrate made and has not removed, before its switch (an undo
+// removes it, a run goes on making it; from the switch on it is kept).
 func targetNeedsRoot(statErr error, j *migrate.Journal) string {
 	switch {
 	case errors.Is(statErr, fs.ErrNotExist):
 		return setup.ConfigFile + " does not exist: migrate makes the target there"
 	case statErr != nil:
 		return setup.ConfigFile + " cannot be read (" + Printable(statErr.Error()) + "): migrate may make the target there"
-	case j != nil && j.CleanupPending():
+	case j != nil && j.TargetMayChange():
 		return "the migration " + j.ID + " made the target at " + setup.ConfigFile + " and has not removed it: migrate may change it"
 	}
 	return ""

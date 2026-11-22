@@ -3551,10 +3551,15 @@ migrations.
     both journals say released (`UndoTarget`), as does `--abort` of a
     run killed while making it. Until the removal is done the migration
     is not released for good: `--abort` (or `--resume`) goes on removing
-    it, and no new migration starts over it.
+    it, and no new migration starts over it. Should it keep failing,
+    `--status` names each item's place: removed by hand, then
+    `--abort --forget-target` clears the record (it removes nothing, and
+    refuses while the configuration migrate made is still there). The
+    unit's undo is done again harmlessly (nothing to disable once its
+    file is gone).
   - **Root:** whenever the target may change (its configuration missing
-    or unreadable, or one migrate made and has not removed), migrate
-    refuses to run without root.
+    or unreadable, or one migrate made and has not removed, before the
+    switch), migrate refuses to run without root.
   - **A prepared target** (another `--config`, or one already there) is
     used as it is.
   - **Tests:** G5's `maketarget_test.go` runs it under a test root

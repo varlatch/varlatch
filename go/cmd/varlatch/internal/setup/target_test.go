@@ -222,6 +222,19 @@ func TestPrepareTargetRefusals(t *testing.T) {
 	if made, err := run(h, Options{}); err == nil || !strings.Contains(err.Error(), "/var/lib/varlatch is there") || len(made) != 0 {
 		t.Errorf("a data directory and no varlatch user: %v %v", made, err)
 	}
+	// The varlatch user's, but not 0700 (varlatchd could not write it).
+	h = newFakeHost(t)
+	h.users[User], h.shells[User] = [2]int{985, 985}, "/usr/sbin/nologin"
+	if err := os.MkdirAll(h.Path(DataDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(h.Path(DataDir), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	h.chowns[DataDir] = [2]int{985, 985}
+	if made, err := run(h, Options{}); err == nil || !strings.Contains(err.Error(), "/var/lib/varlatch is there") || len(made) != 0 {
+		t.Errorf("a data directory 0500: %v %v", made, err)
+	}
 	h = newFakeHost(t)
 	_ = os.Remove(h.Path(UnitFile))
 	if _, err := run(h, Options{}); err == nil || !strings.Contains(err.Error(), "install.sh --server") {
@@ -278,3 +291,27 @@ func TestPrepareTargetWritesItsConfigurationLast(t *testing.T) {
 }
 
 var errStopped = errors.New("stopped")
+
+// The unit's undo is done again harmlessly: with the unit not enabled, or
+// its file removed by hand (systemctl would refuse to disable it), nothing
+// is disabled, so the undo does not fail for good.
+func TestUndoTargetUnitEnabledAgain(t *testing.T) {
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	h.enabled = true
+	if err := UndoTarget(h, []string{MadeUnitEnabled}, nil); err != nil || h.enabled {
+		t.Fatalf("disabled: %v, enabled %v", err, h.enabled)
+	}
+	if err := UndoTarget(h, []string{MadeUnitEnabled}, nil); err != nil {
+		t.Errorf("again: %v", err)
+	}
+	if err := os.Remove(h.Path(UnitFile)); err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{false, true} {
+		h.enabled = enabled
+		if err := UndoTarget(h, []string{MadeUnitEnabled}, nil); err != nil {
+			t.Errorf("the unit file gone (enabled %v): %v", enabled, err)
+		}
+	}
+}

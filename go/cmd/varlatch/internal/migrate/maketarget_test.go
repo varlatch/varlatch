@@ -66,6 +66,7 @@ func (m *fakeMaker) Undo(made []string) error {
 }
 func (m *fakeMaker) KeyItems() (string, string)        { return "root-kek", "backup-key" }
 func (m *fakeMaker) Present(item string) (bool, error) { return m.present[item], nil }
+func (m *fakeMaker) Where() string                     { return "/etc/varlatch/varlatchd.conf" }
 
 // runKilled runs f, a run killAt kills.
 func runKilled(t *testing.T, f func()) {
@@ -230,6 +231,10 @@ func TestTheTargetMigrateMakes(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "not all removed") || j.Phase != Released || j.Created.Undone != "" {
 			t.Fatalf("--abort with the removal failed: %v (%+v)", err, j)
 		}
+		// The way out, should it keep failing, is named.
+		if !strings.Contains(err.Error(), "remove what is left of user, etc-dir, data-dir, unit-enabled, config") || !strings.Contains(err.Error(), "--abort --forget-target") {
+			t.Errorf("no way out named: %v", err)
+		}
 		if _, err := w.eng.Run(context.Background(), true); err == nil || !strings.Contains(err.Error(), "varlatch migrate --abort removes it") {
 			t.Fatalf("a new migration over it: %v", err)
 		}
@@ -258,6 +263,46 @@ func TestTheTargetMigrateMakes(t *testing.T) {
 		}
 		if j.Phase != DryRun || !j.Stopped || containsCall(w.src.calls, "barrier") {
 			t.Fatalf("--resume went on to %s (stopped %v): a dry run is resumed as one", j.Phase, j.Stopped)
+		}
+	})
+	t.Run("a removal that keeps failing, finished by hand", func(t *testing.T) {
+		w := newWorld(t)
+		m := &fakeMaker{missing: true, dir: w.src.dir}
+		w.eng.Maker = m
+		if _, err := w.eng.ForgetTarget(context.Background()); err == nil {
+			t.Fatal("--forget-target with no journal")
+		}
+		if _, err := w.eng.Run(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.eng.ForgetTarget(context.Background()); err == nil || !strings.Contains(err.Error(), "records no target left to remove") {
+			t.Fatalf("--forget-target before an undo: %v", err)
+		}
+		m.undoFails = 1 << 20
+		if _, err := w.eng.Abort(context.Background()); err == nil {
+			t.Fatal("--abort did not fail")
+		}
+		// The configuration still there: nothing is forgotten.
+		if _, err := w.eng.ForgetTarget(context.Background()); err == nil || !strings.Contains(err.Error(), "is still there") {
+			t.Fatalf("--forget-target with the configuration there: %v", err)
+		}
+		// Not this run's to check: the target flags name it.
+		w.eng.Maker = nil
+		if _, err := w.eng.Abort(context.Background()); err == nil || !strings.Contains(err.Error(), "--abort --config /etc/varlatch/varlatchd.conf") {
+			t.Errorf("--abort without the maker: %v", err)
+		}
+		if _, err := w.eng.Run(context.Background(), true); err == nil || !strings.Contains(err.Error(), "--abort --config /etc/varlatch/varlatchd.conf") {
+			t.Errorf("a new migration without the maker: %v", err)
+		}
+		w.eng.Maker = m
+		m.missing = true // the operator removed the rest by hand
+		j, err := w.eng.ForgetTarget(context.Background())
+		if err != nil || !j.Created.Forgotten || j.Created.Undone == "" {
+			t.Fatalf("--forget-target: %v %+v", err, j.Created)
+		}
+		m.undoFails = 0
+		if _, err := w.eng.Run(context.Background(), true); err != nil {
+			t.Fatalf("a new migration after: %v", err)
 		}
 	})
 }

@@ -185,8 +185,8 @@ func (e *Engine) Run(ctx context.Context, dryRunOnly bool) (*Journal, error) {
 	}
 	switch {
 	case j != nil && j.Phase == Released && j.CleanupPending():
-		return j, fmt.Errorf("the migration %s was undone, but what migrate made of the target (%s) is not all removed: varlatch migrate --abort removes it before a new migration",
-			j.ID, strings.Join(j.Created.Made, ", "))
+		return j, fmt.Errorf("the migration %s was undone, but what migrate made of the target (%s) is not all removed: varlatch migrate --abort removes it before a new migration (%s)",
+			j.ID, strings.Join(j.Created.Made, ", "), e.removalHelp(j))
 	case j == nil, j.Phase == Released, j.Stopped && slices.Contains(beforeBarrier, j.Phase):
 	case j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is open: this installation was migrated (varlatch migrate --status)", j.ID)
@@ -813,7 +813,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			return err
 		}
 		if err := e.undoMade(j); err != nil {
-			return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --abort (or --resume) finishes it", cause, err)
+			return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --abort (or --resume) finishes it (%s)", cause, err, e.removalHelp(j))
 		}
 		return fmt.Errorf("%w; what migrate made of the target is removed, and the old installation runs unchanged", cause)
 	}
@@ -826,7 +826,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	}
 	// The target migrate made goes too, once both journals say released.
 	if err := e.undoMade(j); err != nil {
-		return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --abort (or --resume) finishes it", cause, err)
+		return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --abort (or --resume) finishes it (%s)", cause, err, e.removalHelp(j))
 	}
 	return fmt.Errorf("%w; the barrier was lifted and the old installation reopened unchanged", cause)
 }

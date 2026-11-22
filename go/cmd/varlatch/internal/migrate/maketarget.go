@@ -4,9 +4,9 @@ package migrate
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -40,13 +40,19 @@ type TargetMaker interface {
 	KeyItems() (rootKEK, backupKey string)
 	// Present is whether one of KeyItems' files is there.
 	Present(item string) (bool, error)
+	// Where is the configuration's path, where the target is made.
+	Where() string
 }
 
-// CreatedRecord is a target migrate made: its items, in the order made;
-// Undone once they are removed again.
+// CreatedRecord is a target migrate made: its items, in the order made,
+// and where (its configuration's path); Undone once they are removed again
+// (Forgotten: the operator removed what was left by hand, and --abort
+// --forget-target cleared the record).
 type CreatedRecord struct {
-	Made   []string `json:"made"`
-	Undone string   `json:"undone,omitempty"`
+	Made      []string `json:"made"`
+	Config    string   `json:"config,omitempty"`
+	Undone    string   `json:"undone,omitempty"`
+	Forgotten bool     `json:"forgotten,omitempty"`
 }
 
 // CleanupPending is whether the journal records a target migrate made
@@ -55,6 +61,61 @@ type CreatedRecord struct {
 // it.
 func (j *Journal) CleanupPending() bool {
 	return j.Created != nil && j.Created.Undone == "" && len(j.Created.Made) > 0
+}
+
+// TargetMayChange is whether the target migrate made may still be made or
+// removed: CleanupPending, and the migration not past its switch (from the
+// switch on, the target is the installation, kept).
+func (j *Journal) TargetMayChange() bool {
+	return j.CleanupPending() && (slices.Contains(beforeBarrier, j.Phase) || slices.Contains(held, j.Phase) || j.Phase == Transfer || j.Phase == Released)
+}
+
+// madeAt is where the target in j was made, for the operator.
+func madeAt(j *Journal) string {
+	if j.Created != nil && j.Created.Config != "" {
+		return j.Created.Config
+	}
+	return "/etc/varlatch/varlatchd.conf"
+}
+
+// removalHelp is the way out when removing the target migrate made keeps
+// failing, for the messages that say it is not all removed.
+func (e *Engine) removalHelp(j *Journal) string {
+	if e.Maker == nil {
+		return fmt.Sprintf("this run cannot remove it (it was made at %s): run varlatch migrate --abort --config %s, as root", madeAt(j), madeAt(j))
+	}
+	return fmt.Sprintf("if that keeps failing, remove what is left of %s by hand (varlatch migrate --status names each item's place), run varlatch migrate --abort again, and once nothing is left, varlatch migrate --abort --forget-target clears the record",
+		strings.Join(j.Created.Made, ", "))
+}
+
+// ForgetTarget is `varlatch migrate --abort --forget-target`: an undone
+// migration whose made target could not all be removed, its record cleared
+// once the operator removed the rest by hand. It removes nothing, and
+// refuses while the configuration migrate made is still there.
+func (e *Engine) ForgetTarget(ctx context.Context) (*Journal, error) {
+	unlock, err := lockDir(e.Source.Dir())
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	j, err := readJournal(e.Source.Dir())
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case j == nil:
+		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to forget", e.Source.Dir())
+	case j.Phase != Released || !j.CleanupPending():
+		return j, fmt.Errorf("the migration %s records no target left to remove after an undo: --forget-target clears only that record (varlatch migrate --status)", j.ID)
+	case e.Maker == nil:
+		return j, fmt.Errorf("--forget-target checks the target migrate made at %s: give --config %s", madeAt(j), madeAt(j))
+	case !e.Maker.Missing():
+		return j, fmt.Errorf("the configuration migrate made at %s is still there: remove what is left by hand (or varlatch migrate --abort), then --forget-target", madeAt(j))
+	}
+	e.say("Clearing the record of what migrate made of the target (%s): nothing is removed by this run.", strings.Join(j.Created.Made, ", "))
+	j.Created.Undone = e.now().UTC().Format(time.RFC3339Nano)
+	j.Created.Forgotten = true
+	return j, writeJournal(e.Source.Dir(), j)
 }
 
 // makeTarget makes the target when it is missing, journalling each item
@@ -71,7 +132,7 @@ func (e *Engine) makeTarget(ctx context.Context, prev *Journal, id string, src S
 		return rec, nil
 	}
 	if rec == nil {
-		rec = &CreatedRecord{}
+		rec = &CreatedRecord{Config: e.Maker.Where()}
 	}
 	// The source's journal, before the target exists: the migration's id
 	// and what is being made.
@@ -92,7 +153,7 @@ func (e *Engine) makeTarget(ctx context.Context, prev *Journal, id string, src S
 	})
 	if err != nil {
 		if uerr := e.undoMade(pre); uerr != nil {
-			return rec, fmt.Errorf("making the target: %w; removing what was made: %v (varlatch migrate --abort tries again)", err, uerr)
+			return rec, fmt.Errorf("making the target: %w; removing what was made: %v (varlatch migrate --abort tries again; %s)", err, uerr, e.removalHelp(pre))
 		}
 		// Stopped, as a failure before the barrier is: the next run starts
 		// again (it is not an interrupted one).
@@ -113,7 +174,7 @@ func (e *Engine) undoMade(j *Journal) error {
 		return nil
 	}
 	if e.Maker == nil {
-		return errors.New("the target migrate made cannot be removed by this run")
+		return fmt.Errorf("the target migrate made at %s cannot be removed by this run: run varlatch migrate --abort --config %s, as root", madeAt(j), madeAt(j))
 	}
 	e.say("Removing what migrate made of the target: %v.", rec.Made)
 	if err := e.Maker.Undo(rec.Made); err != nil {

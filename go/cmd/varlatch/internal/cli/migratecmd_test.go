@@ -4,7 +4,6 @@ package cli
 
 import (
 	"bytes"
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -84,29 +83,19 @@ func TestMigrateCommand(t *testing.T) {
 func writeEmpty(path string) error { return os.WriteFile(path, []byte("\n"), 0o600) }
 
 // migrate needs root for the host target at setup's place whenever it may
-// change it: its configuration missing, or not readable (as when stat is
-// refused: it may be missing), or a journal recording a target migrate
-// made and has not removed (an --abort or --resume removes it, as root);
-// a prepared target, or one migrate made and removed again, needs none.
+// change it: its configuration missing, or not readable (stat refused: it
+// may be missing), or a journal recording a target migrate made and has
+// not removed, before its switch (an --abort or --resume removes it, as
+// root); a prepared target, one migrate made and removed again, or one
+// past its switch (kept: the installation) needs none. The stat errors are
+// built here, as no directory refuses its owner's stat on every platform.
 func TestTargetNeedsRoot(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads every directory")
+	conf := "/etc/varlatch/varlatchd.conf"
+	missing := &fs.PathError{Op: "stat", Path: conf, Err: fs.ErrNotExist}
+	denied := &fs.PathError{Op: "stat", Path: conf, Err: fs.ErrPermission}
+	journal := func(p migrate.Phase, undone string) *migrate.Journal {
+		return &migrate.Journal{ID: "m1", Phase: p, Created: &migrate.CreatedRecord{Made: []string{"user", "config"}, Undone: undone}}
 	}
-	locked := filepath.Join(t.TempDir(), "locked")
-	if err := os.Mkdir(locked, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(locked, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
-	_, denied := os.Stat(filepath.Join(locked, "varlatchd.conf"))
-	if !errors.Is(denied, fs.ErrPermission) {
-		t.Fatalf("stat in a locked directory: %v", denied)
-	}
-	_, missing := os.Stat(filepath.Join(t.TempDir(), "varlatchd.conf"))
-	made := &migrate.Journal{ID: "m1", Phase: migrate.Released, Created: &migrate.CreatedRecord{Made: []string{"user", "config"}}}
-	removed := &migrate.Journal{ID: "m1", Phase: migrate.Released, Created: &migrate.CreatedRecord{Made: []string{"user", "config"}, Undone: "2026-11-22T00:00:00Z"}}
 	for _, c := range []struct {
 		name    string
 		statErr error
@@ -115,13 +104,32 @@ func TestTargetNeedsRoot(t *testing.T) {
 	}{
 		{"missing", missing, nil, "does not exist"},
 		{"stat refused", denied, nil, "cannot be read"},
-		{"made, not removed", nil, made, "has not removed it"},
+		{"made, undone, not removed", nil, journal(migrate.Released, ""), "has not removed it"},
+		{"made, before the barrier", nil, journal(migrate.DryRun, ""), "has not removed it"},
 		{"prepared", nil, nil, ""},
-		{"made, removed again", nil, removed, ""},
+		{"made, removed again", nil, journal(migrate.Released, "2026-11-22T00:00:00Z"), ""},
+		{"made, open", nil, journal(migrate.Open, ""), ""},
+		{"made, finished", nil, journal(migrate.Finished, ""), ""},
 	} {
 		got := targetNeedsRoot(c.statErr, c.j)
 		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+// --status of an undo whose removal of the made target is not done says
+// so, and names each item's place, for removing it by hand.
+func TestMigrateStatusRemovalPending(t *testing.T) {
+	dir := t.TempDir()
+	j := `{"format":1,"id":"mig_test","phase":"released","history":[],"created":{"made":["user","etc-dir","config"],"config":"/etc/varlatch/varlatchd.conf"}}`
+	if err := os.WriteFile(filepath.Join(dir, migrate.JournalFile), []byte(j), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := Main([]string{"migrate", "--status", "--from", dir}, MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut})
+	if code != 0 || !strings.Contains(out.String(), "removal pending: varlatch migrate --abort removes it") ||
+		!strings.Contains(out.String(), "  etc-dir: /etc/varlatch\n") || !strings.Contains(out.String(), "  config: /etc/varlatch/varlatchd.conf\n") {
+		t.Errorf("--status: %d %q %q", code, out.String(), errOut.String())
 	}
 }

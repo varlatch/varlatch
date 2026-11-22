@@ -109,8 +109,8 @@ func PrepareTarget(ctx context.Context, o Options, made func(item string) error)
 	}
 	r.keepEtc = etcThere
 	dataThere, err := r.targetDirThere(DataDir, MadeDataDir, func(o, _ int, perm fs.FileMode) bool {
-		return found && o == uid && perm&0o077 == 0
-	}, "the "+User+" user's alone (0700)")
+		return found && o == uid && perm == 0o700
+	}, "the "+User+" user's, 0700")
 	if err != nil {
 		return Answers{}, err
 	}
@@ -190,6 +190,28 @@ func (r *run) targetDirThere(p, item string, ok func(uid, gid int, perm fs.FileM
 	return true, nil
 }
 
+// ItemPlace is what one of the Made items is on the host (path: where a
+// host path is, Host.Path), for the operator who removes it by hand.
+func ItemPlace(path func(string) string, item string) string {
+	switch item {
+	case MadeUser:
+		return "the " + User + " user and its own group"
+	case MadeEtcDir:
+		return path(EtcDir)
+	case MadeDataDir:
+		return path(DataDir)
+	case MadeUnitEnabled:
+		return Unit + " enabled (systemctl disable " + Unit + ")"
+	case MadeConfig:
+		return path(ConfigFile)
+	case MadeRootKEK:
+		return path(RootKEK)
+	case MadeBackupKey:
+		return path(BackupKey)
+	}
+	return item
+}
+
 // ItemPresent is whether the file of one of the keys' items (MadeRootKEK,
 // MadeBackupKey) is there.
 func ItemPresent(h Host, item string) (bool, error) {
@@ -223,6 +245,14 @@ func UndoTarget(h Host, made []string, say func(string) error) error {
 		var err error
 		switch item {
 		case MadeUnitEnabled:
+			// Done again harmlessly: nothing to disable when the unit is not
+			// enabled, or its file is gone (removed by hand: systemctl
+			// would refuse to disable it, every time).
+			_, gone := os.Stat(h.Path(UnitFile))
+			out, e := h.Systemctl("is-enabled", Unit)
+			if enabled := e == nil && strings.TrimSpace(out) == "enabled"; !enabled || gone != nil {
+				break // out of the switch: the next item
+			}
 			if out, e := h.Systemctl("disable", Unit); e != nil {
 				err = fmt.Errorf("systemctl disable %s: %v %s", Unit, e, oneLine(out))
 			}

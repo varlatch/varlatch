@@ -121,6 +121,10 @@ func (h *fakeHost) Systemctl(args ...string) (string, error) {
 			h.active = true
 		}
 	case "disable":
+		// systemctl refuses a unit whose file is gone.
+		if _, err := os.Stat(h.Path(UnitFile)); err != nil {
+			return "Failed to disable unit: Unit file " + Unit + " does not exist.", errors.New("exit status 1")
+		}
 		h.enabled = false
 	case "is-enabled":
 		if h.enabled {
