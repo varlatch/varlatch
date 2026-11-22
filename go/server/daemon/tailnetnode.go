@@ -286,7 +286,9 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	controlURL := nodeControl(cfg)
-	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: c.hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags})
+	// On a self-hosted control server the node's tags are its pre-auth
+	// key's (it advertises none: Headscale refuses a key's node that does).
+	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: c.hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: t.ControlURL != ""})
 	authKey = ""
 	if err != nil {
 		return fail("%v", err)
@@ -323,7 +325,17 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	// While held, the read-back is of the hold's name, never the
 	// configured one, which another node holds (no name-suffixed latch).
 	m.SetHeldName(c.hostname)
+	if t.ControlURL != "" {
+		// On a self-hosted control server the node's tags are its key's:
+		// a node without exactly tailnet_tags would open nothing after the
+		// handoff, so it is refused here (ADR-0059 amendment 11).
+		m.RequireTags(t.Tags)
+	}
 	m.Check(ctx)
+	if m.Closed() == tailnet.TagsDiffer {
+		detail, _ := m.Explain()
+		return fail("%s Then run enroll again (the node stays held).", detail)
+	}
 	suffix, open := m.Pinned()
 	res := enrollResult{Hostname: c.hostname, DNSName: st.DNSName, StableID: st.SelfID, Suffix: st.Suffix, TailnetID: st.TailnetID,
 		ControlURL: controlURL, Pinned: suffix, Open: open, Held: true}
@@ -493,7 +505,7 @@ func nodeFor(ctx context.Context, env *hostEnv) (*tailnet.TSNode, func(), error)
 	if h, err := tailnet.LoadHold(cfg.DataDir); err == nil && h != nil {
 		hostname = h.Hostname
 	}
-	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags})
+	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags, KeyTags: cfg.Tailnet.ControlURL != ""})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -578,7 +590,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	defer stop()
 	ctx, cancel := context.WithTimeout(sctx, c.wait+reachSlack)
 	defer cancel()
-	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(cfg), AuthKey: key, Tags: t.Tags}, c.name, c.stableID, c.wait)
+	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(cfg), AuthKey: key, Tags: t.Tags, KeyTags: t.ControlURL != ""}, c.name, c.stableID, c.wait)
 	if err != nil {
 		return fail("%v", err)
 	}

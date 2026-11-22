@@ -303,20 +303,14 @@ func (e *Engine) stopBefore(ctx context.Context, j *Journal, cause error) error 
 }
 
 // pinned refuses a source that is not the last TypeScript release's
-// published image: its registry digest, of its own repository, must be the
-// pinned one. While no digest is pinned (0.23.0 not published yet), every
-// source is refused.
+// published image: its registry digest, of the pinned repository, must be
+// the pinned one.
 func (e *Engine) pinned(src SourceInfo) error {
-	pin := imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
-	if testPin != nil {
-		pin = *testPin
-	}
+	pin := releasePin()
 	if e.pin != nil {
 		pin = *e.pin
 	}
 	switch {
-	case pin.Digest == "":
-		return fmt.Errorf("%s is not yet published; this varlatch cannot migrate yet (it pins the release's image by its digest)", LastTypeScriptRelease)
 	case src.Digest == "":
 		return errors.New("the source's image is not pinned by a registry digest: a migration starts from the last TypeScript release's published image only")
 	case src.DigestRepository != pin.Repository || src.Digest != pin.Digest:
@@ -745,7 +739,8 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	// back, neither the target nor the address moves: --resume goes on.
 	var problems []error
 	// nameBack: the tailnet name is back with the source, or none moved.
-	nameBack := true
+	// stopped: the target is stopped, or nothing of it was asked to stop.
+	nameBack, stopped := true, true
 	if from == Transfer {
 		// The tailnet name first, then the address (decision 12's reverse
 		// order); an address is never given back while the name is not.
@@ -757,7 +752,9 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			problems = append(problems, err)
 			nameBack = false
 		} else {
-			problems = append(problems, e.stopTargetForUndo(ctx)...)
+			stop := e.stopTargetForUndo(ctx)
+			stopped = len(stop) == 0
+			problems = append(problems, stop...)
 		}
 	}
 	// open: the source is behind no gate now. Otherwise closed says why its
@@ -782,16 +779,53 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 		open = true
 	}
 	if from == Transfer && nameBack {
-		// Coolify's domain goes back by hand, whatever the gate.
-		if open || j.Ingress == Coolify {
+		switch {
+		case j.Ingress == Coolify:
+			// Coolify's domain goes back by hand, whatever the gate or the
+			// target: there is nothing of this host's to start or wait for.
 			problems = append(problems, e.returnAddress(ctx, j)...)
-		} else {
+		case !stopped:
+			// The target may still hold the address (an image's service
+			// the operator stops, a unit that would not stop): the source's
+			// ingress would collide with it or race it, and a wait would
+			// probe the target. Left for --resume once it is stopped.
+			problems = append(problems, fmt.Errorf("the source's %s is not started again while the target may still serve the address", ingressPart(j.Ingress)))
+		case !open:
 			problems = append(problems, fmt.Errorf(closed, ingressPart(j.Ingress)))
+		default:
+			back := e.returnAddress(ctx, j)
+			problems = append(problems, back...)
+			// The old installation is reopened only once it answers at its
+			// address: its ingress started is not yet its dashboard
+			// listening (7.8b rehearsal, run r12). A journal that records
+			// no address (one from before the transfer record) has none to
+			// check.
+			switch {
+			case len(back) > 0:
+			case j.Transfer == nil || j.Transfer.Origin == "":
+				e.say("The source's %s was started again; the journal records no address to check it at.", ingressPart(j.Ingress))
+			default:
+				want := ""
+				if j.Copy != nil {
+					want = j.Copy.InstallationID
+				}
+				if err := e.waitForTypeScript(ctx, j, want); err != nil {
+					problems = append(problems, fmt.Errorf("the source's %s was started again, but %w", ingressPart(j.Ingress), err))
+					if !j.UndoUnanswered {
+						j.UndoUnanswered = true
+						if err := e.save(ctx, j); err != nil {
+							problems = append(problems, fmt.Errorf("recording that the source did not answer: %w", err))
+						}
+					}
+				}
+			}
 		}
 	}
 	// The target's database is discarded once the name is back: while it
-	// is not, a --resume may start the target again, which needs it.
-	if nameBack {
+	// is not, a --resume may start the target again, which needs it. A
+	// target that may still run keeps it too: discarding it would only say
+	// to stop the target first, again.
+	if nameBack && stopped {
 		if err := e.discard(ctx, j); err != nil {
 			problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
 		}
@@ -801,7 +835,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 		return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, errors.Join(problems...))
 	}
 	j.Undone = &UndoneRecord{From: from, Why: cause.Error(), Released: released, At: e.now().UTC().Format(time.RFC3339Nano)}
-	j.Undoing = false
+	j.Undoing, j.UndoUnanswered = false, false
 	if err := e.enter(ctx, j, Released); err != nil {
 		did := "the barrier lifted, the target's database discarded"
 		if from == Transfer {

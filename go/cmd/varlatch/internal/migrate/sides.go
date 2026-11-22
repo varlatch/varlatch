@@ -28,9 +28,18 @@ type imagePin struct {
 	Repository, Digest string
 }
 
-// testPin replaces the constants in a crashpoint build only (G5's
-// interruption gate, crashpoint.go); nil in a release.
+// testPin replaces the constants in a crashpoint or rehearsal build only
+// (testonly.go); nil in a release.
 var testPin *imagePin
+
+// releasePin is the image a migration starts from in this build: the
+// constants, or a crashpoint build's testPin.
+func releasePin() imagePin {
+	if testPin != nil {
+		return *testPin
+	}
+	return imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
+}
 
 // Source is the old installation, driven as processes (go-step7 decision
 // 2): its CLI's commands inside its containers, and its host CLI. A
@@ -69,8 +78,10 @@ type Source interface {
 	// StopIngress and StartIngress stop and start what serves the
 	// address (Caddy for public ingress, the dashboard's port for an own
 	// proxy); the Coolify shape has nothing here to stop or start.
+	// StartIngress recreates what does not serve as it is, and with
+	// recreate, whatever it reports.
 	StopIngress(ctx context.Context, kind Ingress) error
-	StartIngress(ctx context.Context, kind Ingress) error
+	StartIngress(ctx context.Context, kind Ingress, recreate bool) error
 }
 
 // Ingress is a source's ingress shape (decision 12).

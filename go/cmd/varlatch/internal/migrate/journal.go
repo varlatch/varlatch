@@ -101,6 +101,11 @@ type Journal struct {
 	Undone      *UndoneRecord    `json:"undone,omitempty"`
 	// Undoing is an undo begun and not finished: --resume goes on with it.
 	Undoing bool `json:"undoing,omitempty"`
+	// UndoUnanswered is that undo's wait for the source at its address
+	// timed out: the next try recreates the source's ingress, whatever its
+	// container reports (it can run with no network, or be caught running
+	// between restarts).
+	UndoUnanswered bool `json:"undoUnanswered,omitempty"`
 	// Ingress is the source's ingress, which the transfer moves: public,
 	// proxy or coolify (decision 12).
 	Ingress Ingress `json:"ingress"`

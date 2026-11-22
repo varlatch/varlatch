@@ -10,7 +10,10 @@
 > `docs/evidence/g1-walkthrough-v0.50.0.md` (or the target release candidate
 > identifier), complete the walkthrough against the release candidate's
 > `varlatchd`, delete this notice and the HTML comment sentinel below the
-> title, and complete Owner Sign-Off below.
+> title, and complete Owner Sign-Off below. The gate reads the evidence as
+> plain lines, not rendered Markdown, so it also rejects any HTML comment
+> (`<!--`) or fenced code block: write notes, commands and logs as plain
+> lines or indented quotes.
 
 ## 1. Candidate and Environment Metadata
 
@@ -61,14 +64,13 @@ If using a scripted capture plus owner review, note the capture command,
 artifact archive location, and confirm every contact sheet and recording was
 reviewed by hand.
 
-```text
 Seed summary (replace with actual details):
+
 - Organizations: primary org (full data), frozen org, scheduled-deletion org, empty org (no GitHub App)
 - Projects: one git-authority project (dev/staging/prod, active + pending Contract revisions, rotating secret), one managed-authority project
 - Access: owner (installation admin), enrolled member, pending invitation, machines (OIDC, expiring credential, workload, agent, retired), custom role, group, team, grants, tailnet Requirement
 - Security & Audit: Security Controls configured, fresh pending step-up approval, webhooks, audit export configured
 - Sync & Installation: platform connections, sync targets, GitHub App + installation target, backup archive, pending device sign-in, isolating maintenance window tested last
-```
 
 ## 4. Route and Screen Checklist
 

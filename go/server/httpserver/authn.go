@@ -232,8 +232,11 @@ func withPrincipal(r *http.Request, p *auth.Principal) *http.Request {
 
 // noStore are the operations answered with Cache-Control: no-store
 // whatever their outcome: device sign-in, passkey confirmation and step-up
-// approvals.
+// approvals, and /v1/meta, which varlatch migrate reads to tell which
+// installation serves an address (a cached answer must not stand for it;
+// the TypeScript route sets none, a deliberate difference).
 var noStore = map[string]bool{
+	"GET /v1/meta":                                        true,
 	"POST /v1/auth/device":                                true,
 	"POST /v1/auth/device/token":                          true,
 	"POST /v1/auth/device/lookup":                         true,

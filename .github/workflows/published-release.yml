@@ -8,9 +8,10 @@
 # (go/install/published_test.go). Every check uses Sigstore's live trusted
 # root. Nothing is signed, uploaded or published here.
 #
-# It runs after the Release workflow publishes a prerelease of the Go line
-# (0.50.0 and later), and by hand for any published release of the Go line
-# (Actions, "Run workflow", its tag). Not on `release: published`: the
+# It runs after the Release workflow publishes a release of the Go line
+# (0.50.0 and later: its prereleases and its final releases), and by hand
+# for any published release of the Go line (Actions, "Run workflow", its
+# tag). Not on `release: published`: the
 # Release workflow publishes with GITHUB_TOKEN, whose events start no other
 # workflow. The tests come from the default branch, so a release tagged
 # before them is checked too.
@@ -48,7 +49,6 @@ jobs:
         env:
           # A tag's run of the Release workflow names the tag as its branch.
           TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
-          EVENT: ${{ github.event_name }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
@@ -65,13 +65,17 @@ jobs:
           minor=${rest%%.*}
           go=false
           if [ "$major" -gt 0 ] || [ "$minor" -ge 50 ]; then go=true; fi
-          # The release must be published; after the Release workflow,
-          # only a prerelease is checked (a final release by hand).
-          if ! prerelease=$(gh release view "$TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease); then
+          # The release must be published (a prerelease or a final one),
+          # and a draft is not: refused explicitly, not left to what the
+          # token can see. Anything but "false" is refused.
+          if ! draft=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft); then
             echo "::error::$TAG is not a published release"
             exit 1
           fi
-          if [ "$EVENT" = workflow_run ] && [ "$prerelease" != true ]; then go=false; fi
+          if [ "$draft" != "false" ]; then
+            echo "::error::$TAG is a draft release, not a published one"
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "go=$go" >> "$GITHUB_OUTPUT"
           echo "$TAG: version $version, checked: $go"
