@@ -289,6 +289,11 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     const limits = AUDIT_EXPORT_LIMITS as { batchEvents: number };
     const saved = limits.batchEvents;
     limits.batchEvents = 3;
+    // Pin the export clock for this test so draining across a UTC hour
+    // boundary (e.g. 15:59:59Z -> 16:00:00Z) cannot legitimately emit a second
+    // hourly heartbeat while keeping retainUntil ~24h ahead for Object Lock.
+    const fixedNow = new Date();
+    setAuditExportTestHooks({ now: () => fixedNow });
     try {
       // Another Organization's events stay out.
       expect((await call("POST", "/v1/organizations", person.cli, { name: "Other", slug: "other" })).status).toBe(201);
