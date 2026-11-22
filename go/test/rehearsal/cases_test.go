@@ -104,16 +104,18 @@ func registerSecrets(in *installation) {
 
 func imagePin(t *testing.T, in *installation, rel release) {
 	const item = 8
-	// The constants (no override): 0.23.0 is not published, so every
-	// source is refused.
+	// The constants (no override): the release pins 0.23.0's published
+	// image (ghcr.io/varlatch/varlatchd by its digest, #402), so this
+	// run's own build of it, from its own registry, is refused as another
+	// image, the published one named.
 	r := in.migrateEnv(rel, false, "", "--dry-run")
-	record(t, item, "no pin: refused as unpublished", r.code != 0 && strings.Contains(r.stderr, "not yet published"), r.String())
+	record(t, item, "no pin: refused as not the published image", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image: repository ghcr.io/varlatch/varlatchd"), r.String())
 	// Another digest than the source's.
 	other := rel.pin()[:strings.Index(rel.pin(), "@")] + "@sha256:" + strings.Repeat("0", 64)
 	r = in.migrateEnv(rel, true, other, "--dry-run")
 	// The message names both images; the CLI's fail-safe masks a registry
 	// with a port as a URL's user name and password (finding of run r1).
-	record(t, item, "another digest: refused", r.code != 0 && !strings.Contains(r.stderr, "not yet published"), r.String())
+	record(t, item, "another digest: refused", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
 	if strings.Contains(r.stderr, "[redacted]@") {
 		differs(item, "G5's pin is ghcr.io/varlatch/varlatchd@sha256:..., a repository without a port.",
 			"with a registry that has a port (a mirror, a private registry, this harness's), the refusal's image references read [redacted]@sha256:...: the fail-safe takes host:port/repo before the at-sign for a URL's credentials",
@@ -125,7 +127,7 @@ func imagePin(t *testing.T, in *installation, rel release) {
 	t.Cleanup(func() { run("", nil, nil, "docker", "image", "rm", local) })
 	in.swapImage(t, local)
 	r = in.migrateEnv(rel, true, rel.pin(), "--dry-run")
-	record(t, item, "a locally built image: refused (no registry digest)", r.code != 0 && !strings.Contains(r.stderr, "not yet published"), r.String())
+	record(t, item, "a locally built image: refused (no registry digest)", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
 	in.swapImage(t, rel.Images["varlatchd"])
 }
 
