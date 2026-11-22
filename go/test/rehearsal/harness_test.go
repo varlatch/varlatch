@@ -495,7 +495,14 @@ func (in *installation) get(path string) (int, string) {
 	if c == nil {
 		c = &http.Client{Timeout: 10 * time.Second}
 	}
-	resp, err := c.Get(in.publicURL + path)
+	req, err := http.NewRequest(http.MethodGet, in.publicURL+path, nil)
+	if err != nil {
+		return 0, err.Error()
+	}
+	// As migrate's prober asks: past any cache in front.
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	resp, err := c.Do(req)
 	if err != nil {
 		return 0, err.Error()
 	}
@@ -503,6 +510,56 @@ func (in *installation) get(path string) (int, string) {
 	var b bytes.Buffer
 	_, _ = b.ReadFrom(resp.Body)
 	return resp.StatusCode, b.String()
+}
+
+// answered is what answersWithin saw: whether an answer passed within the
+// deadline, how long the first passing one took, how many requests it
+// made, and the last answer (the passing one, or the last that did not).
+type answered struct {
+	ok    bool
+	took  time.Duration
+	tries int
+	code  int
+	body  string
+}
+
+// sourceAnswers is whether a /v1/meta answer is the source's own: 200, the
+// TypeScript release 0.23.0, and the installation's id (0.23.0 answers
+// 200 without one while its database is down), as migrate's prober and
+// waitForTypeScript judge it.
+func sourceAnswers(installationID string) func(int, string) bool {
+	return func(code int, body string) bool {
+		var meta struct {
+			InstallationID string `json:"installationId"`
+			ServerVersion  string `json:"serverVersion"`
+		}
+		if code != http.StatusOK || json.Unmarshal([]byte(body), &meta) != nil {
+			return false
+		}
+		return installationID != "" && meta.InstallationID == installationID && meta.ServerVersion == "0.23.0"
+	}
+}
+
+// answersWithin polls get, as a client would, until pass holds of its
+// answer or the deadline passes. It never judges a single request: a
+// source that starts after the poll began is waited for, one that never
+// answers fails at the deadline.
+func answersWithin(get func() (int, string), pass func(int, string) bool, deadline, every time.Duration) answered {
+	start := time.Now()
+	var a answered
+	for {
+		a.tries++
+		a.code, a.body = get()
+		if pass(a.code, a.body) {
+			a.ok, a.took = true, time.Since(start)
+			return a
+		}
+		if time.Since(start)+every > deadline {
+			a.took = time.Since(start)
+			return a
+		}
+		time.Sleep(every)
+	}
 }
 
 // journal is the migration's journal in the Compose directory.

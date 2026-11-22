@@ -333,8 +333,10 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     # The race detector's run (go-race) and the cross-platform builds
-    # (go-platforms) run beside this job.
-    timeout-minutes: 40
+    # (go-platforms) run beside this job. G5 alone takes over 10 minutes
+    # since the tailnet matrix and the whole job about 55 with a cold Go
+    # cache; a cancelled job saves no cache, so the limit leaves room: 75.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -460,7 +462,8 @@ jobs:
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 -tags g5 -run '^TestG5' -v ./server/migration/g5/
+        # -timeout: go test's default 10m is shorter than the G5 package now.
+        run: go test -count=1 -tags g5 -timeout 25m -run '^TestG5' -v ./server/migration/g5/
 
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's
