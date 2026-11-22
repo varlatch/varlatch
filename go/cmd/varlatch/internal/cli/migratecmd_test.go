@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -111,7 +112,7 @@ func TestAnUnclosedHeadscaleKeyIsNamed(t *testing.T) {
 	}
 	at := time.Date(2026, 11, 21, 6, 0, 0, 0, time.UTC)
 	markKeyOpen(dir, "hskey-api-abcdefghijkl", at)
-	if st, err := os.Stat(filepath.Join(dir, headscaleKeyMark)); err != nil || st.Mode().Perm() != 0o600 {
+	if st, err := os.Stat(filepath.Join(dir, headscaleKeyMark)); err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
 		t.Fatalf("the mark: %v %v", st, err)
 	}
 	note := unclosedKeyNote(dir)
