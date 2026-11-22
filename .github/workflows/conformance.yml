@@ -280,13 +280,13 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           (cd go && go generate ./server/web)
-          go/release/build-assets.sh --version "0.0.0-gate.${GITHUB_RUN_NUMBER}" --out "$RUNNER_TEMP/release-assets"
+          go/release/build-assets.sh --version "0.50.0-gate.${GITHUB_RUN_NUMBER}" --out "$RUNNER_TEMP/release-assets"
       - name: Build varlatchd image (go-container)
         if: inputs.gate_target == 'go-container'
         env:
           CGO_ENABLED: "0"
         run: |
-          version="0.0.0-gate.${GITHUB_RUN_NUMBER}"
+          version="0.50.0-gate.${GITHUB_RUN_NUMBER}"
           mkdir -p "$RUNNER_TEMP/conformance-assets"
           (cd go && go build -trimpath -buildvcs=false -tags conformance \
             -ldflags "-s -w -buildid= -X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$version" \
@@ -338,7 +338,7 @@ jobs:
           const summaryPath = process.env.GITHUB_STEP_SUMMARY;
           if (!summaryPath) process.exit(0);
           const lines = [];
-          const esc = (s) => String(s ?? "").replaceAll("`", "\\`").replaceAll("|", "\\|").replaceAll("\n", " ");
+          const esc = (s) => String(s ?? "").replaceAll("`", "'").replaceAll("|", "\\|").replaceAll("\n", " ");
 
           if (!existsSync("conformance-report.json")) {
             lines.push("## Ship Gate G1 Conformance Run: FAILED (no report produced)");
