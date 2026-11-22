@@ -28,6 +28,10 @@
 # systemd and the box's cases (VL_RH_INGRESS=public|coolify, ...). It never
 # stops, removes or rebinds anything that is not this run's; the run's
 # files are handed back to the user who ran sudo.
+#
+# VL_RH_SYNC=fakes (a workstation): the sync case, Sync Targets to the
+# conformance suites' platform stand-ins, migrated and then pushed from Go
+# (VL_RH_ONLY=sync runs it alone).
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: run.sh <typescript-checkout> <run> [<release-dir>]" >&2; exit 64; }
 profile=${VL_RH_PROFILE:-workstation}
@@ -136,7 +140,17 @@ cleanup() {
     fi
     docker image rm "$runner" >/dev/null 2>&1 || true
   fi
+  # The stand-ins' key goes whatever VL_RH_KEEP says.
+  rm -f "$root/work/sync-fakes/key.pem" 2>/dev/null || true
   if [ "${VL_RH_KEEP:-}" != 1 ]; then
+    # The sync case's (VL_RH_SYNC=fakes), when an interrupt left them (the
+    # test binary has no signal handler): its Compose stack, the
+    # stand-ins' container and network, and their directory, by their
+    # exact names. After a clean run there is nothing left to remove.
+    docker compose -p "vl-rh-$run-sync" --profile deploy down -v --remove-orphans --timeout 20 >/dev/null 2>&1 || true
+    docker rm -fv "vl-rh-$run-sync-fakes" >/dev/null 2>&1 || true
+    docker network rm "vl-rh-$run-sync" >/dev/null 2>&1 || true
+    rm -rf "$root/work/sync-fakes" 2>/dev/null || true
     if [ "$created_release" = 1 ]; then
       cleanup_release
     fi
@@ -174,6 +188,9 @@ docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e
     go build -tags rehearsal,crashpoint -o /out/varlatch ./cmd/varlatch &&
     go build -o /out/varlatchd ./cmd/varlatchd &&
     go test -c -tags rehearsal -o /out/rehearsal.test ./test/rehearsal/'
+# The sync case's platform stand-ins (VL_RH_SYNC=fakes), beside the
+# binaries: the runner sees the run's directory, not this checkout.
+cp "$gomod/../scripts/conformance/lib/platform-fakes.cjs" "$root/bin/platform-fakes.cjs"
 release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES

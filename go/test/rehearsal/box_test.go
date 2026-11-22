@@ -104,8 +104,10 @@ func readProfile(euid int) (profileConfig, error) {
 		return prof, fmt.Errorf("VL_RH_INGRESS=%s runs on the box only (VL_RH_PROFILE=box)", prof.ingress)
 	case prof.ingress == "tailnet" || prof.ingress == "combined":
 		return prof, errors.New("the tailnet handoff (B4) needs varlatch migrate's tailnet options (step 7.5b2's wiring), which this stack does not have yet")
-	case prof.sync != "":
-		return prof, errors.New("Sync Targets to real endpoints (B5) need the owner's destinations (internal#221, question 2); not built yet")
+	case prof.sync != "" && prof.sync != "fakes":
+		return prof, fmt.Errorf("VL_RH_SYNC is fakes (the platform stand-ins), not %q: Sync Targets to real endpoints (B5's owner session) need the owner's destinations (internal#221, question 2); not built yet", prof.sync)
+	case prof.sync == "fakes" && prof.box:
+		return prof, errors.New("VL_RH_SYNC=fakes runs on a workstation only: it points the platforms' host names at the stand-ins in the runner container's /etc/hosts, which the box profile does not have")
 	case strings.HasPrefix(prof.source, "restore:"):
 		prof.restore = strings.TrimPrefix(prof.source, "restore:")
 		if err := checkRestore(prof); err != nil {
@@ -145,14 +147,16 @@ func readProfile(euid int) (profileConfig, error) {
 		return prof, fmt.Errorf("VL_RH_KILL is transfer or barrier, not %q", prof.kill)
 	}
 	switch {
-	case only != "" && only != "setup" && only != "kill" && only != "bundle":
-		return prof, fmt.Errorf("VL_RH_ONLY is setup, kill or bundle, not %q", only)
+	case only != "" && only != "setup" && only != "kill" && only != "sync" && only != "bundle":
+		return prof, fmt.Errorf("VL_RH_ONLY is setup, kill, sync or bundle, not %q", only)
 	case only == "kill" && prof.kill == "":
 		// Alone, it would run nothing between the guard and the report.
 		return prof, errors.New("VL_RH_ONLY=kill needs VL_RH_KILL (transfer or barrier): it runs the kill case alone")
+	case only == "sync" && prof.sync != "fakes":
+		return prof, errors.New("VL_RH_ONLY=sync needs VL_RH_SYNC=fakes: it runs the sync case alone")
 	case only == "bundle":
-		if prof.restore != "" || prof.kill != "" || prof.ingress != "proxy" {
-			return prof, errors.New("VL_RH_ONLY=bundle makes the synthetic archive alone: on a seeded source (VL_RH_SOURCE=seed), with the own proxy, no VL_RH_KILL")
+		if prof.restore != "" || prof.kill != "" || prof.sync != "" || prof.ingress != "proxy" {
+			return prof, errors.New("VL_RH_ONLY=bundle makes the synthetic archive alone: on a seeded source (VL_RH_SOURCE=seed), with the own proxy, no VL_RH_KILL or VL_RH_SYNC")
 		}
 		if !filepath.IsAbs(prof.bundleOut) {
 			return prof, errors.New("VL_RH_ONLY=bundle needs VL_RH_BUNDLE_OUT, an absolute path: the directory the archive and its keys go to")

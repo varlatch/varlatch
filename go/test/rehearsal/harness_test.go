@@ -110,6 +110,9 @@ func startService(bin, conf string) error {
 	}
 	defer log.Close()
 	cmd := exec.Command(bin, "serve", "--config", conf)
+	// The case's own environment for the target (its trust roots), as a
+	// unit's Environment= lines would give it.
+	cmd.Env = append(os.Environ(), serviceEnv(state("service.env"))...)
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -137,6 +140,24 @@ func startService(bin, conf string) error {
 		}
 	}
 	return errors.New("varlatchd did not start within 30 s")
+}
+
+// serviceEnv is a service.env file's KEY=VALUE lines (none when it is
+// missing), blank lines and # comments left out.
+func serviceEnv(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") || !strings.Contains(l, "=") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 func stopService() error {
@@ -319,12 +340,22 @@ type installation struct {
 	client             *http.Client // the public URL's client (TLS for public ingress)
 }
 
+// installExtra is what a case adds to an installation: .env variables, a
+// Compose overlay (a file name and its text, added to COMPOSE_FILE), lines
+// for the target's configuration, and the target varlatchd's environment.
+type installExtra struct {
+	env                      map[string]string
+	composeFile, composeText string
+	conf                     string
+	serviceEnv               []string
+}
+
 // newInstallation is a fresh installation of the release, up and serving,
 // with its own public URL (a loopback proxy to its dashboard's port), its
 // target's host-install configuration, and its backup destination.
-func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *installation {
+func newInstallation(t *testing.T, rel release, s3 *s3Server, name string, extras ...installExtra) *installation {
 	t.Helper()
-	in := prepareInstallation(t, rel, s3, name, nil, nil)
+	in := prepareInstallation(t, rel, s3, name, nil, extras...)
 	in.up()
 	return in
 }
@@ -346,8 +377,8 @@ type operatorKeys struct{ kek, bek string }
 // prepareInstallation is an installation's files, its target's and its
 // backup destination, not started: with keys (a restore), its Root KEK
 // is the operator's and its BEK the operator's file, and it is isolated
-// (isolationOverride); extraEnv goes into its .env.
-func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, keys *operatorKeys, extraEnv map[string]string) *installation {
+// (isolationExtra), before the case's extras.
+func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, keys *operatorKeys, extras ...installExtra) *installation {
 	t.Helper()
 	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: prof.ingress}
 	base := filepath.Join(workDir, name)
@@ -420,21 +451,23 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 		env["VARLATCH_ACME_CA"] = "https://pebble:14000/dir"
 	}
 	if keys != nil {
-		// A restored copy (B6) holds what production's would: webhooks,
-		// Sync Targets and audit export streams aimed at real
-		// destinations, with the keys that sign and open them. It reaches
-		// none: sync and the audit export off, its network internal
-		// (isolationOverride), its webhooks revoked once restored
-		// (neutralise).
 		in.isolated = true
-		env["VARLATCH_SYNC"], env["VARLATCH_AUDIT_EXPORT"] = "off", "off"
-		env["COMPOSE_FILE"] = "docker-compose.yml:docker-compose.rehearsal.yml"
-		if err := os.WriteFile(filepath.Join(in.dir, "docker-compose.rehearsal.yml"), []byte(isolationOverride), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		extras = append([]installExtra{isolationExtra(filepath.Join(base, "operator", "backup-destinations.json"))}, extras...)
 	}
-	for k, v := range extraEnv {
-		env[k] = v
+	for _, x := range extras {
+		for k, v := range x.env {
+			env[k] = v
+		}
+		if x.composeFile != "" {
+			if err := os.WriteFile(filepath.Join(in.dir, x.composeFile), []byte(x.composeText), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			files := env["COMPOSE_FILE"]
+			if files == "" {
+				files = "docker-compose.yml"
+			}
+			env["COMPOSE_FILE"] = files + ":" + x.composeFile
+		}
 	}
 	var text strings.Builder
 	for k, v := range env {
@@ -474,12 +507,15 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 			freePort(t), net.JoinHostPort(prof.publicBind, "443"), net.JoinHostPort(prof.publicBind, "80"), in.acme.hostDirectory, in.acme.apiRoot,
 			in.publicURL, in.data, filepath.Join(in.keys, "root-kek"), filepath.Join(in.keys, "backup-key"))
 	}
-	if keys != nil {
-		// A rollback's --finish discards Go's copy after a final archive
-		// of it, uploaded: Go's configuration names the run's destination.
-		// And Go reaches nothing of the copy's either: no sync, no audit
-		// export (its webhooks come revoked from the copy).
-		host += fmt.Sprintf("backup_destinations_file = %s\nbackup_destination = offsite\nsync = off\naudit_export = off\n", in.destinations)
+	var service []string
+	for _, x := range extras {
+		host += x.conf
+		service = append(service, x.serviceEnv...)
+	}
+	if len(service) > 0 {
+		if err := os.WriteFile(filepath.Join(in.state, "service.env"), []byte(strings.Join(service, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	in.conf = filepath.Join(target, "varlatchd.conf")
 	for _, p := range []string{in.conf, filepath.Join(in.state, "service.conf")} {
@@ -508,6 +544,22 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 	}
 	t.Cleanup(in.remove)
 	return in
+}
+
+// isolationExtra is a restored copy's (B6). The copy holds what
+// production's would: webhooks, Sync Targets and audit export streams
+// aimed at real destinations, with the keys that sign and open them. It
+// reaches none: sync and the audit export off, its network internal
+// (isolationOverride), its webhooks revoked once restored (neutralise);
+// and Go's target neither (sync = off, audit_export = off), its backups
+// to the run's destination (a rollback's --finish uploads a final
+// archive of Go's copy before it discards it).
+func isolationExtra(destinations string) installExtra {
+	return installExtra{
+		env:         map[string]string{"VARLATCH_SYNC": "off", "VARLATCH_AUDIT_EXPORT": "off"},
+		composeFile: "docker-compose.isolated.yml", composeText: isolationOverride,
+		conf: fmt.Sprintf("backup_destinations_file = %s\nbackup_destination = offsite\nsync = off\naudit_export = off\n", destinations),
+	}
 }
 
 // isolationOverride is a restored copy's Compose file (B6): its network

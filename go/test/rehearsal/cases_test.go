@@ -46,8 +46,9 @@ func TestRehearsal(t *testing.T) {
 		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
 	default:
 		switch os.Getenv("VL_RH_ONLY") {
-		case "kill":
-			// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL).
+		case "kill", "sync":
+			// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL), and
+			// VL_RH_ONLY=sync the sync case (with VL_RH_SYNC=fakes).
 		case "bundle":
 			t.Run("bundle", func(t *testing.T) { makeBundle(t, rel, s3) })
 			return
@@ -74,8 +75,12 @@ func TestRehearsal(t *testing.T) {
 			}
 		}
 	}
-	if prof.kill != "" && os.Getenv("VL_RH_ONLY") != "setup" {
+	only := os.Getenv("VL_RH_ONLY")
+	if prof.kill != "" && only != "sync" && only != "setup" {
 		t.Run("kill", func(t *testing.T) { killCase(t, rel, s3) })
+	}
+	if prof.sync == "fakes" && only != "kill" {
+		t.Run("sync", func(t *testing.T) { syncCase(t, rel, s3) })
 	}
 }
 

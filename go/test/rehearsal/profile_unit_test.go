@@ -37,18 +37,43 @@ func TestProfileRefusals(t *testing.T) {
 	t.Run("VL_RH_ONLY", func(t *testing.T) {
 		t.Setenv("VL_RH_PROFILE", "")
 		t.Setenv("VL_RH_INGRESS", "")
-		for _, c := range []struct{ only, kill, want string }{
-			{"kill", "", "VL_RH_ONLY=kill needs VL_RH_KILL"},
-			{"everything", "", "VL_RH_ONLY is setup, kill or bundle"},
-			{"bundle", "", "VL_RH_BUNDLE_OUT, an absolute path"},
-			{"kill", "transfer", ""},
-			{"setup", "", ""},
+		for _, c := range []struct{ only, kill, sync, want string }{
+			{"kill", "", "", "VL_RH_ONLY=kill needs VL_RH_KILL"},
+			{"everything", "", "", "VL_RH_ONLY is setup, kill, sync or bundle"},
+			{"bundle", "", "", "VL_RH_BUNDLE_OUT, an absolute path"},
+			{"kill", "transfer", "", ""},
+			{"setup", "", "", ""},
+			{"sync", "", "", "VL_RH_ONLY=sync needs VL_RH_SYNC=fakes"},
+			{"sync", "", "fakes", ""},
 		} {
 			t.Setenv("VL_RH_ONLY", c.only)
 			t.Setenv("VL_RH_KILL", c.kill)
+			t.Setenv("VL_RH_SYNC", c.sync)
 			_, err := readProfile(1000)
 			if (c.want == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), c.want) {
-				t.Errorf("VL_RH_ONLY=%s VL_RH_KILL=%s: %v, want %q", c.only, c.kill, err, c.want)
+				t.Errorf("VL_RH_ONLY=%s VL_RH_KILL=%s VL_RH_SYNC=%s: %v, want %q", c.only, c.kill, c.sync, err, c.want)
+			}
+		}
+	})
+	t.Run("VL_RH_SYNC", func(t *testing.T) {
+		t.Setenv("VL_RH_ONLY", "")
+		for _, c := range []struct{ profile, ingress, sync, want string }{
+			{"", "", "fakes", ""},
+			{"", "", "coolify", "VL_RH_SYNC is fakes"},
+			{"", "", "real", "owner's destinations"},
+			{"box", "public", "fakes", "workstation only"},
+		} {
+			t.Setenv("VL_RH_PROFILE", c.profile)
+			t.Setenv("VL_RH_INGRESS", c.ingress)
+			t.Setenv("VL_RH_SYNC", c.sync)
+			t.Setenv("VL_RH_PUBLIC_NAME", "rh.example")
+			t.Setenv("VL_RH_PUBLIC_BIND", "127.0.0.1")
+			p, err := readProfile(0)
+			if (c.want == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), c.want) {
+				t.Errorf("VL_RH_PROFILE=%s VL_RH_SYNC=%s: %v, want %q", c.profile, c.sync, err, c.want)
+			}
+			if c.want == "" && p.sync != c.sync {
+				t.Errorf("VL_RH_SYNC=%s read as %q", c.sync, p.sync)
 			}
 		}
 	})

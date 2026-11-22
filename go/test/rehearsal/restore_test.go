@@ -74,7 +74,7 @@ func restoredInstallation(t *testing.T, rel release, s3 *s3Server, name string) 
 			secret(strings.TrimSpace(string(b)))
 		}
 	}
-	in := prepareInstallation(t, rel, s3, name, &operatorKeys{kek: prof.restoreKEK, bek: prof.restoreBEK}, nil)
+	in := prepareInstallation(t, rel, s3, name, &operatorKeys{kek: prof.restoreKEK, bek: prof.restoreBEK})
 	registerSecrets(in)
 	// Before the copy first starts (the restore starts it): its Compose
 	// configuration and Go's say it reaches nothing.
@@ -868,8 +868,7 @@ func makeBundle(t *testing.T, rel release, s3 *s3Server) {
 	// The audit export's destination is an S3 server of the run's own on
 	// the installation's network, which the outbound policy is told to
 	// allow by name (its address is a private one).
-	in := prepareInstallation(t, rel, s3, "bundle", nil, map[string]string{"VARLATCH_OUTBOUND_ALLOW": auditS3Alias + ":9000"})
-	in.up()
+	in := newInstallation(t, rel, s3, "bundle", installExtra{env: map[string]string{"VARLATCH_OUTBOUND_ALLOW": auditS3Alias + ":9000"}})
 	registerSecrets(in)
 	audit := startAuditS3(t, in.project+"_default")
 	secret(audit.secret)
