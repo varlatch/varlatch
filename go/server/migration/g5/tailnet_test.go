@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -396,7 +397,13 @@ func fakeDockerTailnet(args []string) (int, bool) {
 		return 1, true
 	case len(args) >= 4 && args[0] == "compose" && args[1] == "up" && args[2] == "-d" && strings.Contains(j, " varlatchd"):
 		// varlatchd shares the sidecar's network: Compose starts the
-		// sidecar first. The rest is the reverse's stand-in's.
+		// sidecar first, unless --no-deps, which starts no dependency (and,
+		// as Docker, fails in a stopped sidecar's namespace: the reverse's
+		// stand-in refuses it, sharedNetworkDown). The rest is the
+		// reverse's stand-in's.
+		if slices.Contains(args, "--no-deps") {
+			return 0, false
+		}
 		if err := startSidecar(); err != nil {
 			return fail("%v", err)
 		}
