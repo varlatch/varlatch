@@ -303,20 +303,14 @@ func (e *Engine) stopBefore(ctx context.Context, j *Journal, cause error) error 
 }
 
 // pinned refuses a source that is not the last TypeScript release's
-// published image: its registry digest, of its own repository, must be the
-// pinned one. While no digest is pinned (0.23.0 not published yet), every
-// source is refused.
+// published image: its registry digest, of the pinned repository, must be
+// the pinned one.
 func (e *Engine) pinned(src SourceInfo) error {
-	pin := imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
-	if testPin != nil {
-		pin = *testPin
-	}
+	pin := releasePin()
 	if e.pin != nil {
 		pin = *e.pin
 	}
 	switch {
-	case pin.Digest == "":
-		return fmt.Errorf("%s is not yet published; this varlatch cannot migrate yet (it pins the release's image by its digest)", LastTypeScriptRelease)
 	case src.Digest == "":
 		return errors.New("the source's image is not pinned by a registry digest: a migration starts from the last TypeScript release's published image only")
 	case src.DigestRepository != pin.Repository || src.Digest != pin.Digest:

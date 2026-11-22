@@ -236,6 +236,10 @@ async function main() {
   const walkthrough = options.walkthrough ? readWalkthrough(options.walkthrough, REPO_ROOT) : null;
   if (walkthrough && walkthrough.isSymlink) usage(`--walkthrough ${options.walkthrough}: symlinks are not allowed`);
   if (walkthrough && !walkthrough.exists) usage(`--walkthrough ${options.walkthrough}: no such file`);
+  // The commit the walkthrough's Candidate commit is compared with: the
+  // checkout's when the run starts, before anything is built from it, not
+  // whatever it holds an hour later.
+  const gateCommit = options.gate ? checkoutCommit(REPO_ROOT) : null;
   let recentCli = null;
   if (options.recentCliReport) {
     try {
@@ -672,7 +676,7 @@ async function main() {
           expectedInForce: [...inForce.keys()],
           lacksInForce: [...lacks.keys()],
           implementation: report.implementation ?? null,
-          commit: checkoutCommit(REPO_ROOT),
+          commit: gateCommit,
         },
         walkthrough,
         recentCli,

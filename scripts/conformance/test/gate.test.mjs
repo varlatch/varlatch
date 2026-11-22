@@ -111,6 +111,67 @@ test("the browser-walkthrough evidence must be named, under docs/evidence/, pres
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Hash | \`<sha256>\` |` }), /unreplaced placeholders/);
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Date | \`YYYY-MM-DD HH:MM UTC\` |` }), /unreplaced placeholders/);
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Owner | \`<name / handle>\` |` }), /unreplaced placeholders/);
+  for (const placeholder of ["<version / sha256>", "<e.g. Chromium 13x / Firefox 13x>", "<e.g. Linux / macOS>", "<GitHub Actions run URL / ID>", "<summary of sign-off>"]) {
+    assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n\n- Field: \`${placeholder}\`` }), /unreplaced placeholders/, placeholder);
+  }
+  // The Done column decides a checklist row: a Notes cell starting with
+  // [ ] does not uncheck a checked row, and a row without its outer
+  // pipes, or with an empty Done cell, is still a row.
+  const withRows = (...rows) => signedWalkthroughContent().replace("| 1 | [x] | Projects |", ["| 1 | [x] | Projects |", ...rows].join("\n"));
+  assert.equal(problem({ ...walkthrough, content: withRows("| 2 | [x] | Audit | [ ] retest on Safari |") }), "");
+  assert.equal(problem({ ...walkthrough, content: withRows("| 2 | [X] | Audit |", "3 | [x] | Access") }), "");
+  assert.match(problem({ ...walkthrough, content: withRows("2 | [ ] | Audit") }), /unchecked checklist rows \(.*lines 6\)/);
+  assert.match(problem({ ...walkthrough, content: withRows("| 2 | [ ] | Audit |", "3 | [ ] | Access |") }), /lines 6, 7\)/);
+  assert.match(problem({ ...walkthrough, content: withRows("| 2 |  | Audit |") }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: withRows("| 2 | done | Audit |") }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n\n4 | [ ] | Settings` }), /unchecked checklist rows/);
+  // GFM separators of one or two hyphens a cell still make a table with a
+  // Done column, whose empty or other cells fail.
+  const shortSeparator = signedWalkthroughContent().replace("| --- | --- | --- |", "| - | -- | --- |");
+  assert.equal(problem({ ...walkthrough, content: shortSeparator }), "");
+  for (const cell of ["", "todo"]) {
+    assert.match(problem({ ...walkthrough, content: shortSeparator.replace("| 1 | [x] | Projects |", `| 1 | ${cell} | Projects |`) }), /unchecked checklist rows/, cell);
+  }
+  // A row a separator follows inside a table is still one of its rows.
+  assert.match(problem({ ...walkthrough, content: withRows("| 2 | [ ] | Audit |", "| --- | --- | --- |", "| 3 | [x] | Access |") }), /unchecked checklist rows \(.*lines 6\)/);
+  // The evidence is read as plain lines: any HTML comment or fenced code
+  // block is refused, wherever it is (the review's bypasses of a parser
+  // that blanked them: a comment opened in a cell, in inline code or mid
+  // prose; fences an inline span opens or a mismatched marker closes; a
+  // fence inside a comment; PASS split by a comment).
+  const verdictLine = "- **Verdict:** `PASS`";
+  const commitLine = `- **Candidate commit:** \`${candidateCommit}\``;
+  const refused = /has HTML comments or fenced code blocks: remove them/;
+  for (const [name, content] of [
+    ["a commented-out Verdict", signedWalkthroughContent().replace(verdictLine, `<!-- ${verdictLine} -->`)],
+    ["a commented-out Candidate commit", signedWalkthroughContent().replace(commitLine, `<!-- ${commitLine} -->`)],
+    ["a comment opened in a cell", withRows("| 2 | [x] | Audit | <!-- note |", "| 3 | [ ] | Access |", "-->")],
+    ["a comment opened in inline code", `${signedWalkthroughContent()}\n\nUse \`<!--\` sparingly.\n- **Verdict:** FAIL\n`],
+    ["a comment opened mid prose", `${signedWalkthroughContent()}\n\nSee below <!-- later\n| 9 | [ ] | old |`],
+    ["PASS split by a comment", signedWalkthroughContent().replace("`PASS`", "`PA<!-- -->SS`")],
+    ["a backtick fence", signedWalkthroughContent().replace(verdictLine, `\`\`\`\n${verdictLine}\n\`\`\``)],
+    ["a tilde fence", signedWalkthroughContent().replace(verdictLine, `~~~~md\n${verdictLine}\n~~~~`)],
+    ["a fence closed by another marker", `${signedWalkthroughContent()}\n\`\`\`\n| 9 | [ ] | old |\n\`\`\`~~~`],
+    ["an inline span that looks like a fence", `${signedWalkthroughContent()}\n\`\`\`note\`\`\``],
+    ["a fence inside a closed comment", `${signedWalkthroughContent()}\n<!--\n\`\`\`\n-->`],
+    ["an indented fence", `${signedWalkthroughContent()}\n   ~~~\n   x\n   ~~~`],
+    ["a quoted example table", `${signedWalkthroughContent()}\n\n\`\`\`md\n| # | Done |\n| --- | --- |\n| 1 | [ ] |\n\`\`\`\n`],
+  ]) {
+    assert.match(problem({ ...walkthrough, content }), refused, name);
+  }
+  // A 4-space indent is a code block: its Verdict or Candidate commit is
+  // not the sign-off's.
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(verdictLine, `    ${verdictLine}`) }), /must record \*\*Verdict:\*\* PASS/);
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(commitLine, `    ${commitLine}`) }), /40-hex Candidate commit/);
+  assert.equal(problem({ ...walkthrough, content: signedWalkthroughContent().replace(verdictLine, `   ${verdictLine}`) }), "");
+  // A Verdict line of any bullet and case counts: a second one fails.
+  assert.equal(problem({ ...walkthrough, content: signedWalkthroughContent().replace(verdictLine, "* **Verdict:** `PASS`") }), "");
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n* **verdict:** FAIL` }), /records 2 \*\*Verdict:\*\* lines/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n+ **VERDICT:** PASS` }), /records 2 \*\*Verdict:\*\* lines/);
+  // Exactly one Verdict line, and it says PASS.
+  for (const second of ["`FAIL`", "`PASS`"]) {
+    assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n- **Verdict:** ${second}` }), /records 2 \*\*Verdict:\*\* lines; Owner Sign-Off holds exactly one/);
+  }
   // Verdict must be PASS (backticks optional).
   assert.equal(problem({ ...walkthrough, content: signedWalkthroughContent().replace("`PASS`", "PASS") }), "");
   assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace("`PASS`", "`FAIL`") }), /\*\*Verdict:\*\* PASS/);
@@ -139,10 +200,37 @@ test("the shipped g1-walkthrough-template.md fails the gate on its own", () => {
   assert.equal(verdict.passed, false);
   const joined = verdict.problems.join("\n");
   assert.match(joined, /still the template/);
+  assert.match(joined, /has HTML comments or fenced code blocks/);
   assert.match(joined, /unchecked checklist rows/);
   assert.match(joined, /unreplaced placeholders/);
   assert.match(joined, /\*\*Verdict:\*\* PASS/);
   assert.match(joined, /40-hex Candidate commit/);
+});
+
+// The template, completed as an owner would: every row checked, every
+// placeholder filled, the notice and the sentinel gone, Verdict PASS.
+test("a completed copy of g1-walkthrough-template.md passes the gate", () => {
+  const template = readFileSync(join(repoRoot, "docs/evidence/g1-walkthrough-template.md"), "utf8");
+  const completed = template
+    .replace(TEMPLATE_SENTINEL, "")
+    .replace(/^> .*\n|^>\n/gm, "")
+    .replaceAll("| [ ] |", "| [x] |")
+    .replace("`PENDING` (set to `PASS` or `FAIL`)", "`PASS`")
+    .replace("`PENDING` (set to `PASS` or `FAIL`)", "`PASS`")
+    .replaceAll("<commit-sha>", candidateCommit)
+    .replaceAll("<sha256>", "b".repeat(64))
+    .replaceAll("<version / sha256>", `0.50.0 / ${"c".repeat(64)}`)
+    .replace(/<e\.g\.[^>\n]*>/g, "Chromium 131 on Linux")
+    .replaceAll("<GitHub Actions run URL / ID>", "123456789")
+    .replaceAll("<summary of sign-off>", "Walked through; no findings.")
+    .replaceAll("YYYY-MM-DD HH:MM UTC", "2026-12-01 12:00 UTC")
+    .replaceAll("<name / handle>", "owner");
+  const w = { ...walkthrough, size: completed.length, content: completed };
+  const verdict = judgeGate({ inventory: small, run: run(passing), walkthrough: w });
+  assert.deepEqual(verdict.problems, []);
+  // Its CRLF copy too.
+  const crlf = { ...w, content: completed.replace(/\n/g, "\r\n") };
+  assert.deepEqual(judgeGate({ inventory: small, run: run(passing), walkthrough: crlf }).problems, []);
 });
 
 test("readWalkthrough and judgeGate reject symlinked evidence files and symlinked parent directories", () => {
