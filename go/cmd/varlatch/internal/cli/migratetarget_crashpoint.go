@@ -73,6 +73,12 @@ func (rootedHost) Chown(string, int, int) error                 { return nil }
 
 func (h rootedHost) Owner(path string) (int, int, error)      { return h.sys.Owner(path) }
 func (h rootedHost) Systemctl(args ...string) (string, error) { return h.sys.Systemctl(args...) }
+func (h rootedHost) SystemctlStdout(args ...string) (string, error) {
+	return h.sys.SystemctlStdout(args...)
+}
+
+// LookupGroup: the test root keeps no groups.
+func (rootedHost) LookupGroup(string) (bool, error) { return false, nil }
 func (rootedHost) Probe(context.Context, string) (diskprobe.Result, error) {
 	return diskprobe.Result{}, errors.New("no probe under a test root")
 }

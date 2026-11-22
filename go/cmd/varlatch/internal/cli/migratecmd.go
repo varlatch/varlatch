@@ -374,12 +374,13 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		case j.Phase == migrate.Released:
 			state = "removal pending: varlatch migrate --abort removes it"
 		}
-		fmt.Fprintf(&b, "Target made by migrate: %s (%s).\n", strings.Join(c.Made, ", "), state)
+		fmt.Fprintf(&b, "Target made by migrate: %s (%s).\n", Printable(strings.Join(c.Made, ", ")), state)
 		if c.Undone == "" && j.Phase == migrate.Released {
-			// Each item's place, for removing it by hand.
+			// Each item's place, for removing it by hand (the journal's
+			// config is setup's, or a test root's: checked as it is read).
 			root := strings.TrimSuffix(c.Config, setup.ConfigFile)
 			for _, item := range c.Made {
-				fmt.Fprintf(&b, "  %s: %s\n", item, Printable(setup.ItemPlace(func(p string) string { return root + p }, item)))
+				fmt.Fprintf(&b, "  %s: %s\n", Printable(item), Printable(setup.ItemPlace(func(p string) string { return root + p }, item)))
 			}
 		}
 	}

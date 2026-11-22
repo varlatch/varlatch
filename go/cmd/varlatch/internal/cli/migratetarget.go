@@ -65,6 +65,8 @@ func (m *setupMaker) Present(item string) (bool, error) { return setup.ItemPrese
 
 func (m *setupMaker) Where() string { return m.host.Path(setup.ConfigFile) }
 
+func (m *setupMaker) Left(made []string) ([]string, error) { return setup.TargetLeft(m.host, made) }
+
 // targetCredentials is the environment of the target's varlatchd: with
 // CREDENTIALS_DIRECTORY the configuration's directory when the
 // configuration names no root_kek_file (a target setup's way, or one migrate

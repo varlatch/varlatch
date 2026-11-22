@@ -76,6 +76,11 @@ func init() {
 
 // crashPoint logs point, and blocks for good when it is the one to pause
 // at.
+// seamPaths: the crashpoint build makes a host target under a test root
+// (the CLI's VARLATCH_MIGRATE_TARGET_ROOT), so a journal may name its
+// configuration there.
+const seamPaths = true
+
 func crashPoint(point string) {
 	if cp.log == nil {
 		return

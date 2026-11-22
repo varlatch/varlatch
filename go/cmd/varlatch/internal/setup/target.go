@@ -190,6 +190,81 @@ func (r *run) targetDirThere(p, item string, ok func(uid, gid int, perm fs.FileM
 	return true, nil
 }
 
+// notEnabled are the states `systemctl is-enabled` prints for a unit that
+// is not enabled.
+var notEnabled = []string{"disabled", "static", "masked", "masked-runtime", "not-found", "indirect", "generated", "transient"}
+
+// unitState is whether the unit is enabled, as `systemctl is-enabled`
+// prints it (its standard output alone); known false when it printed no
+// state known here (the caller then does not take it for not enabled).
+func unitState(h Host) (enabled, known bool) {
+	out, _ := h.SystemctlStdout("is-enabled", Unit)
+	switch state := strings.TrimSpace(out); {
+	case state == "enabled" || state == "enabled-runtime" || state == "linked" || state == "linked-runtime" || state == "alias":
+		return true, true
+	case slices.Contains(notEnabled, state):
+		return false, true
+	}
+	return false, false
+}
+
+// TargetLeft are the Made items of made still there, each with its place
+// ("item (place)"): what UndoTarget would remove, checked one by one
+// (none: the target migrate made is gone). /etc/varlatch counts only
+// while empty, as UndoTarget keeps it holding files migrate did not make;
+// the user counts with its own group.
+func TargetLeft(h Host, made []string) ([]string, error) {
+	var left []string
+	there := func(p string) (bool, error) {
+		_, err := os.Stat(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return err == nil, err
+	}
+	for _, item := range madeOrder {
+		if !slices.Contains(made, item) {
+			continue
+		}
+		var is bool
+		var err error
+		switch item {
+		case MadeConfig:
+			if is, err = there(h.Path(ConfigFile)); err == nil && !is {
+				is, err = there(h.Path(ConfigFile) + ".setup")
+			}
+		case MadeRootKEK, MadeBackupKey:
+			is, err = ItemPresent(h, item)
+		case MadeDataDir:
+			is, err = there(h.Path(DataDir))
+		case MadeEtcDir:
+			var entries []os.DirEntry
+			entries, err = os.ReadDir(h.Path(EtcDir))
+			if errors.Is(err, fs.ErrNotExist) {
+				err = nil
+			} else if err == nil {
+				is = len(entries) == 0
+			}
+		case MadeUnitEnabled:
+			if is, err = there(h.Path(UnitFile)); err == nil && is {
+				enabled, known := unitState(h)
+				is = enabled || !known
+			}
+		case MadeUser:
+			if _, _, is, err = h.LookupUser(User); err == nil && !is {
+				is, err = h.LookupGroup(User)
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("setup: checking the target's %s: %w", item, err)
+		}
+		if is {
+			left = append(left, item+" ("+ItemPlace(h.Path, item)+")")
+		}
+	}
+	return left, nil
+}
+
 // ItemPlace is what one of the Made items is on the host (path: where a
 // host path is, Host.Path), for the operator who removes it by hand.
 func ItemPlace(path func(string) string, item string) string {
@@ -245,13 +320,18 @@ func UndoTarget(h Host, made []string, say func(string) error) error {
 		var err error
 		switch item {
 		case MadeUnitEnabled:
-			// Done again harmlessly: nothing to disable when the unit is not
-			// enabled, or its file is gone (removed by hand: systemctl
-			// would refuse to disable it, every time).
-			_, gone := os.Stat(h.Path(UnitFile))
-			out, e := h.Systemctl("is-enabled", Unit)
-			if enabled := e == nil && strings.TrimSpace(out) == "enabled"; !enabled || gone != nil {
+			// Done again harmlessly: nothing to disable when the unit's file
+			// is gone (removed by hand: systemctl would refuse to disable
+			// it, every time) or systemctl says a state that is not
+			// enabled; otherwise (enabled, or a state not known) disabled.
+			if _, e := os.Stat(h.Path(UnitFile)); errors.Is(e, fs.ErrNotExist) {
 				break // out of the switch: the next item
+			} else if e != nil {
+				err = e
+				break
+			}
+			if enabled, known := unitState(h); known && !enabled {
+				break
 			}
 			if out, e := h.Systemctl("disable", Unit); e != nil {
 				err = fmt.Errorf("systemctl disable %s: %v %s", Unit, e, oneLine(out))

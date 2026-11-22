@@ -315,3 +315,59 @@ func TestUndoTargetUnitEnabledAgain(t *testing.T) {
 		}
 	}
 }
+
+// The unit's undo fails closed: a state systemctl does not print (only an
+// error) is not taken for not enabled, so the unit is disabled.
+func TestUndoTargetUnitStateUnknown(t *testing.T) {
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	h.enabled, h.unknownState = true, true
+	if err := UndoTarget(h, []string{MadeUnitEnabled}, nil); err != nil || h.enabled {
+		t.Errorf("an unknown state: %v, still enabled %v", err, h.enabled)
+	}
+}
+
+// TargetLeft checks every item the undo removes: all of them after
+// PrepareTarget, none after UndoTarget; the user's own group left without
+// it counts; /etc/varlatch holding the operator's file does not (the undo
+// keeps it).
+func TestTargetLeft(t *testing.T) {
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	if err := os.MkdirAll(filepath.Dir(h.Path(DataDir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var made []string
+	if _, err := PrepareTarget(context.Background(), Options{Host: h, Given: proxyAnswers()}, func(item string) error {
+		made = append(made, item)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	left, err := TargetLeft(h, made)
+	// /etc/varlatch holds the configuration: not empty, so not counted.
+	want := []string{"user (the varlatch user and its own group)", "data-dir (" + h.Path(DataDir) + ")",
+		"unit-enabled (varlatchd.service enabled (systemctl disable varlatchd.service))", "config (" + h.Path(ConfigFile) + ")"}
+	if err != nil || !slices.Equal(left, want) {
+		t.Fatalf("left after making: %q %v, want %q", left, err, want)
+	}
+	if err := UndoTarget(h, made, nil); err != nil {
+		t.Fatal(err)
+	}
+	if left, err := TargetLeft(h, made); err != nil || len(left) != 0 {
+		t.Errorf("left after the undo: %q %v", left, err)
+	}
+	h.leftGroups[User] = true
+	if err := os.MkdirAll(h.Path(EtcDir), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := TargetLeft(h, made); !slices.Equal(left, []string{"user (the varlatch user and its own group)", "etc-dir (" + h.Path(EtcDir) + ")"}) {
+		t.Errorf("the group and an empty /etc/varlatch: %q", left)
+	}
+	if err := os.WriteFile(filepath.Join(h.Path(EtcDir), "notes.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := TargetLeft(h, made); slices.Contains(left, "etc-dir ("+h.Path(EtcDir)+")") {
+		t.Errorf("/etc/varlatch holding the operator's file counted: %q", left)
+	}
+}

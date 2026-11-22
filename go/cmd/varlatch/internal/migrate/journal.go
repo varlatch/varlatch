@@ -295,6 +295,9 @@ func readJournal(dir string) (*Journal, error) {
 	if j.Format != 1 || !slices.Contains(Phases, j.Phase) {
 		return nil, fmt.Errorf("%s is a journal of another format (%d) or phase (%q)", filepath.Join(dir, JournalFile), j.Format, j.Phase)
 	}
+	if err := j.Created.valid(); err != nil {
+		return nil, fmt.Errorf("%s is not a migration journal: %v", filepath.Join(dir, JournalFile), err)
+	}
 	return &j, nil
 }
 

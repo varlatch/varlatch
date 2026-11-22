@@ -918,7 +918,7 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	case j.Phase == Open:
 		return j, e.finishOpen(ctx, j)
 	case j.Phase == Released:
-		return j, e.finishReleased(ctx, j)
+		return j, e.removalFailed(j, e.finishReleased(ctx, j))
 	}
 	return j, nil
 }
@@ -1027,7 +1027,7 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 	case j.Phase == Released && j.CleanupPending():
 		// Undone, but what migrate made of the target is not all removed:
 		// removing it goes on.
-		return j, e.finishReleased(ctx, j)
+		return j, e.removalFailed(j, e.finishReleased(ctx, j))
 	case j.Phase == Released:
 		return j, nil
 	case slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer:

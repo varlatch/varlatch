@@ -211,6 +211,22 @@ func (h SystemHost) Systemctl(args ...string) (string, error) {
 	return string(out), err
 }
 
+func (h SystemHost) SystemctlStdout(args ...string) (string, error) {
+	cmd := exec.Command("systemctl", args...)
+	cmd.Env = h.Env
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+func (SystemHost) LookupGroup(name string) (bool, error) {
+	_, err := user.LookupGroup(name)
+	var unknown user.UnknownGroupError
+	if errors.As(err, &unknown) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (SystemHost) Probe(ctx context.Context, dir string) (diskprobe.Result, error) {
 	return diskprobe.Run(ctx, diskprobe.Options{Dir: dir, Unnamed: true})
 }

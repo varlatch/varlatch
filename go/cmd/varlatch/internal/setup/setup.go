@@ -77,6 +77,11 @@ type Host interface {
 	Owner(path string) (uid, gid int, err error)
 	// Systemctl runs systemctl with args.
 	Systemctl(args ...string) (string, error)
+	// SystemctlStdout runs systemctl with args: its standard output alone
+	// (a state it prints, without its warnings).
+	SystemctlStdout(args ...string) (string, error)
+	// LookupGroup is whether the group is there.
+	LookupGroup(name string) (bool, error)
 	// Probe measures dir's disk (diskprobe, with files without a name).
 	Probe(ctx context.Context, dir string) (diskprobe.Result, error)
 	// CheckConfig is `varlatchd admin config-check --config path`: "" when

@@ -26,19 +26,23 @@ import (
 // recorded, the unit's state kept, the probe's answer and the
 // configuration's check chosen by the test.
 type fakeHost struct {
-	root      string
-	users     map[string][2]int
-	shells    map[string]string
-	groups    map[string][]string
-	chowns    map[string][2]int
-	systemctl []string
-	enabled   bool
-	active    bool
-	probe     diskprobe.Result
-	probeErr  error
-	checkMsg  string
-	readyErr  error
-	failUnit  bool
+	root   string
+	users  map[string][2]int
+	shells map[string]string
+	groups map[string][]string
+	chowns map[string][2]int
+	// leftGroups are groups there without their user.
+	leftGroups map[string]bool
+	// unknownState: is-enabled prints no state (an error on stderr only).
+	unknownState bool
+	systemctl    []string
+	enabled      bool
+	active       bool
+	probe        diskprobe.Result
+	probeErr     error
+	checkMsg     string
+	readyErr     error
+	failUnit     bool
 	// The fake varlatchd's admin commands: the first administrator, the
 	// links issued, the attestations, the backups.
 	admin                 string
@@ -60,7 +64,7 @@ type fakeHost struct {
 
 func newFakeHost(t *testing.T) *fakeHost {
 	t.Helper()
-	h := &fakeHost{root: t.TempDir(), users: map[string][2]int{}, shells: map[string]string{}, groups: map[string][]string{}, chowns: map[string][2]int{}}
+	h := &fakeHost{root: t.TempDir(), users: map[string][2]int{}, shells: map[string]string{}, groups: map[string][]string{}, chowns: map[string][2]int{}, leftGroups: map[string]bool{}}
 	s := diskprobe.Stats{Samples: 250, P50: time.Millisecond, P99: 3 * time.Millisecond}
 	h.probe = diskprobe.Result{Append: s, Rewrite: s, Limit: diskprobe.DefaultLimit, Pass: true}
 	if err := os.MkdirAll(filepath.Dir(h.Path(UnitFile)), 0o755); err != nil {
@@ -98,6 +102,15 @@ func (h *fakeHost) Chown(path string, uid, gid int) error {
 	return nil
 }
 
+func (h *fakeHost) SystemctlStdout(args ...string) (string, error) { return h.Systemctl(args...) }
+
+// LookupGroup: a user's own group is there while the user is, or while
+// the test leaves it (leftGroups).
+func (h *fakeHost) LookupGroup(name string) (bool, error) {
+	_, ok := h.users[name]
+	return ok || h.leftGroups[name], nil
+}
+
 // Owner is what Chown made it, else root's.
 func (h *fakeHost) Owner(path string) (int, int, error) {
 	rel, _ := filepath.Rel(h.root, path)
@@ -127,6 +140,9 @@ func (h *fakeHost) Systemctl(args ...string) (string, error) {
 		}
 		h.enabled = false
 	case "is-enabled":
+		if h.unknownState {
+			return "", errors.New("exit status 1")
+		}
 		if h.enabled {
 			return "enabled\n", nil
 		}

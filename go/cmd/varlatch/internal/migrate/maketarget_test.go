@@ -20,12 +20,16 @@ type fakeMaker struct {
 	// failAt fails Make once that item is named; killAt kills the run
 	// there (a panic the test recovers: what is on disk stays as it is).
 	failAt, killAt string
-	// undoFails fails that many Undo calls.
+	// undoFails fails that many Undo calls, each at the user (the last
+	// item removed: what comes before it is gone, the configuration too).
 	undoFails int
-	// present are the keys' files there.
-	present map[string]bool
-	made    []string
-	undone  [][]string
+	// present are the keys' files there; there the other items made, on
+	// the host.
+	present, there map[string]bool
+	// where is Where's ("" setup's place).
+	where  string
+	made   []string
+	undone [][]string
 	// journals is the source's journal as each item was named.
 	journals []string
 	dir      string
@@ -51,22 +55,50 @@ func (m *fakeMaker) Make(_ context.Context, src IngressInfo, kind Ingress, _ []s
 			return errors.New("useradd: cannot lock /etc/passwd")
 		}
 		m.made = append(m.made, item)
+		if m.there == nil {
+			m.there = map[string]bool{}
+		}
+		m.there[item] = true
 	}
 	m.missing = false
 	return nil
 }
 func (m *fakeMaker) Undo(made []string) error {
 	m.undone = append(m.undone, slices.Clone(made))
-	if m.undoFails > 0 {
-		m.undoFails--
-		return errors.New("userdel: user varlatch is currently used by process 1234")
+	for _, item := range []string{"backup-key", "root-kek", "config", "unit-enabled", "data-dir", "etc-dir", "user"} {
+		if !slices.Contains(made, item) {
+			continue
+		}
+		if item == "user" && m.undoFails > 0 {
+			m.undoFails--
+			return errors.New("userdel: user varlatch is currently used by process 1234")
+		}
+		delete(m.there, item)
+		delete(m.present, item)
+		if item == "config" {
+			m.missing = true
+		}
 	}
 	m.missing = true
 	return nil
 }
+func (m *fakeMaker) Left(made []string) ([]string, error) {
+	var left []string
+	for _, item := range made {
+		if m.there[item] || m.present[item] {
+			left = append(left, item+" (fake)")
+		}
+	}
+	return left, nil
+}
 func (m *fakeMaker) KeyItems() (string, string)        { return "root-kek", "backup-key" }
 func (m *fakeMaker) Present(item string) (bool, error) { return m.present[item], nil }
-func (m *fakeMaker) Where() string                     { return "/etc/varlatch/varlatchd.conf" }
+func (m *fakeMaker) Where() string {
+	if m.where != "" {
+		return m.where
+	}
+	return "/etc/varlatch/varlatchd.conf"
+}
 
 // runKilled runs f, a run killAt kills.
 func runKilled(t *testing.T, f func()) {
@@ -282,9 +314,22 @@ func TestTheTargetMigrateMakes(t *testing.T) {
 		if _, err := w.eng.Abort(context.Background()); err == nil {
 			t.Fatal("--abort did not fail")
 		}
-		// The configuration still there: nothing is forgotten.
-		if _, err := w.eng.ForgetTarget(context.Background()); err == nil || !strings.Contains(err.Error(), "is still there") {
-			t.Fatalf("--forget-target with the configuration there: %v", err)
+		// The undo removed the configuration, then failed at the user:
+		// the user is left, so nothing is forgotten.
+		if !m.missing {
+			t.Fatal("the fake's undo did not remove the configuration before the user")
+		}
+		if _, err := w.eng.ForgetTarget(context.Background()); err == nil || !strings.Contains(err.Error(), "still there: user (fake)") {
+			t.Fatalf("--forget-target with the user there: %v", err)
+		}
+		// A retried --abort that fails again names the way out too.
+		if _, err := w.eng.Abort(context.Background()); err == nil || !strings.Contains(err.Error(), "--abort --forget-target") {
+			t.Errorf("--abort again: %v", err)
+		}
+		// Another place's maker: refused, the place named.
+		w.eng.Maker = &fakeMaker{where: "/elsewhere/etc/varlatch/varlatchd.conf"}
+		if _, err := w.eng.ForgetTarget(context.Background()); err == nil || !strings.Contains(err.Error(), "is at /etc/varlatch/varlatchd.conf, not this run's") {
+			t.Errorf("--forget-target with another place's maker: %v", err)
 		}
 		// Not this run's to check: the target flags name it.
 		w.eng.Maker = nil
@@ -295,7 +340,7 @@ func TestTheTargetMigrateMakes(t *testing.T) {
 			t.Errorf("a new migration without the maker: %v", err)
 		}
 		w.eng.Maker = m
-		m.missing = true // the operator removed the rest by hand
+		delete(m.there, "user") // the operator removed the rest by hand
 		j, err := w.eng.ForgetTarget(context.Background())
 		if err != nil || !j.Created.Forgotten || j.Created.Undone == "" {
 			t.Fatalf("--forget-target: %v %+v", err, j.Created)
@@ -303,6 +348,22 @@ func TestTheTargetMigrateMakes(t *testing.T) {
 		m.undoFails = 0
 		if _, err := w.eng.Run(context.Background(), true); err != nil {
 			t.Fatalf("a new migration after: %v", err)
+		}
+	})
+	t.Run("a journal's record is checked as it is read", func(t *testing.T) {
+		w := newWorld(t)
+		for _, rec := range []string{
+			`{"made":["user"],"config":"/etc/varlatch/varlatchd.conf; rm -rf /"}`,
+			`{"made":["user"],"config":"/tmp/x"}`,
+			`{"made":["user\u001b[2J"]}`,
+		} {
+			j := `{"format":1,"id":"mig_x","phase":"released","history":[],"created":` + rec + `}`
+			if err := os.WriteFile(filepath.Join(w.src.dir, JournalFile), []byte(j), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Status(w.src.dir); err == nil || !strings.Contains(err.Error(), "is not a migration journal") {
+				t.Errorf("%s: %v", rec, err)
+			}
 		}
 	})
 }

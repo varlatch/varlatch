@@ -3554,9 +3554,12 @@ migrations.
     it, and no new migration starts over it. Should it keep failing,
     `--status` names each item's place: removed by hand, then
     `--abort --forget-target` clears the record (it removes nothing, and
-    refuses while the configuration migrate made is still there). The
-    unit's undo is done again harmlessly (nothing to disable once its
-    file is gone).
+    refuses while any item recorded is still there, each checked as the
+    undo removes it, the user's own group too). The unit's undo is done
+    again harmlessly (nothing to disable once its file is gone, or in a
+    state systemctl names as not enabled; any other state is disabled).
+    The journal's record is checked as it is read (plain item names, and
+    setup's configuration as where it was made).
   - **Root:** whenever the target may change (its configuration missing
     or unreadable, or one migrate made and has not removed, before the
     switch), migrate refuses to run without root.
