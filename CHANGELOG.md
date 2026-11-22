@@ -90,8 +90,8 @@ Changes since 0.50.0-rc.1, by pull request:
 
 <!-- rc.2 slots: fill from `git log --first-parent v0.50.0-rc.1..origin/main`
      once the queue has drained; remove the slots of PRs that did not merge.
-     Armed or queued when this was written: #341, #328, #330, #313, #369,
-     #382. -->
+     Filled through main a4078086 (#406). Still queued: #380, #381, #385,
+     #405, #408 (slots below). -->
 
 - **Organization administration in the Go CLI (#290).** `varlatch org`,
   `project`, `env-create`, `env-delete`, `identity`, `member`,
@@ -212,10 +212,10 @@ Changes since 0.50.0-rc.1, by pull request:
   - `--finish` ends the rollback window, and `--delete-old-data` removes
     the old data after a verified final archive.
 
-  It refuses every source in this prerelease: it pins the last TypeScript
-  release's image, and that release (0.23.0) is not published yet. The
-  tailnet name's handoff (#360, #365) is groundwork here; its wiring into
-  `varlatch migrate` comes in a later prerelease.
+  It migrates from the last TypeScript release's published image only:
+  0.23.0's, pinned by its registry digest (#402, #403); any other source
+  is refused before anything is done. The tailnet name's handoff (#360,
+  #365) moves the name with the migration (#379).
 - **The container image's definition (#338).** `go/image` builds
   `varlatchd` and `varlatch` from the release's own assets into a
   distroless image that runs as a non-root user. The image is not
@@ -242,26 +242,158 @@ Changes since 0.50.0-rc.1, by pull request:
 - **Test reliability (#376).** The matcher's timing tests collect only
   past a heap margin. No change to what is shipped.
 
-<!-- SLOT #341 (armed): `varlatch setup`, from an empty systemd host to a
-     running, administered, backed-up installation, and `setup --restore`
-     onto a fresh host (steps 6.4a, 6.4b, 6.4c); update the "Prerelease
-     only" paragraph's "no ... setup yet". -->
-<!-- SLOT #328 (queued): `varlatch doctor` for a Go installation; also
-     update the "Prerelease only" paragraph's "no ... doctor yet". -->
-<!-- SLOT #330 (queued): `varlatch upgrade` and `upgrade --check`. -->
-<!-- SLOT #313 (armed): `varlatch run --agent-safe` and `varlatch request`
-     in the Go CLI. -->
-<!-- SLOT #369 (armed): a panicking Sync Target run fails its Target, not
-     `varlatchd`. -->
-<!-- SLOT #382 (armed): the self-hosting guide's self-hosted tailnet
-     control server (Headscale). -->
+- **`varlatch setup` (#341).** Installs a Go installation on a systemd
+  host, as root, from an empty host to a running, administered and
+  backed-up installation:
+  - the questions (the ingress: public HTTPS, your own proxy, this machine
+    only or a tailnet; where backups go: this host or a bucket), each also
+    a flag or an entry of an answers file (`--answers <file>`), so setup
+    runs without a terminal too;
+  - the `varlatch` system user, the data directory (checked with an fsync
+    probe of its disk), the Root KEK and the backup key (made here,
+    root's, 0600, never in an argument, the environment or a log), the
+    configuration and the systemd unit, started and checked ready;
+  - the first administrator's one-time enrollment link, shown on the
+    terminal or written to `--admin-link-out <file>`, and setup waits for
+    the passkey;
+  - each key shown once and pasted back to check it was copied (or, off a
+    terminal, written to `--root-kek-out` and `--backup-key-out`), the
+    Custody Attestation recorded, a first backup made and verified, then
+    `varlatch doctor`.
+
+  Interrupted, setup run again goes on where it stopped; run again after
+  it finished, it changes nothing. `varlatch setup --restore <archive>
+  --root-kek-file <file> --backup-key-file <file>` restores an archive
+  onto a fresh host the same way: the administrators keep their passkeys,
+  so no link is issued, and a backup of the restored installation is
+  verified.
+- **`varlatch doctor` for a Go installation (#328, landed with #341).**
+  Checks the configuration, the data directory and the key files' modes
+  (read with `stat` only: doctor never opens a key file), free space, the
+  disk's fsync latency, the running `varlatchd`, its backups and the keys'
+  custody, and says what to do for each check that fails. It changes
+  nothing; `--json` gives the report as a document.
+- **`varlatch upgrade` (#330).** Upgrades a Go installation on its host,
+  as root: the release's binaries and `release.json` are checked against
+  its signed `SHA256SUMS` first, a release whose database schema this
+  installation cannot be upgraded to is refused, a backup is made, and a
+  release that is not rollback-safe is installed only with
+  `--accept-not-rollback-safe`. An interrupted upgrade is finished or
+  undone by the next run. `varlatch upgrade --check` records the newest
+  release, which the dashboard's release notice shows.
+- **A migration's rollback window and upgrades (#387).** While a
+  migration's rollback window is open, `varlatch upgrade` to a release
+  that ends the window says so and goes on only once you confirm it (on a
+  terminal, or with `--end-rollback-window`).
+- **Host commands and the keys (#391).** A host command run by hand
+  outside the unit (`varlatchd admin ...`, or `varlatch admin ...`) finds
+  the keys beside the configuration, where setup wrote them, only when it
+  runs as root. Without a Root KEK it now says what to do: set
+  `root_kek_file`, or run it as root. In the container image the CLI's
+  refusal of a key in its environment also covers the keys found that
+  way.
+- **`varlatch run --agent-safe` and `varlatch request` (#313).** Run in
+  the Go CLI, as in the TypeScript CLI, with the local Broker (#308): the
+  Agent gets a placeholder for each Secret, and the Broker puts the value
+  in only for the targets you allowed. `--strict` works with
+  `--agent-safe` too.
+- **A Sync Target that fails while it runs (#369).** An unexpected failure
+  inside one Sync Target's run fails that run, counted toward its disable
+  budget and said in its status, instead of stopping `varlatchd`. The log
+  names the Target and the failure, never a value.
+- **The tailnet name moves with the migration (#379).** For a source that
+  serves a tailnet address, `varlatch migrate` moves the name to the Go
+  installation's node: give it `--tailscale-oauth-client-file` (an OAuth
+  client with the `devices:core` scope only) and `--tailnet-auth-key-file`
+  (a reusable key with the node's tags), both from files. The Go node
+  joins under a temporary name before the barrier and takes the name at
+  the switch; an undo or a rollback gives the name back to the old node
+  first. `--accept-rollback-certificate` goes on when the old node's
+  certificate cannot be renewed to last the rollback window.
+- **The tailnet node's tags on a self-hosted control server (#383).** On
+  Headscale the node's tags are its pre-auth key's, and they must be
+  exactly `tailnet_tags`: any other set keeps tailnet access closed until
+  they match, and `varlatch doctor` names both sets and what to do (the
+  API side is described under Unreleased, API: `TAGS_DIFFER`).
+- **The self-hosted tailnet control server, documented (#382).** A new
+  self-hosting page covers running the built-in tailnet node against
+  Headscale: `tailnet_control_url` as `https://` and an IP address, the
+  certificate it needs, tagged pre-auth keys, and what is refused and why.
+- **`varlatch migrate` makes the host target (#392).** When `--config
+  /etc/varlatch/varlatchd.conf` is not there yet, migrate makes the Go
+  installation itself with setup's steps (as root, on a systemd host): the
+  `varlatch` user, the data directory, the configuration from the
+  source's answers and the unit, never keys, which are the source's.
+  `--acme-email`, `--listen` and `--accept-existing-user` as in setup. An
+  undo removes what it made; `--abort --forget-target` clears its record
+  after you removed what an undo could not.
+- **`varlatch migrate --from-archive` (#362).** The backup converter:
+  turns an archive the TypeScript server made (format 1 or 2) into a Go
+  archive (format 3) of the same installation, by the migration's own
+  checks, with the archive's Root KEK and backup key from files
+  (`--kek-file`, `--bek-file`) and `--out <archive>`.
+- **The migration's bundles over standard input and output (#384).** The
+  TypeScript side's export and the reverse's import now pass through the
+  container's standard input and output, so its user never writes or
+  reads your backups directory, which failed every dry run on a real
+  installation. A dry run that failed can be run again.
+- **An undo reopens the source in order (#386, #401).** An undo in the
+  transfer lifts the source's barrier before it gives the address back,
+  so the source's dashboard comes up again, and it reports the old
+  installation reopened only once its public URL answers from it (up to
+  `--transfer-timeout`). A dashboard that a failed start left without its
+  network is made again.
+- **A reverse refuses a stopped tailnet sidecar first (#389).** Where the
+  TypeScript `varlatchd` runs in the Tailscale sidecar's network and the
+  sidecar is stopped, `--rollback` is refused before anything is done,
+  with the step to take (start the sidecar, then run it again), instead
+  of failing after the rebuild.
+- **The Coolify Compose file for the Go image (#390).**
+  `infra/coolify/varlatchd.compose.yml` runs the Go `varlatchd` image as
+  one Coolify service, pinned by its digest (an unset digest is refused),
+  with the setup and upgrade steps in `infra/coolify/README.md`, for when
+  the image is published.
+- **Release builds hold no test overrides (#377).** The overrides the
+  migration's tests and rehearsals use are built with a test tag only, and
+  a check fails the build if a release binary would contain them.
+- **Published releases checked before they are trusted (#395).** The
+  release workflow's check of a published release refuses a draft
+  release outright.
+- **Old CLIs against the Go server (#397).** CI runs the last published
+  TypeScript CLIs against the Go server (ship gate G2), weekly and on
+  demand.
+- **The ship gates' own checks (#394, #399, #400, #403, #407).** The
+  nightly container conformance run serves the CLI release as the binary
+  run does, and its result now counts; ship gate G1 can be run on demand;
+  its browser walkthrough has a checklist and an evidence template, whose
+  check refuses anything Markdown would render differently from what it
+  reads. No change to what is shipped.
+- **The migration's rehearsal on a real installation (#406).** The
+  rehearsal checks that the source answers again after `--abort` as a
+  client would, polling its address. No change to what is shipped.
+- **Test reliability (#388, #393, #396, #398, #404).** More transcripts
+  for `run --agent-safe --strict`, recorded from the TypeScript CLI; three
+  flaky Go tests, an audit export test at an hour's boundary and the
+  conformance runner's platform fakes fixed. No change to what is shipped.
+
+<!-- SLOT #380 (queued): G5's tailnet matrix; also the rollback after a
+     tailnet handoff (the reverse starts the sidecar the handoff stopped,
+     where #389 refused it). Operator wording: "--rollback after a tailnet
+     handoff starts the old node's sidecar itself". -->
+<!-- SLOT #381 (queued): a restore takes the dead installation's tailnet
+     name over (`setup --restore` with tailnet ingress). -->
+<!-- SLOT #385 (queued): the tailnet handoff on Headscale
+     (`--headscale-url` with `--headscale-api-key-file`, or
+     `--headscale-cli`). -->
+<!-- SLOT #405 (queued): the restore's handoff on Headscale (c4). -->
+<!-- SLOT #408 (queued): fill from its PR once it merges. -->
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release, so nothing that follows the latest release
   (`varlatch upgrade`, the release notice, `varlatch self-update`) offers
-  it. The Go server has no published container image, `setup` or `doctor`
-  yet, and `varlatch migrate` refuses every source until the last
-  TypeScript release is published.
+  it. The Go server has no published container image yet, and `varlatch
+  migrate` migrates from the last TypeScript release's published image
+  (0.23.0) only.
 
 ## 0.50.0-rc.1 (2026-11-20)
 
