@@ -7,14 +7,20 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 )
 
 func main() {
+	// What a self-update on Windows left beside this binary (the old one,
+	// renamed aside while it ran) goes now that it no longer runs.
+	selfupdate.CleanUp()
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
@@ -50,7 +56,44 @@ func (osEnv) EnvironNames() []string {
 	return names
 }
 
+// In the single-container image (go/image/Dockerfile sets
+// keyenv.ImageMarker), the CLI runs beside varlatchd and refuses, as
+// varlatchd does, an environment that holds the Root KEK or the Backup
+// Encryption Key that imageConfig names, or a key or passphrase variable
+// name (lib/keyenv): exit 78, the variable named, never its value. It
+// needs no key itself; keys reach varlatchd only as mounted files.
+var imageConfig = "/etc/varlatch/varlatchd.conf"
+
+// exitConfig is the exit status of a refused environment (EX_CONFIG, as
+// varlatchd's).
+const exitConfig = 78
+
+// imageAsRoot is whether this process runs as root (never on Windows,
+// where os.Geteuid is -1); a variable so the tests can be root.
+var imageAsRoot = func() bool { return os.Geteuid() == 0 }
+
+func imageRefusal() string {
+	if os.Getenv(keyenv.ImageMarker) == "" {
+		return ""
+	}
+	// The keys the configuration loads, where varlatchd admin finds them:
+	// the run's CREDENTIALS_DIRECTORY, or, as root, those beside the
+	// configuration (keyenv.CredentialsDir). A host command the CLI fronts
+	// never sees a variable varlatchdEnviron strips, so this check is the
+	// one that covers it.
+	keys := keyenv.Configured(imageConfig, keyenv.CredentialsDir(os.Getenv, imageConfig, imageAsRoot()))
+	why := keyenv.Refusal(os.Environ(), keys...)
+	for _, k := range keys {
+		clear(k.Bytes)
+	}
+	return why
+}
+
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if why := imageRefusal(); why != "" {
+		fmt.Fprintln(stderr, "varlatch: "+why)
+		return exitConfig
+	}
 	if len(args) > 0 && args[0] == "verify-release" {
 		return verifyRelease(args[1:], stdout, stderr)
 	}

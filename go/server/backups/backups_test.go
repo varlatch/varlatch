@@ -220,6 +220,70 @@ func TestRetention(t *testing.T) {
 	}
 }
 
+// Retention never removes a TypeScript-format archive (go-step7 decision
+// 18) nor an archive without a status record Go wrote, however old: it
+// counts and removes Go's own archives only. The status lists the
+// TypeScript ones apart.
+func TestRetentionLeavesTypeScriptArchives(t *testing.T) {
+	f := newFixture(t)
+	s := f.service(nil)
+	backups := filepath.Join(f.dir, Dir)
+	if err := os.MkdirAll(backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := f.clock().Add(-400 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
+	ts := backup.StatusRecord{ArchiveID: "00000000-0000-4000-8000-0000000000aa", InstallationID: f.inst, CreatedAt: old, Release: "0.22.4", RequiredKeyVersions: []int{1}}
+	if err := backup.SaveStatus(f.dir, ts); err != nil {
+		t.Fatal(err)
+	}
+	unrecorded := "00000000-0000-4000-8000-0000000000bb"
+	for _, id := range []string{ts.ArchiveID, unrecorded} {
+		path := filepath.Join(backups, id+".vltbak")
+		if err := os.WriteFile(path, []byte("an archive this installation did not make"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		past := f.clock().Add(-400 * 24 * time.Hour)
+		if err := os.Chtimes(path, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ids []string
+	for i := 0; i < 4; i++ {
+		res, err := s.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, res.ArchiveID)
+		for _, removed := range res.Removed {
+			if removed == ts.ArchiveID || removed == unrecorded {
+				t.Errorf("run %d removed %s", i, removed)
+			}
+		}
+		f.add(time.Hour)
+	}
+	for _, id := range []string{ts.ArchiveID, unrecorded, ids[2], ids[3]} {
+		if _, err := os.Stat(filepath.Join(backups, id+".vltbak")); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+	}
+	for _, id := range ids[:2] {
+		if _, err := os.Stat(filepath.Join(backups, id+".vltbak")); err == nil {
+			t.Errorf("%s was kept beyond backup_keep", id)
+		}
+	}
+	st, err := s.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Archives) != 4 || len(st.TypeScriptArchives) != 1 || st.TypeScriptArchives[0].ArchiveID != ts.ArchiveID {
+		t.Errorf("archives %d, typescriptArchives %+v", len(st.Archives), st.TypeScriptArchives)
+	}
+	js, err := s.StatusJSON()
+	if err != nil || !bytes.Contains(js, []byte(`"typescriptArchives":[{"archiveId":"`+ts.ArchiveID+`"`)) {
+		t.Errorf("status JSON %s %v", js, err)
+	}
+}
+
 // What a run refuses before it writes anything.
 func TestRefusals(t *testing.T) {
 	ctx := context.Background()
@@ -340,6 +404,18 @@ func (s *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.fail {
 		w.WriteHeader(403)
 		io.WriteString(w, `<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>no</Message></Error>`)
+		return
+	}
+	if r.Method == http.MethodGet && (r.URL.RawQuery == "" || strings.HasPrefix(r.URL.RawQuery, "x-id=GetObject")) {
+		b, ok := s.objects[r.URL.Path]
+		if !ok {
+			w.WriteHeader(404)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>NoSuchKey</Code><Message>no</Message></Error>`)
+			return
+		}
+		w.Header().Set("ETag", `"etag"`)
+		w.WriteHeader(200)
+		_, _ = w.Write(b)
 		return
 	}
 	if r.Method != http.MethodPut || r.URL.RawQuery != "" && !strings.HasPrefix(r.URL.RawQuery, "x-id=PutObject") {
@@ -729,5 +805,74 @@ func TestRunLeavesTheACMEStoreOut(t *testing.T) {
 	}
 	if _, ok := conf.Settings["acme_ca_root"]; ok {
 		t.Error("acme_ca_root, a path on this host, is in the archive")
+	}
+}
+
+// The uploaded copy downloaded back and checked (varlatch migrate
+// --finish's final archive): passed and recorded as the delivery's remote
+// verification; a damaged remote copy fails integrity; refused with no
+// destination, and for an archive never uploaded.
+func TestVerifyRemote(t *testing.T) {
+	f := newFixture(t)
+	fake := &fakeS3{objects: map[string][]byte{}}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	s := f.service(nil)
+	res, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.VerifyRemote(context.Background(), res.ArchiveID); !errors.Is(err, ErrNoDestination) {
+		t.Fatalf("no destination: %v", err)
+	}
+	conf := filepath.Join(f.dir, "conf")
+	os.Mkdir(conf, 0o700)
+	os.WriteFile(filepath.Join(conf, "destinations.json"), []byte(`{"offsite":{"endpoint":"`+srv.URL+`","region":"us-east-1","bucket":"b","writeCredentialsFile":"write.json"}}`), 0o600)
+	os.WriteFile(filepath.Join(conf, "write.json"), []byte(`{"accessKeyId":"AKIDTEST","secretAccessKey":"not-a-secret"}`), 0o600)
+	f.cfg.BackupDestinationsFile = filepath.Join(conf, "destinations.json")
+	s = f.service(nil)
+	if _, err := s.VerifyRemote(context.Background(), res.ArchiveID); err == nil || !strings.Contains(err.Error(), "no recorded upload") {
+		t.Fatalf("never uploaded: %v", err)
+	}
+	// A killed verification's download directory: the next run removes it.
+	killed := filepath.Join(f.dir, Dir, ".remote-"+res.ArchiveID)
+	if err := os.MkdirAll(killed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	up, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(killed); !os.IsNotExist(err) {
+		t.Errorf("a killed verification's directory after a run: %v", err)
+	}
+	v, err := s.VerifyRemote(context.Background(), up.ArchiveID)
+	if err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {
+		t.Fatalf("the remote copy: %+v %v", v, err)
+	}
+	st, _ := s.Status()
+	found := false
+	for _, a := range st.Archives {
+		if a.ArchiveID == up.ArchiveID && a.Delivery != nil && a.Delivery.RemoteVerification != nil && a.Delivery.RemoteVerification.Integrity {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the remote verification was not recorded")
+	}
+	key := "/b/varlatch/" + up.ArchiveID + ".vltbak"
+	fake.mu.Lock()
+	b := fake.objects[key]
+	b[len(b)/2] ^= 0xff
+	fake.mu.Unlock()
+	if v, err := s.VerifyRemote(context.Background(), up.ArchiveID); err != nil || v.Integrity {
+		t.Errorf("a damaged remote copy: %+v %v", v, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(f.dir, Dir)); len(entries) > 0 {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".remote-") {
+				t.Errorf("the download is left: %s", e.Name())
+			}
+		}
 	}
 }

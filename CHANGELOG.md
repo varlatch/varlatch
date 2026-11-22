@@ -9,6 +9,14 @@ fixes.
 
 ### API
 
+- **`GET /v1/installation/listeners` has a new node check reason,
+  `TAGS_DIFFER`.** On a self-hosted control server (Headscale) the tailnet
+  node's tags are its pre-auth key's, and when they are not `tailnet_tags`
+  the node check fails with `reason: TAGS_DIFFER`: tailnet access stays
+  closed until they match, and `observed.warnings` names both sets (`varlatch
+  doctor` says it too). `ObservedCheck.reason` is a closed enum, so a client
+  generated from the earlier document that rejects unknown values needs
+  regenerating; the dashboard shows the new reason.
 - **The published OpenAPI document now matches what the server returns.**
   The test suite checks the `/v1` responses it receives against
   `openapi.yaml` (status, content type and JSON body, errors included),

@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,7 +29,8 @@ import (
 //     anything but printJSON, and a redactedJSON made anywhere but
 //     redactJSON;
 //   - outShowing, the one writer that lets a token through, reached
-//     (called or taken as a method value) anywhere but inviteCommand, and
+//     (called or taken as a method value) anywhere but inviteCommand and
+//     showReenrollLinks, and
 //     redactOutputShowing reached anywhere but outShowing;
 //   - os.NewFile (a stream by its descriptor) outside newFileSites,
 //     syscall.Write and unix.Write;
@@ -62,6 +64,10 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		// or through internal/matcher's redaction): its own bytes, never the
 		// CLI's text, so the fail-safe does not rewrite them (5.4b).
 		"internal/cli/runchild.go:runChild": false,
+		// `varlatch request` relays the destination's response as the
+		// Broker relayed it, already scrubbed: the destination's bytes,
+		// never the CLI's text (5.5b).
+		"internal/cli/request.go:relayResponse": false,
 	}
 	// newFileSites may call os.NewFile: each wraps a handle it opened
 	// itself for reading, never a stream.
@@ -182,11 +188,12 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 func isStream(name string) bool { return name == "Stdout" || name == "Stderr" }
 
 // showingSites: where the token-showing writer and its redactor may be
-// reached. outShowing prints invite's enrollment token; nothing else may
-// print a token through it.
-var showingSites = map[string]string{
-	"outShowing":          "internal/cli/admin.go:inviteCommand",
-	"redactOutputShowing": "internal/cli/cli.go:outShowing",
+// reached. outShowing prints invite's enrollment token and a move's
+// re-enrollment links (one token each, slice 6.9); nothing else may print
+// a token through it.
+var showingSites = map[string][]string{
+	"outShowing":          {"internal/cli/admin.go:inviteCommand", "internal/cli/move.go:showReenrollLinks"},
+	"redactOutputShowing": {"internal/cli/cli.go:outShowing"},
 }
 
 // showingMisuse is the guard's complaint about the identifier name reached
@@ -195,10 +202,14 @@ var showingSites = map[string]string{
 // declarations themselves are exempt.
 func showingMisuse(site, name string) string {
 	allowed, ok := showingSites[name]
-	if !ok || site == allowed {
+	if !ok || slices.Contains(allowed, site) {
 		return ""
 	}
-	return name + " reached outside " + allowed[strings.LastIndex(allowed, ":")+1:]
+	var names []string
+	for _, a := range allowed {
+		names = append(names, a[strings.LastIndex(a, ":")+1:])
+	}
+	return name + " reached outside " + strings.Join(names, " and ")
 }
 
 // writesStream is whether a call takes a stream as an argument.

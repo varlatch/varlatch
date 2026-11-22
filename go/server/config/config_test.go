@@ -88,6 +88,9 @@ func TestParseErrors(t *testing.T) {
 		"bad sync":                         kek + "sync = yes\n",
 		"unknown sync adapter":             kek + "sync_adapters = heroku\n",
 		"audit export neither on nor off":  kek + "audit_export = maybe\n",
+		"serve_cli neither on nor off":     kek + "public_url = https://varlatch.example.com\nserve_cli = yes\n",
+		"serve_cli without public_url":     kek + "serve_cli = on\n",
+		"serve_cli with a public_url path": kek + "public_url = https://example.com/vault\nserve_cli = on\n",
 		"overlong line":                    kek + "public_url = https://" + strings.Repeat("a", 70*1024) + "\n",
 		"relative backup_key_file":         kek + "backup_key_file = bek\n",
 		"relative destinations file":       kek + "backup_destinations_file = d.json\n",
@@ -105,7 +108,7 @@ func TestParseErrors(t *testing.T) {
 		"tailnet tag without tag:":         kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = varlatch\ntailnet_port = 8687\n",
 		"tailnet on without a port":        kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\n",
 		"tailnet port too large":           kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 65536\n",
-		"self-hosted control server":       kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://hs.example.com\n",
+		"control server by host name":      kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://hs.example.com\n",
 		"relative tailnet auth key file":   kek + "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_auth_key_file = key\n",
 	} {
 		_, err := Parse(strings.NewReader(file), env(nil))
@@ -122,7 +125,9 @@ func TestParseErrors(t *testing.T) {
 
 // tailnet = on starts varlatchd's tailnet node (ADR-0059 Decision 5); off,
 // the default, leaves every tailnet setting unset. Tailscale's control
-// server is the only one this release joins, given or not.
+// server, given or not, is "" for the pin; a self-hosted one (Headscale) is
+// https with an IP address for its host, canonical, and never a host name
+// (tsnet's bootstrap DNS fallback would send it to Tailscale).
 func TestParseTailnet(t *testing.T) {
 	c, err := Parse(strings.NewReader("root_kek_file = /k\n"), env(nil))
 	if err != nil || c.Tailnet != nil {
@@ -147,9 +152,55 @@ func TestParseTailnet(t *testing.T) {
 	if c, err = Parse(strings.NewReader(on), env(nil)); err != nil || c.Tailnet.AuthKeyFile != "" {
 		t.Errorf("no key file and no credentials directory: %+v, %v", c.Tailnet, err)
 	}
-	_, err = Parse(strings.NewReader(on+"tailnet_control_url = https://hs.example.com\n"), env(nil))
-	if err == nil || !strings.Contains(err.Error(), "a self-hosted one (Headscale) is not supported yet") {
-		t.Errorf("a self-hosted control server: %v", err)
+	for given, want := range map[string]string{
+		"https://192.0.2.10":               "https://192.0.2.10",
+		"https://192.0.2.10/":              "https://192.0.2.10",
+		"https://192.0.2.10:443":           "https://192.0.2.10",
+		"https://192.0.2.10:8443":          "https://192.0.2.10:8443",
+		"https://[2001:db8::10]":           "https://[2001:db8::10]",
+		"https://[2001:DB8:0::10]:8443":    "https://[2001:db8::10]:8443",
+		"https://[::ffff:192.0.2.10]:8443": "https://192.0.2.10:8443",
+		"https://127.0.0.1:8443":           "https://127.0.0.1:8443",
+	} {
+		c, err := Parse(strings.NewReader(on+"tailnet_control_url = "+given+"\n"), env(nil))
+		if err != nil || c.Tailnet.ControlURL != want {
+			t.Errorf("%s: %+v, %v; want %s", given, c, err, want)
+		}
+	}
+	for given, why := range map[string]string{
+		"https://hs.example.com":           "an IP address is never looked up",
+		"https://headscale:8443":           "an IP address is never looked up",
+		"http://192.0.2.10":                "https://<its IP address>",
+		"https://user@192.0.2.10":          "https://<its IP address>",
+		"https://192.0.2.10/headscale":     "https://<its IP address>",
+		"https://192.0.2.10?x=1":           "https://<its IP address>",
+		"https://192.0.2.10#x":             "https://<its IP address>",
+		"https://0.0.0.0":                  "unspecified",
+		"https://[::]:8443":                "unspecified",
+		"https://224.0.0.1":                "multicast",
+		"https://[fe80::1%25eth0]":         "zoned",
+		"https://[::ffff:0.0.0.0]":         "unspecified",
+		"https://[::ffff:224.0.0.1]":       "multicast",
+		"https://[fe80::1]":                "link-local",
+		"https://169.254.10.1":             "link-local",
+		"https://[::ffff:169.254.10.1]":    "link-local",
+		"https://255.255.255.255":          "broadcast",
+		"https://[::ffff:255.255.255.255]": "broadcast",
+		"https://192.0.2.10:0":             "port is not 1 to 65535",
+		"https://010.0.2.10":               "an IP address is never looked up",
+		"https://192.0.2.10:99999":         "https://<its IP address>",
+	} {
+		_, err := Parse(strings.NewReader(on+"tailnet_control_url = "+given+"\n"), env(nil))
+		var cerr *Error
+		if !errors.As(err, &cerr) || !strings.Contains(err.Error(), why) || !strings.Contains(err.Error(), "Leave tailnet_control_url unset for Tailscale's") {
+			t.Errorf("%s: %v, want a configuration error naming %q", given, err, why)
+		}
+	}
+	// A self-hosted control server issues no Tailscale certificate: no
+	// browser endpoint with it.
+	_, err = Parse(strings.NewReader(on+"tailnet_control_url = https://192.0.2.10\ntailnet_https_port = 8688\npublic_url = https://varlatch.example.test\n"), env(nil))
+	if err == nil || !strings.Contains(err.Error(), "does not issue") {
+		t.Errorf("the browser endpoint with a self-hosted control server: %v", err)
 	}
 }
 
@@ -212,6 +263,64 @@ func TestLoadReadError(t *testing.T) {
 	}
 }
 
+// A host command run by hand as root outside the unit (LoadHost with
+// HostEnv) finds the keys beside the configuration, as the unit hands
+// them: only as root, only when the Root KEK is there, and never over a
+// CREDENTIALS_DIRECTORY or a root_kek_file given. Without a Root KEK, a
+// run by hand is told its own remedy, serve the unit's.
+func TestLoadHost(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "varlatchd.conf")
+	if err := os.WriteFile(conf, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	load := func(path string, root bool) (*Config, error) { return LoadHost(path, HostEnv(os.Getenv, path, root)) }
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	const byHand = "no Root KEK: set root_kek_file, or run this as root with the root-kek file beside the configuration (where setup writes it, and the unit's credential comes from)"
+	const unit = "no Root KEK: set root_kek_file, or run varlatchd under its unit, which hands it the root-kek credential"
+	var cerr *Error
+	if _, err := load(conf, true); !errors.As(err, &cerr) || !strings.Contains(err.Error(), byHand) {
+		t.Fatalf("no root-kek beside the configuration: %v", err)
+	}
+	if _, err := Load(conf); !errors.As(err, &cerr) || !strings.Contains(err.Error(), unit) {
+		t.Fatalf("serve's remedy: %v", err)
+	}
+	for _, k := range []string{"root-kek", "backup-key"} {
+		if err := os.WriteFile(filepath.Join(dir, k), []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := load(conf, true)
+	if err != nil || c.RootKEKFile != filepath.Join(dir, "root-kek") || c.BackupKeyFile != filepath.Join(dir, "backup-key") {
+		t.Fatalf("the keys beside the configuration: %+v %v", c, err)
+	}
+	// Not as root: a member of the varlatch group sees root-kek in
+	// /etc/varlatch (0750 root:varlatch), and gets no such directory.
+	if _, err := load(conf, false); !errors.As(err, &cerr) || !strings.Contains(err.Error(), byHand) {
+		t.Fatalf("not as root: %v", err)
+	}
+	if _, err := Load(conf); !errors.As(err, &cerr) {
+		t.Fatalf("Load (serve) must not look beside the configuration: %v", err)
+	}
+	// A relative path: the directory is made absolute.
+	t.Chdir(dir)
+	if c, err := load("varlatchd.conf", true); err != nil || c.RootKEKFile != filepath.Join(dir, "root-kek") {
+		t.Fatalf("a relative --config: %+v %v", c, err)
+	}
+	other := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", other)
+	if c, err := load(conf, true); err != nil || c.RootKEKFile != filepath.Join(other, "root-kek") || c.BackupKeyFile != "" {
+		t.Fatalf("CREDENTIALS_DIRECTORY wins: %+v %v", c, err)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	if err := os.WriteFile(conf, []byte("root_kek_file = /etc/kek\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := load(conf, true); err != nil || c.RootKEKFile != "/etc/kek" {
+		t.Fatalf("root_kek_file wins: %+v %v", c, err)
+	}
+}
+
 // The example the installer and setup follow parses.
 func TestExampleParses(t *testing.T) {
 	f, err := os.Open("../../install/varlatchd.conf.example")
@@ -265,6 +374,14 @@ func TestParsePublicHTTPS(t *testing.T) {
 	if c, err := parse("public_url = https://vault.example.com\nlisten_https = 10.0.0.1:443\n"); err != nil || c.PublicHTTPS.RedirectListen != "10.0.0.1:80" {
 		t.Errorf("the redirect's default address: %+v %v", c, err)
 	}
+	for _, listen := range []string{"127.0.0.1:8686", "127.0.0.2:8686", "[::1]:8686"} {
+		if _, err := parse("listen = " + listen + "\npublic_url = https://vault.example.com\nlisten_https = :443\n"); err != nil {
+			t.Errorf("loopback listen %s with listen_https: %v", listen, err)
+		}
+	}
+	if c, err := parse("listen = 0.0.0.0:8686\npublic_url = https://vault.example.com\n"); err != nil || c.PublicHTTPS != nil {
+		t.Errorf("a non-loopback plain listener without public HTTPS, as before: %+v %v", c, err)
+	}
 	if c, err := parse("public_url = https://vault.example.com\n"); err != nil || c.PublicHTTPS != nil {
 		t.Errorf("off: %+v %v", c, err)
 	}
@@ -284,6 +401,9 @@ func TestParsePublicHTTPS(t *testing.T) {
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca = http://ca.example/directory\n", "is not an https ACME directory URL"},
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca = https://u:p@ca.example/directory\n", "is not an https ACME directory URL"},
 		{"public_url = https://vault.example.com\nlisten_https = :443\nacme_ca_root = ca.pem\n", "is not an absolute path"},
+		{"listen = 0.0.0.0:8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
+		{"listen = 192.0.2.5:8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
+		{"listen = :8686\npublic_url = https://vault.example.com\nlisten_https = :443\n", "the plain listener must be on a loopback address"},
 		{"acme_email = ops@example.com\n", "listen_https is not"},
 		{"listen_http_redirect = :80\n", "listen_https is not"},
 		{"acme_ca = https://ca.example/d\n", "listen_https is not"},
@@ -296,6 +416,42 @@ func TestParsePublicHTTPS(t *testing.T) {
 		}
 		if err != nil && strings.Contains(err.Error(), "u:p") {
 			t.Errorf("%q: the error shows the URL's password", c.conf)
+		}
+	}
+}
+
+// TestBackupKeyCredential: without backup_key_file, the unit's backup-key
+// credential is the backup key when it exists, as the root-kek
+// credential is the Root KEK; without one, no scheduled backup.
+func TestBackupKeyCredential(t *testing.T) {
+	dir := t.TempDir()
+	c, err := Parse(strings.NewReader(""), env(map[string]string{"CREDENTIALS_DIRECTORY": dir}))
+	if err != nil || c.BackupKeyFile != "" || c.RootKEKFile != filepath.Join(dir, "root-kek") {
+		t.Fatalf("no backup-key credential: %+v %v", c, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "backup-key"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = Parse(strings.NewReader(""), env(map[string]string{"CREDENTIALS_DIRECTORY": dir})); err != nil || c.BackupKeyFile != filepath.Join(dir, "backup-key") {
+		t.Errorf("the backup-key credential: %+v %v", c, err)
+	}
+	if c, err = Parse(strings.NewReader("backup_key_file = /etc/bek\n"), env(map[string]string{"CREDENTIALS_DIRECTORY": dir})); err != nil || c.BackupKeyFile != "/etc/bek" {
+		t.Errorf("backup_key_file wins: %+v %v", c, err)
+	}
+}
+
+func TestServeCLI(t *testing.T) {
+	for file, want := range map[string]bool{
+		"root_kek_file = /k\n":                  false,
+		"root_kek_file = /k\nserve_cli = off\n": false,
+		"root_kek_file = /k\npublic_url = https://varlatch.example.com\nserve_cli = on\n":        true,
+		"root_kek_file = /k\npublic_url = http://127.0.0.1:8686\nserve_cli = on\n":               true,
+		"root_kek_file = /k\npublic_url = https://varlatch.example.com/\nserve_cli = on\n":       true,
+		"root_kek_file = /k\npublic_url = https://varlatch.example.com/vault\nserve_cli = off\n": false,
+	} {
+		c, err := Parse(strings.NewReader(file), env(nil))
+		if err != nil || c.ServeCLI != want {
+			t.Errorf("%q: %+v %v", file, c, err)
 		}
 	}
 }

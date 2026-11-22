@@ -86,12 +86,20 @@ func TestHelpIsTheUsageText(t *testing.T) {
 		}
 	}
 	for _, c := range commands {
-		help, ok := CommandHelp(c.name)
+		help, ok := commandHelp(c.name) // the TypeScript text but for an accepted difference (self-update-usage)
 		if !ok {
 			continue
 		}
-		if c.name == "admin" {
+		switch c.name {
+		case "admin":
 			help = adminUsage
+		case "doctor":
+			help = doctorUsage
+		case "setup":
+			help = setupUsage
+		}
+		if c.name == "move" {
+			help = moveUsage
 		}
 		for _, args := range [][]string{{c.name, "--help"}, {"help", c.name}} {
 			if code, out, errs := run(args...); code != ExitOK || out != help+"\n" || errs != "" {

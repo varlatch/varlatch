@@ -16,6 +16,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/config"
@@ -24,6 +25,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -36,8 +38,12 @@ import (
 // enrollment URL on a line of its own, or, with --cli-credential, a
 // one-time CLI credential on the last line.
 //
-//	varlatchd admin bootstrap [--cli-credential [--name <name>]] [--config <file>]
-//	varlatchd admin recover (--identity <id> [--enable] | --new-admin) [--cli-credential [--name <name>]] [--config <file>]
+//	varlatchd admin bootstrap [--cli-credential [--name <name>]] [--revoke-unused] [--config <file>]
+//	varlatchd admin recover (--identity <id> [--enable] | --new-admin) [--cli-credential [--name <name>]] [--revoke-unused] [--config <file>]
+//
+// --revoke-unused (setup's reissue) first revokes the bootstrap and recovery
+// links issued before and never used, in the same write job; the issued
+// event's metadata counts them (revokedUnused).
 //
 // They refuse with the wrong Root KEK. Exit 0 on success, 1 on a refusal
 // or failure, 64 on a usage error, 78 on a configuration error.
@@ -48,12 +54,18 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return adminUsage(stderr, "no command")
 	}
 	sub := args[0]
+	if conformanceSignRelease != nil {
+		if code, handled := conformanceSignRelease(args, stdout, stderr); handled {
+			return code
+		}
+	}
 	conformance := sub == "conformance-probe" && conformanceProbe != nil ||
 		sub == "conformance-fixture" && conformanceFixture != nil
 	operator := sub == "security" || sub == "unfreeze"
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "schema" && !conformance && !operator && !backup && !keys {
+	move := isMoveCommand(sub) || sub == "config"
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && !conformance && !operator && !backup && !keys && !move {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -71,6 +83,24 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		rest = append(rest, args[i])
+	}
+	// Run by hand outside the unit, as root: the keys beside the
+	// configuration, as the unit hands them (config.HostEnv).
+	env := config.HostEnv(os.Getenv, path, adminAsRoot())
+	// In the single-container image, admin refuses a key in its
+	// environment as serve does (lib/keyenv): the keys the configuration
+	// loads, as far as they can be read (those it names, and the
+	// credentials directory's), and the key variable names.
+	if os.Getenv(keyenv.ImageMarker) != "" {
+		keys := keyenv.Configured(path, env("CREDENTIALS_DIRECTORY"))
+		why := keyenv.Refusal(os.Environ(), keys...)
+		for _, k := range keys {
+			clear(k.Bytes)
+		}
+		if why != "" {
+			fmt.Fprintln(stderr, "varlatchd admin: "+why)
+			return ExitConfig
+		}
 	}
 	switch {
 	case sub == "outbound":
@@ -93,8 +123,38 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
+	case sub == "bootstrap-status":
+		if len(rest) != 0 {
+			fmt.Fprintln(stderr, "Usage: varlatchd admin bootstrap-status [--config <file>]")
+			return 64
+		}
+	case sub == "doctor":
+		if _, msg := doctorArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case sub == "schema":
 		if _, _, msg := schemaArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "status":
+		if _, msg := statusArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "release-check":
+		if _, msg := releaseCheckArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "migrate":
+		if _, msg := parseMigrate(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "certificate":
+		if _, msg := certificateArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
@@ -105,6 +165,17 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		}
 	case backup:
 		if _, msg := backupArgs(sub, rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "config":
+		if len(rest) != 1 || rest[0] != "check" {
+			fmt.Fprintln(stderr, configCheckUsage)
+			return 64
+		}
+	case move:
+		// Checked here, so a usage error never reaches the daemon.
+		if msg := moveUsage(sub, rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
@@ -119,7 +190,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			return adminUsage(stderr, msg)
 		}
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadHost(path, env)
 	if err != nil {
 		var cerr *config.Error
 		if errors.As(err, &cerr) {
@@ -130,27 +201,63 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return ExitFailure
 	}
 	switch {
+	case sub == "config":
+		return runConfigCheck(cfg, stdout, stderr)
 	case sub == "outbound":
 		return runOutboundCheck(cfg, rest, stdout, stderr)
 	case sub == "kek":
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":
 		return runCustodyStatus(cfg, stdout, stderr)
+	case sub == "certificate" && rest[0] == "issuances":
+		return runCertificateIssuances(cfg, rest, time.Now(), stdout, stderr)
+	case sub == "tailnet" && rest[0] == "probe-name":
+		return runTailnetProbe(cfg, rest, stdout, stderr)
+	case sub == "tailnet" && (rest[0] == "enroll" || rest[0] == "reaches"):
+		c, _ := nodeArgs(rest)
+		if c.op == "enroll" {
+			return runTailnetEnroll(cfg, c, stdout, stderr)
+		}
+		return runTailnetReaches(cfg, c, stdout, stderr)
+	case sub == "bootstrap-status":
+		return runBootstrapStatus(cfg, stdout, stderr)
+	case sub == "doctor":
+		asJSON, _ := doctorArgs(rest)
+		return runDoctor(cfg, path, asJSON, stdout, stderr)
 	case sub == "backup" && rest[0] == "restore":
 		return restoreOffline(cfg, rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
+	case sub == "migrate" && (rest[0] == "open" || rest[0] == "barrier" || rest[0] == "release"):
+		// The live open, and the reverse's barrier: through the running
+		// daemon, whose admission holds the migration's gate; offline, on
+		// the data directory.
+		return route(cfg, append([]string{sub}, rest...), stdout, stderr)
+	case sub == "migrate":
+		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
+	case sub == "status":
+		return statusOnline(cfg, rest, stdout, stderr)
+	case sub == "release-check":
+		return runReleaseCheck(cfg, rest, stdout, stderr)
 	}
 	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
 }
 
+// adminAsRoot is whether admin runs as root (never on Windows, where
+// os.Geteuid is -1); a variable so the tests can be root.
+var adminAsRoot = func() bool { return os.Geteuid() == 0 }
+
 func adminUsage(stderr io.Writer, msg string) int {
-	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] | "+
-		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] | "+
+	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] [--revoke-unused] | varlatchd admin bootstrap-status | "+
+		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] [--revoke-unused] | "+
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json]  (each with [--config <file>])\n", msg)
+		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin certificate issuances [--all] [--json]|record --attempts <json> | "+
+		"varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
+		"varlatchd admin status [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | "+
+		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
+		"varlatchd admin move-facts | varlatchd admin config check  (each with [--config <file>])\n", msg)
 	return 64
 }
 
@@ -224,7 +331,7 @@ type adminArgs struct {
 func parseAdmin(sub string, args []string) (adminArgs, string) {
 	a := adminArgs{values: map[string]string{}, flags: map[string]bool{}}
 	valued := map[string]bool{"--name": true, "--identity": true}
-	allowed := map[string]bool{"--name": true, "--cli-credential": true}
+	allowed := map[string]bool{"--name": true, "--cli-credential": true, "--revoke-unused": true}
 	if sub == "recover" {
 		allowed["--identity"], allowed["--enable"], allowed["--new-admin"] = true, true, true
 	}
@@ -296,8 +403,11 @@ const MaintenanceRefusal = "Installation is in maintenance; ordinary admin opera
 // writes reports whether a host command may write the installation: all
 // but the backup and maintenance commands, which take the admission their
 // own way (backup run enters it; maintenance manages it; backup status
-// only reads).
-func writes(sub string) bool { return sub != "backup" && sub != "maintenance" }
+// only reads), doctor and status (which only read), migrate (which
+// manages its own gate), and move-facts, which only reads.
+func writes(sub string) bool {
+	return sub != "backup" && sub != "maintenance" && sub != "doctor" && sub != "status" && sub != "migrate" && sub != "move-facts"
+}
 
 // runHost runs one host command, in the daemon or offline, with env. A
 // command that writes enters the maintenance admission first, before any
@@ -305,7 +415,9 @@ func writes(sub string) bool { return sub != "backup" && sub != "maintenance" }
 // refused, as the TypeScript admin CLI refuses it.
 func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int {
 	sub, rest := args[0], args[1:]
-	if writes(sub) && env.admission != nil {
+	// The node's handoff commands write no installation data, and run under
+	// the migration's gate, which they are part of.
+	if writes(sub) && !isNodeCmd(rest) && env.admission != nil {
 		leave, ok := env.admission.Enter()
 		if !ok {
 			fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, MaintenanceRefusal)
@@ -326,8 +438,24 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runCustodyAttest(ctx, env, rest, stdout, stderr)
 	case sub == "audit-export":
 		return runAuditExport(ctx, env, rest, stdout, stderr)
+	case sub == "tailnet" && isNodeCmd(rest):
+		return runTailnetNode(ctx, env, rest, stdout, stderr)
 	case sub == "tailnet":
 		return runTailnetRepin(ctx, env, rest, stdout, stderr)
+	case sub == "doctor":
+		return runDoctorLive(ctx, env, rest, stdout, stderr)
+	case sub == "status":
+		return runStatus(ctx, env, rest, stdout, stderr)
+	case sub == "migrate" && len(rest) > 0 && rest[0] == "barrier":
+		return runMigrateBarrier(ctx, env, rest, stdout, stderr)
+	case sub == "migrate" && len(rest) > 0 && rest[0] == "release":
+		return runMigrateRelease(env, rest, stdout, stderr)
+	case sub == "migrate":
+		return runMigrateOpen(env, rest, stdout, stderr)
+	case sub == "certificate":
+		return runCertificateRecord(ctx, env, rest, stdout, stderr)
+	case isMoveCommand(sub):
+		return runMoveCommand(ctx, env, sub, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":
 		return adminUsage(stderr, "unknown command "+sub)
 	}
@@ -351,7 +479,7 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 	}
 
 	if sub == "bootstrap" {
-		grant, err := svc.IssueBootstrapGrant(ctx)
+		grant, err := svc.IssueBootstrapGrantRevoking(ctx, a.flags["--revoke-unused"])
 		if err != nil {
 			return fail(err)
 		}
@@ -389,7 +517,7 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		}
 		defer release()
 	}
-	grant, err := svc.IssueRecoveryGrant(ctx, auth.Recovery{IdentityID: a.values["--identity"], Enable: a.flags["--enable"], NewAdmin: a.flags["--new-admin"]})
+	grant, err := svc.IssueRecoveryGrant(ctx, auth.Recovery{IdentityID: a.values["--identity"], Enable: a.flags["--enable"], NewAdmin: a.flags["--new-admin"], RevokeUnused: a.flags["--revoke-unused"]})
 	if err != nil {
 		return fail(err)
 	}
@@ -414,6 +542,17 @@ var conformanceProbe func(ctx context.Context, env *hostEnv, args []string, stdo
 // conformanceWarnings logs a conformance build's warnings at startup
 // (redirect_conformance.go); nil in a release.
 var conformanceWarnings func(log *slog.Logger)
+
+// conformanceCLIRelease, set only in a conformance build, points
+// serve_cli at a release the harness signed with a test Sigstore
+// (VARLATCH_CONFORMANCE_CLI_RELEASE) instead of github.com's.
+var conformanceCLIRelease func(o *servecli.Options, log *slog.Logger)
+
+// conformanceSignRelease is `varlatchd admin conformance-sign-release`,
+// in a conformance build only (servecli_conformance.go): it needs no
+// installation. It answers whether args name it (the command's name is
+// the conformance file's alone, so a release binary does not hold it).
+var conformanceSignRelease func(args []string, stdout, stderr io.Writer) (code int, handled bool)
 
 // conformanceFixture is `varlatchd admin conformance-fixture`, in a build
 // with the conformance tag only (fixture_conformance.go); nil otherwise.

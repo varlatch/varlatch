@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -66,9 +67,54 @@ type StatusRecord struct {
 	Verification        *Verification `json:"verification,omitempty"`
 	Delivery            *Delivery     `json:"delivery,omitempty"`
 	Capture             *CaptureStats `json:"capture,omitempty"`
+	// RetainUntil is when a TypeScript-format archive's retention ends, when
+	// it is known (the migration records it: an Object Lock retain-until
+	// date, or the operator's). Without it, the bucket's lifecycle rule
+	// decides, which Varlatch does not read.
+	RetainUntil string `json:"retainUntil,omitempty"`
 }
 
 var errStatus = errors.New("backup: an invalid status record")
+
+// releaseVersion is a record's release: major.minor.patch, with any suffix.
+var releaseVersion = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.[0-9]+`)
+
+// goLine is the first release of the Go line (ADR-0059 step 7, O1): the
+// TypeScript line ends below it.
+const goLine = 50
+
+// line is the release line a record's release names: "typescript" below
+// 0.50, "go" from 0.50, "" for one it cannot read.
+func (s StatusRecord) line() string {
+	m := releaseVersion.FindStringSubmatch(s.Release)
+	if m == nil {
+		return ""
+	}
+	// A number too large to read is no release at all: neither line, so
+	// retention keeps the archive.
+	major, err := strconv.Atoi(m[1])
+	if err != nil {
+		return ""
+	}
+	minor, err := strconv.Atoi(m[2])
+	if err != nil {
+		return ""
+	}
+	if major == 0 && minor < goLine {
+		return "typescript"
+	}
+	return "go"
+}
+
+// TypeScript reports whether the record is a TypeScript-format archive's
+// (format 1 or 2, made by a release below 0.50): restorable only through
+// the converter (varlatch migrate --from-archive), never removed by Go's
+// retention.
+func (s StatusRecord) TypeScript() bool { return s.line() == "typescript" }
+
+// Go reports whether the record names a Go release: the only archives Go's
+// retention removes.
+func (s StatusRecord) Go() bool { return s.line() == "go" }
 
 func (v *Verification) valid() bool {
 	return v == nil || (utf16Len(v.TargetRelease) <= 100 && datetimePattern.MatchString(v.CheckedAt))
@@ -86,6 +132,7 @@ func (s StatusRecord) validate() error {
 	if c := s.Capture; c != nil {
 		ok = ok && c.Mode == "online" && c.SnapshotHeldMs >= 0 && c.DumpMs >= 0 && c.DumpBytes >= 0
 	}
+	ok = ok && (s.RetainUntil == "" || datetimePattern.MatchString(s.RetainUntil))
 	if !ok {
 		return errStatus
 	}
@@ -184,10 +231,16 @@ func DurableJSON(path string, v any, exclusive bool) error {
 var statusName = regexp.MustCompile(`^[a-f0-9-]{36}\.json$`)
 
 // Status is the backup status an Installation Admin reads (backupStatus):
-// the archives' records, newest first, and the warnings.
+// the archives' records, newest first, and the warnings. TypeScript-format
+// archives (go-step7 decision 18) are listed apart, newest first: they are
+// restorable through the converter, with RetainUntil when their retention's
+// end is known, and none of the warnings about Go's own archives counts
+// them. With none, the member is left out: the status is then exactly the
+// TypeScript server's.
 type Status struct {
-	Archives []StatusRecord `json:"archives"`
-	Warnings []string       `json:"warnings"`
+	Archives           []StatusRecord `json:"archives"`
+	TypeScriptArchives []StatusRecord `json:"typescriptArchives,omitempty"`
+	Warnings           []string       `json:"warnings"`
 }
 
 const (
@@ -210,7 +263,7 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Status{}, err
 	}
-	archives := []StatusRecord{}
+	archives, typescript := []StatusRecord{}, []StatusRecord{}
 	for _, e := range entries {
 		if !statusName.MatchString(e.Name()) {
 			continue
@@ -223,9 +276,15 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 		if err := decodeExact(raw, &s); err != nil || s.validate() != nil {
 			return Status{}, errStatus
 		}
+		if s.TypeScript() {
+			typescript = append(typescript, s)
+			continue
+		}
 		archives = append(archives, s)
 	}
-	slices.SortStableFunc(archives, func(a, b StatusRecord) int { return strings.Compare(b.CreatedAt, a.CreatedAt) })
+	newestFirst := func(a, b StatusRecord) int { return strings.Compare(b.CreatedAt, a.CreatedAt) }
+	slices.SortStableFunc(archives, newestFirst)
+	slices.SortStableFunc(typescript, newestFirst)
 	warnings := []string{}
 	var newest *StatusRecord
 	if len(archives) > 0 {
@@ -257,8 +316,10 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 	} else if delivered && !(remote != nil && now.Sub(at(remote.Delivery.RemoteVerification.CheckedAt)) < remoteVerificationMaxAge) {
 		warnings = append(warnings, "No remote copy has passed retrieval and verification within the last 30 days")
 	}
+	// The Root KEK versions every archive needs, TypeScript-format ones
+	// included: converting one still needs its key.
 	var versions []int
-	for _, a := range archives {
+	for _, a := range slices.Concat(archives, typescript) {
 		for _, v := range a.RequiredKeyVersions {
 			if !slices.Contains(versions, v) {
 				versions = append(versions, v)
@@ -267,7 +328,7 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 	}
 	for _, v := range versions {
 		checked := false
-		for _, a := range archives {
+		for _, a := range slices.Concat(archives, typescript) {
 			if slices.Contains(a.RequiredKeyVersions, v) && a.Verification != nil && a.Verification.KeyMatch && now.Sub(at(a.Verification.CheckedAt)) < 30*day {
 				checked = true
 			}
@@ -276,7 +337,7 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 			warnings = append(warnings, fmt.Sprintf("Root KEK version %d required by recorded archives has no successful check within 30 days; retain it while those archives exist", v))
 		}
 	}
-	return Status{Archives: archives, Warnings: warnings}, nil
+	return Status{Archives: archives, TypeScriptArchives: typescript, Warnings: warnings}, nil
 }
 
 // Gate is the maintenance gate (maintenance.ts Gate): while one is open,
@@ -284,10 +345,14 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 // milliseconds); a restore gate holds until the restore completes.
 type Gate struct {
 	ID        string  `json:"id"`
-	Kind      string  `json:"kind"`  // "capture" or "restore"
-	Phase     string  `json:"phase"` // "draining", "paused" or "reconciling"
+	Kind      string  `json:"kind"`  // "capture", "restore" or "migration"
+	Phase     string  `json:"phase"` // "draining", "paused" or "reconciling"; for a migration "transfer", or its barrier's "draining" and "paused"
 	ExpiresAt *int64  `json:"expiresAt"`
 	ArchiveID *string `json:"archiveId"`
+	// FrozenPosition is a drained migration barrier's frozen point, the
+	// last audit position, in decimal (maintenance.ts's frozenPosition):
+	// set once the barrier is paused, absent otherwise.
+	FrozenPosition *string `json:"frozenPosition,omitempty"`
 }
 
 // ErrGateUnreadable keeps the installation isolated: a gate that cannot be
@@ -297,6 +362,9 @@ var ErrGateUnreadable = &Error{"Maintenance state is unreadable; isolation remai
 // GateFile is the gate's file in the state directory.
 const GateFile = "maintenance.json"
 
+// frozenPosition is a frozen point's text: a position, in decimal.
+var frozenPosition = regexp.MustCompile(`^(0|[1-9][0-9]{0,18})$`)
+
 // ReadGate reads the gate, nil when there is none (readGate).
 func ReadGate(dir string) (*Gate, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, GateFile))
@@ -304,16 +372,29 @@ func ReadGate(dir string) (*Gate, error) {
 		return nil, nil
 	}
 	var g Gate
-	if err != nil || json.Unmarshal(raw, &g) != nil || g.ID == "" ||
-		!slices.Contains([]string{"capture", "restore"}, g.Kind) || !slices.Contains([]string{"draining", "paused", "reconciling"}, g.Phase) ||
-		(g.Kind == "capture" && (g.ExpiresAt == nil || *g.ExpiresAt <= 0)) {
+	if err != nil || json.Unmarshal(raw, &g) != nil || g.ID == "" {
+		return nil, ErrGateUnreadable
+	}
+	// A migration's gate (go-step7 decisions 6 and 12), with no expiry,
+	// holds the target isolated while its address is transferred (phase
+	// transfer), or, the barrier of a reverse migration, holds the
+	// installation while it drains (draining) and once frozen (paused, its
+	// frozen point recorded).
+	migration := g.Kind == "migration" && g.ExpiresAt == nil && g.ArchiveID == nil &&
+		(g.Phase == "transfer" && g.FrozenPosition == nil || g.Phase == "draining" && g.FrozenPosition == nil ||
+			g.Phase == "paused" && g.FrozenPosition != nil && frozenPosition.MatchString(*g.FrozenPosition))
+	if g.Kind == "migration" && !migration {
+		return nil, ErrGateUnreadable
+	}
+	if !migration && (g.FrozenPosition != nil || !slices.Contains([]string{"capture", "restore"}, g.Kind) || !slices.Contains([]string{"draining", "paused", "reconciling"}, g.Phase) ||
+		(g.Kind == "capture" && (g.ExpiresAt == nil || *g.ExpiresAt <= 0))) {
 		return nil, ErrGateUnreadable
 	}
 	return &g, nil
 }
 
-// Active is whether a gate admits no work at now: a restore gate always,
-// a capture gate until its lease expires.
+// Active is whether a gate admits no work at now: a restore gate and a
+// migration's always, a capture gate until its lease expires.
 func (g *Gate) Active(now time.Time) bool {
 	return g != nil && (g.Kind != "capture" || *g.ExpiresAt > now.UnixMilli())
 }

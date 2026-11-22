@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -87,6 +88,116 @@ func (a *Admission) Enter() (leave func(), ok bool) {
 			a.busy--
 		}
 	}, true
+}
+
+// AdmitsMeta reports whether the open gate is a migration's, under which
+// GET /v1/meta still answers (httpserver.MetaAdmission).
+func (a *Admission) AdmitsMeta() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	g := a.active()
+	return !a.unreadable && g != nil && g.Kind == "migration"
+}
+
+// EndMigration ends the migration's gate id (go-step7 decision 12, the
+// live open): the gate is removed, and the API admitted again. No gate is
+// nothing to do; another gate is refused.
+func (a *Admission) EndMigration(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unreadable {
+		return backup.ErrGateUnreadable
+	}
+	g := a.active()
+	if g == nil {
+		return nil
+	}
+	if g.Kind != "migration" || g.ID != id || g.Phase != "transfer" {
+		return fmt.Errorf("the open gate is a %s gate (%s, %s), not the migration %s's transfer", g.Kind, g.ID, g.Phase, id)
+	}
+	if err := os.Remove(filepath.Join(a.dir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	a.gate = nil
+	return nil
+}
+
+// ErrBarrier refuses a barrier while another gate is open.
+var ErrBarrier = errors.New("another maintenance operation owns this installation; the migration barrier was not opened")
+
+// BeginBarrier opens the migration barrier of the migration id (go-step7
+// decision 6, the reverse): a migration gate in phase draining, with no
+// expiry, written durably. From here nothing new is admitted: no request
+// but GET /v1/meta, no background pass, no host command that writes; the
+// caller waits for what was admitted (Busy) to end. The same migration's
+// barrier already open (draining, or paused) is returned as it is, so an
+// interrupted barrier is continued; any other gate is refused.
+func (a *Admission) BeginBarrier(id string) (backup.Gate, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unreadable {
+		return backup.Gate{}, backup.ErrGateUnreadable
+	}
+	if g := a.active(); g != nil {
+		if g.Kind == "migration" && g.ID == id && (g.Phase == "draining" || g.Phase == "paused") {
+			return *g, nil
+		}
+		return backup.Gate{}, ErrBarrier
+	}
+	// A lease that expired while varlatchd was stopped.
+	if err := os.Remove(filepath.Join(a.dir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return backup.Gate{}, err
+	}
+	g := backup.Gate{ID: id, Kind: "migration", Phase: "draining"}
+	if err := backup.DurableJSON(filepath.Join(a.dir, backup.GateFile), g, true); err != nil {
+		return backup.Gate{}, err
+	}
+	a.gate = &g
+	return g, nil
+}
+
+// PauseBarrier records the drained barrier's frozen point: phase paused,
+// the last audit position.
+func (a *Admission) PauseBarrier(id string, position int64) (backup.Gate, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unreadable {
+		return backup.Gate{}, backup.ErrGateUnreadable
+	}
+	g := a.active()
+	if g == nil || g.Kind != "migration" || g.ID != id || (g.Phase != "draining" && g.Phase != "paused") {
+		return backup.Gate{}, fmt.Errorf("the migration %s's barrier is not open", id)
+	}
+	frozen := strconv.FormatInt(position, 10)
+	next := backup.Gate{ID: id, Kind: "migration", Phase: "paused", FrozenPosition: &frozen}
+	if err := backup.DurableJSON(filepath.Join(a.dir, backup.GateFile), next, false); err != nil {
+		return backup.Gate{}, err
+	}
+	a.gate = &next
+	return next, nil
+}
+
+// ReleaseBarrier lifts the migration barrier of the migration id (the
+// reverse undone): the gate removed, the API admitted again. No gate is
+// nothing to do; another gate, a transfer's included, is refused.
+func (a *Admission) ReleaseBarrier(id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unreadable {
+		return backup.ErrGateUnreadable
+	}
+	g := a.active()
+	if g == nil {
+		return nil
+	}
+	if g.Kind != "migration" || g.ID != id || (g.Phase != "draining" && g.Phase != "paused") {
+		return fmt.Errorf("the open gate is a %s gate (%s, %s), not the migration %s's barrier", g.Kind, g.ID, g.Phase, id)
+	}
+	if err := os.Remove(filepath.Join(a.dir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	a.gate = nil
+	return nil
 }
 
 // Busy is how many admitted requests are still running.

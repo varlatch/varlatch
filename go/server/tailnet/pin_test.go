@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -451,6 +452,14 @@ func TestNodeTakesItsSettingsFromTheConfigOnly(t *testing.T) {
 	if err != nil || srv.ControlURL != TailscaleControlURL || TailscaleControlURL != config.TailscaleControlURL {
 		t.Fatalf("no control URL configured: %q %v", srv.ControlURL, err)
 	}
+	if !slices.Equal(srv.AdvertiseTags, []string{"tag:varlatch"}) {
+		t.Errorf("Tailscale's: the tags advertised, %v", srv.AdvertiseTags)
+	}
+	// A self-hosted control server takes the tags from the tagged pre-auth
+	// key and refuses a node that advertises any.
+	if keyed, err := newServer(NodeConfig{Dir: t.TempDir(), Hostname: "varlatch", ControlURL: "https://192.0.2.10", Tags: []string{"tag:varlatch"}, KeyTags: true}); err != nil || len(keyed.AdvertiseTags) != 0 {
+		t.Errorf("the key's tags: %v advertised, %v", keyed.AdvertiseTags, err)
+	}
 	for _, name := range tsnetEnv {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv(name, "https://headscale.example.com")
@@ -682,5 +691,155 @@ func TestReportWithTheBrowserEndpoint(t *testing.T) {
 	m.Check(ctx)
 	if report = string(jsvalueStringify(m.Report())); !strings.Contains(report, `"node":{"status":"fail","reason":"NAME_CHANGED"}`) {
 		t.Errorf("a renamed node: %s", report)
+	}
+}
+
+// derpNode is a statusNode whose control server's DERP map lists hosts.
+type derpNode struct {
+	*statusNode
+	mu    sync.Mutex
+	hosts []string
+	err   error
+}
+
+func (n *derpNode) DERPHosts(context.Context) ([]string, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return slices.Clone(n.hosts), n.err
+}
+
+func (n *derpNode) setHosts(hosts []string, err error) {
+	n.mu.Lock()
+	n.hosts, n.err = hosts, err
+	n.mu.Unlock()
+}
+
+// On a self-hosted control server the node's tags are its pre-auth key's:
+// with RequireTags (tailnet_tags), any other set, none included, closes
+// tailnet access (tags-differ, TAGS_DIFFER in the listeners report, both
+// sets named), never latched: it opens again once they match. Without
+// RequireTags (Tailscale's control server, where the node advertises
+// them) the tags close nothing.
+func TestTheTagRule(t *testing.T) {
+	ctx := context.Background()
+	tagged := func(tags ...string) Status {
+		st := running("", "g10.example")
+		st.Tags = tags
+		return st
+	}
+	node := &statusNode{st: tagged()}
+	dir := t.TempDir()
+	m := enrolling(t, node, "https://192.0.2.10", dir, nil)
+	m.RequireTags([]string{"tag:varlatch", "tag:b", "tag:varlatch"})
+	m.Check(ctx)
+	if m.Closed() != TagsDiffer || open(m) {
+		t.Fatalf("an untagged node: closed %q, open %v", m.Closed(), open(m))
+	}
+	if pin, err := LoadPin(filepath.Join(dir, PinFile)); err != nil || pin == nil || pin.Suffix != "g10.example" || pin.Closed != nil {
+		t.Errorf("the pin is recorded all the same, not closed: %+v %v", pin, err)
+	}
+	detail, warnings := m.Explain()
+	if !strings.Contains(detail, "The node's tags (none) are not tailnet_tags (tag:b, tag:varlatch)") || !strings.Contains(detail, "-t tag:b,tag:varlatch") || warnings != nil {
+		t.Errorf("Explain for an untagged node: %q %q", detail, warnings)
+	}
+	m.Listening(true)
+	m.Check(ctx)
+	report := string(jsvalueStringify(m.Report()))
+	for _, want := range []string{`"node":{"status":"fail","reason":"TAGS_DIFFER"}`, `"warnings":["The node's tags (none) are not tailnet_tags (tag:b, tag:varlatch)`} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the listeners report lacks %s:\n%s", want, report)
+		}
+	}
+	// Some, not all; then more than tailnet_tags.
+	for _, tags := range [][]string{{"tag:varlatch"}, {"tag:varlatch", "tag:b", "tag:c"}} {
+		node.set(tagged(tags...), nil)
+		m.Check(ctx)
+		if m.Closed() != TagsDiffer {
+			t.Errorf("tags %v: closed %q", tags, m.Closed())
+		}
+		if d, _ := m.Explain(); !strings.Contains(d, "("+strings.Join(slices.Sorted(slices.Values(tags)), ", ")+")") {
+			t.Errorf("tags %v: %q", tags, d)
+		}
+	}
+	// A tag the node carries twice is one tag: named once, never with an
+	// empty one beside it.
+	node.set(tagged("tag:c", "tag:c"), nil)
+	m.Check(ctx)
+	if d, _ := m.Explain(); m.Closed() != TagsDiffer || !strings.Contains(d, "The node's tags (tag:c) are not tailnet_tags (tag:b, tag:varlatch)") {
+		t.Errorf("tags carried twice: closed %q, %q", m.Closed(), d)
+	}
+	// Exactly tailnet_tags, twice over: open.
+	node.set(tagged("tag:varlatch", "tag:b", "tag:varlatch"), nil)
+	m.Check(ctx)
+	if m.Closed() != "" || !open(m) {
+		t.Errorf("tailnet_tags carried twice: closed %q, open %v", m.Closed(), open(m))
+	}
+	// Exactly tailnet_tags, in another order: open again.
+	node.set(tagged("tag:varlatch", "tag:b"), nil)
+	m.Check(ctx)
+	if m.Closed() != "" || !open(m) {
+		t.Fatalf("with tailnet_tags: closed %q, open %v", m.Closed(), open(m))
+	}
+	if report := string(jsvalueStringify(m.Report())); strings.Contains(report, "warnings") || !strings.Contains(report, `"node":{"status":"pass"}`) {
+		t.Errorf("with tailnet_tags:\n%s", report)
+	}
+	// A pin closure still says its own reason, not the tags'.
+	other := tagged()
+	other.Suffix, other.DNSName = "other.example", "varlatch.other.example"
+	node.set(other, nil)
+	m.Check(ctx)
+	if m.Closed() != PinSuffix {
+		t.Errorf("another tailnet, untagged: %q", m.Closed())
+	}
+	if report := string(jsvalueStringify(m.Report())); !strings.Contains(report, `"node":{"status":"fail","reason":"OTHER_TAILNET"}`) {
+		t.Errorf("another tailnet, untagged:\n%s", report)
+	}
+
+	// No RequireTags: the tags close nothing.
+	ts := enrolling(t, &statusNode{st: tagged()}, "", t.TempDir(), nil)
+	ts.Check(ctx)
+	if ts.Closed() != "" || !open(ts) {
+		t.Errorf("without RequireTags: closed %q", ts.Closed())
+	}
+	if report := string(jsvalueStringify(ts.Report())); strings.Contains(report, "warnings") {
+		t.Errorf("a warning without RequireTags:\n%s", report)
+	}
+}
+
+// A self-hosted control server's DERP map listing Tailscale's DERP servers
+// is said (Explain's warnings, the listeners report's), closing nothing;
+// one listing only its own is not, nor is a DERP map that could not be
+// read. On Tailscale's control server it is never asked.
+func TestTailscaleDERPIsSaid(t *testing.T) {
+	ctx := context.Background()
+	node := &derpNode{statusNode: &statusNode{st: running("", "g10.example")}, hosts: []string{"derp1f.tailscale.com.", "DERP2.tailscale.com", "derp.g10.example", "derp1f.tailscale.com", "tailscale.com"}}
+	m := enrolling(t, node, "https://192.0.2.10", t.TempDir(), nil)
+	m.RequireTags([]string{"tag:varlatch"})
+	m.Check(ctx)
+	if m.Closed() != "" {
+		t.Fatalf("closed: %q", m.Closed())
+	}
+	detail, warnings := m.Explain()
+	if detail != "" || len(warnings) != 1 || !strings.Contains(warnings[0], "Tailscale's DERP servers (derp1f.tailscale.com, derp2.tailscale.com, tailscale.com)") {
+		t.Errorf("Explain: %q %q", detail, warnings)
+	}
+	if report := string(jsvalueStringify(m.Report())); !strings.Contains(report, `"warnings":["The control server's DERP map lists Tailscale's DERP servers (derp1f.tailscale.com, derp2.tailscale.com, tailscale.com)`) {
+		t.Errorf("the listeners report:\n%s", report)
+	}
+	for _, c := range []struct {
+		hosts []string
+		err   error
+	}{{[]string{"derp.g10.example", "tailscale.com.evil.example", "nottailscale.com"}, nil}, {nil, errors.New("no DERP map yet")}} {
+		node.setHosts(c.hosts, c.err)
+		m.Check(ctx)
+		if _, w := m.Explain(); w != nil {
+			t.Errorf("%v %v: %q", c.hosts, c.err, w)
+		}
+	}
+	ts := &derpNode{statusNode: &statusNode{st: running("Tabc", "corp.ts.net")}, hosts: []string{"derp1f.tailscale.com"}}
+	tm := enrolling(t, ts, "", t.TempDir(), nil)
+	tm.Check(ctx)
+	if _, w := tm.Explain(); w != nil {
+		t.Errorf("on Tailscale's control server: %q", w)
 	}
 }

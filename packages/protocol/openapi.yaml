@@ -5456,12 +5456,20 @@ components:
             destination: { type: string }
             uploadedAt: { type: string, format: date-time }
             remoteVerification: { $ref: "#/components/schemas/BackupVerification" }
+        retainUntil:
+          type: string
+          format: date-time
+          description: When a TypeScript-format archive's retention ends, when it is known (an Object Lock retain-until date, or the operator's). Without it, the bucket's lifecycle rule decides.
     InstallationBackups:
       type: object
       required: [archives, warnings]
       properties:
         archives:
           type: array
+          items: { $ref: "#/components/schemas/BackupArchiveStatus" }
+        typescriptArchives:
+          type: array
+          description: A Go installation's TypeScript-format archives (format 1 or 2), newest first, apart from its own. They are restorable through the converter (varlatch migrate --from-archive) and never removed by its retention. None of the warnings about Go's own archives counts them; the Root KEK's does, since converting one needs its key. Absent when there are none; the TypeScript server never sends it.
           items: { $ref: "#/components/schemas/BackupArchiveStatus" }
         warnings:
           type: array
@@ -5691,6 +5699,12 @@ components:
             tailnet: { type: string }
             listenerPort: { type: integer }
             browserEndpoint: { type: [string, "null"] }
+            controlUrl:
+              type: string
+              description: >
+                The self-hosted control server the node joins (Headscale),
+                https on an IP address. Absent for Tailscale's coordination
+                server, and from older servers.
         observed:
           type: object
           required: [checkedAt, checks]
@@ -5715,6 +5729,14 @@ components:
                 The node as varlatchd last read it, at checkedAt. Absent
                 before the first successful LocalAPI read and after a failed
                 one, and from older servers.
+            warnings:
+              type: array
+              items: { type: string }
+              description: >
+                What the last check found that does not close access, each
+                a sentence for the operator: a node on a self-hosted control
+                server that joined with no tags (its tags are its pre-auth
+                key's). Absent when there is none, and from older servers.
 
     ObservedNode:
       type: object
@@ -5743,7 +5765,12 @@ components:
         status: { type: string, enum: [pass, fail, unknown] }
         reason:
           type: string
-          enum: [NOT_CHECKED, NOT_LISTENING, NO_CERTIFICATE, LOCALAPI_UNAVAILABLE, NOT_RUNNING, OTHER_TAILNET, NAME_CHANGED]
+          enum: [NOT_CHECKED, NOT_LISTENING, NO_CERTIFICATE, LOCALAPI_UNAVAILABLE, NOT_RUNNING, OTHER_TAILNET, NAME_CHANGED, TAGS_DIFFER]
+          description: >
+            Why the check fails. TAGS_DIFFER (node only): on a self-hosted
+            control server, the node's tags (its pre-auth key's) are not
+            tailnet_tags, so tailnet access is closed until they match;
+            observed.warnings names both sets.
         certificateNotAfter:
           type: string
           format: date-time

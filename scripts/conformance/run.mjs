@@ -9,11 +9,12 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *
  *   node scripts/conformance/run.mjs --target <target> --cli source|<version>|go:<path>
  *        [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]
- *        [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]
+ *        [--gate [--walkthrough <docs/evidence/file>] [--recent-cli-report <file.json>]]
  *
  *   --target   the server under test (targets/index.mjs): ts-source,
  *              ts-release:<version> (a signed release, verified and pulled
- *              by digest), go-binary:<path> (the Go varlatchd at <path>)
+ *              by digest), go-binary:<path> (the Go varlatchd at <path>),
+ *              go-container:<image> (the Go varlatchd in the image <image>)
  *   --cli      the CLI under test: `source` is apps/cli/dist/varlatch.cjs; a
  *              version is a released CLI pinned in clients.json, downloaded
  *              and verified before anything starts (clients.mjs). The sdk
@@ -60,23 +61,24 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
-import { judgeGate } from "./lib/gate.mjs";
+import { judgeGate, readWalkthrough } from "./lib/gate.mjs";
 import { evaluate, TARGET_SPECIFIC, validateInventory } from "./lib/inventory.mjs";
 import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacking } from "./lib/client-lacks.mjs";
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
 import { probeLacks } from "./lacks-probe.mjs";
 import { assess, BUDGET, declared429, waitMs, WINDOW_MS } from "./lib/request-log.mjs";
-import { endProblem, parseSuiteOutput, resultLine } from "./lib/results.mjs";
+import { endProblem, lastError, parseSuiteOutput, resultLine } from "./lib/results.mjs";
 import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
 import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
 import { loadTarget } from "./targets/index.mjs";
+import { checkoutCommit } from "./targets/ts-source.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -86,8 +88,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function usage(message) {
   console.error(
-    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
-      " [--gate --walkthrough <docs/evidence/file> [--recent-cli-report <file.json>]]",
+    `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path>|go-container:<image> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
+      " [--gate [--walkthrough <docs/evidence/file>] [--recent-cli-report <file.json>]]",
   );
   process.exit(64);
 }
@@ -119,16 +121,10 @@ function parseArgs(argv) {
   if (options.gate && options.suites.length > 0) usage("--gate judges a whole run: --suite is not allowed");
   if (options.shard && options.suites.length > 0) usage("--shard selects the suites itself: --suite is not allowed");
   if (options.shard && options.gate) usage("--gate judges a whole run: --shard is not allowed");
-  if (options.gate && !options.walkthrough) usage("--gate needs the browser-walkthrough evidence file: --walkthrough docs/evidence/<file>");
+  // Omitting --walkthrough still runs the full suite and fails the gate on
+  // missing walkthrough evidence (lib/gate.mjs), so a pre-RC gate run can
+  // surface every open/failing entry; naming a missing file still fails fast.
   return options;
-}
-
-/** The browser-walkthrough evidence as the gate judges it: its path in the checkout, and whether it is there. */
-function walkthroughEvidence(file) {
-  const absolute = resolve(file);
-  const path = relative(REPO_ROOT, absolute).split(sep).join("/");
-  const exists = existsSync(absolute) && statSync(absolute).isFile();
-  return { path, exists, size: exists ? statSync(absolute).size : 0, sha256: exists ? sha256(readFileSync(absolute)) : null };
 }
 
 /** The target's expected failures file (expect/<name>.json), validated; an empty one when there is none. */
@@ -230,15 +226,20 @@ async function main() {
   } catch (err) {
     usage(err.message);
   }
-  const { name: targetName, argument: targetArgument, target, capabilities, expectKey } = loaded;
-  const expectations = loadExpectations(targetName, inventory, openapi);
+  const { name: targetName, argument: targetArgument, target, capabilities, expectKey, as: expectName } = loaded;
+  const expectations = loadExpectations(expectName, inventory, openapi);
   // The target's declared gaps, and the checks that need one.
   const lacks = lacksFor(expectations, expectKey);
   const lacking = lackingChecks(inventory, lacks.keys());
   // Gate evidence is checked before anything starts: a gate run without it
   // cannot pass, so it does not spend an hour finding that out.
-  const walkthrough = options.walkthrough ? walkthroughEvidence(options.walkthrough) : null;
+  const walkthrough = options.walkthrough ? readWalkthrough(options.walkthrough, REPO_ROOT) : null;
+  if (walkthrough && walkthrough.isSymlink) usage(`--walkthrough ${options.walkthrough}: symlinks are not allowed`);
   if (walkthrough && !walkthrough.exists) usage(`--walkthrough ${options.walkthrough}: no such file`);
+  // The commit the walkthrough's Candidate commit is compared with: the
+  // checkout's when the run starts, before anything is built from it, not
+  // whatever it holds an hour later.
+  const gateCommit = options.gate ? checkoutCommit(REPO_ROOT) : null;
   let recentCli = null;
   if (options.recentCliReport) {
     try {
@@ -300,6 +301,9 @@ async function main() {
   const declared = [];
   let state = null;
   let stopped = null;
+  // The suite being started or run: a failure that stops the run there is
+  // that suite's cause too (its fixture, its arguments).
+  let current = null;
 
   const cleanup = async () => {
     for (const pid of running) killGroup(pid);
@@ -384,7 +388,12 @@ async function main() {
         // whenever the target can recover, seed or not (a target that lacks
         // the seed's writes still signs in with it; cli-core's token sign-in).
         if (!setupLacks(inventory, "admin-recover", lacks)) {
-          if (!ctx.adminId) throw new Error("the passkey suite named no identity: nothing after it can run");
+          if (!ctx.adminId) {
+            // The passkey suite's own failure (it did not finish: a browser
+            // that would not launch, a crash) is why; say it here too.
+            const why = errors.find((e) => e.suite === "passkey")?.message;
+            throw new Error(`the passkey suite named no identity${why ? ` (passkey: ${why})` : ""}: nothing after it can run`);
+          }
           ctx.token = await ctx.cliCredential();
         }
         if (setupLacks(inventory, "seed", lacks)) {
@@ -454,6 +463,7 @@ async function main() {
         continue;
       }
       console.log(`--- ${suite.title}`);
+      current = entry.suite;
       const args = await entry.args(ctx);
       await pace(entry.suite);
       const around = entry.around === "convex-down" ? await convexDown(entry.suite) : null;
@@ -536,12 +546,16 @@ async function main() {
       const unfinished = out.timedOut ? "timed out" : endProblem(out.endChannel, { suite: entry.suite, nonce: out.nonce, code: out.code, signal: out.signal });
       const ended = unfinished === null;
       if (!ended && !out.timedOut) {
-        errors.push({ suite: entry.suite, message: `did not finish: ${unfinished}; the checks it did not report fail` });
+        // Its exit and the error it last wrote say why: a suite that
+        // crashed is named with its cause, not only by what it left out.
+        const crash = lastError(out.stderr);
+        const exit = out.signal ? `killed by ${out.signal}` : `exit ${out.code}`;
+        errors.push({ suite: entry.suite, message: `did not finish: ${unfinished}; ${exit}${crash ? `; its last error: ${crash}` : ""}; the checks it did not report fail` });
       }
       const reportedIds = new Set(parsed.results.map((r) => r.id));
       const unreported = ended ? new Set() : new Set([...clientLacked].filter((id) => !reportedIds.has(id) && !observedNotBuilt.has(id)));
       reportLacks(failed, unreported);
-      for (const message of parsed.errors) errors.push({ suite: entry.suite, message });
+      for (const message of parsed.errors) errors.push({ suite: entry.suite, message, cause: true });
       // A failed check explains a non-zero exit.
       const failedResults = anyFailed;
       if (out.timedOut) errors.push({ suite: entry.suite, message: `did not finish within ${SUITE_TIMEOUT_MS / 60_000} minutes` });
@@ -550,10 +564,12 @@ async function main() {
       }
       report.suites.push({ suite: entry.suite, start: new Date(start).toISOString(), end: new Date(end).toISOString(), exit: out.code ?? out.signal, results: parsed.results.length });
       if (entry.suite === "passkey") ctx.adminId = out.stdout.match(/idn_[a-z0-9]*/)?.[0];
+      current = null;
     }
   } catch (err) {
     stopped = err.message;
-    errors.push({ suite: "runner", message: `the run stopped: ${err.message}` });
+    if (current) errors.push({ suite: current, message: err.message, cause: true });
+    errors.push({ suite: "runner", message: `the run stopped${current ? ` in ${current}` : ""}: ${err.message}` });
     if (state && target.describe && !report.targetDetails) report.targetDetails = target.describe(state);
     // What the server refused so far still helps explain the failure.
     if (state && !report.requestBudget && inScope("request-budget")) {
@@ -568,7 +584,7 @@ async function main() {
     report.lacks.stale = await probeLacks({ inventory, openapi, lacks: [...lacks.keys()], origin, target, state });
     for (const { operation, why } of report.lacks.stale) {
       console.log(`STALE-LACKS  ${operation}: ${why}`);
-      errors.push({ suite: "runner", message: `expect/${targetName}.json lacks ${operation}, but ${why}` });
+      errors.push({ suite: "runner", message: `expect/${expectName}.json lacks ${operation}, but ${why}` });
     }
     if (report.lacks.stale.length === 0) console.log(`--- every one answered ${NOT_IMPLEMENTED_YET}`);
   }
@@ -660,11 +676,14 @@ async function main() {
           expectedInForce: [...inForce.keys()],
           lacksInForce: [...lacks.keys()],
           implementation: report.implementation ?? null,
+          commit: gateCommit,
         },
         walkthrough,
         recentCli,
       });
-      report.gate.walkthrough = walkthrough;
+      report.gate.walkthrough = walkthrough
+        ? { path: walkthrough.path, exists: walkthrough.exists, size: walkthrough.size, sha256: walkthrough.sha256 }
+        : null;
       report.gate.recentCliReport = options.recentCliReport ? { file: options.recentCliReport, sha256: sha256(readFileSync(options.recentCliReport)) } : null;
     }
 

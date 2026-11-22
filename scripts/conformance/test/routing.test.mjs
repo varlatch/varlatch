@@ -32,6 +32,7 @@ const PATTERNS = block("PATTERNS");
 const CLI_PATTERNS = block("CLI_PATTERNS");
 const CONFORMANCE_PATTERNS = block("CONFORMANCE_PATTERNS");
 const CELLS = [...PATTERNS, ...CLI_PATTERNS, ...CONFORMANCE_PATTERNS];
+const IMAGE_PATTERNS = block("IMAGE_PATTERNS");
 
 /** A changes-job pattern as a regular expression: * matches anything, / included. */
 const shellGlob = (p) => new RegExp(`^${p.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
@@ -105,8 +106,18 @@ function reached(packageDirs) {
   const inventory = JSON.parse(readFileSync(join(REPO, "scripts/conformance/inventory.json"), "utf8"));
   const roots = Object.values(inventory.suites).map((s) => s.script).filter(Boolean);
   roots.push("scripts/conformance/run.mjs", "scripts/conformance/suite-kit.mjs", "scripts/conformance/lacks-probe.mjs", "scripts/conformance/target-op.mjs");
-  // go-binary's G3 steps: vitest in services/varlatchd on each go-* file go.yml names.
-  for (const m of GO_YML.matchAll(/pnpm --filter @varlatch\/varlatchd exec vitest run (test\/\S+)/g)) roots.push(`services/varlatchd/${m[1]}`);
+  // go-binary's G3 steps: vitest in services/varlatchd on each go-* file
+  // go.yml names. Any other vitest call there is the nightly converter's,
+  // in its release/0.22 checkout (working-directory: ts), whose files are
+  // not this checkout's: never a root here.
+  for (const m of GO_YML.matchAll(/pnpm --filter @varlatch\/varlatchd exec vitest run (test\/\S+)/g)) {
+    if (m[1].startsWith("test/go-")) {
+      roots.push(`services/varlatchd/${m[1]}`);
+      continue;
+    }
+    const step = GO_YML.slice(GO_YML.lastIndexOf("\n      - ", m.index), m.index);
+    assert.match(step, /\n        working-directory: ts\n/, `go.yml runs ${m[1]} outside the release checkout, and it is no go-* G3 test`);
+  }
   roots.push("services/varlatchd/vitest.config.ts");
   const seen = new Set();
   const queue = [...roots];
@@ -153,11 +164,59 @@ test("the rewrite/go push trigger's paths are the changes job's patterns", () =>
   const asPush = (p) => (p.endsWith("/*") ? `${p}*` : p);
   const push = pushPaths();
   const covered = (p) => push.includes(p) || push.some((q) => q.endsWith("/**") && p.startsWith(q.slice(0, -2)));
-  const missing = [...new Set(CELLS.map(asPush))].filter((p) => !covered(p));
+  const all = [...CELLS, ...IMAGE_PATTERNS];
+  const missing = [...new Set(all.map(asPush))].filter((p) => !covered(p));
   assert.deepEqual(missing, [], `patterns missing from the push trigger's paths:\n${missing.join("\n")}`);
   const fromPush = (q) => (q.endsWith("/**") ? q.slice(0, -1) : q);
-  const extra = push.filter((q) => !CELLS.includes(fromPush(q)));
+  const extra = push.filter((q) => !all.includes(fromPush(q)));
   assert.deepEqual(extra, [], `push paths that are no changes-job pattern:\n${extra.join("\n")}`);
+});
+
+/** The non-test Go files of a package directory under go/. */
+const goFiles = (dir) =>
+  readdirSync(join(REPO, "go", dir))
+    .filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
+    .map((f) => `go/${dir}/${f}`);
+
+/** A Go package's in-module imports, followed: the package directories under go/. */
+function goClosure(start) {
+  const MODULE = "github.com/varlatch/varlatch/go/";
+  const seen = new Set();
+  const todo = [start];
+  while (todo.length > 0) {
+    const dir = todo.pop();
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    for (const f of goFiles(dir)) {
+      for (const m of readFileSync(join(REPO, f), "utf8").matchAll(/"github\.com\/varlatch\/varlatch\/go\/([^"]+)"/g)) todo.push(m[1]);
+    }
+  }
+  assert.ok(seen.size > 1 || start !== "lib/keyenv", `no import followed from ${start} (${MODULE})`);
+  return [...seen];
+}
+
+// go-image's selection (IMAGE_PATTERNS): every file the image's build and
+// check read (go/image itself, and what the Dockerfile copies from the
+// repository), and the Go sources of the key-environment refusal: lib/keyenv
+// with every package it imports, the configuration it shares with
+// varlatchd, the daemon's serve and admin, both entrypoints.
+test("go-image's patterns select every file the image's build and check read, and the refusal's Go sources", () => {
+  const files = readdirSync(join(REPO, "go/image")).map((f) => `go/image/${f}`);
+  const dockerfile = readFileSync(join(REPO, "go/image/Dockerfile"), "utf8");
+  for (const line of dockerfile.split("\n").filter((l) => /^COPY\s/.test(l))) {
+    const words = line.trim().split(/\s+/).slice(1);
+    if (words.some((w) => w.startsWith("--from="))) continue;
+    const paths = words.filter((w) => !w.startsWith("--"));
+    for (const src of paths.slice(0, -1)) files.push(src);
+  }
+  assert.ok(files.includes("LICENSE") && files.includes("LICENSES/Apache-2.0.txt"), `the Dockerfile's copies: ${files.join(" ")}`);
+  for (const f of readFileSync(join(REPO, "go/image/check-image.mjs"), "utf8").matchAll(/from "(\.{1,2}\/[^"]+)"/g)) {
+    files.push(relative(REPO, resolve(REPO, "go/image", f[1])).split("\\").join("/"));
+  }
+  for (const dir of [...goClosure("lib/keyenv"), "server/config", "server/daemon", "cmd/varlatchd"]) files.push(...goFiles(dir));
+  files.push("go/cmd/varlatch/main.go");
+  const unselected = files.filter((f) => !selects(IMAGE_PATTERNS, f)).sort();
+  assert.deepEqual(unselected, [], `files go-image reads that do not select it:\n${unselected.join("\n")}`);
 });
 
 test("the shell patterns match as the changes job's [[ == ]] does", () => {

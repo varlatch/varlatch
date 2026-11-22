@@ -6,7 +6,7 @@ import { skillFiles } from "../src/agents/skill.js";
 import { generateTypesModule } from "../src/typegen.js";
 import { generatePythonModule } from "../src/typegenPython.js";
 import { ITEMS, contractItem, revision } from "./fixtures.js";
-import type { Exchange, TranscriptCase } from "./goKit.js";
+import { type Exchange, PLATFORM_PUBLIC_KEY_WORD, type TranscriptCase } from "./goKit.js";
 
 /**
  * The transcript cases, by area (one file each under
@@ -24,12 +24,23 @@ const HELP_TOPICS = [
 ];
 
 /**
- * `admin`'s help is a Go installation's in the Go CLI (go/README.md, the
- * accepted difference `admin-usage`); this recording is the TypeScript
- * CLI's Compose usage.
+ * `admin`'s, `doctor`'s, `move`'s, `setup`'s and `upgrade`'s help are a Go
+ * installation's in the Go CLI (go/README.md, the accepted differences
+ * `admin-usage`, `doctor-usage`, `move-usage`, `setup-usage` and
+ * `upgrade-usage`), and `self-update`'s is the Go CLI's own forms (the
+ * accepted difference `self-update-usage`); these recordings are the
+ * TypeScript CLI's.
  */
+const HELP_DIFFERENCES: Record<string, string> = {
+  admin: "admin-usage",
+  doctor: "doctor-usage",
+  move: "move-usage",
+  setup: "setup-usage",
+  "self-update": "self-update-usage",
+  upgrade: "upgrade-usage",
+};
 const helpDifferences = (topic: string): { differences?: string[] } =>
-  topic === "admin" ? { differences: ["admin-usage"] } : {};
+  HELP_DIFFERENCES[topic] ? { differences: [HELP_DIFFERENCES[topic]] } : {};
 
 const framework: TranscriptCase[] = [
   { id: "usage.no-command", title: "no command prints the usage on stdout, status 0", args: [] },
@@ -1613,6 +1624,156 @@ const hook56a: TranscriptCase[] = [
   { id: "hook.assisted", title: "the same under --assisted", args: ["--assisted", ...HOOK("claude")], stdin: hookEvent("Bash", { command: "cat .env" }), files: ENV_FILE },
 ];
 
+// ---- 5.5b: agent-safe runs and varlatch request ---------------------------------
+//
+// `run --agent-safe` against the fake server: the Agent is `node -e
+// AGENT_PRINT`, which prints what it was given (names, fake values, and
+// whether each proxy variable names a Broker), never the proxy credential.
+// The "agent-run" pattern records the run's identifier, Placeholders and the
+// Broker's port by name (goKit.ts). A nested run is a `varlatch run` with
+// VARLATCH_AGENT_RUN set; `varlatch request` sends to the fake server as its
+// Broker ({{server-host}}), which answers as the Broker or as the
+// destination would.
+
+const AGENT_PRINT =
+  "const fs=require('fs');const e=process.env;const o={args:process.argv.slice(1)};" +
+  "for(const k of ['API_KEY','PIN','PORT','LEGACY_KEY','VARLATCH_TOKEN','VARLATCH_SERVER','VARLATCH_BROKER_CREDENTIAL','VARLATCH_RUN_CONTEXT','NODE_USE_ENV_PROXY','NO_PROXY','no_proxy','VARLATCH_AGENT_RUN'])if(e[k]!==undefined)o[k]=e[k];" +
+  "const p=[e.HTTP_PROXY,e.HTTPS_PROXY,e.http_proxy,e.https_proxy];" +
+  "o.proxy=p.every((x)=>x===undefined)?'none':p.every((x)=>x===p[0]&&/^http:\\/\\/vlt:[A-Za-z0-9_-]+@127\\.0\\.0\\.1:\\d+$/.test(x))?'broker':p.map(String).join(' ');" +
+  "const d=e.VARLATCH_CONFIG_DIR;o.configDir=d&&fs.existsSync(d)?(fs.readdirSync(d).length===0?'own, empty':'own, not empty'):'none';" +
+  "console.log(JSON.stringify(o))";
+const agentChild = (...args: string[]) => ["--", "node", "-e", AGENT_PRINT, ...args];
+const SAFE = (...flags: string[]) => ["run", "--agent-safe", "--agent", "coder", ...flags];
+const BROKER_FILE = { ...SIGNED_IN, "repo/broker.txt": "vlt_brk_fakeBROKER\n" };
+const BROKER_ENV = { VARLATCH_BROKER_CREDENTIAL: "vlt_brk_fakeBROKER" };
+const META_TARGETS = ok("/v1/meta", { ...META, capabilities: ["capabilities.targets", "retrieval.strict"] });
+const NO_CONTRACT = { ...MANIFEST, contract: null };
+const safeEffective = (items: unknown[] = runItems(), manifest: unknown = NO_CONTRACT): Exchange => effectiveAt(ENV, items, { manifest });
+const AGENT_IDENTITIES = ok("/v1/organizations/acme/identities", { items: [{ id: "idn_human", kind: "human", name: "coder" }, { id: "idn_agent", kind: "agent", name: "coder" }] });
+const CAPS = `${ENV}/capabilities`;
+const issued = (extra: Record<string, unknown> = {}): Exchange => ({
+  method: "POST",
+  path: CAPS,
+  status: 201,
+  answer: { id: "cap_1", secret: "capsecret-fake-value", destinations: ["api.example.com:443"], targets: { API_KEY: ["header:authorization"] }, expiresAt: "2100-01-01T00:00:00.000Z", ...extra },
+});
+const capRevoked = (status = 204): Exchange => ({ method: "DELETE", path: `${CAPS}/cap_1`, status, ...(status === 204 ? {} : { answer: apiError(status, "RESOURCE_NOT_FOUND") }) });
+const MINT = "/v1/organizations/acme/identities/idn_agent/credentials";
+const minted: Exchange = { method: "POST", path: MINT, status: 201, answer: { id: "crd_1", token: "vlt_agr_fakeMINTED", expiresAt: "2100-01-01T00:00:00.000Z" } };
+const mintRevoked: Exchange = { method: "DELETE", path: `${MINT}/crd_1`, status: 204 };
+const SAFE_START = [META_TARGETS, safeEffective(), AGENT_IDENTITIES];
+const AGENT_RUN = ["agent-run"];
+const agentSafe = (c: Parameters<typeof v>[0]): TranscriptCase => v({ ...c, patterns: [...AGENT_RUN, ...(c.patterns ?? [])] });
+const TARGET = ["--target", "API_KEY=header:authorization"];
+const HOST = ["--allow-host", "api.example.com"];
+
+const agentRun55b: TranscriptCase[] = [
+  // The command line, before anything is read
+  agentSafe({ id: "usage.agent-missing", title: "--agent-safe without --agent", args: ["run", "--agent-safe", ...HOST, ...agentChild()] }),
+  agentSafe({ id: "usage.target-no-name", title: "--target without a name", args: SAFE("--target", "=header:authorization", ...agentChild()) }),
+  agentSafe({ id: "usage.target-transport-header", title: "--target naming a header the transport owns", args: SAFE("--target", "API_KEY=header:Host", ...agentChild()) }),
+  agentSafe({ id: "usage.target-kind", title: "--target of an unknown kind", args: SAFE("--target", "API_KEY=cookie:session", ...agentChild()) }),
+  agentSafe({ id: "usage.redact", title: "--redact does not apply to --agent-safe", args: SAFE("--redact", ...agentChild()) }),
+  agentSafe({ id: "usage.no-redact", title: "--no-redact does not apply to --agent-safe", args: SAFE("--no-redact", ...agentChild()) }),
+  agentSafe({ id: "usage.export-context", title: "--export-context does not apply to --agent-safe", args: SAFE("--export-context", ...agentChild()) }),
+  agentSafe({ id: "usage.not-signed-in", title: "no credential: 77 before anything is read", args: SAFE(...TARGET, ...HOST, ...agentChild()), files: NOT_SIGNED_IN }),
+  // What the server and the flags must agree on, before anything is issued
+  agentSafe({ id: "server.too-old", title: "a server without substitution targets: refused, nothing started", args: SAFE(...TARGET, ...HOST, ...agentChild()), server: [ok("/v1/meta", { ...META, serverVersion: "0.10.0" })] }),
+  agentSafe({ id: "server.no-manifest", title: "an answer without a manifest: refused", args: SAFE(...TARGET, ...HOST, ...agentChild()), server: [META_TARGETS, effectiveAt(ENV, runItems())] }),
+  agentSafe({ id: "targets.untargeted", title: "every stored Secret needs a target or an omit: each named, with the flags", args: SAFE(...HOST, ...agentChild()), server: [META_TARGETS, safeEffective(runItems([PIN_ITEM]))] }),
+  agentSafe({ id: "targets.unknown", title: "--target and --omit naming items not stored: refused", args: SAFE(...TARGET, "--target", "NOPE=query:key", "--omit", "ALSO_NOPE", ...HOST, ...agentChild()), server: [META_TARGETS, safeEffective()] }),
+  agentSafe({ id: "targets.both", title: "an item both targeted and omitted", args: SAFE(...TARGET, "--omit", "API_KEY", ...HOST, ...agentChild()), server: [META_TARGETS, safeEffective()] }),
+  agentSafe({ id: "contract.denied", title: "an active Contract without contract.read: refused", args: SAFE(...TARGET, ...HOST, ...agentChild()), server: [META_TARGETS, safeEffective(runItems(), MANIFEST), denied(CONTRACT_PATH)] }),
+  agentSafe({ id: "agent.missing", title: "no agent identity of that name", args: ["run", "--agent-safe", "--agent", "nobody", ...TARGET, ...HOST, ...agentChild()], server: [META_TARGETS, safeEffective(), AGENT_IDENTITIES] }),
+  // Nothing to mediate: no Broker
+  agentSafe({ id: "none.omitted", title: "every Secret omitted: no Broker, the plain values, no proxy, an own configuration directory", args: SAFE("--omit", "API_KEY", ...agentChild()), env: { API_KEY: "inherited-copy", HTTPS_PROXY: "http://proxy.example:3128", VARLATCH_TOKEN: "vlt_cli_operatorFAKE" }, files: SIGNED_IN, server: SAFE_START }),
+  agentSafe({ id: "none.metadata", title: "--agent-metadata: a read-only agent-run credential, revoked afterwards", args: SAFE("--omit", "API_KEY", "--agent-metadata", ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, minted, mintRevoked] }),
+  agentSafe({ id: "none.metadata-no-broker-credential", title: "--agent-metadata needs the Broker credential", args: SAFE("--omit", "API_KEY", "--agent-metadata", ...agentChild()), server: SAFE_START }),
+  // A mediated run
+  agentSafe({ id: "mediated.no-allow-host", title: "Secrets to mediate and no --allow-host: refused", args: SAFE(...TARGET, ...agentChild()), env: BROKER_ENV, server: SAFE_START }),
+  agentSafe({ id: "mediated.no-broker-credential", title: "no Broker credential: refused", args: SAFE(...TARGET, ...HOST, ...agentChild()), server: SAFE_START }),
+  agentSafe({ id: "mediated.credential-file-missing", title: "--broker-credential-file naming no file", args: SAFE(...TARGET, ...HOST, "--broker-credential-file", "nosuch.txt", ...agentChild()), server: SAFE_START }),
+  agentSafe({
+    id: "mediated.run",
+    title: "a Placeholder, the plain value, every proxy variable naming the Broker, no bearer; the Capability revoked afterwards",
+    args: SAFE(...TARGET, ...HOST, "--broker-credential-file", "broker.txt", ...agentChild("x")),
+    env: { API_KEY: "inherited-copy", NO_PROXY: "localhost, * ,.internal", no_proxy: "0.0.0.0/0", VARLATCH_TOKEN: "vlt_cli_operatorFAKE", HTTPS_PROXY: "http://proxy.example:3128", ...BROKER_ENV },
+    files: BROKER_FILE,
+    server: [...SAFE_START, issued(), capRevoked()],
+  }),
+  agentSafe({ id: "mediated.metadata-strict", title: "--agent-metadata and --agent-network strict: the credential issued after the Broker starts", args: SAFE(...TARGET, ...HOST, "--agent-network", "strict", "--agent-metadata", ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued(), minted, mintRevoked, capRevoked()] }),
+  agentSafe({ id: "mediated.canonical", title: "targets as given, sent in their canonical form; --ttl", args: SAFE("--target", "API_KEY=header:Authorization", "--target", "API_KEY=query:key", "--ttl", "60", ...HOST, "--allow-host", "api.example.com:8443", ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued({ targets: { API_KEY: ["query:key", "header:authorization"] }, destinations: ["api.example.com:443", "api.example.com:8443"] }), capRevoked()] }),
+  agentSafe({ id: "mediated.ttl-nan", title: "a --ttl that is not a number is sent as null", args: SAFE(...TARGET, "--ttl", "soon", ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, { ...issued(), status: 400, answer: apiError(400, "VALIDATION_FAILED", "ttlSeconds must be a number") }] }),
+  agentSafe({ id: "mediated.exit-status", title: "the Agent's own status", args: SAFE(...TARGET, ...HOST, "--", "node", "-e", "process.exit(5)"), env: BROKER_ENV, server: [...SAFE_START, issued(), capRevoked()] }),
+  agentSafe({ id: "mediated.no-command", title: "a command that does not exist: its error, the Capability revoked", args: SAFE(...TARGET, ...HOST, "--", "varlatch-no-such-command-5-5b"), env: BROKER_ENV, server: [...SAFE_START, issued(), capRevoked()] }),
+  agentSafe({ id: "mediated.targets-differ", title: "the server recorded other targets: revoked, nothing started", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued({ targets: { API_KEY: ["query:key"] } }), capRevoked()] }),
+  agentSafe({ id: "mediated.targets-missing", title: "the server recorded no targets: revoked, nothing started", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued({ targets: undefined }), capRevoked()] }),
+  agentSafe({ id: "mediated.preflight", title: "the agent has no secret.use Grant here: a warning, and the run starts", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued({ preflight: "agent-lacks-secret-use" }), capRevoked()] }),
+  agentSafe({ id: "mediated.revoke-refused", title: "the revocation refused: the Capability's lifetime ends it", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, issued(), capRevoked(404)] }),
+  agentSafe({ id: "mediated.issue-denied", title: "issuance denied: the API's error and status", args: SAFE(...TARGET, ...HOST, ...agentChild()), env: BROKER_ENV, server: [...SAFE_START, { ...issued(), status: 403, answer: apiError(403, "PERMISSION_DENIED") }] }),
+  agentSafe({
+    id: "mediated.contract",
+    title: "an active Contract: inherited copies of its Secrets removed and named",
+    args: SAFE(...TARGET, ...HOST, ...agentChild()),
+    env: { ...BROKER_ENV, LEGACY_KEY: "inherited-legacy", API_KEY: "inherited-copy" },
+    server: [META_TARGETS, safeEffective(runItems(), MANIFEST), contractAnswer({ ...ACTIVE, contract: { ...RUN_CONTRACT, items: [...RUN_CONTRACT.items, item("LEGACY_KEY")] } }), AGENT_IDENTITIES, issued(), capRevoked()],
+  }),
+  // A run inside an agent-safe run
+  agentSafe({ id: "nested.refused", title: "inside an agent-safe run, --agent-safe cannot run", args: SAFE(...TARGET, ...agentChild()), env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef" } }),
+  agentSafe({ id: "nested.refused-two", title: "inside an agent-safe run, --strict and --export-context cannot run", args: ["run", "--strict", "--export-context", ...agentChild()], env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef" } }),
+  agentSafe({
+    id: "nested.run",
+    title: "a nested run: this run's environment, its credentials masked in the output, nothing read",
+    args: ["run", "--omit", "PORT", "--", "node", "-e", "console.log(JSON.stringify({t:process.env.VARLATCH_TOKEN,p:new URL(process.env.HTTPS_PROXY).password,port:process.env.PORT??null,key:process.env.API_KEY}))"],
+    env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef", VARLATCH_TOKEN: "vlt_agr_fakeNESTEDTOKEN", HTTPS_PROXY: "http://vlt:proxyCredentialFake123@127.0.0.1:9", PORT: "8080", API_KEY: "vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  }),
+];
+
+const REQUEST_ENV = { VARLATCH_AGENT_RUN: "run_0123456789abcdef", HTTPS_PROXY: "http://vlt:proxyCredentialFake123@{{server-host}}" };
+const PH = "vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const REQUEST_DEST = "https://api.example.com/v1/charges";
+const r = (c: TranscriptCase): TranscriptCase => ({ files: {}, ...c, env: { ...REQUEST_ENV, ...(c.env ?? {}) } });
+const atDest = (method: string, status: number, answer: unknown, headers?: Record<string, string>): Exchange => ({ method, path: REQUEST_DEST, status, answer, ...(headers ? { headers } : {}) });
+const BROKER_SAYS = (status: number, text: string): Exchange => ({ method: "GET", path: REQUEST_DEST, status, answer: text, headers: { "content-type": "text/plain", "varlatch-broker": "refused" } });
+
+const request55b: TranscriptCase[] = [
+  // The command line
+  r({ id: "usage.no-url", title: "no URL", args: ["request", "-i"] }),
+  r({ id: "usage.two-urls", title: "two URLs", args: ["request", REQUEST_DEST, "--", REQUEST_DEST] }),
+  r({ id: "usage.method", title: "-X with something that is not a method", args: ["request", "-X", "GET X", REQUEST_DEST] }),
+  r({ id: "usage.request-last", title: "--request without a value", args: ["request", REQUEST_DEST, "--request"] }),
+  r({ id: "usage.header", title: "-H without a colon", args: ["request", "-H", "Authorization", REQUEST_DEST] }),
+  r({ id: "usage.header-break", title: "--header with a line break in its value", args: ["request", "--header", "X-A: one\ntwo", REQUEST_DEST] }),
+  r({ id: "usage.body-twice", title: "-d and --data: the body once", args: ["request", "-d", "a=1", "--data", "b=2", REQUEST_DEST] }),
+  r({ id: "usage.json-file-missing", title: "--json @file naming no file", args: ["request", "--json", "@nosuch.json", REQUEST_DEST] }),
+  r({ id: "usage.unknown-option", title: "an unknown option", args: ["request", "--insecure", REQUEST_DEST] }),
+  r({ id: "usage.not-absolute", title: "not an absolute URL", args: ["request", "/v1/charges"] }),
+  r({ id: "usage.not-http", title: "not an HTTP URL", args: ["request", "ftp://api.example.com/x"] }),
+  r({ id: "usage.credentials", title: "credentials in the URL are not sent", args: ["request", "https://user:pw@api.example.com/x"] }),
+  r({ id: "usage.output-last", title: "-o without a value", args: ["request", REQUEST_DEST, "-o"] }),
+  // No Broker to send through
+  { id: "broker.not-agent-run", title: "outside an agent-safe run: refused", args: ["request", REQUEST_DEST] },
+  r({ id: "broker.no-proxy", title: "an agent-safe run without a Broker", args: ["request", REQUEST_DEST], env: { HTTPS_PROXY: "" } }),
+  r({ id: "broker.not-url", title: "a proxy that is not a URL", args: ["request", REQUEST_DEST], env: { HTTPS_PROXY: "not a url" } }),
+  r({ id: "broker.not-loopback", title: "a proxy that is not this run's Broker", args: ["request", REQUEST_DEST], env: { HTTPS_PROXY: "http://vlt:x@proxy.example:3128" } }),
+  { id: "broker.http-proxy", title: "HTTP_PROXY names the Broker when no HTTPS_PROXY is set", args: ["request", REQUEST_DEST], files: {}, env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef", HTTP_PROXY: "http://vlt:x@127.0.0.1:9" } },
+  r({ id: "broker.node-proxy", title: "NODE_USE_ENV_PROXY does not send the request to the Broker through itself", args: ["request", REQUEST_DEST], env: { NODE_USE_ENV_PROXY: "1" }, server: [atDest("GET", 200, "direct\n", { "content-type": "text/plain" })] }),
+  r({ id: "broker.unreachable", title: "nothing listens at the Broker's address: 69", args: ["request", REQUEST_DEST], env: { HTTPS_PROXY: "http://vlt:x@127.0.0.1:9" } }),
+  // Through the Broker
+  r({ id: "send.get", title: "a GET: the destination's body on stdout, 0", args: ["request", "-H", `Authorization: Bearer ${PH}`, REQUEST_DEST], server: [atDest("GET", 200, "charged\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.json", title: "--json: POST, JSON content type and accept", args: ["request", "--json", '{"amount":5}', REQUEST_DEST], server: [atDest("POST", 200, { ok: true })] }),
+  r({ id: "send.form-stdin", title: "-d @-: the body from stdin, a form", args: ["request", "-X", "PUT", "-d", "@-", REQUEST_DEST], stdin: "a=1&b=2", server: [atDest("PUT", 200, "done\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.data-file", title: "--data @file, a content type given", args: ["request", "--data", "@body.json", "--header", "Content-Type: application/json", REQUEST_DEST], files: { "body.json": '{"from":"file"}' }, server: [atDest("POST", 200, "ok\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.output", title: "-o: the body written to the file, nothing on stdout", args: ["request", "-o", "out.txt", REQUEST_DEST], server: [atDest("GET", 200, "to the file\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.output-long", title: "--output and --request DELETE", args: ["request", "--request", "DELETE", "--output", "out.txt", REQUEST_DEST], server: [atDest("DELETE", 200, "deleted\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.destination-error", title: "a destination's error status is relayed: 0", args: ["request", REQUEST_DEST], server: [atDest("GET", 500, "varlatch-broker: not the Broker's\n", { "content-type": "text/plain" })] }),
+  r({ id: "send.query-fragment", title: "the URL as written: a query, a fragment, and an empty query", args: ["request", "https://api.example.com/a b?q=1 2#frag ment"], server: [{ method: "GET", path: "https://api.example.com/a%20b?q=1%202#frag%20ment", status: 200, answer: "ok\n", headers: { "content-type": "text/plain" } }] }),
+  // The Broker's own replies
+  r({ id: "refused.blocked", title: "the Broker refuses: its text, 1", args: ["request", "--include", REQUEST_DEST], differences: ["broker-reply-once"], server: [BROKER_SAYS(403, "varlatch-broker: API_KEY: placeholder at header \"x-debug\", which is not a target\n")] }),
+  r({ id: "refused.credential", title: "the proxy credential refused: 77", args: ["request", REQUEST_DEST], differences: ["broker-reply-once"], server: [BROKER_SAYS(407, "")] }),
+  r({ id: "refused.maintenance", title: "the installation in maintenance: 69", args: ["request", REQUEST_DEST], differences: ["broker-reply-once"], server: [BROKER_SAYS(503, "varlatch-broker: the Varlatch installation is in maintenance (restore or upgrade); retry later\n")] }),
+];
+
 // varlatch run --strict (5.4f): one strict retrieval, the environment the
 // command would receive resolved and validated against its Contract
 // Revision, and 78 with every violation (names, classes and reasons, never a
@@ -1700,6 +1861,127 @@ const strict54f: TranscriptCase[] = [
   s({ id: "refused.omit-unknown", title: "--omit of a name neither stored nor in the Contract: 64", options: ["--omit", "NOPE"], server: strictRun() }),
   s({ id: "refused.retrieval-denied", title: "the retrieval refused: the error's status", server: [STRICT_META, denied(RETRIEVALS, "POST")] }),
   s({ id: "refused.short-assisted", title: "assisted mode: a Secret too short to mask still stops the run", env: ASSISTED, server: strictRun({ stored: [{ name: "API_KEY", sensitive: true, value: "1234" }, STORED[1] as Stored] }) }),
+];
+
+// varlatch run --agent-safe --strict (5.5b, recorded here, after 5.4f's
+// strict retrieval): the operator's preflight retrieval (no Secret values;
+// the server's verdict per Secret), then the Capability bound to that state,
+// and 78 with every violation before the Agent starts. A Secret's verdict
+// refuses it by precedence (not-evaluated, then invalid, then an unresolved
+// reference); the issuance's report adds missing, or else agent-unauthorized.
+const STRICT_SAFE_META = ok("/v1/meta", { ...META, capabilities: ["capabilities.targets", "retrieval.strict", "retrieval.preflight"] });
+const PREFLIGHT_STORED: Stored[] = [{ name: "API_KEY", sensitive: true, value: null }, STORED[1] as Stored];
+const preflight = (validation: Record<string, unknown[]> = {}, o: { stored?: Stored[]; contract?: unknown; withheld?: unknown[] } = {}): Exchange => {
+  const e = strictRetrieval({ stored: o.stored ?? PREFLIGHT_STORED, contract: o.contract, withheld: o.withheld });
+  return { ...e, answer: { ...(e.answer as Record<string, unknown>), validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [], ...validation } } };
+};
+const agentReport = (extra: Record<string, unknown> = {}) => ({ preflightItems: [{ name: "API_KEY", present: true, authorized: true, ...extra }] });
+const STRICT_SAFE = (...flags: string[]) => SAFE("--strict", ...TARGET, ...HOST, ...flags, ...agentChild());
+const strictSafeStart = (validation?: Record<string, unknown[]>): Exchange[] => [STRICT_SAFE_META, AGENT_IDENTITIES, preflight(validation)];
+const NOT_EVALUATED = (reason: string) => ({ notEvaluated: [{ name: "API_KEY", reason }] });
+const INVALID = { invalid: [{ name: "API_KEY", reason: "is not a valid string" }] };
+const UNRESOLVED = { unresolved: [{ name: "API_KEY", references: ["OTHER_KEY"] }] };
+const NO_SECRETS = { stored: [STORED[1] as Stored], contract: strictContract(STRICT_ITEMS.filter((i) => i.name !== "API_KEY")) };
+const MULTI_SECRET_STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: null },
+  { name: "PIN", sensitive: true, value: null },
+  { name: "LEGACY_KEY", sensitive: true, value: null },
+  STORED[1] as Stored,
+];
+const MULTI_SECRET_CONTRACT = strictContract([
+  ...STRICT_ITEMS,
+  item("PIN", ALWAYS),
+  item("LEGACY_KEY", ALWAYS),
+]);
+const OPTIONAL_PIN_STORED: Stored[] = [
+  { name: "API_KEY", sensitive: true, value: null },
+  { name: "PIN", sensitive: true, value: null },
+  STORED[1] as Stored,
+];
+const OPTIONAL_PIN_CONTRACT = strictContract([...STRICT_ITEMS, item("PIN")]);
+const agentSafeStrict55b: TranscriptCase[] = [
+  // Server capability gating: fail closed (78) without starting anything
+  agentSafe({ id: "strict.no-preflight", title: "strict: server without retrieval.preflight fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [META_TARGETS] }),
+  agentSafe({ id: "strict.no-targets", title: "strict: server without capabilities.targets fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [ok("/v1/meta", { capabilities: ["retrieval.strict", "retrieval.preflight"] })] }),
+  agentSafe({ id: "strict.no-strict", title: "strict: server without retrieval.preflight or retrieval.strict fails closed", args: STRICT_SAFE(), env: BROKER_ENV, server: [ok("/v1/meta", { ...META, capabilities: ["capabilities.targets"] })] }),
+  // The verdicts, by precedence: the Capability issued, then revoked, 78
+  agentSafe({ id: "strict.not-evaluated", title: "strict: not-evaluated before invalid and an unresolved reference", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart({ ...NOT_EVALUATED("permission"), ...INVALID, ...UNRESOLVED }), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.not-evaluated-requirement", title: "strict: not-evaluated, a Requirement not met", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(NOT_EVALUATED("requirement")), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.invalid", title: "strict: invalid before an unresolved reference, the value never shown", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart({ ...INVALID, ...UNRESOLVED }), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.unresolved-reference", title: "strict: a reference left literal for the operator", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(UNRESOLVED), issued(agentReport()), capRevoked()] }),
+  agentSafe({ id: "strict.missing", title: "strict: no longer stored at issuance, before agent-unauthorized", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ present: false, authorized: false })), capRevoked()] }),
+  agentSafe({ id: "strict.agent-unauthorized", title: "strict: the Agent lacks secret.use", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ authorized: false, reason: "permission" })), capRevoked()] }),
+  agentSafe({ id: "strict.agent-unauthorized-requirement", title: "strict: the Agent's Requirement not met at issuance", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(), issued(agentReport({ authorized: false, reason: "requirement" })), capRevoked()] }),
+  agentSafe({ id: "strict.verdict-and-agent", title: "strict: a verdict and the issuance's report, both named", args: STRICT_SAFE(), env: BROKER_ENV, server: [...strictSafeStart(INVALID), issued(agentReport({ authorized: false })), capRevoked()] }),
+  // Multi-Secret with mixed verdicts (one valid, one invalid at preflight, one agent-unauthorized at issuance)
+  agentSafe({
+    id: "strict.multi-mixed-verdicts",
+    title: "strict: multiple Secrets with mixed verdicts, only failing Secrets named in Contract order",
+    args: SAFE("--strict", ...TARGET, "--target", "PIN=query:pin", "--target", "LEGACY_KEY=header:x-legacy", ...HOST, ...agentChild()),
+    env: BROKER_ENV,
+    server: [
+      STRICT_SAFE_META,
+      AGENT_IDENTITIES,
+      preflight({ invalid: [{ name: "PIN", reason: "is not a valid string" }] }, { stored: MULTI_SECRET_STORED, contract: MULTI_SECRET_CONTRACT }),
+      issued({
+        targets: { API_KEY: ["header:authorization"], PIN: ["query:pin"], LEGACY_KEY: ["header:x-legacy"] },
+        preflightItems: [
+          { name: "API_KEY", present: true, authorized: true },
+          { name: "PIN", present: true, authorized: true },
+          { name: "LEGACY_KEY", present: true, authorized: false, reason: "permission" },
+        ],
+      }),
+      capRevoked(),
+    ],
+  }),
+  // Withheld Secret at preflight: mediated as a Placeholder, Run Context records delivered/varlatch
+  agentSafe({
+    id: "strict.withheld-secret",
+    title: "strict: a Secret listed in callerView.withheld at preflight is still mediated as a Placeholder",
+    args: STRICT_SAFE(),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy" },
+    server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, withheldKey()), issued(agentReport()), capRevoked()],
+  }),
+  // --allow-inherited and --omit under agent-safe strict
+  agentSafe({
+    id: "strict.allow-inherited",
+    title: "strict: --allow-inherited accepts a non-sensitive Contract item from the parent environment",
+    args: STRICT_SAFE("--allow-inherited", "REGION"),
+    env: { ...BROKER_ENV, REGION: "eu-west" },
+    server: [...strictSafeStart(), issued(agentReport()), capRevoked()],
+  }),
+  agentSafe({
+    id: "strict.allow-inherited-secret",
+    title: "strict: --allow-inherited naming a Secret is refused before issuance",
+    args: STRICT_SAFE("--allow-inherited", "API_KEY"),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy" },
+    server: strictSafeStart(),
+  }),
+  agentSafe({
+    id: "strict.omit-optional-secret",
+    title: "strict: --omit leaves an optional stored Secret off the Capability and out of the Agent's environment",
+    args: STRICT_SAFE("--omit", "PIN"),
+    env: { ...BROKER_ENV, PIN: "inherited-pin" },
+    server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, { stored: OPTIONAL_PIN_STORED, contract: OPTIONAL_PIN_CONTRACT }), issued(agentReport()), capRevoked()],
+  }),
+  agentSafe({
+    id: "strict.omit-required-secret",
+    title: "strict: --omit of a required stored Secret refuses with 78 without issuing a Capability",
+    args: SAFE("--strict", "--omit", "API_KEY", ...HOST, ...agentChild()),
+    env: BROKER_ENV,
+    server: strictSafeStart(),
+  }),
+  // Allowed
+  agentSafe({
+    id: "strict.run",
+    title: "strict: allowed, a Placeholder through the Broker, the Capability revoked afterwards",
+    args: SAFE("--strict", ...TARGET, ...HOST, ...agentChild("x")),
+    env: { ...BROKER_ENV, API_KEY: "inherited-copy", VARLATCH_TOKEN: "vlt_cli_operatorFAKE" },
+    server: [...strictSafeStart(), issued(agentReport()), capRevoked()],
+  }),
+  // Nothing to mediate: no Broker, no Capability
+  agentSafe({ id: "strict.nothing", title: "strict: no Secret to mediate, the Agent started without a Broker", args: SAFE("--strict", ...agentChild()), env: BROKER_ENV, server: [STRICT_SAFE_META, AGENT_IDENTITIES, preflight({}, NO_SECRETS)] }),
+  agentSafe({ id: "strict.nothing-no-broker-credential", title: "strict: the Broker credential is needed even with nothing to mediate", args: SAFE("--strict", ...agentChild()), server: [STRICT_SAFE_META, AGENT_IDENTITIES] }),
 ];
 
 // ---- 5.6b: varlatch mcp ----------------------------------------------------------
@@ -2157,6 +2439,136 @@ const admin57a: TranscriptCase[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// 5.8b: sync check and sync push, against the fake platforms (goKit.ts's
+// platformServer: api.github.com, coolify.conformance.test and
+// convex.conformance.test). Every request a platform receives is recorded;
+// a case that sends none says so with an empty script. A value a case
+// stores appears only in what a platform receives, never in the output.
+
+const SYNC_TOKEN = "platform-token-canary-0001";
+const OTHER_TOKEN = "platform-token-canary-0002";
+const GH_ENV = { GITHUB_TOKEN: "github-token-must-not-be-read", GH_TOKEN: "gh-token-must-not-be-read" };
+const syncItem = (name: string, sensitive: boolean, value: string | null) => ({ name, sensitive, source: "self", value: sensitive ? null : value });
+const SYNC_ITEMS = [syncItem("API_TOKEN", true, null), syncItem("DATABASE_URL", true, null), syncItem("LOG_LEVEL", false, "info"), syncItem("PIN", true, null)];
+const SECRET_VALUES: Record<string, string> = { API_TOKEN: "api-token-value-canary", DATABASE_URL: "postgres://app:db-canary@db.internal/app", PIN: "q7Zx2Kw" };
+const syncEffective = (items: unknown[] = SYNC_ITEMS, contract: unknown = null) => ok(`${ENV}/effective-configuration?include=values`, { environmentId: "env_dev", items, manifest: { manifestVersion: 1, contract } });
+const disclose = (names: string[] = Object.keys(SECRET_VALUES)) => exch("POST", `${ENV}/disclosures`, 200, { items: names.map((n) => ({ name: n, versionId: `ver_${n}`, value: SECRET_VALUES[n] })), withheld: [] });
+const SYNC = (sub: string, ...rest: string[]) => ["sync", sub, ...rest];
+const GH = ["--platform", "github-actions", "--base", "acme", "--repo", "web"];
+const COOLIFY = ["--platform", "coolify", "--base", "https://coolify.conformance.test", "--app", "app-uuid-0001"];
+const COOLIFY_SVC = ["--platform", "coolify", "--base", "https://coolify.conformance.test", "--service", "svc-uuid-0001"];
+const CONVEX = ["--platform", "convex", "--base", "https://convex.conformance.test"];
+const TOKEN_ENV = { VARLATCH_SYNC_TOKEN: SYNC_TOKEN, ...GH_ENV };
+const plat = (method: string, path: string, status: number, answer?: unknown): Exchange => ({ method, path, status, ...(answer === undefined ? { headers: {} } : { answer }) });
+const COOLIFY_ROWS = [
+  { uuid: "r1", key: "API_TOKEN", value: SECRET_VALUES.API_TOKEN, is_preview: false },
+  { uuid: "r2", key: "LOG_LEVEL", value: "debug", is_preview: false },
+  { uuid: "r3", key: "OLD_FLAG", value: "x", is_preview: false },
+  { uuid: "r4", key: "COOLIFY_FQDN", value: "https://app.example", is_preview: false },
+];
+const coolifyEnvs = (rows: unknown = COOLIFY_ROWS, status = 200) => plat("GET", "/api/v1/applications/app-uuid-0001/envs", status, rows);
+const CONVEX_VARS = [{ name: "API_TOKEN", value: "something-else" }, { name: "LOG_LEVEL", value: "info" }, { name: "PIN", value: SECRET_VALUES.PIN }];
+const convexQuery = (vars: unknown = CONVEX_VARS, status = 200) => plat("POST", "/api/query", status, status === 200 ? { status: "success", value: vars } : { code: "Unauthenticated" });
+const ghKey = (path = "/repos/acme/web/actions/secrets") => plat("GET", `${path}/public-key`, 200, { key_id: "key-1", key: PLATFORM_PUBLIC_KEY_WORD });
+const ghPut = (name: string, status = 201, path = "/repos/acme/web/actions/secrets") => plat("PUT", `${path}/${name}`, status);
+const SERVICE_ROWS = [
+  { uuid: "s1", key: "API_TOKEN", value: SECRET_VALUES.API_TOKEN },
+  { uuid: "s2", key: "LOG_LEVEL", value: "info" },
+  { uuid: "s3", key: "PIN" },
+];
+const SERVICE_COMPOSE = "services:\n  backend:\n    environment:\n      LOG_LEVEL: warn\n      API_TOKEN: ${API_TOKEN}\n  dashboard:\n    image: x\n";
+const CYCLIC_COMPOSE = "services:\n  backend: &loop\n    environment:\n      API_TOKEN: ${API_TOKEN}\n    extends: *loop\n";
+const serviceRecord = (compose: string) => ({ uuid: "svc-uuid-0001", name: "convex", compose_parsing_version: 5, docker_compose_raw: compose, docker_compose: "services:\n  backend:\n    env_file: [.env]\n" });
+const sy = (c: Omit<TranscriptCase, "differences" | "files" | "cwd"> & { files?: Record<string, string>; cwd?: string; differences?: string[] }): TranscriptCase => v(c);
+
+const sync58b: TranscriptCase[] = [
+  // the command line
+  sy({ id: "sync.none", title: "sync alone (64)", args: ["sync"] }),
+  sy({ id: "sync.unknown", title: "an unknown subcommand (64)", args: ["sync", "pull"] }),
+  sy({ id: "check.no-platform", title: "check without --platform (64), nothing sent", args: SYNC("check", "--base", "acme") }),
+  sy({ id: "check.no-base", title: "check without --base (64)", args: SYNC("check", "--platform", "github-actions") }),
+  sy({ id: "check.unknown-option", title: "check is strict: a push-only option (64)", args: SYNC("check", ...GH, "--build-time", "true") }),
+  sy({ id: "check.unknown-platform", title: "an unknown platform (64), nothing sent", args: SYNC("check", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "check.bad-base", title: "a Coolify base that is not https (64), nothing sent", args: SYNC("check", "--platform", "coolify", "--base", "http://coolify.conformance.test", "--app", "app-uuid-0001"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "check.no-repo", title: "GitHub without --repo (64), nothing sent", args: SYNC("check", "--platform", "github-actions", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "push.no-platform", title: "push without --platform (64, after the context)", args: SYNC("push", "--base", "acme") }),
+  sy({ id: "push.no-base", title: "push without --base (64)", args: SYNC("push", "--platform", "convex") }),
+  sy({ id: "push.unknown-platform", title: "push to an unknown platform (1), nothing sent", args: SYNC("push", "--platform", "gitlab", "--base", "acme"), env: TOKEN_ENV, platform: [] }),
+  sy({ id: "push.bad-destination", title: "push to Coolify with both --app and --service (1), nothing sent", args: SYNC("push", ...COOLIFY, "--service", "svc-uuid-0001"), env: TOKEN_ENV, platform: [] }),
+
+  // sync check, GitHub Actions: write-only, nothing read or disclosed
+  sy({ id: "check.github", title: "GitHub Actions: values are write-only, so no key is compared (2); nothing is disclosed", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.github.json", title: "the same, --json", args: SYNC("check", ...GH, "--gh-environment", "prod", "--json"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.github.contract", title: "with an active Contract: its items are the keys", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [{ ...syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }) }, ok("/v1/organizations/acme/projects/web/contract", { id: "crv_1", contract: { items: [{ name: "API_TOKEN" }, { name: "NEW_ONE" }, { name: "VARLATCH_RUN_CONTEXT" }] } })], platform: [] }),
+  sy({ id: "check.github.contract-403", title: "a Contract this identity may not read: the stored items, said", args: SYNC("check", ...GH), env: TOKEN_ENV, server: [syncEffective(SYNC_ITEMS, { revisionId: "crv_1" }), { ...ok("/v1/organizations/acme/projects/web/contract", apiError(403, "PERMISSION_DENIED")), status: 403 }], platform: [] }),
+
+  // sync check, Coolify: the platform first, then only the Secrets it holds are disclosed
+  sy({ id: "check.coolify", title: "Coolify: read first, then the one Secret it holds disclosed; drift (1), never a value", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.json", title: "the same, --json", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.map", title: "--map renames; only the mapped key is compared", args: SYNC("check", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN=OLD_FLAG"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.coolify.exclude", title: "--exclude a prefix", args: SYNC("check", ...COOLIFY, "--exclude", "API_*", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs()] }),
+  sy({ id: "check.map-unknown", title: "--map naming no stored item (64, after reading the Environment)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.map-and-exclude", title: "--map with --exclude (64)", args: SYNC("check", ...COOLIFY, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.coolify.unauthorized", title: "Coolify refuses the token: not checked (2), nothing disclosed", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [coolifyEnvs({ message: "Unauthenticated." }, 401)] }),
+  sy({ id: "check.coolify.garbage", title: "an answer that is not JSON: not checked (2), the body never repeated", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective()], platform: [{ ...coolifyEnvs(`<html>${SECRET_VALUES.API_TOKEN}</html>`), headers: { "content-type": "text/html" } }] }),
+  sy({ id: "check.disclosure-denied", title: "the disclosure refused: said, the Secret not compared", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), { ...exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED")) }], platform: [coolifyEnvs()] }),
+
+  // the credential's variable: --token-env, VARLATCH_SYNC_TOKEN, never GITHUB_TOKEN or GH_TOKEN
+  sy({ id: "check.token-env.given", title: "--token-env names the variable read", args: SYNC("check", ...COOLIFY, "--token-env", "MY_COOLIFY"), env: { MY_COOLIFY: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.token-env.absent", title: "without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [coolifyEnvs()] }),
+  sy({ id: "check.token-env.empty", title: "--token-env naming an empty variable: not checked (2), GITHUB_TOKEN and GH_TOKEN not read, nothing sent to the platform", args: SYNC("check", ...COOLIFY, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, server: [syncEffective()], platform: [] }),
+  sy({ id: "check.token-env.unset", title: "no VARLATCH_SYNC_TOKEN and no --token-env: not checked (2)", args: SYNC("check", ...COOLIFY, "--json"), env: GH_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "push.token-env.given", title: "push: --token-env names the variable GitHub gets", args: SYNC("push", ...GH, "--token-env", "MY_GITHUB", "--map", "LOG_LEVEL"), env: { MY_GITHUB: OTHER_TOKEN, ...TOKEN_ENV }, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.token-env.absent", title: "push without --token-env: VARLATCH_SYNC_TOKEN, not GITHUB_TOKEN or GH_TOKEN", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.token-env.empty", title: "push with --token-env naming an empty variable (1): nothing read, disclosed or sent", args: SYNC("push", ...GH, "--token-env", "EMPTY"), env: { EMPTY: "", ...GH_ENV }, platform: [] }),
+
+  // sync check, Convex
+  sy({ id: "check.convex", title: "Convex: read, the Secrets it holds disclosed, compared", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
+  sy({ id: "check.convex.json", title: "the same, --json", args: SYNC("check", ...CONVEX, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN", "PIN"])], platform: [convexQuery()] }),
+  sy({ id: "check.convex.unauthorized", title: "Convex refuses the key: not checked (2)", args: SYNC("check", ...CONVEX), env: TOKEN_ENV, server: [syncEffective()], platform: [convexQuery(null, 401)] }),
+
+  // sync push, GitHub Actions: the public key, then one sealed value per secret
+  sy({ id: "push.github", title: "GitHub Actions: every readable value, sealed to the repository's key", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("DATABASE_URL"), ghPut("LOG_LEVEL"), ghPut("PIN")] }),
+  sy({ id: "push.github.environment", title: "--gh-environment: the environment's secrets", args: SYNC("push", ...GH, "--gh-environment", "prod", "--map", "API_TOKEN=deploy_token"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey("/repos/acme/web/environments/prod/secrets"), ghPut("DEPLOY_TOKEN", 201, "/repos/acme/web/environments/prod/secrets")] }),
+  sy({ id: "push.github.skipped", title: "a name GitHub reserves and one not readable are skipped (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN=GITHUB_TOKEN", "--map", "MISSING", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.github.nothing", title: "nothing readable to push (1): the platform never reached", args: SYNC("push", ...GH, "--map", "MISSING"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
+  sy({ id: "push.github.exclude", title: "--exclude without --map", args: SYNC("push", ...GH, "--exclude", "PIN", "--exclude", "DATABASE_*"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN"), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.map-and-exclude", title: "--map with --exclude (1), after the disclosure, nothing sent to the platform", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--exclude", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [] }),
+  sy({ id: "push.github.put-fails", title: "one secret refused: failed, the rest pushed (1)", args: SYNC("push", ...GH, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [ghKey(), ghPut("API_TOKEN", 422), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.disclosure-denied", title: "the disclosure refused: non-sensitive values only", args: SYNC("push", ...GH), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 403, apiError(403, "PERMISSION_DENIED"))], platform: [ghKey(), ghPut("LOG_LEVEL")] }),
+  sy({ id: "push.github.key-refused", title: "the public key refused: the adapter's error stops the push (TypeScript lets it escape)", args: SYNC("push", ...GH, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("GET", "/repos/acme/web/actions/secrets/public-key", 401, { message: "Bad credentials" })], differences: ["uncaught"] }),
+
+  // sync push, Coolify and Convex
+  sy({ id: "push.coolify", title: "Coolify application: read, then each value written", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL", "--map", "API_TOKEN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" }), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r1" })] }),
+  sy({ id: "push.coolify.refused", title: "Coolify refuses a write: failed (1), the platform's words masked", args: SYNC("push", ...COOLIFY, "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 422, { message: `token ${SYNC_TOKEN} may not write` })] }),
+  sy({ id: "check.coolify.service", title: "a Coolify service: its compose file's use of each name, said", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
+  sy({ id: "check.coolify.service.json", title: "the same, --json", args: SYNC("check", ...COOLIFY_SVC, "--json"), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(SERVICE_COMPOSE))] }),
+  sy({ id: "check.coolify.service.cycle", title: "a compose file with an alias inside its own anchor (step 4 defect 6): Go reports usage unchecked", args: SYNC("check", ...COOLIFY_SVC), env: TOKEN_ENV, server: [syncEffective(), disclose(["API_TOKEN"])], platform: [plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS), plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord(CYCLIC_COMPOSE))], differences: ["compose-usage-unchecked"] }),
+  sy({ id: "check.github.environment-flag", title: "-e names the Environment compared", args: SYNC("check", ...GH, "-e", "dev"), env: TOKEN_ENV, server: [syncEffective()], platform: [] }),
+  sy({ id: "push.coolify.build-time", title: "Coolify application: --build-time and --platform-expands go with each write", args: SYNC("push", ...COOLIFY, "--build-time", "true", "--platform-expands", "SERVICE_URL_API,SERVICE_FQDN_API", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
+  // A disclosed item without a string value: none is withheld in check and not readable in push; a number never matches the platform's text
+  // (TypeScript throws pushing a number, so that push is pinned by internal/cli's TestPushReadsOnlyStringValues, not a transcript)
+  sy({ id: "check.coolify.value-absent", title: "a disclosed Secret without a value: withheld (2), never compared as text", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "undefined", is_preview: false }])] }),
+  sy({ id: "check.coolify.value-null", title: "a disclosed Secret whose value is null: withheld (2)", args: SYNC("check", ...COOLIFY, "--json"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: null }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "null", is_preview: false }])] }),
+  sy({ id: "check.coolify.value-number", title: "a disclosed Secret that is a number: differs (1) from the same digits on the platform", args: SYNC("check", ...COOLIFY), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: 12345 }], withheld: [] })], platform: [coolifyEnvs([{ uuid: "r1", key: "API_TOKEN", value: "12345", is_preview: false }])] }),
+  sy({ id: "push.coolify.value-absent", title: "a disclosed Secret without a value is not readable: not pushed (1)", args: SYNC("push", ...COOLIFY, "--map", "API_TOKEN", "--map", "LOG_LEVEL"), env: TOKEN_ENV, server: [syncEffective(), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN" }], withheld: [] })], platform: [coolifyEnvs(), plat("PATCH", "/api/v1/applications/app-uuid-0001/envs", 201, { uuid: "r2" })] }),
+  // A push to a Coolify service: its compose file read first; a name Coolify sets is skipped, a value with $ the compose file copies is refused
+  sy({
+    id: "push.coolify.service",
+    title: "Coolify service: usage read before any write; MY_URL skipped (Coolify sets it), API_TOKEN refused ($ copied into the compose file), LOG_LEVEL written (1)",
+    args: SYNC("push", ...COOLIFY_SVC, "--map", "LOG_LEVEL", "--map", "API_TOKEN", "--map", "MY_URL"),
+    env: TOKEN_ENV,
+    server: [syncEffective([...SYNC_ITEMS, syncItem("MY_URL", false, "https://my.example")]), exch("POST", `${ENV}/disclosures`, 200, { items: [{ name: "API_TOKEN", versionId: "ver_API_TOKEN", value: "tok$en-canary-value" }], withheld: [] })],
+    platform: [
+      plat("GET", "/api/v1/services/svc-uuid-0001", 200, serviceRecord("services:\n  backend:\n    environment:\n      LOG_LEVEL: ${LOG_LEVEL}\n      API_TOKEN: ''\n      MY_URL: ${SERVICE_URL_BACKEND}\n")),
+      plat("GET", "/api/v1/services/svc-uuid-0001/envs", 200, SERVICE_ROWS),
+      plat("PATCH", "/api/v1/services/svc-uuid-0001/envs", 201, { uuid: "s2" }),
+    ],
+  }),
+  sy({ id: "push.convex", title: "Convex: one batch", args: SYNC("push", ...CONVEX, "--map", "LOG_LEVEL", "--map", "PIN"), env: TOKEN_ENV, server: [syncEffective(), disclose()], platform: [plat("POST", "/api/update_environment_variables", 200, {})] }),
+];
+
+// ---------------------------------------------------------------------------
 // 5.7b: Security (security status, report, controls and set). Times that
 // `ago` and `until` word are in 2100 ("just now") or in 2020 ("within a
 // day"), so the recording reads the same on any day; the process tests
@@ -2372,6 +2784,180 @@ const security57b: TranscriptCase[] = [
   a({ id: "status.items-not-a-list", title: "a list of another shape stops status (TypeScript throws a TypeError)", args: STATUS, server: statusAt({ list: { availableModes: ["off"], items: "x" }, report: null, keys: null, review: null, reqs: null, audit: null, perms: { actions: [] } }), differences: UNCAUGHT }),
 ];
 
+// ---------------------------------------------------------------------------
+// 5.7c: the audit export, deletion and freezes (audit-export, audit export
+// [--deleted-org], project delete, org delete/deletion, org
+// freeze/unfreeze). Every refusal before the write is recorded with the
+// requests it sent (none, for a command line that is wrong).
+
+const META_DESTROY = { ...META, capabilities: ["projects.delete", "organizations.delete", "organizations.incident-freeze", "audit.storage-export"] };
+const META_DELETE_ONLY = { ...META, capabilities: ["organizations.delete"] };
+const metaOf = (meta: unknown = META_DESTROY) => ok("/v1/meta", meta);
+const DELETED = { projectId: "prj_1", slug: "web", environments: 3, values: 12, versionsErased: 40, capabilitiesRevoked: 2, targetsRevoked: 1, teamLinksRemoved: 4 };
+const PD = (...rest: string[]) => ["project", "delete", ...rest];
+const OD = (...rest: string[]) => ["org", "delete", ...rest];
+const deletionOf = (extra: Record<string, unknown> = {}) => ({ id: "del_1", scheduledAt: "2026-11-19T10:00:00.000Z", requestedBy: "Ada", runAfter: FUTURE, approvalRequired: true, approvedBy: null, approvedAt: null, ...extra });
+const ORG_ROW = { id: "org_acme", slug: "acme", name: "Acme" };
+const scheduleAt = (body: unknown = deletionOf()) => exch("POST", `${ORG}/deletion`, 201, body);
+const auditAt = (answer: unknown = AUDIT_ACTIVE, status = 200) => ({ ...ok(`${ORG}/audit-export`, answer), status });
+const FROZEN_AT = { id: "frz_1", frozenAt: "2026-11-19T09:00:00Z", frozenBy: { id: ADA, name: "Ada" }, reason: "Laptop stolen" };
+const FZ = (...rest: string[]) => ["org", "freeze", "acme", ...rest];
+const UNFZ = (...rest: string[]) => ["org", "unfreeze", "acme", ...rest];
+const freezeState = (extra: Record<string, unknown> = {}) => ok(`${ORG}/incident-freeze`, { freeze: FROZEN_AT, resumingTargets: [], ...extra });
+const liftAt = (status: number, answer: unknown) => exch("POST", `${ORG}/incident-freeze/frz_1/lift`, status, answer);
+const LIFTED = { freeze: { ...FROZEN_AT, liftedAt: "2026-11-19T11:00:00.000Z" }, resumingTargets: [{ id: "stg_1", projectSlug: "web", environmentName: "prod", platform: "coolify", destination: "app-1" }] };
+const LIFT_APPROVAL = { ...APPROVAL, summary: { title: "Lift the incident freeze of Acme", changes: [{ field: "freeze", from: "frozen", to: "lifted", loosens: true }] } };
+const liftPoll = (state: string) => ok("/v1/me/approvals/apr_1", { ...LIFT_APPROVAL, state });
+
+const AE = (...rest: string[]) => ["audit-export", ...rest];
+const SECRET_FILE = { "secret.txt": "fake-secret-access-key-0001\n" };
+const DEST = ["--endpoint", "https://s3.example.com", "--region", "eu-west-1", "--bucket", "audit"];
+const KEY = ["--access-key-id", "AKIAFAKE0001", "--secret-file", "{{dir}}/secret.txt"];
+const withSecret = (files: Record<string, string> = SIGNED_IN) => ({ ...files, ...SECRET_FILE });
+const EXPORT = AUDIT_ACTIVE.export;
+const changedExport = (extra: Record<string, unknown> = {}) => ({ changed: true, loosened: false, export: { ...EXPORT, version: 4, ...extra } });
+const CHECK_OK = { ok: true, objectLock: "accepted", keyCanRead: true, message: null };
+const NDJSON = '{"id":"evt_1","eventType":"organization.created"}\n{"id":"evt_2","eventType":"project.created"}\n';
+
+const audit57c: TranscriptCase[] = [
+  // project delete
+  a({ id: "pd.no-slug", title: "project delete without a slug (64)", args: PD() }),
+  a({ id: "pd.no-confirm", title: "without --confirm: what it erases and the command to confirm, nothing sent (64)", args: PD("web") }),
+  a({ id: "pd.no-confirm.server", title: "the same with --server: the command repeats it", args: PD("web", "--server", "{{server}}") }),
+  a({ id: "pd.no-confirm.outside", title: "outside a repository: <org> in the command (64)", args: PD("web"), ...OUTSIDE }),
+  a({ id: "pd.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...PD("web")] }),
+  a({ id: "pd.wrong-confirm", title: "--confirm naming another Project (64), nothing sent", args: PD("web", "--confirm", "api") }),
+  a({ id: "pd.extra", title: "an extra argument (64)", args: PD("web", "api", "--confirm", "web") }),
+  a({ id: "pd.deleted", title: "--confirm: deleted, with what was erased and what deletion does not reach", args: PD("web", "--confirm", "web"), server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.assisted-confirmed", title: "assisted mode with --confirm deletes", args: ["--assisted", ...PD("web", "--confirm", "web")], server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.outside", title: "outside a repository with --org and --server", args: PD("web", "--confirm", "web", "--org", "acme", "--server", "{{server}}"), ...OUTSIDE, server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 200, DELETED)] }),
+  a({ id: "pd.outside-no-org", title: "outside a repository with --confirm but no --org (64), nothing sent", args: PD("web", "--confirm", "web"), ...OUTSIDE }),
+  a({ id: "pd.no-capability", title: "a server that cannot delete projects (1), nothing deleted", args: PD("web", "--confirm", "web"), server: [metaOf(META_BARE)] }),
+  a({ id: "pd.refused", title: "the deletion refused: the server's error", args: PD("web", "--confirm", "web"), server: [metaOf(), exch("DELETE", `${ORG}/projects/web`, 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "pd.not-signed-in", title: "no credential (77), nothing sent", args: PD("web", "--confirm", "web"), files: NOT_SIGNED_IN }),
+
+  // org delete and org deletion: the command line
+  a({ id: "od.no-slug", title: "org delete without a slug (64)", args: OD() }),
+  a({ id: "od.no-confirm", title: "scheduling without --confirm: what it does and the command (64), nothing sent", args: OD("acme") }),
+  a({ id: "od.no-confirm.after", title: "the same with --after: the command keeps it", args: OD("acme", "--after", "7", "--server", "{{server}}") }),
+  a({ id: "od.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...OD("acme")] }),
+  a({ id: "od.wrong-confirm", title: "--confirm naming another Organization (64)", args: OD("acme", "--confirm", "other") }),
+  a({ id: "od.approve-and-cancel", title: "--approve with --cancel (64)", args: OD("acme", "--approve", "del_1", "--cancel", "del_1") }),
+  a({ id: "od.cancel-confirm", title: "a cancel with --confirm (64)", args: OD("acme", "--cancel", "del_1", "--confirm", "acme") }),
+  a({ id: "od.cancel-after", title: "--after with --cancel (64)", args: OD("acme", "--cancel", "del_1", "--after", "3") }),
+  a({ id: "od.approve-after", title: "--after with --approve (64)", args: OD("acme", "--approve", "del_1", "--after", "3") }),
+  a({ id: "od.after-zero", title: "--after 0 (64)", args: OD("acme", "--confirm", "acme", "--after", "0") }),
+  a({ id: "od.after-31", title: "--after 31 (64)", args: OD("acme", "--confirm", "acme", "--after", "31") }),
+  a({ id: "od.after-word", title: "--after that is not a number (64)", args: OD("acme", "--confirm", "acme", "--after", "1w") }),
+  a({ id: "od.approve-assisted", title: "approving in assisted mode without --confirm (78), nothing sent", args: ["--assisted", ...OD("acme", "--approve", "del_1")] }),
+
+  // org delete: requests
+  a({ id: "od.schedule", title: "scheduled: the request, what it suspends, the tombstone export, the limits, the audit export's key", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt()] }),
+  a({ id: "od.schedule.after", title: "--after 7 is sent; a server without audit export says nothing of it", args: OD("acme", "--confirm", "acme", "--after", "7"), server: [metaOf(META_DELETE_ONLY), ok(ORG, ORG_ROW), { ...scheduleAt(deletionOf({ approvalRequired: false })), path: `${ORG}/deletion` }] }),
+  a({ id: "od.schedule.no-export", title: "no audit export: nothing about its key", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt(AUDIT_NONE)] }),
+  a({ id: "od.schedule.export-unreadable", title: "the audit export's state unreadable: said, never left out", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), scheduleAt(), auditAt(apiError(500, "INTERNAL"), 500)] }),
+  a({ id: "od.schedule.step-up", title: "scheduling under admin step-up in assisted mode: the approval to give (75)", args: ["--assisted", ...OD("acme", "--confirm", "acme")], server: [metaOf(), ok(ORG, ORG_ROW), exch("POST", `${ORG}/deletion`, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }))] }),
+  a({ id: "od.schedule.refused", title: "the schedule refused: the server's error", args: OD("acme", "--confirm", "acme"), server: [metaOf(), ok(ORG, ORG_ROW), exch("POST", `${ORG}/deletion`, 409, apiError(409, "CONFLICT", "a deletion is already scheduled"))] }),
+  a({ id: "od.approve", title: "approved: the request as it stands", args: OD("acme", "--approve", "del_1"), server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/approve`, 200, deletionOf({ approvedBy: "Bob", approvedAt: "2026-11-19T10:30:00Z" }))] }),
+  a({ id: "od.approve.assisted-confirmed", title: "approving in assisted mode with --confirm", args: ["--assisted", ...OD("acme", "--approve", "del_1", "--confirm", "acme")], server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/approve`, 200, deletionOf({ approvedBy: "Bob", approvedAt: "not a time" }))] }),
+  a({ id: "od.cancel", title: "cancelled", args: OD("acme", "--cancel", "del_1"), server: [metaOf(), exch("POST", `${ORG}/deletion/del_1/cancel`, 200, deletionOf())] }),
+  a({ id: "od.no-capability", title: "a server that cannot delete organizations (1), nothing sent but meta", args: OD("acme", "--confirm", "acme"), server: [metaOf(META_BARE)] }),
+  a({ id: "deletion.open", title: "org deletion: an overdue request waiting for approval never runs without it", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: deletionOf({ runAfter: PAST }) })] }),
+  a({ id: "deletion.open.json", title: "org deletion --json", args: ["org", "deletion", "acme", "--json"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: deletionOf() })] }),
+  a({ id: "deletion.none", title: "no deletion scheduled", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: null })] }),
+  a({ id: "deletion.none.json", title: "the same, --json: deletion null", args: ["org", "deletion", "acme", "--json"], server: [metaOf(), ok(`${ORG}/deletion`, { deletion: null })] }),
+  a({ id: "deletion.confirm-option", title: "org deletion takes no --confirm (64)", args: ["org", "deletion", "acme", "--confirm", "acme"] }),
+  a({ id: "deletion.answer-null", title: "an answer of another shape stops org deletion (TypeScript throws a TypeError)", args: ["org", "deletion", "acme"], server: [metaOf(), ok(`${ORG}/deletion`, null)], differences: UNCAUGHT }),
+
+  // org freeze and unfreeze
+  a({ id: "fz.no-slug", title: "org freeze without a slug (64)", args: ["org", "freeze"] }),
+  a({ id: "fz.no-reason", title: "without --reason (64), nothing sent", args: FZ("--confirm", "acme") }),
+  a({ id: "fz.blank-reason", title: "a reason of spaces only (64)", args: FZ("--reason", "   ", "--confirm", "acme") }),
+  a({ id: "fz.long-reason", title: "a reason over 200 characters (64)", args: FZ("--reason", "x".repeat(201), "--confirm", "acme") }),
+  a({ id: "fz.no-confirm", title: "without --confirm: what it stops and the command (64), nothing sent", args: FZ("--reason", "laptop stolen") }),
+  a({ id: "fz.wrong-confirm", title: "--confirm naming another Organization: the same prompt (64)", args: FZ("--reason", "it's stolen", "--confirm", "other", "--server", "{{server}}") }),
+  a({ id: "fz.assisted", title: "assisted mode without --confirm: the human's decision (78), nothing sent", args: ["--assisted", ...FZ("--reason", "laptop stolen")] }),
+  a({ id: "fz.frozen", title: "frozen: what it stops and how to lift it", args: FZ("--reason", "  laptop stolen  ", "--confirm", "acme"), server: [metaOf(), exch("POST", `${ORG}/incident-freeze`, 201, FROZEN_AT)] }),
+  a({ id: "fz.no-capability", title: "a server without the incident freeze (1)", args: FZ("--reason", "x", "--confirm", "acme"), server: [metaOf(META_BARE)] }),
+  a({ id: "fz.refused", title: "the freeze refused: the server's error", args: FZ("--reason", "x", "--confirm", "acme"), server: [metaOf(), exch("POST", `${ORG}/incident-freeze`, 403, apiError(403, "PERMISSION_DENIED"))] }),
+  a({ id: "unfz.not-frozen", title: "unfreeze an Organization that is not frozen", args: UNFZ(), server: [metaOf(), ok(`${ORG}/incident-freeze`, { freeze: null, resumingTargets: null })] }),
+  a({ id: "unfz.not-frozen.json", title: "the same, --json: freeze null", args: UNFZ("--json"), server: [metaOf(), ok(`${ORG}/incident-freeze`, { freeze: null })] }),
+  a({ id: "unfz.assisted", title: "unfreezing in assisted mode: what the lift does, then the approval to give (75)", args: ["--assisted", ...UNFZ()], server: [metaOf(), freezeState({ resumingTargets: null }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL }))] }),
+  a({ id: "unfz.approved", title: "unfreezing: waits for the approval, then lifts; resuming Sync Targets listed", args: UNFZ(), server: [metaOf(), freezeState({ resumingTargets: LIFTED.resumingTargets }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("approved"), liftAt(200, LIFTED)] }),
+  a({ id: "unfz.approved.json", title: "the same, --json: no confirmation lines", args: UNFZ("--json"), server: [metaOf(), freezeState(), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("approved"), liftAt(200, { ...LIFTED, resumingTargets: [] })] }),
+  a({ id: "unfz.cancelled", title: "the lift's approval cancelled (77): still frozen", args: UNFZ(), server: [metaOf(), freezeState(), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL })), liftPoll("closed")] }),
+  a({ id: "unfz.reason-escaped", title: "a reason with a control character: escaped", args: ["--assisted", ...UNFZ()], server: [metaOf(), freezeState({ freeze: { ...FROZEN_AT, reason: "bell\u0007 here", frozenBy: { id: BOB, name: null } } }), liftAt(403, err(403, "STEP_UP_REQUIRED", { approval: LIFT_APPROVAL }))] }),
+  a({ id: "unfz.reason-option", title: "unfreeze takes no --reason (64)", args: UNFZ("--reason", "x") }),
+
+  // audit-export: the command line, before any request
+  a({ id: "ae.none", title: "audit-export alone (64)", args: AE() }),
+  a({ id: "ae.unknown", title: "an unknown subcommand (64)", args: AE("list") }),
+  a({ id: "ae.create.no-bucket", title: "create without --bucket (64)", args: AE("create", "--endpoint", "https://s3.example.com", "--region", "eu", ...KEY), files: withSecret() }),
+  a({ id: "ae.create.no-key", title: "create without --access-key-id (64)", args: AE("create", ...DEST) }),
+  a({ id: "ae.create.no-retention", title: "create with --no-retention (64)", args: AE("create", ...DEST, ...KEY, "--no-retention"), files: withSecret() }),
+  a({ id: "ae.create.no-path-style", title: "create with --no-path-style (64)", args: AE("create", ...DEST, ...KEY, "--no-path-style"), files: withSecret() }),
+  a({ id: "ae.create.from", title: "--from that is neither (64)", args: AE("create", ...DEST, ...KEY, "--from", "yesterday"), files: withSecret() }),
+  a({ id: "ae.create.retention", title: "--retention of another form (64)", args: AE("create", ...DEST, ...KEY, "--retention", "compliance:3651"), files: withSecret() }),
+  a({ id: "ae.create.both-sources", title: "--secret-stdin and --secret-file (64)", args: AE("create", ...DEST, ...KEY, "--secret-stdin"), files: withSecret() }),
+  a({ id: "ae.change.secret-alone", title: "a secret source without --access-key-id (64)", args: AE("change", "--secret-stdin") }),
+  a({ id: "ae.change.nothing", title: "change naming nothing (64)", args: AE("change") }),
+  a({ id: "ae.change.key-and-settings", title: "a key with a setting (64): each change is approved separately", args: AE("change", "--bucket", "b", ...KEY), files: withSecret() }),
+  a({ id: "ae.change.both-retentions", title: "--retention with --no-retention (64)", args: AE("change", "--retention", "governance:30", "--no-retention") }),
+  a({ id: "ae.change.both-styles", title: "--path-style with --no-path-style (64)", args: AE("change", "--path-style", "--no-path-style") }),
+  a({ id: "ae.check.retention", title: "check with a malformed --retention (64)", args: AE("check", "--retention", "forever") }),
+  a({ id: "ae.create.no-source", title: "a key without a secret source off a terminal (64), nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001") }),
+  a({ id: "ae.create.no-source.assisted", title: "the same in assisted mode: it never prompts (64)", args: ["--assisted", ...AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001")] }),
+  a({ id: "ae.create.secret-missing", title: "a --secret-file that does not exist (1), nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-file", "{{dir}}/nope.txt") }),
+  a({ id: "ae.create.secret-empty", title: "an empty secret on standard input, nothing sent", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-stdin"), stdin: "" }),
+  a({ id: "ae.extra", title: "an extra argument (64)", args: AE("show", "now") }),
+
+  // audit-export: requests
+  a({ id: "ae.show", title: "show: the export's status", args: AE("show"), server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.json", title: "show --json", args: AE("show", "--json"), server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.none", title: "show with no export", args: AE("show"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.show.stopped", title: "show with the export stopped by the host operator", args: AE("show"), server: [metaOf(), auditAt(AUDIT_OFF)] }),
+  a({ id: "ae.show.no-capability", title: "a server without audit export (1)", args: AE("show"), server: [metaOf(META_BARE)] }),
+  a({ id: "ae.show.outside", title: "outside a repository with --org and --server", args: AE("show", "--org", "acme", "--server", "{{server}}"), ...OUTSIDE, server: [metaOf(), auditAt()] }),
+  a({ id: "ae.show.outside-no-org", title: "outside a repository without --org (64), nothing sent", args: AE("show"), ...OUTSIDE }),
+  a({ id: "ae.create", title: "create from a secret file: what it copies and the status without its first line", args: AE("create", ...DEST, ...KEY, "--retention", "compliance:400"), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export`, 201, EXPORT)] }),
+  a({ id: "ae.create.json", title: "create --json, from standard input, starting now", args: AE("create", ...DEST, "--access-key-id", "AKIAFAKE0001", "--secret-stdin", "--from", "now", "--prefix", "logs/", "--path-style", "--json"), stdin: "fake-secret-access-key-0002\n", server: [metaOf(), exch("POST", `${ORG}/audit-export`, 201, { ...EXPORT, state: "active" })] }),
+  a({ id: "ae.create.echoed", title: "a server echoing the key in its error: masked", args: AE("create", ...DEST, ...KEY), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export`, 400, apiError(400, "VALIDATION_FAILED", "key fake-secret-access-key-0001 refused"))] }),
+  a({ id: "ae.change", title: "change the bucket at the current version", args: AE("change", "--bucket", "audit-2"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport())] }),
+  a({ id: "ae.change.stream", title: "a change that starts a new stream, with approval", args: AE("change", "--endpoint", "https://other.example.com", "--no-retention"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport({ streamId: "st_2", cursor: 0 }))] }),
+  a({ id: "ae.change.loosened", title: "a loosening change: your approval was used", args: AE("change", "--retention", "governance:30"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, { ...changedExport(), loosened: true })] }),
+  a({ id: "ae.change.same", title: "the settings it already has: nothing changed", args: AE("change", "--prefix", ""), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, { changed: false, loosened: false, export: EXPORT })] }),
+  a({ id: "ae.change.json", title: "change --json", args: AE("change", "--path-style", "--json"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 200, changedExport())] }),
+  a({ id: "ae.change.key", title: "a new key on its own: replaced", args: AE("change", ...KEY), files: withSecret(), server: [metaOf(), auditAt(), exch("PUT", `${ORG}/audit-export/credential`, 200, { ...EXPORT, version: 4 })] }),
+  a({ id: "ae.change.none", title: "change with no export (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.change.removed", title: "change of a removed export (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(AUDIT_OFF)] }),
+  a({ id: "ae.change.conflict", title: "the export changed meanwhile: run it again (1)", args: AE("change", "--bucket", "b"), server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 409, apiError(409, "VERSION_CONFLICT", "version 3 is not current"))] }),
+  a({ id: "ae.change.step-up", title: "a change needing approval in assisted mode: the approval to give (75)", args: ["--assisted", ...AE("change", "--endpoint", "https://other.example.com")], server: [metaOf(), auditAt(), exch("PATCH", `${ORG}/audit-export`, 403, err(403, "STEP_UP_REQUIRED", { approval: SEC_APPROVAL }))] }),
+  a({ id: "ae.remove.no-confirm", title: "remove without --confirm: what it stops and the command (64), nothing sent", args: AE("remove") }),
+  a({ id: "ae.remove.no-confirm.outside", title: "the same outside a repository: <organization>", args: AE("remove"), ...OUTSIDE }),
+  a({ id: "ae.remove.wrong-confirm", title: "--confirm naming another Organization (64)", args: AE("remove", "--confirm", "other") }),
+  a({ id: "ae.remove.assisted", title: "assisted mode without --confirm (78), nothing sent", args: ["--assisted", ...AE("remove")] }),
+  a({ id: "ae.remove", title: "removed at the current version", args: AE("remove", "--confirm", "acme"), server: [metaOf(), auditAt(), exch("DELETE", `${ORG}/audit-export?expectedVersion=3`, 200, { ...EXPORT, state: "removed", version: 4 })] }),
+  a({ id: "ae.remove.json", title: "remove --json", args: AE("remove", "--confirm", "acme", "--json"), server: [metaOf(), auditAt(), exch("DELETE", `${ORG}/audit-export?expectedVersion=3`, 200, { ...EXPORT, state: "removed", version: 4 })] }),
+  a({ id: "ae.remove.none", title: "remove with no export (1)", args: AE("remove", "--confirm", "acme"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.check", title: "check the export's own destination with its stored key", args: AE("check"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, CHECK_OK)] }),
+  a({ id: "ae.check.named", title: "check a named destination with a new key: no status read", args: AE("check", ...DEST, ...KEY, "--retention", "governance:7"), files: withSecret(), server: [metaOf(), exch("POST", `${ORG}/audit-export/check`, 200, { ...CHECK_OK, objectLock: null, keyCanRead: null })] }),
+  a({ id: "ae.check.prefix", title: "check with only --prefix: the export's destination, the prefix named", args: AE("check", "--prefix", "new/", "--json"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ...CHECK_OK, objectLock: "verified", keyCanRead: false })] }),
+  a({ id: "ae.check.failed", title: "a failed check: its reason, exit 1", args: AE("check"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ok: false, message: "AccessDenied\u0007", objectLock: null, keyCanRead: null })] }),
+  a({ id: "ae.check.failed-silent", title: "a failed check without a reason, --json: exit 1", args: AE("check", "--json"), server: [metaOf(), auditAt(), exch("POST", `${ORG}/audit-export/check`, 200, { ok: false, message: null })] }),
+  a({ id: "ae.check.nothing", title: "no export and no destination named (1)", args: AE("check"), server: [metaOf(), auditAt(AUDIT_NONE)] }),
+  a({ id: "ae.check.key-no-destination", title: "a key but no destination (64, after the meta)", args: AE("check", ...KEY), files: withSecret(), server: [metaOf()] }),
+
+  // audit export, NDJSON
+  a({ id: "export.ndjson", title: "audit export: the log as NDJSON, as the server sent it", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.refused", title: "audit export refused: the server's error", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, apiError(403, "PERMISSION_DENIED")), status: 403 }] }),
+  a({ id: "export.not-json-error", title: "an error that is not a Varlatch error: HTTP <status>", args: ["audit", "export"], server: [{ ...ok(`${ORG}/audit-events/export`, "<html>bad gateway</html>"), status: 502, headers: { "content-type": "text/html" } }] }),
+  a({ id: "export.deleted", title: "audit export --deleted-org: a deleted Organization's log", args: ["audit", "export", "--deleted-org", "org_gone", "--server", "{{server}}"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.deleted.default-server", title: "--deleted-org with the only credential's server", args: ["audit", "export", "--deleted-org", "org_gone"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", NDJSON), headers: { "content-type": "application/x-ndjson" } }] }),
+  a({ id: "export.deleted.no-value", title: "--deleted-org without a value (64)", args: ["audit", "export", "--deleted-org"], ...OUTSIDE }),
+  a({ id: "export.deleted.extra", title: "--deleted-org with an extra argument (64)", args: ["audit", "export", "now", "--deleted-org", "org_gone"], ...OUTSIDE }),
+  a({ id: "export.deleted.not-found", title: "an unknown deleted Organization: the server's 404", args: ["audit", "export", "--deleted-org", "org_gone", "--server", "{{server}}"], ...OUTSIDE, server: [{ ...ok("/v1/deleted-organizations/org_gone/audit-events/export", apiError(404, "RESOURCE_NOT_FOUND")), status: 404 }] }),
+];
+
 // ---- 5.8a: guided init, and what it never does off a terminal ---------------
 //
 // Guided `init` runs only with a terminal on both ends, outside assisted
@@ -2404,9 +2990,13 @@ export const AREAS: Record<string, TranscriptCase[]> = {
   "5.4d-scan": scan54d,
   "5.4e-find-files": findFiles54e,
   "5.4f-strict": strict54f,
+  "5.5b-agent-run": [...agentRun55b, ...agentSafeStrict55b],
+  "5.5b-request": request55b,
   "5.6a-hook": hook56a,
   "5.6b-mcp": mcp56b,
   "5.7a-admin": admin57a,
   "5.7b-security": security57b,
+  "5.7c-audit": audit57c,
   "5.8a-guided-init": guided58a,
+  "5.8b-sync": sync58b,
 };

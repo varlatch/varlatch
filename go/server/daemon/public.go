@@ -56,7 +56,11 @@ func servePublic(cfg *config.Config, public *publictls.Manager, handler http.Han
 		ReadTimeout:       readTimeout,
 		IdleTimeout:       idleTimeout,
 		ErrorLog:          quiet,
-		ConnContext:       httpserver.ConnContext,
+		// Clients reach this listener directly: no X-Forwarded-For is
+		// believed, whatever trusted_proxies says (it is the plain
+		// listener's, for a proxy in front of that one), and a request for
+		// a host other than the public URL's is 421 (httpserver).
+		ConnContext: httpserver.DirectConnContext,
 		// A TLS-ALPN-01 handshake serves no request.
 		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){publictls.ACMETLS1: publictls.ChallengeOnly},
 	}

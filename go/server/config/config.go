@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/outbound"
@@ -81,8 +83,9 @@ type Config struct {
 	SyncAdapters []string
 
 	// Backups (ADR-0059 Decision 7). BackupKeyFile is the Backup Encryption
-	// Key's file (32 bytes, hex or base64); without one, varlatchd makes no
-	// scheduled backup.
+	// Key's file (32 bytes, hex or base64): backup_key_file, else the
+	// unit's backup-key credential when it exists; without one, varlatchd
+	// makes no scheduled backup.
 	BackupKeyFile string
 	// BackupInterval is how often a scheduled backup runs; 0 is off.
 	BackupInterval time.Duration
@@ -99,6 +102,9 @@ type Config struct {
 	// (ADR-0059 Decision 5, step 6's decision 4); nil when off, which
 	// leaves every other listener exactly as it is.
 	PublicHTTPS *PublicHTTPS
+	// ServeCLI is serve_cli (ADR-0058 Decision 3): the installation serves
+	// its release's CLI and installers at its public URL.
+	ServeCLI bool
 }
 
 // PublicHTTPS is varlatchd's own public HTTPS: a certificate for the
@@ -190,7 +196,7 @@ var keys = []string{"listen", "public_url", "data_dir", "root_kek_file", "truste
 	"backup_key_file", "backup_interval", "backup_keep", "backup_destinations_file", "backup_destination",
 	"tailnet", "tailnet_hostname", "tailnet_tags", "tailnet_port", "tailnet_control_url", "tailnet_auth_key_file",
 	"tailnet_https_port", "tailnet_browser_origins",
-	"listen_https", "listen_http_redirect", "acme_email", "acme_ca", "acme_ca_root"}
+	"listen_https", "listen_http_redirect", "acme_email", "acme_ca", "acme_ca_root", "serve_cli"}
 
 // Backup defaults: a day between backups, seven archives kept (the
 // TypeScript host backup's LOCAL_KEEP), the destination named offsite
@@ -213,7 +219,19 @@ const (
 // env supplies CREDENTIALS_DIRECTORY (systemd's credentials, the default
 // home of the Root KEK) and STATE_DIRECTORY (the unit's state directory,
 // the default data directory when set).
-func Parse(r io.Reader, env Env) (*Config, error) {
+func Parse(r io.Reader, env Env) (*Config, error) { return parse(r, env, false) }
+
+// noRootKEK is what a configuration with no Root KEK lacks: under the unit
+// (serve), its credential; run by hand (host), the key beside the
+// configuration, read as root.
+func noRootKEK(host bool) *Error {
+	if host {
+		return &Error{0, "no Root KEK: set root_kek_file, or run this as root with the root-kek file beside the configuration (where setup writes it, and the unit's credential comes from)"}
+	}
+	return &Error{0, "no Root KEK: set root_kek_file, or run varlatchd under its unit, which hands it the root-kek credential"}
+}
+
+func parse(r io.Reader, env Env, host bool) (*Config, error) {
 	values := map[string]string{}
 	lines := map[string]int{}
 	sc := bufio.NewScanner(r)
@@ -295,7 +313,7 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 	case env("CREDENTIALS_DIRECTORY") != "":
 		c.RootKEKFile = filepath.Join(env("CREDENTIALS_DIRECTORY"), "root-kek")
 	default:
-		return nil, &Error{0, "no Root KEK: set root_kek_file, or run varlatchd under its unit, which hands it the root-kek credential"}
+		return nil, noRootKEK(host)
 	}
 	if v := values["trusted_proxies"]; v != "" {
 		if _, err := clientaddr.ParseTrustedProxies(v); err != nil {
@@ -325,6 +343,23 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 	default:
 		return nil, at("sync", "%q must be on or off", v)
 	}
+	switch v := values["serve_cli"]; v {
+	case "", "off":
+	case "on":
+		// The installers name the public URL, and it is what people
+		// trust to run code on their machines (https, or this machine).
+		if c.PublicURL == nil {
+			return nil, at("serve_cli", "on needs public_url: the installers it serves download from that address")
+		}
+		// The installers download from the origin; a path would be dropped,
+		// so the address they name would not be the one configured.
+		if p := c.PublicURL.EscapedPath(); p != "" && p != "/" {
+			return nil, at("serve_cli", "on needs a public_url without a path (%q has %q): the installers it serves name the origin alone", c.PublicURL.String(), p)
+		}
+		c.ServeCLI = true
+	default:
+		return nil, at("serve_cli", "%q must be on or off", v)
+	}
 	switch v := values["audit_export"]; v {
 	case "", "on":
 	case "off":
@@ -350,8 +385,17 @@ func Parse(r io.Reader, env Env) (*Config, error) {
 			return nil, at(name, "%q is not an absolute path", v)
 		}
 	}
-	if v := values["backup_key_file"]; v != "" {
+	switch v := values["backup_key_file"]; {
+	case v != "":
 		c.BackupKeyFile = filepath.Clean(v)
+	case env("CREDENTIALS_DIRECTORY") != "":
+		// The unit's backup-key credential, as root_kek_file's: setup
+		// writes both keys beside the configuration, and the unit loads
+		// them (varlatchd.service, LoadCredential). Only when it is there:
+		// without one, no scheduled backup, as before.
+		if p := filepath.Join(env("CREDENTIALS_DIRECTORY"), "backup-key"); fileExists(p) {
+			c.BackupKeyFile = p
+		}
 	}
 	c.BackupInterval = DefaultBackupInterval
 	switch v := values["backup_interval"]; v {
@@ -418,6 +462,12 @@ func listenAddress(name, v string, zero bool, at func(string, string, ...any) er
 	return nil
 }
 
+// loopbackIP is whether host is a loopback IP address (127.0.0.0/8, ::1).
+func loopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // publicDNSName is a host name a public certificate can name: two labels
 // at least, letters, digits and hyphens.
 var publicDNSName = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -469,6 +519,12 @@ func parsePublicHTTPS(values map[string]string, at func(string, string, ...any) 
 	}
 	if v == c.Listen || p.RedirectListen != "" && p.RedirectListen == c.Listen {
 		return nil, at("listen_https", "and listen_http_redirect must differ from listen, the plain listener")
+	}
+	// The plain listener stays on this machine: with public HTTPS, the
+	// API and the dashboard are never served in plain text beyond it (a
+	// proxy in front of the plain listener runs on this host).
+	if lh, _, _ := net.SplitHostPort(c.Listen); !loopbackIP(lh) {
+		return nil, at("listen", "%q: with listen_https, the plain listener must be on a loopback address (such as 127.0.0.1:8686), so nothing is served in plain text beyond this machine", c.Listen)
 	}
 	if e := values["acme_email"]; e != "" {
 		if !emailAddress.MatchString(e) {
@@ -538,12 +594,11 @@ func parseTailnet(values map[string]string, at func(string, string, ...any) erro
 	case "", TailscaleControlURL:
 		// Tailscale's, given or not: the pin records it as "".
 	default:
-		// ADR-0059 Decision 5: a self-hosted control server (Headscale)
-		// needs https and tsnet's bootstrap DNS fallback off, so that its
-		// host name never goes to Tailscale while it is down; the tsnet
-		// release in use has no way to turn that fallback off.
-		return nil, at("tailnet_control_url", "%q: this release joins Tailscale's coordination server only; a self-hosted one "+
-			"(Headscale) is not supported yet. Leave tailnet_control_url unset.", v)
+		u, msg := selfHostedControlURL(v)
+		if msg != "" {
+			return nil, at("tailnet_control_url", "%q: %s", v, msg)
+		}
+		t.ControlURL = u
 	}
 	switch v := values["tailnet_auth_key_file"]; {
 	case v != "":
@@ -557,12 +612,64 @@ func parseTailnet(values map[string]string, at func(string, string, ...any) erro
 	return t, parseBrowserEndpoint(values, at, c, t)
 }
 
+// selfHostedControlURL is a self-hosted control server's URL (Headscale),
+// as the node is given it and the pin records it: https, and an IP
+// address for its host (ADR-0059 Decision 5, as amended for step 7.5c).
+// tsnet resolves a control server's host name through Tailscale's DERP
+// servers whenever the ordinary lookup fails (its bootstrap DNS fallback,
+// which no tailscale.com release can turn off), so a self-hosted server's
+// name would go to Tailscale while that server or its DNS is down; an IP
+// address is never looked up. msg says why v is refused, "" when it is
+// not.
+func selfHostedControlURL(v string) (string, string) {
+	const why = "a self-hosted control server (Headscale) is given as https://<its IP address>[:port], such as https://192.0.2.10 or https://[2001:db8::10]:8443: " +
+		"tsnet looks a control server's host name up through Tailscale's DERP servers when the ordinary lookup fails, so a name would go to Tailscale; " +
+		"an IP address is never looked up. Leave tailnet_control_url unset for Tailscale's"
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme != "https" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", why
+	}
+	addr, err := netip.ParseAddr(u.Hostname())
+	if err != nil {
+		return "", why
+	}
+	// Judged as it is written back: an IPv4-mapped address is its IPv4
+	// one, so ::ffff:0.0.0.0 is the unspecified address it unmaps to.
+	if addr.Zone() != "" {
+		return "", "a zoned address is not a control server's; " + why
+	}
+	addr = addr.Unmap()
+	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
+		return "", "not an address a control server listens on (an unspecified, multicast, link-local or broadcast address); " + why
+	}
+	host := addr.String()
+	if addr.Is6() {
+		host = "[" + host + "]"
+	}
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return "", "its port is not 1 to 65535; " + why
+		}
+		if n != 443 {
+			host += ":" + strconv.Itoa(n)
+		}
+	}
+	return "https://" + host, ""
+}
+
 // parseBrowserEndpoint reads tailnet_https_port and tailnet_browser_origins
 // (config.ts's tailnetBrowser): the browser endpoint is off unless the
 // port is set, and then needs a port of its own and at least one origin.
 // Its host is tailnet_hostname in the pinned tailnet, known at enrolment.
 func parseBrowserEndpoint(values map[string]string, at func(string, string, ...any) error, c *Config, t *Tailnet) error {
 	raw := values["tailnet_https_port"]
+	if raw != "" && t.ControlURL != "" {
+		// The browser endpoint serves the node's Tailscale certificate,
+		// which only Tailscale's coordination server issues.
+		return at("tailnet_https_port", "the browser endpoint serves a Tailscale certificate, which a self-hosted control server (tailnet_control_url) does not issue: "+
+			"leave tailnet_https_port unset with a self-hosted control server")
+	}
 	if raw == "" {
 		if values["tailnet_browser_origins"] != "" {
 			return at("tailnet_browser_origins", "is set, but the browser endpoint is off; set tailnet_https_port to serve it")
@@ -659,4 +766,48 @@ func Load(path string) (*Config, error) {
 	}
 	defer f.Close()
 	return Parse(f, os.Getenv)
+}
+
+// LoadHost is Load for a host command run by hand outside the unit
+// (varlatchd admin), with env from HostEnv: the configuration as the unit
+// loads it, and, without a Root KEK, a remedy for a run by hand.
+func LoadHost(path string, env Env) (*Config, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return parse(f, env, true)
+}
+
+// HostEnv is env for a host command run by hand outside the unit: the unit
+// hands varlatchd its keys as credentials from beside the configuration
+// (LoadCredential=root-kek:/etc/varlatch/root-kek), so for a run as root
+// that sets no CREDENTIALS_DIRECTORY, with the Root KEK beside the
+// configuration, the configuration's directory stands for it. The keys are
+// read where they are, under their own modes (root's, 0600), never copied,
+// and nothing goes into the process's environment.
+//
+// Only as root, since host commands are root's: /etc/varlatch is 0750
+// root:varlatch, so a member of the varlatch group can see that root-kek
+// is there (though not read it), and gets no such directory. The rule is
+// keyenv.CredentialsDir, which the varlatch CLI's host front and the
+// image's key refusal apply too.
+func HostEnv(env Env, path string, root bool) Env {
+	dir := keyenv.CredentialsDir(env, path, root)
+	if dir == env("CREDENTIALS_DIRECTORY") {
+		return env
+	}
+	return func(name string) string {
+		if name == "CREDENTIALS_DIRECTORY" {
+			return dir
+		}
+		return env(name)
+	}
+}
+
+// fileExists is whether path names something (a credential's file).
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

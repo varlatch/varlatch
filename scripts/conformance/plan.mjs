@@ -91,6 +91,7 @@ export const PLAN = [
   // docs/design/go-cli.md, slice 5.7a).
   { suite: "admin-cli", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "security-cli", args: (ctx) => [ctx.origin, ctx.token] },
+  { suite: "audit-cli", args: (ctx) => [ctx.origin, ctx.token] },
   // Deletion over the API: a Project's deletion, its approval at enforce.
   { suite: "deletion", args: (ctx) => [ctx.origin, ctx.token] },
   // Audit webhook delivery against the target's local receiver.
@@ -100,6 +101,8 @@ export const PLAN = [
   // OIDC workload identity, against the target's local issuer.
   { suite: "oidc", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "doctor", args: () => [] },
+  // The Go installation's doctor (go-server checks), on its own host.
+  { suite: "go-doctor", args: () => [] },
   { suite: "convex-down", args: (ctx) => [ctx.origin, ctx.token] },
   { suite: "cli-download-off", args: (ctx) => [ctx.origin] },
   { suite: "cli-download-on", args: (ctx) => [ctx.origin] },

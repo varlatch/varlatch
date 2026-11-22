@@ -16,7 +16,20 @@ test("a target's capabilities come from capabilities.json alone, and every adapt
     const loaded = await loadTarget(spec);
     assert.deepEqual(loaded.capabilities, file[name], name);
     assert.equal(loaded.target.capabilities, undefined, `${name} declares no capabilities of its own`);
+    assert.equal(loaded.as, name, `${name} runs with its own expectations`);
   }
+});
+
+test("go-container runs as go-binary: its capabilities, expectations file and expectation key", async () => {
+  assert.ok(TARGET_NAMES.includes("go-container"));
+  assert.equal(file["go-container"], undefined, "go-container has no capabilities of its own in capabilities.json");
+  const loaded = await loadTarget("go-container:ghcr.io/varlatch/varlatchd:test");
+  assert.equal(loaded.name, "go-container");
+  assert.equal(loaded.argument, "ghcr.io/varlatch/varlatchd:test");
+  assert.deepEqual(loaded.capabilities, file["go-binary"]);
+  assert.equal(loaded.as, "go-binary");
+  assert.equal(loaded.expectKey, "go-binary");
+  await assert.rejects(loadTarget("go-container"), /go-container:<image>/);
 });
 
 test("an adapter that lacks a listed capability's operation is refused", () => {
