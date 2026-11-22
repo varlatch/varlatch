@@ -180,6 +180,13 @@ func TestFailingChecks(t *testing.T) {
 		{"no recent archive", "backups.status", Advisory, "", func(f *fixture) {
 			f.now = f.now.Add(72 * time.Hour)
 		}, "No archive created within the last 48 hours", "backup status"},
+		{"only an earlier database's archive (a migration made again)", "backups.status", Advisory, "", func(f *fixture) {
+			// The live database was made after the archive: an import's.
+			f.in.Live.DatabaseCreatedAt = f.now.Add(-30 * time.Minute).Format(time.RFC3339Nano)
+		}, "No archive created within the last 48 hours", "backup status"},
+		{"only another installation's archive", "backups.status", Advisory, "", func(f *fixture) {
+			f.in.Live.InstallationID = "inst_other"
+		}, "No archive created within the last 48 hours", "backup status"},
 		{"a closed tailnet pin", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
 			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "suffix-changed"
 		}, "tailnet access is closed: suffix-changed", "varlatch tailnet repin"},

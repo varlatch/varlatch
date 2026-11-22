@@ -123,3 +123,61 @@ func TestStatusListsTypeScriptArchivesApart(t *testing.T) {
 		t.Errorf("ReadStatus: %v", err)
 	}
 }
+
+// An earlier database's records (a migration rolled back, its old data
+// deleted, then a new one: Go's backups/ kept) are listed, but do not make
+// this database's backups recent nor stand for its newest archive; another
+// installation's neither. The zero Lifecycle counts every record, as
+// before.
+func TestStatusCountsOnlyTheLiveDatabasesArchives(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	iso := func(d time.Duration) string { return now.Add(d).Format("2006-01-02T15:04:05.000Z") }
+	checked := &Verification{Integrity: true, Compatibility: true, KeyMatch: true, CheckedAt: iso(-2 * time.Hour), TargetRelease: "0.50.0"}
+	delivered := &Delivery{Destination: "b2", UploadedAt: iso(-2 * time.Hour), RemoteVerification: checked}
+	// The earlier migration's final archive, two hours old: verified and
+	// delivered, of the same installation.
+	old := StatusRecord{ArchiveID: "00000000-0000-4000-8000-000000000001", InstallationID: "inst_a", CreatedAt: iso(-2 * time.Hour), Release: "0.50.0",
+		RequiredKeyVersions: []int{1}, Verification: checked, Delivery: delivered}
+	if err := SaveStatus(dir, old); err != nil {
+		t.Fatal(err)
+	}
+	// The zero Lifecycle: as before, the old archive is recent.
+	st, err := ReadStatus(dir, now)
+	if err != nil || len(st.Warnings) != 0 || len(st.Archives) != 1 {
+		t.Fatalf("every record: %+v %v", st, err)
+	}
+	// The new database, imported an hour ago: no archive of its own yet.
+	life := Lifecycle{InstallationID: "inst_a", Since: now.Add(-time.Hour)}
+	if life.Holds(old) {
+		t.Fatal("the earlier database's archive is held")
+	}
+	st, err = ReadStatusFor(dir, now, life)
+	if err != nil || len(st.Archives) != 1 || !slices.Contains(st.Warnings, "No archive created within the last 48 hours") {
+		t.Fatalf("after the import: %+v %v", st, err)
+	}
+	// Its own first archive, not yet verified: it is the newest, the 48
+	// hours are met.
+	own := StatusRecord{ArchiveID: "00000000-0000-4000-8000-000000000002", InstallationID: "inst_a", CreatedAt: iso(-time.Minute), Release: "0.50.0", RequiredKeyVersions: []int{1}}
+	if err := SaveStatus(dir, own); err != nil {
+		t.Fatal(err)
+	}
+	st, err = ReadStatusFor(dir, now, life)
+	if err != nil || slices.Contains(st.Warnings, "No archive created within the last 48 hours") ||
+		!slices.Contains(st.Warnings, "Newest archive "+own.ArchiveID+" has not passed verification") || len(st.Archives) != 2 {
+		t.Fatalf("its own archive: %+v %v", st, err)
+	}
+	// Within a minute of the making (records keep milliseconds) it is
+	// held; a clock moved back before the making judges by installation
+	// only.
+	if !life.Holds(StatusRecord{InstallationID: "inst_a", CreatedAt: now.Add(-time.Hour - 30*time.Second).Format("2006-01-02T15:04:05.000Z")}) {
+		t.Fatal("an archive made within the slack is not held")
+	}
+	if life.At(now.Add(-3*time.Hour)).Since != (time.Time{}) || !life.At(now.Add(-3*time.Hour)).Holds(old) || life.At(now).Since != life.Since || life.At(life.Since.Add(-time.Second)).Since != life.Since {
+		t.Fatal("At with the clock moved back")
+	}
+	// Another installation's record is not this one's, whenever made.
+	if (Lifecycle{InstallationID: "inst_b"}).Holds(own) || !(Lifecycle{}).Holds(own) || !(Lifecycle{InstallationID: "inst_a"}).Holds(old) {
+		t.Fatal("Holds by installation")
+	}
+}
