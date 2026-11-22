@@ -61,6 +61,7 @@ const migrateUsage = `Usage:
                 after a rollback Go's copy kept; --delete-old-data, never implied, removes the old data too, after a
                 final archive of it is made and verified: the backup options above are the final archive's)
   varlatch migrate --status [--from <compose directory>] [--json]
+  varlatch migrate --from-archive <archive> ... (the backup converter: varlatch migrate --from-archive --help)
                (on the installation's host, as root: --from is the Compose installation of the last
                 TypeScript release, the current directory by default; --config the target's varlatchd.conf;
                 --ingress the source's: its own Caddy (public), your reverse proxy (proxy), or Coolify's)`
@@ -175,6 +176,9 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 }
 
 func migrateCommand(r *Run) error {
+	if fromArchive(r.Args) {
+		return migrateArchiveCommand(r)
+	}
 	for _, a := range r.Args {
 		if a == "--help" || a == "-h" {
 			return r.println(migrateUsage)

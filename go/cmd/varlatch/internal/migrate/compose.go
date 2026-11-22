@@ -471,10 +471,8 @@ func (c *Compose) Export(ctx context.Context, runKey []byte, dryRun bool) (strin
 const ExportSummaryPrefix = "varlatch-export-summary: "
 
 // export runs the export with the command prefix gives (exec into the
-// running daemon's container, or a one-off one). The bundle streams into
-// a .partial beside its name, renamed to it only once the export ended
-// with status 0 and its summary: a killed run leaves the .partial, which
-// CleanLeftovers removes, and never a bundle.
+// running daemon's container, or a one-off one), into a new name in the
+// installation's backups directory (receiveBundle).
 func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix func(...string) []string) (string, error) {
 	suffix := make([]byte, 6)
 	if _, err := rand.Read(suffix); err != nil {
@@ -482,18 +480,39 @@ func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix
 	}
 	backups := filepath.Join(c.Directory, "backups")
 	host := filepath.Join(backups, "migration-"+hex.EncodeToString(suffix)+".jsonl")
-	partial := host + ".partial"
-	out, err := createOwned(partial, backups)
-	if err != nil {
-		return "", fmt.Errorf("the bundle in the installation's backups directory: %w", err)
-	}
 	args := []string{"migration", "export", "--out", "-", "--digests"}
 	if dryRun {
 		args = append(args, "--dry-run")
 	}
+	err := receiveBundle(ctx, "the source's migration export", host, runKey, func(ctx context.Context, in io.Reader, out io.Writer) (Ran, error) {
+		return c.stream(ctx, prefix(args...), in, out)
+	})
+	if err != nil {
+		return "", err
+	}
+	return host, nil
+}
+
+// receiveBundle runs an export that writes its bundle on its standard
+// output (the last TypeScript release's `admin migration export --out -`),
+// the run key line on its input, into path on this host: mode 0600, owned
+// as path's directory is when this process is root. The bundle streams
+// into a .partial beside path, never held in memory, and is renamed to
+// path only once the export ended with status 0 and its summary (the last
+// line of its standard error, ExportSummaryPrefix and a JSON object); the
+// rename is then made durable. Anything else removes the .partial: a
+// killed run leaves only it (CleanLeftovers, the converter's scratch), and
+// never a bundle. what names the export in its failure.
+func receiveBundle(ctx context.Context, what, path string, runKey []byte, run func(ctx context.Context, in io.Reader, out io.Writer) (Ran, error)) error {
+	dir := filepath.Dir(path)
+	partial := path + ".partial"
+	out, err := createOwned(partial, dir)
+	if err != nil {
+		return fmt.Errorf("the bundle in %s: %w", dir, err)
+	}
 	key := RunKeyText(runKey)
 	defer clear(key)
-	r, err := c.stream(ctx, prefix(args...), bytes.NewReader(key), out)
+	r, err := run(ctx, bytes.NewReader(key), out)
 	if serr := out.Sync(); err == nil && serr != nil {
 		err = serr
 	}
@@ -501,25 +520,25 @@ func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix
 		err = cerr
 	}
 	if err == nil && r.Code != 0 {
-		err = failure("the source's migration export", r)
+		err = failure(what, r)
 	}
 	if err == nil && !exportSummary(r.Said) {
-		err = errors.New("the source's migration export ended without its summary: the bundle it wrote is not taken")
+		err = fmt.Errorf("%s ended without its summary: the bundle it wrote is not taken", what)
 	}
 	if err == nil {
-		err = os.Rename(partial, host)
+		err = os.Rename(partial, path)
 	}
 	if err != nil {
 		_ = os.Remove(partial)
-		return "", err
+		return err
 	}
 	// The rename made durable, as writeJournal's is: the bundle the
 	// journal will name is there after a crash.
-	if err := syncDir(backups); err != nil {
-		_ = os.Remove(host)
-		return "", err
+	if err := syncDir(dir); err != nil {
+		_ = os.Remove(path)
+		return err
 	}
-	return host, nil
+	return nil
 }
 
 // syncDir makes a directory's entries durable (a rename into it).
