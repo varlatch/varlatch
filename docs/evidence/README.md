@@ -28,8 +28,11 @@ running suites for an hour). After the run, `judgeGate`
    checkout (no `..` path traversal).
 2. The file must exist as a regular, non-empty, non-symlink file (`lstat`).
 3. The file must not contain the template sentinel
-   (`<!-- g1-walkthrough: TEMPLATE -->`), any HTML comment (`<!--`) or fenced
-   code block (a line starting with three backticks or tildes): the gate reads
+   (`<!-- g1-walkthrough: TEMPLATE -->`), any HTML comment (`<!--`), raw HTML
+   block (`<details>`, `<pre>`, `<style>`, `<script>`, `<textarea>`,
+   `<template>`, `<noscript>`, `<xmp>`, `<iframe>`, `<table>` or `<div>`), or
+   fenced code block (three backticks or tildes, at the margin or opened
+   inside a list item or a blockquote): the gate reads
    the evidence as plain lines, not rendered Markdown, so it refuses what it
    would read differently from a reader. Nor may it contain an unchecked
    checklist row (a row whose Done cell is not `[x]`, with or without its

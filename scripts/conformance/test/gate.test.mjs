@@ -141,7 +141,7 @@ test("the browser-walkthrough evidence must be named, under docs/evidence/, pres
   // fence inside a comment; PASS split by a comment).
   const verdictLine = "- **Verdict:** `PASS`";
   const commitLine = `- **Candidate commit:** \`${candidateCommit}\``;
-  const refused = /has HTML comments or fenced code blocks: remove them/;
+  const refused = /has HTML comments, raw HTML or fenced code blocks: remove them/;
   for (const [name, content] of [
     ["a commented-out Verdict", signedWalkthroughContent().replace(verdictLine, `<!-- ${verdictLine} -->`)],
     ["a commented-out Candidate commit", signedWalkthroughContent().replace(commitLine, `<!-- ${commitLine} -->`)],
@@ -156,8 +156,30 @@ test("the browser-walkthrough evidence must be named, under docs/evidence/, pres
     ["a fence inside a closed comment", `${signedWalkthroughContent()}\n<!--\n\`\`\`\n-->`],
     ["an indented fence", `${signedWalkthroughContent()}\n   ~~~\n   x\n   ~~~`],
     ["a quoted example table", `${signedWalkthroughContent()}\n\n\`\`\`md\n| # | Done |\n| --- | --- |\n| 1 | [ ] |\n\`\`\`\n`],
+    // Raw HTML that opens a block or hides its content, in any case.
+    ...["details", "pre", "style", "script", "textarea", "template", "noscript", "xmp", "iframe", "table", "div"].map((tag) => [
+      `a raw <${tag}> block`,
+      signedWalkthroughContent().replace(verdictLine, `<${tag.toUpperCase()} class="x">\n${verdictLine}\n</${tag}>`),
+    ]),
+    ["a self-closing raw tag", `${signedWalkthroughContent()}\n<div/>`],
+    ["a raw tag at the end of the file", `${signedWalkthroughContent()}\n<pre`],
+    ["a raw tag across lines", `${signedWalkthroughContent()}\n<details\nopen>\n| 9 | [ ] | old |\n</details>`],
+    ["a raw HTML table hiding a row", `${signedWalkthroughContent()}\n<table><tr><td>| 9 | [ ] | old |</td></tr></table>`],
+    // Fences opened inside a list item or a blockquote, at any indent.
+    ["a fence in a bullet", `${signedWalkthroughContent()}\n- \`\`\`\n  ${verdictLine}\n  \`\`\``],
+    ["a fence in a numbered item", `${signedWalkthroughContent()}\n1. ~~~\n   x\n   ~~~`],
+    ["a fence in a numbered item with a parenthesis", `${signedWalkthroughContent()}\n2) \`\`\`\n   x\n   \`\`\``],
+    ["a fence in a blockquote", `${signedWalkthroughContent()}\n> \`\`\`\n> x\n> \`\`\``],
+    ["a fence in a blockquote without a space", `${signedWalkthroughContent()}\n>\`\`\`\n>x\n>\`\`\``],
+    ["a fence in a nested list in a blockquote", `${signedWalkthroughContent()}\n> - * ~~~\n>     x`],
+    ["a fence indented four spaces", `${signedWalkthroughContent()}\n    \`\`\`\n    x`],
   ]) {
     assert.match(problem({ ...walkthrough, content }), refused, name);
+  }
+  // Route placeholders, other angle brackets and prose naming the
+  // elements are not raw HTML; a bullet without a fence is not one.
+  for (const fine of ["| 1 | [x] | Projects | `/o/<org>/p/<git-proj>` |", "The <table-less> layout, a <table-name>, a <predicate>, <divs> and <templates>.", "- Item `x` and ~two~ tildes", "> quoted note"]) {
+    assert.equal(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n\n${fine}` }), "", fine);
   }
   // A 4-space indent is a code block: its Verdict or Candidate commit is
   // not the sign-off's.
@@ -200,7 +222,7 @@ test("the shipped g1-walkthrough-template.md fails the gate on its own", () => {
   assert.equal(verdict.passed, false);
   const joined = verdict.problems.join("\n");
   assert.match(joined, /still the template/);
-  assert.match(joined, /has HTML comments or fenced code blocks/);
+  assert.match(joined, /has HTML comments, raw HTML or fenced code blocks/);
   assert.match(joined, /unchecked checklist rows/);
   assert.match(joined, /unreplaced placeholders/);
   assert.match(joined, /\*\*Verdict:\*\* PASS/);
