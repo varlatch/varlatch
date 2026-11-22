@@ -3466,8 +3466,8 @@ migrations.
   `varlatchd admin migrate`.
   - The phases: preflight (the source is 0.23.0 by its image's version,
     and its image is the published one by its registry digest of
-    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, filled in when
-    0.23.0 is published: until then `migrate` refuses every source; it is
+    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, v0.23.0's
+    varlatchd image index as its release published it; it is
     behind no gate; what an interrupted run left, its scratch directories
     and bundles by their exact names, is removed; a fresh backup made, uploaded,
     downloaded and verified; the target's key files given the source's
