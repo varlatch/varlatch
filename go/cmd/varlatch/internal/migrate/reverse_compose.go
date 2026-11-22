@@ -397,8 +397,10 @@ func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRec
 	}
 	defer in.Close()
 	answer := &tail{n: importAnswerLimit}
+	// The service's image runs its entrypoint (node dist/cli.js): run's
+	// command is the CLI's arguments only.
 	r, err := c.stream(ctx, []string{"compose", "--profile", reverseProfile, "run", "--rm", "-T", "varlatch-reverse-import",
-		"node", "dist/cli.js", "admin", "migration", "import", "--in", "-"}, in, answer)
+		"admin", "migration", "import", "--in", "-"}, in, answer)
 	if err != nil {
 		return TSImportRecord{}, err
 	}
@@ -422,9 +424,11 @@ func (c *Compose) ResetConvex(ctx context.Context) error {
 }
 
 // oneOff is the TypeScript CLI in a one-off container of the varlatchd
-// service, its daemon not started.
+// service, its daemon not started. Unlike exec, run keeps the image's
+// entrypoint (node dist/cli.js), so its command is the CLI's arguments
+// only (rehearsal r16d: "Unknown command: node").
 func oneOff(args ...string) []string {
-	return append([]string{"compose", "run", "--rm", "-T", "--no-deps", service, "node", "dist/cli.js", "admin"}, args...)
+	return append([]string{"compose", "run", "--rm", "-T", "--no-deps", service, "admin"}, args...)
 }
 
 // ExportForCheck is `admin migration export --dry-run --digests` of the
