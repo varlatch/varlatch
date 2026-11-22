@@ -103,8 +103,8 @@ func (s fakesState) coolifyWrites() int {
 }
 
 // writeFakesCerts writes the run's CA (ca.pem) and the stand-ins'
-// certificate for names, signed by it, with its key (cert.pem, key.pem),
-// into dir. Readable by the stand-ins' user: they are this run's only.
+// certificate for names, signed by it (cert.pem), readable by anyone, and
+// its key (key.pem), 0600: startFakes hands it to the stand-ins' user.
 func writeFakesCerts(dir string, names []string) error {
 	now := time.Now()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -147,7 +147,15 @@ func writeFakesCerts(dir string, names []string) error {
 		"key.pem":  {Type: "PRIVATE KEY", Bytes: keyDER},
 	}
 	for name, block := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), pem.EncodeToMemory(block), 0o644); err != nil {
+		mode := os.FileMode(0o644)
+		if name == "key.pem" {
+			mode = 0o600
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, pem.EncodeToMemory(block), mode); err != nil {
+			return err
+		}
+		if err := os.Chmod(path, mode); err != nil {
 			return err
 		}
 	}
@@ -170,7 +178,8 @@ func goRoots(dir, system string) (string, error) {
 }
 
 // syncOverlay is the source's Compose overlay: its varlatchd trusts the
-// run's CA (NODE_EXTRA_CA_CERTS, from dir's source.env), reaches the
+// run's CA (NODE_EXTRA_CA_CERTS, from dir's source.env; only ca.pem is
+// mounted, never the stand-ins' key), reaches the
 // stand-ins' network, and finds the platforms' names at their address.
 // The variable comes through env_file, not environment: an overlay's
 // environment merged into the base file's makes `docker compose config
@@ -186,7 +195,7 @@ func syncOverlay(network, ip, dir string) string {
 	for _, h := range fakeHosts {
 		fmt.Fprintf(&b, "      - \"%s:%s\"\n", h, ip)
 	}
-	fmt.Fprintf(&b, "    volumes:\n      - %s:%s:ro\n    networks:\n      vl-rh-sync: {}\nnetworks:\n  vl-rh-sync:\n    external: true\n    name: %s\n", dir, syncMount, network)
+	fmt.Fprintf(&b, "    volumes:\n      - %s/ca.pem:%s/ca.pem:ro\n    networks:\n      vl-rh-sync: {}\nnetworks:\n  vl-rh-sync:\n    external: true\n    name: %s\n", dir, syncMount, network)
 	return b.String()
 }
 
@@ -228,11 +237,26 @@ func startFakes(t *testing.T) *platformFakes {
 		t.Fatal(err)
 	}
 	_ = os.Chmod(f.dir, 0o755)
+	// Last: the stand-ins' key always, the directory unless VL_RH_KEEP=1
+	// keeps the source (which mounts its ca.pem). run.sh removes it too
+	// after an interrupted run.
+	t.Cleanup(func() {
+		_ = os.Remove(filepath.Join(f.dir, "key.pem"))
+		if os.Getenv("VL_RH_KEEP") != "1" {
+			_ = os.RemoveAll(f.dir)
+		}
+	})
 	if err := os.WriteFile(filepath.Join(f.dir, "platform-fakes.cjs"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeFakesCerts(f.dir, fakeHosts); err != nil {
 		t.Fatal(err)
+	}
+	// The stand-ins run as uid 1000; the harness as root (the runner).
+	if os.Geteuid() == 0 {
+		if err := os.Chown(filepath.Join(f.dir, "key.pem"), 1000, 1000); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(f.dir, "source.env"), []byte("NODE_EXTRA_CA_CERTS="+syncMount+"/ca.pem\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -344,11 +368,26 @@ func pollUntil(d, gap time.Duration, done func() bool) bool {
 	}
 }
 
-// syncTarget is the part of a Sync Target's view the case reads.
+// syncTarget is the part of a Sync Target's view the case reads. Drained
+// (no run of it holds a lease) is Go's; the source's view has none.
 type syncTarget struct {
 	LastResult    string `json:"lastResult"`
 	LastAttemptAt string `json:"lastAttemptAt"`
 	FailureCount  int    `json:"failureCount"`
+	NeedsSync     bool   `json:"needsSync"`
+	Drained       *bool  `json:"drained"`
+}
+
+// settled is a Target with no run in progress and nothing due.
+func (s syncTarget) settled() bool { return s.Drained != nil && *s.Drained && !s.NeedsSync }
+
+// migrationStatus is what the source's `admin migration status` prints.
+type migrationStatus struct {
+	Gate *struct {
+		Kind  string `json:"kind"`
+		Phase string `json:"phase"`
+	} `json:"gate"`
+	InFlight map[string]int `json:"inFlight"`
 }
 
 func (s syncTarget) ok() bool {
@@ -356,7 +395,11 @@ func (s syncTarget) ok() bool {
 }
 
 func (s syncTarget) String() string {
-	return fmt.Sprintf("%q, %d failures, attempted %s", s.LastResult, s.FailureCount, s.LastAttemptAt)
+	drained := "?"
+	if s.Drained != nil {
+		drained = fmt.Sprint(*s.Drained)
+	}
+	return fmt.Sprintf("%q, %d failures, attempted %s, needsSync %v, drained %s", s.LastResult, s.FailureCount, s.LastAttemptAt, s.NeedsSync, drained)
 }
 
 func syncCase(t *testing.T, rel release, s3 *s3Server) {
@@ -426,6 +469,7 @@ func syncCase(t *testing.T, rel release, s3 *s3Server) {
 	// is held, the barrier is opened. The source gives up on a write after
 	// 10 s (packages/sync DEFAULT_TIMEOUT_MS), so the barrier starts at
 	// once and the write is released within a few seconds.
+	writesBefore := f.state().Writes[repo]
 	f.github(map[string]any{"op": "hold", "repo": repo})
 	put("DEBUG", "true")
 	heldAt := time.Time{}
@@ -448,8 +492,10 @@ func syncCase(t *testing.T, rel release, s3 *s3Server) {
 	go func() { barrierDone <- in.admin(nil, "migration", "barrier", "--drain-seconds", "20") }()
 	var status string
 	waiting := pollUntil(6*time.Second, 300*time.Millisecond, func() bool {
-		status = strings.Join(strings.Fields(in.admin(nil, "migration", "status").stdout), "")
-		return strings.Contains(status, `"kind":"migration"`) && strings.Contains(status, `"sync":`)
+		out := strings.TrimSpace(in.admin(nil, "migration", "status").stdout)
+		status = strings.Join(strings.Fields(out), "")
+		var ms migrationStatus
+		return json.Unmarshal([]byte(out), &ms) == nil && ms.Gate != nil && ms.Gate.Kind == "migration" && ms.InFlight["sync"] >= 1
 	})
 	time.Sleep(time.Second)
 	running := len(barrierDone) == 0
@@ -460,6 +506,10 @@ func syncCase(t *testing.T, rel release, s3 *s3Server) {
 	var b barrierAnswer
 	drained := r.code == 0 && json.Unmarshal([]byte(lastLine(r.stdout)), &b) == nil && b.Gate.Kind == "migration"
 	measure("item 13: the barrier's drain", string(b.Drained))
+	var drain struct {
+		WaitedFor map[string]int `json:"waitedFor"`
+	}
+	_ = json.Unmarshal(b.Drained, &drain)
 	st = f.state()
 	once := 0
 	for _, d := range st.Deliveries {
@@ -467,8 +517,13 @@ func syncCase(t *testing.T, rel release, s3 *s3Server) {
 			once++
 		}
 	}
-	record(t, item, "the held write is delivered once and the barrier drains after it", drained && bytes.Contains(b.Drained, []byte(`"sync"`)) && once == 1 && len(st.Abandoned) == 0,
-		fmt.Sprintf("released %s; delivered %d times, %d abandoned; drained %s; %s", trim(released), once, len(st.Abandoned), string(b.Drained), r.String()))
+	// Every answered write counts in writes, a held one once released and
+	// answered, a retry without a hold at once: exactly one more.
+	writesAfter := st.Writes[repo]
+	record(t, item, "the held write is delivered once and the barrier drains after it",
+		drained && drain.WaitedFor["sync"] >= 1 && once == 1 && writesAfter == writesBefore+1 && len(st.Abandoned) == 0,
+		fmt.Sprintf("released %s; delivered %d times, %d abandoned; GitHub writes %d then %d; drained %s; %s",
+			trim(released), once, len(st.Abandoned), writesBefore, writesAfter, string(b.Drained), r.String()))
 	if drained {
 		rl := in.admin(nil, "migration", "release", "--id", b.Gate.ID)
 		code, _ := in.get("/v1/meta")
@@ -501,21 +556,31 @@ func syncCase(t *testing.T, rel release, s3 *s3Server) {
 
 	// 4. Go sends nothing the source delivered: both Targets pushed, each
 	// runs on Go, and no write reaches a platform.
+	// A run's lastAttemptAt moves when it takes its lease, before it
+	// sends or commits anything: the run is over once the Target is
+	// drained (no lease) with nothing due. The counts are read after a
+	// further window, for anything a run sent last.
 	pushedAt := time.Now()
 	codes := []int{}
+	pushOK := true
 	for _, id := range []string{tGh, tApp} {
 		code, _ := c.send("POST", env+"/sync-targets/"+id+"/push", map[string]any{})
 		codes = append(codes, code)
+		pushOK = pushOK && code >= 200 && code < 300
 	}
 	ranOnGo := func(id string) bool {
-		at, err := time.Parse(time.RFC3339Nano, target(id).LastAttemptAt)
-		return err == nil && at.After(pushedAt.Add(-time.Second))
+		v := target(id)
+		at, err := time.Parse(time.RFC3339Nano, v.LastAttemptAt)
+		return err == nil && at.After(pushedAt.Add(-time.Second)) && v.settled()
 	}
 	both := pollUntil(150*time.Second, 2*time.Second, func() bool { return ranOnGo(tGh) && ranOnGo(tApp) })
+	time.Sleep(5 * time.Second)
 	st = f.state()
-	record(t, item, "after the migration, Go sends nothing the source delivered", both && st.Writes[repo] == ghWrites && st.coolifyWrites() == coolWrites && target(tGh).ok() && target(tApp).ok(),
-		fmt.Sprintf("push answered %v; ran on Go %v; GitHub writes %d then %d; Coolify writes %d then %d; GitHub Target %s; Coolify Target %s",
-			codes, both, ghWrites, st.Writes[repo], coolWrites, st.coolifyWrites(), target(tGh), target(tApp)))
+	gt, at := target(tGh), target(tApp)
+	record(t, item, "after the migration, Go sends nothing the source delivered",
+		pushOK && both && gt.settled() && at.settled() && st.Writes[repo] == ghWrites && st.coolifyWrites() == coolWrites && gt.ok() && at.ok(),
+		fmt.Sprintf("push answered %v; ran on Go and settled %v; GitHub writes %d then %d; Coolify writes %d then %d; GitHub Target %s; Coolify Target %s",
+			codes, both, ghWrites, st.Writes[repo], coolWrites, st.coolifyWrites(), gt, at))
 
 	// 5. A change made on Go is pushed from Go.
 	put("PORT", "9090")

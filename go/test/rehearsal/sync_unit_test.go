@@ -53,10 +53,13 @@ func TestSyncStandIns(t *testing.T) {
 		if _, err := leaf.Verify(x509.VerifyOptions{DNSName: fakeHosts[0]}); err == nil {
 			t.Error("the certificate verifies without the run's CA")
 		}
-		for _, name := range []string{"ca.pem", "cert.pem", "key.pem"} {
-			if fi, err := os.Stat(filepath.Join(dir, name)); err != nil || fi.Mode().Perm()&0o004 == 0 {
-				t.Errorf("%s is not readable by the stand-ins' user: %v", name, err)
+		for _, name := range []string{"ca.pem", "cert.pem"} {
+			if fi, err := os.Stat(filepath.Join(dir, name)); err != nil || fi.Mode().Perm() != 0o644 {
+				t.Errorf("%s: %v, %v, want 0644", name, fi.Mode().Perm(), err)
 			}
+		}
+		if fi, err := os.Stat(filepath.Join(dir, "key.pem")); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Errorf("key.pem: %v, %v, want 0600", fi.Mode().Perm(), err)
 		}
 	})
 	t.Run("the target's roots: the system's and the run's CA", func(t *testing.T) {
@@ -87,7 +90,7 @@ func TestSyncStandIns(t *testing.T) {
 		for _, want := range []string{
 			"    env_file:\n      - /w/sync-fakes/source.env\n",
 			`- "api.github.com:172.30.0.2"`, `- "coolify.conformance.test:172.30.0.2"`, `- "convex.conformance.test:172.30.0.2"`,
-			"- /w/sync-fakes:/vl-rh-sync:ro",
+			"- /w/sync-fakes/ca.pem:/vl-rh-sync/ca.pem:ro",
 			"    networks:\n      vl-rh-sync: {}\n",
 			"networks:\n  vl-rh-sync:\n    external: true\n    name: vl-rh-r1-sync\n",
 		} {
@@ -98,6 +101,10 @@ func TestSyncStandIns(t *testing.T) {
 		// The default network stays (a map merges with the base file's).
 		if strings.Contains(got, "- default") {
 			t.Errorf("the overlay lists networks, which replaces the base file's: %s", got)
+		}
+		// Only the CA reaches the source, never the stand-ins' key.
+		if strings.Count(got, "/w/sync-fakes") != 2 || strings.Contains(got, "key.pem") {
+			t.Errorf("the overlay mounts more than ca.pem: %s", got)
 		}
 		// No environment of its own: merged, it reads as a list to migrate.
 		if strings.Contains(got, "environment:") {

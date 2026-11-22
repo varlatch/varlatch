@@ -116,7 +116,17 @@ cleanup() {
     docker run --rm --name "vl-rh-$run-chown" -u 0 -v "$root:$root" "$runner" chown -R "$(id -u):$(id -g)" "$root" || true
     docker image rm "$runner" >/dev/null 2>&1 || true
   fi
+  # The stand-ins' key goes whatever VL_RH_KEEP says.
+  rm -f "$root/work/sync-fakes/key.pem" 2>/dev/null || true
   if [ "${VL_RH_KEEP:-}" != 1 ]; then
+    # The sync case's (VL_RH_SYNC=fakes), when an interrupt left them (the
+    # test binary has no signal handler): its Compose stack, the
+    # stand-ins' container and network, and their directory, by their
+    # exact names. After a clean run there is nothing left to remove.
+    docker compose -p "vl-rh-$run-sync" --profile deploy down -v --remove-orphans --timeout 20 >/dev/null 2>&1 || true
+    docker rm -fv "vl-rh-$run-sync-fakes" >/dev/null 2>&1 || true
+    docker network rm "vl-rh-$run-sync" >/dev/null 2>&1 || true
+    rm -rf "$root/work/sync-fakes" 2>/dev/null || true
     if [ "$created_release" = 1 ]; then
       cleanup_release
     fi
