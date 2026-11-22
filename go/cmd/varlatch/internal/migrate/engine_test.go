@@ -1456,6 +1456,9 @@ func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
 		{"the same", "coolify.lan, 10.0.0.0/8:8000", "10.0.0.0/8:8000,COOLIFY.lan", "", ""},
 		{"a wider target", "coolify.lan", "coolify.lan,*.lan", "", ""},
 		{"a name's trailing dot", "coolify.lan.,Convex.LAN.:3210,10.0.0.0/8", "coolify.lan,convex.lan:3210,10.0.0.0/8", "", ""},
+		// JavaScript's \s, as outbound.ParseAllow drops it: a no-break
+		// space, a byte order mark, an ideographic space.
+		{"Unicode blanks", "coolify.lan\u00a0,\ufeffconvex.lan:3210\u3000", "coolify.lan,convex.lan:3210", "", ""},
 		{"one missing", "coolify.lan,convex.lan:3210", "coolify.lan", "", "lacks entries the source allows (convex.lan:3210)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

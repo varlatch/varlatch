@@ -55,6 +55,17 @@ func (c *Compose) Tailnet(ctx context.Context) (TailnetInfo, error) {
 	return info, nil
 }
 
+// SharesTailnetNetwork is whether varlatchd runs in the sidecar's network
+// (network_mode service:tailscale), as the stock topology's does: stopping
+// the sidecar then takes its network away.
+func (c *Compose) SharesTailnetNetwork(ctx context.Context) (bool, error) {
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return false, err
+	}
+	return cfg.Services[service].NetworkMode == "service:"+tailscaleService, nil
+}
+
 // StopTailnet is `docker compose stop tailscale`: tailscaled stops without
 // logging out, its state volume kept.
 func (c *Compose) StopTailnet(ctx context.Context) error {

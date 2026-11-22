@@ -44,6 +44,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 )
 
 // Options are a migration's settings.
@@ -709,6 +712,15 @@ func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 	ts, ok := e.Source.(TailnetSource)
 	owned := ok && sidecarOwned(j)
+	if sh, ok := e.Source.(networkSharer); owned && ok {
+		// Only a varlatchd in the sidecar's network lost it with the
+		// sidecar: one with its own network is marked as it is.
+		shared, err := sh.SharesTailnetNetwork(ctx)
+		if err != nil {
+			return fmt.Errorf("reading whether the source's varlatchd runs in its tailnet sidecar's network: %w; varlatch migrate --resume goes on", err)
+		}
+		owned = shared
+	}
 	if owned {
 		temp := "its temporary name"
 		if j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.ServingTemp != "" {
@@ -716,9 +728,20 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 		}
 		e.say("Tailnet: the source's sidecar starts again (its node under %s), so that its varlatchd, which shares its network, is marked migrated out; then it stops.", temp)
 		if err := ts.StartTailnet(ctx); err != nil {
+			// The sidecar may have started and varlatchd not: as the
+			// handoff left it, the old node off the tailnet.
+			if serr := ts.StopTailnet(ctx); serr != nil {
+				err = fmt.Errorf("%w; stopping the sidecar again: %v", err, serr)
+			}
 			return fmt.Errorf("starting the source's tailnet sidecar to mark the source migrated out: %w; varlatch migrate --resume goes on", err)
 		}
 		crashPoint("switch sidecar started")
+		if err := e.sourceAnswers(ctx); err != nil {
+			if serr := ts.StopTailnet(ctx); serr != nil {
+				err = fmt.Errorf("%w; stopping the sidecar again: %v", err, serr)
+			}
+			return fmt.Errorf("%w; varlatch migrate --resume goes on", err)
+		}
 	}
 	if err := e.migratedOut(ctx, j); err != nil {
 		if owned {
@@ -736,6 +759,42 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 		}
 	}
 	return nil
+}
+
+// networkSharer is a source that says whether its varlatchd runs in its
+// tailnet sidecar's network (Compose: network_mode service:tailscale).
+// A source that does not say is taken to.
+type networkSharer interface {
+	SharesTailnetNetwork(ctx context.Context) (bool, error)
+}
+
+// sourceReadyWait bounds the wait for the source's varlatchd, restarted
+// with its sidecar, to answer a command in its container; it is asked
+// every sourceReadyEvery.
+var sourceReadyWait, sourceReadyEvery = time.Minute, 2 * time.Second
+
+// sourceAnswers waits, at most sourceReadyWait, for the source's varlatchd
+// to answer its gate's status (a command in its container): restarted
+// with its sidecar, it may not be up yet.
+func (e *Engine) sourceAnswers(ctx context.Context) error {
+	sleep := e.sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	deadline := e.now().Add(sourceReadyWait)
+	for {
+		_, err := e.Source.Gate(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !e.now().Before(deadline) {
+			return fmt.Errorf("the source's varlatchd did not answer within %s of its sidecar's start: %w", sourceReadyWait, err)
+		}
+		sleep(sourceReadyEvery)
+	}
 }
 
 // open restarts the target out of the transfer's isolation: stopped, its
@@ -1222,7 +1281,14 @@ func (e *Engine) sameOutbound(ing IngressInfo, tgt TargetInfo) error {
 func allowEntries(spec string) []string {
 	var out []string
 	for _, raw := range strings.Split(spec, ",") {
-		x := strings.ToLower(strings.Join(strings.Fields(raw), ""))
+		// Without JavaScript's \s anywhere, lower-cased as ASCII: as
+		// outbound.ParseAllow reads an entry.
+		x := whatwg.ToLower(strings.Map(func(r rune) rune {
+			if whatwg.IsJSSpace(r) || unicode.Is(unicode.Zs, r) {
+				return -1
+			}
+			return r
+		}, raw))
 		if x == "" {
 			continue
 		}
