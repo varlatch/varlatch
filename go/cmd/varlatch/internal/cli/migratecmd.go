@@ -368,9 +368,9 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		state := "kept"
 		switch {
 		case c.Forgotten:
-			state = "removed by hand, its record cleared " + c.Undone
+			state = "removed by hand, its record cleared " + Printable(c.Undone)
 		case c.Undone != "":
-			state = "removed again " + c.Undone
+			state = "removed again " + Printable(c.Undone)
 		case j.Phase == migrate.Released:
 			state = "removal pending: varlatch migrate --abort removes it"
 		}

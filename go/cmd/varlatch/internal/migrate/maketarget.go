@@ -87,9 +87,9 @@ var (
 )
 
 // valid checks a record read from a journal (the source's directory may
-// be writable by others than root): its items plain names, and where it
-// was made setup's place (or, in the crashpoint build, a clean path ending
-// in it, under a test root).
+// be writable by others than root): its items plain names, where it was
+// made setup's place (or, in the crashpoint build, a clean path ending in
+// it, under a test root), and when it was undone a time.
 func (c *CreatedRecord) valid() error {
 	if c == nil {
 		return nil
@@ -101,6 +101,11 @@ func (c *CreatedRecord) valid() error {
 	}
 	if c.Config != "" && !validMadeAt(c.Config) {
 		return fmt.Errorf("created.config is not setup's configuration (%s)", setupConfig)
+	}
+	if c.Undone != "" {
+		if _, err := time.Parse(time.RFC3339Nano, c.Undone); err != nil {
+			return fmt.Errorf("created.undone is not a time")
+		}
 	}
 	return nil
 }

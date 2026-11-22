@@ -356,6 +356,7 @@ func TestTheTargetMigrateMakes(t *testing.T) {
 			`{"made":["user"],"config":"/etc/varlatch/varlatchd.conf; rm -rf /"}`,
 			`{"made":["user"],"config":"/tmp/x"}`,
 			`{"made":["user\u001b[2J"]}`,
+			`{"made":["user"],"undone":"soon\u001b[2J"}`,
 		} {
 			j := `{"format":1,"id":"mig_x","phase":"released","history":[],"created":` + rec + `}`
 			if err := os.WriteFile(filepath.Join(w.src.dir, JournalFile), []byte(j), 0o600); err != nil {
