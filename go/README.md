@@ -311,7 +311,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   nothing. `.github/workflows/published-release.yml` (step 6.1b) checks a
   published release of the Go line as people install it, on Linux, macOS
   and Windows (`install/published_test.go`, G8's published-asset half):
-  after the Release workflow publishes a prerelease, or by hand for any.
+  after the Release workflow publishes a release (a prerelease or a final
+  one), or by hand for any.
 - `image/` (step 6, slice 6.10a): the single-container image, varlatchd
   and the CLI in one distroless image for linux/amd64 and arm64, built by
   `image/build.sh` from the release's own Linux binaries. See "The
