@@ -37,6 +37,9 @@ type ProbeConfig struct {
 	ControlURL string
 	AuthKey    string
 	Tags       []string
+	// KeyTags: the probe's tags are its auth key's (a self-hosted control
+	// server), and it advertises none (NodeConfig.KeyTags).
+	KeyTags bool
 	// Timeout bounds each probe node's join (default 60 s).
 	Timeout time.Duration
 	// NamePrefix is the probe node's name before its random part
@@ -142,7 +145,7 @@ func probeJoin(ctx context.Context, c ProbeConfig, look func(context.Context, *l
 			observe("removed " + dir)
 		}
 	}()
-	srv, err := newServer(NodeConfig{Dir: dir, Hostname: name, ControlURL: c.ControlURL, AuthKey: c.AuthKey, Tags: c.Tags})
+	srv, err := newServer(NodeConfig{Dir: dir, Hostname: name, ControlURL: c.ControlURL, AuthKey: c.AuthKey, Tags: c.Tags, KeyTags: c.KeyTags})
 	if err != nil {
 		return err
 	}

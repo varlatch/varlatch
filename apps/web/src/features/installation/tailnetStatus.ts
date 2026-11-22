@@ -31,6 +31,7 @@ export const REASON_TEXT: Record<ListenerReason, string> = {
   NOT_RUNNING: "The node is not connected to the tailnet",
   OTHER_TAILNET: "The node is on another tailnet than the configured one",
   NAME_CHANGED: "The node's name is no longer the browser endpoint's host",
+  TAGS_DIFFER: "The node's tags are not tailnet_tags",
 };
 
 export type Tone = "ok" | "warn" | "error" | "muted";
@@ -147,6 +148,9 @@ export function remedy(reason: ListenerReason | undefined, deployment: Deploymen
             `and VARLATCH_TAILNET_NODE ${machine ? `to ${machine}` : "confirmed as the node's machine name"}`
         : `Rejoin the node to the configured tailnet, or set VARLATCH_TAILNET_NAME to ${theirs ?? "the node's tailnet"}, then redeploy`;
     }
+    case "TAGS_DIFFER":
+      // Only on a self-hosted control server, where the node's tags are its pre-auth key's.
+      return "Give the node exactly tailnet_tags in Headscale (headscale nodes tag -i <node id> -t <tailnet_tags>), or enrol it again with a pre-auth key tagged with them; access reopens at the next check";
     case "NAME_CHANGED": {
       if (deployment === "setup") return "Rerun varlatch setup: it stops and says what changed";
       // NAME_CHANGED is judged only on the configured tailnet, so the node's name is its new name there.
