@@ -76,6 +76,10 @@ type ReverseSource interface {
 	// UndoRebuild puts the installation back as the forward migration
 	// left it.
 	UndoRebuild(ctx context.Context, plan RebuildRecord) error
+	// ReverseReady refuses, with the step to take, a reverse whose
+	// one-off commands could not start (varlatchd in a stopped sidecar's
+	// network), before anything of it is done.
+	ReverseReady(ctx context.Context) error
 }
 
 // projectName is the installation's Compose project, as Compose itself
@@ -427,7 +431,7 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 	}
 	// The one-off commands below and varlatchd itself run in varlatchd's
 	// network, without their dependencies.
-	if err := c.networkOwnerRunning(ctx); err != nil {
+	if err := c.networkOwnerRunning(ctx, "varlatch migrate --resume"); err != nil {
 		return err
 	}
 	g, err := c.gateOffline(ctx)
@@ -476,7 +480,7 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 // nor a one-off container of its starts there. That service is not started
 // here: it is the old Tailscale node, which must not come back beside Go's
 // unasked (as ServeForArchive refuses to).
-func (c *Compose) networkOwnerRunning(ctx context.Context) error {
+func (c *Compose) networkOwnerRunning(ctx context.Context, then string) error {
 	cfg, err := c.config(ctx)
 	if err != nil {
 		return err
@@ -493,7 +497,15 @@ func (c *Compose) networkOwnerRunning(ctx context.Context) error {
 		return nil
 	}
 	return fmt.Errorf("the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), which is not running, so neither it nor its one-off commands can start: "+
-		"start it by hand (docker compose up -d --no-deps %s, in %s; it brings the old Tailscale node back), then varlatch migrate --resume", owner, owner, owner, c.Directory)
+		"start it by hand (docker compose up -d --no-deps %s, in %s; it brings the old Tailscale node back), then %s", owner, owner, owner, c.Directory, then)
+}
+
+// ReverseReady: the reverse's one-off commands (the rebuilt database's
+// export for the checks among them) run in varlatchd's network, so a
+// stopped sidecar it shares refuses the reverse before Go's barrier, not
+// after the rebuild.
+func (c *Compose) ReverseReady(ctx context.Context) error {
+	return c.networkOwnerRunning(ctx, "varlatch migrate --rollback again")
 }
 
 // gateOffline is the installation's gate, read in a one-off container.

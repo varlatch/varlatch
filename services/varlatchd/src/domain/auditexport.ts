@@ -522,6 +522,7 @@ async function insertPlan(
 }
 
 async function dbNow(db: Querier): Promise<Date> {
+  if (testHooks.now) return testHooks.now();
   const row = (await db.query("SELECT clock_timestamp() AS now")).rows[0] as { now: Date | string };
   return new Date(row.now);
 }
@@ -530,6 +531,8 @@ async function dbNow(db: Querier): Promise<Date> {
 // The S3 client, through the outbound policy (ADR-0057)
 
 export interface AuditExportTestHooks {
+  /** Overrides dbNow() so tests do not race UTC hour boundaries. */
+  now?: () => Date;
   /** Called before an upload is sent. Throwing fails the attempt without anything reaching the destination. */
   beforeUpload?: (plan: PlanRow) => void | Promise<void>;
   /** Called after an upload succeeded at the destination, before the worker sees the response. Throwing loses the response. */

@@ -140,10 +140,11 @@ func (SystemHost) Probe(ctx context.Context, dir string) (diskprobe.Result, erro
 	return diskprobe.Run(ctx, diskprobe.Options{Dir: dir, Unnamed: true})
 }
 
-// CheckConfig runs `varlatchd admin config-check --config path` with the
-// keys' directory as its credentials, as the unit hands them over.
+// CheckConfig runs `varlatchd admin config check --config path` with the
+// keys' directory as its credentials, as the unit hands them over; what it
+// answers for a valid configuration (its facts) is not needed here.
 func (h SystemHost) CheckConfig(path string) (string, error) {
-	cmd := exec.Command(h.Varlatchd, "admin", "config-check", "--config", path)
+	cmd := exec.Command(h.Varlatchd, "admin", "config", "check", "--config", path)
 	cmd.Env = append(append([]string{}, h.Env...), "CREDENTIALS_DIRECTORY="+filepath.Dir(RootKEK))
 	out, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
