@@ -30,8 +30,8 @@ const migrateArchiveUsage = `Usage:
                (on a Linux or macOS host with Docker, one conversion at a time per host: the TypeScript
                 archive is restored in an isolated PostgreSQL with no network, exported by the last
                 TypeScript release's image, imported and checked by varlatchd, and sealed as a format 3
-                archive at --out; --ts-image is required until this varlatch carries that release's digest;
-                --out-bek-file when --bek-file holds a passphrase)`
+                archive at --out; --ts-image gives that image by its registry digest, by default the one this
+                varlatch pins; --out-bek-file when --bek-file holds a passphrase)`
 
 // conversionSignals end a backup conversion with its cleanup (syscall
 // names them on every platform; the mode itself runs on Linux and macOS).

@@ -90,13 +90,18 @@ func sweepFiles(dir string, names *regexp.Regexp, dirs bool, say func(string)) {
 	}
 }
 
-// DefaultTSImage is the last TypeScript release's image, once its digest
-// is published (sides.go); "" until then, when --ts-image is required.
-func DefaultTSImage() string {
-	if LastTypeScriptDigest == "" {
+// DefaultTSImage is the last TypeScript release's image, by the digest
+// this varlatch pins (sides.go): what the converter runs without
+// --ts-image.
+func DefaultTSImage() string { return defaultImage(LastTypeScriptRepository, LastTypeScriptDigest) }
+
+// defaultImage is repository@digest, or "" with no digest (a varlatch that
+// pins none refuses a conversion without --ts-image).
+func defaultImage(repository, digest string) string {
+	if digest == "" {
 		return ""
 	}
-	return LastTypeScriptRepository + "@" + LastTypeScriptDigest
+	return repository + "@" + digest
 }
 
 // ArchiveOptions is one conversion.

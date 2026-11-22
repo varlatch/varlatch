@@ -3597,9 +3597,9 @@ migrations.
   exists or an image not pinned by digest before any container starts.
   Then an isolated restore: a throwaway PostgreSQL 17.6 (by digest) with
   `--network none` takes the Secret Plane's dump as the TypeScript
-  restore does, and the last TypeScript release's image (`--ts-image`,
-  by registry digest, required until 0.23.0's digest is in
-  `LastTypeScriptDigest`; a local image ID only with
+  restore does, and the last TypeScript release's image (by default the
+  one `LastTypeScriptDigest` pins, v0.23.0's; `--ts-image` gives another
+  by registry digest, and a local image ID only with
   `VARLATCH_ALLOW_LOCAL_TS_IMAGE=1`, for the tests, with a warning) runs
   in its namespace, read-only, as this
   user, with no capability: `migrate` (an older schema brought forward),
