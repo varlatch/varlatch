@@ -695,7 +695,11 @@ func abortMidHandoff(t *testing.T, w *tailnetWorld, rel release, s3 *s3Server) {
 		record(t, item, "the second source's sidecar holds its name", false, fmt.Sprintf("sidecar %q; nodes %s", sidecar2, w.nodeNames()))
 		return
 	}
-	const point = "tailnet forward serving renamed"
+	// A crash point is reached once its step is journalled, before its
+	// act: at "incoming renamed" the sidecar's node is renamed away and the
+	// target's not yet named (run r17v: at "serving renamed" the sidecar's
+	// node still held the name).
+	const point = "tailnet forward incoming renamed"
 	log := filepath.Join(in2.state, "crashpoints.log")
 	cmd := exec.Command(filepath.Join(binDir, "varlatch"), in2.migrateArgs(w.authority()...)...)
 	cmd.Dir = in2.dir
