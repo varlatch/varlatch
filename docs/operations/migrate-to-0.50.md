@@ -12,10 +12,10 @@ before the new server opens.
 > TypeScript release, 0.23.0, is published, and `varlatch migrate` starts
 > from its published image only.
 
-<!-- TODO before this guide leaves draft: three points still depend on
-     unmerged pull requests, each marked "TODO #n" where it applies: #385 (the
-     tailnet handoff on Headscale), #405 and #408 (a restore on Headscale,
-     and `varlatch setup --restore` on a Headscale tailnet). -->
+<!-- TODO before this guide leaves draft: two points still depend on
+     unmerged pull requests, marked "TODO #405 and #408" where they apply:
+     a restore on Headscale, and `varlatch setup --restore` on a Headscale
+     tailnet. -->
 
 ## What people notice
 
@@ -419,18 +419,51 @@ Two things on the tailnet itself:
   the name reaches the new node, so the transfer is undone; the message
   names the tags.
 
-This prerelease moves a tailnet name on Tailscale only. On Headscale, the
-migration will run where the `headscale` CLI reaches the control server,
-or take an API key that expires within the hour (`headscale apikeys
-create --expiration 1h`), refusing a longer-lived one since a Headscale
-API key is a full administrator. On a self-hosted control server, the new
-node's tags (its pre-auth key's) must be the configuration's
-`tailnet_tags`: until they are, its tailnet access stays closed, and its
-tailnet status says `TAGS_DIFFER`, naming both sets.
+##### On a self-hosted control server (Headscale)
 
-<!-- TODO #385: the tailnet handoff on Headscale (its authority, the
-     headscale CLI or a short-lived API key); check this paragraph against
-     it and drop "Tailscale only". -->
+The name moves the same way on Headscale, with Headscale's authority in
+place of the OAuth client. Headscale issues no certificates, so there are
+no certificate steps either:
+
+- **Both nodes on the same control server.** The source's `tailscale`
+  sidecar logs in to it with `--login-server=https://<its IP
+  address>[:port]` in its `TS_EXTRA_ARGS` (an override of your Compose
+  installation's). The target's configuration names the same server the
+  same way, as `tailnet_control_url`. migrate compares the two and refuses
+  a difference before anything is done.
+- **The authority**, one of:
+  - **Headscale's API:** `--headscale-url https://<its IP
+    address>[:port]` with `--headscale-api-key-file <file>`, a key from
+    `headscale apikeys create --expiration 1h`. Every Headscale API key is
+    a full administrator, so migrate refuses one that never expires or
+    that expires more than an hour from now. Each run expires its own key
+    when it ends, so give every run (`--resume`, `--abort`,
+    `--rollback`) a new one. A run that is killed cannot expire its key.
+    The next run names it, and you expire it with `headscale apikeys
+    expire --prefix <prefix>`:
+
+    ```text
+    varlatch migrate: an earlier run opened the Headscale API key <prefix> at <time> and did not close it (it was stopped): the key stays live until it expires, up to an hour after it was made. Expire it now: headscale apikeys expire --prefix <prefix>
+    ```
+
+  - **Headscale's CLI**, when migrate runs on the control server's host:
+    `--headscale-cli <absolute path to headscale>`, with no key at all.
+- **The new node's auth key** (`--tailnet-auth-key-file <file>`): a
+  reusable pre-auth key tagged with the node's tags (`headscale
+  preauthkeys create --reusable --tags <tags>`). Headscale gives a node its
+  pre-auth key's tags, so they must be the configuration's `tailnet_tags`.
+  Until they are, the node's tailnet access stays closed, and its tailnet
+  status says `TAGS_DIFFER`, naming both sets.
+- **No HTTPS.** A source that serves the tailnet browser endpoint over
+  HTTPS (the sidecar's `TS_SERVE_CONFIG`) is refused: remove the HTTPS
+  overlay first. A target configuration that sets `tailnet_https_port` is
+  refused too: leave it unset.
+
+The authority must match the control server. Tailscale's OAuth client on a
+self-hosted server, or Headscale's authority on Tailscale's, is refused
+before anything is done, naming the one to give. A run that resumes a
+handoff must give the authority it was planned with: its node ids are
+that server's.
 
 ## The image target
 
