@@ -16,8 +16,9 @@
  *             vl-conformance-<installation directory's name>: host network,
  *             the installation directory mounted at its own path (its data
  *             directory, Root KEK file and configuration), as this user, with
- *             only SSL_CERT_FILE and VARLATCH_CONFORMANCE_OUTBOUND_HOSTS from
- *             the environment. The supervisor's SIGTERM reaches varlatchd
+ *             only SSL_CERT_FILE, VARLATCH_CONFORMANCE_OUTBOUND_HOSTS and
+ *             VARLATCH_CONFORMANCE_CLI_RELEASE from the environment. The
+ *             supervisor's SIGTERM reaches varlatchd
  *             through docker's signal proxy
  *   <wrapper> admin ... --config <conf>
  *             `docker exec` in that container while it runs; otherwise a
@@ -26,9 +27,10 @@
  *             a container of its own, removed when it ends
  *   <wrapper> admin conformance-sign-release <dir> <version>
  *             (serve-cli's release, go-binary's prepareCliRelease) a
- *             container of its own with <dir>'s parent, the installation
- *             directory, mounted at its own path: it reads and signs the
- *             files in <dir> and writes the trusted root beside them
+ *             container of its own with <dir> alone mounted at its own path
+ *             (not the installation's Root KEK, data or configuration): it
+ *             reads and signs the files in <dir> and writes the signature
+ *             and the trusted root into it
  *
  * `serve` and every admin container also take VARLATCH_CONFORMANCE_CLI_RELEASE
  * from the environment: go-binary hands serve-cli's release to varlatchd
@@ -72,11 +74,13 @@ if [ -n "$conf" ]; then
   name="vl-conformance-$(basename "$dir" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_.-')"
   mount="-v $dir:$dir"
 elif [ "\${1:-}" = admin ] && [ "\${2:-}" = conformance-sign-release ] && [ -n "\${3:-}" ]; then
-  # The release's directory is the installation's: its parent, mounted
-  # at its own path, so the paths the harness passes mean the same inside.
+  # The release's directory alone, mounted at its own path so the path
+  # the harness passes means the same inside: signing reads and writes
+  # only there, so nothing else of the installation is exposed. Named by
+  # the installation (its parent) for a name unique to the run.
   dir=$(dirname "$3")
   name="vl-conformance-$(basename "$dir" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_.-')-sign"
-  mount="-v $dir:$dir"
+  mount="-v $3:$3"
 else
   name="vl-conformance-probe-$$"
   mount=''

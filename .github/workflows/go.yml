@@ -53,6 +53,8 @@ on:
       - "packages/contract/test/vectors/**"
       - "scripts/check-licenses.mjs"
       - "scripts/check-timing-tests.sh"
+      # go's shellcheck step checks it.
+      - "scripts/ci-nightly-report.sh"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"
       - "scripts/conformance/inventory.json"
@@ -174,6 +176,7 @@ jobs:
             packages/contract/test/vectors/*
             scripts/check-licenses.mjs
             scripts/check-timing-tests.sh
+            scripts/ci-nightly-report.sh
             packages/protocol/openapi.yaml
             scripts/conformance/run.mjs
             scripts/conformance/inventory.json
@@ -1288,7 +1291,9 @@ jobs:
   # manual run only: one unsharded run of about 45 minutes, too long for
   # every pull request. The image is built from this commit's release
   # assets (build-assets.sh, the dashboard generated) with varlatchd's
-  # conformance build (its probes and fixtures). Not one of go-ok's jobs.
+  # conformance build (its probes and fixtures). One of go-ok's jobs: on
+  # a pull request or in the merge queue it is skipped, which go-ok takes
+  # as passed; on a nightly or manual run its failure turns go-ok red.
   go-container:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -1670,9 +1675,12 @@ jobs:
   # each red run's link, commit and failed jobs; the next green nightly
   # closes it. Main's nightly and dispatched runs only (a branch's dispatch
   # says nothing about main), on GITHUB_TOKEN with issues: write alone.
+  # The report never changes the run's result: continue-on-error, and the
+  # script warns and exits 0 when GitHub's API fails.
   nightly-report:
     if: always() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     needs: [go-ok]
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
