@@ -75,6 +75,15 @@ func PrepareTarget(ctx context.Context, o Options, made func(item string) error)
 		// A test root: the data directory is under it.
 		r.configExtra = "data_dir = " + dd + "\n"
 	}
+	// The source's private destinations stay allowed (its
+	// VARLATCH_OUTBOUND_ALLOW, the same entries): the configuration check
+	// below judges them as varlatchd does.
+	if v := strings.TrimSpace(o.OutboundAllow); v != "" {
+		if strings.ContainsAny(v, "\r\n") {
+			return Answers{}, errors.New("setup: the source's outbound allow list holds a line break: it is not a list varlatchd reads")
+		}
+		r.configExtra += "outbound_allow = " + v + "\n"
+	}
 	if _, err := os.Stat(r.path(ConfigFile)); err == nil {
 		return Answers{}, fmt.Errorf("setup: %s exists: the target is there already", ConfigFile)
 	} else if !errors.Is(err, fs.ErrNotExist) {

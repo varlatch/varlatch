@@ -372,7 +372,9 @@ func fakeDockerTailnet(args []string) (int, bool) {
 		logCall(j)
 		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{
 			"varlatchd": map[string]any{"network_mode": "service:tailscale"},
-			"tailscale": map[string]any{"environment": map[string]any{"TS_STATE_DIR": "/var/lib/tailscale"}},
+			// The list form, as Compose 5.6 prints an environment written
+			// as a list or merged with an overlay's.
+			"tailscale": map[string]any{"environment": []string{"TS_STATE_DIR=/var/lib/tailscale"}},
 		}})
 		fmt.Println(string(out))
 		return 0, true

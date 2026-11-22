@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
 )
@@ -26,7 +27,8 @@ func TestAdminOutboundCheck(t *testing.T) {
 		return runAdmin(t, append(append([]string{"outbound"}, args...), "--config", in.conf)...)
 	}
 	// Before there is a database.
-	if code, out, errOut := run("check"); code != ExitOK || !strings.Contains(out, "VARLATCH_OUTBOUND_ALLOW: 192.168.0.0/16\n\nNo destinations configured.") {
+	if code, out, errOut := run("check"); code != ExitOK || !strings.Contains(out, "outbound_allow ("+in.conf+"): 192.168.0.0/16\n\nNo destinations configured.") ||
+		strings.Contains(out, "VARLATCH_OUTBOUND_ALLOW") {
 		t.Fatalf("no database: %d %q %q", code, out, errOut)
 	}
 	r := start(t, in)
@@ -79,5 +81,21 @@ func TestAdminOutboundCheck(t *testing.T) {
 		if code, _, errOut := run(args...); code != 64 || !strings.HasPrefix(errOut, outboundUsage) {
 			t.Errorf("%v: %d %q", args, code, errOut)
 		}
+	}
+}
+
+// The check names the setting a Go installation has, outbound_allow in its
+// configuration file, and suggests a line for it, with the restart a host
+// install or the image takes.
+func TestOutboundSetting(t *testing.T) {
+	t.Setenv(keyenv.ImageMarker, "")
+	s := outboundSetting("/etc/varlatch/varlatchd.conf")
+	if got := strings.Join(s.Suggest("coolify.lan,10.0.0.0/8"), "\n"); s.Name != "outbound_allow (/etc/varlatch/varlatchd.conf)" ||
+		got != "Suggested: set this line in /etc/varlatch/varlatchd.conf, then restart varlatchd (sudo systemctl restart varlatchd):\n  outbound_allow = coolify.lan,10.0.0.0/8" {
+		t.Errorf("a host install: %q %q", s.Name, got)
+	}
+	t.Setenv(keyenv.ImageMarker, "1")
+	if got := strings.Join(outboundSetting("/data/varlatchd.conf").Suggest("coolify.lan"), "\n"); got != "Suggested: set this line in /data/varlatchd.conf, then restart varlatchd (restart its container):\n  outbound_allow = coolify.lan" {
+		t.Errorf("the image: %q", got)
 	}
 }
