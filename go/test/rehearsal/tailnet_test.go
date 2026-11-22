@@ -235,6 +235,29 @@ func tailnetConf(machine, controlURL string) string {
 
 func (w *tailnetWorld) docker(args ...string) ran { return run("", nil, nil, "docker", args...) }
 
+// dropEnvLines removes the lines starting with prefix from an .env file,
+// keeping its mode; a missing file is nothing to do.
+func dropEnvLines(path, prefix string) error {
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	var keep []string
+	for _, l := range strings.SplitAfter(string(b), "\n") {
+		if !strings.HasPrefix(l, prefix) {
+			keep = append(keep, l)
+		}
+	}
+	return os.WriteFile(path, []byte(strings.Join(keep, "")), fi.Mode().Perm())
+}
+
 // headscaleCLI runs the headscale command in its container.
 func (w *tailnetWorld) headscaleCLI(args ...string) ran {
 	return w.docker(append([]string{"exec", w.server, "headscale"}, args...)...)
@@ -245,17 +268,22 @@ func (w *tailnetWorld) headscaleCLI(args ...string) ran {
 // removed by those names when the case ends.
 func startTailnet(t *testing.T) *tailnetWorld {
 	t.Helper()
-	w := &tailnetWorld{t: t, headscale: prof.tailscaleOAuth == "", network: "vl-rh-" + runID + "-tailnet", dir: filepath.Join(workDir, "tailnet"),
+	w := &tailnetWorld{t: t, headscale: prof.tailscaleOAuth == "", network: "vl-rh-" + runID + "-tailnet", dir: filepath.Join(workDir, "tailnet-net"),
 		server: "vl-rh-" + runID + "-headscale", holder: "vl-rh-" + runID + "-headscale-net", client: "vl-rh-" + runID + "-tailnet-client"}
 	if err := os.MkdirAll(w.dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.Chmod(w.dir, 0o755)
-	// Last: the keys and the directory (unless VL_RH_KEEP=1 keeps the
-	// installations, which mount its CA).
+	// Last: the keys, whatever VL_RH_KEEP says (the installations' .env
+	// lose their TS_AUTHKEY line: on Tailscale it is the owner's reusable
+	// key), and the directory, unless VL_RH_KEEP=1 keeps the
+	// installations, which mount its CA.
 	t.Cleanup(func() {
 		for _, f := range []string{"hs/tls.key", "node-auth-key", "client.env"} {
 			_ = os.Remove(filepath.Join(w.dir, f))
+		}
+		for _, name := range []string{"tailnet", "tailnet-abort"} {
+			_ = dropEnvLines(filepath.Join(workDir, name, "compose", ".env"), "TS_AUTHKEY=")
 		}
 		if os.Getenv("VL_RH_KEEP") != "1" {
 			_ = os.RemoveAll(w.dir)
@@ -587,6 +615,9 @@ func isTarget(in *installation, meta string) bool {
 func tailnetCase(t *testing.T, rel release, s3 *s3Server) {
 	const item = tailnetItem
 	w := startTailnet(t)
+	if !w.headscale {
+		measure("item 14: left in the owner's tailnet", "the case's sidecars' and targets' devices (vl-rh-"+runID+"-tailnet, vl-rh-"+runID+"-tailnet-abort and their -vl-<op>-o and -n renames) stay; only the client node logs out: delete vl-rh-"+runID+"-* in the admin console")
+	}
 	measure("item 14: the control server", map[bool]string{true: "the run's Headscale at " + w.url, false: "Tailscale's (the owner's tailnet " + w.suffix + ")"}[w.headscale])
 
 	// 1. The forward migration with the name handoff, then a rollback.
@@ -698,6 +729,11 @@ func abortMidHandoff(t *testing.T, w *tailnetWorld, rel release, s3 *s3Server) {
 		return
 	}
 	measure("item 14: the nodes at the kill", w.nodeNames())
+	// The kill left the name off the sidecar's node (renamed away, the
+	// target's not yet named): so the name coming back proves the undo.
+	var atKill string
+	moved := pollUntil(60*time.Second, 2*time.Second, func() bool { atKill = w.holderOf(machine2); return atKill != sidecar2 })
+	record(t, item, "at the kill the name is off the sidecar's node", moved, fmt.Sprintf("the name's node %q (the sidecar's %q)", atKill, sidecar2))
 	ab := in2.migrateEnv(rel, true, rel.pin(), append([]string{"--abort"}, w.authority()...)...)
 	record(t, item, "--abort after the kill mid-handoff", ab.code == 0, ab.String()+" "+lastLines(ab.stdout, 4))
 	id, meta, ok := w.served(machine2, 180*time.Second, func(id, meta string) bool { return id == sidecar2 && isSource(in2, meta) })

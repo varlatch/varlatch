@@ -94,9 +94,33 @@ func TestTailnetPieces(t *testing.T) {
 			t.Error("Tailscale's control server needs no tailnet_control_url")
 		}
 	})
+	t.Run("an .env loses its auth key line, keeping its mode", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), ".env")
+		if err := os.WriteFile(p, []byte("A=1\nTS_AUTHKEY=k\nB=2\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := dropEnvLines(p, "TS_AUTHKEY="); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(p)
+		fi, _ := os.Stat(p)
+		if string(b) != "A=1\nB=2\n" || fi.Mode().Perm() != 0o600 {
+			t.Errorf("%q, mode %04o", b, fi.Mode().Perm())
+		}
+		if err := dropEnvLines(filepath.Join(t.TempDir(), "missing"), "TS_AUTHKEY="); err != nil {
+			t.Errorf("a missing file: %v", err)
+		}
+	})
 	t.Run("the profile", func(t *testing.T) {
 		key := filepath.Join(dir, "key")
 		if err := os.WriteFile(key, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		open := filepath.Join(dir, "open-key")
+		if err := os.WriteFile(open, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(open, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		for _, c := range []struct {
@@ -109,6 +133,7 @@ func TestTailnetPieces(t *testing.T) {
 			{"box", "tailnet", key, "", "tail1.ts.net", "", "VL_RH_TAILSCALE_AUTH_KEY_FILE"},
 			{"box", "tailnet", key, key, "tail1.ts.net", "", ""},
 			{"box", "tailnet", filepath.Join(dir, "missing"), key, "tail1.ts.net", "", "no such file"},
+			{"box", "tailnet", key, open, "tail1.ts.net", "", "mode 0644"},
 			{"box", "proxy", key, key, "tail1.ts.net", "", "goes with VL_RH_INGRESS=tailnet"},
 			{"", "tailnet", "", "", "", "transfer", "leave VL_RH_KILL"},
 		} {

@@ -29,7 +29,10 @@
 # VL_RH_INGRESS=tailnet (a workstation or the box): the tailnet case, the
 # name handoff on a Headscale the run starts; with VL_RH_TAILSCALE_OAUTH_FILE,
 # VL_RH_TAILSCALE_AUTH_KEY_FILE and VL_RH_TAILSCALE_TAILNET (the owner, on
-# the box), on the owner's Tailscale tailnet instead.
+# the box), on the owner's Tailscale tailnet instead. There, only the client
+# node logs out at the end: the sidecars' and targets' devices
+# (vl-rh-<run>-tailnet, vl-rh-<run>-tailnet-abort and their -vl-<op>-o and -n
+# renames) stay in the tailnet; delete vl-rh-<run>-* in its admin console.
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: run.sh <typescript-checkout> <run> [<release-dir>]" >&2; exit 64; }
 profile=${VL_RH_PROFILE:-workstation}
@@ -123,8 +126,13 @@ cleanup() {
   fi
   # The stand-ins' key and the tailnet case's keys go whatever VL_RH_KEEP
   # says.
-  rm -f "$root/work/sync-fakes/key.pem" "$root/work/tailnet/hs/tls.key" "$root/work/tailnet/node-auth-key" \
-    "$root/work/tailnet/client.env" "$root"/work/tailnet/api-key-* 2>/dev/null || true
+  rm -f "$root/work/sync-fakes/key.pem" "$root/work/tailnet-net/hs/tls.key" "$root/work/tailnet-net/node-auth-key" \
+    "$root/work/tailnet-net/client.env" "$root"/work/tailnet-net/api-key-* 2>/dev/null || true
+  # The tailnet installations' .env carry the nodes' auth key (on Tailscale
+  # the owner's reusable one): the line goes, VL_RH_KEEP or not.
+  for f in "$root"/work/tailnet/compose/.env "$root"/work/tailnet-abort/compose/.env; do
+    [ -f "$f" ] && sed -i '/^TS_AUTHKEY=/d' "$f" 2>/dev/null || true
+  done
   if [ "${VL_RH_KEEP:-}" != 1 ]; then
     # The sync case's (VL_RH_SYNC=fakes), when an interrupt left them (the
     # test binary has no signal handler): its Compose stack, the
@@ -143,7 +151,7 @@ cleanup() {
     [ -z "${VL_RH_TAILSCALE_OAUTH_FILE:-}" ] || docker exec "vl-rh-$run-tailnet-client" tailscale logout >/dev/null 2>&1 || true
     docker rm -fv "vl-rh-$run-tailnet-client" "vl-rh-$run-headscale" "vl-rh-$run-headscale-net" >/dev/null 2>&1 || true
     docker network rm "vl-rh-$run-tailnet" >/dev/null 2>&1 || true
-    rm -rf "$root/work/tailnet" 2>/dev/null || true
+    rm -rf "$root/work/tailnet-net" 2>/dev/null || true
     if [ "$created_release" = 1 ]; then
       cleanup_release
     fi

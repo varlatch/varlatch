@@ -151,8 +151,12 @@ func readProfile(euid int) (profileConfig, error) {
 	}
 	if realTailscale {
 		for _, f := range []string{prof.tailscaleOAuth, prof.tailscaleAuthKey} {
-			if _, err := os.Stat(f); err != nil {
+			fi, err := os.Stat(f)
+			if err != nil {
 				return prof, fmt.Errorf("the tailnet case on Tailscale: %v", err)
+			}
+			if fi.Mode().Perm()&0o077 != 0 {
+				return prof, fmt.Errorf("the tailnet case on Tailscale: %s is mode %04o: the OAuth client and the auth key are the owner's, 0600", f, fi.Mode().Perm())
 			}
 		}
 	}
