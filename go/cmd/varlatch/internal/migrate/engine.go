@@ -267,7 +267,10 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 		return j, e.stopBefore(ctx, j, err)
 	}
 	if err := e.prepareTailnet(ctx, j); err != nil {
-		return j, err
+		if errors.Is(err, errHandoffUnderway) {
+			return j, err
+		}
+		return j, e.stopBefore(ctx, j, err)
 	}
 	report, err := e.dryRun(ctx, j)
 	if err != nil {
@@ -786,8 +789,12 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			problems = append(problems, fmt.Errorf(closed, ingressPart(j.Ingress)))
 		}
 	}
-	if err := e.discard(ctx, j); err != nil {
-		problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
+	// The target's database is discarded once the name is back: while it
+	// is not, a --resume may start the target again, which needs it.
+	if nameBack {
+		if err := e.discard(ctx, j); err != nil {
+			problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
+		}
 	}
 	if len(problems) > 0 {
 		// Not released: the journal stays where it was, for --resume.

@@ -388,6 +388,11 @@ func operationOf(name, held string) string {
 	return op
 }
 
+// errHandoffUnderway is a tailnet handoff past prepared at the preflight:
+// the run is not recorded as stopped (a new run must not start over a
+// name that moved); --resume goes on with it.
+var errHandoffUnderway = errors.New("the handoff is underway")
+
 // prepareTailnet is the handoff's preflight (after the keys, before the
 // dry run): the target's node enrolled, held, under its temporary name,
 // the plan made and prepared. Nothing is renamed. It does nothing for a
@@ -501,7 +506,7 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 	rec.Control, rec.ControlServer = e.Tailnet.Control.Kind(), e.Tailnet.Server
 	if rec.Handoff != nil && rec.Handoff.Phase != tailhandoff.Prepared {
 		// Only a handoff that changed nothing is prepared again.
-		return fmt.Errorf("preflight: the tailnet handoff %s is %s, not prepared: varlatch migrate --resume", op, rec.Handoff.Phase)
+		return fmt.Errorf("preflight: the tailnet handoff %s is %s, not prepared: varlatch migrate --resume: %w", op, rec.Handoff.Phase, errHandoffUnderway)
 	}
 	j.Tailnet = rec
 	if rec.Suffix == "" {

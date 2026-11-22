@@ -740,3 +740,68 @@ func TestFinishOnAFinishedMigrationRecords(t *testing.T) {
 		t.Fatalf("a second --finish wrote again: %d writes", w.tgt.recorded)
 	}
 }
+
+// A tailnet preflight that fails (here the target's tailnet_hostname is
+// not the source's node) records the run as stopped, as every failure
+// before the barrier does: once fixed, a plain rerun goes on.
+func TestATailnetPreflightFailureIsStopped(t *testing.T) {
+	w := newTailnetWorld(t)
+	w.tgt.info.Tailnet.Hostname = "other"
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "tailnet_hostname is other") || !strings.Contains(err.Error(), "recorded as stopped") || !j.Stopped {
+		t.Fatalf("%v %+v", err, j)
+	}
+	w.tgt.info.Tailnet.Hostname = "vault"
+	if j, err = w.eng.Run(context.Background(), false); err != nil || j.Phase != Open {
+		t.Fatalf("the rerun: %v %+v", err, j)
+	}
+}
+
+// unavailableProber fails the combined final check and takes the control
+// plane down with it, so the undo cannot give the name back.
+type unavailableProber struct {
+	failingProber
+	cp *tailcontroltest.Tailscale
+}
+
+func (p unavailableProber) Probe(ctx context.Context, origin string) (string, string, error) {
+	if p.t.opened {
+		p.cp.SetUnavailable(true)
+	}
+	return p.failingProber.Probe(ctx, origin)
+}
+
+// An undo in the transfer whose name return fails (the control plane
+// down, not a step for the operator): the barrier is lifted, and nothing
+// after the name moves: the target is not stopped, its database is not
+// discarded, the address is not given back. --resume, the control plane
+// back, gives the name back, then does the rest, and releases.
+func TestAFailedNameReturnLeavesTheRestForTheResume(t *testing.T) {
+	w := newTailnetWorld(t)
+	w.eng.Prober = unavailableProber{failingProber: failingProber{fakeProber: w.prober, t: w.tgt}, cp: w.cp}
+	j, err := w.eng.Run(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "undoing did not finish") || !strings.Contains(err.Error(), "giving the tailnet name back") || j.Phase == Released || !j.Undoing {
+		t.Fatalf("%v %+v", err, j)
+	}
+	if n := w.names(); n["new"] != "vault" {
+		t.Fatalf("names %v", n)
+	}
+	if !w.tgt.database || !w.tgt.running || !w.src.ingressDown {
+		t.Fatalf("after the failed name return: target's database %v, target running %v, the source's ingress down %v", w.tgt.database, w.tgt.running, w.src.ingressDown)
+	}
+	if g, _ := w.src.Gate(context.Background()); g != nil {
+		t.Fatalf("the barrier was not lifted: %+v", g)
+	}
+	w.cp.SetUnavailable(false)
+	w.eng.Prober = w.prober
+	j, err = w.eng.Resume(context.Background())
+	if j == nil || j.Phase != Released {
+		t.Fatalf("--resume: %v %+v", err, j)
+	}
+	if n := w.names(); n["old"] != "vault" {
+		t.Fatalf("names after --resume %v", n)
+	}
+	if w.tgt.database || w.tgt.running || w.src.ingressDown || !w.src.running {
+		t.Fatalf("after --resume: target's database %v, target running %v, the source's ingress down %v, sidecar running %v", w.tgt.database, w.tgt.running, w.src.ingressDown, w.src.running)
+	}
+}
