@@ -2161,11 +2161,24 @@ serves the tailnet listener on the node's own addresses
   - **Tags** come from the auth key there: Headscale refuses a node that
     registers with a pre-auth key and advertises tags (0.29.7), so the
     node advertises none, and its key must be a tagged pre-auth key
-    (`headscale preauthkeys create --tags <tailnet_tags>`). A node that
-    joined with no tags (an untagged key) keeps access open for now: it
-    is logged once and the listeners report carries a warning
-    (`observed.warnings`, shown in the dashboard's Tailnet tab); access
-    closes on tags other than `tailnet_tags` in a later slice.
+    (`headscale preauthkeys create --tags <tailnet_tags>`). The node's
+    tags must then be exactly `tailnet_tags` (step 7.5c c3): any other
+    set, none included (an untagged key), closes tailnet access (fail
+    closed, never latched) until they match. The listeners report says
+    `TAGS_DIFFER` with both sets in `observed.warnings` (the dashboard's
+    Tailnet tab), and doctor's `tailnet.pin` names them, with the remedy:
+    give the node `tailnet_tags` in Headscale (`headscale nodes tag -i
+    <node id> -t <tailnet_tags>`), or enrol it again with a tagged key;
+    access opens at the next check (60 seconds). `admin tailnet enroll`
+    refuses such a node before the handoff goes on (the node stays held,
+    so enroll runs again once it is tagged).
+  - **DERP.** The node uses the DERP map its control server sends. One
+    that lists Tailscale's DERP servers (Headscale's default `derp.urls`)
+    sends the node's netcheck, STUN and relayed traffic to Tailscale:
+    doctor's advisory `tailnet.control` fails, naming them, and the
+    listeners report's `observed.warnings` carries the same; access stays
+    open (Headscale's configuration is the operator's). Keep `derp.urls`
+    and `derp.paths` to your own DERP servers.
   - **No browser endpoint** with it: `tailnet_https_port` serves the
     node's Tailscale certificate, which a self-hosted server does not
     issue, so the two together are refused.
@@ -2178,8 +2191,16 @@ serves the tailnet listener on the node's own addresses
     tagged by its key, is pinned to the control URL and `base_domain`
     with no tailnet StableID, and while Headscale is unreachable makes no
     bootstrap DNS query; another configured control URL closes access.
-    The handoff's Headscale cases (migrate's Headscale authority, the
-    restore handoff, StableID lookups) are step 7.5c's next slices.
+    The identity cases (c3): a node's StableID on Headscale is its node id
+    (`headscale nodes list`'s, a number per database, never a pin); over
+    the tailnet listener a tagged peer is known by its tags and Headscale
+    node id, a user's device by its user's login (Headscale's user name),
+    the node itself is refused (self) and an address no device has
+    (unrecognized); the node retagged in Headscale closes access and
+    reopens once tagged again; a handoff's node enrols, is held, is shown
+    reaching its name from a probe, and opens (`server/daemon`'s
+    `TestHeadscaleHandoffNode`). Migrate's Headscale authority and the
+    restore handoff are step 7.5c's other slices.
 - **The pin** (`<data_dir>/tailnet-pin.json`, `server/tailnet/pin.go`)
   is the control URL, the tailnet's StableID (Tailscale) and its MagicDNS
   suffix (Headscale's `base_domain`), never the display name. It is taken

@@ -152,7 +152,7 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
                     <Status tone={checkTone(check.status)}>{check.status}</Status>
                   </td>
                   <td className={cn(table.td, "text-[13px]")}>
-                    {check.reason ? <span className="block">{REASON_TEXT[check.reason]}</span> : <span className="block text-muted">{row.passes}</span>}
+                    {check.reason ? <span className="block">{REASON_TEXT[check.reason] ?? check.reason}</span> : <span className="block text-muted">{row.passes}</span>}
                     {check.certificateNotAfter && (
                       <span className="block text-muted">
                         {Date.parse(check.certificateNotAfter) > now

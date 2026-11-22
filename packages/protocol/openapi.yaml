@@ -5765,7 +5765,12 @@ components:
         status: { type: string, enum: [pass, fail, unknown] }
         reason:
           type: string
-          enum: [NOT_CHECKED, NOT_LISTENING, NO_CERTIFICATE, LOCALAPI_UNAVAILABLE, NOT_RUNNING, OTHER_TAILNET, NAME_CHANGED]
+          enum: [NOT_CHECKED, NOT_LISTENING, NO_CERTIFICATE, LOCALAPI_UNAVAILABLE, NOT_RUNNING, OTHER_TAILNET, NAME_CHANGED, TAGS_DIFFER]
+          description: >
+            Why the check fails. TAGS_DIFFER (node only): on a self-hosted
+            control server, the node's tags (its pre-auth key's) are not
+            tailnet_tags, so tailnet access is closed until they match;
+            observed.warnings names both sets.
         certificateNotAfter:
           type: string
           format: date-time

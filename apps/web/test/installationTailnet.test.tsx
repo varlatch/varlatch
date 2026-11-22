@@ -30,6 +30,7 @@ vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api }) }))
 import {
   LISTENERS_STALE_MS,
   NODE_PLACEHOLDER,
+  REASON_TEXT,
   checkRows,
   enableEndpointLines,
   endpointRule,
@@ -115,6 +116,11 @@ describe("guidance", () => {
       "Set VARLATCH_TAILNET_NODE to the node's new name and VARLATCH_TAILNET_ENDPOINT to https://<new name>.example.ts.net:8688, then redeploy",
     );
     expect(remedy("NO_CERTIFICATE", "coolify", ENDPOINT)).toMatch(/VARLATCH_TAILNET_CERT_UID must be 999/);
+    // A self-hosted control server's node without exactly tailnet_tags: the same remedy for either deployment.
+    for (const deployment of ["setup", "coolify"] as const) {
+      expect(remedy("TAGS_DIFFER", deployment, null)).toMatch(/^Give the node exactly tailnet_tags in Headscale \(headscale nodes tag/);
+    }
+    expect(REASON_TEXT.TAGS_DIFFER).toBe("The node's tags are not tailnet_tags");
   });
 
   it("never fixes the tailnet name without the endpoint URL that depends on it", () => {
@@ -221,6 +227,14 @@ describe("Tailnet tab", () => {
     await act(async () => byTestId("tailnet-deployment-coolify").props.onClick());
     expect(text(byTestId("tailnet-add-lines"))).toContain("docker-compose.coolify-tailscale.yml");
     expect(text(byTestId("tailnet-endpoint-lines"))).toContain("VARLATCH_TAILNET_CERT_UID=999");
+  });
+
+  it("names a reason this dashboard does not know by its code, as a newer server may send one", async () => {
+    // A server newer than this dashboard: a reason outside the enum it was built with.
+    const reason = "SOME_NEW_REASON" as unknown as "NAME_CHANGED";
+    await mount(async () => ({ tailnet: report({ node: { status: "fail", reason } }, ago(60_000)) }));
+    expect(row("node").props["data-status"]).toBe("fail");
+    expect(text(row("node"))).toContain("SOME_NEW_REASON");
   });
 
   it("shows one check time for the whole report, each check's result, and the fix for the chosen deployment", async () => {
