@@ -65,9 +65,15 @@ jobs:
           minor=${rest%%.*}
           go=false
           if [ "$major" -gt 0 ] || [ "$minor" -ge 50 ]; then go=true; fi
-          # The release must be published (a prerelease or a final one).
-          if ! gh release view "$TAG" --repo "$REPO" --json tagName > /dev/null; then
+          # The release must be published (a prerelease or a final one),
+          # and a draft is not: refused explicitly, not left to what the
+          # token can see. Anything but "false" is refused.
+          if ! draft=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft); then
             echo "::error::$TAG is not a published release"
+            exit 1
+          fi
+          if [ "$draft" != "false" ]; then
+            echo "::error::$TAG is a draft release, not a published one"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"

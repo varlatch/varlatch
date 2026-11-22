@@ -127,16 +127,37 @@ func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 	if info.Release == "" {
 		info.Release = strings.TrimPrefix(img.Tag, "v")
 	}
-	// The digest of the image's own repository, not of another name the
-	// same image was pulled under.
-	for _, d := range inspect.RepoDigests {
-		repo, digest, ok := strings.Cut(d, "@")
-		if ok && repo == img.Repository && strings.HasPrefix(digest, "sha256:") {
-			info.Digest, info.DigestRepository = digest, repo
-			break
+	info.Digest, info.DigestRepository = repoDigest(inspect.RepoDigests, img.Repository, releasePin())
+	return info, nil
+}
+
+// repoDigest is the registry digest an image is checked by, of the
+// repository and digest pairs Docker lists for it (RepoDigests, in no
+// order that means anything): the pinned image's when the image is it
+// (pulled by tag and by digest, an index and a platform's manifest, under
+// several names), else the first of the pinned repository, else the
+// first of the name it runs under. A digest of another repository is
+// never taken for the pinned one's: the pin compares both.
+func repoDigest(repoDigests []string, running string, pin imagePin) (digest, repository string) {
+	var ofPin, ofRunning [2]string
+	for _, d := range repoDigests {
+		repo, dig, ok := strings.Cut(d, "@")
+		if !ok || !strings.HasPrefix(dig, "sha256:") {
+			continue
+		}
+		switch {
+		case repo == pin.Repository && dig == pin.Digest:
+			return dig, repo
+		case repo == pin.Repository && ofPin[0] == "":
+			ofPin = [2]string{dig, repo}
+		case repo == running && ofRunning[0] == "":
+			ofRunning = [2]string{dig, repo}
 		}
 	}
-	return info, nil
+	if ofPin[0] != "" {
+		return ofPin[0], ofPin[1]
+	}
+	return ofRunning[0], ofRunning[1]
 }
 
 // Gate is the source's gate (`admin migration status`).

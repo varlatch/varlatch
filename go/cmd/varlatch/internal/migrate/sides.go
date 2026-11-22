@@ -32,6 +32,15 @@ type imagePin struct {
 // (testonly.go); nil in a release.
 var testPin *imagePin
 
+// releasePin is the image a migration starts from in this build: the
+// constants, or a crashpoint build's testPin.
+func releasePin() imagePin {
+	if testPin != nil {
+		return *testPin
+	}
+	return imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
+}
+
 // Source is the old installation, driven as processes (go-step7 decision
 // 2): its CLI's commands inside its containers, and its host CLI. A
 // Source never opens a database itself.
