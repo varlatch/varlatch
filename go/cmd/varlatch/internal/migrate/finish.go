@@ -483,7 +483,7 @@ func finishNotice(j *Journal) string {
 	}
 	if f.DeleteOldData {
 		fmt.Fprintf(&b, "This can no longer be undone: Go's copy and the TypeScript installation's pre-migration volumes are removed. The final archive %s (format 3) restores Go's copy through a Go varlatchd only (setup --restore). "+
-			"It is in %s (and uploaded where the Go configuration's backup destination says): move it out before a new migration into that data directory, which imports into an empty one only.",
+			"It is in %s (and uploaded where the Go configuration's backup destination says); a new migration into that data directory leaves it there.",
 			f.ArchiveID, filepath.Join(j.Target.DataDir, "backups"))
 	} else {
 		b.WriteString("Go's copy and the TypeScript installation's pre-migration volumes are kept until varlatch migrate --finish --delete-old-data.")

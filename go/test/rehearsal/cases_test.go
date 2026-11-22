@@ -42,8 +42,9 @@ func TestRehearsal(t *testing.T) {
 	case "public":
 		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
 	default:
-		// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL).
-		if os.Getenv("VL_RH_ONLY") == "kill" {
+		// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL), and
+		// VL_RH_ONLY=sync the sync case (with VL_RH_SYNC=fakes).
+		if only := os.Getenv("VL_RH_ONLY"); only == "kill" || only == "sync" {
 			break
 		}
 		t.Run("main", func(t *testing.T) { mainCases(t, rel, s3) })
@@ -60,8 +61,12 @@ func TestRehearsal(t *testing.T) {
 			t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
 		}
 	}
-	if prof.kill != "" {
+	only := os.Getenv("VL_RH_ONLY")
+	if prof.kill != "" && only != "sync" {
 		t.Run("kill", func(t *testing.T) { killCase(t, rel, s3) })
+	}
+	if prof.sync == "fakes" && only != "kill" {
+		t.Run("sync", func(t *testing.T) { syncCase(t, rel, s3) })
 	}
 }
 

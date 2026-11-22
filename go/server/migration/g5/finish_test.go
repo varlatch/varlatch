@@ -5,8 +5,12 @@
 package g5_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -597,19 +601,103 @@ func TestG5FinishAfterARollback(t *testing.T) {
 		t.Errorf("after --delete-old-data: frozen copy %v, gate %v; both removed", frozen, gate)
 	}
 	w.expectReverse("finished", rbState{"finished", "rolled-back", "source", "", false, true, true})
-	// Go's copy gone, a new migration may begin, and goes through once the
-	// final archive is moved out of the data directory, as the notice says.
-	if !strings.Contains(out, "move it out before a new migration") {
+	// Go's copy gone, a new migration may begin, and goes through with the
+	// final archive left where it is, in the data directory's backups/
+	// (rehearsal r16f: the import refused it, after the barrier).
+	if !strings.Contains(out, "a new migration into that data directory leaves it there") {
 		t.Errorf("the notice says nothing of the final archive's place:\n%s", out)
 	}
-	if err := os.Rename(filepath.Join(w.data, "backups"), filepath.Join(w.stateDir, "final-archive")); err != nil {
-		t.Fatal(err)
+	before := dirFiles(t, filepath.Join(w.data, "backups"))
+	if len(before) == 0 {
+		t.Fatal("no final archive in the data directory's backups/")
 	}
 	if code := w.run(""); code != 0 {
 		t.Fatalf("a new migration after the reverse finished: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
 	if s, d := w.phases(); s != "open" || d != "open" {
 		t.Errorf("the new migration's journals: %s / %s", s, d)
+	}
+	if after := dirFiles(t, filepath.Join(w.data, "backups")); !maps.Equal(before, after) {
+		t.Errorf("the import changed Go's backups/: %v, then %v", before, after)
+	}
+	w.noSecrets()
+}
+
+// dirFiles is each regular file under dir, by its path there, and its
+// SHA-256.
+func dirFiles(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		rel, _ := filepath.Rel(dir, p)
+		out[rel] = hex.EncodeToString(sum[:])
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// A name in the target's data directory that is not the migration's is
+// refused by the preflight, before the backup and the barrier: the source
+// keeps serving, with no gate and no downtime, and the migration goes
+// through once the name is gone. Go's backups/, a directory, is not such
+// a name; a file of that name is.
+func TestG5APreflightRefusesWhatTheImportWould(t *testing.T) {
+	w := newWorld(t, false)
+	before := w.sourceHash()
+	for _, c := range []struct{ name, what string }{
+		{"notes.txt", "a stray file"},
+		{"backups", "a file named backups"},
+	} {
+		stray := filepath.Join(w.data, c.name)
+		if err := os.WriteFile(stray, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		code := w.run("")
+		out := string(w.outputs[len(w.outputs)-1])
+		if code != 1 || !strings.Contains(out, "preflight: the target's import would be refused") || !strings.Contains(out, c.name) {
+			t.Fatalf("%s: %d\n%s", c.what, code, out)
+		}
+		log, _ := os.ReadFile(filepath.Join(w.stateDir, "crashpoints.log"))
+		for _, never := range []string{"entered preflight", "barrier held", "entered barrier"} {
+			if strings.Contains(string(log), never) {
+				t.Errorf("%s: refused after %q", c.what, never)
+			}
+		}
+		if a, g := w.answers(), w.gateKind(); a != "source" || g != "" {
+			t.Errorf("%s: the public URL answers from %s, the source's gate %q", c.what, a, g)
+		}
+		if err := os.Remove(stray); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if w.sourceHash() != before {
+		t.Error("the refused runs changed the source")
+	}
+	// Go's local backup store, a directory, is left as it is.
+	kept := filepath.Join(w.data, "backups", "kept.vltbak")
+	if err := os.MkdirAll(filepath.Dir(kept), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("an archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.run(""); code != 0 {
+		t.Fatalf("the migration with backups/ in the data directory: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expect("after", "open", "open", "target-open", "migrated-out")
+	if b, err := os.ReadFile(kept); err != nil || string(b) != "an archive" {
+		t.Errorf("backups/ after the import: %q, %v", b, err)
 	}
 	w.noSecrets()
 }

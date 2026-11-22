@@ -278,6 +278,11 @@ func runSidecar() int {
 	logtail.Disable()
 	srv := &tsnet.Server{Dir: state("sidecar"), Hostname: "vault", ControlURL: os.Getenv("G5_TAILNET_CONTROL"), AuthKey: "g5-sidecar",
 		AdvertiseTags: []string{"tag:varlatch"}, Logf: logger.Discard, UserLogf: logger.Discard}
+	if os.Getenv("G5_HEADSCALE") != "" {
+		// On Headscale (headscale_test.go): its tagged pre-auth key gives
+		// the node its tags, and it advertises none.
+		srv.AuthKey, srv.AdvertiseTags = os.Getenv("G5_SIDECAR_AUTHKEY"), nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	st, err := srv.Up(ctx)
@@ -357,7 +362,18 @@ func stopSidecar() error {
 		}
 	}
 	_ = os.Remove(state("sidecar.pid"))
-	return setStopped("tailscale", true)
+	if err := setStopped("tailscale", true); err != nil {
+		return err
+	}
+	if sharedNamespace() {
+		// As the stock Tailscale topology: varlatchd runs in the sidecar's
+		// network, which goes with it (Postgres's route too), so its
+		// network watchdog exits it, and Docker cannot start it again
+		// while the sidecar is stopped (run r17u of the B4 rehearsal). A
+		// command in its container fails from here.
+		return setStopped("varlatchd", true)
+	}
+	return nil
 }
 
 // fakeDockerTailnet answers Docker's part of the sidecar: the Compose
@@ -370,9 +386,16 @@ func fakeDockerTailnet(args []string) (int, bool) {
 	switch {
 	case j == "compose config --no-interpolate --format json":
 		logCall(j)
+		// The list form, as Compose 5.6 prints an environment written as a
+		// list or merged with an overlay's.
+		sidecarEnv := []string{"TS_STATE_DIR=/var/lib/tailscale"}
+		if u := os.Getenv("G5_HEADSCALE"); u != "" {
+			// The operator's override: the sidecar logs in to Headscale.
+			sidecarEnv = append(sidecarEnv, "TS_EXTRA_ARGS=--login-server="+u)
+		}
 		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{
 			"varlatchd": map[string]any{"network_mode": "service:tailscale"},
-			"tailscale": map[string]any{"environment": map[string]any{"TS_STATE_DIR": "/var/lib/tailscale"}},
+			"tailscale": map[string]any{"environment": sidecarEnv},
 		}})
 		fmt.Println(string(out))
 		return 0, true
@@ -390,6 +413,12 @@ func fakeDockerTailnet(args []string) (int, bool) {
 		return 0, true
 	case j == "compose restart varlatchd":
 		logCall(j)
+		if stopped("tailscale") {
+			return fail("Error response from daemon: cannot join network namespace of a non running container: g5-installation-tailscale-1")
+		}
+		if err := setStopped("varlatchd", false); err != nil {
+			return fail("%v", err)
+		}
 		return 0, true
 	case strings.HasPrefix(j, "compose run --rm --no-deps -T --entrypoint cat tailscale /var/lib/tailscale/certs/"):
 		logCall(j)
@@ -590,6 +619,45 @@ func TestG5TailnetInterruptions(t *testing.T) {
 				w.noSecrets()
 			})
 		}
+	}
+}
+
+// G5, the switch after the tailnet handoff interrupted: varlatch migrate
+// killed once the migration is switched with the sidecar stopped (its
+// varlatchd without its network, as run r17u of the B4 rehearsal left it),
+// once the sidecar runs again for the source's mark, and once the source
+// is marked, before the sidecar stops again. --abort refuses (past the
+// switch, forward only) and changes nothing; --resume marks the source,
+// the sidecar stopped again, and opens; a second --resume changes
+// nothing.
+func TestG5TailnetSwitchInterruptions(t *testing.T) {
+	for _, point := range []string{"entered switched", "switch sidecar started", "switch marked"} {
+		t.Run(point, func(t *testing.T) {
+			w, tn := newTailnetWorld(t)
+			sidecar := sidecarID(t)
+			if code := w.run(point); code != -1 {
+				t.Fatalf("not killed at %s: %d", point, code)
+			}
+			if s, _ := w.phases(); s != "switched" {
+				t.Fatalf("killed at %s: the source's journal %q", point, s)
+			}
+			if code := w.run("", "--abort"); code == 0 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "forward only") {
+				t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			if code := w.run("", "--resume"); code != 0 {
+				t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			w.useState()
+			w.expect("resumed", "open", "open", "target-open", "migrated-out")
+			w.tailnetAt(t, tn, sidecar, "target")
+			if sidecarRunning() {
+				t.Error("the sidecar runs after the open")
+			}
+			if code := w.run("", "--resume"); code != 0 {
+				t.Errorf("a second --resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			w.noSecrets()
+		})
 	}
 }
 
@@ -902,11 +970,8 @@ func TestG5TailnetMigrateAgainAfterARollback(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("--finish --delete-old-data: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
-	// The step the finish notice names: its final archive moved out of
-	// the data directory, which an import builds into empty only.
-	if err := os.Rename(filepath.Join(w.data, "backups"), filepath.Join(t.TempDir(), "backups")); err != nil {
-		t.Fatal(err)
-	}
+	// The final archive stays in the data directory's backups/, which the
+	// import leaves as it is.
 	if code := w.run(""); code != 0 {
 		t.Fatalf("the new migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}

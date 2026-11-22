@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,11 +36,18 @@ const migrateUsage = `Usage:
                    [--dry-run] [--max-downtime <duration>] [--drain <duration>] [--transfer-timeout <duration>]
                    [--unit <systemd unit>] [--kek-file <file>] [--destinations-file <file>] [--ts-cli <program>] [--json]
                    [--tailscale-oauth-client-file <file> --tailnet-auth-key-file <file> [--accept-rollback-certificate]]
+                   [--headscale-url <https://IP[:port]> --headscale-api-key-file <file> | --headscale-cli <path>]
                (a source serving a tailnet address: the name moves to the target's node; the OAuth client has the
                 devices:core scope only, the file {"clientId": ..., "clientSecret": ...}; the auth key is reusable,
                 with the node's tags; both from files, never an argument; --accept-rollback-certificate goes on
                 when the old node's certificate cannot be renewed to last the rollback window: a rollback after
-                it ends then needs a new one, about 40 s of downtime)
+                it ends then needs a new one, about 40 s of downtime.
+                On a self-hosted control server (Headscale), its authority instead of the OAuth client: its API
+                at its IP address with a key from headscale apikeys create --expiration 1h (expired when the run
+                ends: each run takes a new one; a run that is killed leaves its key live until it expires, up to
+                an hour: expire it with headscale apikeys expire --prefix <prefix>, which the next run names), or
+                its CLI's absolute path when migrate runs on the control server; the auth key is a reusable
+                pre-auth key tagged with the node's tags; no HTTPS overlay)
   varlatch migrate ... --config /etc/varlatch/varlatchd.conf, not there yet: migrate makes the target with setup's steps
                    (as root; the varlatch user, the data directory, the configuration from the source's answers, the
                    unit enabled; never keys: they are the source's), removed again if the migration is undone:
@@ -75,7 +83,7 @@ var goOnlyCommands = map[string]func(*Run) error{
 
 type migrateOptions struct {
 	from, config, bekFile, destination, readCredentials, destinationsFile, kekFile, tsCLI, ingress, unit string
-	oauthClientFile, tailnetAuthKeyFile                                                                  string
+	oauthClientFile, tailnetAuthKeyFile, headscaleURL, headscaleKeyFile, headscaleCLI                    string
 	toData, toKeys, toConfig, toImage, toService, acmeEmail, listen                                      string
 	maxDowntime, drain, transferTimeout                                                                  time.Duration
 	dryRun, resume, abort, status, asJSON, rollback, finish, deleteOldData, acceptExistingUser, forget   bool
@@ -88,7 +96,8 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		"--read-credentials-file": &o.readCredentials, "--destinations-file": &o.destinationsFile, "--kek-file": &o.kekFile, "--ts-cli": &o.tsCLI,
 		"--ingress": &o.ingress, "--unit": &o.unit, "--to-data": &o.toData, "--to-keys": &o.toKeys, "--to-config": &o.toConfig,
 		"--to-image": &o.toImage, "--to-service": &o.toService, "--acme-email": &o.acmeEmail, "--listen": &o.listen,
-		"--tailscale-oauth-client-file": &o.oauthClientFile, "--tailnet-auth-key-file": &o.tailnetAuthKeyFile}
+		"--tailscale-oauth-client-file": &o.oauthClientFile, "--tailnet-auth-key-file": &o.tailnetAuthKeyFile,
+		"--headscale-url": &o.headscaleURL, "--headscale-api-key-file": &o.headscaleKeyFile, "--headscale-cli": &o.headscaleCLI}
 	durations := map[string]*time.Duration{"--max-downtime": &o.maxDowntime, "--drain": &o.drain, "--transfer-timeout": &o.transferTimeout}
 	flags := map[string]*bool{"--dry-run": &o.dryRun, "--resume": &o.resume, "--abort": &o.abort, "--status": &o.status, "--json": &o.asJSON, "--rollback": &o.rollback, "--accept-rollback-certificate": &o.acceptRollbackCertificate,
 		"--finish": &o.finish, "--delete-old-data": &o.deleteOldData, "--accept-existing-user": &o.acceptExistingUser, "--forget-target": &o.forget}
@@ -144,8 +153,18 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 		return o, usage("--acme-email, --listen and --accept-existing-user are the answers of a host target migrate makes (--config): not with --rollback, --finish, --status or --to-*")
 	case o.acceptRollbackCertificate && o.oauthClientFile == "":
 		return o, usage("--accept-rollback-certificate goes with --tailscale-oauth-client-file: it is the tailnet handoff's")
-	case (o.status || o.finish) && (o.oauthClientFile != "" || o.tailnetAuthKeyFile != ""):
-		return o, usage("--tailscale-oauth-client-file and --tailnet-auth-key-file go with a migration, its --resume and --abort, and --rollback")
+	case (o.status || o.finish) && (o.oauthClientFile != "" || o.tailnetAuthKeyFile != "" || o.headscaleURL != "" || o.headscaleKeyFile != "" || o.headscaleCLI != ""):
+		return o, usage("the tailnet's authority and --tailnet-auth-key-file go with a migration, its --resume and --abort, and --rollback")
+	case (o.headscaleURL != "") != (o.headscaleKeyFile != ""):
+		return o, usage("--headscale-url and --headscale-api-key-file go together: Headscale's API and its key")
+	case o.headscaleURL != "" && o.headscaleCLI != "":
+		return o, usage("--headscale-url or --headscale-cli, not both: Headscale's API, or its CLI on the control server")
+	case o.oauthClientFile != "" && (o.headscaleURL != "" || o.headscaleCLI != ""):
+		return o, usage("one tailnet authority: --tailscale-oauth-client-file (Tailscale's) or --headscale-url/--headscale-cli (a self-hosted control server's)")
+	case o.headscaleURL != "" && headscaleURLRefusal(o.headscaleURL) != "":
+		return o, usage("--headscale-url " + shownArgument(o.headscaleURL) + ": " + headscaleURLRefusal(o.headscaleURL))
+	case o.headscaleCLI != "" && !filepath.IsAbs(o.headscaleCLI):
+		return o, usage("--headscale-cli is the headscale command's absolute path")
 	case o.deleteOldData && !o.finish:
 		return o, usage("--delete-old-data goes with --finish only: it removes the old side's data, after a verified final archive")
 	case o.finish && (o.resume || o.abort || o.rollback || o.dryRun || o.status || o.ingress != "" || o.maxDowntime != 0 || o.drain != 0 || o.transferTimeout != 0):
@@ -227,13 +246,49 @@ func migrateCommand(r *Run) error {
 	// The tailnet handoff's authority and the new node's auth key, from
 	// files only (never an argument or the environment).
 	var tailnetOptions *migrate.TailnetOptions
-	if o.oauthClientFile != "" {
-		cp, err := tailscaleControl(o.oauthClientFile)
+	if o.oauthClientFile != "" || o.headscaleURL != "" || o.headscaleCLI != "" {
+		var cp tailcontrol.ControlPlane
+		server := ""
+		switch {
+		case o.oauthClientFile != "":
+			cp, err = tailscaleControl(o.oauthClientFile)
+		case o.headscaleURL != "":
+			server, _ = tailcontrol.CanonicalControlURL(o.headscaleURL)
+			cp, err = headscaleAPIControl(server, o.headscaleKeyFile)
+		default:
+			server = migrate.CLIAuthority(o.headscaleCLI)
+			cp, err = headscaleCLIControl(o.headscaleCLI)
+		}
 		if err != nil {
 			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
 		}
-		defer func() { _ = cp.Close(context.Background()) }()
-		tailnetOptions = &migrate.TailnetOptions{Control: cp, AcceptRollbackCertificate: o.acceptRollbackCertificate}
+		api, _ := cp.(*tailcontrol.HeadscaleAPI)
+		if api != nil {
+			// A run killed before it closed its key left it live: said, with
+			// its prefix. This run's is recorded until it is closed.
+			if note := unclosedKeyNote(o.from); note != "" {
+				_ = r.warn(note)
+			}
+			markKeyOpen(o.from, api.KeyPrefix(), time.Now())
+		}
+		// The authority ends with the run, whatever its outcome: a
+		// Headscale API key is expired (a later run takes a new one).
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			prefix := ""
+			if api != nil {
+				prefix = api.KeyPrefix()
+			}
+			if err := cp.Close(ctx); err != nil {
+				_ = r.warn("varlatch migrate: " + err.Error() + "; it expires on its own within the hour, or expire it now: headscale apikeys expire --prefix " + cmp.Or(prefix, "<its prefix>"))
+				return
+			}
+			if api != nil {
+				markKeyClosed(o.from)
+			}
+		}()
+		tailnetOptions = &migrate.TailnetOptions{Control: cp, AcceptRollbackCertificate: o.acceptRollbackCertificate, Server: server}
 	}
 	var tailnetAuthKey []byte
 	if o.tailnetAuthKeyFile != "" {
@@ -477,6 +532,80 @@ func tailscaleControl(path string) (tailcontrol.ControlPlane, error) {
 	}
 	return tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: tailscaleAPIOverride, Tailnet: c.Tailnet, ClientID: c.ClientID, ClientSecret: c.ClientSecret,
 		HTTP: tailscaleHTTPClient()})
+}
+
+// headscaleURLRefusal is why --headscale-url is refused, "" when it is
+// not: lib/tailcontrol's rule, tailnet_control_url's, so the server is
+// spelled as varlatchd.conf spells it (https on an IP address).
+func headscaleURLRefusal(v string) string {
+	_, why := tailcontrol.CanonicalControlURL(v)
+	return why
+}
+
+// headscaleKeyMark is the Compose directory's record of the Headscale API
+// key a run opened and has not closed yet: its prefix and when, never the
+// key. A run killed before Close leaves its key live until the key
+// expires; the next run says so, naming the prefix to expire.
+const headscaleKeyMark = "migration-headscale-key.json"
+
+type keyMark struct {
+	Prefix   string    `json:"prefix"`
+	OpenedAt time.Time `json:"openedAt"`
+}
+
+// unclosedKeyNote is what to say about a key an earlier run left open.
+func unclosedKeyNote(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, headscaleKeyMark))
+	if err != nil {
+		return ""
+	}
+	var m keyMark
+	if json.Unmarshal(b, &m) != nil || m.Prefix == "" {
+		return ""
+	}
+	return fmt.Sprintf("varlatch migrate: an earlier run opened the Headscale API key %s at %s and did not close it (it was stopped): the key stays live until it expires, up to an hour after it was made. Expire it now: headscale apikeys expire --prefix %s",
+		m.Prefix, m.OpenedAt.UTC().Format(time.RFC3339), m.Prefix)
+}
+
+func markKeyOpen(dir, prefix string, at time.Time) {
+	b, _ := json.Marshal(keyMark{Prefix: prefix, OpenedAt: at.UTC()})
+	_ = os.WriteFile(filepath.Join(dir, headscaleKeyMark), append(b, '\n'), 0o600)
+}
+
+func markKeyClosed(dir string) { _ = os.Remove(filepath.Join(dir, headscaleKeyMark)) }
+
+// headscaleAPIControl is a self-hosted control server's API with the
+// operator's key, read from its file and checked (Headscale lists it, and
+// it expires within the hour) before anything else is done.
+func headscaleAPIControl(base, keyFile string) (tailcontrol.ControlPlane, error) {
+	key, err := secretinput.ReadFile(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("the Headscale API key file: %w", err)
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, fmt.Errorf("the Headscale API key file %s is empty", Printable(keyFile))
+	}
+	h, err := tailcontrol.NewHeadscaleAPI(tailcontrol.HeadscaleAPIConfig{BaseURL: base, APIKey: key, HTTP: tailscaleHTTPClient()})
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := h.Open(ctx); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// headscaleCLIControl is the control server's own headscale command, for a
+// migration run on that server: no key leaves it.
+func headscaleCLIControl(path string) (tailcontrol.ControlPlane, error) {
+	h := &tailcontrol.HeadscaleCLI{Binary: path}
+	if err := h.Validate(); err != nil {
+		return nil, err
+	}
+	return h, nil
 }
 
 func ms(n int64) string { return (time.Duration(n) * time.Millisecond).Round(time.Second).String() }

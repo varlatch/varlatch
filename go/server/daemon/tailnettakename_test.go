@@ -462,6 +462,11 @@ func TestTakeNameJudgesByTheControlPlanesClock(t *testing.T) {
 	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "within 5m0s") || !strings.Contains(errOut, "nothing was renamed") {
 		t.Fatalf("seen a minute ago by the control plane's clock: %d %q", code, errOut)
 	}
+	// A Date over an hour off this host's clock: neither is trusted.
+	set(2*time.Hour, false, time.Now().Add(-3*time.Hour))
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "more than 1h0m0s apart") || !strings.Contains(errOut, "nothing was renamed") {
+		t.Fatalf("a Date two hours ahead: %d %q", code, errOut)
+	}
 	set(0, true, time.Now().Add(-time.Hour))
 	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "no Date header") || !strings.Contains(errOut, "nothing was renamed") {
 		t.Fatalf("a listing without a Date: %d %q", code, errOut)
@@ -567,6 +572,12 @@ func TestTakeNameRefusals(t *testing.T) {
 	}
 	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", oauth, "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "not a temporary name of vault") {
 		t.Fatalf("another hold: %d %q", code, errOut)
+	}
+	// On a self-hosted control server: not yet (slice 7.5c c4).
+	hs := newInstall(t, "")
+	hs.write(t, "tailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://192.0.2.10\n")
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", oauth, "--config", hs.conf); code != ExitFailure || !strings.Contains(errOut, "names a self-hosted control server (https://192.0.2.10)") || !strings.Contains(errOut, "nothing was done") {
+		t.Fatalf("on Headscale: %d %q", code, errOut)
 	}
 	if code, _, _ := runAdmin(t, "tailnet", "take-name", "--config", in.conf); code != 64 {
 		t.Fatalf("no --oauth-client-file: %d", code)

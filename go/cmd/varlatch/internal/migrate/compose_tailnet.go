@@ -52,6 +52,11 @@ func (c *Compose) Tailnet(ctx context.Context) (TailnetInfo, error) {
 	if v := svc.Environment["TS_SERVE_CONFIG"]; v != nil && *v != "" {
 		info.HTTPS = true
 	}
+	if v := svc.Environment["TS_EXTRA_ARGS"]; v != nil {
+		if info.ControlURL, err = loginServer(*v); err != nil {
+			return TailnetInfo{}, fmt.Errorf("the sidecar's TS_EXTRA_ARGS: %w", err)
+		}
+	}
 	return info, nil
 }
 
