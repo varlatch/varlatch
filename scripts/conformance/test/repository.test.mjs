@@ -391,6 +391,41 @@ test("the steps the setup, ingress and installers replacements name cannot skip 
   const pubTests = named("installers").filter(({ t }) => t.startsWith("TestPublished"));
   assert.ok(pubTests.length >= 3, "the published-release tests named");
   for (const { dir, t } of pubTests) runs(pub, dir, t);
+  assert.deepEqual(publishedReleaseProblems(published), []);
+});
+
+/**
+ * What published-release.yml must keep: the installers on Windows too
+ * (install.ps1), on a runner it may change (VARLATCH_TEST_DISPOSABLE), and
+ * a draft release refused explicitly before anything is checked.
+ */
+function publishedReleaseProblems(workflow) {
+  const problems = [];
+  const matrix = workflow.match(/^\s+os: \[([^\]\n]*)\]/m);
+  if (!matrix || !matrix[1].split(",").map((s) => s.trim()).includes("windows-latest")) problems.push("the installers matrix lacks windows-latest");
+  const step = workflow.indexOf("- name: The installers against the published release");
+  const stepText = step < 0 ? "" : workflow.slice(step, workflow.indexOf("\n      - ", step + 1) > 0 ? workflow.indexOf("\n      - ", step + 1) : undefined);
+  if (!/\n\s+VARLATCH_TEST_DISPOSABLE: "1"\n/.test(stepText)) problems.push('the installers step lacks VARLATCH_TEST_DISPOSABLE: "1"');
+  if (!/gh release view "\$TAG" --repo "\$REPO" --json isDraft --jq \.isDraft/.test(workflow) || !/if \[ "\$draft" != "false" \]; then\n\s+echo "::error::[^"\n]*draft[^"\n]*"\n\s+exit 1/.test(workflow)) {
+    problems.push("a draft release is not refused explicitly");
+  }
+  return problems;
+}
+
+test("the published-release guard fails when the workflow loses Windows, the disposable runner or the draft refusal", () => {
+  const published = readFileSync(join(repoRoot, ".github/workflows/published-release.yml"), "utf8");
+  assert.deepEqual(publishedReleaseProblems(published), []);
+  const mutated = (from, to, want) => {
+    assert.ok(published.includes(from), `the workflow has ${from}`);
+    const p = publishedReleaseProblems(published.replace(from, to));
+    assert.ok(p.length === 1 && p[0].includes(want), `${from} -> ${to}: ${JSON.stringify(p)}`);
+  };
+  mutated("os: [ubuntu-latest, macos-latest, windows-latest]", "os: [ubuntu-latest, macos-latest]", "windows-latest");
+  mutated("os: [ubuntu-latest, macos-latest, windows-latest]", "os: [ubuntu-latest, macos-latest, windows-2022]", "windows-latest");
+  mutated('VARLATCH_TEST_DISPOSABLE: "1"', 'VARLATCH_TEST_DISPOSABLE: "0"', "VARLATCH_TEST_DISPOSABLE");
+  mutated('          VARLATCH_TEST_DISPOSABLE: "1"\n', "", "VARLATCH_TEST_DISPOSABLE");
+  mutated("--json isDraft --jq .isDraft", "--json tagName --jq .tagName", "draft");
+  mutated('if [ "$draft" != "false" ]; then', 'if [ "$draft" = "maybe" ]; then', "draft");
 });
 
 test("the Go test reference guard: renames, removals, the old form and build tags", () => {
