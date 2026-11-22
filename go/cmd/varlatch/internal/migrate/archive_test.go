@@ -157,13 +157,28 @@ func TestArchiveRefusesBeforeAnyProgram(t *testing.T) {
 	exists := filepath.Join(dir, "exists.vltbak")
 	write(t, exists, []byte("an archive already here"))
 	goArchive := goFormatArchive(t, dir, keyVec)
+	// No --ts-image: refused while this varlatch carries no digest of the
+	// last TypeScript release (sides.go); once it does, the default is that
+	// pinned image, and the conversion goes on to its next check (here an
+	// output that exists), so the case holds before and after the pin.
+	noImage := struct {
+		mod  func(*ArchiveOptions)
+		want string
+	}{func(o *ArchiveOptions) { o.TSImage = "" }, "give --ts-image"}
+	if LastTypeScriptDigest != "" {
+		if DefaultTSImage() != LastTypeScriptRepository+"@"+LastTypeScriptDigest {
+			t.Fatalf("the default image: %q", DefaultTSImage())
+		}
+		noImage.mod = func(o *ArchiveOptions) { o.TSImage, o.Out = "", exists }
+		noImage.want = "exists: the converter writes a new archive"
+	}
 
 	for _, c := range []struct {
 		name string
 		mod  func(*ArchiveOptions)
 		want string
 	}{
-		{"no image", func(o *ArchiveOptions) { o.TSImage = "" }, "give --ts-image"},
+		{"no image", noImage.mod, noImage.want},
 		{"an image by tag", func(o *ArchiveOptions) { o.TSImage = "ghcr.io/varlatch/varlatchd:0.23.0" }, "is not pinned by its registry digest"},
 		{"a local image ID without VARLATCH_ALLOW_LOCAL_TS_IMAGE", func(o *ArchiveOptions) { o.TSImage = "sha256:" + strings.Repeat("ef", 32) }, "is not pinned by its registry digest"},
 		{"an output that exists", func(o *ArchiveOptions) { o.Out = exists }, "exists: the converter writes a new archive"},
