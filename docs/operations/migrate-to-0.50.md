@@ -8,13 +8,15 @@ identity, its address and its keys, and every person, Organization,
 Project, value, grant, credential and audit event, checked on both sides
 before the new server opens.
 
-> **Not released yet.** This guide describes the migration as it ships with
-> the last TypeScript release (0.23.0) and the first 0.50 release. Until
-> 0.23.0 is published, `varlatch migrate` refuses every source.
+> **Prerelease.** This guide follows the 0.50 prereleases. The last
+> TypeScript release, 0.23.0, is published, and `varlatch migrate` starts
+> from its published image only.
 
-<!-- pending: the whole guide follows the step 7 pull requests; each
-     "pending" comment below names the one a point depends on. When it
-     merges, check the point against it and remove the comment. -->
+<!-- TODO before this guide leaves draft: four points still depend on
+     unmerged pull requests, each marked "TODO #n" where it applies: #381 (a
+     restore taking the old installation's tailnet name over), #385 (the
+     tailnet handoff on Headscale), #405 and #408 (a restore on Headscale,
+     and `varlatch setup --restore` on a Headscale tailnet). -->
 
 ## What people notice
 
@@ -26,54 +28,51 @@ before the new server opens.
   revocations and use limits. A CLI keeps its server address, so released
   CLIs and the new one go on working without a new `varlatch login`.
 - **A short downtime.** From the barrier to the open, the installation
-  answers `503` with a `Retry-After` hint: fetching values, OIDC
+  answers `503` with `Retry-After: 5`: fetching values, OIDC
   exchanges, sign-ins and device sign-ins wait, and a CLI polling a device
   sign-in continues against the new server at the same address.
   Applications that already hold their values keep running. Do not
   schedule CI deploys during the window. The dry run measures how long it
   will be (see [The dry run](#the-dry-run)).
-
-  <!-- pending: the TypeScript release's barrier answering 503 with
-       Retry-After (0.23.0, release/0.22); check against it. -->
 - **Unfinished sign-ins are retried.** A passkey ceremony or sign-in that
-  was in flight at the barrier fails and is started again. The dry run
-  counts them.
-
-  <!-- pending: the TypeScript release's export reporting the unfinished
-       ceremonies it leaves out (0.23.0); the dry run's report does not
-       show a count yet. -->
+  was in flight at the barrier is not carried over: it fails and is
+  started again.
 - **Dashboards and live views reconnect** to the new server on their own.
 
 Sync Targets, webhooks and audit export are drained at the barrier and
 resume on the new server from where they stopped: nothing already
 delivered is sent again, and a failed delivery is retried under the same
-rules. The final report lists each one's last delivery.
-
-<!-- pending: the TypeScript release's drain, and the report's list of
-     last deliveries; neither is in the report yet. -->
+rules.
 
 ## Before you start
 
 ### Upgrade to the last TypeScript release first
 
 `varlatch migrate` takes exactly one source: a Compose installation of the
-last TypeScript release, **0.23.0**, running its published image (checked by
-its registry digest). Upgrade to it first, the usual way
+last TypeScript release, **0.23.0**, running its published image,
+`ghcr.io/varlatch/varlatchd`, checked by its registry digest. Upgrade to it
+first, the usual way
 ([Upgrade](../../infra/compose/README.md#upgrade-backup-gated-forward-only)),
-and let it run. Check that its exposure backfill has finished, and that no
-key rotation is in progress: the migration refuses a source in either
-state.
+and let it run.
 
-<!-- pending: the TypeScript release's export refusing an unfinished
-     backfill and a key rotation in progress (0.23.0). -->
-
-<!-- pending: 0.23.0 published and its digest pinned in varlatch migrate
-     (LastTypeScriptDigest); until then every source is refused. -->
+- A source on another release is refused: `the source runs <release>; a
+  migration starts from the last TypeScript release, 0.23.0, only: upgrade
+  it first`.
+- An image built locally, or pulled under another repository's name, is
+  refused, naming both images: `the source's image is repository
+  <repository>, digest <digest>, not the published 0.23.0 image: repository
+  ghcr.io/varlatch/varlatchd, digest sha256:6d9b9a67...`.
+- Its exposure backfill must have finished, and no key rotation may be in
+  progress. The TypeScript release's export refuses either: `the exposure
+  backfill has not finished: let varlatchd run until it has (it runs in
+  the background), then export again`, or `a Root KEK rotation is in
+  progress (<state>): finish it, then export again`.
 
 ### What you need
 
 On the installation's Linux host, as root (`varlatch migrate` runs on
-Linux only; every other OS refuses at once):
+Linux only; on any other OS it refuses at once: `varlatch migrate runs on
+the Linux host of the installation it migrates`):
 
 - **The Go CLI**, `varlatch` 0.50 or later, and `varlatchd` of the release
   you migrate to. `varlatch migrate` drives both installations as
@@ -92,13 +91,34 @@ Linux only; every other OS refuses at once):
 - **The target**, in one of two shapes:
   - **A host install** (`--config /etc/varlatch/varlatchd.conf`, and
     `--unit` when its systemd unit is not `varlatchd`). There is no need to
-    run `varlatch setup` first: when the host install does not exist,
-    `varlatch migrate` creates it with setup's own files (the `varlatch`
-    system user, the data directory, `/etc/varlatch`, the configuration
-    and the unit). It generates no keys: the target's Root KEK and Backup
-    Encryption Key are the source's, copied into its key files. A host
-    install you prepared yourself is accepted too, as long as its data
-    directory is empty and it has not been started.
+    run `varlatch setup` first. When the configuration is not there,
+    `varlatch migrate` makes the host install with setup's own steps: the
+    `varlatch` system user, the data directory, `/etc/varlatch`, the
+    configuration, and the unit, enabled but not started.
+    - **The configuration's answers** come from the source: its public URL
+      and its ingress (for your own proxy, the dashboard's address the
+      proxy targets). Give what the source cannot say: `--acme-email`, the
+      certificate account's address for public ingress; `--listen`, the
+      plain listener (Coolify's, or another address than the
+      dashboard's); and `--accept-existing-user` to use a `varlatch` user
+      that already exists.
+    - **No keys are generated:** the target's Root KEK and Backup
+      Encryption Key are the source's, copied into its key files.
+    - **An undo removes what it made.** Each item is recorded in the
+      journal before it is made, so an undo before the switch removes
+      exactly those items, never what was already there. If removing them
+      keeps failing, remove what is left by hand (`--status` names each
+      item), then clear the record with `varlatch migrate --abort
+      --forget-target`.
+    - **A host install you prepared yourself** is used as it is, as long
+      as its data directory is empty and it has not been started.
+    - **A source that serves a tailnet address needs a prepared target.**
+      The host install migrate makes is never on a tailnet, so migrate
+      refuses before anything is made or backed up: `the target migrate
+      makes at /etc/varlatch/varlatchd.conf is never on a tailnet: write
+      /etc/varlatch/varlatchd.conf with tailnet = on and the tailnet
+      settings first (a prepared target, which migrate uses as it is),
+      then run varlatch migrate again; nothing was done`.
   - **The 0.50 image** (`--to-data`, `--to-keys`, `--to-config`,
     `--to-image` and `--to-service`), its service created in setup mode
     with nothing listening, and its data directory, keys directory and
@@ -109,13 +129,6 @@ Linux only; every other OS refuses at once):
   scheme, host and port alike: passkeys belong to that address. A
   migration onto another address is refused; move afterwards with
   [`varlatch move`](move-installation.md).
-
-<!-- pending (not opened yet): migrate creating the host install with setup's files
-     code (user, data directory, /etc/varlatch, configuration, unit; keys
-     from the source through admin migrate keys, never generated), and
-     accepting a prepared one (empty data directory, not started). Check
-     the options it takes for the configuration it writes (listen,
-     listen_https, public_url from the source) when it lands. -->
 
 Run `varlatch migrate` from the Compose directory of the installation, or
 name that directory with `--from`. `varlatch migrate --help` lists every
@@ -158,16 +171,10 @@ migration that measured its transfer reports the time alone.
   about a minute for a certificate or a Coolify domain move, seconds for
   your own proxy). The migration refuses to start its barrier when the
   projection exceeds `--max-downtime` (10 minutes by default).
-- **Drain** is bounded by `--drain`: in-flight requests, Sync Target
-  pushes, webhook deliveries and audit export batches finish within it,
-  and nothing new starts. A request whose body is still uploading when
-  the barrier starts is not waited for: once its body arrives, it gets a
-  `503` with `Retry-After`, and the client sends it again. The drain
-  report does not list it.
-
-  <!-- pending: the TypeScript release's drain (0.23.0, release/0.22): an
-       upload in progress answered 503 once its body is in, and left out
-       of the report's waitedFor; check against it. -->
+- **Drain** is bounded by `--drain` (60 seconds by default): in-flight
+  requests (an upload still arriving included), Sync Target pushes,
+  webhook deliveries and audit export batches finish within it, and
+  nothing new starts.
 
 `varlatch migrate --status` shows where a migration stands, from the
 Compose directory (or with `--from`). Add `--json` for the full report.
@@ -201,8 +208,6 @@ Compose directory and in the target's data directory) before it starts:
 6. **The switch**: the TypeScript installation is marked migrated out. It
    no longer starts writable, and answers `503` to every request, reads
    included, so no application reads a stale value from it.
-   <!-- pending: the TypeScript release's migrated-out marker refusing
-        reads (0.23.0). -->
 7. **Open**: the new server serves the installation at its address.
 
 The journal holds no key and no value. The new server does not start on a
@@ -223,9 +228,6 @@ writable once its journal says switched.
 > refuses again), and `varlatch migrate` uses `--no-deps` for its own
 > restarts.
 
-<!-- pending (0.23.0, release/0.22): varlatch-migrate refusing behind the
-     migrated-out gate and the resulting Compose recreate behaviour. -->
-
 ### Interrupted
 
 A migration can be interrupted anywhere: a lost connection, a reboot, a
@@ -239,12 +241,31 @@ from the journal and never guesses:
 | During the address transfer | Closed, the new server isolated behind its gate | Checks the address again (or your step, on Coolify); if it does not answer from the new server, gives it back and undoes |
 | After the switch | The new server serves, or is about to; the old one refuses writes | Finishes the open |
 
-Any failure from the barrier to the switch undoes the migration. After the
-switch it goes forward: `--resume` finishes the open. If the control
-plane of the tailnet cannot be reached during an undo, both installations
-stay closed until `--resume` finishes it. `varlatch
-migrate --abort` undoes a migration that has not switched yet, the address
-first.
+Any failure from the barrier to the switch undoes the migration, in
+reverse order:
+
+1. The tailnet name goes back to the old node, when it moved.
+2. The new server stops.
+3. The barrier is lifted.
+4. The address goes back: the old ingress (Caddy or the dashboard) starts
+   again. It is recreated when its container does not serve, for example
+   one that a failed start left without a network. On Coolify, you move
+   the domain back when asked.
+5. The undo reports the old installation reopened only once it answers at
+   its address, as itself, within `--transfer-timeout`. If it does not,
+   the undo stays resumable: `--resume` (or `--abort`) starts the ingress
+   again and checks again.
+
+While the new server may still serve the address (it did not stop, or its
+service is yours to stop), the old ingress is not started and the new
+server's database is kept; `--resume` goes on once it is stopped. If the
+tailnet's control plane cannot be reached during an undo, the address does
+not move back either, and both installations stay closed until `--resume`
+finishes it.
+
+After the switch it goes forward: `--resume` finishes the open. `varlatch
+migrate --abort` undoes a migration that has not switched yet, in the same
+order.
 
 ## The address transfer
 
@@ -274,7 +295,8 @@ it asks for, then run it again with `--resume`.
 
 1. Create the 0.50 application in Coolify as a **Docker Compose** resource
    pointing at `infra/coolify/varlatchd.compose.yml` (see
-   `infra/coolify/README.md` and [The image target](#the-image-target)),
+   [its Coolify setup](../../infra/coolify/README.md#single-container-go-service-050)
+   and [The image target](#the-image-target)),
    with `VARLATCH_VARLATCHD_DIGEST` set to the release's verified digest,
    in setup mode with nothing listening (do not click **Deploy** yet):
    - create the host configuration file (`/srv/varlatch/varlatchd.conf`, or
@@ -299,9 +321,6 @@ it asks for, then run it again with `--resume`.
 If the check fails, `--resume` checks again once you have fixed the
 domain. `--abort` undoes the migration: it tells you to move the domain
 back to the TypeScript application first.
-
-<!-- pending #390: infra/coolify/varlatchd.compose.yml and its Coolify
-     setup documentation in infra/coolify/README.md. -->
 
 ### The tailnet
 
@@ -328,10 +347,8 @@ tailnet name over to a new node, by rename, in the same transfer:
 With both a public (or Coolify) address and the tailnet address, the order
 is fixed: the domain first, checked through the public URL; then the
 tailnet name, checked from a client node; then both together. A failure
-undoes them in reverse order.
-
-<!-- pending #379: the handoff's wiring into varlatch migrate, and the
-     combined order. -->
+undoes them in reverse order: the tailnet name goes back first, then the
+address.
 
 #### The tailnet authority
 
@@ -373,13 +390,14 @@ This prerelease moves a tailnet name on Tailscale only. On Headscale, the
 migration will run where the `headscale` CLI reaches the control server,
 or take an API key that expires within the hour (`headscale apikeys
 create --expiration 1h`), refusing a longer-lived one since a Headscale
-API key is a full administrator.
+API key is a full administrator. On a self-hosted control server, the new
+node's tags (its pre-auth key's) must be the configuration's
+`tailnet_tags`: until they are, its tailnet access stays closed, and its
+tailnet status says `TAGS_DIFFER`, naming both sets.
 
-<!-- pending #379: the handoff's wiring into varlatch migrate (and #378
-     for the 0.50 server's handoff commands): the options above,
-     --accept-rollback-certificate, the refusal without the authority, the
-     probe's reusable key and access rule. pending (not opened yet):
-     Headscale authority wiring (slice 7.5c-2). -->
+<!-- TODO #385: the tailnet handoff on Headscale (its authority, the
+     headscale CLI or a short-lived API key); check this paragraph against
+     it and drop "Tailscale only". -->
 
 ## The image target
 
@@ -405,9 +423,6 @@ sudo varlatch migrate --ingress coolify \
   `--to-keys /srv/varlatch/keys`, `--to-config /srv/varlatch/varlatchd.conf`
   and `--to-service varlatchd`, and its `VARLATCH_VARLATCHD_DIGEST`
   variable pins the digest matching `--to-image`.
-
-  <!-- pending #390: infra/coolify/varlatchd.compose.yml defaults matching
-       --to-data/--to-keys/--to-config/--to-service. -->
 - `--to-image` is pinned by its digest, and its tag is the release of the
   `varlatchd` on this host, which fills the bind paths as the image's user.
   The migration does not run Docker against the service: that it runs this
@@ -422,15 +437,14 @@ sudo varlatch migrate --ingress coolify \
   new node until you do. Then `--resume` (or `--abort`) gives the name
   back to the old node, then the address.
 
-  <!-- pending #379: the handoff's wiring into varlatch migrate. -->
-
 ## The rollback window
 
 For **30 days after the switch**, `varlatch migrate --rollback` returns the
 installation to the last TypeScript release, with everything that changed
 since. It works while every release the installation has run since is
 reversible to 0.23.0: each 0.50 release says so in its `release.json`
-(`reversibleTo`), and is tested against 0.23.0 before it is published. A
+(`reversibleTo`), and passes the migration's gate, forward and back,
+before it is published. A
 release that cannot keep the window says so instead
 (`endsRollbackWindow`); every release says exactly one of the two, or it
 is refused when it is built. `varlatch upgrade` asks before upgrading to a
@@ -439,9 +453,6 @@ release that ends the window:
 > This release ends the migration's rollback window: after it, `varlatch
 > migrate --rollback` can no longer return this installation to the
 > TypeScript release (0.23.0). Its data stays; only the way back goes.
-
-<!-- pending (not built yet): the release job's test of each release
-     against 0.23.0's image. -->
 
 ### Roll back
 
@@ -475,13 +486,18 @@ undoes the rollback, and the new server goes on serving. During the
 transfer, `--resume` checks again and `--abort` gives the address back to
 the new server first. People sign in again after a rollback too.
 
-On a Tailscale topology (`varlatchd` with `network_mode: service:tailscale`),
-`--rollback` refuses up front if the old `tailscale` sidecar is stopped and
-names the step to take (`docker compose up -d --no-deps tailscale`, then
-`varlatch migrate --rollback` again): `varlatch migrate` never starts the
-old Tailscale node itself.
+On a Tailscale topology (`varlatchd` with `network_mode: service:tailscale`):
 
-<!-- pending #389: rollback refusing a stopped tailscale sidecar up front. -->
+- **After a migration that moved the tailnet name**, the rollback starts
+  the old `tailscale` sidecar itself, which the migration stopped at the
+  switch. Its old node comes back under its temporary name. The name stays
+  with the new server's node until the address moves back, then returns
+  to the old node. An undo of the rollback stops the sidecar again. Give
+  the tailnet authority again (see [The tailnet authority](#the-tailnet-authority)).
+- **Otherwise** `varlatch migrate` never starts the old Tailscale node
+  itself. If the old `tailscale` sidecar is stopped, `--rollback` refuses
+  before anything and names the step: `docker compose up -d --no-deps
+  tailscale`, then `varlatch migrate --rollback` again.
 
 ### Archives made during the window
 
@@ -506,6 +522,11 @@ sudo varlatch setup --restore <archive> \
 ```
 
 or by the installation a later forward migration makes.
+
+<!-- TODO #381: a restore onto a fresh host taking the old installation's
+     tailnet name over. TODO #405 and #408: a restore on a Headscale
+     tailnet, and `varlatch setup --restore` driving it (restore only).
+     Describe both here once they merge. -->
 
 ### Finish
 
@@ -536,9 +557,6 @@ sudo varlatch migrate --finish --delete-old-data \
   options are this archive's. The TypeScript release takes a backup while
   it is marked migrated out (for this archive), never behind the
   transfer's barrier.
-
-  <!-- pending: 0.23.0 allowing a backup behind its migrated-out gate and
-       refusing one behind the transfer barrier (release/0.22). -->
 - Only once the journal records the verified archive are the old
   PostgreSQL and Convex volumes removed, with the TypeScript
   installation's `<project>_varlatch-state` volume.
@@ -595,15 +613,11 @@ varlatch migrate --from-archive <archive> \
   and sends nothing. The 0.50 server then imports it, runs every check of
   the migration, and seals a format 3 archive at `--out`, of the same
   installation and with the same keys. Restore it with `setup --restore`.
-- `--ts-image <name>@sha256:<digest>` names the TypeScript release's image,
-  pinned by digest. It is required until the converter carries 0.23.0's
-  digest.
+- `--ts-image <name>@sha256:<digest>` names the TypeScript release's image
+  by its registry digest. By default it is the one this `varlatch` pins:
+  0.23.0's published image.
 - When `--bek-file` holds a passphrase rather than the key,
   `--out-bek-file` names the key file the new archive is sealed with.
 - Any archive from 0.7.0 on converts. The converter ships with every
   release for at least 12 months, and until every old archive's retention
   has ended.
-
-<!-- pending #362: --from-archive, --ts-image, --out-bek-file, Linux and
-     macOS only. pending (not built yet): the migration recording a
-     TypeScript archive's retain-until date. -->
