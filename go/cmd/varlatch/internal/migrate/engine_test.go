@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -545,7 +546,7 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 		{"no digest", func(w *world) { w.src.info.Digest = "" }, "not pinned by a registry digest"},
 		{"another digest", func(w *world) { w.src.info.Digest = "sha256:" + hexOf(randomBytes(32)) }, "not the published 0.23.0 image"},
 		{"another repository", func(w *world) { w.src.info.DigestRepository = "ghcr.io/someone/varlatchd" }, "not the published 0.23.0 image"},
-		{"no pinned digest yet", func(w *world) { w.eng.pin = nil }, "0.23.0 is not yet published; this varlatch cannot migrate yet"},
+		{"the published pin, another image", func(w *world) { w.eng.pin = nil }, "not the published 0.23.0 image"},
 		{"a source behind a gate", func(w *world) { w.src.gate = &Gate{Kind: "restore", ID: "g"} }, "behind a restore gate"},
 		{"a target with a database", func(w *world) { w.tgt.database = true }, "holds a database and no migration journal"},
 		{"a target of another migration", func(w *world) { w.tgt.journal = &JournalHead{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Copied} }, "holds the migration mig_aaaa"},
@@ -861,6 +862,25 @@ func TestATransferThatFailsGoesBack(t *testing.T) {
 	}
 	if w.prober.probes < 5 {
 		t.Errorf("probed %d times in 10 s", w.prober.probes)
+	}
+}
+
+// The published pin (0.23.0's Step 7 item): migrate no longer refuses as
+// unpublished, and a source on v0.23.0's varlatchd image index passes the
+// pin while any other image is refused.
+func TestThePublishedPin(t *testing.T) {
+	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(LastTypeScriptDigest) || LastTypeScriptRepository != "ghcr.io/varlatch/varlatchd" {
+		t.Fatalf("the pin: %s@%s", LastTypeScriptRepository, LastTypeScriptDigest)
+	}
+	e := &Engine{}
+	ok := SourceInfo{Release: LastTypeScriptRelease, DigestRepository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
+	if err := e.pinned(ok); err != nil {
+		t.Fatalf("the published image refused: %v", err)
+	}
+	other := ok
+	other.Digest = "sha256:" + strings.Repeat("0", 64)
+	if err := e.pinned(other); err == nil || strings.Contains(err.Error(), "not yet published") || !strings.Contains(err.Error(), "not the published 0.23.0 image") {
+		t.Fatalf("another image: %v", err)
 	}
 }
 
