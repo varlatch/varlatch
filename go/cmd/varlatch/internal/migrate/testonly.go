@@ -19,8 +19,7 @@ import (
 //
 //   - VARLATCH_MIGRATE_PIN=<repository>@<digest> pins the source's image in
 //     place of LastTypeScriptRepository and LastTypeScriptDigest (a
-//     release pins 0.23.0's, and refuses every source until it is
-//     published);
+//     release pins 0.23.0's published image, by its registry digest);
 //   - VARLATCH_MIGRATE_IMAGE_USER=<uid>:<gid> is the image target's user,
 //     for a test that does not run as root.
 

@@ -613,9 +613,24 @@ func collisionCase(t *testing.T, rel release, s3 *s3Server) {
 	}
 	ab := in.migrateEnv(rel, true, rel.pin(), "--abort")
 	measure("item 6: --abort once the port is free", ab.String()+" "+lastLines(ab.stdout, 3))
-	code, body := in.get("/v1/meta")
-	record(t, item, "after --abort the source answers again", code == 200 && strings.Contains(body, `"serverVersion":"0.23.0"`), fmt.Sprintf("%d %s", code, trim(body)))
+	// As a client would: the source is polled until it answers from
+	// 0.23.0, for at most sourceAnswerDeadline, never judged on a single
+	// request (r12 read once, right after --abort). It fails if the source
+	// never answers in time; the time to its first answer is recorded.
+	a := answersWithin(func() (int, string) { return in.get("/v1/meta") },
+		func(code int, body string) bool {
+			return code == 200 && strings.Contains(body, `"serverVersion":"0.23.0"`)
+		},
+		sourceAnswerDeadline, 250*time.Millisecond)
+	measure("item 6: the source's first answer after --abort", fmt.Sprintf("%v after %d requests (ok %v)", a.took.Round(time.Millisecond), a.tries, a.ok))
+	record(t, item, "after --abort the source answers again", a.ok,
+		fmt.Sprintf("%d %s; first answer %v after --abort exited (%d requests, deadline %v)", a.code, trim(a.body), a.took.Round(time.Millisecond), a.tries, sourceAnswerDeadline))
 }
+
+// sourceAnswerDeadline bounds item 6's wait for the source after --abort.
+// The undo already waits for it at its address (the transfer timeout), so
+// a healthy source answers at once; the margin is for a loaded host.
+const sourceAnswerDeadline = 60 * time.Second
 
 // afterFailedDryRun: a dry run that fails after its journal is written
 // leaves the migration "interrupted in phase started", which refuses the

@@ -505,6 +505,39 @@ func (in *installation) get(path string) (int, string) {
 	return resp.StatusCode, b.String()
 }
 
+// answered is what answersWithin saw: whether an answer passed within the
+// deadline, how long the first passing one took, how many requests it
+// made, and the last answer (the passing one, or the last that did not).
+type answered struct {
+	ok    bool
+	took  time.Duration
+	tries int
+	code  int
+	body  string
+}
+
+// answersWithin polls get, as a client would, until pass holds of its
+// answer or the deadline passes. It never judges a single request: a
+// source that starts after the poll began is waited for, one that never
+// answers fails at the deadline.
+func answersWithin(get func() (int, string), pass func(int, string) bool, deadline, every time.Duration) answered {
+	start := time.Now()
+	var a answered
+	for {
+		a.tries++
+		a.code, a.body = get()
+		if pass(a.code, a.body) {
+			a.ok, a.took = true, time.Since(start)
+			return a
+		}
+		if time.Since(start)+every > deadline {
+			a.took = time.Since(start)
+			return a
+		}
+		time.Sleep(every)
+	}
+}
+
 // journal is the migration's journal in the Compose directory.
 func (in *installation) journal() map[string]any {
 	b, err := os.ReadFile(filepath.Join(in.dir, "migration.json"))
