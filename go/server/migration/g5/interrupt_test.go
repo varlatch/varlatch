@@ -540,7 +540,9 @@ const ownerFile = "g5-owner.pid"
 // process its owner file names is dead; one without an owner file (a
 // scratch directory, the Headscale cases' CA, or a run of a branch from
 // before owner files) only once it is older than abandonedAfter, longer
-// than any G5 run, so a live run's is never removed.
+// than any G5 run, so a live run's is never removed. A live run is judged
+// by its pid, so this assumes one PID namespace for every run (a run in
+// another container would look dead).
 func sweepAbandoned() {
 	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*", "g5-headscale-ca-*"} {
 		dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))

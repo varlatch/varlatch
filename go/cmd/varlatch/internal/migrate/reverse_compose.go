@@ -80,6 +80,10 @@ type ReverseSource interface {
 	// one-off commands could not start (varlatchd in a stopped sidecar's
 	// network), before anything of it is done.
 	ReverseReady(ctx context.Context) error
+	// StartNetworkOwner starts the service varlatchd shares its network
+	// with (network_mode: service:<it>) when it is not running; nothing
+	// otherwise. Only for a sidecar migrate itself stopped (sidecarOwned).
+	StartNetworkOwner(ctx context.Context) error
 }
 
 // projectName is the installation's Compose project, as Compose itself
@@ -506,6 +510,31 @@ func (c *Compose) networkOwnerRunning(ctx context.Context, then string) error {
 // after the rebuild.
 func (c *Compose) ReverseReady(ctx context.Context) error {
 	return c.networkOwnerRunning(ctx, "varlatch migrate --rollback again")
+}
+
+// StartNetworkOwner: `docker compose start <owner>` when varlatchd runs in
+// another service's network and that service is not running. The reverse
+// of a migration whose tailnet handoff stopped the sidecar at the switch
+// starts it so (the old node, under its temporary name: the name stays
+// with Go's node until the reverse's own handoff), as StartTailnet does,
+// without restarting varlatchd.
+func (c *Compose) StartNetworkOwner(ctx context.Context) error {
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return err
+	}
+	owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:")
+	if !ok {
+		return nil
+	}
+	running, err := c.running(ctx)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(running, owner) {
+		return nil
+	}
+	return c.compose(ctx, "docker compose start "+owner, "start", owner)
 }
 
 // gateOffline is the installation's gate, read in a one-off container.
