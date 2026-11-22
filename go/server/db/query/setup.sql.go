@@ -224,6 +224,21 @@ func (q *Queries) PeekSetupGrant(ctx context.Context, arg PeekSetupGrantParams) 
 	return i, err
 }
 
+const revokeUnusedSetupLinks = `-- name: RevokeUnusedSetupLinks :execrows
+UPDATE setup_grants SET revoked_at = ?1
+WHERE kind IN ('bootstrap', 'recover') AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > ?1
+`
+
+// setup's reissue (admin bootstrap|recover --revoke-unused): the
+// bootstrap and recovery links issued before and never used.
+func (q *Queries) RevokeUnusedSetupLinks(ctx context.Context, now sql.NullInt64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeUnusedSetupLinks, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setupGrantByTokenHash = `-- name: SetupGrantByTokenHash :one
 SELECT id, kind, subject_identity_id, token_hash, expires_at, consumed_at, created_at, invite_organization_id, invite_role, invite_name, revoked_at, created_by FROM setup_grants WHERE token_hash = ?
 `

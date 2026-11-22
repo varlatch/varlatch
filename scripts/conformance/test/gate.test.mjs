@@ -5,13 +5,15 @@
  * still open.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { canonical, judgeGate, predatedFeatures, recentCliProblems, replacements } from "../lib/gate.mjs";
+import { canonical, judgeGate, onGoServer, predatedFeatures, readWalkthrough, recentCliProblems, replacements, TEMPLATE_SENTINEL } from "../lib/gate.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(here, "..", "..", "..");
 const inventory = JSON.parse(readFileSync(join(here, "..", "inventory.json"), "utf8"));
 
 /** A small inventory whose replacements are all satisfiable. */
@@ -24,7 +26,30 @@ const small = {
   },
   externalSuites: { setup: { script: "scripts/test-setup.mjs", replacement: "a.new" } },
 };
-const walkthrough = { path: "docs/evidence/walkthrough-2026-12.md", exists: true, size: 120, sha256: "w".repeat(64) };
+const candidateCommit = "a".repeat(40);
+const signedWalkthroughContent = (commit = candidateCommit) =>
+  [
+    "# Gate G1 Browser Walkthrough Evidence",
+    "",
+    "| # | Done | Screen |",
+    "| --- | --- | --- |",
+    "| 1 | [x] | Projects |",
+    "",
+    "## 7. Owner Sign-Off",
+    "",
+    "- **Owner:** owner",
+    "- **Date (UTC):** 2026-12-01 12:00 UTC",
+    `- **Candidate commit:** \`${commit}\``,
+    "- **Verdict:** `PASS`",
+  ].join("\n");
+const walkthrough = {
+  path: "docs/evidence/walkthrough-2026-12.md",
+  exists: true,
+  isSymlink: false,
+  size: signedWalkthroughContent().length,
+  sha256: "w".repeat(64),
+  content: signedWalkthroughContent(),
+};
 const implementation = { target: "go-binary", sha256: "b".repeat(64) };
 const run = (outcomes, extra = {}) => ({
   target: "go-binary:/usr/bin/varlatchd",
@@ -33,6 +58,7 @@ const run = (outcomes, extra = {}) => ({
   checks: Object.entries(outcomes).map(([id, outcome]) => ({ id, outcome })),
   expectedInForce: [],
   implementation,
+  commit: candidateCommit,
   ...extra,
 });
 const passing = { "a.new": "pass", "a.old": "not-applicable", "a.gone": "not-applicable" };
@@ -65,13 +91,92 @@ test("each replacement must be present and passing; an open one fails the gate",
   assert.deepEqual(v.open, ["setup (scripts/test-setup.mjs): ADR-0059 step 6"]);
 });
 
-test("the browser-walkthrough evidence must be named, under docs/evidence/, present and not empty", () => {
-  const problem = (w) => judgeGate({ inventory: small, run: run(passing), walkthrough: w }).problems.join();
+test("the browser-walkthrough evidence must be named, under docs/evidence/, present, not empty, not a symlink, and signed off", () => {
+  const problem = (w, extraRun = {}) => judgeGate({ inventory: small, run: run(passing, extraRun), walkthrough: w }).problems.join("\n");
   assert.match(problem(null), /names no browser-walkthrough evidence file/);
   assert.match(problem({ ...walkthrough, path: "notes.md" }), /is not under docs\/evidence\//);
   assert.match(problem({ ...walkthrough, path: "docs/evidence/../../x.md" }), /is not under docs\/evidence\//);
+  assert.match(problem({ ...walkthrough, isSymlink: true }), /symlink/);
   assert.match(problem({ ...walkthrough, exists: false }), /does not exist/);
   assert.match(problem({ ...walkthrough, size: 0 }), /is empty/);
+  assert.match(problem({ ...walkthrough, content: undefined }), /no readable content/);
+  // Template sentinel (tolerant whitespace/case), unchecked checklist rows, and unreplaced placeholders fail the gate.
+  assert.match(problem({ ...walkthrough, content: `${TEMPLATE_SENTINEL}\n${signedWalkthroughContent()}` }), /still the template/);
+  assert.match(problem({ ...walkthrough, content: `<!--  G1-WALKTHROUGH:   template -->\n${signedWalkthroughContent()}` }), /still the template/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| 2 | [ ] | Audit |` }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| 3 | [ ] not done |` }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| x | [ ]` }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace("PASS", "PENDING") }), /unreplaced placeholders/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Commit | \`<commit-sha>\` |` }), /unreplaced placeholders/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Hash | \`<sha256>\` |` }), /unreplaced placeholders/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Date | \`YYYY-MM-DD HH:MM UTC\` |` }), /unreplaced placeholders/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Owner | \`<name / handle>\` |` }), /unreplaced placeholders/);
+  // Verdict must be PASS (backticks optional).
+  assert.equal(problem({ ...walkthrough, content: signedWalkthroughContent().replace("`PASS`", "PASS") }), "");
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace("`PASS`", "`FAIL`") }), /\*\*Verdict:\*\* PASS/);
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(/Verdict.*\n?/, "") }), /\*\*Verdict:\*\* PASS/);
+  // Candidate commit must be 40 hex and match the run's commit, including on go-binary fingerprints (which carry no commit).
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent("deadbeef") }), /40-hex Candidate commit/);
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(/Candidate commit.*\n/, "") }), /40-hex Candidate commit/);
+  const otherCommit = "f".repeat(40);
+  assert.match(problem(walkthrough, { implementation, commit: otherCommit }), /does not match the run's commit/);
+  assert.match(problem(walkthrough, { implementation, commit: null }), /recorded no expected commit/);
+  assert.equal(problem(walkthrough, { implementation, commit: candidateCommit }), "");
+  assert.match(
+    problem(walkthrough, { implementation: { target: "ts-source", commit: otherCommit }, commit: null }),
+    /does not match the run's commit/,
+  );
+  assert.equal(problem(walkthrough, { implementation: { target: "ts-source", commit: candidateCommit }, commit: null }), "");
+});
+
+test("the shipped g1-walkthrough-template.md fails the gate on its own", () => {
+  const templatePath = join(repoRoot, "docs/evidence/g1-walkthrough-template.md");
+  const w = readWalkthrough(templatePath, repoRoot);
+  assert.equal(w.path, "docs/evidence/g1-walkthrough-template.md");
+  assert.equal(w.exists, true);
+  assert.equal(w.isSymlink, false);
+  const verdict = judgeGate({ inventory: small, run: run(passing), walkthrough: w });
+  assert.equal(verdict.passed, false);
+  const joined = verdict.problems.join("\n");
+  assert.match(joined, /still the template/);
+  assert.match(joined, /unchecked checklist rows/);
+  assert.match(joined, /unreplaced placeholders/);
+  assert.match(joined, /\*\*Verdict:\*\* PASS/);
+  assert.match(joined, /40-hex Candidate commit/);
+});
+
+test("readWalkthrough and judgeGate reject symlinked evidence files and symlinked parent directories", () => {
+  const dir = mkdtempSync(join(tmpdir(), "varlatch-gate-walkthrough-"));
+  try {
+    const evidenceDir = join(dir, "docs", "evidence");
+    mkdirSync(evidenceDir, { recursive: true });
+    const realFile = join(evidenceDir, "signed.md");
+    writeFileSync(realFile, signedWalkthroughContent());
+    // Direct file symlink inside docs/evidence/.
+    const fileLink = join(evidenceDir, "link.md");
+    symlinkSync(realFile, fileLink);
+    const linked = readWalkthrough(fileLink, dir);
+    assert.equal(linked.isSymlink, true);
+    assert.match(judgeGate({ inventory: small, run: run(passing), walkthrough: linked }).problems.join("\n"), /symlink/);
+
+    // Symlinked subdirectory inside docs/evidence/ pointing outside docs/evidence/.
+    const outsideDir = join(dir, "outside");
+    mkdirSync(outsideDir, { recursive: true });
+    writeFileSync(join(outsideDir, "signed.md"), signedWalkthroughContent());
+    symlinkSync(outsideDir, join(evidenceDir, "sub"));
+    const viaDirLink = readWalkthrough(join(evidenceDir, "sub", "signed.md"), dir);
+    assert.equal(viaDirLink.isSymlink, true);
+    assert.match(judgeGate({ inventory: small, run: run(passing), walkthrough: viaDirLink }).problems.join("\n"), /symlink/);
+
+    // Regular file inside docs/evidence/ passes cleanly.
+    const regular = readWalkthrough(realFile, dir);
+    assert.equal(regular.isSymlink, false);
+    assert.equal(regular.exists, true);
+    const ok = judgeGate({ inventory: small, run: run(passing), walkthrough: regular });
+    assert.deepEqual(ok, { passed: true, problems: [], open: [] });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /** A complete report of a gate run with a source CLI, as run.mjs writes it. */
@@ -146,10 +251,11 @@ test("a gate run needs its own implementation fingerprint", () => {
   assert.match(verdict.problems.join(), /recorded no implementation fingerprint/);
 });
 
-test("today no target can pass the gate: the doctor and lifecycle replacements are open", () => {
+test("today no target can pass the gate: doctor's pending-upgrade check and the lifecycle replacements are open", () => {
   const open = replacements(inventory).filter((r) => r.replacement && typeof r.replacement === "object" && "open" in r.replacement);
-  // Doctor is written in step 6, and each lifecycle and installer suite in
-  // the step its Go counterpart lands. The Convex realtime checks' are
+  // Doctor's checks are the Go installation's (step 6.5), but for its
+  // pending upgrade (step 6.6's journal); each lifecycle and installer
+  // suite is written in the step its Go counterpart lands. The Convex realtime checks' are
   // written (step 3.5): the degraded-state checks, which run on every
   // target.
   assert.ok(!open.some((r) => r.of.startsWith("realtime.")));
@@ -181,6 +287,27 @@ test("today no target can pass the gate: the doctor and lifecycle replacements a
     assert.match(verdict.problems[0], /replacements are still open/);
     assert.equal(verdict.open.length, open.length);
   }
+});
+
+test("a ts-stack check replaced by a go-server check: on the Go server the replacement must pass, off it the check itself", () => {
+  const replaced = Object.entries(inventory.checks).filter(([, c]) => c.kind === "ts-stack" && typeof c.replacement === "string" && inventory.checks[c.replacement]?.kind === "go-server");
+  assert.ok(replaced.length > 0, "the doctor's checks are replaced by the Go installation's (step 6.5)");
+  const [of, { replacement }] = replaced[0];
+  const outcomes = (failing) => Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, id === failing ? "fail" : c.kind === "ts-stack" ? "pass" : c.kind === "go-server" ? "not-applicable" : "pass"]));
+  const ts = judgeGate({ inventory, run: run(outcomes(of), { target: "ts-source" }), walkthrough });
+  assert.ok(ts.problems.some((p) => p.startsWith(`${of}: off the Go server it must pass itself`)), ts.problems.join("\n"));
+  const goOutcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" ? "not-applicable" : id === replacement ? "fail" : "pass"]));
+  // The Go server is go-binary and go-container alike (the image's
+  // varlatchd, run as go-binary): there the replacement must pass.
+  for (const target of ["go-binary:/opt/varlatchd", "go-container:varlatchd:test"]) {
+    const go = judgeGate({ inventory, run: run(goOutcomes, { target }), walkthrough });
+    assert.ok(go.problems.some((p) => p.startsWith(`${of}: its replacement ${replacement} must pass in this run`)), `${target}: ${go.problems.join("\n")}`);
+    assert.ok(!go.problems.some((p) => p.startsWith(`${of}: off the Go server`)), target);
+  }
+  assert.equal(onGoServer("go-container:varlatchd:test"), true);
+  assert.equal(onGoServer("go-binary:/opt/varlatchd"), true);
+  assert.equal(onGoServer("ts-release:0.22.0"), false);
+  assert.equal(onGoServer("go-binaryx:/x"), false);
 });
 
 test("the hand-over's go-client checks may be not applicable only when the CLI under test is not the Go CLI", () => {

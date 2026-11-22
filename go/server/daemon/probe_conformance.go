@@ -72,6 +72,12 @@ func init() {
 		var err error
 		var out any
 		switch rest[0] {
+		case "audit-event-count":
+			// How many audit events there are: a read-only command (doctor)
+			// must leave the number as it found it.
+			var n int64
+			err = store.Reader().QueryRowContext(ctx, "SELECT count(*) FROM audit_events").Scan(&n)
+			out = n
 		case "sync-trigger-position":
 			// Where the trigger scan stands: a change reaches the engine once
 			// the scan's cursor passes its audit event.

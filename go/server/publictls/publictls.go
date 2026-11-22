@@ -358,7 +358,7 @@ func (m *Manager) beginIssuance(ctx context.Context, now time.Time) (id int64, u
 	if m.o.IssuanceLimit > 0 && n >= m.o.IssuanceLimit {
 		// An hour past the week: the CA's own window may end a little
 		// after this installation's clock says.
-		return -1, oldest.Add(IssuanceWindow + time.Hour), nil
+		return -1, oldest.Add(IssuanceWindow + IssuanceSlack), nil
 	}
 	id, err = m.o.Issuances.Begin(ctx, strings.ToLower(m.o.Host), now)
 	if err != nil {

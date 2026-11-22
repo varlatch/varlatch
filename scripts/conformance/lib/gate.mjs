@@ -27,9 +27,88 @@
  * evidence is taken from the CI artifacts of one workflow run
  * (scripts/conformance/README.md, Gate mode), never from a local file.
  */
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
 import { compareVersions, VERSION } from "./inventory.mjs";
 
 export const EVIDENCE_DIR = "docs/evidence/";
+export const TEMPLATE_SENTINEL = "<!-- g1-walkthrough: TEMPLATE -->";
+const TEMPLATE_SENTINEL_RE = /<!--\s*g1-walkthrough:\s*TEMPLATE\s*-->/i;
+const UNCHECKED_ROW = /^\s*\|(?:[^\r\n]*\|)?\s*\[\s*\](?:\s|$|\|)/m;
+const PLACEHOLDER = /\bPENDING\b|<commit-sha>|<full-40-char-sha>|<sha256>|YYYY-MM-DD HH:MM UTC|<name \/ handle>/;
+const CANDIDATE_COMMIT_LINE = /^\s*(?:-\s*)?\*\*Candidate commit:\*\*\s*`?([^`\r\n]+?)`?\s*$/im;
+const VERDICT_PASS_LINE = /^\s*(?:-\s*)?\*\*Verdict:\*\*\s*`?PASS`?\s*$/m;
+const HEX_40 = /^[0-9a-f]{40}$/i;
+
+/**
+ * Reads a browser-walkthrough evidence file for gate mode without following
+ * symlinks (neither the file itself nor a symlinked parent escaping repoRoot).
+ */
+export function readWalkthrough(file, repoRoot) {
+  const absolute = resolve(file);
+  const path = relative(repoRoot, absolute).split(sep).join("/");
+  const stat = lstatSync(absolute, { throwIfNoEntry: false });
+  if (!stat) return { path, exists: false, isSymlink: false, size: 0, sha256: null, content: null };
+  if (stat.isSymbolicLink()) return { path, exists: true, isSymlink: true, size: 0, sha256: null, content: null };
+  if (!stat.isFile()) return { path, exists: false, isSymlink: false, size: 0, sha256: null, content: null };
+  const realRoot = realpathSync(repoRoot);
+  const realFile = realpathSync(absolute);
+  if (realFile !== resolve(realRoot, path)) {
+    return { path, exists: true, isSymlink: true, size: 0, sha256: null, content: null };
+  }
+  const raw = readFileSync(absolute);
+  return {
+    path,
+    exists: true,
+    isSymlink: false,
+    size: raw.length,
+    sha256: createHash("sha256").update(raw).digest("hex"),
+    content: raw.toString("utf8"),
+  };
+}
+
+/** Content rules on a walkthrough evidence file once it exists and is non-empty. */
+function walkthroughContentProblems(walkthrough, run) {
+  const problems = [];
+  if (typeof walkthrough.content !== "string") {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has no readable content`);
+    return problems;
+  }
+  const { content } = walkthrough;
+  if (TEMPLATE_SENTINEL_RE.test(content)) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} is still the template (${TEMPLATE_SENTINEL})`);
+  }
+  if (UNCHECKED_ROW.test(content)) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has unchecked checklist rows (| [ ] |)`);
+  }
+  if (PLACEHOLDER.test(content)) {
+    problems.push(
+      `the browser-walkthrough evidence ${walkthrough.path} still contains unreplaced placeholders (PENDING, <commit-sha>, <sha256>, YYYY-MM-DD HH:MM UTC, or <name / handle>)`,
+    );
+  }
+  if (!VERDICT_PASS_LINE.test(content)) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} must record **Verdict:** PASS in Owner Sign-Off`);
+  }
+  const commitMatch = content.match(CANDIDATE_COMMIT_LINE);
+  const commit = commitMatch ? commitMatch[1].trim() : null;
+  const runCommit = typeof run.commit === "string" && HEX_40.test(run.commit) ? run.commit : null;
+  const implCommit = typeof run.implementation?.commit === "string" && HEX_40.test(run.implementation.commit) ? run.implementation.commit : null;
+  const expectedCommit = runCommit ?? implCommit;
+  if (!commit || !HEX_40.test(commit)) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} must name a 40-hex Candidate commit in Owner Sign-Off`);
+  } else if (!expectedCommit) {
+    problems.push(`the run recorded no expected commit to compare the browser-walkthrough Candidate commit (${commit}) against`);
+  } else {
+    if (commit.toLowerCase() !== expectedCommit.toLowerCase()) {
+      problems.push(`the browser-walkthrough evidence ${walkthrough.path} Candidate commit (${commit}) does not match the run's commit (${expectedCommit})`);
+    }
+    if (implCommit && commit.toLowerCase() !== implCommit.toLowerCase() && implCommit.toLowerCase() !== expectedCommit.toLowerCase()) {
+      problems.push(`the browser-walkthrough evidence ${walkthrough.path} Candidate commit (${commit}) does not match the run's implementation commit (${implCommit})`);
+    }
+  }
+  return problems;
+}
 
 /** Every replacement the gate needs: the ts-stack checks' and the outside suites'. */
 export function replacements(inventory) {
@@ -69,7 +148,16 @@ export function predatedFeatures(inventory, version) {
  */
 function mayNotApply(inventory, id, target, cli) {
   const kind = inventory.checks[id]?.kind;
-  return kind === "ts-stack" || (kind === "go-server" && !/^go-(binary|container)(:|$)/.test(String(target))) || (kind === "go-client" && cli !== "go");
+  return kind === "ts-stack" || (kind === "go-server" && !onGoServer(target)) || (kind === "go-client" && cli !== "go");
+}
+
+/**
+ * Whether target is the Go server: go-binary, and go-container (the same
+ * varlatchd in the single-container image, run as go-binary). The one
+ * test of it, for every rule that tells the Go server's checks apart.
+ */
+export function onGoServer(target) {
+  return /^go-(binary|container)(:|$)/.test(String(target));
 }
 
 /** The rules a run's own checks must meet: no expected failure, every replacement passing. */
@@ -100,6 +188,13 @@ function runRules(inventory, run) {
   const open = [];
   for (const { of, replacement } of replacements(inventory)) {
     if (typeof replacement === "string") {
+      // A go-server replacement runs only on the Go server: off it, the
+      // TypeScript check it replaces is the one that must pass.
+      if (inventory.checks[replacement]?.kind === "go-server" && !onGoServer(run.target)) {
+        const got = outcome.get(of);
+        if (got !== "pass") problems.push(`${of}: off the Go server it must pass itself, its replacement ${replacement} being the Go server's (${got ?? "not in the run"})`);
+        continue;
+      }
       const got = outcome.get(replacement);
       if (got !== "pass") problems.push(`${of}: its replacement ${replacement} must pass in this run (${got ?? "not in the run"})`);
     } else if (replacement && "open" in replacement) {
@@ -116,8 +211,9 @@ function runRules(inventory, run) {
  * Judges a run in gate mode.
  *
  *   run         { target, cli (the CLI's spec), partial, ok, checks: [{ id, outcome }], expectedInForce: [check ids],
- *                 lacksInForce: [operations], implementation (the target's fingerprint, or null) }
- *   walkthrough null, or { path (relative to the checkout), exists, size, sha256 }
+ *                 lacksInForce: [operations], implementation (the target's fingerprint, or null),
+ *                 commit (the checkout's 40-hex HEAD commit, or null) }
+ *   walkthrough null, or { path (relative to the checkout), exists, isSymlink, size, sha256, content }
  *   recentCli   null, or the parsed report (conformance-report.json) of a
  *               run with a recent CLI
  *
@@ -130,8 +226,10 @@ export function judgeGate({ inventory, run, walkthrough = null, recentCli = null
   if (!walkthrough) problems.push(`the run names no browser-walkthrough evidence file (--walkthrough ${EVIDENCE_DIR}<file>)`);
   else if (!walkthrough.path.startsWith(EVIDENCE_DIR) || walkthrough.path.split("/").includes("..")) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} is not under ${EVIDENCE_DIR} of this checkout`);
-  } else if (!walkthrough.exists) problems.push(`the browser-walkthrough evidence ${walkthrough.path} does not exist`);
+  } else if (walkthrough.isSymlink) problems.push(`the browser-walkthrough evidence ${walkthrough.path} is a symlink (symlinks are not allowed)`);
+  else if (!walkthrough.exists) problems.push(`the browser-walkthrough evidence ${walkthrough.path} does not exist`);
   else if (!(walkthrough.size > 0)) problems.push(`the browser-walkthrough evidence ${walkthrough.path} is empty`);
+  else problems.push(...walkthroughContentProblems(walkthrough, run));
 
   const predating = run.checks.filter((c) => c.outcome === "predates-cli").map((c) => c.id);
   if (predating.length > 0) {

@@ -189,6 +189,7 @@ of reaching into Compose or the database:
 | `ts-stack` | `ts-stack compose <args...>` and `ts-stack compose-env`: Compose control for the ts-stack checks |
 | `webhook-receiver` | `webhook-receiver url\|requests`: a local endpoint the server reaches on its own loopback (`url` starts it when it is not running and answers the URL to register; `requests` what it recorded: `[{ at, method, target, contentType, signature, body, status }]`); a path with a segment `fail-<n>` answers 500 to its first n requests. The target's outbound allow list opens that port and nothing else private (the TypeScript stacks run it inside varlatchd's container with `VARLATCH_OUTBOUND_ALLOW`; go-binary as a process of its own with `outbound_allow`) |
 | `host-admin` | `host-admin audit-export <args...>`: one `varlatchd admin audit-export` host command, run as the operator runs it (the TypeScript stacks: in the container; go-binary: through the daemon's control socket). JSON: `{ status, stdout, stderr }`, whatever the status, so a suite can check a refusal |
+| `go-host` | `go-host doctor`: the Go installation's own host command `varlatchd admin doctor --json` (the one `varlatch doctor` fronts), run on its host with its configuration. JSON: `{ status, report, stderr }`, the report parsed (null when none was printed). go-binary only |
 | `oidc-issuer` | `oidc-issuer start`: a local OIDC issuer over https (lib/oidc-issuer.cjs) at `https://127.0.0.1:<port>`, its self-signed certificate made when the target starts and trusted by its server (the TypeScript stacks: `NODE_EXTRA_CA_CERTS`, the issuer inside varlatchd's container; go-binary: `SSL_CERT_FILE`, the issuer on a host loopback port). The allow list opens its port. JSON `{ issuer }`. `keys <json>` sets its JWKS (`{ keys }`); `counts` answers `{ discovery, jwks }`, its documents fetched so far |
 | `platform-fakes` | `platform-fakes start`: fake GitHub, Coolify and Convex services (lib/platform-fakes.cjs) the server's sync engine reaches under the platforms' own host names: `api.github.com`, `coolify.conformance.test`, `convex.conformance.test`, over https with a certificate made when the target starts and trusted by its server. The TypeScript stacks run them inside varlatchd's container on its loopback port 443, with `extra_hosts` leading the names there and `NODE_EXTRA_CA_CERTS`; go-binary runs them on a host loopback port, which the conformance build's host override (`VARLATCH_CONFORMANCE_OUTBOUND_HOSTS`, never in a release) leads the names to, with `SSL_CERT_FILE`. Either way the outbound allow list is what lets the fakes' address through. JSON `{ github, coolify, convex }` (the base identities). `state` answers what they hold and every request they saw (`{ github, coolify, running, convex, requests, githubApps, codesUsed, mints }`, credentials, keys and sealed values left out); `drift <resource> <key> <value>` changes a Coolify value behind Varlatch's back; `github <json>` sets up the fake GitHub's App side (a manifest code the conversion hands an App over for, an App registered directly with its private key answered, its keys added or deleted, an installation), which then answers the App's JWT, its installations and installation tokens narrowed to repositories and permissions as GitHub does |
 | `object-store` | `object-store start`: a local S3 server with Object Lock (MinIO, pinned by digest), running until `down` removes it by its name. JSON: `{ endpoint, hostEndpoint, region, accessKeyId, secretAccessKey }`, the endpoint the server reaches it at and the one the suite does. The target's outbound allow list opens it and nothing else private (the TypeScript stacks: an alias on the Compose project's network; go-binary: a loopback port) |
@@ -524,21 +525,26 @@ shows this on the inventory as it stands.
 (`gh workflow run conformance.yml --ref <branch>`), on GitHub-hosted
 runners with only the read-only job token:
 
-| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` |
-| --- | --- | --- | --- |
-| `ts-source` | ✓ | ✓ | ✓ |
-| `ts-release:0.22.0` | ✓ | ✓ | ✓ |
-| `go-binary` | ✓ | | |
+| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` | CLI `0.22.4` | CLI `0.23.0` | CLI `go` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ts-source` | ✓ | ✓ | ✓ | | | ✓ |
+| `ts-release:0.22.0` | ✓ | ✓ | ✓ | | | ✓ |
+| `go-binary` | ✓ | | | ✓ | ✓ | |
 
 The `images` job builds the source images once (`source-images.mjs`) and
-passes them to the `ts-source` cells as an artifact. The `go-binary` cell
-builds the dashboard and `varlatchd` from the checkout. Each cell is its own
-job, with its own stack (or server) on its own free ports, at most three at
-a time and 60 minutes each, and uploads its `conformance-report.json`
-(`conformance-report-<target>-cli-<cli>`, tokens masked as in the logs).
-`go.yml` also runs the `go-binary` target with the source CLI on every pull
-request that changes `go/` or the harness's `go-binary` pieces, in three
-shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
+passes them to the `ts-source` cells as an artifact. The `go-binary` cells
+build the dashboard and `varlatchd` from the checkout; the `0.22.4` and
+`0.23.0` cells cover ADR-0059 gate G2 (the last two TypeScript CLI releases
+against the Go server). Any future CLI entry marked `pending` in
+`clients.json` (without `commit` or `sha256`) is skipped in `cells` with a
+notice and activates automatically once its commit and hash are pinned. Each
+cell is its own job, with its own stack (or server) on its own free ports, at
+most three at a time and 60 minutes each, and uploads its
+`conformance-report.json` (`conformance-report-<target>-cli-<cli>`, tokens
+masked as in the logs). `go.yml` also runs the `go-binary` target with the
+source CLI and the Go CLI on every pull request that changes `go/` or the
+harness's `go-binary` pieces, in three shards ([Shards](#shards)), as
+`ci.yml`'s `e2e` job runs `ts-source`.
 
 ## Clients
 
@@ -547,9 +553,13 @@ shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
 checkout: `cd go && go build -o <path> ./cmd/varlatch`), or a
 released TypeScript CLI pinned in `clients.json` by version, release commit
 and the hash of `varlatch-cli-<version>.cjs`, never "latest". The pins now
-are 0.21.0 and 0.22.0; a later release is added by hand (its commit from
-`gh api repos/varlatch/varlatch/commits/v<V> --jq .sha`, its hash from the
-verified `SHA256SUMS`).
+are 0.21.0, 0.22.0, 0.22.4, and 0.23.0; a later release is added by hand (its
+commit from `gh api repos/varlatch/varlatch/commits/v<V> --jq .sha`, its hash
+from the verified `SHA256SUMS`). An unreleased future entry may temporarily
+use `{ "pending": "<reason>" }` (with no `commit` or `sha256`) so the weekly
+matrix skips it with a notice; selecting a `pending` version directly with
+`run.mjs --cli <version>` fails closed with a usage error and never downloads
+anything.
 
 Before the target starts, a pinned CLI is downloaded from its GitHub release
 into a new, empty directory and verified as
