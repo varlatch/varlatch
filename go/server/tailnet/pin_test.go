@@ -761,6 +761,19 @@ func TestTheTagRule(t *testing.T) {
 			t.Errorf("tags %v: %q", tags, d)
 		}
 	}
+	// A tag the node carries twice is one tag: named once, never with an
+	// empty one beside it.
+	node.set(tagged("tag:c", "tag:c"), nil)
+	m.Check(ctx)
+	if d, _ := m.Explain(); m.Closed() != TagsDiffer || !strings.Contains(d, "The node's tags (tag:c) are not tailnet_tags (tag:b, tag:varlatch)") {
+		t.Errorf("tags carried twice: closed %q, %q", m.Closed(), d)
+	}
+	// Exactly tailnet_tags, twice over: open.
+	node.set(tagged("tag:varlatch", "tag:b", "tag:varlatch"), nil)
+	m.Check(ctx)
+	if m.Closed() != "" || !open(m) {
+		t.Errorf("tailnet_tags carried twice: closed %q, open %v", m.Closed(), open(m))
+	}
 	// Exactly tailnet_tags, in another order: open again.
 	node.set(tagged("tag:varlatch", "tag:b"), nil)
 	m.Check(ctx)
