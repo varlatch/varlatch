@@ -3680,6 +3680,47 @@ migrations.
   stopped one by writing its journal and starting it. A switch is the
   journal's word alone, written beside the varlatchd serving under the
   transfer's gate.
+- `varlatch migrate --from-archive`, the backup converter (step 7, slice
+  7.7b; go-step7 decision 18; `cmd/varlatch/internal/migrate` archive.go):
+  a TypeScript archive (format 1 or 2) to a format 3 archive of the same
+  installation (`--out`), by the migration's own path, on a host with
+  Docker. It opens the archive with the BEK (`--bek-file`, a key or a
+  passphrase; a passphrase needs `--out-bek-file`, the key file the output
+  is sealed with) and checks the Root KEK (`--kek-file`) against its
+  canaries, refusing a wrong key, a varlatchd archive, an output that
+  exists or an image not pinned by digest before any container starts.
+  Then an isolated restore: a throwaway PostgreSQL 17.6 (by digest) with
+  `--network none` takes the Secret Plane's dump as the TypeScript
+  restore does, and the last TypeScript release's image (by default the
+  one `LastTypeScriptDigest` pins, v0.23.0's; `--ts-image` gives another
+  by registry digest, and a local image ID only with
+  `VARLATCH_ALLOW_LOCAL_TS_IMAGE=1`, for the tests, with a warning) runs
+  in its namespace, read-only, as this
+  user, with no capability: `migrate` (an older schema brought forward),
+  `admin migration backfill` (the exposure index an archive from before
+  0.20.0 lacks) and `admin migration export --dry-run --digests`, the run
+  key on its stdin. Never a daemon. Then varlatchd, as a process, on a
+  scratch data directory: `admin migrate import`, `admin migrate check`
+  (every check passes) and `admin backup run`, whose archive is placed at
+  `--out` once its installation and key versions are the source's. Both
+  containers and the scratch directory are removed, on an interrupt too
+  (SIGINT, SIGTERM, SIGHUP end it through its context), and when a
+  removal fails it says the cleanup is incomplete. One conversion runs at
+  a time per host, whoever runs it (an flock on
+  /run/lock/varlatch-convert.lock, or /tmp's, whatever TMPDIR says), and
+  each starts by sweeping what a killed one left: the converter's
+  labelled containers, by ID, its working directories in the scratch
+  root and the copy it was placing beside `--out` (directories or regular
+  files of its own names, never a symbolic link; one it may not remove is
+  warned about). Linux and macOS only. PostgreSQL's own
+  messages (psql, pg_restore) are not shown: they can quote the
+  archive's data. Its tests: the
+  refusals before any program runs and the conversion's sequence, with
+  fakes; the isolation per pull request in go.yml
+  (`TestArchiveIsolationHasNoNetwork`, Docker); the conversions of
+  release/0.22's generated archives (format 1 and 2 of the seeded
+  installation, format 1 of a 0.7.0 installation), each restored after,
+  in the nightly converter job (`TestConvertArchives`).
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the
