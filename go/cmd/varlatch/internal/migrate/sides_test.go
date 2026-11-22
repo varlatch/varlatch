@@ -156,11 +156,39 @@ func TestComposeDiscover(t *testing.T) {
 	}}
 	c := &Compose{Directory: dir, Run: run}
 	info, err := c.Discover(context.Background())
-	if err != nil || info.Release != "0.23.0" || info.Digest != digest || info.Image != "ghcr.io/varlatch/varlatchd:0.23.0" {
+	if err != nil || info.Release != "0.23.0" || info.Digest != digest || info.DigestRepository != "ghcr.io/varlatch/varlatchd" || info.Image != "ghcr.io/varlatch/varlatchd:0.23.0" {
 		t.Fatalf("%+v %v", info, err)
 	}
 	if _, err := (&Compose{Directory: t.TempDir(), Run: run}).Discover(context.Background()); err == nil || !strings.Contains(err.Error(), "no docker-compose.yml") {
 		t.Errorf("no Compose file: %v", err)
+	}
+}
+
+// The digest an image is checked by, of the several Docker lists: the
+// pinned image's when it is among them, whatever the order; else the
+// pinned repository's first; else the running name's first; never another
+// repository's.
+func TestRepoDigest(t *testing.T) {
+	pin := imagePin{Repository: "ghcr.io/varlatch/varlatchd", Digest: "sha256:" + strings.Repeat("a", 64)}
+	platform := "sha256:" + strings.Repeat("b", 64)
+	mirror := "sha256:" + strings.Repeat("c", 64)
+	for _, c := range []struct {
+		name         string
+		digests      []string
+		running      string
+		digest, repo string
+	}{
+		{"the pin after a platform manifest", []string{pin.Repository + "@" + platform, pin.Repository + "@" + pin.Digest}, pin.Repository, pin.Digest, pin.Repository},
+		{"the pin, run under a mirror's name", []string{"mirror.example.test/varlatchd@" + mirror, pin.Repository + "@" + pin.Digest}, "mirror.example.test/varlatchd", pin.Digest, pin.Repository},
+		{"the pinned repository, another digest", []string{"mirror.example.test/varlatchd@" + mirror, pin.Repository + "@" + platform}, "mirror.example.test/varlatchd", platform, pin.Repository},
+		{"only the running name's", []string{"mirror.example.test/varlatchd@" + mirror}, "mirror.example.test/varlatchd", mirror, "mirror.example.test/varlatchd"},
+		{"only another repository's", []string{"someone.example.test/varlatchd@" + mirror}, pin.Repository, "", ""},
+		{"not a digest", []string{pin.Repository + "@md5:00", "no-at-sign"}, pin.Repository, "", ""},
+		{"none", nil, pin.Repository, "", ""},
+	} {
+		if d, r := repoDigest(c.digests, c.running, pin); d != c.digest || r != c.repo {
+			t.Errorf("%s: %s %s, want %s %s", c.name, r, d, c.repo, c.digest)
+		}
 	}
 }
 

@@ -546,7 +546,7 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 		{"no digest", func(w *world) { w.src.info.Digest = "" }, "not pinned by a registry digest"},
 		{"another digest", func(w *world) { w.src.info.Digest = "sha256:" + hexOf(randomBytes(32)) }, "not the published 0.23.0 image"},
 		{"another repository", func(w *world) { w.src.info.DigestRepository = "ghcr.io/someone/varlatchd" }, "not the published 0.23.0 image"},
-		{"the published pin, another image", func(w *world) { w.eng.pin = nil }, "not the published 0.23.0 image"},
+		{"the release's own pin, another image", func(w *world) { w.eng.pin = nil }, "not the published 0.23.0 image"},
 		{"a source behind a gate", func(w *world) { w.src.gate = &Gate{Kind: "restore", ID: "g"} }, "behind a restore gate"},
 		{"a target with a database", func(w *world) { w.tgt.database = true }, "holds a database and no migration journal"},
 		{"a target of another migration", func(w *world) { w.tgt.journal = &JournalHead{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Copied} }, "holds the migration mig_aaaa"},
@@ -865,22 +865,34 @@ func TestATransferThatFailsGoesBack(t *testing.T) {
 	}
 }
 
-// The published pin (0.23.0's Step 7 item): migrate no longer refuses as
-// unpublished, and a source on v0.23.0's varlatchd image index passes the
-// pin while any other image is refused.
+// The published pin (0.23.0's Step 7 item): a source on v0.23.0's
+// varlatchd image index passes it; another digest, the same digest of
+// another repository, or none, is refused.
 func TestThePublishedPin(t *testing.T) {
 	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(LastTypeScriptDigest) || LastTypeScriptRepository != "ghcr.io/varlatch/varlatchd" {
 		t.Fatalf("the pin: %s@%s", LastTypeScriptRepository, LastTypeScriptDigest)
+	}
+	if testPin != nil {
+		t.Skip("a crashpoint build run with VARLATCH_MIGRATE_PIN pins its own image")
 	}
 	e := &Engine{}
 	ok := SourceInfo{Release: LastTypeScriptRelease, DigestRepository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
 	if err := e.pinned(ok); err != nil {
 		t.Fatalf("the published image refused: %v", err)
 	}
-	other := ok
-	other.Digest = "sha256:" + strings.Repeat("0", 64)
-	if err := e.pinned(other); err == nil || strings.Contains(err.Error(), "not yet published") || !strings.Contains(err.Error(), "not the published 0.23.0 image") {
-		t.Fatalf("another image: %v", err)
+	for name, c := range map[string]struct {
+		set  func(*SourceInfo)
+		want string
+	}{
+		"another digest":     {func(s *SourceInfo) { s.Digest = "sha256:" + strings.Repeat("0", 64) }, "not the published 0.23.0 image"},
+		"another repository": {func(s *SourceInfo) { s.DigestRepository = "registry.example.test/varlatchd" }, "not the published 0.23.0 image"},
+		"no digest":          {func(s *SourceInfo) { s.Digest, s.DigestRepository = "", "" }, "not pinned by a registry digest"},
+	} {
+		src := ok
+		c.set(&src)
+		if err := e.pinned(src); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 
