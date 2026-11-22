@@ -12,9 +12,8 @@ before the new server opens.
 > TypeScript release, 0.23.0, is published, and `varlatch migrate` starts
 > from its published image only.
 
-<!-- TODO before this guide leaves draft: five points still depend on
-     unmerged pull requests, each marked "TODO #n" where it applies: #381 (a
-     restore taking the old installation's tailnet name over), #385 (the
+<!-- TODO before this guide leaves draft: four points still depend on
+     unmerged pull requests, each marked "TODO #n" where it applies: #385 (the
      tailnet handoff on Headscale), #405 and #408 (a restore on Headscale,
      and `varlatch setup --restore` on a Headscale tailnet), and the migrate
      fix that carries the outbound allow list over ("TODO outbound"). -->
@@ -537,10 +536,44 @@ sudo varlatch setup --restore <archive> \
 
 or by the installation a later forward migration makes.
 
-<!-- TODO #381: a restore onto a fresh host taking the old installation's
-     tailnet name over. TODO #405 and #408: a restore on a Headscale
-     tailnet, and `varlatch setup --restore` driving it (restore only).
-     Describe both here once they merge. -->
+**On a Tailscale tailnet, the restore takes the old installation's name
+over.** Give `setup --restore` the tailnet ingress and an OAuth client, as
+for the migration (see [The tailnet authority](#the-tailnet-authority);
+both files by absolute path):
+
+```sh
+sudo varlatch setup --restore <archive> \
+  --root-kek-file /path/to/varlatch-kek --backup-key-file /path/to/backup-key \
+  --ingress tailnet --tailnet-hostname <name> \
+  --tailnet-auth-key-file /root/auth-key \
+  --tailscale-oauth-client-file /root/oauth-client.json
+```
+
+It takes the name by rename, instead of waiting for the old node to be
+deleted, before `varlatchd` first starts:
+
+1. The restored node joins under a temporary name, `<name>-vl-<op>-n`,
+   held: it serves nothing yet.
+2. The old node must be dead: not connected to the tailnet, and last seen
+   more than 5 minutes ago by the control plane's clock. This is checked
+   again right before the rename. A node seen since may be the old
+   installation still running, so its name is never taken; there is no
+   override. Stop the old installation, wait, and run setup again.
+3. The old node is renamed `<name>-vl-<op>-o`, and the restored node
+   takes the name. With tailnet HTTPS, the name's certificate is obtained
+   (and counted against the name's issuances).
+4. The name is checked to reach the restored node from another node of
+   the tailnet. Then the hold is removed, and `varlatchd` listens once it
+   starts.
+
+Each step is journalled before it acts. Run the same command again after
+an interruption: a cut-short rename is undone, then done again, and one
+stopped after the rename is checked again and finished. The old node stays in the
+tailnet under its `-o` name until you remove it in the admin console.
+
+<!-- TODO #405 and #408: a restore on a Headscale tailnet (take-name
+     refuses a self-hosted control server until then), and `varlatch
+     setup --restore` driving it. Describe both here once they merge. -->
 
 ### Finish
 
