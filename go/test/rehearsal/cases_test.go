@@ -41,6 +41,9 @@ func TestRehearsal(t *testing.T) {
 		return
 	case "public":
 		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
+	case "tailnet":
+		t.Run("tailnet", func(t *testing.T) { tailnetCase(t, rel, s3) })
+		return
 	default:
 		// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL), and
 		// VL_RH_ONLY=sync the sync case (with VL_RH_SYNC=fakes).
@@ -195,7 +198,7 @@ func (in *installation) migrateEnvVars(rel release, withPin bool, pin string) []
 	if withPin {
 		env = append(env, "VARLATCH_MIGRATE_PIN="+pin)
 	}
-	return env
+	return append(env, in.migrateExtraEnv...)
 }
 
 // migrateEnv is migrate with the pin override set to pin (or unset).
