@@ -83,7 +83,7 @@ func (rootedHost) Probe(context.Context, string) (diskprobe.Result, error) {
 	return diskprobe.Result{}, errors.New("no probe under a test root")
 }
 func (h rootedHost) CheckConfig(path string) (string, error) {
-	cmd := exec.Command(h.sys.Varlatchd, "admin", "config-check", "--config", path)
+	cmd := exec.Command(h.sys.Varlatchd, "admin", "config", "check", "--config", path)
 	cmd.Env = append(append([]string{}, h.sys.Env...), "CREDENTIALS_DIRECTORY="+h.Path(setup.EtcDir))
 	out, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
