@@ -379,6 +379,8 @@ type tailnetState struct {
 	HeldAs     string   `json:"heldAs"`
 	PinnedTo   string   `json:"pinnedTo"`
 	HoldBroken bool     `json:"holdBroken,omitempty"`
+	// ControlURL is tailnet_control_url, canonical; "" is Tailscale's.
+	ControlURL string `json:"controlUrl,omitempty"`
 }
 
 func readTailnetState(cfg *config.Config) *tailnetState {
@@ -386,7 +388,7 @@ func readTailnetState(cfg *config.Config) *tailnetState {
 	if t == nil {
 		return nil
 	}
-	st := &tailnetState{Hostname: t.Hostname, Tags: t.Tags, HTTPSPort: t.HTTPSPort}
+	st := &tailnetState{Hostname: t.Hostname, Tags: t.Tags, HTTPSPort: t.HTTPSPort, ControlURL: t.ControlURL}
 	if t.AuthKeyFile != "" {
 		if b, err := os.ReadFile(t.AuthKeyFile); err == nil {
 			st.AuthKey = len(bytes.TrimSpace(b)) > 0

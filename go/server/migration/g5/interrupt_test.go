@@ -86,6 +86,13 @@ func registerCleanupDir(dir string) {
 	cleanupDirs.mu.Unlock()
 }
 
+// unregisterCleanupDir forgets dir once its test removed it itself.
+func unregisterCleanupDir(dir string) {
+	cleanupDirs.mu.Lock()
+	cleanupDirs.dirs = slices.DeleteFunc(cleanupDirs.dirs, func(d string) bool { return d == dir })
+	cleanupDirs.mu.Unlock()
+}
+
 func removeCleanupDirs() {
 	cleanupDirs.mu.Lock()
 	dirs := slices.Clone(cleanupDirs.dirs)
@@ -571,6 +578,9 @@ type world struct {
 	// secrets are a world's own, scanned for too (the tailnet's OAuth
 	// client secret and auth key).
 	secrets [][]byte
+	// beforeRun runs before every varlatch migrate (Headscale's world
+	// writes a new API key: each run expires its own).
+	beforeRun func()
 	// extraEnv is the CLI's added environment (a target made under a test
 	// root, maketarget_test.go).
 	extraEnv []string
@@ -596,14 +606,21 @@ const ownerFile = "g5-owner.pid"
 // process is gone: one killed (SIGKILL, or go test's -timeout panic) runs
 // none of its cleanup. Only this user's; a shared directory only when the
 // process its owner file names is dead; one without an owner file (a
-// scratch directory, or a run of a branch from before owner files) only
-// once it is older than abandonedAfter, longer than any G5 run, so a live
-// run's is never removed. A live run is judged by its pid, so this assumes
-// one PID namespace for every run (a run in another container would look
-// dead).
+// scratch directory, the Headscale cases' CA, or a run of a branch from
+// before owner files) only once it is older than abandonedAfter, longer
+// than any G5 run, so a live run's is never removed. A live run is judged
+// by its pid, so this assumes one PID namespace for every run (a run in
+// another container would look dead).
 func sweepAbandoned() {
-	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*"} {
-		dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
+	var globs []string
+	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*", "g5-headscale-ca-*"} {
+		globs = append(globs, filepath.Join(os.TempDir(), pattern))
+	}
+	// The worlds' short target directories (shortTarget), in shortRoot
+	// whatever TMPDIR is: each holds its run's owner file.
+	globs = append(globs, filepath.Join(shortRoot, "g5s*"))
+	for _, glob := range globs {
+		dirs, _ := filepath.Glob(glob)
 		for _, d := range dirs {
 			st, err := os.Lstat(d)
 			if err != nil || !st.IsDir() {
@@ -630,6 +647,10 @@ func sweepAbandoned() {
 // abandonedAfter is the age past which a G5 directory without an owner
 // file is no live run's.
 const abandonedAfter = 6 * time.Hour
+
+// shortRoot is where shortTarget makes the worlds' short directories
+// (/tmp; a variable so the sweep's test can use its own).
+var shortRoot = "/tmp"
 
 func setUpShared(t *testing.T) {
 	shared.once.Do(func() {
@@ -740,6 +761,9 @@ func freePort(t *testing.T) string {
 	for range 200 {
 		b := randomBytes(2)
 		addr := "127.0.0.1:" + strconv.Itoa(from+(int(b[0])<<8|int(b[1]))%(low-from))
+		if !reservePort(t, addr) {
+			continue
+		}
 		if l, err := net.Listen("tcp", addr); err == nil {
 			l.Close()
 			return addr
@@ -747,6 +771,34 @@ func freePort(t *testing.T) string {
 	}
 	t.Fatal("no free port below the ephemeral range")
 	return ""
+}
+
+// reservedPorts are the ports freePort handed to a test still running: a
+// port is free once it is bound by no one, which another world's freePort
+// in this process could also see before the first target binds it.
+var reservedPorts struct {
+	mu    sync.Mutex
+	addrs map[string]bool
+}
+
+// reservePort reserves addr for t until its cleanup; false when another
+// test holds it.
+func reservePort(t *testing.T, addr string) bool {
+	reservedPorts.mu.Lock()
+	defer reservedPorts.mu.Unlock()
+	if reservedPorts.addrs[addr] {
+		return false
+	}
+	if reservedPorts.addrs == nil {
+		reservedPorts.addrs = map[string]bool{}
+	}
+	reservedPorts.addrs[addr] = true
+	t.Cleanup(func() {
+		reservedPorts.mu.Lock()
+		delete(reservedPorts.addrs, addr)
+		reservedPorts.mu.Unlock()
+	})
+	return true
 }
 
 // shortTarget is where a world's target lives as varlatchd sees it: a short
@@ -757,12 +809,23 @@ func freePort(t *testing.T) string {
 // follows the link (an ancestor of the data directory, owned by this user
 // in a directory of its own) and refuses only a data directory that is
 // itself a link.
+//
+// The short directory carries the run's owner file and is a cleanup
+// directory too, so an interrupted run (SIGINT, SIGTERM) removes it, and
+// the next run's sweepAbandoned removes a killed run's.
 func shortTarget(t *testing.T, dir string) string {
-	short, err := os.MkdirTemp("/tmp", "g5s")
+	short, err := os.MkdirTemp(shortRoot, "g5s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	registerCleanupDir(short)
+	t.Cleanup(func() {
+		_ = os.RemoveAll(short)
+		unregisterCleanupDir(short)
+	})
+	if err := os.WriteFile(filepath.Join(short, ownerFile), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	link := filepath.Join(short, "t")
 	if err := os.Symlink(dir, link); err != nil {
 		t.Fatal(err)
@@ -922,6 +985,9 @@ func (w *world) run(pause string, extra ...string) int {
 func (w *world) runArgs(pause string, args []string) int {
 	t := w.t
 	t.Helper()
+	if w.beforeRun != nil {
+		w.beforeRun()
+	}
 	log := filepath.Join(w.stateDir, "crashpoints.log")
 	_ = os.Remove(log)
 	cmd := exec.Command(shared.varlatch, args...)

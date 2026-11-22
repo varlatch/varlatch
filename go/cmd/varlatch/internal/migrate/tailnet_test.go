@@ -435,7 +435,7 @@ func TestAResumeWithoutTheAuthorityIsRefused(t *testing.T) {
 	}
 	w.eng.Tailnet = nil
 	j.Tailnet.Handoff.Phase = tailhandoff.Prepared
-	if err := w.eng.switchTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) || !strings.Contains(err.Error(), "--resume --tailscale-oauth-client-file") {
+	if err := w.eng.switchTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) || !strings.Contains(err.Error(), "--resume with the authority and --tailnet-auth-key-file") {
 		t.Fatalf("switch: %v", err)
 	}
 	j.Tailnet.Handoff.Phase = tailhandoff.Switching

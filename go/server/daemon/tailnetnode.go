@@ -163,6 +163,12 @@ var (
 	}
 )
 
+// keyTags is whether the node commands' nodes take their tags from the
+// auth key (tailnet.NodeConfig's KeyTags): on a configured self-hosted
+// control server (Headscale), which refuses a pre-auth key's node that
+// advertises tags, as varlatchd's own node does (startTailnet).
+func keyTags(cfg *config.Config) bool { return cfg.Tailnet != nil && cfg.Tailnet.ControlURL != "" }
+
 func nodeControl(cfg *config.Config) string {
 	if nodeControlURL != "" {
 		return nodeControlURL
@@ -288,7 +294,7 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	controlURL := nodeControl(cfg)
 	// On a self-hosted control server the node's tags are its pre-auth
 	// key's (it advertises none: Headscale refuses a key's node that does).
-	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: c.hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: t.ControlURL != ""})
+	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: c.hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: keyTags(cfg)})
 	authKey = ""
 	if err != nil {
 		return fail("%v", err)
@@ -505,7 +511,7 @@ func nodeFor(ctx context.Context, env *hostEnv) (*tailnet.TSNode, func(), error)
 	if h, err := tailnet.LoadHold(cfg.DataDir); err == nil && h != nil {
 		hostname = h.Hostname
 	}
-	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags, KeyTags: cfg.Tailnet.ControlURL != ""})
+	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags, KeyTags: keyTags(cfg)})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -590,7 +596,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	defer stop()
 	ctx, cancel := context.WithTimeout(sctx, c.wait+reachSlack)
 	defer cancel()
-	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(cfg), AuthKey: key, Tags: t.Tags, KeyTags: t.ControlURL != ""}, c.name, c.stableID, c.wait)
+	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(cfg), AuthKey: key, Tags: t.Tags, KeyTags: keyTags(cfg)}, c.name, c.stableID, c.wait)
 	if err != nil {
 		return fail("%v", err)
 	}

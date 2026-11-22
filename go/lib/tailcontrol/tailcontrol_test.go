@@ -302,6 +302,47 @@ func TestHeadscaleAPI(t *testing.T) {
 	}
 }
 
+// An earlier Headscale's keys (<prefix>.<secret>, listed by their plain
+// prefix, expired by it) work as 0.28's masked ones do.
+func TestHeadscaleAPILegacyKeys(t *testing.T) {
+	f := tailcontroltest.NewHeadscaleLegacy(50*time.Minute, tailcontroltest.Node{ID: "1", Name: "vault", Online: true})
+	defer f.Close()
+	hs := headscaleOf(t, f, f.Key)
+	if err := hs.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if devices, err := hs.Devices(ctx); err != nil || len(devices) != 1 {
+		t.Fatalf("%+v, %v", devices, err)
+	}
+	if err := hs.Close(ctx); err != nil || !f.KeyExpired() {
+		t.Fatalf("close: %v, expired %v", err, f.KeyExpired())
+	}
+}
+
+// Headscale's timestamps: RFC 3339 from its API, protobuf Timestamps from
+// its CLI's JSON (0.29.7), null or the zero time or the epoch when unset.
+func TestHeadscaleTimestamps(t *testing.T) {
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		json     string
+		lastSeen time.Time
+		expired  bool
+	}{
+		{`{"id":"1","given_name":"vault","last_seen":{"seconds":1795262400,"nanos":5},"expiry":null}`, time.Unix(1795262400, 5).UTC(), false},
+		{`{"id":1,"given_name":"vault","last_seen":null,"expiry":{"seconds":0}}`, time.Time{}, false},
+		{`{"id":1,"given_name":"vault","expiry":{"seconds":1700000000}}`, time.Time{}, true},
+		{`{"id":"1","givenName":"vault","lastSeen":"2026-11-21T11:59:00Z","expiry":"0001-01-01T00:00:00Z"}`, time.Date(2026, 11, 21, 11, 59, 0, 0, time.UTC), false},
+		{`{"id":"1","givenName":"vault","lastSeen":"0001-01-01T00:00:00Z"}`, time.Time{}, false},
+	} {
+		out := "[" + c.json + "]"
+		cli := &tailcontrol.HeadscaleCLI{Run: func(context.Context, ...string) ([]byte, error) { return []byte(out), nil }, Now: func() time.Time { return now }}
+		devices, err := cli.Devices(ctx)
+		if err != nil || len(devices) != 1 || !devices[0].LastSeen.Equal(c.lastSeen) || devices[0].Expired != c.expired {
+			t.Errorf("%s: %+v %v", c.json, devices, err)
+		}
+	}
+}
+
 func TestHeadscaleAPIKeyMustExpireWithinTheHour(t *testing.T) {
 	for _, life := range []time.Duration{2 * time.Hour, 90 * 24 * time.Hour} {
 		f := tailcontroltest.NewHeadscale(life, tailcontroltest.Node{ID: "1", Name: "vault"})
