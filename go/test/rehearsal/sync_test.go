@@ -177,6 +177,9 @@ func goRoots(dir, system string) (string, error) {
 // --no-interpolate` (Compose 5.6) print the service's environment as a
 // list, which migrate's preflight cannot read ("docker compose config did
 // not name the installation's Compose project", run r16s).
+// TODO(5.1f): once migrate reads a list-form environment, set
+// NODE_EXTRA_CA_CERTS under environment again and drop source.env, so the
+// case runs the shape an operator's overlay has.
 func syncOverlay(network, ip, dir string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Written by the rehearsal's sync case: the platform stand-ins.\nservices:\n  varlatchd:\n    env_file:\n      - %s/source.env\n    extra_hosts:\n", dir)
