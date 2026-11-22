@@ -12,11 +12,12 @@ before the new server opens.
 > TypeScript release, 0.23.0, is published, and `varlatch migrate` starts
 > from its published image only.
 
-<!-- TODO before this guide leaves draft: four points still depend on
+<!-- TODO before this guide leaves draft: five points still depend on
      unmerged pull requests, each marked "TODO #n" where it applies: #381 (a
      restore taking the old installation's tailnet name over), #385 (the
      tailnet handoff on Headscale), #405 and #408 (a restore on Headscale,
-     and `varlatch setup --restore` on a Headscale tailnet). -->
+     and `varlatch setup --restore` on a Headscale tailnet), and the migrate
+     fix that carries the outbound allow list over ("TODO outbound"). -->
 
 ## What people notice
 
@@ -102,6 +103,19 @@ the Linux host of the installation it migrates`):
       plain listener (Coolify's, or another address than the
       dashboard's); and `--accept-existing-user` to use a `varlatch` user
       that already exists.
+    - **Private destinations need the allow list on the target too.** If
+      the source's `.env` sets `VARLATCH_OUTBOUND_ALLOW` (Coolify, Convex,
+      webhooks or an OIDC issuer on a private address), put the same value
+      in the target's configuration as `outbound_allow` before you
+      migrate (the 0.50 image's: the file `--to-config` names). migrate
+      does not copy it, and without it the new server refuses those
+      destinations. Check it after the migration with `varlatchd admin
+      outbound check --config /etc/varlatch/varlatchd.conf` (for the
+      image, in its container), which lists every configured destination
+      and exits 0 when all are allowed.
+      <!-- TODO outbound: once migrate carries VARLATCH_OUTBOUND_ALLOW into
+      outbound_allow, say it is carried over, keep the check, and name the
+      GitHub destination if the check lists it then. -->
     - **No keys are generated:** the target's Root KEK and Backup
       Encryption Key are the source's, copied into its key files.
     - **An undo removes what it made.** Each item is recorded in the
