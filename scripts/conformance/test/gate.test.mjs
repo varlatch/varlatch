@@ -134,16 +134,36 @@ test("the browser-walkthrough evidence must be named, under docs/evidence/, pres
   }
   // A row a separator follows inside a table is still one of its rows.
   assert.match(problem({ ...walkthrough, content: withRows("| 2 | [ ] | Audit |", "| --- | --- | --- |", "| 3 | [x] | Access |") }), /unchecked checklist rows \(.*lines 6\)/);
-  // Comments and fenced blocks count for nothing: a Verdict or Candidate
-  // commit there is no sign-off, and a table quoted there is no checklist.
+  // The evidence is read as plain lines: any HTML comment or fenced code
+  // block is refused, wherever it is (the review's bypasses of a parser
+  // that blanked them: a comment opened in a cell, in inline code or mid
+  // prose; fences an inline span opens or a mismatched marker closes; a
+  // fence inside a comment; PASS split by a comment).
   const verdictLine = "- **Verdict:** `PASS`";
-  for (const hidden of [`<!-- ${verdictLine} -->`, `<!--\n${verdictLine}\n-->`, `\`\`\`\n${verdictLine}\n\`\`\``, `~~~~md\n${verdictLine}\n~~~~`]) {
-    assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(verdictLine, hidden) }), /must record \*\*Verdict:\*\* PASS/, hidden);
-  }
   const commitLine = `- **Candidate commit:** \`${candidateCommit}\``;
-  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(commitLine, `<!-- ${commitLine} -->`) }), /40-hex Candidate commit/);
-  assert.equal(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n\nExample:\n\n\`\`\`md\n| # | Done |\n| --- | --- |\n| 1 | [ ] |\n\`\`\`\n` }), "");
-  assert.equal(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n<!--\n| 9 | [ ] | old |\n-->` }), "");
+  const refused = /has HTML comments or fenced code blocks: remove them/;
+  for (const [name, content] of [
+    ["a commented-out Verdict", signedWalkthroughContent().replace(verdictLine, `<!-- ${verdictLine} -->`)],
+    ["a commented-out Candidate commit", signedWalkthroughContent().replace(commitLine, `<!-- ${commitLine} -->`)],
+    ["a comment opened in a cell", withRows("| 2 | [x] | Audit | <!-- note |", "| 3 | [ ] | Access |", "-->")],
+    ["a comment opened in inline code", `${signedWalkthroughContent()}\n\nUse \`<!--\` sparingly.\n- **Verdict:** FAIL\n`],
+    ["a comment opened mid prose", `${signedWalkthroughContent()}\n\nSee below <!-- later\n| 9 | [ ] | old |`],
+    ["PASS split by a comment", signedWalkthroughContent().replace("`PASS`", "`PA<!-- -->SS`")],
+    ["a backtick fence", signedWalkthroughContent().replace(verdictLine, `\`\`\`\n${verdictLine}\n\`\`\``)],
+    ["a tilde fence", signedWalkthroughContent().replace(verdictLine, `~~~~md\n${verdictLine}\n~~~~`)],
+    ["a fence closed by another marker", `${signedWalkthroughContent()}\n\`\`\`\n| 9 | [ ] | old |\n\`\`\`~~~`],
+    ["an inline span that looks like a fence", `${signedWalkthroughContent()}\n\`\`\`note\`\`\``],
+    ["a fence inside a closed comment", `${signedWalkthroughContent()}\n<!--\n\`\`\`\n-->`],
+    ["an indented fence", `${signedWalkthroughContent()}\n   ~~~\n   x\n   ~~~`],
+    ["a quoted example table", `${signedWalkthroughContent()}\n\n\`\`\`md\n| # | Done |\n| --- | --- |\n| 1 | [ ] |\n\`\`\`\n`],
+  ]) {
+    assert.match(problem({ ...walkthrough, content }), refused, name);
+  }
+  // A 4-space indent is a code block: its Verdict or Candidate commit is
+  // not the sign-off's.
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(verdictLine, `    ${verdictLine}`) }), /must record \*\*Verdict:\*\* PASS/);
+  assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace(commitLine, `    ${commitLine}`) }), /40-hex Candidate commit/);
+  assert.equal(problem({ ...walkthrough, content: signedWalkthroughContent().replace(verdictLine, `   ${verdictLine}`) }), "");
   // A Verdict line of any bullet and case counts: a second one fails.
   assert.equal(problem({ ...walkthrough, content: signedWalkthroughContent().replace(verdictLine, "* **Verdict:** `PASS`") }), "");
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n* **verdict:** FAIL` }), /records 2 \*\*Verdict:\*\* lines/);
@@ -180,6 +200,7 @@ test("the shipped g1-walkthrough-template.md fails the gate on its own", () => {
   assert.equal(verdict.passed, false);
   const joined = verdict.problems.join("\n");
   assert.match(joined, /still the template/);
+  assert.match(joined, /has HTML comments or fenced code blocks/);
   assert.match(joined, /unchecked checklist rows/);
   assert.match(joined, /unreplaced placeholders/);
   assert.match(joined, /\*\*Verdict:\*\* PASS/);

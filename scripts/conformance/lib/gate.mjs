@@ -37,37 +37,23 @@ export const TEMPLATE_SENTINEL = "<!-- g1-walkthrough: TEMPLATE -->";
 const TEMPLATE_SENTINEL_RE = /<!--\s*g1-walkthrough:\s*TEMPLATE\s*-->/i;
 const PLACEHOLDER =
   /\bPENDING\b|<commit-sha>|<full-40-char-sha>|<sha256>|<version \/ sha256>|<e\.g\.[^>\r\n]*>|<GitHub Actions run URL \/ ID>|<summary of sign-off>|YYYY-MM-DD HH:MM UTC|<name \/ handle>/;
-const CANDIDATE_COMMIT_LINE = /^\s*(?:[-*+]\s*)?\*\*Candidate commit:\*\*\s*`?([^`\r\n]+?)`?\s*$/im;
-const VERDICT_LINE = /^\s*(?:[-*+]\s*)?\*\*Verdict:\*\*.*$/gim;
-const VERDICT_PASS = /^\s*(?:[-*+]\s*)?\*\*Verdict:\*\*\s*`?PASS`?\s*$/i;
+// A sign-off line starts within three spaces (four would be a code block).
+const CANDIDATE_COMMIT_LINE = /^ {0,3}(?:[-*+][ \t]*)?\*\*Candidate commit:\*\*[ \t]*`?([^`\r\n]+?)`?[ \t]*\r?$/im;
+const VERDICT_LINE = /^ {0,3}(?:[-*+][ \t]*)?\*\*Verdict:\*\*.*$/gim;
+const VERDICT_PASS = /^ {0,3}(?:[-*+][ \t]*)?\*\*Verdict:\*\*[ \t]*`?PASS`?[ \t]*\r?$/i;
 // GFM: a separator cell is one or more hyphens, with optional colons.
 const TABLE_SEPARATOR = /^:?-+:?$/;
 const CHECKED = /^\[[xX]\]$/;
 const UNCHECKED_CELL = /^\[\s*\](?:\s|$)/;
 
 /**
- * What Markdown renders of content as prose and tables: fenced code blocks
- * and HTML comments (an unclosed one runs to the end) blanked, each line
- * kept, so a commented-out or quoted Verdict or table counts for nothing
- * and line numbers stay the file's.
+ * The evidence is read as plain lines, not rendered: an HTML comment or a
+ * fenced code block could hide a line Markdown would not show, or show one
+ * the gate would not read, so a file with either is refused (fail closed)
+ * rather than parsed as CommonMark would.
  */
-export function renderedText(content) {
-  const lines = content.split("\n");
-  let fence = null;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && /^ {0,3}[`~]+\s*$/.test(line)) fence = null;
-    } else if (marker) {
-      fence = marker[1];
-    } else {
-      continue;
-    }
-    lines[i] = line.endsWith("\r") ? "\r" : "";
-  }
-  return lines.join("\n").replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => comment.replace(/[^\r\n]/g, ""));
-}
+const HTML_COMMENT = /<!--/;
+const CODE_FENCE = /^ {0,3}(?:`{3,}|~{3,})/m;
 
 /** A Markdown table row's cells, with or without its outer pipes; null for a line that is not one. */
 function tableCells(line) {
@@ -84,7 +70,7 @@ function tableCells(line) {
  * any other table, a cell starting with [ ] is an unchecked row.
  */
 export function uncheckedRows(content) {
-  const rows = renderedText(content).split(/\r?\n/).map(tableCells);
+  const rows = content.split(/\r?\n/).map(tableCells);
   const separator = (cells) => cells !== null && cells.every((c) => TABLE_SEPARATOR.test(c));
   const lines = [];
   // done: the current table's Done column (-1: none); active: a table
@@ -152,6 +138,11 @@ function walkthroughContentProblems(walkthrough, run) {
   if (TEMPLATE_SENTINEL_RE.test(content)) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} is still the template (${TEMPLATE_SENTINEL})`);
   }
+  if (HTML_COMMENT.test(content) || CODE_FENCE.test(content)) {
+    problems.push(
+      `the browser-walkthrough evidence ${walkthrough.path} has HTML comments or fenced code blocks: remove them (the evidence is read as plain lines, not rendered)`,
+    );
+  }
   const unchecked = uncheckedRows(content);
   if (unchecked.length > 0) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} has unchecked checklist rows (| [ ] |, lines ${unchecked.join(", ")})`);
@@ -161,16 +152,13 @@ function walkthroughContentProblems(walkthrough, run) {
       `the browser-walkthrough evidence ${walkthrough.path} still contains unreplaced placeholders (PENDING, <commit-sha>, <sha256>, <version / sha256>, <e.g. ...>, <GitHub Actions run URL / ID>, <summary of sign-off>, YYYY-MM-DD HH:MM UTC, or <name / handle>)`,
     );
   }
-  // Sign-off lines count only where Markdown renders them: not in a
-  // comment or a fenced block.
-  const rendered = renderedText(content);
-  const verdicts = rendered.match(VERDICT_LINE) ?? [];
+  const verdicts = content.match(VERDICT_LINE) ?? [];
   if (verdicts.length > 1) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} records ${verdicts.length} **Verdict:** lines; Owner Sign-Off holds exactly one`);
   } else if (verdicts.length === 0 || !VERDICT_PASS.test(verdicts[0])) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} must record **Verdict:** PASS in Owner Sign-Off`);
   }
-  const commitMatch = rendered.match(CANDIDATE_COMMIT_LINE);
+  const commitMatch = content.match(CANDIDATE_COMMIT_LINE);
   const commit = commitMatch ? commitMatch[1].trim() : null;
   const runCommit = typeof run.commit === "string" && HEX_40.test(run.commit) ? run.commit : null;
   const implCommit = typeof run.implementation?.commit === "string" && HEX_40.test(run.implementation.commit) ? run.implementation.commit : null;
