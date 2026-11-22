@@ -33,7 +33,11 @@ import (
 //     reverse, the source's alone) say it; "finish containers removed"
 //     after docker compose down; "finish volume removed" between a
 //     volume's removal and its journal entry; "finish go discarded" once
-//     Go's copy is discarded after a reverse.
+//     Go's copy is discarded after a reverse;
+//   - the tailnet handoff: "tailnet <forward|undo|rollback> <step>" once
+//     it has journalled a step (prepared, switching, serving closed,
+//     serving renamed, incoming renamed, opening, done, undoing, undone,
+//     undo-pending), before its act.
 //
 // The gate's stand-in source and target also take testonly.go's overrides
 // (the image pin and the image's user), which this build has too. A

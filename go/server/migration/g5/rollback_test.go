@@ -226,12 +226,19 @@ func migrateRunsAgain(args []string) bool {
 	return false
 }
 
+// sharedNamespace is whether varlatchd runs in the Tailscale sidecar's
+// network: the shared-namespace topology (G5_SHARED_NAMESPACE), and every
+// tailnet world (G5_TAILNET), whose sidecar the handoff stops and starts.
+func sharedNamespace() bool {
+	return os.Getenv("G5_SHARED_NAMESPACE") != "" || os.Getenv("G5_TAILNET") != ""
+}
+
 // sharedNetworkDown reports whether these docker arguments start varlatchd,
 // or a one-off container of its, without its dependencies while it runs in
-// the Tailscale sidecar's network (G5_SHARED_NAMESPACE) and the sidecar is
+// the Tailscale sidecar's network (sharedNamespace) and the sidecar is
 // stopped.
 func sharedNetworkDown(args []string) bool {
-	if os.Getenv("G5_SHARED_NAMESPACE") == "" || !stopped("tailscale") || len(args) < 3 || args[0] != "compose" || !slices.Contains(args, "--no-deps") {
+	if !sharedNamespace() || !stopped("tailscale") || len(args) < 3 || args[0] != "compose" || !slices.Contains(args, "--no-deps") {
 		return false
 	}
 	return (args[1] == "run" || args[1] == "up") && slices.Contains(args, "varlatchd")
@@ -383,7 +390,7 @@ func fakeDockerReverse(args []string) (int, bool) {
 		return 0, true
 	case j == "compose ps --status running --services":
 		services := []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"}
-		if os.Getenv("G5_SHARED_NAMESPACE") != "" {
+		if sharedNamespace() {
 			// The Tailscale topology: the sidecar varlatchd shares.
 			services = append(services, "tailscale")
 		}
@@ -490,7 +497,7 @@ func (w *world) rollbackArgs(extra ...string) []string {
 	} else {
 		a = append(a, "--config", w.conf)
 	}
-	return append(a, extra...)
+	return append(append(a, w.extraArgs...), extra...)
 }
 
 func (w *world) rollback(pause string, extra ...string) int {
