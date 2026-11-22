@@ -48,6 +48,8 @@ func TestMigrateCommand(t *testing.T) {
 		{[]string{"migrate", "--finish", "--rollback", "--config", "/c"}, "--finish takes --from, the target"},
 		{[]string{"migrate", "--finish", "--ingress", "proxy", "--config", "/c"}, "--finish takes --from, the target"},
 		{[]string{"migrate", "--finish", "--yes", "--config", "/c"}, "unknown option --yes"},
+		{[]string{"migrate", "--ingress", "public", "--config", "/c", "--accept-rollback-certificate"}, "--accept-rollback-certificate goes with --tailscale-oauth-client-file"},
+		{[]string{"migrate", "--status", "--tailscale-oauth-client-file", "/o"}, "--tailscale-oauth-client-file and --tailnet-auth-key-file go with a migration"},
 	} {
 		if code, _, errOut := run(c.args...); code != ExitUsage || !strings.Contains(errOut, c.why) {
 			t.Errorf("%q: %d %q, want %q", c.args, code, errOut, c.why)

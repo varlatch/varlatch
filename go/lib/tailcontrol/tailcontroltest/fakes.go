@@ -77,7 +77,11 @@ type Tailscale struct {
 	// LagRenames makes a rename show only from the second listing after
 	// it: a control plane that lists the old name for a moment.
 	LagRenames bool
-	pending    map[string]string // device id -> name a lagged rename sets
+	// AfterRename, when set, runs after each rename the fake applied, with
+	// the fake's lock held: set changes another device's name (a third
+	// device taking a name the rename freed, say).
+	AfterRename func(id, name string, set func(id, name string))
+	pending     map[string]string // device id -> name a lagged rename sets
 
 	mu        sync.Mutex
 	nodes     []*Node
@@ -95,6 +99,18 @@ func NewTailscale(nodes ...Node) *Tailscale {
 	}
 	f.Server = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	return f
+}
+
+// SetName renames a device directly, as another actor on the tailnet
+// would.
+func (f *Tailscale) SetName(id, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, n := range f.nodes {
+		if n.ID == id {
+			n.Name = name
+		}
+	}
 }
 
 // Nodes is a copy of the tailnet's devices.
@@ -227,6 +243,15 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 			f.pending[target.ID] = stored
 		} else {
 			target.Name = stored
+		}
+		if f.AfterRename != nil {
+			f.AfterRename(target.ID, stored, func(id, name string) {
+				for _, n := range f.nodes {
+					if n.ID == id {
+						n.Name = name
+					}
+				}
+			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{})
 	default:

@@ -24,6 +24,10 @@ type Host struct {
 	// Unit is the target's systemd unit ("varlatchd"), started and
 	// stopped around the address transfer.
 	Unit string
+	// TailnetAuthKey is the new tailnet node's auth key, given to the
+	// target's tailnet_auth_key_file with the keys (nil: none). The caller
+	// clears it.
+	TailnetAuthKey []byte
 }
 
 func (h *Host) unit() string {
@@ -79,16 +83,17 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		return info, TargetState{}, failure("varlatchd admin migrate state", r)
 	}
 	var s struct {
-		Journal     *JournalHead `json:"journal"`
-		Database    bool         `json:"database"`
-		DataDir     string       `json:"dataDir"`
-		Release     string       `json:"release"`
-		PublicURL   string       `json:"publicUrl"`
-		Listen      string       `json:"listen"`
-		ListenHTTPS string       `json:"listenHttps"`
-		Gate        *bool        `json:"migrationGate"`
-		Barrier     string       `json:"barrier"`
-		Running     bool         `json:"running"`
+		Journal     *JournalHead   `json:"journal"`
+		Database    bool           `json:"database"`
+		DataDir     string         `json:"dataDir"`
+		Release     string         `json:"release"`
+		PublicURL   string         `json:"publicUrl"`
+		Listen      string         `json:"listen"`
+		ListenHTTPS string         `json:"listenHttps"`
+		Gate        *bool          `json:"migrationGate"`
+		Barrier     string         `json:"barrier"`
+		Running     bool           `json:"running"`
+		Tailnet     *TargetTailnet `json:"tailnet"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &s); err != nil || s.DataDir == "" {
 		return info, TargetState{}, errors.New("varlatchd admin migrate state did not answer in JSON")
@@ -97,6 +102,7 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		return info, TargetState{}, errors.New("the target's varlatchd is older than this varlatch (its admin migrate state names no release, address or gate): install the varlatchd of this release")
 	}
 	info.DataDir, info.Release, info.PublicURL, info.Listen, info.ListenHTTPS = s.DataDir, s.Release, s.PublicURL, s.Listen, s.ListenHTTPS
+	info.Tailnet = s.Tailnet
 	return info, TargetState{Journal: s.Journal, Database: s.Database, Gate: *s.Gate, Barrier: s.Barrier, Running: s.Running}, nil
 }
 
@@ -104,9 +110,10 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 // file's bytes in base64 (so no copy of a key is an uncleared string here).
 func (h *Host) Keys(ctx context.Context, rootKEK, bek []byte) (string, string, error) {
 	b, err := json.Marshal(struct {
-		RootKEK []byte `json:"rootKek"`
-		BEK     []byte `json:"bek,omitempty"`
-	}{rootKEK, bek})
+		RootKEK        []byte `json:"rootKek"`
+		BEK            []byte `json:"bek,omitempty"`
+		TailnetAuthKey []byte `json:"tailnetAuthKey,omitempty"`
+	}{rootKEK, bek, h.TailnetAuthKey})
 	if err != nil {
 		return "", "", err
 	}

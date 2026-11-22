@@ -2246,6 +2246,73 @@ serves the tailnet listener on the node's own addresses
   a missing pin, lookups and contexts across a closure, the admission) are
   unit tests in `pin_test.go`. The live checks on a real tailnet are run
   by hand (the PR lists them).
+- **The node's side of a tailnet handoff** (step 7, slice 7.5b part 2;
+  internal docs/design/go-step7.md decision 11; `daemon/tailnetnode.go`,
+  `tailnet/hold.go`). These host commands are what `varlatch migrate` and
+  the restore ask of this installation's node.
+  - **None opens the database.** So they run on the empty data directory a
+    migration imports into, and under the migration's gate: the
+    maintenance admission does not refuse them.
+  - **Files made as root.** The node's files a command creates as root go
+    to the data directory's owner: the state directory, the pin, the
+    hold, the listeners report and the lock.
+  - `varlatchd admin tailnet enroll --hostname <temporary name>
+    [--certificate] [--timeout <d>] [--json]` runs offline, under the
+    data directory's lock, before varlatchd first starts:
+    - it writes the hold first (`tailnet-handoff.json`, 0600), so a crash
+      after the join leaves the node held;
+    - the node then joins with the auth key under the temporary name, and
+      its tailnet is pinned from what it observes;
+    - with `--certificate`, it gets a certificate for that name, which
+      proves issuance works now;
+    - it reports the node's StableID, MagicDNS name, suffix, tailnet and
+      control server.
+
+    It refuses the configured name, a name shaped like the control
+    plane's collision suffix of it (`vault-1` for `vault`, which would
+    latch the tailnet closed), a name the control plane changed, a data
+    directory setup has not made, and a name other than the one a hold
+    already names, enrolled or not. Run again for the same name, it
+    reports the same node; an enrolled node no handoff holds is held again
+    only while the control plane names it exactly the temporary name.
+  - **A varlatchd started under the hold** joins under the hold's
+    temporary name, never announcing the configured one, which another
+    node holds, and reads its name back as the hold's (open sets the
+    configured one again). Nothing listens on the tailnet until `varlatchd admin
+    tailnet open [--json]`, which:
+    - removes the hold first;
+    - then, through the control socket, starts the tailnet listener and
+      waits for it. An error means it is not listening.
+
+    Offline, `open` only removes the hold. With no hold it does nothing:
+    a resumed handoff calls it again.
+  - `varlatchd admin tailnet certificate obtain|expiry --name <name>
+    [--json]` works on `<name>.<pinned suffix>`:
+    - `obtain` is one attempt, through the running varlatchd's node or
+      offline through the enrolled node, started for it. A refusal for the
+      authority's rate limit is answered as `refusal: "rate-limited"`.
+    - `expiry` reads the node's cached certificate (`tailnet/certs/`,
+      tsnet's ACME store) and never issues one.
+  - `varlatchd admin tailnet reaches --name <name> --stable-id <id>
+    [--wait <d>] [--json]` is the final check, from a client node:
+    - an ephemeral probe node joins with the auth key, as the restore's
+      probe does, so the key must be reusable;
+    - it looks among its peers, every second until `--wait` has passed,
+      for the name to be held by exactly the node with that StableID;
+    - it logs out and leaves no state, on SIGINT or SIGTERM too; a
+      killed probe's directory (`varlatchd-reach-*` in the system's
+      temporary directory, this user's, older than 10 minutes) is swept
+      by the next probe.
+
+    The tailnet's access rules must let the node's tags see each other,
+    or the probe sees nothing and the check fails closed: the answer then
+    says so and names the tags.
+  - **Tests.** `daemon`'s `TestTheHandoffNode` uses testcontrol and a
+    test CA: enrolment, held, pinned and certified, run again, refusals,
+    the expiry read without an issuance, varlatchd started held, silent on
+    the tailnet, the reach check, obtain through the running node, and the
+    live open answering at once. `tailnet`'s `TestReaches`, `TestTheHold`
+    and `TestCachedNotAfter` cover the rest.
 
 ### The browser endpoint over HTTPS (step 4.13c)
 
@@ -3399,8 +3466,8 @@ migrations.
   `varlatchd admin migrate`.
   - The phases: preflight (the source is 0.23.0 by its image's version,
     and its image is the published one by its registry digest of
-    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, filled in when
-    0.23.0 is published: until then `migrate` refuses every source; it is
+    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, v0.23.0's
+    varlatchd image index as its release published it; it is
     behind no gate; what an interrupted run left, its scratch directories
     and bundles by their exact names, is removed; a fresh backup made, uploaded,
     downloaded and verified; the target's key files given the source's

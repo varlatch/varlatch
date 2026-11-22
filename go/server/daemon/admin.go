@@ -209,10 +209,16 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":
 		return runCustodyStatus(cfg, stdout, stderr)
-	case sub == "certificate":
+	case sub == "certificate" && rest[0] == "issuances":
 		return runCertificateIssuances(cfg, rest, time.Now(), stdout, stderr)
 	case sub == "tailnet" && rest[0] == "probe-name":
 		return runTailnetProbe(cfg, rest, stdout, stderr)
+	case sub == "tailnet" && (rest[0] == "enroll" || rest[0] == "reaches"):
+		c, _ := nodeArgs(rest)
+		if c.op == "enroll" {
+			return runTailnetEnroll(cfg, c, stdout, stderr)
+		}
+		return runTailnetReaches(cfg, c, stdout, stderr)
 	case sub == "bootstrap-status":
 		return runBootstrapStatus(cfg, stdout, stderr)
 	case sub == "doctor":
@@ -247,7 +253,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
-		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin certificate issuances [--json] | "+
+		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin certificate issuances [--all] [--json]|record --attempts <json> | "+
 		"varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
 		"varlatchd admin status [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | "+
 		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
@@ -409,7 +415,9 @@ func writes(sub string) bool {
 // refused, as the TypeScript admin CLI refuses it.
 func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io.Writer) int {
 	sub, rest := args[0], args[1:]
-	if writes(sub) && env.admission != nil {
+	// The node's handoff commands write no installation data, and run under
+	// the migration's gate, which they are part of.
+	if writes(sub) && !isNodeCmd(rest) && env.admission != nil {
 		leave, ok := env.admission.Enter()
 		if !ok {
 			fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, MaintenanceRefusal)
@@ -430,6 +438,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runCustodyAttest(ctx, env, rest, stdout, stderr)
 	case sub == "audit-export":
 		return runAuditExport(ctx, env, rest, stdout, stderr)
+	case sub == "tailnet" && isNodeCmd(rest):
+		return runTailnetNode(ctx, env, rest, stdout, stderr)
 	case sub == "tailnet":
 		return runTailnetRepin(ctx, env, rest, stdout, stderr)
 	case sub == "doctor":
@@ -442,6 +452,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runMigrateRelease(env, rest, stdout, stderr)
 	case sub == "migrate":
 		return runMigrateOpen(env, rest, stdout, stderr)
+	case sub == "certificate":
+		return runCertificateRecord(ctx, env, rest, stdout, stderr)
 	case isMoveCommand(sub):
 		return runMoveCommand(ctx, env, sub, rest, stdout, stderr)
 	case sub != "bootstrap" && sub != "recover":

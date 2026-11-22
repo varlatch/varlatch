@@ -651,7 +651,7 @@ func TestTheServingCertificateAndTheRollbackWindow(t *testing.T) {
 		return nil
 	}
 	p := r2.forward(t)
-	if _, err := r2.engine.Prepare(ctx, p); err == nil || !strings.Contains(err.Error(), "accept that to go on") {
+	if _, err := r2.engine.Prepare(ctx, p); err == nil || !strings.Contains(err.Error(), "accept that to go on (varlatch migrate --accept-rollback-certificate)") {
 		t.Fatalf("without acceptance: %v", err)
 	}
 	p.AcceptRollbackCertificate = true
@@ -871,6 +871,46 @@ func TestABystanderTakesTheIncomingNameDuringTheUndo(t *testing.T) {
 	}
 	if serving, incoming := r.ep.state(); serving || incoming || r.ep.reopens != 0 {
 		t.Errorf("serving open %v, incoming open %v, reopens %d", serving, incoming, r.ep.reopens)
+	}
+}
+
+// TestAThirdDeviceTakesTheFreedName: once the serving node is renamed
+// aside, a third device takes the name, so the incoming rename is refused
+// (it is really taken) and the undo cannot give the name back either: it
+// stays pending, naming that device and the operator's step, never "once
+// the control plane answers". Renamed away by the operator, Resume
+// finishes the undo.
+func TestAThirdDeviceTakesTheFreedName(t *testing.T) {
+	r := newRig(t)
+	p := r.forward(t)
+	if _, err := r.engine.Prepare(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	servingTemp, _ := p.ServingTemp()
+	r.f.AfterRename = func(id, name string, set func(id, name string)) {
+		if id == "1" && name == servingTemp {
+			set("4", "vault") // the laptop takes the freed name
+		}
+	}
+	s, err := r.engine.Switch(ctx, op)
+	var he *tailhandoff.HandoffError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || !errors.Is(err, tailcontrol.ErrNameTaken) {
+		t.Fatalf("%+v, %v", s, err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "another device holds it now") || !strings.Contains(msg, "held by vault (4,") || strings.Contains(msg, "once the control plane answers") {
+		t.Fatalf("the message: %s", msg)
+	}
+	if serving, incoming := r.ep.state(); serving || incoming {
+		t.Errorf("serving open %v, incoming open %v", serving, incoming)
+	}
+	r.f.AfterRename = nil
+	r.f.SetName("4", "laptop")
+	s, err = r.engine.Resume(ctx, op)
+	if !errors.As(err, &he) || he.Phase != tailhandoff.Undone || s.Phase != tailhandoff.Undone {
+		t.Fatalf("resumed: %+v, %v", s, err)
+	}
+	if n := r.names(); n["1"] != "vault" || n["2"] != p.IncomingName {
+		t.Errorf("names %v", n)
 	}
 }
 
