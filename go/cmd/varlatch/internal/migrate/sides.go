@@ -108,6 +108,9 @@ type IngressInfo struct {
 	// (VARLATCH_OUTBOUND_ALLOW), "" for none: the target's outbound_allow
 	// takes the same entries.
 	OutboundAllow string
+	// OutboundAllowFromConfig: varlatchd was not running, so OutboundAllow
+	// is docker compose config's value, not the container's.
+	OutboundAllowFromConfig bool
 }
 
 // SourceInfo is what a migration starts from.

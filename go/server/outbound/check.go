@@ -37,7 +37,7 @@ const (
 
 // KindGitHub is a GitHub Sync Target's connection, whose destination is
 // GitHub's API. Only `varlatchd admin outbound check` lists it
-// (CheckGitHub): the API's report keeps the four kinds it documents.
+// (RunAdminCheck): the API's report keeps the four kinds it documents.
 const KindGitHub Kind = "github"
 
 var kindLabel = map[Kind]string{KindWebhook: "webhook", KindCoolify: "Coolify", KindConvex: "Convex", KindIssuer: "OIDC issuer", KindGitHub: "GitHub"}
@@ -45,10 +45,10 @@ var kindLabel = map[Kind]string{KindWebhook: "webhook", KindCoolify: "Coolify", 
 // GitHubAPI is where every GitHub connection goes (githubapps.GitHubAPI).
 const GitHubAPI = "https://api.github.com"
 
-// CheckGitHub is each live GitHub Sync Target connection (org: an
-// Organization's id or slug, "" for all), checked as a destination at
-// GitHubAPI, as RunCheck checks the others.
-func (p *Policy) CheckGitHub(ctx context.Context, db query.DBTX, org string) ([]Checked, error) {
+// githubDestinations are the live GitHub Sync Target connections (org:
+// an Organization's id or slug, "" for all), each a destination at
+// GitHubAPI.
+func githubDestinations(ctx context.Context, db query.DBTX, org string) ([]row, error) {
 	if db == nil {
 		return nil, nil
 	}
@@ -63,32 +63,16 @@ func (p *Policy) CheckGitHub(ctx context.Context, db query.DBTX, org string) ([]
 	if err != nil {
 		return nil, err
 	}
+	defer rs.Close()
 	var rows []row
 	for rs.Next() {
 		r := row{kind: KindGitHub, name: new(string), url: GitHubAPI}
 		if err := rs.Scan(&r.organizationID, &r.organization, &r.id, r.name); err != nil {
-			rs.Close()
 			return nil, err
 		}
 		rows = append(rows, r)
 	}
-	if err := rs.Close(); err != nil {
-		return nil, err
-	}
-	if err := rs.Err(); err != nil {
-		return nil, err
-	}
-	out := []Checked{}
-	for _, r := range rows {
-		c, err := p.checkRow(ctx, r, p.sharedLookup)
-		if err != nil {
-			return nil, err
-		}
-		if c != nil {
-			out = append(out, *c)
-		}
-	}
-	return out, nil
+	return rows, rs.Err()
 }
 
 // Checked is one configured destination and its verdict: "public",
@@ -284,6 +268,28 @@ func (p *Policy) RunCheck(ctx context.Context, db query.DBTX, org string, now fu
 	if err != nil {
 		return Report{}, err
 	}
+	return p.scan(ctx, rows, now)
+}
+
+// RunAdminCheck is RunCheck with the GitHub Sync Targets' connections
+// too, after the others, in the same scan (GitHub's API resolved once, and
+// in the suggestion when refused): `varlatchd admin outbound check` lists
+// them, the API's report keeps the kinds it documents.
+func (p *Policy) RunAdminCheck(ctx context.Context, db query.DBTX, org string, now func() time.Time) (Report, error) {
+	rows, err := liveDestinations(ctx, db, org)
+	if err != nil {
+		return Report{}, err
+	}
+	github, err := githubDestinations(ctx, db, org)
+	if err != nil {
+		return Report{}, err
+	}
+	return p.scan(ctx, append(rows, github...), now)
+}
+
+// scan checks the rows and makes the report: verdicts in the rows' order,
+// the suggestion, what is left apart, and the exit code.
+func (p *Policy) scan(ctx context.Context, rows []row, now func() time.Time) (Report, error) {
 	// Each name once per scan, however many rows point at it.
 	var mu sync.Mutex
 	resolved := map[string]*flight{}

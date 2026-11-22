@@ -225,6 +225,9 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if err != nil {
 		return prev, err
 	}
+	if ing.OutboundAllowFromConfig {
+		e.say("The source's varlatchd is not running: its outbound allow list (VARLATCH_OUTBOUND_ALLOW) is read from docker compose config, not from its container.")
+	}
 	id := ""
 	if reuse {
 		id = prev.ID
@@ -1171,14 +1174,25 @@ func (e *Engine) sameOutbound(ing IngressInfo, tgt TargetInfo) error {
 }
 
 // allowEntries are an allow list's entries as compared: without blanks,
-// lower-cased (names and IPv6 addresses), empty ones dropped.
+// lower-cased (names and IPv6 addresses), a name's trailing dot dropped
+// (outbound.ParseAllow), empty ones dropped.
 func allowEntries(spec string) []string {
 	var out []string
 	for _, raw := range strings.Split(spec, ",") {
 		x := strings.ToLower(strings.Join(strings.Fields(raw), ""))
-		if x != "" {
-			out = append(out, x)
+		if x == "" {
+			continue
 		}
+		// A host name's one trailing dot, before its port, is the same
+		// name (outbound.ParseAllow); an address or a range keeps its text.
+		if !strings.HasPrefix(x, "[") && !strings.Contains(x, "/") && strings.Count(x, ":") <= 1 {
+			host, port, hasPort := strings.Cut(x, ":")
+			x = strings.TrimSuffix(host, ".")
+			if hasPort {
+				x += ":" + port
+			}
+		}
+		out = append(out, x)
 	}
 	return out
 }

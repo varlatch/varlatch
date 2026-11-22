@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -134,38 +133,55 @@ func TestRunCheck(t *testing.T) {
 	}
 }
 
-// The GitHub Connections' destination, GitHub's API, checked as the
-// others are: every live Connection's, one Organization's with org, and
-// refused when the name resolves to a private address.
-func TestCheckGitHub(t *testing.T) {
+// The admin check's GitHub Connections: GitHub's API, after the other
+// destinations, in the same scan (resolved once however many Connections
+// point at it); one Organization's with org; refused when the name
+// resolves to a private address, and then in the suggestion and the exit
+// code as any refused destination is.
+func TestRunAdminCheck(t *testing.T) {
 	reader := destinationsDB(t)
 	dns := checkDNS()
 	dns.set("api.github.com", v4("140.82.121.6"))
 	p := New(nil, Options{Resolve: dns.resolve})
-	got, err := p.CheckGitHub(context.Background(), reader, "")
+	now := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC) }
+	r, err := p.RunAdminCheck(context.Background(), reader, "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var ids []string
-	for _, d := range got {
-		ids = append(ids, d.Organization+" "+d.ID+" "+string(d.Kind)+" "+d.Scheme+"://"+d.Host+":"+strconv.Itoa(d.Port)+" "+d.Verdict)
+	var got []string
+	for _, d := range r.Destinations {
+		got = append(got, d.ID+" "+d.Verdict)
 	}
-	if want := "acme pcn_g1 github https://api.github.com:443 public|beta pcn_g2 github https://api.github.com:443 public"; strings.Join(ids, "|") != want {
-		t.Errorf("GitHub destinations %q, want %q", ids, want)
+	want := "whk_1 public|whk_2 refused|whk_3 refused|whk_4 refused|whk_5 refused|whk_6 unresolved|whk_7 refused|pcn_1 refused|pcn_g1 public|pcn_g2 public"
+	if strings.Join(got, "|") != want {
+		t.Errorf("destinations %q, want %q", got, want)
 	}
-	if got, _ := p.CheckGitHub(context.Background(), reader, "beta"); len(got) != 1 || got[0].ID != "pcn_g2" {
-		t.Errorf("beta: %+v", got)
+	if n := dns.count("api.github.com"); n != 1 {
+		t.Errorf("api.github.com was resolved %d times in one scan", n)
 	}
-	r := Report{Destinations: got}
+	g := r.Destinations[len(r.Destinations)-2]
+	if g.Organization != "acme" || g.Kind != KindGitHub || g.Scheme != "https" || g.Host != "api.github.com" || g.Port != 443 {
+		t.Errorf("acme's GitHub destination: %+v", g)
+	}
 	if lines := strings.Join(r.Lines(), "\n"); !strings.Contains(lines, `acme  GitHub  pcn_g1 "Acme on GitHub"  https://api.github.com:443  [140.82.121.6]  public`) {
 		t.Errorf("the lines:\n%s", lines)
 	}
-	dns.set("api.github.com", v4("10.1.2.3"))
-	if got, _ := New(nil, Options{Resolve: dns.resolve}).CheckGitHub(context.Background(), reader, "acme"); len(got) != 1 || got[0].Verdict != "refused" || got[0].Reason != "private_address" {
-		t.Errorf("a private answer: %+v", got)
+	// RunCheck (the API's report) leaves them out.
+	if r, _ := p.RunCheck(context.Background(), reader, "", now); len(r.Destinations) != 8 {
+		t.Errorf("RunCheck lists %d destinations", len(r.Destinations))
 	}
-	if got, err := p.CheckGitHub(context.Background(), nil, ""); err != nil || len(got) != 0 {
-		t.Errorf("no database: %v %v", got, err)
+	// Refused: suggested, and exit 1, with nothing else refused.
+	dns.set("api.github.com", v4("10.1.2.3"))
+	r, err = New(nil, Options{Resolve: dns.resolve}).RunAdminCheck(context.Background(), reader, "beta", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Destinations) != 2 || r.Destinations[1].ID != "pcn_g2" || r.Destinations[1].Verdict != "refused" || r.Destinations[1].Reason != "private_address" ||
+		r.Suggested == nil || *r.Suggested != "private.test,api.github.com" || r.ExitCode != 1 {
+		t.Errorf("beta, GitHub's API private: %+v, suggested %v", r.Destinations, r.Suggested)
+	}
+	if r, err := p.RunAdminCheck(context.Background(), nil, "", now); err != nil || len(r.Destinations) != 0 || r.ExitCode != 0 {
+		t.Errorf("no database: %+v %v", r, err)
 	}
 }
 

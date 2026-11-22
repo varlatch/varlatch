@@ -10,7 +10,8 @@
       "environment": [
         "A=1",
         "B",
-        "C="
+        "C=",
+        "D=b=c"
       ],
       "image": "busybox",
       "networks": {
@@ -19,6 +20,9 @@
     },
     "b": {
       "environment": [
+        "FLAG=false",
+        "PORT=8080",
+        "RATIO=1.5",
         "X=1",
         "Y",
         "Z=2"

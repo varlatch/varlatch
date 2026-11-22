@@ -6,8 +6,12 @@ services:
       - A=1
       - B
       - C=
+      - D=b=c
   b:
     image: busybox
     environment:
       X: "1"
       Y:
+      PORT: 8080
+      FLAG: false
+      RATIO: 1.5

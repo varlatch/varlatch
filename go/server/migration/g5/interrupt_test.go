@@ -234,6 +234,33 @@ func fakeDocker(args []string) int {
 	case j == "image inspect --format {{json .}} sha256:g5image":
 		fmt.Printf(`{"RepoDigests":["%s"],"Config":{"Labels":{"org.opencontainers.image.version":"0.23.0"}}}`+"\n", os.Getenv("VARLATCH_MIGRATE_PIN"))
 		return 0
+	case j == "compose ps -q varlatchd":
+		// The running service's container, as migrate reads its
+		// environment (the outbound allow list).
+		if !stopped("varlatchd") {
+			fmt.Println("g5-varlatchd-1")
+		}
+		return 0
+	case j == "inspect --format {{json .Config.Env}} g5-varlatchd-1", j == "compose config --format json":
+		// The value Compose gives varlatchd: .env's VARLATCH_OUTBOUND_ALLOW
+		// (the Compose file's ${VARLATCH_OUTBOUND_ALLOW:-}), as the
+		// running container has it or, stopped, docker compose config.
+		allow := ""
+		env, _ := os.ReadFile(".env")
+		for _, l := range strings.Split(string(env), "\n") {
+			if v, ok := strings.CutPrefix(l, "VARLATCH_OUTBOUND_ALLOW="); ok {
+				allow = v
+			}
+		}
+		vars := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "VARLATCH_OUTBOUND_ALLOW=" + allow}
+		if args[0] == "inspect" {
+			out, _ := json.Marshal(vars)
+			fmt.Println(string(out))
+			return 0
+		}
+		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{"varlatchd": map[string]any{"environment": map[string]string{"VARLATCH_OUTBOUND_ALLOW": allow}}}})
+		fmt.Println(string(out))
+		return 0
 	case len(args) == 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start") && args[2] == "varlatch-web":
 		if args[1] == "stop" {
 			return okOr(os.WriteFile(state("web-stopped"), nil, 0o600))

@@ -237,8 +237,15 @@ func TestSidecarOwned(t *testing.T) {
 func TestComposeEnvironmentForms(t *testing.T) {
 	str := func(v string) *string { return &v }
 	for file, want := range map[string]map[string]composeEnv{
-		"map-and-list.json": {"a": {"A": str("1"), "B": nil, "C": str("")}, "b": {"X": str("1"), "Y": nil}},
-		"overlay-list.json": {"a": {"A": str("1"), "B": nil, "C": str("")}, "b": {"X": str("1"), "Y": nil, "Z": str("2")}},
+		// The map's unquoted number and boolean are JSON ones there.
+		"map-and-list.json": {
+			"a": {"A": str("1"), "B": nil, "C": str(""), "D": str("b=c")},
+			"b": {"X": str("1"), "Y": nil, "PORT": str("8080"), "FLAG": str("false"), "RATIO": str("1.5")},
+		},
+		"overlay-list.json": {
+			"a": {"A": str("1"), "B": nil, "C": str(""), "D": str("b=c")},
+			"b": {"X": str("1"), "Y": nil, "Z": str("2"), "PORT": str("8080"), "FLAG": str("false"), "RATIO": str("1.5")},
+		},
 	} {
 		b, err := os.ReadFile(filepath.Join("testdata", "compose-config", file))
 		if err != nil {
@@ -262,10 +269,19 @@ func TestComposeEnvironmentForms(t *testing.T) {
 			}
 		}
 	}
+	// A name a list repeats: the last one holds, as in a container's
+	// environment.
+	run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"p","services":{"a":{"environment":["A=1","A=2","B=x","B"]}}}`)}}}
+	cfg, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context())
+	if env := cfg.Services["a"].Environment; err != nil || env["A"] == nil || *env["A"] != "2" || env["B"] != nil || len(env) != 2 {
+		t.Fatalf("a repeated name: %v %v", env, err)
+	}
 	// What Compose cannot have printed is said as such, not as a project
 	// without a name.
-	run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"p","services":{"a":{"environment":42}}}`)}}}
-	if _, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context()); err == nil || !strings.Contains(err.Error(), "a configuration migrate cannot read") {
-		t.Fatalf("an environment of neither form: %v", err)
+	for _, bad := range []string{`42`, `{"A":{"x":1}}`, `{"A":["x"]}`, `[1]`} {
+		run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"p","services":{"a":{"environment":` + bad + `}}}`)}}}
+		if _, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context()); err == nil || !strings.Contains(err.Error(), "a configuration migrate cannot read") {
+			t.Errorf("the environment %s: %v", bad, err)
+		}
 	}
 }

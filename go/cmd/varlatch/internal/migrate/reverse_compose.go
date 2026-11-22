@@ -112,7 +112,9 @@ type composeConfig struct {
 // writes it as a list (- A=1) or an overlay merges one in, a list
 // (["A=1", "B"]), as Compose 5.6 does. A name without a value (null, or a
 // list entry without =) is taken from the shell when Compose runs, so it
-// is nil here: not set.
+// is nil here: not set. A map's unquoted number or boolean (PORT: 8080,
+// TS_USERSPACE: false) is a JSON number or boolean there: its text is the
+// value, as the container gets it.
 type composeEnv map[string]*string
 
 func (e *composeEnv) UnmarshalJSON(b []byte) error {
@@ -138,9 +140,28 @@ func (e *composeEnv) UnmarshalJSON(b []byte) error {
 		*e = m
 		return nil
 	}
-	var m map[string]*string
-	if err := json.Unmarshal(b, &m); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
+	}
+	m := composeEnv{}
+	for name, v := range raw {
+		v = bytes.TrimSpace(v)
+		switch {
+		case bytes.Equal(v, []byte("null")):
+			m[name] = nil
+		case len(v) > 0 && v[0] == '"':
+			var str string
+			if err := json.Unmarshal(v, &str); err != nil {
+				return err
+			}
+			m[name] = &str
+		case bytes.Equal(v, []byte("true")), bytes.Equal(v, []byte("false")), len(v) > 0 && (v[0] == '-' || v[0] >= '0' && v[0] <= '9'):
+			str := string(v)
+			m[name] = &str
+		default:
+			return fmt.Errorf("the environment's %s is neither a value nor null", name)
+		}
 	}
 	*e = m
 	return nil

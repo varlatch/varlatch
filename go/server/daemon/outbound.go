@@ -97,27 +97,12 @@ func runOutboundCheck(cfg *config.Config, path string, rest []string, stdout, st
 		defer conn.Close()
 		db = conn
 	}
-	report, err := policy.RunCheck(context.Background(), db, o.org, time.Now)
+	// The GitHub Sync Targets' connections too (RunAdminCheck): GitHub's
+	// API is public, but a policy or a resolver can still refuse it.
+	report, err := policy.RunAdminCheck(context.Background(), db, o.org, time.Now)
 	if err != nil {
 		fmt.Fprintf(stderr, "varlatchd admin outbound check: %v\n", err)
 		return ExitFailure
-	}
-	// The GitHub Sync Targets' connections too, here only (the API's
-	// report keeps its kinds): GitHub's API is public, but a policy or a
-	// resolver can still refuse it.
-	github, err := policy.CheckGitHub(context.Background(), db, o.org)
-	if err != nil {
-		fmt.Fprintf(stderr, "varlatchd admin outbound check: %v\n", err)
-		return ExitFailure
-	}
-	for _, d := range github {
-		report.Destinations = append(report.Destinations, d)
-		switch {
-		case d.Verdict == "refused":
-			report.ExitCode = 1
-		case d.Verdict == "unresolved" && report.ExitCode == 0:
-			report.ExitCode = 2
-		}
 	}
 	if o.asJSON {
 		b, err := json.Marshal(report)

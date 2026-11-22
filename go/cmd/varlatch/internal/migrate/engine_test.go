@@ -1439,8 +1439,8 @@ func TestAReleaseWaitsForTheImagesStop(t *testing.T) {
 // The source's outbound allow list against the target's: none at the
 // source changes nothing; a target with none while the source allows some
 // is refused before anything is done; one that lacks some of the source's
-// entries goes on, the missing ones named. Entries compare without blanks
-// or case.
+// entries goes on, the missing ones named. Entries compare without blanks,
+// case or a name's trailing dot.
 func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
 	for _, c := range []struct {
 		name, src, tgt, refused, warned string
@@ -1449,6 +1449,7 @@ func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
 		{"none at the target", "coolify.lan,10.0.0.0/8:8000", "", "sets no outbound_allow", ""},
 		{"the same", "coolify.lan, 10.0.0.0/8:8000", "10.0.0.0/8:8000,COOLIFY.lan", "", ""},
 		{"a wider target", "coolify.lan", "coolify.lan,*.lan", "", ""},
+		{"a name's trailing dot", "coolify.lan.,Convex.LAN.:3210,10.0.0.0/8", "coolify.lan,convex.lan:3210,10.0.0.0/8", "", ""},
 		{"one missing", "coolify.lan,convex.lan:3210", "coolify.lan", "", "lacks entries the source allows (convex.lan:3210)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
