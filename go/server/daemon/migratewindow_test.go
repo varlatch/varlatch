@@ -126,4 +126,5 @@ func TestTheWindowEndsBesideTheRunningVarlatchd(t *testing.T) {
 	if c := httpStatus(t, r, "GET", "/v1/whoami"); c == http.StatusServiceUnavailable {
 		t.Error("isolated at start once the window ended")
 	}
+	r.stop(t)
 }

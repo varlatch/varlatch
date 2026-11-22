@@ -46,6 +46,16 @@ type tailnetRunner struct {
 	log  *slog.Logger
 	done chan struct{}
 
+	// dataDir holds the handoff's hold (tailnet.Hold). held: varlatchd
+	// started under it, so the node joins under the hold's temporary name
+	// and nothing listens until open closes openCh; listened then carries
+	// the listener's outcome.
+	dataDir  string
+	held     bool
+	openCh   chan struct{}
+	openOnce sync.Once
+	listened chan error
+
 	mu      sync.Mutex
 	srvs    []*http.Server
 	stopped bool
@@ -80,11 +90,22 @@ func startTailnet(cfg *config.Config, controlURL string, certs tailnet.CertSourc
 			authKey = strings.TrimSpace(string(b))
 		}
 	}
+	// A node held for a handoff keeps the temporary name it enrolled
+	// under: announcing the configured name, which another node holds,
+	// would have the control plane rename it.
+	hold, err := tailnet.LoadHold(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	hostname := t.Hostname
+	if hold != nil {
+		hostname = hold.Hostname
+	}
 	tslog := log.With("component", "tsnet")
 	node, err := tailnet.StartNode(tailnet.NodeConfig{
 		// On a self-hosted control server (configured, not a test's), the
 		// tags are the tagged pre-auth key's.
-		Dir: dir, Hostname: t.Hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: t.ControlURL != "",
+		Dir: dir, Hostname: hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: t.ControlURL != "",
 		Logf: func(format string, args ...any) { tslog.Debug(fmt.Sprintf(format, args...)) },
 	})
 	if err != nil {
@@ -96,8 +117,15 @@ func startTailnet(cfg *config.Config, controlURL string, certs tailnet.CertSourc
 		return nil, err
 	}
 	// The read-back: a name the control plane suffixed keeps access closed.
-	m.SetHostname(t.Hostname)
-	r := &tailnetRunner{cfg: t, node: node, manager: m, resolver: tailnet.NewPinnedResolver(node, m, log), log: log, done: make(chan struct{})}
+	// While a handoff holds the node, it is read back as the hold's name
+	// (open sets the configured one again).
+	if hold != nil {
+		m.SetHeldName(hostname)
+	} else {
+		m.SetHostname(hostname)
+	}
+	r := &tailnetRunner{cfg: t, node: node, manager: m, resolver: tailnet.NewPinnedResolver(node, m, log), log: log, done: make(chan struct{}),
+		dataDir: cfg.DataDir, held: hold != nil, openCh: make(chan struct{}), listened: make(chan error, 1)}
 	if t.HTTPSPort != 0 {
 		if certs == nil {
 			certs = node
@@ -134,8 +162,20 @@ func (r *tailnetRunner) serve(ctx context.Context, handler, browser http.Handler
 		return
 	}
 	r.manager.Check(ctx)
+	if r.held {
+		r.log.Info("the tailnet node is held for a handoff: nothing listens on the tailnet until `varlatchd admin tailnet open`")
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.openCh:
+		}
+		r.manager.Check(ctx)
+	}
 	ln, err := r.node.Listen(r.cfg.Port)
 	r.manager.Listening(err == nil)
+	if r.held {
+		r.listened <- err
+	}
 	if err != nil {
 		r.log.Error("the tailnet listener cannot listen", "port", r.cfg.Port, "error", err)
 	} else if r.start(handler, ln, slog.LevelWarn) {
@@ -164,6 +204,40 @@ func (r *tailnetRunner) serve(ctx context.Context, handler, browser http.Handler
 		case <-tick.C:
 			r.manager.Check(ctx)
 		}
+	}
+}
+
+// open ends a handoff's hold: the hold removed first (the decision to
+// open, kept should anything after fail), then the tailnet listener
+// started, and its outcome awaited. Nothing when varlatchd did not start
+// held, or opened already: the handoff calls it again after a crash.
+func (r *tailnetRunner) open(ctx context.Context) error {
+	if !r.held {
+		return tailnet.ClearHold(r.dataDir)
+	}
+	if err := tailnet.ClearHold(r.dataDir); err != nil {
+		return fmt.Errorf("removing the hold: %w", err)
+	}
+	r.manager.SetHostname(r.cfg.Hostname)
+	first := false
+	r.openOnce.Do(func() { first = true; close(r.openCh) })
+	if !first {
+		r.mu.Lock()
+		listening := len(r.srvs) > 0
+		r.mu.Unlock()
+		if listening {
+			return nil
+		}
+		return errors.New("the tailnet listener was opened before and is not listening: see varlatchd's log")
+	}
+	select {
+	case err := <-r.listened:
+		if err != nil {
+			return fmt.Errorf("the tailnet listener cannot listen: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("the tailnet listener did not start: %w (the node may not have joined its tailnet yet; see varlatchd's log)", ctx.Err())
 	}
 }
 
@@ -203,7 +277,7 @@ func (r *tailnetRunner) stop(ctx context.Context) {
 }
 
 // tailnetUsage is `admin tailnet`'s usage.
-const tailnetUsage = "Usage: varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | varlatchd admin tailnet probe-name [--json]"
+var tailnetUsage = "Usage: varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | varlatchd admin tailnet probe-name [--json] | " + nodeUsage[len("Usage: "):]
 
 // repinArgs are `admin tailnet repin`'s flags.
 type repinArgs struct {
@@ -220,6 +294,11 @@ var offerToken = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // usage error.
 func tailnetArgs(rest []string) (repinArgs, string) {
 	var a repinArgs
+	if isNodeCmd(rest) {
+		c, msg := nodeArgs(rest)
+		a.asJSON = c.asJSON
+		return a, msg
+	}
 	if len(rest) > 0 && rest[0] == "probe-name" {
 		for _, arg := range rest[1:] {
 			if arg != "--json" {

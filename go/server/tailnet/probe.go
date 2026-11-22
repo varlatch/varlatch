@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"tailscale.com/client/local"
 	"tailscale.com/envknob"
 	"tailscale.com/logtail"
 	"tailscale.com/net/netns"
@@ -38,6 +39,9 @@ type ProbeConfig struct {
 	Tags       []string
 	// Timeout bounds each probe node's join (default 60 s).
 	Timeout time.Duration
+	// NamePrefix is the probe node's name before its random part
+	// (varlatch-restore-probe- by default).
+	NamePrefix string
 	// betweenJoins, set by tests, runs after the first probe node left.
 	betweenJoins func()
 	// observe, set by tests, hears what each probe node did: "join <name>
@@ -62,15 +66,22 @@ func ProbeName(ctx context.Context, c ProbeConfig) (ProbeResult, error) {
 	if c.Timeout <= 0 {
 		c.Timeout = 60 * time.Second
 	}
-	seen, err := probeJoin(ctx, c, true)
+	err := probeJoin(ctx, c, func(ctx context.Context, lc *local.Client) error {
+		peers, err := probePeers(ctx, lc)
+		for _, p := range peers {
+			if p.Label == strings.ToLower(c.Hostname) || strings.EqualFold(p.HostName, c.Hostname) {
+				res.Seen = append(res.Seen, p.DNSName)
+			}
+		}
+		return err
+	})
 	if err != nil {
 		return res, fmt.Errorf("tailnet: the probe could not join with the auth key: %w", err)
 	}
-	res.Seen = seen
 	if c.betweenJoins != nil {
 		c.betweenJoins()
 	}
-	if _, err := probeJoin(ctx, c, false); err != nil {
+	if err := probeJoin(ctx, c, nil); err != nil {
 		res.SecondJoin = err.Error()
 		return res, nil
 	}
@@ -78,22 +89,53 @@ func ProbeName(ctx context.Context, c ProbeConfig) (ProbeResult, error) {
 	return res, nil
 }
 
-// probeJoin joins one ephemeral probe node, reads its peers when look is
-// set, logs it out (an ephemeral node logged out is deleted by the control
-// plane) and removes its state.
-func probeJoin(ctx context.Context, c ProbeConfig, look bool) ([]string, error) {
-	suffix := make([]byte, 4)
-	if _, err := rand.Read(suffix); err != nil {
+// probePeer is a peer as a probe node sees it.
+type probePeer struct {
+	// DNSName is its MagicDNS name, lower case, without the trailing dot;
+	// Label that name's first label.
+	DNSName, Label string
+	HostName       string
+	StableID       string
+}
+
+// probePeers are the peers a probe node sees now.
+func probePeers(ctx context.Context, lc *local.Client) ([]probePeer, error) {
+	st, err := lc.Status(ctx)
+	if err != nil {
 		return nil, err
 	}
-	name := "varlatch-restore-probe-" + hex.EncodeToString(suffix)
+	var out []probePeer
+	for _, p := range st.Peer {
+		if p == nil {
+			continue
+		}
+		dns := strings.ToLower(strings.TrimSuffix(p.DNSName, "."))
+		label, _, _ := strings.Cut(dns, ".")
+		out = append(out, probePeer{DNSName: dns, Label: label, HostName: p.HostName, StableID: string(p.ID)})
+	}
+	return out, nil
+}
+
+// probeJoin joins one ephemeral probe node, runs look with its local
+// client when set, logs it out (an ephemeral node logged out is deleted by
+// the control plane) and removes its state.
+func probeJoin(ctx context.Context, c ProbeConfig, look func(context.Context, *local.Client) error) error {
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		return err
+	}
+	prefix := c.NamePrefix
+	if prefix == "" {
+		prefix = "varlatch-restore-probe-"
+	}
+	name := prefix + hex.EncodeToString(suffix)
 	observe := c.observe
 	if observe == nil {
 		observe = func(string) {}
 	}
 	dir, err := os.MkdirTemp(c.Dir, ".tailnet-probe-")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() {
 		if os.RemoveAll(dir) == nil {
@@ -102,7 +144,7 @@ func probeJoin(ctx context.Context, c ProbeConfig, look bool) ([]string, error) 
 	}()
 	srv, err := newServer(NodeConfig{Dir: dir, Hostname: name, ControlURL: c.ControlURL, AuthKey: c.AuthKey, Tags: c.Tags})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Ephemeral: logged out, the control plane deletes it.
 	srv.Ephemeral = true
@@ -116,11 +158,11 @@ func probeJoin(ctx context.Context, c ProbeConfig, look bool) ([]string, error) 
 	jctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	if _, err := srv.Up(jctx); err != nil {
-		return nil, err
+		return err
 	}
 	lc, err := srv.LocalClient()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() {
 		lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
@@ -129,25 +171,75 @@ func probeJoin(ctx context.Context, c ProbeConfig, look bool) ([]string, error) 
 			observe("logout " + name)
 		}
 	}()
-	if !look {
-		return nil, nil
+	if look == nil {
+		return nil
 	}
-	st, err := lc.Status(jctx)
+	// The look has the operation's context: its wait may outlast the join's
+	// timeout.
+	return look(ctx, lc)
+}
+
+// ReachResult is what the reach check found: Reaches when name, resolved
+// from the probe (a client node of the tailnet), is the node with the
+// expected StableID, and only it.
+type ReachResult struct {
+	Reaches bool `json:"reaches"`
+	// Holders are the peers whose MagicDNS name's first label is name
+	// (compared without case), with their StableIDs.
+	Holders []ReachHolder `json:"holders"`
+}
+
+// ReachHolder is a peer under the name.
+type ReachHolder struct {
+	DNSName  string `json:"dnsName"`
+	StableID string `json:"stableId"`
+}
+
+// Reaches is the handoff's final check (go-step7 decision 11): an
+// ephemeral probe node joins with the auth key, as the restore's probe
+// does, and looks, every second until wait has passed, for name among its
+// peers: MagicDNS resolves a name from that same map, so the name reaches
+// the node when the one peer under it is stableID. It logs out and leaves
+// no state. An error is a join that failed: nothing could be checked. The
+// tailnet's access rules must let the node's tags see each other, or the
+// probe sees nothing and the check fails closed.
+func Reaches(ctx context.Context, c ProbeConfig, name, stableID string, wait time.Duration) (ReachResult, error) {
+	var res ReachResult
+	if c.Timeout <= 0 {
+		c.Timeout = 60 * time.Second
+	}
+	if c.NamePrefix == "" {
+		c.NamePrefix = "varlatch-reach-probe-"
+	}
+	want := strings.ToLower(name)
+	err := probeJoin(ctx, c, func(ctx context.Context, lc *local.Client) error {
+		deadline := time.Now().Add(wait)
+		for {
+			peers, err := probePeers(ctx, lc)
+			if err != nil {
+				return err
+			}
+			res.Holders = nil
+			for _, p := range peers {
+				if p.Label == want {
+					res.Holders = append(res.Holders, ReachHolder{DNSName: p.DNSName, StableID: p.StableID})
+				}
+			}
+			res.Reaches = len(res.Holders) == 1 && res.Holders[0].StableID == stableID
+			if res.Reaches || !time.Now().Before(deadline) {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(time.Second):
+			}
+		}
+	})
 	if err != nil {
-		return nil, err
+		return res, fmt.Errorf("tailnet: the reach probe could not join with the auth key: %w", err)
 	}
-	var seen []string
-	for _, p := range st.Peer {
-		if p == nil {
-			continue
-		}
-		dns := strings.ToLower(strings.TrimSuffix(p.DNSName, "."))
-		label, _, _ := strings.Cut(dns, ".")
-		if strings.EqualFold(p.HostName, c.Hostname) || strings.EqualFold(label, c.Hostname) {
-			seen = append(seen, dns)
-		}
-	}
-	return seen, nil
+	return res, nil
 }
 
 // ErrNameHeld is a restore whose node's name is still held.

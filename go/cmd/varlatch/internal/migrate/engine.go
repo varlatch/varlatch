@@ -96,6 +96,9 @@ type Engine struct {
 	BEK []byte
 	// Prober asks the public URL which installation serves it.
 	Prober Prober
+	// Tailnet is the tailnet handoff's authority (tailnet.go); nil when
+	// the source serves no tailnet address.
+	Tailnet *TailnetOptions
 	// pin replaces the published image's (the tests' fakes only).
 	pin *imagePin
 	// sleep waits between probes (time.Sleep; the tests' clock).
@@ -261,6 +264,12 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 		return j, e.stopBefore(ctx, j, err)
 	}
 	if err := e.preflight(ctx, j); err != nil {
+		return j, e.stopBefore(ctx, j, err)
+	}
+	if err := e.prepareTailnet(ctx, j); err != nil {
+		if errors.Is(err, errHandoffUnderway) {
+			return j, err
+		}
 		return j, e.stopBefore(ctx, j, err)
 	}
 	report, err := e.dryRun(ctx, j)
@@ -492,7 +501,7 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 	r := &DryRunReport{At: checked.UTC().Format(time.RFC3339Nano), ExportMs: exportedAt.Sub(start).Milliseconds(),
 		ImportMs: imported.Sub(exportedAt).Milliseconds(), CheckMs: checked.Sub(imported).Milliseconds(),
 		DrainMs: e.drain().Milliseconds(), MaxDowntimeMs: e.maxDowntime().Milliseconds(), Copy: cp, Checks: &checks,
-		TransferMs: transferEstimate(j.Ingress).Milliseconds(), Ingress: j.Ingress}
+		TransferMs: (transferEstimate(j.Ingress) + tailnetEstimate(j.Tailnet)).Milliseconds(), Ingress: j.Ingress}
 	r.ProjectedMs = r.DrainMs + r.ExportMs + r.ImportMs + r.CheckMs + r.TransferMs
 	r.Fits = r.ProjectedMs <= r.MaxDowntimeMs
 	j.DryRun = r
@@ -589,6 +598,9 @@ func (e *Engine) cutover(ctx context.Context, j *Journal) (*Journal, error) {
 		return j, e.undo(ctx, j, err)
 	}
 	if err := e.transfer(ctx, j); err != nil {
+		return j, err
+	}
+	if err := e.switchTailnet(ctx, j); err != nil {
 		return j, err
 	}
 	return j, e.switchAndOpen(ctx, j)
@@ -726,16 +738,30 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			return fmt.Errorf("%w; undoing could not start: %v", cause, err)
 		}
 	}
-	// In the transfer: the target stops first, then the barrier is lifted,
-	// then the source's ingress starts (returnAddress says why in that
-	// order). With the ingress stopped, nothing reaches the source between
-	// the two.
+	// In the transfer: the tailnet name goes back first, then the target
+	// stops, then the barrier is lifted, then the source's ingress starts
+	// (returnAddress says why in that order). With the ingress stopped,
+	// nothing reaches the source between the two. While the name is not
+	// back, neither the target nor the address moves: --resume goes on.
 	var problems []error
-	stopped := true
+	// nameBack: the tailnet name is back with the source, or none moved.
+	// stopped: the target is stopped, or nothing of it was asked to stop.
+	nameBack, stopped := true, true
 	if from == Transfer {
-		stop := e.stopTargetForUndo(ctx)
-		stopped = len(stop) == 0
-		problems = append(problems, stop...)
+		// The tailnet name first, then the address (decision 12's reverse
+		// order); an address is never given back while the name is not.
+		if err := e.unwindTailnet(ctx, j); errors.Is(err, ErrAwaitingOperator) {
+			// The operator's step first (exit 75); --resume goes on with
+			// the undo.
+			return fmt.Errorf("%w; undoing waits: %w", cause, err)
+		} else if err != nil {
+			problems = append(problems, err)
+			nameBack = false
+		} else {
+			stop := e.stopTargetForUndo(ctx)
+			stopped = len(stop) == 0
+			problems = append(problems, stop...)
+		}
 	}
 	// open: the source is behind no gate now. Otherwise closed says why its
 	// ingress is not started.
@@ -758,7 +784,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	default:
 		open = true
 	}
-	if from == Transfer {
+	if from == Transfer && nameBack {
 		switch {
 		case j.Ingress == Coolify:
 			// Coolify's domain goes back by hand, whatever the gate or the
@@ -801,9 +827,11 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			}
 		}
 	}
-	// A target that may still run keeps its database: discarding it would
-	// only say to stop the target first, again.
-	if stopped {
+	// The target's database is discarded once the name is back: while it
+	// is not, a --resume may start the target again, which needs it. A
+	// target that may still run keeps it too: discarding it would only say
+	// to stop the target first, again.
+	if nameBack && stopped {
 		if err := e.discard(ctx, j); err != nil {
 			problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
 		}
@@ -899,6 +927,9 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	case j.Phase == Transfer:
 		e.say("The migration %s is transferring its address: the public URL is checked again.", j.ID)
 		if err := e.transfer(ctx, j); err != nil {
+			return j, err
+		}
+		if err := e.switchTailnet(ctx, j); err != nil {
 			return j, err
 		}
 		return j, e.switchAndOpen(ctx, j)

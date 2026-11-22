@@ -274,7 +274,7 @@ func origin(u *url.URL) string { return u.Scheme + "://" + u.Host }
 
 const notRunning = "varlatchd did not answer on its control socket, so this is unknown"
 const startIt = "Start varlatchd (sudo systemctl start varlatchd; journalctl -u varlatchd says why it stopped), then run doctor again"
-const runAs = "Run doctor as root (sudo varlatch doctor) or as the user varlatchd runs as"
+const runAs = "Run doctor as root (sudo varlatch doctor), or as the user varlatchd runs as where the configuration names root_kek_file"
 
 func readiness(live *Live) Check {
 	c := Check{ID: "secret-plane.ready", Title: "Server readiness (schema, Root KEK, installation)", Class: Mandatory}
