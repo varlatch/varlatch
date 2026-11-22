@@ -531,14 +531,59 @@ var shared struct {
 	err                    error
 }
 
+// ownerFile names, in a run's shared directory, the process that made it.
+const ownerFile = "g5-owner.pid"
+
+// sweepAbandoned removes the temporary directories of earlier runs whose
+// process is gone: one killed (SIGKILL, or go test's -timeout panic) runs
+// none of its cleanup. Only this user's; a shared directory only when the
+// process its owner file names is dead; one without an owner file (a
+// scratch directory, the Headscale cases' CA, or a run of a branch from
+// before owner files) only once it is older than abandonedAfter, longer
+// than any G5 run, so a live run's is never removed.
+func sweepAbandoned() {
+	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*", "g5-headscale-ca-*"} {
+		dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
+		for _, d := range dirs {
+			st, err := os.Lstat(d)
+			if err != nil || !st.IsDir() {
+				continue
+			}
+			if sys, ok := st.Sys().(*syscall.Stat_t); !ok || int(sys.Uid) != os.Getuid() {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(d, ownerFile))
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				if time.Since(st.ModTime()) > abandonedAfter {
+					_ = os.RemoveAll(d)
+				}
+			case err == nil:
+				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 && !alive(pid) {
+					_ = os.RemoveAll(d)
+				}
+			}
+		}
+	}
+}
+
+// abandonedAfter is the age past which a G5 directory without an owner
+// file is no live run's.
+const abandonedAfter = 6 * time.Hour
+
 func setUpShared(t *testing.T) {
 	shared.once.Do(func() {
+		sweepAbandoned()
 		dir, err := os.MkdirTemp("", "g5-interrupt-")
 		if err != nil {
 			shared.err = err
 			return
 		}
 		registerCleanupDir(dir)
+		if err := os.WriteFile(filepath.Join(dir, ownerFile), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			shared.err = err
+			return
+		}
 		shared.dir = dir
 		root, _ := filepath.Abs(filepath.Join("..", "..", ".."))
 		bin := filepath.Join(dir, "bin")
