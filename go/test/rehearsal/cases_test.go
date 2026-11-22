@@ -123,20 +123,31 @@ func imagePin(t *testing.T, in *installation, rel release) {
 			"with a registry that has a port (a mirror, a private registry, this harness's), the refusal's image references read [redacted]@sha256:...: the fail-safe takes host:port/repo before the at-sign for a URL's credentials",
 			"migrate's diagnostics: the operator cannot read which image was found or wanted")
 	}
-	// An image built here, never pushed: no registry digest of its own. A
-	// new image ID (a label added), not a tag of the pushed one, which
-	// would keep the pushed image's RepoDigests; checked empty before the
-	// run.
-	local := "vl-rh-" + runID + "-local/varlatchd:0.23.0"
+	// An image built here, never pushed. A new image ID (a label added),
+	// not a tag of the pushed one, which would keep the pushed image's
+	// RepoDigests.
+	localRepo := "vl-rh-" + runID + "-local/varlatchd"
+	local := localRepo + ":0.23.0"
 	base := rel.Images["varlatchd"][:strings.Index(rel.Images["varlatchd"], "@")]
 	must(t, run("", nil, []byte("FROM "+base+"\nLABEL org.varlatch.rehearsal.local="+runID+"\n"), "docker", "build", "-q", "-t", local, "-"), "build a local image")
 	t.Cleanup(func() { run("", nil, nil, "docker", "image", "rm", local) })
-	if digests := run("", nil, nil, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", local); strings.TrimSpace(digests.stdout) != "[]" {
-		t.Fatalf("the local image has registry digests: %s", digests.stdout)
-	}
+	digests := strings.TrimSpace(run("", nil, nil, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", local).stdout)
+	measure("item 8: the local image's RepoDigests", digests)
 	in.swapImage(t, local)
 	r = in.migrateEnv(rel, true, rel.pin(), "--dry-run")
-	record(t, item, "a locally built image: refused (no registry digest)", r.code != 0 && strings.Contains(r.stderr, "not pinned by a registry digest"), r.String())
+	if digests == "[]" {
+		// The classic image store: no RepoDigests, the no-digest refusal.
+		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "not pinned by a registry digest"), r.String())
+	} else {
+		// The containerd image store (Docker's default since 29) lists a
+		// digest under the local name too, which migrate cannot tell from
+		// a registry's: the image is refused as another repository than
+		// the pin, the no-digest branch unreachable here.
+		differs(item, "G5's stand-in source has no RepoDigests for an image built and never pushed.",
+			fmt.Sprintf("Docker lists %s for an image built here and never pushed (the containerd image store gives a local name a digest), so migrate reads it as that repository's registry digest", digests),
+			"the \"not pinned by a registry digest\" refusal is unreachable on such a host; the image is still refused, as another repository and digest than the pin")
+		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "the source's image is repository "+localRepo+",") && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
+	}
 	in.swapImage(t, rel.Images["varlatchd"])
 }
 
