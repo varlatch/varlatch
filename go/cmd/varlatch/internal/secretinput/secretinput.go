@@ -272,3 +272,7 @@ func errnoName(errno syscall.Errno) string {
 	}
 	return ""
 }
+
+// ReadErrorCode is Node's code for a failed read of path ("ENOENT",
+// "EACCES", "EISDIR", ...), "an error" when it has none.
+func ReadErrorCode(path string, err error) string { return readErrorCode(path, err) }

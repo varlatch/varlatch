@@ -50,6 +50,9 @@ func commandTimeout(args []string) time.Duration {
 	if len(args) >= 2 && args[0] == "backup" && args[1] == "test-bucket" {
 		return time.Hour
 	}
+	if len(args) >= 2 && args[0] == "migrate" && args[1] == "barrier" {
+		return barrierTimeout(args)
+	}
 	// A tailnet certificate's obtain waits as long as it asked to try.
 	if len(args) >= 3 && args[0] == "tailnet" && args[1] == "certificate" && args[2] == "obtain" {
 		for i := 3; i+1 < len(args); i++ {
@@ -62,7 +65,7 @@ func commandTimeout(args []string) time.Duration {
 }
 
 const (
-	backupUsage      = "Usage: varlatchd admin backup run [--json] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] | varlatchd admin backup test-bucket [--json]"
+	backupUsage      = "Usage: varlatchd admin backup run [--json [--verify-remote]] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] | varlatchd admin backup test-bucket [--json]"
 	maintenanceUsage = "Usage: varlatchd admin maintenance begin --ttl <duration> | varlatchd admin maintenance end <lease id> | varlatchd admin maintenance status"
 )
 
@@ -72,7 +75,8 @@ const (
 func backupArgs(sub string, rest []string) (ttl time.Duration, msg string) {
 	if sub == "backup" {
 		switch {
-		case len(rest) == 1 && rest[0] == "run", len(rest) == 2 && rest[0] == "run" && rest[1] == "--json", len(rest) == 1 && rest[0] == "status",
+		case len(rest) == 1 && rest[0] == "run", len(rest) == 2 && rest[0] == "run" && rest[1] == "--json",
+			len(rest) == 3 && rest[0] == "run" && rest[1] == "--json" && rest[2] == "--verify-remote", len(rest) == 1 && rest[0] == "status",
 			len(rest) == 1 && rest[0] == "test-bucket", len(rest) == 2 && rest[0] == "test-bucket" && rest[1] == "--json":
 			return 0, ""
 		case len(rest) > 0 && rest[0] == "restore":
@@ -166,8 +170,27 @@ func runBackupCommand(ctx context.Context, env *hostEnv, sub string, rest []stri
 		}
 		return printJSON(st)
 	}
+	if len(rest) == 3 && !env.backups.HasDestination() {
+		// Refused before an archive is made: only its remote copy counts.
+		return fail(backups.ErrNoDestination)
+	}
 	res, err := env.backups.Run(ctx)
-	if len(rest) == 2 {
+	if len(rest) == 3 && err == nil {
+		// --verify-remote: the uploaded copy downloaded back and checked
+		// (varlatch migrate --finish's final archive, which it trusts only
+		// once its remote copy opens).
+		v, verr := env.backups.VerifyRemote(ctx, res.ArchiveID)
+		switch {
+		case verr != nil:
+			err = fmt.Errorf("the archive %s's remote copy could not be verified: %w", res.ArchiveID, verr)
+		case res.Delivery != nil:
+			res.Delivery.RemoteVerification = &v
+		}
+		if verr == nil && (!v.Integrity || !v.Compatibility || !v.KeyMatch) {
+			err = fmt.Errorf("the archive %s's remote copy failed its check (integrity %t, compatibility %t, Root KEK match %t)", res.ArchiveID, v.Integrity, v.Compatibility, v.KeyMatch)
+		}
+	}
+	if len(rest) >= 2 {
 		if res.ArchiveID != "" {
 			printJSON(res)
 		}

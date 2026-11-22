@@ -251,7 +251,7 @@ func (r *Run) varlatchd(prefix string, args []string, config string) (answer, sa
 		args = append(slices.Clone(args), "--config", config)
 	}
 	cmd := exec.Command(path, args...)
-	cmd.Env = hostCredentials(varlatchdEnviron(r), config)
+	cmd.Env = hostCredentials(varlatchdEnviron(r), config, asRoot())
 	answer, said, err = runChild(cmd)
 	if err != nil {
 		var exit *exec.ExitError

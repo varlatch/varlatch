@@ -61,13 +61,13 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
-import { judgeGate } from "./lib/gate.mjs";
+import { judgeGate, readWalkthrough } from "./lib/gate.mjs";
 import { evaluate, TARGET_SPECIFIC, validateInventory } from "./lib/inventory.mjs";
 import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacking } from "./lib/client-lacks.mjs";
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
@@ -78,6 +78,7 @@ import { NOT_BUILT } from "./suite-kit.mjs";
 import { PLAN } from "./plan.mjs";
 import { loadWeights, parseShard, shardSuites } from "./shard.mjs";
 import { loadTarget } from "./targets/index.mjs";
+import { checkoutCommit } from "./targets/ts-source.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -122,14 +123,6 @@ function parseArgs(argv) {
   if (options.shard && options.gate) usage("--gate judges a whole run: --shard is not allowed");
   if (options.gate && !options.walkthrough) usage("--gate needs the browser-walkthrough evidence file: --walkthrough docs/evidence/<file>");
   return options;
-}
-
-/** The browser-walkthrough evidence as the gate judges it: its path in the checkout, and whether it is there. */
-function walkthroughEvidence(file) {
-  const absolute = resolve(file);
-  const path = relative(REPO_ROOT, absolute).split(sep).join("/");
-  const exists = existsSync(absolute) && statSync(absolute).isFile();
-  return { path, exists, size: exists ? statSync(absolute).size : 0, sha256: exists ? sha256(readFileSync(absolute)) : null };
 }
 
 /** The target's expected failures file (expect/<name>.json), validated; an empty one when there is none. */
@@ -238,7 +231,8 @@ async function main() {
   const lacking = lackingChecks(inventory, lacks.keys());
   // Gate evidence is checked before anything starts: a gate run without it
   // cannot pass, so it does not spend an hour finding that out.
-  const walkthrough = options.walkthrough ? walkthroughEvidence(options.walkthrough) : null;
+  const walkthrough = options.walkthrough ? readWalkthrough(options.walkthrough, REPO_ROOT) : null;
+  if (walkthrough && walkthrough.isSymlink) usage(`--walkthrough ${options.walkthrough}: symlinks are not allowed`);
   if (walkthrough && !walkthrough.exists) usage(`--walkthrough ${options.walkthrough}: no such file`);
   let recentCli = null;
   if (options.recentCliReport) {
@@ -676,11 +670,14 @@ async function main() {
           expectedInForce: [...inForce.keys()],
           lacksInForce: [...lacks.keys()],
           implementation: report.implementation ?? null,
+          commit: checkoutCommit(REPO_ROOT),
         },
         walkthrough,
         recentCli,
       });
-      report.gate.walkthrough = walkthrough;
+      report.gate.walkthrough = walkthrough
+        ? { path: walkthrough.path, exists: walkthrough.exists, size: walkthrough.size, sha256: walkthrough.sha256 }
+        : null;
       report.gate.recentCliReport = options.recentCliReport ? { file: options.recentCliReport, sha256: sha256(readFileSync(options.recentCliReport)) } : null;
     }
 

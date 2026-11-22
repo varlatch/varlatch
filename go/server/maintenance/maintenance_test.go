@@ -140,3 +140,120 @@ func TestUnreadableAndRestoreGates(t *testing.T) {
 		t.Errorf("a restore gate ended as a lease: %v", err)
 	}
 }
+
+// The reverse migration's barrier (go-step7 decision 6, Go's half): opened
+// draining, nothing admitted from then but what ran; the same migration's
+// barrier continued, another gate refused; paused with its frozen point;
+// a restart stays behind it; released by its migration only, never by a
+// lease's end or the transfer's open.
+func TestMigrationBarrier(t *testing.T) {
+	const id, other = "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", "mig_bbbbbbbbbbbbbbbbbbbbbbbbbb"
+	dir := t.TempDir()
+	a := Open(dir, nil)
+	leave, ok := a.Enter()
+	if !ok {
+		t.Fatal("not admitted")
+	}
+	g, err := a.BeginBarrier(id)
+	if err != nil || g.Kind != "migration" || g.Phase != "draining" || g.ID != id || g.ExpiresAt != nil || g.FrozenPosition != nil {
+		t.Fatalf("the barrier: %+v %v", g, err)
+	}
+	if _, ok := a.Enter(); ok {
+		t.Fatal("admitted behind the barrier")
+	}
+	if a.Busy() != 1 || !a.AdmitsMeta() {
+		t.Fatalf("busy %d, meta %v", a.Busy(), a.AdmitsMeta())
+	}
+	leave()
+	if g, err := a.BeginBarrier(id); err != nil || g.Phase != "draining" {
+		t.Fatalf("the same barrier again: %+v %v", g, err)
+	}
+	if _, err := a.BeginBarrier(other); !errors.Is(err, ErrBarrier) {
+		t.Fatalf("another migration's barrier: %v", err)
+	}
+	if _, err := a.Begin(time.Minute); !errors.Is(err, ErrOpen) {
+		t.Fatalf("a lease behind the barrier: %v", err)
+	}
+	if err := a.End(id); err == nil {
+		t.Fatal("the barrier ended as a lease")
+	}
+	if err := a.EndMigration(id); err == nil {
+		t.Fatal("the barrier ended as the transfer's gate")
+	}
+	if _, err := a.PauseBarrier(other, 7); err == nil {
+		t.Fatal("another migration paused the barrier")
+	}
+	g, err = a.PauseBarrier(id, 42)
+	if err != nil || g.Phase != "paused" || g.FrozenPosition == nil || *g.FrozenPosition != "42" {
+		t.Fatalf("paused: %+v %v", g, err)
+	}
+	// On disk, as a restart reads it.
+	b := Open(dir, nil)
+	if got, err := b.Gate(); err != nil || got == nil || got.Phase != "paused" || *got.FrozenPosition != "42" || !b.Isolated() {
+		t.Fatalf("after a restart: %+v %v", got, err)
+	}
+	if g, err := b.BeginBarrier(id); err != nil || g.Phase != "paused" {
+		t.Fatalf("a paused barrier continued: %+v %v", g, err)
+	}
+	if err := b.ReleaseBarrier(other); err == nil {
+		t.Fatal("another migration released the barrier")
+	}
+	if err := b.ReleaseBarrier(id); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.Enter(); !ok {
+		t.Fatal("not admitted after the release")
+	}
+	if _, err := os.Stat(filepath.Join(dir, backup.GateFile)); !os.IsNotExist(err) {
+		t.Fatalf("the gate file after the release: %v", err)
+	}
+	if err := b.ReleaseBarrier(id); err != nil {
+		t.Fatalf("a second release: %v", err)
+	}
+	// The transfer's gate is not a barrier: neither released nor
+	// continued as one.
+	transfer, _ := json.Marshal(backup.Gate{ID: id, Kind: "migration", Phase: "transfer"})
+	if err := os.WriteFile(filepath.Join(dir, backup.GateFile), transfer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := Open(dir, nil)
+	if err := c.ReleaseBarrier(id); err == nil {
+		t.Fatal("the transfer's gate released as a barrier")
+	}
+	if _, err := c.BeginBarrier(id); !errors.Is(err, ErrBarrier) {
+		t.Fatalf("a barrier over the transfer's gate: %v", err)
+	}
+}
+
+// A migration gate is read in its forms only: a transfer, a draining
+// barrier, a paused one with its frozen point; any other is unreadable,
+// and isolates.
+func TestMigrationGateForms(t *testing.T) {
+	for _, c := range []struct {
+		json string
+		ok   bool
+	}{
+		{`{"id":"m","kind":"migration","phase":"transfer","expiresAt":null,"archiveId":null}`, true},
+		{`{"id":"m","kind":"migration","phase":"draining","expiresAt":null,"archiveId":null}`, true},
+		{`{"id":"m","kind":"migration","phase":"paused","expiresAt":null,"archiveId":null,"frozenPosition":"17"}`, true},
+		{`{"id":"m","kind":"migration","phase":"paused","expiresAt":null,"archiveId":null}`, false},
+		{`{"id":"m","kind":"migration","phase":"paused","expiresAt":null,"archiveId":null,"frozenPosition":"-1"}`, false},
+		{`{"id":"m","kind":"migration","phase":"paused","expiresAt":null,"archiveId":null,"frozenPosition":"017"}`, false},
+		{`{"id":"m","kind":"migration","phase":"draining","expiresAt":null,"archiveId":null,"frozenPosition":"3"}`, false},
+		{`{"id":"m","kind":"migration","phase":"draining","expiresAt":5,"archiveId":null}`, false},
+		{`{"id":"m","kind":"migration","phase":"reconciling","expiresAt":null,"archiveId":null}`, false},
+		{`{"id":"m","kind":"capture","phase":"draining","expiresAt":5,"archiveId":null,"frozenPosition":"3"}`, false},
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, backup.GateFile), []byte(c.json), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		g, err := backup.ReadGate(dir)
+		if c.ok != (err == nil && g != nil) {
+			t.Errorf("%s: %+v %v", c.json, g, err)
+		}
+		if !c.ok && !Open(dir, nil).Isolated() {
+			t.Errorf("%s: not isolated", c.json)
+		}
+	}
+}

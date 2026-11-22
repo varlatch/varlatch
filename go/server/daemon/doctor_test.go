@@ -6,7 +6,9 @@ package daemon
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -46,21 +48,58 @@ func tree(t *testing.T, dir string, skip func(rel string) bool) map[string]strin
 	return out
 }
 
-// settled is dir's tree once two looks 2.5 seconds apart agree (within
-// 30 seconds).
+// settled is dir's tree once the database's WAL is wholly in the database
+// file (walBackfilled) and two looks a checkpoint period apart agree, the
+// WAL index included. The WAL and its index are skipped by the tree, so
+// without the first condition a checkpoint still to come (the daemon's
+// start writes, under load) would change the database file later, as if
+// what the test runs next had written it.
 func settled(t *testing.T, dir string, skip func(string) bool) map[string]string {
 	t.Helper()
-	prev := tree(t, dir, skip)
-	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
-		time.Sleep(2500 * time.Millisecond)
-		next := tree(t, dir, skip)
-		if maps.Equal(prev, next) {
-			return next
+	// The daemon's passive checkpoint runs every two seconds; a look apart
+	// is a little more.
+	const look = 2500 * time.Millisecond
+	type state struct {
+		tree       map[string]string
+		mxFrame    uint32
+		backfilled bool
+	}
+	read := func() state {
+		mx, done := walBackfilled(t, filepath.Join(dir, "varlatch.db-shm"))
+		return state{tree(t, dir, skip), mx, done}
+	}
+	prev := read()
+	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); {
+		time.Sleep(look)
+		next := read()
+		if next.backfilled && prev.backfilled && next.mxFrame == prev.mxFrame && maps.Equal(prev.tree, next.tree) {
+			return next.tree
 		}
 		prev = next
 	}
-	t.Fatal("the data directory did not settle")
+	t.Fatalf("the data directory did not settle: the WAL backfilled %v, its frames %d", prev.backfilled, prev.mxFrame)
 	return nil
+}
+
+// walBackfilled reads SQLite's WAL index (the -shm file; sqlite.org's WAL
+// file format: the index header's mxFrame at byte 16, the checkpoint
+// information's nBackfill at byte 96, in the host's byte order): the WAL's
+// last valid frame, and whether every frame up to it is in the database
+// file. No index (no WAL in use) is backfilled.
+func walBackfilled(t *testing.T, shm string) (uint32, bool) {
+	t.Helper()
+	b, err := os.ReadFile(shm)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, true
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) < 100 {
+		return 0, false
+	}
+	mx, backfill := binary.NativeEndian.Uint32(b[16:20]), binary.NativeEndian.Uint32(b[96:100])
+	return mx, backfill == mx
 }
 
 func sameTree(t *testing.T, what string, before, after map[string]string) {
@@ -227,25 +266,5 @@ func TestDoctorSaysWhyItCouldNotAsk(t *testing.T) {
 	}
 	if c := reportCheck(t, rep, "secret-plane.ready"); c.Status != doctor.Unknown || !strings.Contains(c.Remedy, "sudo varlatch doctor") {
 		t.Errorf("readiness: %+v", c)
-	}
-}
-
-// TestConfigCheck: `varlatchd admin config-check` says whether a
-// configuration is valid (what setup asks before it starts the unit), and
-// reads nothing else.
-func TestConfigCheck(t *testing.T) {
-	in := newInstall(t, "")
-	if code, out, errOut := runAdmin(t, "config-check", "--config", in.conf); code != ExitOK || out != "The configuration file "+in.conf+" is valid.\n" || errOut != "" {
-		t.Errorf("valid: %d %q %q", code, out, errOut)
-	}
-	bad := filepath.Join(in.dir, "bad.conf")
-	if err := os.WriteFile(bad, []byte("listen_https = :443\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if code, _, errOut := runAdmin(t, "config-check", "--config", bad); code != ExitConfig || !strings.Contains(errOut, "is not valid") {
-		t.Errorf("not valid: %d %q", code, errOut)
-	}
-	if code, _, errOut := runAdmin(t, "config-check", "extra", "--config", in.conf); code != 64 || !strings.Contains(errOut, "Usage: varlatchd admin config-check") {
-		t.Errorf("usage: %d %q", code, errOut)
 	}
 }

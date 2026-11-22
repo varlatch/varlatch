@@ -53,6 +53,8 @@ on:
       - "packages/contract/test/vectors/**"
       - "scripts/check-licenses.mjs"
       - "scripts/check-timing-tests.sh"
+      # go's shellcheck step checks it.
+      - "scripts/ci-nightly-report.sh"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"
       - "scripts/conformance/inventory.json"
@@ -174,6 +176,7 @@ jobs:
             packages/contract/test/vectors/*
             scripts/check-licenses.mjs
             scripts/check-timing-tests.sh
+            scripts/ci-nightly-report.sh
             packages/protocol/openapi.yaml
             scripts/conformance/run.mjs
             scripts/conformance/inventory.json
@@ -416,6 +419,7 @@ jobs:
           go vet -tags conformance ./...
           go vet -tags crashpoint ./...
           go vet -tags g9a ./...
+          go vet -tags g5 ./server/migration/g5/
           go vet -tags headscale ./server/tailnet/... ./server/daemon/...
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
@@ -439,6 +443,23 @@ jobs:
 
       - name: Every timing test runs alone
         run: scripts/check-timing-tests.sh
+
+      # G5's damage gate (ADR-0059 G5; internal docs/design/go-step7.md
+      # slice 7.3c; go/server/migration/g5): the migration's Go path through
+      # the varlatchd binary on a seeded installation, every damage of the
+      # bundle stream, its check sections and the imported database failing
+      # at its stage and check, named, a killed import cleared by the next,
+      # and nothing secret printed; its interrupted half (7.4c) and its
+      # reverse half (7.6a: Go's barrier, the reverse export and checks, a
+      # second forward migration reproducing the state, after each kind of
+      # change on Go; varlatch migrate --rollback interrupted at every
+      # phase boundary; --finish and --delete-old-data). Its own step, so the gate's evidence is its own line
+      # in the run.
+      - name: G5, the migration's damage gate
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags g5 -run '^TestG5' -v ./server/migration/g5/
 
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's
@@ -568,8 +589,8 @@ jobs:
       - name: install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck
         run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh go/install/test-setup.sh
 
-      - name: The release's asset scripts pass shellcheck
-        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh
+      - name: The release's asset scripts and the nightly report pass shellcheck
+        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh scripts/ci-nightly-report.sh
 
       # G13 (ADR-0059 step 4.14), and the Go replacement of
       # scripts/test-backup-s3.mjs: the S3 client against a local S3 server
@@ -603,7 +624,10 @@ jobs:
       # expiry (45-second certificates), a failed challenge reported and
       # retried with backoff, the store's modes, a restart serving the
       # stored certificate, and varlatchd serving HTTPS with nothing before
-      # a certificate and only a redirect on its plain listener. No outside
+      # a certificate and only a redirect on its plain listener; and a move
+      # to another name (slice 6.9, TestPublicHTTPSMoveAgainstPebble):
+      # `varlatch move` built from this commit, the new name's certificate,
+      # the old passkeys removed, a re-enrollment over HTTPS. No outside
       # network: every name resolves to 127.0.0.1. Never Let's Encrypt from
       # CI (its staging only by hand, with the owner).
       - name: Public HTTPS against Pebble
@@ -1270,7 +1294,9 @@ jobs:
   # manual run only: one unsharded run of about 45 minutes, too long for
   # every pull request. The image is built from this commit's release
   # assets (build-assets.sh, the dashboard generated) with varlatchd's
-  # conformance build (its probes and fixtures). Not one of go-ok's jobs.
+  # conformance build (its probes and fixtures). One of go-ok's jobs: on
+  # a pull request or in the merge queue it is skipped, which go-ok takes
+  # as passed; on a nightly or manual run its failure turns go-ok red.
   go-container:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -1307,19 +1333,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # The version is above 0.15.0, as every Go release is: serve_cli
+      # refuses to serve a release of 0.15.0 or earlier as unsigned
+      # (go/lib/release ErrUnsigned), so the cli-download-on checks need one
+      # it would serve. No release uses it.
       - name: Build the release's Go assets
         env:
           CGO_ENABLED: "0"
         run: |
           (cd go && go generate ./server/web)
-          go/release/build-assets.sh --version "0.0.0-check.${GITHUB_RUN_NUMBER}" --out "$RUNNER_TEMP/release-assets"
+          go/release/build-assets.sh --version "0.50.0-check.${GITHUB_RUN_NUMBER}" --out "$RUNNER_TEMP/release-assets"
       # The image with varlatchd's conformance build beside the release's
       # CLI, which the conformance target needs.
       - name: Build the image with the conformance binaries
         env:
           CGO_ENABLED: "0"
         run: |
-          version="0.0.0-check.${GITHUB_RUN_NUMBER}"
+          version="0.50.0-check.${GITHUB_RUN_NUMBER}"
           mkdir "$RUNNER_TEMP/conformance-assets"
           (cd go && go build -trimpath -buildvcs=false -tags conformance \
             -ldflags "-s -w -buildid= -X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$version" \
@@ -1619,8 +1649,11 @@ jobs:
     name: go-ok
     # On a draft it runs too, and fails: every other job is skipped then, and
     # a skipped required check would read as passed.
+    # go-container runs only at night and by hand (skipped on a pull request
+    # and in the merge queue, which go-ok accepts): listed so that a failed
+    # nightly run's go-ok is red too, not green beside a red job.
     if: always()
-    needs: [changes, go, go-race, go-platforms, go-binary, go-image, openapi, windows, go-cli-platforms, go-binary-go-cli]
+    needs: [changes, go, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1638,3 +1671,37 @@ jobs:
             echo "::error::A Go job failed or was cancelled."
             exit 1
           fi
+
+  # The nightly's issue (scripts/ci-nightly-report.sh): nobody is notified of
+  # a scheduled run, so a red nightly could stay red unseen. While go-ok is
+  # red on main's nightly, one issue, "Nightly go.yml is red", is open, with
+  # each red run's link, commit and failed jobs; the next green nightly
+  # closes it. Main's nightly and dispatched runs only (a branch's dispatch
+  # says nothing about main), on GITHUB_TOKEN with issues: write alone.
+  # The report never changes the run's result: continue-on-error, and the
+  # script warns and exits 0 when GitHub's API fails.
+  nightly-report:
+    if: always() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [go-ok]
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci-nightly-report.sh
+          sparse-checkout-cone-mode: false
+      - name: The nightly's issue follows go-ok
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.go-ok.result }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: scripts/ci-nightly-report.sh

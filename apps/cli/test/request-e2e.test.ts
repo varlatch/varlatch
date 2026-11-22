@@ -11,6 +11,7 @@ import { canonicalTargets } from "@varlatch/protocol";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SKILL_FILES } from "../src/agents/skillFiles.generated.js";
+import { cliCommand } from "./cliUnderTest.js";
 
 /**
  * `varlatch request` end to end (ADR-0043 Decision 6): a real
@@ -129,10 +130,12 @@ const fs = require("fs");
 const net = require("net");
 const e = process.env;
 const ph = e.STRIPE_KEY;
+// The CLI under test: the TypeScript bundle run by Node.js, or a Go binary.
+const [cli, ...cliArgs] = JSON.parse(e.CLI_CMD);
 const dest = "127.0.0.1:" + e.UPSTREAM_PORT;
 const record = { placeholder: ph, probes: {} };
 function request(name, args, env = e) {
-  const r = spawnSync(process.execPath, [e.CLI_BUNDLE, "request", ...args], { env, encoding: "utf8", timeout: 20000 });
+  const r = spawnSync(cli, [...cliArgs, "request", ...args], { env, encoding: "utf8", timeout: 20000 });
   record.probes[name] = { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 request("json", ["-X", "POST", "-H", "Authorization: Bearer " + ph, "--json", JSON.stringify({ key: ph, note: "keep" }), "-i", "https://" + dest + "/charges"]);
@@ -155,12 +158,12 @@ for (const [name, command] of [["docDouble", e.DOC_DOUBLE], ["docSingle", e.DOC_
 // Real clients, as Agents reach for them: curl in a nested varlatch run (how the agent evaluations called
 // the API), with -v, and Python's urllib on its own; the control sends its request through the Broker.
 function nested(name, command) {
-  const r = spawnSync(process.execPath, [e.CLI_BUNDLE, "run", "--", ...command], { env: e, encoding: "utf8", timeout: 20000 });
+  const r = spawnSync(cli, [...cliArgs, "run", "--", ...command], { env: e, encoding: "utf8", timeout: 20000 });
   record.probes[name] = { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 nested("nestedCurl", ["curl", "-sS", "https://" + dest + "/nested-curl"]);
 nested("nestedCurlVerbose", ["curl", "-v", "https://" + dest + "/nested-curl-verbose"]);
-nested("nestedRequest", [process.execPath, e.CLI_BUNDLE, "request", "https://" + dest + "/nested-request"]);
+nested("nestedRequest", [cli, ...cliArgs, "request", "https://" + dest + "/nested-request"]);
 const py = spawnSync("python3", ["-c", "import urllib.request; urllib.request.urlopen('https://" + dest + "/python')"], { env: e, encoding: "utf8", timeout: 20000 });
 record.probes.python = { code: py.status, stdout: py.stdout, stderr: py.stderr };
 // A CONNECT tunnel, as curl, fetch, and most SDKs open for HTTPS through a proxy.
@@ -218,13 +221,14 @@ beforeAll(async () => {
   writeFileSync(join(dir, "agent.cjs"), AGENT);
   // `varlatch` on PATH, so the documented command runs as written.
   mkdirSync(join(dir, "bin"));
-  writeFileSync(join(dir, "bin", "varlatch"), `#!/bin/sh\nexec "${process.execPath}" "${bundle}" "$@"\n`, { mode: 0o755 });
+  const [cli, cliArgs] = cliCommand(bundle, []);
+  writeFileSync(join(dir, "bin", "varlatch"), `#!/bin/sh\nexec ${[cli, ...cliArgs].map((a) => `"${a}"`).join(" ")} "$@"\n`, { mode: 0o755 });
   const documented = /^(varlatch --assisted request -X POST -H "Authorization: Bearer \$STRIPE_KEY" .*) https:\/\/api\.stripe\.com\/v1\/charges$/m.exec(SKILL_FILES["references/agent-run.md"] as string)?.[1];
   if (!documented) throw new Error("the documented request example is not in references/agent-run.md");
 
   const out = join(dir, "record.json");
   const args = [
-    bundle, "run", "--agent-safe", "--agent", "coder",
+    "run", "--agent-safe", "--agent", "coder",
     "--allow-host", `127.0.0.1:${upstreamPort}`,
     "--target", "STRIPE_KEY=header:authorization", "--target", "STRIPE_KEY=json:/key",
     "--", process.execPath, join(dir, "agent.cjs"),
@@ -240,14 +244,14 @@ beforeAll(async () => {
     VARLATCH_ASSISTED: "0",
     // The Broker originates TLS and must trust the destination's certificate.
     NODE_EXTRA_CA_CERTS: join(dir, "cert.pem"),
-    CLI_BUNDLE: bundle,
+    CLI_CMD: JSON.stringify([cli, ...cliArgs]),
     UPSTREAM_PORT: String(upstreamPort),
     OUT: out,
     BODY_FILE: join(dir, "body.json"),
     OUTPUT_FILE: join(dir, "response.json"),
   };
   outer = await new Promise((resolve) => {
-    const child = spawn(process.execPath, args, { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(...cliCommand(bundle, args), { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", (d: Buffer) => (output += d.toString()));
     child.stderr.on("data", (d: Buffer) => (output += d.toString()));

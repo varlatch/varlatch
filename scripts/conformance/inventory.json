@@ -4678,7 +4678,7 @@
       "script": "scripts/test-move.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: moving a Go installation to another public URL"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflow (.github/workflows/go.yml), not runner checks: go/server/daemon.TestPublicHTTPSMoveAgainstPebble in the step 'Public HTTPS against Pebble' (varlatch move, built from the commit, takes an installation on the public ingress from one name to another: an archive first, the certificate for the new name from Pebble, the passkey of the old address removed once and the old name no longer served, one re-enrollment link per person, never in the journal of the move or a log, the Installation Admin re-enrolled over HTTPS at the new origin on the same identity, and a rerun closing the move); and in the step 'Test': go/server/daemon.TestMoveKeepsTheTailnetNode (the settings, pin and state of the tailnet node unchanged by a move, and a move to the tailnet ingress refused), go/server/daemon.TestMoveCommands (admin public-url-changed and admin reenroll through the socket, else offline: passkeys and browser sessions removed once, one live link per person, no link in an audit event or a log), go/server/httpserver.TestMoveReenrollsAtTheNewRelyingParty (the relying party is the new host: an old passkey refused there, a re-enrollment link used once from the new origin only), go/cmd/varlatch/internal/cli.TestMoveRefusals, go/cmd/varlatch/internal/cli.TestMovedConfig and go/cmd/varlatch/internal/cli.TestAdminReenroll."
       }
     },
     "installers": {

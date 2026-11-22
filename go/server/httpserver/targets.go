@@ -389,28 +389,35 @@ func (o *operations) UpdateSyncTarget(ctx context.Context, _ api.UpdateSyncTarge
 		destination = destinationRaw.(jsvalue.Object)
 		patch.Destination, patch.HasDestination = destination, true
 	} else {
-		v, err := jsvalue.Parse([]byte(target.Destination))
-		if err != nil {
+		if destination, err = syncs.StoredDestination(target.Destination); err != nil {
 			return nil, err
 		}
-		o, ok := jsvalue.JSOrder(v).(jsvalue.Object)
-		if !ok {
-			return nil, errors.New("the Sync Target's stored destination is not an object")
-		}
-		destination = o
 	}
 	dest, err := canonicalDestination(c.Platform, destination)
 	if err != nil {
 		return nil, err
 	}
+	mappingRaw, hasMapping := body.Get("mapping")
+	// A stored mapping this server cannot read (imported or migrated data)
+	// is repaired by a patch that gives a whole mapping: the previous one
+	// is then unknown, no item keeps an affirmation from it, and the new
+	// one runs the disclosure gate as a widening does. Without a mapping in
+	// the patch, the Target is refused as it is.
 	prev, err := syncs.ParseMapping(target.Mapping)
+	prevUnknown := false
 	if err != nil {
-		return nil, err
+		if !hasMapping || !errors.Is(err, syncs.ErrStoredMapping) {
+			return nil, err
+		}
+		prevUnknown = true
 	}
 	mapping := prev
-	mappingRaw, hasMapping := body.Get("mapping")
 	if hasMapping {
-		if mapping, err = syncs.NormalizeMapping(c.Platform, mappingRaw.(jsvalue.Object), sensitive, &prev, dest); err != nil {
+		previous := &prev
+		if prevUnknown {
+			previous = nil
+		}
+		if mapping, err = syncs.NormalizeMapping(c.Platform, mappingRaw.(jsvalue.Object), sensitive, previous, dest); err != nil {
 			return nil, err
 		}
 		patch.Mapping = &mapping
@@ -429,7 +436,7 @@ func (o *operations) UpdateSyncTarget(ctx context.Context, _ api.UpdateSyncTarge
 		patch.Redeploy = &b
 	}
 	var decisions jsvalue.Object
-	if hasDestination || patch.ConnectionID != nil || (hasMapping && syncs.MappingWidens(prev, mapping)) {
+	if hasDestination || patch.ConnectionID != nil || (hasMapping && (prevUnknown || syncs.MappingWidens(prev, mapping))) {
 		if decisions, err = t.disclosureGate(ctx, mapping, sensitive); err != nil {
 			return nil, err
 		}

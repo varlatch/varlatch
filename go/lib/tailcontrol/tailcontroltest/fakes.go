@@ -68,13 +68,20 @@ type Tailscale struct {
 	// EchoCredentials makes every error answer quote the request's
 	// credentials, to show that tailcontrol never repeats them.
 	EchoCredentials bool
+	// Unavailable makes every request fail with 503, as a control server
+	// restarting or out of reach answers.
+	Unavailable bool
 	// EchoScope makes a token exchange answer a scope that quotes the
 	// client secret and the token issued.
 	EchoScope bool
 	// LagRenames makes a rename show only from the second listing after
 	// it: a control plane that lists the old name for a moment.
 	LagRenames bool
-	pending    map[string]string // device id -> name a lagged rename sets
+	// AfterRename, when set, runs after each rename the fake applied, with
+	// the fake's lock held: set changes another device's name (a third
+	// device taking a name the rename freed, say).
+	AfterRename func(id, name string, set func(id, name string))
+	pending     map[string]string // device id -> name a lagged rename sets
 
 	mu        sync.Mutex
 	nodes     []*Node
@@ -92,6 +99,18 @@ func NewTailscale(nodes ...Node) *Tailscale {
 	}
 	f.Server = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	return f
+}
+
+// SetName renames a device directly, as another actor on the tailnet
+// would.
+func (f *Tailscale) SetName(id, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, n := range f.nodes {
+		if n.ID == id {
+			n.Name = name
+		}
+	}
 }
 
 // Nodes is a copy of the tailnet's devices.
@@ -125,9 +144,20 @@ func (f *Tailscale) fail(w http.ResponseWriter, r *http.Request, status int, mes
 	writeJSON(w, status, map[string]string{"message": message})
 }
 
+// SetUnavailable switches the fake down or back up.
+func (f *Tailscale) SetUnavailable(down bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Unavailable = down
+}
+
 func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.Unavailable {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"message": "service unavailable"})
+		return
+	}
 	if r.Method == http.MethodPost && r.URL.Path == "/api/v2/oauth/token" {
 		if r.PostFormValue("grant_type") != "client_credentials" || r.PostFormValue("client_id") != f.ClientID || r.PostFormValue("client_secret") != f.ClientSecret {
 			f.fail(w, r, http.StatusUnauthorized, "invalid client credentials")
@@ -214,6 +244,15 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 		} else {
 			target.Name = stored
 		}
+		if f.AfterRename != nil {
+			f.AfterRename(target.ID, stored, func(id, name string) {
+				for _, n := range f.nodes {
+					if n.ID == id {
+						n.Name = name
+					}
+				}
+			})
+		}
 		writeJSON(w, http.StatusOK, map[string]any{})
 	default:
 		f.fail(w, r, http.StatusNotFound, "not found")
@@ -231,10 +270,19 @@ type Headscale struct {
 	// RewriteRename, when set, turns a requested name into the one stored.
 	RewriteRename func(string) string
 
-	mu      sync.Mutex
-	nodes   []*Node
-	expired bool
-	Renames int
+	mu          sync.Mutex
+	nodes       []*Node
+	expired     bool
+	unavailable bool
+	Renames     int
+}
+
+// SetUnavailable switches the fake down (every request and CLI call fails)
+// or back up.
+func (f *Headscale) SetUnavailable(down bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.unavailable = down
 }
 
 // NewHeadscale serves a fake whose key expires after keyLife.
@@ -311,6 +359,10 @@ func (f *Headscale) rename(id, name string) (int, string) {
 func (f *Headscale) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.unavailable {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"message": "unavailable"})
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer "+f.Key || f.expired || time.Now().After(f.KeyExpires) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Unauthorized"})
 		return
@@ -356,6 +408,9 @@ func (f *Headscale) serve(w http.ResponseWriter, r *http.Request) {
 func (f *Headscale) Run(_ context.Context, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.unavailable {
+		return nil, fmt.Errorf("headscale: cannot reach the server: connection refused")
+	}
 	switch {
 	case len(args) == 4 && args[0] == "nodes" && args[1] == "list" && args[2] == "--output" && args[3] == "json":
 		nodes := []map[string]any{}
