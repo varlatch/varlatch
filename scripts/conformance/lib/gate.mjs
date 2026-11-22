@@ -27,9 +27,73 @@
  * evidence is taken from the CI artifacts of one workflow run
  * (scripts/conformance/README.md, Gate mode), never from a local file.
  */
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
 import { compareVersions, VERSION } from "./inventory.mjs";
 
 export const EVIDENCE_DIR = "docs/evidence/";
+export const TEMPLATE_SENTINEL = "<!-- g1-walkthrough: TEMPLATE -->";
+const UNCHECKED_ROW = /\|\s*\[\s*\]\s*\|/;
+const PLACEHOLDER = /\bPENDING\b|<commit-sha>|<full-40-char-sha>/;
+const CANDIDATE_COMMIT_LINE = /^\s*-\s*\*\*Candidate commit:\*\*\s*`?([^`\r\n]+?)`?\s*$/im;
+const HEX_40 = /^[0-9a-f]{40}$/i;
+
+/**
+ * Reads a browser-walkthrough evidence file for gate mode without following
+ * symlinks (neither the file itself nor a symlinked parent escaping repoRoot).
+ */
+export function readWalkthrough(file, repoRoot) {
+  const absolute = resolve(file);
+  const path = relative(repoRoot, absolute).split(sep).join("/");
+  const stat = lstatSync(absolute, { throwIfNoEntry: false });
+  if (!stat) return { path, exists: false, isSymlink: false, size: 0, sha256: null, content: null };
+  if (stat.isSymbolicLink()) return { path, exists: true, isSymlink: true, size: 0, sha256: null, content: null };
+  if (!stat.isFile()) return { path, exists: false, isSymlink: false, size: 0, sha256: null, content: null };
+  const realRoot = realpathSync(repoRoot);
+  const realFile = realpathSync(absolute);
+  if (realFile !== resolve(realRoot, path)) {
+    return { path, exists: true, isSymlink: true, size: 0, sha256: null, content: null };
+  }
+  const raw = readFileSync(absolute);
+  return {
+    path,
+    exists: true,
+    isSymlink: false,
+    size: raw.length,
+    sha256: createHash("sha256").update(raw).digest("hex"),
+    content: raw.toString("utf8"),
+  };
+}
+
+/** Content rules on a walkthrough evidence file once it exists and is non-empty. */
+function walkthroughContentProblems(walkthrough, implementation) {
+  const problems = [];
+  if (typeof walkthrough.content !== "string") {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has no readable content`);
+    return problems;
+  }
+  const { content } = walkthrough;
+  if (content.includes(TEMPLATE_SENTINEL)) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} is still the template (${TEMPLATE_SENTINEL})`);
+  }
+  if (UNCHECKED_ROW.test(content)) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has unchecked checklist rows (| [ ] |)`);
+  }
+  if (PLACEHOLDER.test(content)) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} still contains unreplaced placeholders (PENDING or <commit-sha>)`);
+  }
+  const commitMatch = content.match(CANDIDATE_COMMIT_LINE);
+  const commit = commitMatch ? commitMatch[1].trim() : null;
+  if (!commit || !HEX_40.test(commit)) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} must name a 40-hex Candidate commit in Owner Sign-Off`);
+  } else if (typeof implementation?.commit === "string" && implementation.commit.length > 0 && commit.toLowerCase() !== implementation.commit.toLowerCase()) {
+    problems.push(
+      `the browser-walkthrough evidence ${walkthrough.path} Candidate commit (${commit}) does not match the run's implementation commit (${implementation.commit})`,
+    );
+  }
+  return problems;
+}
 
 /** Every replacement the gate needs: the ts-stack checks' and the outside suites'. */
 export function replacements(inventory) {
@@ -133,7 +197,7 @@ function runRules(inventory, run) {
  *
  *   run         { target, cli (the CLI's spec), partial, ok, checks: [{ id, outcome }], expectedInForce: [check ids],
  *                 lacksInForce: [operations], implementation (the target's fingerprint, or null) }
- *   walkthrough null, or { path (relative to the checkout), exists, size, sha256 }
+ *   walkthrough null, or { path (relative to the checkout), exists, isSymlink, size, sha256, content }
  *   recentCli   null, or the parsed report (conformance-report.json) of a
  *               run with a recent CLI
  *
@@ -146,8 +210,10 @@ export function judgeGate({ inventory, run, walkthrough = null, recentCli = null
   if (!walkthrough) problems.push(`the run names no browser-walkthrough evidence file (--walkthrough ${EVIDENCE_DIR}<file>)`);
   else if (!walkthrough.path.startsWith(EVIDENCE_DIR) || walkthrough.path.split("/").includes("..")) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} is not under ${EVIDENCE_DIR} of this checkout`);
-  } else if (!walkthrough.exists) problems.push(`the browser-walkthrough evidence ${walkthrough.path} does not exist`);
+  } else if (walkthrough.isSymlink) problems.push(`the browser-walkthrough evidence ${walkthrough.path} is a symlink (symlinks are not allowed)`);
+  else if (!walkthrough.exists) problems.push(`the browser-walkthrough evidence ${walkthrough.path} does not exist`);
   else if (!(walkthrough.size > 0)) problems.push(`the browser-walkthrough evidence ${walkthrough.path} is empty`);
+  else problems.push(...walkthroughContentProblems(walkthrough, run.implementation));
 
   const predating = run.checks.filter((c) => c.outcome === "predates-cli").map((c) => c.id);
   if (predating.length > 0) {
