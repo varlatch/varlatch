@@ -399,11 +399,35 @@ func fakeTSCLI(args []string) int {
 // fakeSystemctl starts and stops the target's varlatchd (G5_STATE's
 // service.conf and varlatchd), as its unit would.
 func fakeSystemctl(args []string) int {
+	if len(args) == 1 && args[0] == "daemon-reload" {
+		return 0
+	}
 	if len(args) != 2 {
 		return 1
 	}
 	pid := readPID()
 	switch args[0] {
+	case "enable":
+		return okOr(os.WriteFile(state("unit-enabled"), nil, 0o600))
+	case "disable":
+		if err := os.Remove(state("unit-enabled")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return okOr(err)
+		}
+		return 0
+	case "is-enabled":
+		if _, err := os.Stat(state("unit-enabled")); err == nil {
+			fmt.Println("enabled")
+			return 0
+		}
+		fmt.Println("disabled")
+		return 1
+	case "is-active":
+		if pid > 0 && alive(pid) {
+			fmt.Println("active")
+			return 0
+		}
+		fmt.Println("inactive")
+		return 3
 	case "start":
 		if pid > 0 && alive(pid) {
 			return 0
@@ -442,6 +466,10 @@ func startService(bin, conf string) error {
 	defer log.Close()
 	cmd := exec.Command(bin, "serve", "--config", conf)
 	cmd.Stdout, cmd.Stderr = log, log
+	// The unit hands a target made setup's way its keys as credentials.
+	if b, err := os.ReadFile(state("credentials-dir")); err == nil {
+		cmd.Env = append(os.Environ(), "CREDENTIALS_DIRECTORY="+strings.TrimSpace(string(b)))
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return err
@@ -506,6 +534,12 @@ type world struct {
 	// secrets are a world's own, scanned for too (the tailnet's OAuth
 	// client secret and auth key).
 	secrets [][]byte
+	// extraEnv is the CLI's added environment (a target made under a test
+	// root, maketarget_test.go).
+	extraEnv []string
+	// client asks the public URL (http.DefaultClient when nil; a TLS
+	// origin's own client in maketarget_test.go).
+	client *http.Client
 }
 
 // shared is built once: the binaries, the seed and its decision table.
@@ -812,6 +846,7 @@ func (w *world) runArgs(pause string, args []string) int {
 		"VARLATCH_MIGRATE_LOG="+log, "VARLATCH_MIGRATE_PAUSE="+pause, "TMPDIR="+w.stateDir,
 		fmt.Sprintf("VARLATCH_MIGRATE_IMAGE_USER=%d:%d", os.Getuid(), os.Getgid()))
 	cmd.Env = append(cmd.Env, w.env...)
+	cmd.Env = append(cmd.Env, w.extraEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
@@ -896,7 +931,11 @@ func (w *world) phases() (string, string) {
 // (the target's /v1/meta, every other route 503), "target-open", or "none".
 func (w *world) answers() string {
 	get := func(p string) (int, string) {
-		res, err := http.Get(w.origin + p)
+		c := w.client
+		if c == nil {
+			c = http.DefaultClient
+		}
+		res, err := c.Get(w.origin + p)
 		if err != nil {
 			return 0, ""
 		}

@@ -47,13 +47,19 @@ const CHECKED = /^\[[xX]\]$/;
 const UNCHECKED_CELL = /^\[\s*\](?:\s|$)/;
 
 /**
- * The evidence is read as plain lines, not rendered: an HTML comment or a
- * fenced code block could hide a line Markdown would not show, or show one
- * the gate would not read, so a file with either is refused (fail closed)
- * rather than parsed as CommonMark would.
+ * The evidence is read as plain lines, not rendered: an HTML comment, a
+ * raw HTML block or a fenced code block (at the margin, or opened inside a
+ * list item or a blockquote) could hide a line Markdown would not show, or
+ * show one the gate would not read, so a file with any of them is refused
+ * (fail closed) rather than parsed as CommonMark would. The raw HTML is
+ * the elements that open a block or hide their content (a route
+ * placeholder such as <org> is none of them).
  */
 const HTML_COMMENT = /<!--/;
-const CODE_FENCE = /^ {0,3}(?:`{3,}|~{3,})/m;
+// The tag name ends as a tag's does (space, / or >), so <table-name> is a
+// placeholder, not a table.
+const RAW_HTML = /<(?:details|pre|style|script|textarea|template|noscript|xmp|iframe|table|div)(?=[\s/>]|$)/i;
+const CODE_FENCE = /^[ \t]*(?:>[ \t]*|(?:[-*+]|\d+[.)])[ \t]+)*(?:`{3,}|~{3,})/m;
 
 /** A Markdown table row's cells, with or without its outer pipes; null for a line that is not one. */
 function tableCells(line) {
@@ -138,9 +144,9 @@ function walkthroughContentProblems(walkthrough, run) {
   if (TEMPLATE_SENTINEL_RE.test(content)) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} is still the template (${TEMPLATE_SENTINEL})`);
   }
-  if (HTML_COMMENT.test(content) || CODE_FENCE.test(content)) {
+  if (HTML_COMMENT.test(content) || RAW_HTML.test(content) || CODE_FENCE.test(content)) {
     problems.push(
-      `the browser-walkthrough evidence ${walkthrough.path} has HTML comments or fenced code blocks: remove them (the evidence is read as plain lines, not rendered)`,
+      `the browser-walkthrough evidence ${walkthrough.path} has HTML comments, raw HTML or fenced code blocks: remove them (the evidence is read as plain lines, not rendered)`,
     );
   }
   const unchecked = uncheckedRows(content);

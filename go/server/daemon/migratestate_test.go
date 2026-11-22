@@ -537,3 +537,50 @@ func TestTheSwitchBesideARunningVarlatchd(t *testing.T) {
 		t.Fatal(errOut)
 	}
 }
+
+// A target made setup's way (slice 7.4e) names no key file: its keys are
+// the unit's credentials beside its configuration. With
+// CREDENTIALS_DIRECTORY set to that directory, as migrate runs varlatchd
+// for such a target, `admin migrate keys` writes the source's Root KEK and
+// BEK there, 0600, where the unit loads them; without it, the BEK has no
+// place and is refused.
+func TestAdminMigrateKeysAsCredentials(t *testing.T) {
+	dir := t.TempDir()
+	creds := filepath.Join(dir, "etc")
+	data := filepath.Join(dir, "data")
+	for _, d := range []string{creds, data} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conf := filepath.Join(creds, "varlatchd.conf")
+	if err := os.WriteFile(conf, []byte("listen = 127.0.0.1:0\ndata_dir = "+data+"\nbackup_interval = off\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	kek := []byte(hex.EncodeToString(envelope.GenerateKey()) + "\n")
+	bek := []byte(hex.EncodeToString(envelope.GenerateKey()) + "\n")
+	t.Setenv("CREDENTIALS_DIRECTORY", creds)
+	code, out, errOut := migrateWith(t, conf, keysJSON(t, kek, bek), "keys")
+	if code != ExitOK || strings.TrimSpace(out) != `{"rootKek":"written","bek":"written"}` {
+		t.Fatalf("keys: %d %q %q", code, out, errOut)
+	}
+	for name, want := range map[string][]byte{"root-kek": kek, "backup-key": bek} {
+		b, err := os.ReadFile(filepath.Join(creds, name))
+		st, serr := os.Stat(filepath.Join(creds, name))
+		if err != nil || serr != nil || !bytes.Equal(b, want) || st.Mode().Perm() != 0o600 {
+			t.Errorf("%s: %v %v", name, err, serr)
+		}
+	}
+	// Found the same: unchanged.
+	if code, out, _ := migrateWith(t, conf, keysJSON(t, kek, bek), "keys"); code != ExitOK || strings.TrimSpace(out) != `{"rootKek":"unchanged","bek":"unchanged"}` {
+		t.Errorf("again: %d %q", code, out)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	conf2 := filepath.Join(dir, "other.conf")
+	if err := os.WriteFile(conf2, []byte("listen = 127.0.0.1:0\ndata_dir = "+data+"\nroot_kek_file = "+filepath.Join(dir, "k")+"\nbackup_interval = off\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := migrateWith(t, conf2, keysJSON(t, kek, bek), "keys"); code != ExitConfig || !strings.Contains(errOut, "names no backup_key_file") {
+		t.Errorf("a BEK with no place: %d %q", code, errOut)
+	}
+}

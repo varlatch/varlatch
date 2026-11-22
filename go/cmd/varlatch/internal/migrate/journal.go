@@ -115,6 +115,8 @@ type Journal struct {
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	// Finish is --finish's record.
 	Finish *FinishRecord `json:"finish,omitempty"`
+	// Created is the target migrate made, when it made it (slice 7.4e).
+	Created *CreatedRecord `json:"created,omitempty"`
 	// Tailnet is the tailnet handoff's (tailnet.go), when the source
 	// serves a tailnet address.
 	Tailnet *TailnetRecord `json:"tailnet,omitempty"`
@@ -300,6 +302,9 @@ func readJournal(dir string) (*Journal, error) {
 	}
 	if j.Format != 1 || !slices.Contains(Phases, j.Phase) {
 		return nil, fmt.Errorf("%s is a journal of another format (%d) or phase (%q)", filepath.Join(dir, JournalFile), j.Format, j.Phase)
+	}
+	if err := j.Created.valid(); err != nil {
+		return nil, fmt.Errorf("%s is not a migration journal: %v", filepath.Join(dir, JournalFile), err)
 	}
 	return &j, nil
 }
