@@ -1,0 +1,4 @@
+services:
+  b:
+    environment:
+      - Z=2

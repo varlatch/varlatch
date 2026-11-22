@@ -335,6 +335,9 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		PublicURL   string          `json:"publicUrl"`
 		Listen      string          `json:"listen"`
 		ListenHTTPS string          `json:"listenHttps"`
+		// OutboundAllow is the configuration's outbound_allow, as written
+		// ("" for none): what migrate compares with the source's.
+		OutboundAllow string `json:"outboundAllow"`
 		// MigrationGate is whether the transfer's gate stands (an
 		// unreadable gate counts: it isolates as well); Barrier a reverse
 		// migration's barrier's phase (draining, paused), when one
@@ -346,7 +349,7 @@ func runMigrateState(cfg *config.Config, a migrateArgs, b []byte, stdout io.Writ
 		// Tailnet is the tailnet listener's settings and its node's handoff
 		// state (go-step7 decision 11), null when tailnet = off.
 		Tailnet *tailnetState `json:"tailnet"`
-	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https,
+	}{journal, dbErr == nil, cfg.DataDir, buildinfo.Version, public, cfg.Listen, https, cfg.OutboundAllow,
 		gerr != nil || (gate != nil && gate.Kind == "migration" && gate.Phase == "transfer"), barrierPhase(gate), running, readTailnetState(cfg)})
 	fmt.Fprintln(stdout, string(out))
 	return ExitOK

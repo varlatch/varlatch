@@ -375,10 +375,12 @@ func fakeDockerTailnet(args []string) (int, bool) {
 	switch {
 	case j == "compose config --no-interpolate --format json":
 		logCall(j)
-		sidecarEnv := map[string]any{"TS_STATE_DIR": "/var/lib/tailscale"}
+		// The list form, as Compose 5.6 prints an environment written as a
+		// list or merged with an overlay's.
+		sidecarEnv := []string{"TS_STATE_DIR=/var/lib/tailscale"}
 		if u := os.Getenv("G5_HEADSCALE"); u != "" {
 			// The operator's override: the sidecar logs in to Headscale.
-			sidecarEnv["TS_EXTRA_ARGS"] = "--login-server=" + u
+			sidecarEnv = append(sidecarEnv, "TS_EXTRA_ARGS=--login-server="+u)
 		}
 		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{
 			"varlatchd": map[string]any{"network_mode": "service:tailscale"},
