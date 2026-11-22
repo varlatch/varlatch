@@ -200,11 +200,16 @@ func (h *HeadscaleAPI) err(op, device string, err error) error {
 }
 
 func (h *HeadscaleAPI) request(ctx context.Context, method, path string, body any, out any) error {
+	_, err := h.requestDated(ctx, method, path, body, out)
+	return err
+}
+
+func (h *HeadscaleAPI) requestDated(ctx context.Context, method, path string, body any, out any) (time.Time, error) {
 	var r *bytes.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return time.Time{}, err
 		}
 		r = bytes.NewReader(b)
 	} else {
@@ -212,13 +217,13 @@ func (h *HeadscaleAPI) request(ctx context.Context, method, path string, body an
 	}
 	req, err := http.NewRequestWithContext(ctx, method, h.base+path, r)
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+h.key())
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return do(h.http, req, out, h.key())
+	return doDated(h.http, req, out, h.key())
 }
 
 // Open checks the key: Headscale lists it, it has not expired, and it
@@ -271,23 +276,33 @@ func (h *HeadscaleAPI) opened(op, device string) error {
 	return nil
 }
 
+var _ ClockedLister = (*HeadscaleAPI)(nil)
+
 // Devices lists every node.
 func (h *HeadscaleAPI) Devices(ctx context.Context) ([]Device, error) {
+	d, _, err := h.DevicesAt(ctx)
+	return d, err
+}
+
+// DevicesAt is Devices, with the listing's time by Headscale's clock (its
+// answer's Date header; zero without a usable one).
+func (h *HeadscaleAPI) DevicesAt(ctx context.Context) ([]Device, time.Time, error) {
 	const op = "list devices"
 	if err := h.opened(op, ""); err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	var got struct {
 		Nodes []headscaleNode `json:"nodes"`
 	}
-	if err := h.request(ctx, http.MethodGet, "/api/v1/node", nil, &got); err != nil {
-		return nil, h.err(op, "", err)
+	at, err := h.requestDated(ctx, http.MethodGet, "/api/v1/node", nil, &got)
+	if err != nil {
+		return nil, time.Time{}, h.err(op, "", err)
 	}
 	devices, err := headscaleDevices(got.Nodes, h.now())
 	if err != nil {
-		return nil, h.err(op, "", err)
+		return nil, time.Time{}, h.err(op, "", err)
 	}
-	return devices, nil
+	return devices, at, nil
 }
 
 // Rename gives the node the name, which must be canonical.

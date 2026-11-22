@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
@@ -54,22 +55,25 @@ import (
 
 // nodeCmd is a node command's arguments.
 type nodeCmd struct {
-	op           string // enroll, certificate, open, reaches, take-name
-	oauthFile    string
-	action       string // certificate: obtain or expiry
-	hostname     string
-	name         string
-	stableID     string
-	certificate  bool
-	asJSON       bool
-	wait, budget time.Duration
+	op               string // enroll, certificate, open, reaches, take-name
+	oauthFile        string
+	headscaleURL     string
+	headscaleKeyFile string
+	headscaleCLI     string
+	action           string // certificate: obtain or expiry
+	hostname         string
+	name             string
+	stableID         string
+	certificate      bool
+	asJSON           bool
+	wait, budget     time.Duration
 }
 
 const nodeUsage = "Usage: varlatchd admin tailnet enroll --hostname <temporary name> [--certificate] [--timeout <d>] [--json] | " +
 	"varlatchd admin tailnet certificate obtain --name <name> [--timeout <d>] [--json] | varlatchd admin tailnet certificate expiry --name <name> [--json] | " +
 	"varlatchd admin tailnet open [--json] | " +
 	"varlatchd admin tailnet reaches --name <name> --stable-id <id> [--wait <d>] [--json] | " +
-	"varlatchd admin tailnet take-name --oauth-client-file <file> [--json]"
+	"varlatchd admin tailnet take-name (--oauth-client-file <file> | --headscale-url <https://IP[:port]> --headscale-api-key-file <file>) [--json]"
 
 // stableIDShape is a node's StableID as a control plane gives it
 // (Tailscale's n...CNTRL, Headscale's number).
@@ -105,6 +109,16 @@ func nodeArgs(rest []string) (nodeCmd, string) {
 			c.oauthFile, ok = value(i)
 			ok = ok && filepath.IsAbs(c.oauthFile)
 			i++
+		case a == "--headscale-url" && c.op == "take-name":
+			c.headscaleURL, ok = value(i)
+			i++
+		case a == "--headscale-api-key-file" && c.op == "take-name":
+			c.headscaleKeyFile, ok = value(i)
+			ok = ok && filepath.IsAbs(c.headscaleKeyFile)
+			i++
+		case a == "--headscale-cli" && c.op == "take-name":
+			c.headscaleCLI, ok = value(i)
+			i++
 		case a == "--certificate" && c.op == "enroll":
 			c.certificate, ok = true, true
 		case a == "--hostname" && c.op == "enroll":
@@ -138,8 +152,20 @@ func nodeArgs(rest []string) (nodeCmd, string) {
 		return nodeCmd{}, "varlatchd admin tailnet enroll: --hostname takes the node's temporary name (lower-case letters, digits and -, at most 63)"
 	case (c.op == "certificate" || c.op == "reaches") && !tailnet.ValidHostname(strings.ToLower(c.name)):
 		return nodeCmd{}, "varlatchd admin tailnet " + c.op + ": --name takes a node's name (letters, digits and -, at most 63), without the tailnet's suffix"
-	case c.op == "take-name" && c.oauthFile == "":
-		return nodeCmd{}, "varlatchd admin tailnet take-name: --oauth-client-file takes the Tailscale OAuth client's file (an absolute path; the devices:core scope only)"
+	case c.op == "take-name" && c.headscaleCLI != "":
+		return nodeCmd{}, "varlatchd admin tailnet take-name: --headscale-cli cannot be used with take-name: Headscale's CLI listing carries no HTTP Date header by which to judge whether the old node is dead (a host whose clock is off could rename a live installation). Give --headscale-url and --headscale-api-key-file (a key created with headscale apikeys create --expiration 1h)"
+	case c.op == "take-name" && (c.headscaleURL != "") != (c.headscaleKeyFile != ""):
+		return nodeCmd{}, "varlatchd admin tailnet take-name: --headscale-url and --headscale-api-key-file go together (the API key file must be an absolute path)"
+	case c.op == "take-name" && c.oauthFile != "" && c.headscaleURL != "":
+		return nodeCmd{}, "varlatchd admin tailnet take-name: give one tailnet authority: --oauth-client-file (Tailscale) or --headscale-url and --headscale-api-key-file (Headscale), not both"
+	case c.op == "take-name" && c.oauthFile == "" && c.headscaleURL == "":
+		return nodeCmd{}, "varlatchd admin tailnet take-name: give --oauth-client-file (Tailscale, devices:core scope only) or --headscale-url and --headscale-api-key-file (Headscale), each file an absolute path"
+	case c.op == "take-name" && c.headscaleURL != "":
+		canon, why := tailcontrol.CanonicalControlURL(c.headscaleURL)
+		if why != "" {
+			return nodeCmd{}, "varlatchd admin tailnet take-name: --headscale-url: " + why
+		}
+		c.headscaleURL = canon
 	case c.op == "reaches" && !stableIDShape.MatchString(c.stableID):
 		return nodeCmd{}, "varlatchd admin tailnet reaches: --stable-id takes the node's StableID, as enroll reports it"
 	}

@@ -424,6 +424,7 @@ jobs:
           go vet -tags g9a ./...
           go vet -tags g5 ./server/migration/g5/
           go vet -tags headscale ./server/tailnet/... ./server/daemon/...
+          go vet -tags "headscale crashpoint" ./server/daemon/
           go vet -tags "g5 headscale" ./server/migration/g5/
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
@@ -525,7 +526,11 @@ jobs:
       # and the identity cases (tagged peer, user's device, self,
       # unrecognized; StableID = Headscale's node id) hold, in the node and
       # through varlatchd's tailnet listener and a handoff's node commands
-      # (step 7.5c c3). Its own build tag: it needs Docker.
+      # (step 7.5c c3). The restore's take-name on Headscale (c4: a dead
+      # holder renamed away through Headscale's API, its key expired however
+      # the run ends; a live one, and one back before the rename, refused
+      # with nothing renamed) runs here too, server/daemon's
+      # TestHeadscaleTakeName*. Its own build tag: it needs Docker.
       - name: Headscale, a self-hosted control server
         working-directory: go
         env:
@@ -543,6 +548,17 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -tags "g5 headscale" -run '^TestG5Headscale' -v ./server/migration/g5/
+
+      # The restore's take-name on Headscale killed at each journalled step
+      # (step 7.5c c4, crashpoint; go/server/daemon/
+      # tailnettakename_headscale_crash_test.go), then run again: resumed
+      # to done, no issuance count. Its other cases run in the Headscale
+      # step above.
+      - name: Headscale, the restore's take-name killed at every step
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags "headscale crashpoint" -run '^TestKillTheHeadscaleTakeoverAtEveryStep$' -v ./server/daemon/
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a
