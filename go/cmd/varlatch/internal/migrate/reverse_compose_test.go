@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 )
 
 // .env as the reverse writes it (#370 review): a line longer than a
@@ -169,5 +171,59 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 				t.Fatalf("%v, started %v: %v", err, started, run.ran)
 			}
 		})
+	}
+}
+
+// StartNetworkOwner starts only the service varlatchd shares its network
+// with, and only when it is not running: never varlatchd, never a service
+// of its own network.
+func TestStartNetworkOwner(t *testing.T) {
+	for _, c := range []struct {
+		name, config, running string
+		started               bool
+	}{
+		{"its own network", `{"name":"varlatch","services":{"varlatchd":{}}}`, "postgres\n", false},
+		{"the sidecar's, running", `{"name":"varlatch","services":{"varlatchd":{"network_mode":"service:tailscale"}}}`, "postgres\ntailscale\n", false},
+		{"the sidecar's, stopped", `{"name":"varlatch","services":{"varlatchd":{"network_mode":"service:tailscale"}}}`, "postgres\n", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			run := &scripted{t: t, answers: map[string]Ran{
+				"docker compose config --no-interpolate --format json": {Answer: []byte(c.config)},
+				"docker compose ps --status running --services":        {Answer: []byte(c.running)},
+				"docker compose start tailscale":                       {},
+			}}
+			cmp := &Compose{Directory: t.TempDir(), Run: run}
+			if err := cmp.StartNetworkOwner(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := slices.Contains(run.ran, "docker compose start tailscale"); got != c.started {
+				t.Fatalf("started %v, want %v: %v", got, c.started, run.ran)
+			}
+			for _, r := range run.ran {
+				if strings.Contains(r, "varlatchd") && strings.HasPrefix(r, "docker compose up") || strings.HasPrefix(r, "docker compose restart") {
+					t.Errorf("ran %q", r)
+				}
+			}
+		})
+	}
+}
+
+// The sidecar is migrate's own to start for a reverse only after a
+// tailnet handoff that moved the name; otherwise a stopped sidecar is the
+// operator's (ReverseReady refuses it).
+func TestSidecarOwned(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		j    *Journal
+		want bool
+	}{
+		{"no tailnet", &Journal{}, false},
+		{"a handoff prepared, nothing moved", &Journal{Tailnet: &TailnetRecord{Handoff: &tailhandoff.State{Phase: tailhandoff.Prepared}}}, false},
+		{"a handoff undone", &Journal{Tailnet: &TailnetRecord{Handoff: &tailhandoff.State{Phase: tailhandoff.Undone}}}, false},
+		{"the name moved", &Journal{Tailnet: &TailnetRecord{Handoff: &tailhandoff.State{Phase: tailhandoff.Done}}}, true},
+	} {
+		if got := sidecarOwned(c.j); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
 	}
 }
