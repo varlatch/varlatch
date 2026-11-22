@@ -334,8 +334,9 @@ jobs:
     runs-on: ubuntu-latest
     # The race detector's run (go-race) and the cross-platform builds
     # (go-platforms) run beside this job. G5 alone takes over 10 minutes
-    # since the tailnet matrix, hence 50.
-    timeout-minutes: 50
+    # since the tailnet matrix and the whole job about 55 with a cold Go
+    # cache; a cancelled job saves no cache, so the limit leaves room: 75.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
