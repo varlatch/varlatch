@@ -68,23 +68,47 @@ type running struct {
 	addr    string
 	signals chan os.Signal
 	done    chan int
+	exited  chan struct{}
 	stderr  *syncBuffer
+}
+
+func (r *running) stopOnCleanup(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		select {
+		case <-r.exited:
+			return
+		default:
+		}
+		select {
+		case r.signals <- syscall.SIGTERM:
+		default:
+		}
+		select {
+		case <-r.exited:
+		case <-time.After(30 * time.Second):
+			t.Errorf("varlatchd did not stop within 30 s during cleanup: %s", r.stderr.String())
+		}
+	})
 }
 
 func start(t *testing.T, in install) *running {
 	t.Helper()
-	r := &running{signals: make(chan os.Signal, 1), done: make(chan int, 1), stderr: &syncBuffer{}}
+	r := &running{signals: make(chan os.Signal, 1), done: make(chan int, 1), exited: make(chan struct{}), stderr: &syncBuffer{}}
 	ready := make(chan string, 1)
 	go func() {
+		defer close(r.exited)
 		r.done <- Serve(Options{ConfigPath: in.conf, Stderr: r.stderr, Signals: r.signals, Ready: func(a net.Addr) { ready <- a.String() }})
 	}()
 	select {
 	case r.addr = <-ready:
 	case code := <-r.done:
+		<-r.exited
 		t.Fatalf("exited %d before serving: %s", code, r.stderr.String())
 	case <-time.After(30 * time.Second):
 		t.Fatal("not serving after 30 s")
 	}
+	r.stopOnCleanup(t)
 	return r
 }
 
@@ -93,6 +117,7 @@ func (r *running) stop(t *testing.T) {
 	r.signals <- syscall.SIGTERM
 	select {
 	case code := <-r.done:
+		<-r.exited
 		if code != ExitOK {
 			t.Fatalf("stopped with %d: %s", code, r.stderr.String())
 		}
