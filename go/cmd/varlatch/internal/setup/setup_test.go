@@ -1310,7 +1310,25 @@ func TestRestoreTakesTheTailnetNameOver(t *testing.T) {
 	o.RootKEKOut, o.BackupKeyOut = "", ""
 	o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
 	o.Given = Answers{Ingress: Tailnet, TailnetHostname: "varlatch", TailnetPort: "8687", TailnetTags: "tag:varlatch",
-		TailnetAuthKeyFile: "/etc/varlatch/tailnet-auth-key", TailscaleOAuthClientFile: "/etc/varlatch/tailscale-oauth.json", Backups: "host"}
+		TailnetAuthKeyFile: "/etc/varlatch/tailnet-auth-key", TailscaleOAuthClientFile: "/srv/tailscale-oauth.json", Backups: "host"}
+	// The client's file as varlatchd needs it: refused up front at 0644,
+	// before anything is made.
+	oauth := h.Path("/srv/tailscale-oauth.json")
+	if err := os.MkdirAll(filepath.Dir(oauth), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oauth, []byte(`{"clientId":"x","clientSecret":"y"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "tighten it to 0600") || len(h.adminCalls) != 0 {
+		t.Fatalf("a 0644 OAuth client file: %v (admin %q)", err, h.adminCalls)
+	}
+	if _, err := os.Stat(h.Path(Journal)); !os.IsNotExist(err) {
+		t.Fatalf("the refusal wrote the journal: %v", err)
+	}
+	if err := os.Chmod(oauth, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "take-name") && !strings.Contains(err.Error(), "enroll") {
 		t.Fatalf("a failed takeover: %v", err)
 	}
@@ -1329,7 +1347,7 @@ func TestRestoreTakesTheTailnetNameOver(t *testing.T) {
 	}
 	temp, _ := tailcontrol.TempName("varlatch", op, tailcontrol.RoleNew)
 	enroll := "tailnet enroll --hostname " + temp + " --json"
-	take := "tailnet take-name --oauth-client-file /etc/varlatch/tailscale-oauth.json --json"
+	take := "tailnet take-name --oauth-client-file /srv/tailscale-oauth.json --json"
 	if !h.tookName || !slices.Contains(h.adminCalls, enroll) || !slices.Contains(h.adminCalls, take) || slices.Contains(h.adminCalls, "tailnet probe-name --json") {
 		t.Fatalf("the takeover's commands: %q", h.adminCalls)
 	}

@@ -514,8 +514,28 @@ func TestAHolderBackOnlineBeforeTheRename(t *testing.T) {
 	if s, err := j.read(); err != nil || s == nil || s.Phase != tailhandoff.Prepared {
 		t.Fatalf("the journal: %+v %v", s, err)
 	}
-	// Still online: the prepared handoff is refused the same way.
+	// The journal planned for another node: refused before anything is
+	// renamed (a handoff under way goes on for its own node only).
+	rec, err := j.readRecord()
+	if err != nil || rec == nil || rec.IncomingStableID != ours {
+		t.Fatalf("the journal's incoming node: %+v %v (this node %s)", rec, err, ours)
+	}
+	rec.IncomingStableID = "nOTHER"
+	other, _ := json.Marshal(rec)
+	if err := os.WriteFile(j.path, other, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	handoffPoint = prev
+	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure ||
+		!strings.Contains(errOut, "planned for the node nOTHER, not this node ("+ours+")") || w.api.renameCount() != 0 {
+		t.Fatalf("a journal planned for another node: %d %q, %d renames", code, errOut, w.api.renameCount())
+	}
+	rec.IncomingStableID = ours
+	back, _ := json.Marshal(rec)
+	if err := os.WriteFile(j.path, back, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Still online: the prepared handoff is refused the same way.
 	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "is connected to the tailnet now") {
 		t.Fatalf("again while online: %d %q", code, errOut)
 	}
@@ -752,6 +772,84 @@ func TestHeadscaleTakeNameFakes(t *testing.T) {
 		}
 		if f.Renames != 0 {
 			t.Fatalf("%d renames on a refusal", f.Renames)
+		}
+	})
+
+	// 1d. A handoff under way began against another control server (or
+	// Tailscale's): refused before anything is renamed, the key expired.
+	// Headscale's node ids are small integers another server reuses.
+	t.Run("a handoff under way against another control server", func(t *testing.T) {
+		for _, recorded := range []string{"https://192.0.2.99", ""} {
+			f := tailcontroltest.NewHeadscale(50*time.Minute, tailcontroltest.Node{ID: "1", Name: "vault"})
+			defer f.Close()
+			prevTLS := takeNameTLS
+			takeNameTLS = f.Client().Transport.(*http.Transport).TLSClientConfig
+			in := newInstall(t, "")
+			in.write(t, fmt.Sprintf("tailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = %s\noutbound_allow = %s\n",
+				f.URL, headscaleOutboundAllowEntry(f.URL)))
+			op, _ := tailcontrol.NewOperationID()
+			temp, _ := tailcontrol.TempName("vault", op, tailcontrol.RoleNew)
+			if err := tailnet.SaveHold(in.data, &tailnet.Hold{Hostname: temp, Since: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(in.data, tailnet.StateDir), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(in.data, tailnet.StateDir, "tailscaled.state"), []byte("{}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			rec, _ := json.Marshal(takeoverRecord{State: tailhandoff.State{Plan: tailhandoff.Plan{Operation: op, Name: "vault", ServingID: "1", IncomingID: "2"},
+				Phase: tailhandoff.Prepared}, ControlURL: recorded})
+			if err := os.WriteFile(filepath.Join(in.data, TakeoverFile), rec, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			keyFile := filepath.Join(in.dir, "hs-key")
+			if err := os.WriteFile(keyFile, []byte(f.Key+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			want := "began against " + controlName(recorded) + ", not this tailnet_control_url (" + f.URL + ")"
+			code, _, errOut := runAdmin(t, "tailnet", "take-name", "--headscale-url", f.URL, "--headscale-api-key-file", keyFile, "--config", in.conf)
+			takeNameTLS = prevTLS
+			if code != ExitFailure || !strings.Contains(errOut, want) || strings.Contains(errOut, f.Key) {
+				t.Fatalf("recorded %q: %d %q", recorded, code, errOut)
+			}
+			if f.Renames != 0 || !f.KeyExpired() {
+				t.Errorf("recorded %q: %d renames, key expired %v", recorded, f.Renames, f.KeyExpired())
+			}
+		}
+	})
+
+	// 1e. A key the handoff's open refuses (it expires more than an hour
+	// from now): the warning names that refusal, and says how to expire
+	// the key.
+	t.Run("a key the open refuses is named as refused", func(t *testing.T) {
+		f := tailcontroltest.NewHeadscale(3*time.Hour, tailcontroltest.Node{ID: "1", Name: "vault"})
+		defer f.Close()
+		prevTLS := takeNameTLS
+		takeNameTLS = f.Client().Transport.(*http.Transport).TLSClientConfig
+		t.Cleanup(func() { takeNameTLS = prevTLS })
+		in := newInstall(t, "")
+		in.write(t, fmt.Sprintf("tailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = %s\noutbound_allow = %s\n",
+			f.URL, headscaleOutboundAllowEntry(f.URL)))
+		op, _ := tailcontrol.NewOperationID()
+		temp, _ := tailcontrol.TempName("vault", op, tailcontrol.RoleNew)
+		if err := tailnet.SaveHold(in.data, &tailnet.Hold{Hostname: temp, Since: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(in.data, tailnet.StateDir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(in.data, tailnet.StateDir, "tailscaled.state"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		keyFile := filepath.Join(in.dir, "hs-key")
+		if err := os.WriteFile(keyFile, []byte(f.Key+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		code, _, errOut := runAdmin(t, "tailnet", "take-name", "--headscale-url", f.URL, "--headscale-api-key-file", keyFile, "--config", in.conf)
+		if code != ExitFailure || !strings.Contains(errOut, "was not expired (") || !strings.Contains(errOut, "more than an hour from now") ||
+			strings.Contains(errOut, "could not be reached") || !strings.Contains(errOut, "headscale apikeys expire --prefix") || strings.Contains(errOut, f.Key) {
+			t.Fatalf("a key expiring in 3 h: %d %q", code, errOut)
 		}
 	})
 

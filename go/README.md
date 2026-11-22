@@ -2344,12 +2344,20 @@ serves the tailnet listener on the node's own addresses
       `tailcontrol.CanonicalControlURL` and required to equal
       `tailnet_control_url`, and `--headscale-api-key-file`, read with the
       same secret-file checks). The key must expire within the hour and is
-      expired when `take-name` ends however it ends, a refusal before the
-      handoff included; when Headscale cannot be reached to do it (the
-      outbound policy refused it, say), the answer names the command that
-      does it on the control server (`headscale apikeys expire --prefix
-      hskey-api-<12>`), and a run killed outright leaves its key to expire
-      by itself within the hour. `--headscale-cli` is
+      expired however `take-name` ends after its first checks (the tailnet
+      off, an authority that does not match `tailnet_control_url`, an
+      authority file refused: those leave the key to expire by itself
+      within the hour), a refusal before the handoff included; when it
+      cannot be expired that way (Headscale unreachable, the outbound
+      policy refused it, or the key refused for expiring too late), the
+      answer says why and names the command that does it on the control
+      server (`headscale apikeys expire --prefix hskey-api-<12>`), and a
+      run killed outright leaves its key to expire by itself within the
+      hour. The authority's file is checked before anything starts. A
+      handoff under way goes on only against the control server it began
+      on (its journal records `tailnet_control_url`) and only for the node
+      it planned for: Headscale's node ids are small integers that
+      another server, or another node, can carry. `--headscale-cli` is
       refused because Headscale's CLI listing carries no HTTP `Date` header
       by which to judge liveness against `deadGrace`;
     - both go through the outbound policy's client (purpose

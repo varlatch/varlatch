@@ -6,6 +6,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -354,6 +355,41 @@ func TestHeadscaleTakeNameHolderReturnsBeforeRename(t *testing.T) {
 	back = nil
 	waitHeadscaleOnline(t, w.hs, w.deadID, false)
 	time.Sleep(3 * time.Second)
+
+	// The journal planned for another node than this one: refused before
+	// anything is renamed (Headscale's ids are small integers that another
+	// node, or another server's, can carry).
+	rec, err := j.readRecord()
+	if err != nil || rec == nil || rec.ControlURL != w.hs.URL {
+		t.Fatalf("the journal's control server: %+v %v", rec, err)
+	}
+	planned := rec.IncomingStableID
+	rec.IncomingStableID = "999"
+	writeRecord := func(r *takeoverRecord) {
+		t.Helper()
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(j.path, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeRecord(rec)
+	key2 := w.freshKey(t)
+	code, _, errOut = runAdmin(t, "tailnet", "take-name", "--headscale-url", w.hs.URL, "--headscale-api-key-file", w.apiKeyFile, "--config", w.in.conf)
+	if code != ExitFailure || !strings.Contains(errOut, "planned for the node 999, not this node ("+ours+")") || strings.Contains(errOut, key2) {
+		t.Fatalf("a journal planned for another node: %d %q", code, errOut)
+	}
+	if n := w.names(t); n[w.deadID] != "vault" || n[ours] != w.temp {
+		t.Fatalf("names after the refusal: %v", n)
+	}
+	if live := w.hs.LiveAPIKeys(t); live != 0 {
+		t.Fatalf("%d Headscale API keys live after the refusal, want 0", live)
+	}
+	rec.IncomingStableID = planned
+	writeRecord(rec)
+
 	_ = w.freshKey(t)
 	code, out, errOut := runAdmin(t, "tailnet", "take-name", "--headscale-url", w.hs.URL, "--headscale-api-key-file", w.apiKeyFile, "--json", "--config", w.in.conf)
 	if code != ExitOK || !strings.Contains(out, `"phase":"done"`) {

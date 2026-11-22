@@ -125,15 +125,29 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	case isHeadscale && c.headscaleURL != t.ControlURL:
 		return fail("--headscale-url (%s) does not match tailnet_control_url (%s): the API authority must be the installation's own control server; nothing was done", c.headscaleURL, t.ControlURL)
 	}
-	// The authority given ends with the command, however it ends: on
-	// Headscale its API key (a full administrator's) is expired on every
-	// exit, the ones before the handoff opened it included.
+	// The authority's file is checked before anything starts (a symbolic
+	// link, another file type, or a mode open to group or others refused),
+	// so a restore stops here rather than after its enrolment.
+	authorityFile, authorityWhat := c.oauthFile, "the OAuth client file"
+	if isHeadscale {
+		authorityFile, authorityWhat = c.headscaleKeyFile, "the Headscale API key file"
+	}
+	if f, err := openSecretFile(authorityFile); err != nil {
+		return fail("cannot read %s: %v; nothing was done", authorityWhat, err)
+	} else {
+		_ = f.Close()
+	}
+	// The authority given ends with the command, however it ends after the
+	// checks above: on Headscale its API key (a full administrator's) is
+	// expired on every exit, the ones before the handoff opened it
+	// included.
 	var cp tailcontrol.ControlPlane
 	opened := false
+	var openErr error
 	if isHeadscale {
 		defer func() {
 			if cp == nil {
-				expireUnopened(cfg, c, opened, stderr)
+				expireUnopened(cfg, c, opened, openErr, stderr)
 			}
 		}()
 	}
@@ -153,10 +167,21 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	}
 	defer unlock()
 	defer giveToOwner(cfg.DataDir, owner)
-	journal := &takeoverJournal{path: filepath.Join(cfg.DataDir, TakeoverFile)}
-	prev, err := journal.read()
+	journal := &takeoverJournal{path: filepath.Join(cfg.DataDir, TakeoverFile), controlURL: t.ControlURL}
+	rec, err := journal.readRecord()
 	if err != nil {
 		return fail("%v", err)
+	}
+	var prev *tailhandoff.State
+	if rec != nil {
+		prev = &rec.State
+		// A handoff under way goes on against the control server it began
+		// on only: a node's id there means nothing on another (Headscale's
+		// are small integers two servers share).
+		if prev.Phase != tailhandoff.Done && prev.Phase != tailhandoff.Undone && rec.ControlURL != t.ControlURL {
+			return fail("the handoff under way (%s) began against %s, not this tailnet_control_url (%s): set tailnet_control_url back to finish it; nothing was done",
+				takeoverStep(prev), controlName(rec.ControlURL), controlName(t.ControlURL))
+		}
 	}
 	hold, err := tailnet.LoadHold(cfg.DataDir)
 	if err != nil {
@@ -201,7 +226,7 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	opened = true
 	cp, err = openTakeNameControl(ctx, cfg, c, policy)
 	if err != nil {
-		cp = nil
+		cp, openErr = nil, err
 		return fail("%v", err)
 	}
 	defer closeControlPlane(cp, stderr)
@@ -241,6 +266,14 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 		he.Certs = nodeCerts{node: node, dataDir: cfg.DataDir, suffix: st.Suffix}
 		he.Ledger = &issuanceFile{path: filepath.Join(cfg.DataDir, IssuanceFile)}
 	}
+	// A handoff under way goes on for the node it planned for only (by its
+	// StableID, recorded with the journal: the plan's ids are the control
+	// plane's own).
+	if rec != nil && prev.Plan.Operation == op && prev.Phase != tailhandoff.Done && prev.Phase != tailhandoff.Undone &&
+		rec.IncomingStableID != "" && rec.IncomingStableID != st.SelfID {
+		return fail("the handoff under way planned for the node %s, not this node (%s): nothing was done", rec.IncomingStableID, st.SelfID)
+	}
+	journal.incomingStableID = st.SelfID
 	var state *tailhandoff.State
 	switch {
 	case prev == nil || prev.Plan.Operation != op || prev.Phase == tailhandoff.Undone:
@@ -376,7 +409,7 @@ func closeControlPlane(cp tailcontrol.ControlPlane, stderr io.Writer) {
 // do): through the outbound policy's client, as the handoff would. tried
 // says the handoff's own open already failed: then it is not tried again,
 // and the operator is told how to expire the key on the control server.
-func expireUnopened(cfg *config.Config, c nodeCmd, tried bool, stderr io.Writer) {
+func expireUnopened(cfg *config.Config, c nodeCmd, tried bool, openErr error, stderr io.Writer) {
 	manual := func(why error) {
 		raw, err := readSecretFile(c.headscaleKeyFile)
 		if err != nil {
@@ -391,7 +424,12 @@ func expireUnopened(cfg *config.Config, c nodeCmd, tried bool, stderr io.Writer)
 			prefix, why, prefix)
 	}
 	if tried {
-		manual(errors.New("the control server could not be reached with it"))
+		// Why the handoff's open failed: the control server unreachable,
+		// or the key refused (expiring too late, already expired).
+		if openErr == nil {
+			openErr = errors.New("the control server could not be reached with it")
+		}
+		manual(openErr)
 		return
 	}
 	entries, err := outbound.ParseAllow(cfg.OutboundAllow)
@@ -638,10 +676,21 @@ func heldNode(ctx context.Context, cfg *config.Config, hostname string) (*tailne
 }
 
 // takeoverJournal is the handoff's journal: one state, in the data
-// directory, written durably before each act.
-type takeoverJournal struct{ path string }
+// directory, written durably before each act, with the control server it
+// runs against (controlURL: tailnet_control_url, "" for Tailscale's) and
+// the incoming node's StableID.
+type takeoverJournal struct{ path, controlURL, incomingStableID string }
 
-func (j *takeoverJournal) read() (*tailhandoff.State, error) {
+// takeoverRecord is the journal's file: the handoff's state, its control
+// server, and the node it planned for (its StableID, as the node reads
+// it).
+type takeoverRecord struct {
+	tailhandoff.State
+	ControlURL       string `json:"controlUrl,omitempty"`
+	IncomingStableID string `json:"incomingStableId,omitempty"`
+}
+
+func (j *takeoverJournal) readRecord() (*takeoverRecord, error) {
 	b, err := os.ReadFile(j.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -649,11 +698,19 @@ func (j *takeoverJournal) read() (*tailhandoff.State, error) {
 	if err != nil {
 		return nil, err
 	}
-	var s tailhandoff.State
-	if err := json.Unmarshal(b, &s); err != nil {
+	var r takeoverRecord
+	if err := json.Unmarshal(b, &r); err != nil {
 		return nil, fmt.Errorf("the handoff's journal %s is not readable: %w", j.path, err)
 	}
-	return &s, nil
+	return &r, nil
+}
+
+func (j *takeoverJournal) read() (*tailhandoff.State, error) {
+	r, err := j.readRecord()
+	if r == nil {
+		return nil, err
+	}
+	return &r.State, nil
 }
 
 func (j *takeoverJournal) clear() error {
@@ -673,7 +730,7 @@ func (j *takeoverJournal) Load(_ context.Context, op string) (*tailhandoff.State
 }
 
 func (j *takeoverJournal) Save(_ context.Context, s *tailhandoff.State) error {
-	b, err := json.MarshalIndent(s, "", "  ")
+	b, err := json.MarshalIndent(takeoverRecord{State: *s, ControlURL: j.controlURL, IncomingStableID: j.incomingStableID}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -682,6 +739,14 @@ func (j *takeoverJournal) Save(_ context.Context, s *tailhandoff.State) error {
 	}
 	handoffPoint("take-name " + takeoverStep(s))
 	return nil
+}
+
+// controlName is a control server as the operator knows it.
+func controlName(controlURL string) string {
+	if controlURL == "" {
+		return "Tailscale's control server"
+	}
+	return controlURL
 }
 
 // takeoverStep names what a saved state says was decided last.
