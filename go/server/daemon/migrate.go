@@ -22,6 +22,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/check"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
+	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
 // The migration's host commands (internal docs/design/go-step7.md decision
@@ -283,13 +284,52 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	return migrateWork(cfg, a, nil, stdin, stdout, fail)
 }
 
+// handoffNodeFiles are what `admin tailnet enroll` leaves in a migration's
+// target before the import (go-step7 decision 11: the new node joins
+// under its temporary name before the barrier): the node's state, its
+// pin, the handoff's hold and the listeners report.
+var handoffNodeFiles = []string{tailnet.StateDir, tailnet.PinFile, tailnet.HoldFile, tailnet.ListenersFile}
+
+// enrolledNode checks the handoff's files an import accepts in the data
+// directory: each of its kind (the state a directory, the others regular
+// files, never a link), and a node there held for a handoff, so a node
+// that served elsewhere is never imported beside.
+func enrolledNode(dataDir string) error {
+	present := false
+	for _, name := range handoffNodeFiles {
+		st, err := os.Lstat(filepath.Join(dataDir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		present = true
+		if want := name == tailnet.StateDir; st.IsDir() != want || (!want && !st.Mode().IsRegular()) {
+			return fmt.Errorf("the data directory %s is not empty (%s is not what a tailnet enrolment leaves): an import builds a fresh database only", dataDir, name)
+		}
+	}
+	if !present {
+		return nil
+	}
+	hold, err := tailnet.LoadHold(dataDir)
+	if err != nil {
+		return err
+	}
+	if hold == nil {
+		return fmt.Errorf("the data directory %s holds a tailnet node that no handoff holds (no %s): an import accepts only a node enrolled for the migration (varlatchd admin tailnet enroll)", dataDir, tailnet.HoldFile)
+	}
+	return nil
+}
+
 // migrateWork is import, check and export, once runMigrate has the data
 // directory (or needs none: a scratch check, an export of a barrier's
 // frozen copy).
 func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io.Reader, stdout io.Writer, fail func(int, string, ...any) int) int {
-	// The journal (`varlatch migrate`'s) is the one other name an import
-	// leaves in the data directory.
-	o := migrate.Options{DataDir: cfg.DataDir, Ignore: []string{LockFile, JournalFile}, Release: buildinfo.Version, Keep: a.keep}
+	// The journal (`varlatch migrate`'s) is one other name an import leaves
+	// in the data directory; a node enrolled for the tailnet handoff,
+	// held, is the others (enrolledNode).
+	o := migrate.Options{DataDir: cfg.DataDir, Ignore: append([]string{LockFile, JournalFile}, handoffNodeFiles...), Release: buildinfo.Version, Keep: a.keep}
 	if frozen != nil {
 		o.From, o.FrozenAt = frozen.path, frozen.position
 		// The copy is made beside the bundle, never in the data
@@ -324,6 +364,11 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 		return runCheck(cfg, a, o.DataDir, o.RootKEK, stdin, stdout, fail)
 	}
 	var res migrate.Result
+	if a.sub == "import" && a.scratch == "" {
+		if err := enrolledNode(cfg.DataDir); err != nil {
+			return fail(ExitFailure, "%v; nothing was imported", err)
+		}
+	}
 	if a.sub == "import" {
 		in, err := os.Open(a.in)
 		if err != nil {
