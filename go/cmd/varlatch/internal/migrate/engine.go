@@ -791,19 +791,29 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 				}
 				if err := e.waitForTypeScript(ctx, j, want); err != nil {
 					problems = append(problems, fmt.Errorf("the source's %s was started again, but %w", ingressPart(j.Ingress), err))
+					if !j.UndoUnanswered {
+						j.UndoUnanswered = true
+						if err := e.save(ctx, j); err != nil {
+							problems = append(problems, fmt.Errorf("recording that the source did not answer: %w", err))
+						}
+					}
 				}
 			}
 		}
 	}
-	if err := e.discard(ctx, j); err != nil {
-		problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
+	// A target that may still run keeps its database: discarding it would
+	// only say to stop the target first, again.
+	if stopped {
+		if err := e.discard(ctx, j); err != nil {
+			problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
+		}
 	}
 	if len(problems) > 0 {
 		// Not released: the journal stays where it was, for --resume.
 		return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, errors.Join(problems...))
 	}
 	j.Undone = &UndoneRecord{From: from, Why: cause.Error(), Released: released, At: e.now().UTC().Format(time.RFC3339Nano)}
-	j.Undoing = false
+	j.Undoing, j.UndoUnanswered = false, false
 	if err := e.enter(ctx, j, Released); err != nil {
 		did := "the barrier lifted, the target's database discarded"
 		if from == Transfer {

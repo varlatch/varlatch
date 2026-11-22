@@ -374,7 +374,7 @@ func (c *Compose) StartServing(ctx context.Context, kind Ingress) error {
 	if kind == Coolify {
 		return nil
 	}
-	return c.StartIngress(ctx, kind)
+	return c.StartIngress(ctx, kind, false)
 }
 
 // StopServing: the shape's ingress, then varlatchd.

@@ -68,8 +68,10 @@ type Source interface {
 	// StopIngress and StartIngress stop and start what serves the
 	// address (Caddy for public ingress, the dashboard's port for an own
 	// proxy); the Coolify shape has nothing here to stop or start.
+	// StartIngress recreates what does not serve as it is, and with
+	// recreate, whatever it reports.
 	StopIngress(ctx context.Context, kind Ingress) error
-	StartIngress(ctx context.Context, kind Ingress) error
+	StartIngress(ctx context.Context, kind Ingress, recreate bool) error
 }
 
 // Ingress is a source's ingress shape (decision 12).

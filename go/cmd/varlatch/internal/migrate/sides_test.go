@@ -436,13 +436,13 @@ func TestComposeIngress(t *testing.T) {
 	for _, c2 := range []struct {
 		kind Ingress
 		want []string
-	}{{Public, []string{"docker compose stop caddy", "docker compose ps --status running --services", "docker compose up -d --no-deps --force-recreate caddy"}},
-		{Proxy, []string{"docker compose stop varlatch-web", "docker compose ps --status running --services", "docker compose up -d --no-deps --force-recreate varlatch-web"}}} {
+	}{{Public, []string{"docker compose stop caddy", "docker compose ps -a -q caddy", "docker compose up -d --no-deps --force-recreate caddy"}},
+		{Proxy, []string{"docker compose stop varlatch-web", "docker compose ps -a -q varlatch-web", "docker compose up -d --no-deps --force-recreate varlatch-web"}}} {
 		run.ran = nil
 		if err := c.StopIngress(ctx, c2.kind); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.StartIngress(ctx, c2.kind); err != nil {
+		if err := c.StartIngress(ctx, c2.kind, false); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Join(run.ran, "|") != strings.Join(c2.want, "|") {
@@ -452,22 +452,49 @@ func TestComposeIngress(t *testing.T) {
 	if err := c.StopIngress(ctx, Coolify); err == nil {
 		t.Fatal("the Coolify shape has nothing here to stop")
 	}
-	// Running already (a retry): started again without being recreated, so
-	// a dashboard still starting is not killed nor Caddy's connections
-	// dropped.
-	up := &scripted{t: t, answers: map[string]Ran{
-		"docker compose ps --status running --services": {Answer: []byte("varlatchd\nvarlatch-web\ncaddy\n")},
-		"docker compose up -d --no-deps ":               {},
-	}}
-	cu := &Compose{Directory: dir, Run: up}
-	for _, k := range []Ingress{Public, Proxy} {
-		up.ran = nil
-		if err := cu.StartIngress(ctx, k); err != nil {
-			t.Fatal(err)
-		}
-		svc, _ := ingressService(k)
-		if want := "docker compose ps --status running --services|docker compose up -d --no-deps " + svc; strings.Join(up.ran, "|") != want {
-			t.Fatalf("%s running: %q", k, up.ran)
+	// A container that serves (a retry after it came up) is started again
+	// without being recreated, so a dashboard still starting is not killed
+	// nor Caddy's connections dropped. Anything else is recreated: running
+	// with no network (Caddy answers 502 so), restarting, caught running
+	// in a crash loop, not one container, or with recreate (an undo whose
+	// wait for the source timed out).
+	for _, c2 := range []struct {
+		name      string
+		ids, info string
+		recreate  bool
+		want      string
+	}{
+		{"serves", "c1\n", "running false 0 1\n", false, "ps|inspect|up"},
+		{"no network", "c1\n", "running false 0 0\n", false, "ps|inspect|recreate"},
+		{"restarting", "c1\n", "restarting true 4 1\n", false, "ps|inspect|recreate"},
+		{"caught running between restarts", "c1\n", "running false 4 1\n", false, "ps|inspect|recreate"},
+		{"exited", "c1\n", "exited false 0 0\n", false, "ps|inspect|recreate"},
+		{"no container", "", "", false, "ps|recreate"},
+		{"two containers", "c1\nc2\n", "", false, "ps|recreate"},
+		{"recreate", "c1\n", "running false 0 1\n", true, "recreate"},
+	} {
+		for _, k := range []Ingress{Public, Proxy} {
+			svc, _ := ingressService(k)
+			up := &scripted{t: t, answers: map[string]Ran{
+				"docker compose ps -a -q " + svc:                     {Answer: []byte(c2.ids)},
+				"docker inspect --format " + containerFormat + " c1": {Answer: []byte(c2.info)},
+				"docker compose up -d --no-deps ":                    {},
+			}}
+			cu := &Compose{Directory: dir, Run: up}
+			if err := cu.StartIngress(ctx, k, c2.recreate); err != nil {
+				t.Fatal(err)
+			}
+			names := map[string]string{
+				"docker compose ps -a -q " + svc: "ps", "docker inspect --format " + containerFormat + " c1": "inspect",
+				"docker compose up -d --no-deps " + svc: "up", "docker compose up -d --no-deps --force-recreate " + svc: "recreate",
+			}
+			var got []string
+			for _, r := range up.ran {
+				got = append(got, names[r])
+			}
+			if strings.Join(got, "|") != c2.want {
+				t.Errorf("%s, %s: %q", c2.name, k, up.ran)
+			}
 		}
 	}
 }

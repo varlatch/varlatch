@@ -264,7 +264,7 @@ func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
 		}
 		e.say("The address goes back by hand: in Coolify, move the domain of %s back to the TypeScript application.", origin)
 	default:
-		if err := e.Source.StartIngress(ctx, j.Ingress); err != nil {
+		if err := e.Source.StartIngress(ctx, j.Ingress, j.UndoUnanswered); err != nil {
 			return []error{fmt.Errorf("starting the source's %s again: %w", ingressPart(j.Ingress), err)}
 		}
 	}

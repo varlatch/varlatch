@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 )
@@ -263,30 +262,58 @@ func (c *Compose) StopIngress(ctx context.Context, kind Ingress) error {
 }
 
 // StartIngress is `docker compose up -d --no-deps` of it, recreating it
-// (--force-recreate) unless it runs. A start that failed (its port held,
-// 7.8b rehearsal run r13) leaves the stopped container with no network,
-// which `docker compose start` reuses: the dashboard then cannot resolve
-// varlatchd and never answers. Such a container restarts in a loop, so it
-// is not running, and is recreated. Both services are stateless (the
-// dashboard is nginx in front of varlatchd; Caddy keeps its certificates
-// in its volumes), and the new container comes from the same Compose
-// project, so recreating changes nothing of the installation. One that
-// runs is left as it is (a retry would otherwise kill a dashboard still
-// starting, or drop Caddy's connections). --no-deps: the services they
-// depend on run already, and varlatch-migrate's one-off is not run again.
-func (c *Compose) StartIngress(ctx context.Context, kind Ingress) error {
+// (--force-recreate) unless its container serves (containerServes), and
+// always with recreate. A start that failed (its port held, 7.8b
+// rehearsal run r13) leaves the container with no network, which `docker
+// compose start` reuses: the dashboard then cannot resolve varlatchd and
+// never answers. Such a container can still be running (Caddy resolves
+// its upstream per request, so it runs and answers 502), or be caught
+// running between restarts. Both services are stateless (the dashboard is
+// nginx in front of varlatchd; Caddy keeps its certificates in its
+// volumes), and the new container comes from the same Compose project, so
+// recreating changes nothing of the installation. One that serves is left
+// as it is (a retry would otherwise kill a dashboard still starting, or
+// drop Caddy's connections). --no-deps: the services they depend on run
+// already, and varlatch-migrate's one-off is not run again.
+func (c *Compose) StartIngress(ctx context.Context, kind Ingress, recreate bool) error {
 	svc, err := ingressService(kind)
 	if err != nil {
 		return err
 	}
-	running, err := c.running(ctx)
-	if err != nil {
-		return err
-	}
-	if slices.Contains(running, svc) {
-		return c.ingress(ctx, []string{"up", "-d", "--no-deps"}, kind)
+	if !recreate {
+		serves, err := c.containerServes(ctx, svc)
+		if err != nil {
+			return err
+		}
+		if serves {
+			return c.ingress(ctx, []string{"up", "-d", "--no-deps"}, kind)
+		}
 	}
 	return c.ingress(ctx, []string{"up", "-d", "--no-deps", "--force-recreate"}, kind)
+}
+
+// containerFormat is what containerServes reads of a container.
+const containerFormat = "{{.State.Status}} {{.State.Restarting}} {{.RestartCount}} {{len .NetworkSettings.Networks}}"
+
+// containerServes reports whether the service's one container is running,
+// not restarting, never restarted by its restart policy (a crash loop can
+// be caught running), and attached to a network. Anything else, or what
+// Docker cannot say, is a container to recreate.
+func (c *Compose) containerServes(ctx context.Context, svc string) (bool, error) {
+	r, err := c.docker(ctx, []string{"compose", "ps", "-a", "-q", svc}, nil)
+	if err != nil {
+		return false, err
+	}
+	ids := strings.Fields(string(r.Answer))
+	if r.Code != 0 || len(ids) != 1 {
+		return false, nil
+	}
+	r, err = c.docker(ctx, []string{"inspect", "--format", containerFormat, ids[0]}, nil)
+	if err != nil {
+		return false, err
+	}
+	f := strings.Fields(string(r.Answer))
+	return r.Code == 0 && len(f) == 4 && f[0] == "running" && f[1] == "false" && f[2] == "0" && f[3] != "0", nil
 }
 
 func (c *Compose) ingress(ctx context.Context, verb []string, kind Ingress) error {

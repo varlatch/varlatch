@@ -196,6 +196,20 @@ func webLate() error {
 	return nil
 }
 
+// containerFormat is what varlatch migrate inspects of an ingress
+// container (internal/migrate, containerServes).
+const containerFormat = "{{.State.Status}} {{.State.Restarting}} {{.RestartCount}} {{len .NetworkSettings.Networks}}"
+
+// brokenContainer names the state files of a service's container left
+// without a network and in a crash loop: the dashboard's web-netless and
+// web-restarting, <svc>-netless and <svc>-restarting otherwise.
+func brokenContainer(svc string) [2]string {
+	if svc == "varlatch-web" {
+		svc = "web"
+	}
+	return [2]string{svc + "-netless", svc + "-restarting"}
+}
+
 // migrateRunsAgain reports whether `docker compose start|up` of these
 // services runs the one-off varlatch-migrate again: each of varlatchd,
 // the dashboard (on varlatchd) and Caddy (on the dashboard) depends on it
@@ -279,13 +293,16 @@ func fakeDockerReverse(args []string) (int, bool) {
 			if err := setStopped(svc, false); err != nil {
 				return fail("%v", err)
 			}
-			if svc == "varlatch-web" {
-				if slices.Contains(args, "--force-recreate") {
-					// A new container: its network attached again.
-					if err := os.Remove(state("web-netless")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if slices.Contains(args, "--force-recreate") {
+				// A new container: its network attached again, its crash
+				// loop (and restart count) gone.
+				for _, f := range brokenContainer(svc) {
+					if err := os.Remove(state(f)); err != nil && !errors.Is(err, os.ErrNotExist) {
 						return fail("%v", err)
 					}
 				}
+			}
+			if svc == "varlatch-web" {
 				if err := webLate(); err != nil {
 					return fail("%v", err)
 				}
@@ -342,11 +359,37 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 		}
 		return 0, true
+	case len(args) == 5 && args[0] == "compose" && args[1] == "ps" && args[2] == "-a" && args[3] == "-q":
+		// A service's one container, running or not.
+		fmt.Println("g5-" + args[4] + "-1")
+		return 0, true
+	case len(args) == 4 && args[0] == "inspect" && args[1] == "--format" && args[2] == containerFormat:
+		// As Docker: a container a failed start left without a network
+		// (<svc>-netless) runs with none, and one in a crash loop
+		// (<svc>-restarting) is caught running, its restart count up.
+		svc := strings.TrimSuffix(strings.TrimPrefix(args[3], "g5-"), "-1")
+		status, networks, restarts := "running", 1, 0
+		if stopped(svc) {
+			status = "exited"
+		}
+		files := brokenContainer(svc)
+		if _, err := os.Stat(state(files[0])); err == nil {
+			networks = 0
+		}
+		if _, err := os.Stat(state(files[1])); err == nil {
+			restarts = 7
+		}
+		fmt.Printf("%s false %d %d\n", status, restarts, networks)
+		return 0, true
 	case j == "compose ps --status running --services":
 		services := []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"}
 		if os.Getenv("G5_SHARED_NAMESPACE") != "" {
 			// The Tailscale topology: the sidecar varlatchd shares.
 			services = append(services, "tailscale")
+		}
+		if env, _ := os.ReadFile(".env"); bytes.Contains(env, []byte("docker-compose.caddy.yml")) {
+			// The public-ingress topology: Caddy in front.
+			services = append(services, "caddy")
 		}
 		for _, svc := range services {
 			if !stopped(svc) {

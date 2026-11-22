@@ -32,6 +32,8 @@ type fakeSource struct {
 	exportTakes time.Duration
 	ingress     IngressInfo
 	ingressDown bool
+	// recreates are the ingress starts asked to recreate it.
+	recreates int
 }
 
 func (s *fakeSource) call(name string) error {
@@ -54,13 +56,16 @@ func (s *fakeSource) StopIngress(_ context.Context, kind Ingress) error {
 	return nil
 }
 
-// StartIngress recreates the ingress without its dependencies, as the
-// real one does (up -d --no-deps --force-recreate): it comes up behind a
-// gate too, and answers with the gate's 503 (the prober) until the
-// barrier is lifted.
-func (s *fakeSource) StartIngress(_ context.Context, kind Ingress) error {
+// StartIngress starts the ingress without its dependencies, as the real
+// one does (up -d --no-deps): it comes up behind a gate too, and answers
+// with the gate's 503 (the prober) until the barrier is lifted. A start
+// asked to recreate is recorded too.
+func (s *fakeSource) StartIngress(_ context.Context, kind Ingress, recreate bool) error {
 	if err := s.call("start " + string(kind)); err != nil {
 		return err
+	}
+	if recreate {
+		s.recreates++
 	}
 	s.ingressDown = false
 	return nil
@@ -969,13 +974,17 @@ func TestAnUndoWaitsForTheSourceToAnswer(t *testing.T) {
 				!strings.Contains(err.Error(), "varlatch migrate --resume tries again") {
 				t.Fatalf("--abort with the source not answering: %v", err)
 			}
-			if j, rerr := readJournal(w.src.dir); rerr != nil || j.Phase != Transfer || !j.Undoing {
-				t.Fatalf("the journal: %+v %v", j, rerr)
+			// Recorded, so the next try recreates the ingress whatever its
+			// container reports.
+			if j, rerr := readJournal(w.src.dir); rerr != nil || j.Phase != Transfer || !j.Undoing || !j.UndoUnanswered || w.src.recreates != 0 {
+				t.Fatalf("the journal: %+v %v, %d recreates", j, rerr, w.src.recreates)
 			}
-			// It answers now: --resume finishes the undo.
+			// It answers now: --resume finishes the undo, the ingress
+			// recreated.
 			w.prober.sourceDown = false
-			if j, err := w.eng.Resume(context.Background()); err != nil && !strings.Contains(err.Error(), "reopened unchanged") || j.Phase != Released {
-				t.Fatalf("--resume once it answers: %+v %v", j, err)
+			j, err := w.eng.Resume(context.Background())
+			if err != nil && !strings.Contains(err.Error(), "reopened unchanged") || j.Phase != Released || j.UndoUnanswered || w.src.recreates != 1 {
+				t.Fatalf("--resume once it answers: %+v %v, %d recreates", j, err, w.src.recreates)
 			}
 		})
 	}
@@ -1003,6 +1012,10 @@ func TestAnUndoLeavesTheIngressWhileTheTargetRuns(t *testing.T) {
 			}
 			if containsCall(w.src.calls, "start proxy") || w.prober.probes != 0 {
 				t.Fatalf("started the ingress or waited: %v, %d probes", w.src.calls, w.prober.probes)
+			}
+			// Its database is kept while it may run: no discard to refuse.
+			if strings.Contains(err.Error(), "discarding") || slices.ContainsFunc(w.tgt.calls, func(c string) bool { return strings.HasPrefix(c, "discard ") }) {
+				t.Fatalf("discarded while the target may run: %v %v", err, w.tgt.calls)
 			}
 			if j, rerr := readJournal(w.src.dir); rerr != nil || j.Phase != Transfer || !j.Undoing {
 				t.Fatalf("the journal: %+v %v", j, rerr)
