@@ -36,3 +36,31 @@ func TestAnswersWithin(t *testing.T) {
 		t.Errorf("never: %+v", never)
 	}
 }
+
+// The source's own answer: 200, 0.23.0 and its installation's id. A 200
+// of another release, one without the id (0.23.0's while its database is
+// down), another installation's, a page that is not JSON and an error
+// status are not.
+func TestSourceAnswers(t *testing.T) {
+	own := sourceAnswers("inst_own")
+	for _, c := range []struct {
+		name string
+		code int
+		body string
+		want bool
+	}{
+		{"the source", 200, `{"apiMajor":1,"serverVersion":"0.23.0","installationId":"inst_own"}`, true},
+		{"another release", 200, `{"serverVersion":"0.50.0","installationId":"inst_own"}`, false},
+		{"no installation id", 200, `{"serverVersion":"0.23.0"}`, false},
+		{"another installation", 200, `{"serverVersion":"0.23.0","installationId":"inst_other"}`, false},
+		{"not JSON", 200, "<html>bad gateway</html>", false},
+		{"an error status", 503, `{"serverVersion":"0.23.0","installationId":"inst_own"}`, false},
+	} {
+		if got := own(c.code, c.body); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	if sourceAnswers("")(200, `{"serverVersion":"0.23.0","installationId":""}`) {
+		t.Error("an unknown installation id accepts any answer")
+	}
+}

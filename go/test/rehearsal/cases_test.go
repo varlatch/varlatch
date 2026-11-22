@@ -115,19 +115,28 @@ func imagePin(t *testing.T, in *installation, rel release) {
 	r = in.migrateEnv(rel, true, other, "--dry-run")
 	// The message names both images; the CLI's fail-safe masks a registry
 	// with a port as a URL's user name and password (finding of run r1).
-	record(t, item, "another digest: refused", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
+	// The override took effect: the refusal names its digest as the one
+	// wanted.
+	record(t, item, "another digest: refused", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image") && strings.Contains(r.stderr, "sha256:"+strings.Repeat("0", 64)), r.String())
 	if strings.Contains(r.stderr, "[redacted]@") {
 		differs(item, "G5's pin is ghcr.io/varlatch/varlatchd@sha256:..., a repository without a port.",
 			"with a registry that has a port (a mirror, a private registry, this harness's), the refusal's image references read [redacted]@sha256:...: the fail-safe takes host:port/repo before the at-sign for a URL's credentials",
 			"migrate's diagnostics: the operator cannot read which image was found or wanted")
 	}
-	// An image built here, never pushed: no registry digest of its own.
+	// An image built here, never pushed: no registry digest of its own. A
+	// new image ID (a label added), not a tag of the pushed one, which
+	// would keep the pushed image's RepoDigests; checked empty before the
+	// run.
 	local := "vl-rh-" + runID + "-local/varlatchd:0.23.0"
-	must(t, run("", nil, nil, "docker", "tag", rel.Images["varlatchd"][:strings.Index(rel.Images["varlatchd"], "@")], local), "tag a local image")
+	base := rel.Images["varlatchd"][:strings.Index(rel.Images["varlatchd"], "@")]
+	must(t, run("", nil, []byte("FROM "+base+"\nLABEL org.varlatch.rehearsal.local="+runID+"\n"), "docker", "build", "-q", "-t", local, "-"), "build a local image")
 	t.Cleanup(func() { run("", nil, nil, "docker", "image", "rm", local) })
+	if digests := run("", nil, nil, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", local); strings.TrimSpace(digests.stdout) != "[]" {
+		t.Fatalf("the local image has registry digests: %s", digests.stdout)
+	}
 	in.swapImage(t, local)
 	r = in.migrateEnv(rel, true, rel.pin(), "--dry-run")
-	record(t, item, "a locally built image: refused (no registry digest)", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
+	record(t, item, "a locally built image: refused (no registry digest)", r.code != 0 && strings.Contains(r.stderr, "not pinned by a registry digest"), r.String())
 	in.swapImage(t, rel.Images["varlatchd"])
 }
 
@@ -615,24 +624,25 @@ func collisionCase(t *testing.T, rel release, s3 *s3Server) {
 	}
 	ab := in.migrateEnv(rel, true, rel.pin(), "--abort")
 	measure("item 6: --abort once the port is free", ab.String()+" "+lastLines(ab.stdout, 3))
-	// As a client would: the source is polled until it answers from
-	// 0.23.0, for at most sourceAnswerDeadline, never judged on a single
-	// request (r12 read once, right after --abort). It fails if the source
-	// never answers in time; the time to its first answer is recorded.
-	a := answersWithin(func() (int, string) { return in.get("/v1/meta") },
-		func(code int, body string) bool {
-			return code == 200 && strings.Contains(body, `"serverVersion":"0.23.0"`)
-		},
-		sourceAnswerDeadline, 250*time.Millisecond)
-	measure("item 6: the source's first answer after --abort", fmt.Sprintf("%v after %d requests (ok %v)", a.took.Round(time.Millisecond), a.tries, a.ok))
-	record(t, item, "after --abort the source answers again", a.ok,
-		fmt.Sprintf("%d %s; first answer %v after --abort exited (%d requests, deadline %v)", a.code, trim(a.body), a.took.Round(time.Millisecond), a.tries, sourceAnswerDeadline))
+	// As a client would: the source is polled until it answers as itself
+	// (0.23.0 and this installation's id), never judged on one request
+	// (r12 read once, right after --abort). --abort exits 0 only once the
+	// source answers (its undo waits for it), so the check passes only if
+	// it answers within sourceAnswerBound of --abort's exit; the poll goes
+	// on to sourceAnswerDeadline so a late answer is still measured.
+	a := answersWithin(func() (int, string) { return in.get("/v1/meta") }, sourceAnswers(in.installationID), sourceAnswerDeadline, 250*time.Millisecond)
+	measure("item 6: the source's first answer after --abort", fmt.Sprintf("%v after %d requests (answered %v)", a.took.Round(time.Millisecond), a.tries, a.ok))
+	record(t, item, "after --abort the source answers again", a.ok && a.took <= sourceAnswerBound,
+		fmt.Sprintf("%d %s; first answer %v after --abort exited (%d requests; bound %v, polled up to %v)", a.code, trim(a.body), a.took.Round(time.Millisecond), a.tries, sourceAnswerBound, sourceAnswerDeadline))
 }
 
-// sourceAnswerDeadline bounds item 6's wait for the source after --abort.
-// The undo already waits for it at its address (the transfer timeout), so
-// a healthy source answers at once; the margin is for a loaded host.
-const sourceAnswerDeadline = 60 * time.Second
+// Item 6's bounds after --abort exits: the source must answer within
+// sourceAnswerBound (the undo waited for it, so a regression shows as a
+// late answer); the poll goes on to sourceAnswerDeadline, for the report.
+const (
+	sourceAnswerBound    = 5 * time.Second
+	sourceAnswerDeadline = 60 * time.Second
+)
 
 // afterFailedDryRun: a dry run that fails after its journal is written
 // leaves the migration "interrupted in phase started", which refuses the
