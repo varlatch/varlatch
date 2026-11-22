@@ -21,7 +21,10 @@ import (
 //     journalled in both places; "barrier held" once the source's barrier
 //     is up and recorded; "transfer started" once the target serves under
 //     the transfer's gate; "open source" when the source's journal says
-//     open but the live open has not run yet;
+//     open but the live open has not run yet; "switch sidecar started"
+//     once the sidecar the tailnet handoff stopped runs again for the
+//     source's mark, and "switch marked" once the source is marked
+//     migrated out, before the sidecar stops again;
 //   - the reverse (--rollback): "rollback barrier held" once Go's barrier
 //     is up; "rollback rebuilt" once the TypeScript side runs on its fresh
 //     volumes; "rollback go stopped" and "rollback transfer started" in

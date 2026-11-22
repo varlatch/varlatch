@@ -19,6 +19,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/check"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
@@ -322,14 +323,35 @@ func enrolledNode(dataDir string) error {
 	return nil
 }
 
+// importIgnore are the names an import leaves in the data directory: the
+// lock, `varlatch migrate`'s journal, and a node enrolled for the tailnet
+// handoff, held (enrolledNode). importKeep are the directories it leaves
+// as they are: Go's local backup store, which a discarded copy's final
+// archive is in (varlatch migrate --finish --delete-old-data after a
+// rollback).
+var (
+	importIgnore = append([]string{LockFile, JournalFile}, handoffNodeFiles...)
+	importKeep   = []string{backups.Dir}
+)
+
+// importableDataDir is whether an import may build its database in
+// dataDir: the check the import makes, and the one `admin migrate state`
+// reports (importRefusal) for varlatch migrate's preflight, which so
+// refuses before the barrier what the import would refuse after it.
+func importableDataDir(dataDir string) error {
+	if err := enrolledNode(dataDir); err != nil {
+		return err
+	}
+	return migrate.CheckFresh(dataDir, importIgnore, importKeep)
+}
+
 // migrateWork is import, check and export, once runMigrate has the data
 // directory (or needs none: a scratch check, an export of a barrier's
 // frozen copy).
 func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io.Reader, stdout io.Writer, fail func(int, string, ...any) int) int {
-	// The journal (`varlatch migrate`'s) is one other name an import leaves
-	// in the data directory; a node enrolled for the tailnet handoff,
-	// held, is the others (enrolledNode).
-	o := migrate.Options{DataDir: cfg.DataDir, Ignore: append([]string{LockFile, JournalFile}, handoffNodeFiles...), Release: buildinfo.Version, Keep: a.keep}
+	// What an import leaves in the data directory (importIgnore,
+	// importKeep): the same lists importableDataDir checks.
+	o := migrate.Options{DataDir: cfg.DataDir, Ignore: importIgnore, KeepDirs: importKeep, Release: buildinfo.Version, Keep: a.keep}
 	if frozen != nil {
 		o.From, o.FrozenAt = frozen.path, frozen.position
 		// The copy is made beside the bundle, never in the data
@@ -346,7 +368,7 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 				return fail(ExitFailure, "%v", err)
 			}
 		}
-		o.DataDir, o.Ignore = a.scratch, nil
+		o.DataDir, o.Ignore, o.KeepDirs = a.scratch, nil, nil
 	}
 	if a.sub == "import" || a.sub == "check" {
 		raw, err := os.ReadFile(cfg.RootKEKFile)
@@ -365,7 +387,7 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 	}
 	var res migrate.Result
 	if a.sub == "import" && a.scratch == "" {
-		if err := enrolledNode(cfg.DataDir); err != nil {
+		if err := importableDataDir(cfg.DataDir); err != nil {
 			return fail(ExitFailure, "%v; nothing was imported", err)
 		}
 	}
