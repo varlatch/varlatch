@@ -20,7 +20,9 @@
 # instead of seeding; the three are files the operator copied to this host,
 # mounted read-only into the runner. VL_RH_ONLY=bundle makes a synthetic
 # production-shaped archive and its keys in VL_RH_BUNDLE_OUT (an empty
-# directory), for B6 without production's.
+# directory), for B6 without production's. With VL_RH_KEEP=1 a restored
+# installation is kept whole, the Root KEK's copy in its Compose
+# directory's secrets/ included: remove it by hand (shred -u) when done.
 #
 # VL_RH_PROFILE=box (the experiments server; internal
 # docs/design/go-step8-rehearsals.md): run by the owner as root on the

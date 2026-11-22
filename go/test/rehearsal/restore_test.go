@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -76,6 +77,11 @@ func restoredInstallation(t *testing.T, rel release, s3 *s3Server, name string) 
 	}
 	in := prepareInstallation(t, rel, s3, name, &operatorKeys{kek: prof.restoreKEK, bek: prof.restoreBEK})
 	registerSecrets(in)
+	if os.Getenv("VL_RH_KEEP") == "1" {
+		// Kept installations keep their files: the Root KEK's copy too,
+		// which the operator then removes by hand.
+		measure("item 14: "+name+": VL_RH_KEEP=1", "the Root KEK's copy stays in "+in.kekCopy+" (mode 0644, in a 0700 directory) with the installation: remove it by hand (shred -u) when done")
+	}
 	// Before the copy first starts (the restore starts it): its Compose
 	// configuration and Go's say it reaches nothing.
 	if ok, detail := in.isolatedBeforeStart(); !record2(t, restoreItem, name+": before the copy starts: isolated", ok, detail) {
@@ -197,8 +203,10 @@ func (in *installation) isolatedRunning() (bool, string) {
 	// An address, not a name: the network, not DNS, refuses it.
 	out := in.inside(`fetch("http://1.1.1.1/", { signal: AbortSignal.timeout(5000) }).then(r => console.log("reached", r.status)).catch(e => console.log("refused", e.cause?.code ?? e.name))`)
 	egress := strings.TrimSpace(out.stdout)
-	if !strings.HasPrefix(egress, "refused") {
-		bad = append(bad, "a request from varlatchd to 1.1.1.1: "+egress)
+	// The network's own refusals only: a timeout (a firewall dropping the
+	// packets, or a slow route that would reach) is no proof.
+	if egress != "refused ENETUNREACH" && egress != "refused EHOSTUNREACH" {
+		bad = append(bad, "a request from varlatchd to 1.1.1.1: "+egress+" (not ENETUNREACH or EHOSTUNREACH)")
 	}
 	if len(bad) > 0 {
 		return false, strings.Join(bad, "; ")
@@ -325,9 +333,56 @@ func forwardAndCheck(t *testing.T, in *installation, rel release, what string, p
 	_, body := in.get("/v1/meta")
 	record(t, item, what+": the public URL answers from the target", strings.Contains(body, in.installationID) && !strings.Contains(body, `"serverVersion":"0.23.0"`), trim(body))
 	forwardParity(t, in, what)
+	isolated, detail := in.goRunsIsolated(rd)
+	record(t, item, what+": Go runs with sync and the audit export off", isolated, detail)
 	got, err := rd.read()
 	record(t, item, what+": the CLI reads the same on Go", err == nil && sameReads(want, got), rd.compare(want, got, err))
 	return true
+}
+
+// goRunsIsolated: the target varlatchd, as it runs, has the audit export
+// off (its API answers enabled false for the read Organization) and sync
+// off (its log at start says so: the unit's journal on the box, the
+// stand-in systemctl's log on a workstation).
+func (in *installation) goRunsIsolated(rd *reader) (bool, string) {
+	var bad []string
+	req, err := http.NewRequest(http.MethodGet, in.publicURL+"/v1/organizations/"+rd.org+"/audit-export", nil)
+	if err != nil {
+		return false, err.Error()
+	}
+	req.Header.Set("Authorization", "Bearer "+rd.token)
+	c := in.client
+	if c == nil {
+		c = &http.Client{Timeout: 10 * time.Second}
+	}
+	var st struct {
+		Enabled *bool `json:"enabled"`
+	}
+	resp, err := c.Do(req)
+	switch {
+	case err != nil:
+		bad = append(bad, "the audit export's status: "+err.Error())
+	default:
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &st) != nil || st.Enabled == nil || *st.Enabled {
+			bad = append(bad, fmt.Sprintf("the audit export's status: %d, enabled %v", resp.StatusCode, st.Enabled))
+		}
+	}
+	var log string
+	if prof.box {
+		log = run("", nil, nil, "journalctl", "-u", in.unitName()+".service", "--no-pager", "-o", "cat").stdout
+	} else {
+		b, _ := os.ReadFile(filepath.Join(in.state, "service.log"))
+		log = string(b)
+	}
+	if !strings.Contains(log, "sync targets disabled by sync = off") {
+		bad = append(bad, "Go's log does not say sync targets disabled by sync = off")
+	}
+	if len(bad) > 0 {
+		return false, strings.Join(bad, "; ")
+	}
+	return true, "GET .../audit-export: enabled false; the log: sync targets disabled by sync = off"
 }
 
 // --- parity: the source's export against migrate's checks ---
