@@ -236,7 +236,9 @@ func tailnetConf(machine, controlURL string) string {
 func (w *tailnetWorld) docker(args ...string) ran { return run("", nil, nil, "docker", args...) }
 
 // dropEnvLines removes the lines starting with prefix from an .env file,
-// keeping its mode; a missing file is nothing to do.
+// keeping its mode, atomically (a temporary file beside it, synced, then
+// renamed over it: an interrupted cleanup leaves the old file or the new
+// one, never half of either); a missing file is nothing to do.
 func dropEnvLines(path, prefix string) error {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -255,7 +257,36 @@ func dropEnvLines(path, prefix string) error {
 			keep = append(keep, l)
 		}
 	}
-	return os.WriteFile(path, []byte(strings.Join(keep, "")), fi.Mode().Perm())
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	done := false
+	defer func() {
+		if !done {
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	if _, err := tmp.WriteString(strings.Join(keep, "")); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(fi.Mode().Perm()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	done = true
+	return nil
 }
 
 // headscaleCLI runs the headscale command in its container.
@@ -439,14 +470,19 @@ func (w *tailnetWorld) machine(name string) string {
 	return "vl-rh-" + runID + "-" + name
 }
 
-// holder is the node the client's map gives machine's name to (its
-// StableID; on Headscale its node id), "" when none.
-func (w *tailnetWorld) holderOf(machine string) string {
+// holderOf is the node the client's map gives machine's name to (its
+// StableID; on Headscale its node id), "" when none; ok is false when the
+// client's status could not be read, which says nothing of the holder.
+func (w *tailnetWorld) holderOf(machine string) (string, bool) {
 	st, ok := w.status()
 	if !ok {
-		return ""
+		return "", false
 	}
-	fqdn := machine + "." + w.suffix
+	return holderIn(st, machine+"."+w.suffix), true
+}
+
+// holderIn is the peer of st named fqdn, "" when none.
+func holderIn(st tailnetStatus, fqdn string) string {
 	for _, p := range st.Peer {
 		if strings.EqualFold(strings.TrimSuffix(p.DNSName, "."), fqdn) {
 			return p.ID
@@ -468,7 +504,7 @@ func (w *tailnetWorld) meta(machine string) (string, bool) {
 func (w *tailnetWorld) served(machine string, d time.Duration, holds func(id, meta string) bool) (string, string, bool) {
 	var id, meta string
 	ok := pollUntil(d, 2*time.Second, func() bool {
-		id = w.holderOf(machine)
+		id, _ = w.holderOf(machine)
 		meta, _ = w.meta(machine)
 		return holds(id, meta)
 	})
@@ -735,8 +771,13 @@ func abortMidHandoff(t *testing.T, w *tailnetWorld, rel release, s3 *s3Server) {
 	measure("item 14: the nodes at the kill", w.nodeNames())
 	// The kill left the name off the sidecar's node (renamed away, the
 	// target's not yet named): so the name coming back proves the undo.
+	// A status that cannot be read is not a move.
 	var atKill string
-	moved := pollUntil(60*time.Second, 2*time.Second, func() bool { atKill = w.holderOf(machine2); return atKill != sidecar2 })
+	moved := pollUntil(60*time.Second, 2*time.Second, func() bool {
+		id, ok := w.holderOf(machine2)
+		atKill = id
+		return ok && id != sidecar2
+	})
 	record(t, item, "at the kill the name is off the sidecar's node", moved, fmt.Sprintf("the name's node %q (the sidecar's %q)", atKill, sidecar2))
 	ab := in2.migrateEnv(rel, true, rel.pin(), append([]string{"--abort"}, w.authority()...)...)
 	record(t, item, "--abort after the kill mid-handoff", ab.code == 0, ab.String()+" "+lastLines(ab.stdout, 4))

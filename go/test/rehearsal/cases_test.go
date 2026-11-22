@@ -139,11 +139,16 @@ func imagePin(t *testing.T, in *installation, rel release) {
 	base := rel.Images["varlatchd"][:strings.Index(rel.Images["varlatchd"], "@")]
 	must(t, run("", nil, []byte("FROM "+base+"\nLABEL org.varlatch.rehearsal.local="+runID+"\n"), "docker", "build", "-q", "-t", local, "-"), "build a local image")
 	t.Cleanup(func() { run("", nil, nil, "docker", "image", "rm", local) })
-	digests := strings.TrimSpace(run("", nil, nil, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", local).stdout)
+	raw := strings.TrimSpace(must(t, run("", nil, nil, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", local), "inspect the local image").stdout)
+	repoDigests, err := decodeRepoDigests(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digests := raw
 	measure("item 8: the local image's RepoDigests", digests)
 	in.swapImage(t, local)
 	r = in.migrateEnv(rel, true, rel.pin(), "--dry-run")
-	if digests == "[]" {
+	if len(repoDigests) == 0 {
 		// The classic image store: no RepoDigests, the no-digest refusal.
 		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "not pinned by a registry digest"), r.String())
 	} else {
@@ -157,6 +162,17 @@ func imagePin(t *testing.T, in *installation, rel release) {
 		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "the source's image is repository "+localRepo+",") && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
 	}
 	in.swapImage(t, rel.Images["varlatchd"])
+}
+
+// decodeRepoDigests is `docker image inspect --format '{{json
+// .RepoDigests}}'`'s answer: a JSON list of name@sha256:... (or null, an
+// image without any).
+func decodeRepoDigests(raw string) ([]string, error) {
+	var d []string
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		return nil, fmt.Errorf("docker image inspect's RepoDigests %q: %v", raw, err)
+	}
+	return d, nil
 }
 
 // swapImage points the source's varlatchd service at image and recreates

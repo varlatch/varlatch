@@ -110,6 +110,23 @@ func TestTailnetPieces(t *testing.T) {
 		if err := dropEnvLines(filepath.Join(t.TempDir(), "missing"), "TS_AUTHKEY="); err != nil {
 			t.Errorf("a missing file: %v", err)
 		}
+		// Atomic: the temporary file was renamed over it, none is left.
+		entries, _ := os.ReadDir(filepath.Dir(p))
+		if len(entries) != 1 || entries[0].Name() != ".env" {
+			t.Errorf("left beside it: %v", entries)
+		}
+	})
+	t.Run("the name's holder in the client's map", func(t *testing.T) {
+		st := tailnetStatus{Peer: map[string]tailnetPeer{
+			"a": {ID: "2", DNSName: "rh-tailnet-vl-op-o.rh.example."},
+			"b": {ID: "3", DNSName: "RH-Tailnet.rh.example."},
+		}}
+		if got := holderIn(st, "rh-tailnet.rh.example"); got != "3" {
+			t.Errorf("holder %q, want 3", got)
+		}
+		if got := holderIn(st, "rh-other.rh.example"); got != "" {
+			t.Errorf("no holder: %q", got)
+		}
 	})
 	t.Run("the profile", func(t *testing.T) {
 		key := filepath.Join(dir, "key")
