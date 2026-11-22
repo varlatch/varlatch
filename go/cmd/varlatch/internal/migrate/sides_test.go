@@ -663,15 +663,43 @@ func TestComposeOutboundAllow(t *testing.T) {
 		})
 	}
 	secret := `["VARLATCH_PUBLIC_URL=https://vault.example.test",`
-	for name, run := range map[string]*scripted{
-		"inspect fails":    {t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")}, inspect: {Code: 1, Said: []byte("Error: no such object")}}},
-		"inspect not JSON": {t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")}, inspect: {Answer: []byte(secret)}}},
-		"config fails":     {t: t, answers: map[string]Ran{ps: {}, config: {Code: 1, Said: []byte("invalid interpolation format")}}},
-		"config not JSON":  {t: t, answers: map[string]Ran{ps: {}, config: {Answer: []byte(`{"name":"p","services":` + secret)}}},
+	// What each says, beyond that the variable cannot be read; never a
+	// value Docker printed (config's stderr can hold any).
+	for name, c := range map[string]struct {
+		run  *scripted
+		says string
+	}{
+		"inspect fails":    {&scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")}, inspect: {Code: 1, Said: []byte("Error: no such object")}}}, "docker inspect"},
+		"inspect not JSON": {&scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")}, inspect: {Answer: []byte(secret)}}}, "docker inspect"},
+		// Not "not running": ps failed, or found more than one.
+		"ps fails":       {&scripted{t: t, answers: map[string]Ran{ps: {Code: 1, Said: []byte("no configuration file provided")}}}, "docker compose ps -q varlatchd failed (exit 1), so migrate cannot tell whether"},
+		"two containers": {&scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\nc2\n")}}}, "names 2 running containers (c1, c2)"},
+		"config fails": {&scripted{t: t, answers: map[string]Ran{ps: {}, config: {Code: 1, Said: []byte("invalid interpolation format for https://vault.example.test")}}},
+			"docker compose config failed (exit 1; run docker compose config in"},
+		"config needs a variable": {&scripted{t: t, answers: map[string]Ran{ps: {}, config: {Code: 1, Said: []byte(`required variable VARLATCH_TAILNET_NAME is missing a value: set in .env, near https://vault.example.test`)}}},
+			"a variable the Compose files need is unset"},
+		"config not JSON": {&scripted{t: t, answers: map[string]Ran{ps: {}, config: {Answer: []byte(`{"name":"p","services":` + secret)}}}, "did not give the varlatchd service's environment"},
 	} {
-		if _, _, err := (&Compose{Directory: t.TempDir(), Run: run}).outboundAllow(context.Background()); err == nil ||
-			!strings.Contains(err.Error(), "VARLATCH_OUTBOUND_ALLOW cannot be read") || strings.Contains(err.Error(), "vault.example.test") {
+		_, _, err := (&Compose{Directory: t.TempDir(), Run: c.run}).outboundAllow(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "VARLATCH_OUTBOUND_ALLOW cannot be read") || !strings.Contains(err.Error(), c.says) ||
+			strings.Contains(err.Error(), "vault.example.test") || strings.Contains(err.Error(), "missing a value") {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Whether varlatchd runs in its sidecar's network, from its Compose
+// project: the stock Tailscale topology's network_mode, or its own.
+func TestComposeSharesTailnetNetwork(t *testing.T) {
+	const config = "docker compose config --no-interpolate --format json"
+	for answer, want := range map[string]bool{
+		`{"name":"p","services":{"varlatchd":{"network_mode":"service:tailscale"},"tailscale":{}}}`: true,
+		`{"name":"p","services":{"varlatchd":{},"tailscale":{}}}`:                                   false,
+		`{"name":"p","services":{"varlatchd":{"network_mode":"host"},"tailscale":{}}}`:              false,
+	} {
+		run := &scripted{t: t, answers: map[string]Ran{config: {Answer: []byte(answer)}}}
+		if got, err := (&Compose{Directory: t.TempDir(), Run: run}).SharesTailnetNetwork(context.Background()); err != nil || got != want {
+			t.Errorf("%s: %v %v", answer, got, err)
 		}
 	}
 }
