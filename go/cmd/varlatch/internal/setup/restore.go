@@ -223,9 +223,25 @@ func (r *run) takeName(ctx context.Context) error {
 		}
 		return r.o.Say("This node holds the tailnet name " + a.TailnetHostname + "; the old node is renamed aside. Tailnet access opens when varlatchd starts.")
 	}
-	// An earlier run may have finished it: take-name says so.
-	if resumed && take() == nil {
-		return nil
+	// The configuration must name the control server the answers do
+	// (varlatchd's tailnet_control_url): a hand-edited one is refused
+	// before the node enrols against it.
+	if got := r.configValue("tailnet_control_url"); got != a.TailnetControlURL {
+		return fmt.Errorf("setup: %s's tailnet_control_url (%s) is not the answered control server (%s): nothing was changed; put it back as answered",
+			ConfigFile, orTailscale(got), orTailscale(a.TailnetControlURL))
+	}
+	// Where an earlier run got to is read from the node's own state, never
+	// by trying take-name (on Headscale every take-name expires its API
+	// key, a refusal included): not enrolled, it enrols (held under its
+	// temporary name) and takes the name once; held, it takes the name;
+	// enrolled and no longer held, the takeover is done once its journal
+	// says so (otherwise take-name finishes it).
+	st := r.takeoverState()
+	switch {
+	case resumed && st.enrolled && !st.held && st.phase == "done":
+		return r.o.Say("This node holds the tailnet name " + a.TailnetHostname + " (an earlier run took it over).")
+	case resumed && st.enrolled:
+		return take()
 	}
 	if err := r.o.Say("Taking the tailnet name " + a.TailnetHostname + " over: this node joins as " + temp + " first (held, serving nothing), then the old node is renamed aside and this one takes the name."); err != nil {
 		return err
@@ -234,6 +250,60 @@ func (r *run) takeName(ctx context.Context) error {
 		return err
 	}
 	return take()
+}
+
+// The node's files in the data directory that a takeover leaves, as
+// varlatchd writes them (server/tailnet's StateDir and HoldFile, and
+// daemon's TakeoverFile).
+const (
+	tailnetStateFile = "tailnet/tailscaled.state"
+	tailnetHoldFile  = "tailnet-handoff.json"
+	takeoverFile     = "tailnet-takeover.json"
+)
+
+// takeover is where a restore's takeover got to, from the node's state:
+// enrolled (its tailnet state there), held (for the handoff, under its
+// temporary name), and the takeover journal's phase ("" without one).
+type takeover struct {
+	enrolled, held bool
+	phase          string
+}
+
+func (r *run) takeoverState() takeover {
+	dir := r.path(DataDir)
+	exists := func(p string) bool { _, err := os.Stat(filepath.Join(dir, p)); return err == nil }
+	t := takeover{enrolled: exists(tailnetStateFile), held: exists(tailnetHoldFile)}
+	if b, err := os.ReadFile(filepath.Join(dir, takeoverFile)); err == nil {
+		var j struct {
+			Phase string `json:"phase"`
+		}
+		if json.Unmarshal(b, &j) == nil {
+			t.phase = j.Phase
+		}
+	}
+	return t
+}
+
+// configValue is varlatchd.conf's value for key ("" when it has none).
+func (r *run) configValue(key string) string {
+	b, err := os.ReadFile(r.path(ConfigFile))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(k) == key {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func orTailscale(controlURL string) string {
+	if controlURL == "" {
+		return "none: Tailscale's control server"
+	}
+	return controlURL
 }
 
 // issuances is `varlatchd admin certificate issuances --json`.

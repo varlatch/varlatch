@@ -2390,8 +2390,14 @@ serves the tailnet listener on the node's own addresses
     `tailnet_control_url`) and `--headscale-api-key-file <file>` instead,
     and `take-name` gets `--headscale-url` (that same URL) and the key file;
     both files' modes are checked at the answers step, before anything is
-    made, and the answers are journalled, so a rerun takes the same
-    authority and one naming another control server is refused. A fresh
+    made (while the takeover is still to do), and the answers are
+    journalled, so a rerun takes the same authority and one naming another
+    control server is refused (Tailscale's, answered as no URL, included).
+    A rerun reads where the takeover got to from the node's state (enrolled,
+    held, the takeover journal's phase), never by trying `take-name`, which
+    on Headscale expires its key every time; and a `varlatchd.conf` whose
+    `tailnet_control_url` is not the answered one is refused before the
+    node enrols. A fresh
     setup on a self-hosted control server is not built yet: setup refuses
     `--tailnet-control-url` without `--restore`
     (`TestRestoreTakesTheTailnetNameOverOnHeadscale`,

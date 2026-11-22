@@ -320,8 +320,19 @@ func (r *run) saveJournal() error {
 // missing ones are asked, or, without a terminal, refused.
 func (r *run) answers() error {
 	a := r.j.Answers
+	// Once answered, a tailnet installation's control server is answered
+	// too, Tailscale's written as no URL: a URL given on a rerun is another
+	// answer, refused before anything is saved.
+	if r.j.Done["answers"] != "" && a.Ingress == Tailnet && a.TailnetControlURL == "" && r.o.Given.TailnetControlURL != "" {
+		return &UsageError{"setup already answered --tailnet-control-url differently for this host (Tailscale's control server, " + Journal + "); setup does not change an installation: moving it is `varlatch move`"}
+	}
 	if differ := a.Merge(r.o.Given); len(differ) > 0 {
 		return &UsageError{fmt.Sprintf("setup already answered --%s differently for this host (%s); setup does not change an installation: moving it is `varlatch move`", strings.Join(differ, ", --"), Journal)}
+	}
+	// A self-hosted control server, for now a restore's only (setup's fresh
+	// installation on one is not built yet): refused before any question.
+	if a.TailnetControlURL != "" && r.j.Restore == nil {
+		return &UsageError{"setup: --tailnet-control-url goes with --restore for now: setup does not yet set up a fresh installation on a self-hosted control server"}
 	}
 	for {
 		missing := a.Missing()
@@ -339,16 +350,14 @@ func (r *run) answers() error {
 	if err := a.Check(); err != nil {
 		return &UsageError{err.Error()}
 	}
-	// A restore's OAuth client: varlatchd reads it at the takeover, after
-	// the node enrols, and refuses one open to group or others; so its file
-	// is checked now (never read by setup), before anything is made.
-	// A self-hosted control server, for now a restore's only: setup's
-	// fresh installation on one is not built yet.
-	if a.TailnetControlURL != "" && r.j.Restore == nil {
-		return &UsageError{"setup: --tailnet-control-url goes with --restore for now: setup does not yet set up a fresh installation on a self-hosted control server"}
-	}
+	// The takeover's authority (Tailscale's OAuth client, or a Headscale
+	// API key): varlatchd reads its file at the takeover, after the node
+	// enrols, and refuses one open to group or others; so the file is
+	// checked now (never read by setup), before anything is made, and only
+	// while the takeover is still to do (a key expired and deleted after it
+	// blocks nothing).
 	for _, f := range []struct{ flag, path string }{{"tailscale-oauth-client-file", a.TailscaleOAuthClientFile}, {"headscale-api-key-file", a.HeadscaleAPIKeyFile}} {
-		if f.path == "" {
+		if f.path == "" || r.j.Done["name"] != "" {
 			continue
 		}
 		if err := secretFileMode(r.path(f.path)); err != nil {
