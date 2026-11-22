@@ -445,3 +445,88 @@ func TestTheFrozenCopy(t *testing.T) {
 		}
 	}
 }
+
+// Go's local backup store, backups/, kept in the data directory after a
+// discarded copy (varlatch migrate --finish --delete-old-data after a
+// rollback; rehearsal r16f): an import leaves it as it is, a directory
+// only. CheckFresh, the check a preflight makes, gives the import's
+// verdict without its removals.
+func TestAnImportKeepsGoBackups(t *testing.T) {
+	keep := []string{"backups"}
+	t.Run("a backups directory: imported beside, untouched", func(t *testing.T) {
+		s := loadSource(t)
+		dir := t.TempDir()
+		archive := filepath.Join(dir, "backups", "final.vltbak")
+		if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(archive, []byte("the final archive"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckFresh(dir, nil, keep); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Import(context.Background(), bytes.NewReader(sourceBundle(t, s, nil, false)), Options{DataDir: dir, KeepDirs: keep, RootKEK: s.RootKEK, Release: "0.50.0-test"}); err != nil {
+			t.Fatal(err)
+		}
+		if b, err := os.ReadFile(archive); err != nil || string(b) != "the final archive" {
+			t.Fatalf("backups/ after the import: %q, %v", b, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, config.DatabaseFile)); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, c := range []struct {
+		what string
+		make func(t *testing.T, dir string)
+		want string
+	}{
+		{"a file named backups", func(t *testing.T, dir string) {
+			if err := os.WriteFile(filepath.Join(dir, "backups"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, "holds backups, which is not a directory"},
+		{"a link named backups, to a directory", func(t *testing.T, dir string) {
+			if err := os.Symlink(t.TempDir(), filepath.Join(dir, "backups")); err != nil {
+				t.Fatal(err)
+			}
+		}, "holds backups, which is not a directory"},
+		{"backups and another name", func(t *testing.T, dir string) {
+			if err := os.Mkdir(filepath.Join(dir, "backups"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "notes.txt"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, "is not empty (notes.txt)"},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			dir := t.TempDir()
+			c.make(t, dir)
+			for name, err := range map[string]error{"CheckFresh": CheckFresh(dir, nil, keep), "fresh": fresh(dir, nil, keep)} {
+				if err == nil || !strings.Contains(err.Error(), c.want) {
+					t.Errorf("%s: %v, want %q", name, err, c.want)
+				}
+			}
+		})
+	}
+	t.Run("an interrupted import's leftover: the check removes nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		left := filepath.Join(dir, importPrefix+"0123456789ab.db")
+		if err := os.WriteFile(left, []byte("cut short"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := CheckFresh(dir, nil, keep); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(left); err != nil {
+			t.Fatalf("CheckFresh removed the leftover: %v", err)
+		}
+		if err := fresh(dir, nil, keep); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(left); !os.IsNotExist(err) {
+			t.Fatalf("fresh kept the leftover: %v", err)
+		}
+	})
+}

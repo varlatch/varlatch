@@ -204,7 +204,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	case sub == "config":
 		return runConfigCheck(cfg, stdout, stderr)
 	case sub == "outbound":
-		return runOutboundCheck(cfg, rest, stdout, stderr)
+		return runOutboundCheck(cfg, path, rest, stdout, stderr)
 	case sub == "kek":
 		return runKek(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "custody" && rest[0] == "status":

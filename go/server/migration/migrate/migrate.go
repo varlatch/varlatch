@@ -75,10 +75,14 @@ type Result struct {
 
 // Options are an import's or an export's.
 type Options struct {
-	// DataDir is the data directory: empty but for the names in Ignore, for
-	// an import.
+	// DataDir is the data directory: empty but for the names in Ignore and
+	// the directories in KeepDirs, for an import.
 	DataDir string
 	Ignore  []string
+	// KeepDirs are directories an import leaves as they are (Go's local
+	// backup store, backups/, kept after a discarded copy): each must be a
+	// directory, never a link or a file, and nothing in it is read.
+	KeepDirs []string
 	// RootKEK checks the imported installation's canary.
 	RootKEK []byte
 	// Release is this varlatchd's, recorded in the schema and the events.
@@ -157,12 +161,24 @@ var staleTemp = regexp.MustCompile(`^\.migrate-(import|export)-[0-9a-f]{12}\.db(
 // was killed leaves in the data directory (staleTemp).
 func IsLeftover(name string) bool { return staleTemp.MatchString(name) }
 
-// fresh checks dir holds nothing but the ignored names, after removing what
-// an import or a reverse export that was killed left (that exact pattern
-// only, regular files only: the caller holds the data directory, with no
-// varlatchd running, so neither runs now). Anything else, a look-alike
-// included, is refused and named.
-func fresh(dir string, ignore []string) error {
+// fresh checks dir holds nothing but the ignored names and the kept
+// directories, after removing what an import or a reverse export that was
+// killed left (that exact pattern only, regular files only: the caller
+// holds the data directory, with no varlatchd running, so neither runs
+// now). Anything else, a look-alike included, is refused and named.
+func fresh(dir string, ignore, keepDirs []string) error {
+	return freshEntries(dir, ignore, keepDirs, true)
+}
+
+// CheckFresh is fresh's verdict without its removals, for a check made
+// before an import (varlatch migrate's preflight, through `varlatchd admin
+// migrate state`): what an interrupted import left counts as removable,
+// as the import then removes it.
+func CheckFresh(dir string, ignore, keepDirs []string) error {
+	return freshEntries(dir, ignore, keepDirs, false)
+}
+
+func freshEntries(dir string, ignore, keepDirs []string, remove bool) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -171,7 +187,17 @@ func fresh(dir string, ignore []string) error {
 		if slices.Contains(ignore, e.Name()) {
 			continue
 		}
+		if slices.Contains(keepDirs, e.Name()) {
+			// e.Type is Lstat's: a link to a directory is not one.
+			if !e.IsDir() {
+				return fmt.Errorf("the data directory %s holds %s, which is not a directory: an import keeps that name only as a directory (Go's backups)", dir, e.Name())
+			}
+			continue
+		}
 		if staleTemp.MatchString(e.Name()) && e.Type().IsRegular() {
+			if !remove {
+				continue
+			}
 			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
 				return fmt.Errorf("an interrupted import or export left %s, which cannot be removed: %w", e.Name(), err)
 			}
@@ -200,7 +226,7 @@ func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err e
 	if err != nil {
 		return res, err
 	}
-	if err := fresh(o.DataDir, o.Ignore); err != nil {
+	if err := fresh(o.DataDir, o.Ignore, o.KeepDirs); err != nil {
 		return res, err
 	}
 	if _, err := bundle.Verify(in, m); err != nil {
