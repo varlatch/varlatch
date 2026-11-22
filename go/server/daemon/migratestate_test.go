@@ -139,9 +139,16 @@ const (
 func TestAdminMigrateState(t *testing.T) {
 	in := newInstall(t, "backup_interval = off\n")
 	code, out, _ := migrateWith(t, in.conf, nil, "state")
-	if code != ExitOK || !strings.Contains(out, `"journal":null`) || !strings.Contains(out, `"database":false`) {
+	if code != ExitOK || !strings.Contains(out, `"journal":null`) || !strings.Contains(out, `"database":false`) || !strings.Contains(out, `"outboundAllow":""`) {
 		t.Fatalf("no journal: %d %q", code, out)
 	}
+	// The configuration's outbound_allow, which migrate holds to the
+	// source's.
+	in.write(t, "backup_interval = off\noutbound_allow = coolify.lan,10.0.0.0/8:8000\n")
+	if code, out, _ := migrateWith(t, in.conf, nil, "state"); code != ExitOK || !strings.Contains(out, `"outboundAllow":"coolify.lan,10.0.0.0/8:8000"`) {
+		t.Fatalf("outbound_allow: %d %q", code, out)
+	}
+	in.write(t, "backup_interval = off\n")
 	write := func(id, phase string) (int, string) {
 		code, _, errOut := migrateWith(t, in.conf, journalText(id, phase), "state", "--write")
 		return code, errOut

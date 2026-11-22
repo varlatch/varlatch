@@ -83,6 +83,29 @@ func TestPrepareTargetOnAnEmptyHost(t *testing.T) {
 // the unit enabled; neither directory is chmodded or chowned. The undo
 // then removes only the configuration, and keeps /etc/varlatch with the
 // operator's file.
+// A migration's target keeps the source's outbound allow list: written as
+// outbound_allow; one with a line break is refused before anything is made.
+func TestPrepareTargetCarriesTheOutboundAllowList(t *testing.T) {
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	if err := os.MkdirAll(filepath.Dir(h.Path(DataDir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var made []string
+	o := Options{Host: h, Given: proxyAnswers(), Say: (&recorder{}).say, OutboundAllow: "coolify.lan,convex.lan:3210\nlisten = 0.0.0.0:80"}
+	if _, err := PrepareTarget(context.Background(), o, func(item string) error { made = append(made, item); return nil }); err == nil || !strings.Contains(err.Error(), "line break") || len(made) != 0 {
+		t.Fatalf("a line break: %v, made %v", err, made)
+	}
+	o.OutboundAllow = " coolify.lan,convex.lan:3210 "
+	if _, err := PrepareTarget(context.Background(), o, func(item string) error { made = append(made, item); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	conf, err := os.ReadFile(h.Path(ConfigFile))
+	if err != nil || !strings.Contains(string(conf), "\noutbound_allow = coolify.lan,convex.lan:3210\n") {
+		t.Fatalf("the configuration: %s %v", conf, err)
+	}
+}
+
 func TestPrepareTargetUsesWhatIsThere(t *testing.T) {
 	skipOffUnix(t)
 	h, said := newFakeHost(t), &recorder{}
