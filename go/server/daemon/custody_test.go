@@ -170,12 +170,16 @@ func TestKeyCustodyCommands(t *testing.T) {
 	}
 }
 
-// varlatchd admin run by hand outside the unit (what doctor's remedies and
-// the README give): the configuration names no key file, and the keys are
-// beside it, where the unit's LoadCredential reads them. Offline and
-// through the running daemon, the admin commands find them there; with no
-// Root KEK beside the configuration they say what is lacking.
+// varlatchd admin run by hand as root outside the unit (what doctor's
+// remedies and the README give): the configuration names no key file, and
+// the keys are beside it, where the unit's LoadCredential reads them.
+// Offline and through the running daemon, the admin commands find them
+// there; not as another user (a member of the varlatch group sees that
+// root-kek is there); with no Root KEK beside the configuration they say
+// what is lacking, a run by hand's own remedy.
 func TestAdminFindsTheKeysBesideTheConfiguration(t *testing.T) {
+	defer func(was func() bool) { adminAsRoot = was }(adminAsRoot)
+	adminAsRoot = func() bool { return true }
 	in := newInstall(t, "")
 	if err := os.WriteFile(filepath.Join(in.dir, "backup-key"), []byte(hex.EncodeToString(envelope.GenerateKey())+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -207,7 +211,12 @@ func TestAdminFindsTheKeysBesideTheConfiguration(t *testing.T) {
 	if err := os.WriteFile(elsewhere, []byte(conf), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := runAdmin(t, "custody", "status", "--config", elsewhere); code != ExitConfig || !strings.Contains(errOut, "no Root KEK") {
+	const byHand = "no Root KEK: set root_kek_file, or run this as root with the root-kek file beside the configuration"
+	if code, _, errOut := runAdmin(t, "custody", "status", "--config", elsewhere); code != ExitConfig || !strings.Contains(errOut, byHand) || strings.Contains(errOut, "under its unit") {
 		t.Fatalf("no Root KEK beside the configuration: %d %q", code, errOut)
+	}
+	adminAsRoot = func() bool { return false }
+	if code, _, errOut := runAdmin(t, "bootstrap-status", "--config", in.conf); code != ExitConfig || !strings.Contains(errOut, byHand) {
+		t.Fatalf("not as root: %d %q", code, errOut)
 	}
 }

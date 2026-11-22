@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -86,12 +87,42 @@ func Refusal(environ []string, keys ...Key) string {
 	return ""
 }
 
-// Configured are the keys a varlatchd configuration file names
-// (root_kek_file, backup_key_file), each read when this process can read
-// it: the CLI's view of them. A key it cannot read or parse is left out;
-// so is everything when the configuration cannot be read. Clear each
-// Bytes after use.
-func Configured(confPath string) []Key {
+// CredentialsDir is the credentials directory a host command run outside
+// the unit loads its keys from (getenv: the process's environment): the
+// run's CREDENTIALS_DIRECTORY when it sets one (an empty value is none);
+// otherwise, for a run as root (root), the configuration's directory when
+// the Root KEK (root-kek) is there, as the unit's LoadCredential reads it
+// (/etc/varlatch/root-kek beside /etc/varlatch/varlatchd.conf); else "".
+// Only as root: /etc/varlatch is 0750 root:varlatch, so a member of the
+// varlatch group can see that root-kek is there, though not read it.
+// varlatchd admin (config.HostEnv), the CLI's host front and the image's
+// key refusal all apply this one rule.
+func CredentialsDir(getenv func(string) string, confPath string, root bool) string {
+	if d := getenv("CREDENTIALS_DIRECTORY"); d != "" {
+		return d
+	}
+	if !root {
+		return ""
+	}
+	abs, err := filepath.Abs(confPath)
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Dir(abs)
+	if _, err := os.Stat(filepath.Join(dir, "root-kek")); err != nil {
+		return ""
+	}
+	return dir
+}
+
+// Configured are the keys a varlatchd configuration file loads: those it
+// names (root_kek_file, backup_key_file) and, for one it names none for,
+// credentialsDir's (root-kek, backup-key: the credentials directory, as
+// the configuration takes it; "" for none), each read when this process
+// can read it: the CLI's view of them. A key it cannot read or parse is
+// left out; so is everything when the configuration cannot be read. Clear
+// each Bytes after use.
+func Configured(confPath, credentialsDir string) []Key {
 	f, err := os.Open(confPath)
 	if err != nil {
 		return nil
@@ -113,8 +144,11 @@ func Configured(confPath string) []Key {
 	}
 	_ = f.Close()
 	var keys []Key
-	read := func(name, what string, parse func(string) ([]byte, error)) {
+	read := func(name, credential, what string, parse func(string) ([]byte, error)) {
 		path := files[name]
+		if path == "" && credentialsDir != "" {
+			path = filepath.Join(credentialsDir, credential)
+		}
 		if path == "" {
 			return
 		}
@@ -128,7 +162,7 @@ func Configured(confPath string) []Key {
 			keys = append(keys, Key{what, key})
 		}
 	}
-	read("root_kek_file", RootKEK, envelope.ParseRootKEK)
-	read("backup_key_file", BEK, backup.ParseKey)
+	read("root_kek_file", "root-kek", RootKEK, envelope.ParseRootKEK)
+	read("backup_key_file", "backup-key", BEK, backup.ParseKey)
 	return keys
 }
