@@ -253,6 +253,9 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if err != nil {
 		return prev, err
 	}
+	if err := e.sameOutbound(ing, tgt); err != nil {
+		return prev, err
+	}
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
 		Drain: int64(e.drain() / time.Second), Ingress: e.Options.Ingress, Transfer: &TransferRecord{Origin: origin}, History: []Step{}, Created: created}
 	if e.Options.Ingress == Proxy {
@@ -1130,5 +1133,52 @@ func RunKeyText(k []byte) []byte {
 	out := make([]byte, hex.EncodedLen(len(k))+1)
 	hex.Encode(out, k)
 	out[len(out)-1] = '\n'
+	return out
+}
+
+// sameOutbound holds the target's outbound allow list to the source's
+// (VARLATCH_OUTBOUND_ALLOW, the same entries as outbound_allow): the
+// private destinations the TypeScript server reached stay reachable.
+//   - A target that sets no outbound_allow while the source allows some
+//     is refused, nothing done: Go would refuse every one of them (Sync
+//     Targets, webhooks, OIDC issuers, the audit export) once it serves,
+//     and the fix is one line of its configuration. A target migrate
+//     makes carries the source's list, so it is never refused.
+//   - A target whose list lacks some of the source's entries goes on,
+//     with a warning naming them: a wider entry of its own may cover
+//     them, which comparing entries cannot tell.
+func (e *Engine) sameOutbound(ing IngressInfo, tgt TargetInfo) error {
+	src := allowEntries(ing.OutboundAllow)
+	if len(src) == 0 {
+		return nil
+	}
+	have := allowEntries(tgt.OutboundAllow)
+	if len(have) == 0 {
+		return fmt.Errorf("preflight: the source allows private destinations (VARLATCH_OUTBOUND_ALLOW=%s), and the target's configuration %s sets no outbound_allow, so the Go installation would refuse them all: add the line outbound_allow = %s to it; nothing was done",
+			ing.OutboundAllow, tgt.Config, ing.OutboundAllow)
+	}
+	var missing []string
+	for _, x := range src {
+		if !slices.Contains(have, x) {
+			missing = append(missing, x)
+		}
+	}
+	if len(missing) > 0 {
+		e.say("Warning: the target's outbound_allow (%s) lacks entries the source allows (%s): unless its own entries cover them, the Go installation refuses those destinations; the source's list is VARLATCH_OUTBOUND_ALLOW=%s.",
+			tgt.OutboundAllow, strings.Join(missing, ","), ing.OutboundAllow)
+	}
+	return nil
+}
+
+// allowEntries are an allow list's entries as compared: without blanks,
+// lower-cased (names and IPv6 addresses), empty ones dropped.
+func allowEntries(spec string) []string {
+	var out []string
+	for _, raw := range strings.Split(spec, ",") {
+		x := strings.ToLower(strings.Join(strings.Fields(raw), ""))
+		if x != "" {
+			out = append(out, x)
+		}
+	}
 	return out
 }

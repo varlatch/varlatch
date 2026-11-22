@@ -53,7 +53,7 @@ func (m *setupMaker) Make(ctx context.Context, src migrate.IngressInfo, kind mig
 	if a.Backups == "" {
 		a.Backups = "host"
 	}
-	_, err := setup.PrepareTarget(ctx, setup.Options{Host: m.host, Given: a, Say: m.say, AcceptExistingUser: m.accept, Ours: earlier}, made)
+	_, err := setup.PrepareTarget(ctx, setup.Options{Host: m.host, Given: a, Say: m.say, AcceptExistingUser: m.accept, Ours: earlier, OutboundAllow: src.OutboundAllow}, made)
 	return err
 }
 

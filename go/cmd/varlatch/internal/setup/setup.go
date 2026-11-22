@@ -111,6 +111,10 @@ type Asker interface {
 // Options are a run's.
 type Options struct {
 	Host Host
+	// OutboundAllow is a migration target's outbound_allow: the source's
+	// VARLATCH_OUTBOUND_ALLOW, carried as it is (the entries are the same
+	// on both lines). PrepareTarget only; setup asks no such question.
+	OutboundAllow string
 	// Given are the answers from the flags and the answers file.
 	Given Answers
 	// Ask is nil without a terminal: every answer must be given.

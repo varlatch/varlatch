@@ -227,3 +227,45 @@ func TestSidecarOwned(t *testing.T) {
 		}
 	}
 }
+
+// A service's environment as `docker compose config --format json`
+// prints it, in both forms: testdata/compose-config holds Compose 5.6.1's
+// own output (docker compose -f docker-compose.yml [-f override.yml]
+// config --no-interpolate --format json) for a list (- A=1), a map, and a
+// map an overlay merged a list into (printed as a list). A name without a
+// value is not set.
+func TestComposeEnvironmentForms(t *testing.T) {
+	str := func(v string) *string { return &v }
+	for file, want := range map[string]map[string]composeEnv{
+		"map-and-list.json": {"a": {"A": str("1"), "B": nil, "C": str("")}, "b": {"X": str("1"), "Y": nil}},
+		"overlay-list.json": {"a": {"A": str("1"), "B": nil, "C": str("")}, "b": {"X": str("1"), "Y": nil, "Z": str("2")}},
+	} {
+		b, err := os.ReadFile(filepath.Join("testdata", "compose-config", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: b}}}
+		cfg, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context())
+		if err != nil || cfg.Name != "envprobe" {
+			t.Fatalf("%s: %+v %v", file, cfg, err)
+		}
+		for svc, env := range want {
+			got := cfg.Services[svc].Environment
+			if len(got) != len(env) {
+				t.Errorf("%s %s: %v", file, svc, got)
+			}
+			for k, v := range env {
+				g, ok := got[k]
+				if !ok || (v == nil) != (g == nil) || v != nil && *v != *g {
+					t.Errorf("%s %s %s: %v, want %v", file, svc, k, g, v)
+				}
+			}
+		}
+	}
+	// What Compose cannot have printed is said as such, not as a project
+	// without a name.
+	run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"p","services":{"a":{"environment":42}}}`)}}}
+	if _, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context()); err == nil || !strings.Contains(err.Error(), "a configuration migrate cannot read") {
+		t.Fatalf("an environment of neither form: %v", err)
+	}
+}

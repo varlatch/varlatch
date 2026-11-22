@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,6 +46,12 @@ func destinationsDB(t *testing.T) *sql.DB {
 				('whk_8', 'org_g', 'https://private.test/g', '{}', 8, 0)`,
 			`INSERT INTO webhooks (id, organization_id, url, secret_envelope, created_at, cursor_occurred_at, revoked_at) VALUES ('whk_9', 'org_a', 'https://private.test/r', '{}', 9, 0, 10)`,
 			`INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope) VALUES ('pcn_1', 'org_a', 'coolify', 'https://private.test', 'Lab', '{}')`,
+			// GitHub Connections: RunCheck leaves them out, CheckGitHub lists the live ones.
+			`INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope) VALUES
+				('pcn_g1', 'org_a', 'github-actions', 'acme', 'Acme on GitHub', '{}'),
+				('pcn_g2', 'org_b', 'github-actions', 'beta', 'Beta on GitHub', '{}'),
+				('pcn_g3', 'org_g', 'github-actions', 'gone', 'Gone', '{}')`,
+			`INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, revoked_at) VALUES ('pcn_g4', 'org_a', 'github-actions', 'old', 'Old', '{}', 1)`,
 		} {
 			if _, err := tx.ExecContext(ctx, q); err != nil {
 				return err
@@ -124,6 +131,53 @@ func TestRunCheck(t *testing.T) {
 	// Nothing configured: exit 0, and the line that says so.
 	if r, _ := p.RunCheck(context.Background(), nil, "", now); r.ExitCode != 0 || !strings.Contains(strings.Join(r.Lines(), "\n"), "No destinations configured.") {
 		t.Errorf("no database: %+v", r)
+	}
+}
+
+// The GitHub Connections' destination, GitHub's API, checked as the
+// others are: every live Connection's, one Organization's with org, and
+// refused when the name resolves to a private address.
+func TestCheckGitHub(t *testing.T) {
+	reader := destinationsDB(t)
+	dns := checkDNS()
+	dns.set("api.github.com", v4("140.82.121.6"))
+	p := New(nil, Options{Resolve: dns.resolve})
+	got, err := p.CheckGitHub(context.Background(), reader, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, d := range got {
+		ids = append(ids, d.Organization+" "+d.ID+" "+string(d.Kind)+" "+d.Scheme+"://"+d.Host+":"+strconv.Itoa(d.Port)+" "+d.Verdict)
+	}
+	if want := "acme pcn_g1 github https://api.github.com:443 public|beta pcn_g2 github https://api.github.com:443 public"; strings.Join(ids, "|") != want {
+		t.Errorf("GitHub destinations %q, want %q", ids, want)
+	}
+	if got, _ := p.CheckGitHub(context.Background(), reader, "beta"); len(got) != 1 || got[0].ID != "pcn_g2" {
+		t.Errorf("beta: %+v", got)
+	}
+	r := Report{Destinations: got}
+	if lines := strings.Join(r.Lines(), "\n"); !strings.Contains(lines, `acme  GitHub  pcn_g1 "Acme on GitHub"  https://api.github.com:443  [140.82.121.6]  public`) {
+		t.Errorf("the lines:\n%s", lines)
+	}
+	dns.set("api.github.com", v4("10.1.2.3"))
+	if got, _ := New(nil, Options{Resolve: dns.resolve}).CheckGitHub(context.Background(), reader, "acme"); len(got) != 1 || got[0].Verdict != "refused" || got[0].Reason != "private_address" {
+		t.Errorf("a private answer: %+v", got)
+	}
+	if got, err := p.CheckGitHub(context.Background(), nil, ""); err != nil || len(got) != 0 {
+		t.Errorf("no database: %v %v", got, err)
+	}
+}
+
+// The report names the setting as its caller says, with its suggestion.
+func TestReportLinesFor(t *testing.T) {
+	v := "private.test"
+	r := Report{Suggested: &v}
+	s := Setting{Name: "outbound_allow (/etc/varlatchd.conf)", Suggest: func(v string) []string { return []string{"Set:", "  outbound_allow = " + v} }}
+	lines := strings.Join(r.LinesFor(s), "\n")
+	if !strings.HasPrefix(lines, "outbound_allow (/etc/varlatchd.conf): (not set)\n") || !strings.HasSuffix(lines, "\n\nSet:\n  outbound_allow = private.test") ||
+		strings.Contains(lines, "VARLATCH_OUTBOUND_ALLOW") {
+		t.Errorf("the lines:\n%s", lines)
 	}
 }
 

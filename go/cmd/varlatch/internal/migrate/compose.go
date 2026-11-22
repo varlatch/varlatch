@@ -240,14 +240,15 @@ func (c *Compose) kekPath() (string, error) {
 
 // Ingress reads the installation's .env as its Compose files do: the
 // public URL (VARLATCH_PUBLIC_URL), the Caddy overlay in COMPOSE_FILE
-// (public ingress), and the dashboard's published address
-// (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default).
+// (public ingress), the dashboard's published address
+// (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default), and the
+// outbound allow list (VARLATCH_OUTBOUND_ALLOW).
 func (c *Compose) Ingress(context.Context) (IngressInfo, error) {
 	env, err := c.envFile()
 	if err != nil {
 		return IngressInfo{}, err
 	}
-	info := IngressInfo{PublicURL: env["VARLATCH_PUBLIC_URL"]}
+	info := IngressInfo{PublicURL: env["VARLATCH_PUBLIC_URL"], OutboundAllow: strings.TrimSpace(env["VARLATCH_OUTBOUND_ALLOW"])}
 	for _, f := range strings.Split(env["COMPOSE_FILE"], string(os.PathListSeparator)) {
 		if filepath.Base(strings.TrimSpace(f)) == "docker-compose.caddy.yml" {
 			info.Caddy = true

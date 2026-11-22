@@ -1435,3 +1435,43 @@ func TestAReleaseWaitsForTheImagesStop(t *testing.T) {
 		t.Fatalf("after the stop: %v %+v gate %v", err, w.tgt.journal, w.tgt.gate)
 	}
 }
+
+// The source's outbound allow list against the target's: none at the
+// source changes nothing; a target with none while the source allows some
+// is refused before anything is done; one that lacks some of the source's
+// entries goes on, the missing ones named. Entries compare without blanks
+// or case.
+func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
+	for _, c := range []struct {
+		name, src, tgt, refused, warned string
+	}{
+		{"none at the source", "", "", "", ""},
+		{"none at the target", "coolify.lan,10.0.0.0/8:8000", "", "sets no outbound_allow", ""},
+		{"the same", "coolify.lan, 10.0.0.0/8:8000", "10.0.0.0/8:8000,COOLIFY.lan", "", ""},
+		{"a wider target", "coolify.lan", "coolify.lan,*.lan", "", ""},
+		{"one missing", "coolify.lan,convex.lan:3210", "coolify.lan", "", "lacks entries the source allows (convex.lan:3210)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			w.src.ingress.OutboundAllow = c.src
+			w.tgt.info.OutboundAllow = c.tgt
+			_, err := w.eng.Run(context.Background(), true)
+			said := strings.Join(w.said, "\n")
+			if c.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), c.refused) || !strings.Contains(err.Error(), "outbound_allow = "+c.src) || !strings.Contains(err.Error(), "nothing was done") {
+					t.Fatalf("%v", err)
+				}
+				if slices.Contains(w.src.calls, "backup") {
+					t.Fatalf("a backup was made before the refusal: %v", w.src.calls)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (c.warned != "") != strings.Contains(said, "Warning: the target's outbound_allow") || c.warned != "" && !strings.Contains(said, c.warned) {
+				t.Errorf("said: %s", said)
+			}
+		})
+	}
+}

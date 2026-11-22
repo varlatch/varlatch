@@ -1,0 +1,13 @@
+name: envprobe
+services:
+  a:
+    image: busybox
+    environment:
+      - A=1
+      - B
+      - C=
+  b:
+    image: busybox
+    environment:
+      X: "1"
+      Y:

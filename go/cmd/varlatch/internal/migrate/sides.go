@@ -104,6 +104,10 @@ type IngressInfo struct {
 	PublicURL  string
 	Caddy      bool
 	WebAddress string
+	// OutboundAllow is the source's outbound allow list
+	// (VARLATCH_OUTBOUND_ALLOW), "" for none: the target's outbound_allow
+	// takes the same entries.
+	OutboundAllow string
 }
 
 // SourceInfo is what a migration starts from.
@@ -180,6 +184,8 @@ type TargetInfo struct {
 	PublicURL   string `json:"publicUrl"`
 	Listen      string `json:"listen"`
 	ListenHTTPS string `json:"listenHttps"`
+	// OutboundAllow is its configuration's outbound_allow ("" for none).
+	OutboundAllow string `json:"outboundAllow,omitempty"`
 	// Tailnet is its tailnet settings and node, nil when tailnet = off.
 	Tailnet *TargetTailnet `json:"tailnet,omitempty"`
 }

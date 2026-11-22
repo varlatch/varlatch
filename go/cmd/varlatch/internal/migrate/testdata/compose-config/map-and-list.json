@@ -1,0 +1,31 @@
+{
+  "name": "envprobe",
+  "networks": {
+    "default": {
+      "name": "envprobe_default"
+    }
+  },
+  "services": {
+    "a": {
+      "environment": [
+        "A=1",
+        "B",
+        "C="
+      ],
+      "image": "busybox",
+      "networks": {
+        "default": null
+      }
+    },
+    "b": {
+      "environment": {
+        "X": "1",
+        "Y": null
+      },
+      "image": "busybox",
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

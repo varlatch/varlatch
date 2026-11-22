@@ -102,9 +102,48 @@ func (c *Compose) projectName(ctx context.Context) (string, error) {
 type composeConfig struct {
 	Name     string `json:"name"`
 	Services map[string]struct {
-		NetworkMode string             `json:"network_mode"`
-		Environment map[string]*string `json:"environment"`
+		NetworkMode string     `json:"network_mode"`
+		Environment composeEnv `json:"environment"`
 	} `json:"services"`
+}
+
+// composeEnv is a service's environment as `docker compose config --format
+// json` prints it: a map ({"A": "1", "B": null}), or, when the Compose file
+// writes it as a list (- A=1) or an overlay merges one in, a list
+// (["A=1", "B"]), as Compose 5.6 does. A name without a value (null, or a
+// list entry without =) is taken from the shell when Compose runs, so it
+// is nil here: not set.
+type composeEnv map[string]*string
+
+func (e *composeEnv) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if bytes.Equal(b, []byte("null")) {
+		*e = nil
+		return nil
+	}
+	if len(b) > 0 && b[0] == '[' {
+		var list []string
+		if err := json.Unmarshal(b, &list); err != nil {
+			return err
+		}
+		m := composeEnv{}
+		for _, kv := range list {
+			name, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				m[name] = nil
+				continue
+			}
+			m[name] = &v
+		}
+		*e = m
+		return nil
+	}
+	var m map[string]*string
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	*e = m
+	return nil
 }
 
 func (c *Compose) config(ctx context.Context) (composeConfig, error) {
@@ -116,7 +155,10 @@ func (c *Compose) config(ctx context.Context) (composeConfig, error) {
 		return composeConfig{}, errors.New("docker compose config failed: the installation's Compose project could not be read")
 	}
 	var m composeConfig
-	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &m); err != nil || m.Name == "" || strings.ContainsAny(m.Name, "/ \t\n") {
+	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &m); err != nil {
+		return composeConfig{}, fmt.Errorf("docker compose config answered with a configuration migrate cannot read: %v", err)
+	}
+	if m.Name == "" || strings.ContainsAny(m.Name, "/ \t\n") {
 		return composeConfig{}, errors.New("docker compose config did not name the installation's Compose project")
 	}
 	return m, nil

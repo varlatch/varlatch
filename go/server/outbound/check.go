@@ -35,7 +35,61 @@ const (
 	KindIssuer  Kind = "oidc-issuer"
 )
 
-var kindLabel = map[Kind]string{KindWebhook: "webhook", KindCoolify: "Coolify", KindConvex: "Convex", KindIssuer: "OIDC issuer"}
+// KindGitHub is a GitHub Sync Target's connection, whose destination is
+// GitHub's API. Only `varlatchd admin outbound check` lists it
+// (CheckGitHub): the API's report keeps the four kinds it documents.
+const KindGitHub Kind = "github"
+
+var kindLabel = map[Kind]string{KindWebhook: "webhook", KindCoolify: "Coolify", KindConvex: "Convex", KindIssuer: "OIDC issuer", KindGitHub: "GitHub"}
+
+// GitHubAPI is where every GitHub connection goes (githubapps.GitHubAPI).
+const GitHubAPI = "https://api.github.com"
+
+// CheckGitHub is each live GitHub Sync Target connection (org: an
+// Organization's id or slug, "" for all), checked as a destination at
+// GitHubAPI, as RunCheck checks the others.
+func (p *Policy) CheckGitHub(ctx context.Context, db query.DBTX, org string) ([]Checked, error) {
+	if db == nil {
+		return nil, nil
+	}
+	filter, args := "", []any{}
+	if org != "" {
+		filter, args = " AND (o.id = ? OR o.slug = ?)", []any{org, org}
+	}
+	rs, err := db.QueryContext(ctx, `SELECT c.organization_id, o.slug, c.id, c.name FROM platform_connections c
+		JOIN organizations o ON o.id = c.organization_id
+		WHERE c.revoked_at IS NULL AND o.deleted_at IS NULL AND c.platform = 'github-actions'`+filter+`
+		ORDER BY o.slug, c.created_at, c.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	var rows []row
+	for rs.Next() {
+		r := row{kind: KindGitHub, name: new(string), url: GitHubAPI}
+		if err := rs.Scan(&r.organizationID, &r.organization, &r.id, r.name); err != nil {
+			rs.Close()
+			return nil, err
+		}
+		rows = append(rows, r)
+	}
+	if err := rs.Close(); err != nil {
+		return nil, err
+	}
+	if err := rs.Err(); err != nil {
+		return nil, err
+	}
+	out := []Checked{}
+	for _, r := range rows {
+		c, err := p.checkRow(ctx, r, p.sharedLookup)
+		if err != nil {
+			return nil, err
+		}
+		if c != nil {
+			out = append(out, *c)
+		}
+	}
+	return out, nil
+}
 
 // Checked is one configured destination and its verdict: "public",
 // "allowed" (Entries open it), "refused" (Reason) or "unresolved" (Error,
@@ -436,13 +490,30 @@ func (r Report) Refused() []RefusedView {
 	return out
 }
 
-// Lines is outboundCheckLines: the report for a person.
-func (r Report) Lines() []string {
+// Setting is how a report names the allow list's setting: its label, and
+// the lines that suggest a value.
+type Setting struct {
+	Name    string
+	Suggest func(value string) []string
+}
+
+// TypeScriptSetting is the TypeScript server's: VARLATCH_OUTBOUND_ALLOW in
+// its environment.
+var TypeScriptSetting = Setting{Name: "VARLATCH_OUTBOUND_ALLOW", Suggest: func(v string) []string {
+	return []string{"Suggested (then restart varlatchd):", "  VARLATCH_OUTBOUND_ALLOW=" + v}
+}}
+
+// Lines is outboundCheckLines: the report for a person, as the TypeScript
+// server words it.
+func (r Report) Lines() []string { return r.LinesFor(TypeScriptSetting) }
+
+// LinesFor is the report for a person, the setting named as s says.
+func (r Report) LinesFor(s Setting) []string {
 	allow := "(not set)"
 	if len(r.Allow) > 0 {
 		allow = strings.Join(r.Allow, ",")
 	}
-	lines := []string{"VARLATCH_OUTBOUND_ALLOW: " + allow, ""}
+	lines := []string{s.Name + ": " + allow, ""}
 	if len(r.Destinations) == 0 {
 		lines = append(lines, "No destinations configured.")
 	}
@@ -469,7 +540,8 @@ func (r Report) Lines() []string {
 		lines = append(lines, fmt.Sprintf("%s  %s  %s%s  %s://%s:%d  [%s]  %s", d.Organization, kindLabel[d.Kind], d.ID, name, d.Scheme, d.Host, d.Port, addresses, verdict))
 	}
 	if r.Suggested != nil {
-		lines = append(lines, "", "Suggested (then restart varlatchd):", "  VARLATCH_OUTBOUND_ALLOW="+*r.Suggested)
+		lines = append(lines, "")
+		lines = append(lines, s.Suggest(*r.Suggested)...)
 	}
 	if len(r.Apart) > 0 {
 		lines = append(lines, "", "Not suggested, decide yourself:")

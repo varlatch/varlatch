@@ -455,9 +455,10 @@ func TestComposeIngress(t *testing.T) {
 		t.Fatalf("no .env: %+v %v", ing, err)
 	}
 	_ = os.WriteFile(filepath.Join(dir, ".env"), []byte("# the installation\nVARLATCH_PUBLIC_URL=\"https://vault.example.test\"\n"+
-		"COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml\nVARLATCH_WEB_PORT=9000\nBIND_ADDRESS=0.0.0.0\n"), 0o600)
+		"COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml\nVARLATCH_WEB_PORT=9000\nBIND_ADDRESS=0.0.0.0\n"+
+		"VARLATCH_OUTBOUND_ALLOW=\" coolify.lan, 10.0.0.0/8:8000 \"\n"), 0o600)
 	ing, err = c.Ingress(context.Background())
-	if err != nil || ing.PublicURL != "https://vault.example.test" || !ing.Caddy || ing.WebAddress != "0.0.0.0:9000" {
+	if err != nil || ing.PublicURL != "https://vault.example.test" || !ing.Caddy || ing.WebAddress != "0.0.0.0:9000" || ing.OutboundAllow != "coolify.lan, 10.0.0.0/8:8000" {
 		t.Fatalf(".env: %+v %v", ing, err)
 	}
 	ctx := context.Background()

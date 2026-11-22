@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/outbound"
@@ -59,7 +61,21 @@ func outboundArgs(rest []string) (outboundOpts, string) {
 	return o, ""
 }
 
-func runOutboundCheck(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
+// outboundSetting names the allow list as a Go installation has it:
+// outbound_allow in its configuration file (varlatchd reads no
+// VARLATCH_OUTBOUND_ALLOW), and how to restart varlatchd after changing
+// it, on a host install or in the image.
+func outboundSetting(path string) outbound.Setting {
+	restart := "sudo systemctl restart varlatchd"
+	if os.Getenv(keyenv.ImageMarker) != "" {
+		restart = "restart its container"
+	}
+	return outbound.Setting{Name: "outbound_allow (" + path + ")", Suggest: func(v string) []string {
+		return []string{"Suggested: set this line in " + path + ", then restart varlatchd (" + restart + "):", "  outbound_allow = " + v}
+	}}
+}
+
+func runOutboundCheck(cfg *config.Config, path string, rest []string, stdout, stderr io.Writer) int {
 	o, _ := outboundArgs(rest)
 	spec := cfg.OutboundAllow
 	if o.allow != nil {
@@ -86,6 +102,23 @@ func runOutboundCheck(cfg *config.Config, rest []string, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "varlatchd admin outbound check: %v\n", err)
 		return ExitFailure
 	}
+	// The GitHub Sync Targets' connections too, here only (the API's
+	// report keeps its kinds): GitHub's API is public, but a policy or a
+	// resolver can still refuse it.
+	github, err := policy.CheckGitHub(context.Background(), db, o.org)
+	if err != nil {
+		fmt.Fprintf(stderr, "varlatchd admin outbound check: %v\n", err)
+		return ExitFailure
+	}
+	for _, d := range github {
+		report.Destinations = append(report.Destinations, d)
+		switch {
+		case d.Verdict == "refused":
+			report.ExitCode = 1
+		case d.Verdict == "unresolved" && report.ExitCode == 0:
+			report.ExitCode = 2
+		}
+	}
 	if o.asJSON {
 		b, err := json.Marshal(report)
 		if err != nil {
@@ -94,7 +127,7 @@ func runOutboundCheck(cfg *config.Config, rest []string, stdout, stderr io.Write
 		}
 		fmt.Fprintln(stdout, string(b))
 	} else {
-		for _, l := range report.Lines() {
+		for _, l := range report.LinesFor(outboundSetting(path)) {
 			fmt.Fprintln(stdout, l)
 		}
 	}
