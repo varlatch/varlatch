@@ -197,7 +197,7 @@ runner_built=1
 envs=()
 for v in "${pass[@]}"; do envs+=(-e "$v"); done
 docker run --rm --name "vl-rh-$run-test" --network host -u 0 -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" "${mounts[@]}" -w "$root/work" \
+  -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" ${mounts[@]+"${mounts[@]}"} -w "$root/work" \
   -e VL_RH_RUN="$run" -e VL_RH_RELEASE_DIR="$release" -e VL_RH_BIN="$root/bin" -e VL_RH_WORK="$root/work" \
   -e VL_RH_REPORT="$root/report" -e VL_RH_TS="$ts" -e VL_RH_TARGET_ROOT="$target_root" "${envs[@]}" \
   "$runner" "$root/bin/rehearsal.test" -test.v -test.timeout 90m -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"

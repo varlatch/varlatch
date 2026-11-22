@@ -311,6 +311,7 @@ type installation struct {
 	readCreds          string
 	fakebin            string
 	kekCopy            string // a restored installation's copy of the operator's Root KEK
+	isolated           bool   // a restored copy: no sync, no audit export, no egress (isolationOverride)
 	proxy              *http.Server
 	installationID     string
 	ingress            string       // proxy or public
@@ -323,7 +324,7 @@ type installation struct {
 // target's host-install configuration, and its backup destination.
 func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *installation {
 	t.Helper()
-	in := prepareInstallation(t, rel, s3, name, nil)
+	in := prepareInstallation(t, rel, s3, name, nil, nil)
 	in.up()
 	return in
 }
@@ -344,8 +345,9 @@ type operatorKeys struct{ kek, bek string }
 
 // prepareInstallation is an installation's files, its target's and its
 // backup destination, not started: with keys (a restore), its Root KEK
-// is the operator's and its BEK the operator's file.
-func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, keys *operatorKeys) *installation {
+// is the operator's and its BEK the operator's file, and it is isolated
+// (isolationOverride); extraEnv goes into its .env.
+func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, keys *operatorKeys, extraEnv map[string]string) *installation {
 	t.Helper()
 	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: prof.ingress}
 	base := filepath.Join(workDir, name)
@@ -417,6 +419,23 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 		env["VARLATCH_HTTPS_PORT"] = net.JoinHostPort(prof.publicBind, "443")
 		env["VARLATCH_ACME_CA"] = "https://pebble:14000/dir"
 	}
+	if keys != nil {
+		// A restored copy (B6) holds what production's would: webhooks,
+		// Sync Targets and audit export streams aimed at real
+		// destinations, with the keys that sign and open them. It reaches
+		// none: sync and the audit export off, its network internal
+		// (isolationOverride), its webhooks revoked once restored
+		// (neutralise).
+		in.isolated = true
+		env["VARLATCH_SYNC"], env["VARLATCH_AUDIT_EXPORT"] = "off", "off"
+		env["COMPOSE_FILE"] = "docker-compose.yml:docker-compose.rehearsal.yml"
+		if err := os.WriteFile(filepath.Join(in.dir, "docker-compose.rehearsal.yml"), []byte(isolationOverride), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for k, v := range extraEnv {
+		env[k] = v
+	}
 	var text strings.Builder
 	for k, v := range env {
 		fmt.Fprintf(&text, "%s=%s\n", k, v)
@@ -458,7 +477,9 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 	if keys != nil {
 		// A rollback's --finish discards Go's copy after a final archive
 		// of it, uploaded: Go's configuration names the run's destination.
-		host += fmt.Sprintf("backup_destinations_file = %s\nbackup_destination = offsite\n", in.destinations)
+		// And Go reaches nothing of the copy's either: no sync, no audit
+		// export (its webhooks come revoked from the copy).
+		host += fmt.Sprintf("backup_destinations_file = %s\nbackup_destination = offsite\nsync = off\naudit_export = off\n", in.destinations)
 	}
 	in.conf = filepath.Join(target, "varlatchd.conf")
 	for _, p := range []string{in.conf, filepath.Join(in.state, "service.conf")} {
@@ -488,6 +509,23 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 	t.Cleanup(in.remove)
 	return in
 }
+
+// isolationOverride is a restored copy's Compose file (B6): its network
+// internal, so no container of it reaches anything outside it; only the
+// dashboard joins a second network, for its published port, which the
+// run's proxy reaches (nginx there proxies to varlatchd and Convex only).
+const isolationOverride = `# Written by the rehearsal harness (B6): a restored copy reaches nothing
+# outside its own network.
+networks:
+  default:
+    internal: true
+  edge: {}
+services:
+  varlatch-web:
+    networks:
+      default: {}
+      edge: {}
+`
 
 func (in *installation) startProxy() {
 	target, _ := url.Parse("http://127.0.0.1:" + in.webPort)
@@ -644,9 +682,22 @@ func (in *installation) remove() {
 		return
 	}
 	run(in.dir, nil, nil, "docker", "compose", "-p", in.project, "--profile", "deploy", "down", "-v", "--remove-orphans", "--timeout", "20")
+	// down -v removes the volumes the Compose files name now: after a
+	// rollback those are its fresh ones, so the installation's earlier
+	// ones (kept until a --finish --delete-old-data) are removed by the
+	// project's label, each by its name (run r16e left two).
+	vols := run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "label=com.docker.compose.project="+in.project)
+	for _, v := range strings.Fields(vols.stdout) {
+		if strings.HasPrefix(v, in.project+"_") {
+			run("", nil, nil, "docker", "volume", "rm", v)
+		}
+	}
 	if in.kekCopy != "" {
 		_ = os.Remove(in.kekCopy)
 	}
+	// The run's own files of the installation: logs, the reader's
+	// repository and home (its credential), its HMAC key.
+	_ = os.RemoveAll(in.state)
 	if in.targetRoot != "" && in.targetDir != "" {
 		_ = os.RemoveAll(in.targetDir)
 		_ = os.Remove(filepath.Join(in.targetRoot, runID))

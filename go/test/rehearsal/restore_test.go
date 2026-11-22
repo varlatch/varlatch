@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,8 +74,13 @@ func restoredInstallation(t *testing.T, rel release, s3 *s3Server, name string) 
 			secret(strings.TrimSpace(string(b)))
 		}
 	}
-	in := prepareInstallation(t, rel, s3, name, &operatorKeys{kek: prof.restoreKEK, bek: prof.restoreBEK})
+	in := prepareInstallation(t, rel, s3, name, &operatorKeys{kek: prof.restoreKEK, bek: prof.restoreBEK}, nil)
 	registerSecrets(in)
+	// Before the copy first starts (the restore starts it): its Compose
+	// configuration and Go's say it reaches nothing.
+	if ok, detail := in.isolatedBeforeStart(); !record2(t, restoreItem, name+": before the copy starts: isolated", ok, detail) {
+		t.FailNow()
+	}
 	ts := filepath.Join(in.fakebin, "varlatch-ts")
 	r := run(in.dir, nil, nil, ts, "admin", "backup", "restore", "--in", prof.restore, "--bek-file", in.bek,
 		"--kek-file", filepath.Join(in.dir, "secrets", "varlatch-kek"), "--dir", in.dir)
@@ -97,7 +103,107 @@ func restoredInstallation(t *testing.T, rel release, s3 *s3Server, name string) 
 	if !record2(t, restoreItem, name+": the restored installation serves 0.23.0 at the public URL", ok, fmt.Sprintf("/readyz %d after %s; /v1/meta %s", a.code, a.took.Round(time.Millisecond), trim(redact(body)))) {
 		t.FailNow()
 	}
+	// The restore started the copy (inside its internal network, sync and
+	// the audit export off): its webhooks revoked at once, before anything
+	// of the run's, then the copy checked as it runs.
+	n, err := in.neutralise()
+	if !record2(t, restoreItem, name+": the copy's webhooks revoked", err == nil, fmt.Sprintf("%d revoked (%v)", n, err)) {
+		t.FailNow()
+	}
+	if ok, detail := in.isolatedRunning(); !record2(t, restoreItem, name+": the restored copy reaches nothing", ok, detail) {
+		t.FailNow()
+	}
 	return in
+}
+
+// --- the copy's isolation (B6) ---
+
+// isolatedBeforeStart: the copy's Compose configuration as Compose
+// resolves it, before any of its containers exists (varlatchd with sync
+// and the audit export off, its network internal, only the dashboard on
+// another), and Go's configuration with sync and the audit export off.
+func (in *installation) isolatedBeforeStart() (bool, string) {
+	r := in.compose("config", "--format", "json")
+	var cfg struct {
+		Services map[string]struct {
+			Environment map[string]*string         `json:"environment"`
+			Networks    map[string]json.RawMessage `json:"networks"`
+		} `json:"services"`
+		Networks map[string]struct {
+			Internal bool `json:"internal"`
+		} `json:"networks"`
+	}
+	if r.code != 0 || json.Unmarshal([]byte(r.stdout), &cfg) != nil {
+		return false, "docker compose config: " + r.String()
+	}
+	var bad []string
+	env := cfg.Services["varlatchd"].Environment
+	for _, k := range []string{"VARLATCH_SYNC", "VARLATCH_AUDIT_EXPORT"} {
+		if v := env[k]; v == nil || *v != "off" {
+			bad = append(bad, k+" is not off")
+		}
+	}
+	if !cfg.Networks["default"].Internal {
+		bad = append(bad, "the default network is not internal")
+	}
+	for name, svc := range cfg.Services {
+		for net := range svc.Networks {
+			if net != "default" && !(name == "varlatch-web" && net == "edge") {
+				bad = append(bad, name+" is on the network "+net)
+			}
+		}
+	}
+	conf, err := os.ReadFile(in.conf)
+	if err != nil || !strings.Contains(string(conf), "\nsync = off\n") || !strings.Contains(string(conf), "\naudit_export = off\n") {
+		bad = append(bad, "Go's configuration does not say sync = off and audit_export = off")
+	}
+	if len(bad) > 0 {
+		return false, strings.Join(bad, "; ")
+	}
+	return true, "VARLATCH_SYNC=off, VARLATCH_AUDIT_EXPORT=off, the network internal (the dashboard alone on a second, for its port); Go's sync = off, audit_export = off"
+}
+
+// neutralise revokes every webhook of the copy that is not (the
+// harness's SQL, never product code): 0.23.0 delivers to webhooks whose
+// revoked_at is null only.
+func (in *installation) neutralise() (int, error) {
+	r := in.psql("WITH r AS (UPDATE webhooks SET revoked_at = now() WHERE revoked_at IS NULL RETURNING 1) SELECT count(*) FROM r")
+	if r.code != 0 {
+		return 0, errors.New("psql: " + r.String())
+	}
+	var n int
+	_, err := fmt.Sscanf(strings.TrimSpace(r.stdout), "%d", &n)
+	return n, err
+}
+
+// psql is one query of the copy's database, its answer unaligned.
+func (in *installation) psql(query string) ran {
+	return run(in.dir, nil, nil, "docker", "compose", "exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "varlatch", "-At", "-c", query)
+}
+
+// isolatedRunning: the running copy's varlatchd has sync and the audit
+// export off, no webhook is live, and a request from inside it to an
+// address outside does not leave its network.
+func (in *installation) isolatedRunning() (bool, string) {
+	var bad []string
+	r := run(in.dir, nil, nil, "docker", "compose", "exec", "-T", "varlatchd", "printenv", "VARLATCH_SYNC", "VARLATCH_AUDIT_EXPORT")
+	if strings.Fields(r.stdout) == nil || strings.Join(strings.Fields(r.stdout), " ") != "off off" {
+		bad = append(bad, "varlatchd's sync and audit export: "+strings.Join(strings.Fields(r.stdout), " "))
+	}
+	live := in.psql("SELECT count(*) FROM webhooks WHERE revoked_at IS NULL")
+	if strings.TrimSpace(live.stdout) != "0" {
+		bad = append(bad, "live webhooks: "+strings.TrimSpace(live.stdout)+" "+live.String())
+	}
+	// An address, not a name: the network, not DNS, refuses it.
+	out := in.inside(`fetch("http://1.1.1.1/", { signal: AbortSignal.timeout(5000) }).then(r => console.log("reached", r.status)).catch(e => console.log("refused", e.cause?.code ?? e.name))`)
+	egress := strings.TrimSpace(out.stdout)
+	if !strings.HasPrefix(egress, "refused") {
+		bad = append(bad, "a request from varlatchd to 1.1.1.1: "+egress)
+	}
+	if len(bad) > 0 {
+		return false, strings.Join(bad, "; ")
+	}
+	return true, "sync and the audit export off, no live webhook, a request from varlatchd to 1.1.1.1 " + egress
 }
 
 func restoreCase(t *testing.T, rel release, s3 *s3Server) {
@@ -143,6 +249,10 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	}
 	a := answersWithin(func() (int, string) { return in.get("/v1/meta") }, sourceAnswers(in.installationID), sourceAnswerDeadline, 250*time.Millisecond)
 	record(t, item, "after the rollback the public URL answers from 0.23.0", a.ok, fmt.Sprintf("%d %s after %v", a.code, trim(a.body), a.took.Round(time.Millisecond)))
+	// The TypeScript side runs again, on a database rebuilt from Go's:
+	// as isolated as before (the webhooks come back revoked).
+	isolated, detail := in.isolatedRunning()
+	record(t, item, "after the rollback the copy reaches nothing", isolated, detail)
 	reverseParity(t, in)
 	back, err := rd.read()
 	record(t, item, "the CLI reads after the rollback: the day's changes are on 0.23.0", err == nil && sameReads(changed, back), rd.compare(changed, back, err))
@@ -414,7 +524,7 @@ func (rd *reader) describe(r reads, err error) string {
 	if err != nil {
 		return err.Error()
 	}
-	return fmt.Sprintf("%d Organizations, %d Projects in the one read, %d Environments, %d values named and %d read in one", r.orgs, r.projects, r.envs, r.names, r.found)
+	return fmt.Sprintf("%d Organizations, %d Projects in the one read, %d Environments there, %d values named and %d read in them", r.orgs, r.projects, r.envs, r.names, r.found)
 }
 
 func (rd *reader) compare(want, got reads, err error) string {
@@ -603,15 +713,6 @@ func (rd *reader) read() (reads, error) {
 		return r, err
 	}
 	r.parts["environments"], r.envs = rd.mac(out), len(envs)
-	out, names, err := rd.listed("items", "name", "values", "list", "--json", "-e", rd.env)
-	if err != nil {
-		return r, err
-	}
-	r.parts["value names"], r.names = rd.mac(out), len(names)
-	namesFile := filepath.Join(rd.in.state, "digest-names")
-	if err := os.WriteFile(namesFile, []byte(strings.Join(names, "\n")), 0o600); err != nil {
-		return r, err
-	}
 	self, _ := os.Executable()
 	link := filepath.Join(rd.repo, "envdigest")
 	if _, err := os.Lstat(link); err != nil {
@@ -619,13 +720,30 @@ func (rd *reader) read() (reads, error) {
 			return r, err
 		}
 	}
-	v := rd.cli("run", "-e", rd.env, "--", link, rd.key, namesFile)
-	var found int
-	var digest string
-	if _, err := fmt.Sscanf(strings.TrimSpace(lastLine(v.stdout)), "%d %s", &found, &digest); v.code != 0 || err != nil {
-		return r, fmt.Errorf("varlatch run: exit %d: %s", v.code, redact(lastLines(v.stderr, 2)))
+	// Every Environment of the Project: its values' names, and the
+	// values (an HMAC each Environment, combined in order).
+	var listings, digests strings.Builder
+	for _, env := range envs {
+		out, names, err := rd.listed("items", "name", "values", "list", "--json", "-e", env)
+		if err != nil {
+			return r, err
+		}
+		fmt.Fprintf(&listings, "%s\n%s\n", env, out)
+		r.names += len(names)
+		namesFile := filepath.Join(rd.in.state, "digest-names")
+		if err := os.WriteFile(namesFile, []byte(strings.Join(names, "\n")), 0o600); err != nil {
+			return r, err
+		}
+		v := rd.cli("run", "-e", env, "--", link, rd.key, namesFile)
+		var found int
+		var digest string
+		if _, err := fmt.Sscanf(strings.TrimSpace(lastLine(v.stdout)), "%d %s", &found, &digest); v.code != 0 || err != nil {
+			return r, fmt.Errorf("varlatch run: exit %d: %s", v.code, redact(lastLines(v.stderr, 2)))
+		}
+		fmt.Fprintf(&digests, "%s %d %s\n", env, found, digest)
+		r.found += found
 	}
-	r.parts["values"], r.found = digest, found
+	r.parts["value names"], r.parts["values"] = rd.mac(listings.String()), rd.mac(digests.String())
 	return r, nil
 }
 
@@ -747,11 +865,18 @@ func convertArchive(t *testing.T, in *installation, rel release) {
 
 func makeBundle(t *testing.T, rel release, s3 *s3Server) {
 	const item = bundleItem
-	in := newInstallation(t, rel, s3, "bundle")
+	// The audit export's destination is an S3 server of the run's own on
+	// the installation's network, which the outbound policy is told to
+	// allow by name (its address is a private one).
+	in := prepareInstallation(t, rel, s3, "bundle", nil, map[string]string{"VARLATCH_OUTBOUND_ALLOW": auditS3Alias + ":9000"})
+	in.up()
 	registerSecrets(in)
+	audit := startAuditS3(t, in.project+"_default")
+	secret(audit.secret)
+	audit.createBucket(t, "vl-rh-audit")
 	s := seed(t, in)
 	record(t, item, "seeded through the real /v1", true, fmt.Sprintf("%d values, %d versions, in %s", s.values, s.versions, s.took.Round(time.Millisecond)))
-	shape := productionShape(t, s)
+	shape := productionShape(t, s, audit)
 	record(t, item, "production-shaped", true, shape)
 	if err := os.MkdirAll(prof.bundleOut, 0o700); err != nil {
 		t.Fatal(err)
@@ -788,12 +913,43 @@ func makeBundle(t *testing.T, rel release, s3 *s3Server) {
 	measure("item 15: the archive", fmt.Sprintf("%d bytes", size))
 }
 
+// auditS3Alias is the audit export's S3 server's name on the bundle
+// installation's network.
+const auditS3Alias = "vl-rh-audit-s3"
+
+// startAuditS3 is an S3 server (MinIO, by digest) for the bundle's audit
+// export, on network as auditS3Alias, and on loopback for the harness.
+func startAuditS3(t *testing.T, network string) *s3Server {
+	t.Helper()
+	s := &s3Server{name: "vl-rh-" + runID + "-audit-minio", user: "rh" + hexBytes(6), secret: hexBytes(20)}
+	port := freePort(t)
+	must(t, run("", nil, nil, "docker", "run", "-d", "--name", s.name, "--network", network, "--network-alias", auditS3Alias, "-p", "127.0.0.1:"+port+":9000",
+		"-e", "MINIO_ROOT_USER="+s.user, "-e", "MINIO_ROOT_PASSWORD="+s.secret, minioImage, "server", "/data"), "start the audit export's MinIO")
+	// Before the installation's cleanup (registered first), which removes
+	// the network this is on.
+	t.Cleanup(func() { run("", nil, nil, "docker", "rm", "-fv", s.name) })
+	s.endpoint = "http://127.0.0.1:" + port
+	for deadline := time.Now().Add(60 * time.Second); ; time.Sleep(250 * time.Millisecond) {
+		if resp, err := http.Get(s.endpoint + "/minio/health/ready"); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				return s
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the audit export's MinIO did not become ready")
+		}
+	}
+}
+
 // productionShape adds what a production installation has beyond the
 // seed: a second Organization's Project with values, a machine's service
-// credential, a webhook (to a name that never resolves), a deleted value
-// and a rotation in its grace window. Left out: people with passkeys
-// (WebAuthn), Platform Connections and Sync Targets (they reach out).
-func productionShape(t *testing.T, s seeded) string {
+// credential, a webhook (to a name that never resolves), a deleted value,
+// a rotation in its grace window, an audit export stream (to the run's
+// own S3 server), and a Platform Connection with a Sync Target (to a
+// Coolify that never resolves). Left out: people with passkeys
+// (WebAuthn).
+func productionShape(t *testing.T, s seeded, audit *s3Server) string {
 	c := s.client
 	const acme, beta = "/v1/organizations/acme", "/v1/organizations/beta"
 	c.ok("POST", beta+"/projects", map[string]any{"name": "Jobs", "slug": "jobs", "contractAuthority": "managed"})
@@ -813,5 +969,14 @@ func productionShape(t *testing.T, s seeded) string {
 		t.Fatalf("seed: delete a value: %d", code)
 	}
 	c.ok("POST", acme+"/projects/api/environments/staging/values/VALUE_0001/rotations", map[string]any{"value": secret("rh-" + hexBytes(16)), "graceSeconds": 86400})
-	return "a second Organization's Project (25 values), a service credential, a webhook, a deleted value, a rotation"
+	c.ok("POST", acme+"/audit-export", map[string]any{
+		"destination": map[string]any{"endpoint": "http://" + auditS3Alias + ":9000", "region": "us-east-1", "bucket": "vl-rh-audit", "prefix": "audit/", "pathStyle": true},
+		"credential":  map[string]any{"accessKeyId": audit.user, "secretAccessKey": audit.secret},
+		"from":        "beginning",
+	})
+	conn := str(c.ok("POST", acme+"/platform-connections", map[string]any{"platform": "coolify", "baseIdentity": "https://coolify.rehearsal.invalid",
+		"name": "lab", "credential": secret("rh-" + hexBytes(24))}), "id")
+	c.ok("POST", acme+"/projects/api/environments/production/sync-targets", map[string]any{"connectionId": conn,
+		"destination": map[string]any{"applicationUuid": "rehearsal-app-1"}, "mapping": map[string]any{"kind": "explicit", "items": []map[string]any{{"name": "VALUE_0002"}}}})
+	return "a second Organization's Project (25 values), a service credential, a webhook, a deleted value, a rotation, an audit export stream, a Platform Connection and a Sync Target"
 }
