@@ -90,6 +90,7 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 		PublicURL   string         `json:"publicUrl"`
 		Listen      string         `json:"listen"`
 		ListenHTTPS string         `json:"listenHttps"`
+		Outbound    string         `json:"outboundAllow"`
 		Gate        *bool          `json:"migrationGate"`
 		Barrier     string         `json:"barrier"`
 		Running     bool           `json:"running"`
@@ -106,6 +107,7 @@ func (h *Host) Describe(ctx context.Context) (TargetInfo, TargetState, error) {
 	}
 	info.DataDir, info.Release, info.PublicURL, info.Listen, info.ListenHTTPS = s.DataDir, s.Release, s.PublicURL, s.Listen, s.ListenHTTPS
 	info.Tailnet = s.Tailnet
+	info.OutboundAllow = s.Outbound
 	return info, TargetState{Journal: s.Journal, Database: s.Database, Gate: *s.Gate, Barrier: s.Barrier, Running: s.Running, ImportRefusal: s.ImportRefusal}, nil
 }
 
