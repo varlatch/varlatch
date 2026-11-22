@@ -180,7 +180,8 @@ func (r *run) restore(ctx context.Context) error {
 }
 
 // takeName is a restore's tailnet handoff (go-step7 decision 11), with the
-// operator's OAuth client: the restored node enrols held under its
+// operator's authority over the tailnet (Tailscale's OAuth client, or a
+// self-hosted control server's API key): the restored node enrols held under its
 // temporary name (<name>-vl-<op>-n), then varlatchd takes the dead node's
 // name over by rename (`varlatchd admin tailnet take-name`, the old node
 // renamed <name>-vl-<op>-o), before the unit first starts. The operation is
@@ -203,7 +204,14 @@ func (r *run) takeName(ctx context.Context) error {
 		return err
 	}
 	take := func() error {
-		out, err := r.h.Admin(ctx, "tailnet", "take-name", "--oauth-client-file", a.TailscaleOAuthClientFile, "--json")
+		// The authority the answers name: Tailscale's OAuth client, or the
+		// self-hosted control server's API (its URL tailnet_control_url,
+		// which varlatchd requires the URL to equal).
+		authority := []string{"--oauth-client-file", a.TailscaleOAuthClientFile}
+		if a.HeadscaleAPIKeyFile != "" {
+			authority = []string{"--headscale-url", a.TailnetControlURL, "--headscale-api-key-file", a.HeadscaleAPIKeyFile}
+		}
+		out, err := r.h.Admin(ctx, append(append([]string{"tailnet", "take-name"}, authority...), "--json")...)
 		if err != nil {
 			return err
 		}
@@ -289,7 +297,7 @@ func (r *run) nameCheck(ctx context.Context) error {
 	if r.j.Restore == nil || a.Ingress != Tailnet || r.j.Done["name"] != "" {
 		return nil
 	}
-	if a.TailscaleOAuthClientFile != "" {
+	if a.TailscaleOAuthClientFile != "" || a.HeadscaleAPIKeyFile != "" {
 		return r.takeName(ctx)
 	}
 	if err := r.o.Say("Checking that the tailnet name " + a.TailnetHostname + " is free: a probe joins with your auth key, twice, and leaves."); err != nil {

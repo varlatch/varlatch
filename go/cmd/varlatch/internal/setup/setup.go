@@ -342,9 +342,17 @@ func (r *run) answers() error {
 	// A restore's OAuth client: varlatchd reads it at the takeover, after
 	// the node enrols, and refuses one open to group or others; so its file
 	// is checked now (never read by setup), before anything is made.
-	if f := a.TailscaleOAuthClientFile; f != "" {
-		if err := secretFileMode(r.path(f)); err != nil {
-			return &UsageError{"setup: --tailscale-oauth-client-file: " + err.Error() + "; nothing was changed"}
+	// A self-hosted control server, for now a restore's only: setup's
+	// fresh installation on one is not built yet.
+	if a.TailnetControlURL != "" && r.j.Restore == nil {
+		return &UsageError{"setup: --tailnet-control-url goes with --restore for now: setup does not yet set up a fresh installation on a self-hosted control server"}
+	}
+	for _, f := range []struct{ flag, path string }{{"tailscale-oauth-client-file", a.TailscaleOAuthClientFile}, {"headscale-api-key-file", a.HeadscaleAPIKeyFile}} {
+		if f.path == "" {
+			continue
+		}
+		if err := secretFileMode(r.path(f.path)); err != nil {
+			return &UsageError{"setup: --" + f.flag + ": " + err.Error() + "; nothing was changed"}
 		}
 	}
 	r.j.Answers = a
@@ -718,6 +726,7 @@ func RenderConfig(a Answers) []byte {
 		set("tailnet_tags", a.TailnetTags)
 		set("tailnet_port", a.TailnetPort)
 		set("tailnet_auth_key_file", a.TailnetAuthKeyFile)
+		set("tailnet_control_url", a.TailnetControlURL)
 	}
 	if a.Backups == "bucket" {
 		set("backup_destinations_file", a.BackupDestinationsFile)

@@ -2384,7 +2384,18 @@ serves the tailnet listener on the node's own addresses
 
     `varlatch setup --restore ... --tailscale-oauth-client-file <file>`
     (ingress tailnet) runs it in place of the name probe: the operation
-    journalled first, then `enroll` and `take-name`, before the unit.
+    journalled first, then `enroll` and `take-name`, before the unit. On a
+    self-hosted control server the restore answers
+    `--tailnet-control-url <https://IP[:port]>` (canonical, written as
+    `tailnet_control_url`) and `--headscale-api-key-file <file>` instead,
+    and `take-name` gets `--headscale-url` (that same URL) and the key file;
+    both files' modes are checked at the answers step, before anything is
+    made, and the answers are journalled, so a rerun takes the same
+    authority and one naming another control server is refused. A fresh
+    setup on a self-hosted control server is not built yet: setup refuses
+    `--tailnet-control-url` without `--restore`
+    (`TestRestoreTakesTheTailnetNameOverOnHeadscale`,
+    `TestHeadscaleRestoreAnswersRefused`).
     Tests: `daemon`'s `TestTheRestoreTakesTheName` (testcontrol and a fake
     of Tailscale's API over it, a rename the control server's: the dead
     node offline under the name, the takeover through the outbound policy,

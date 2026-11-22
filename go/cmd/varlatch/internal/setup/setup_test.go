@@ -1382,3 +1382,109 @@ func TestRestoreTakesTheTailnetNameOver(t *testing.T) {
 		}
 	}
 }
+
+// A restore onto a self-hosted control server (Headscale): the answers
+// name its URL (written as tailnet_control_url) and an API key file, whose
+// mode is checked before anything is made; varlatchd takes the dead node's
+// name over with them (--headscale-url equal to tailnet_control_url, and
+// --headscale-api-key-file). The answers are journalled: a rerun takes the
+// same authority, and one naming another control server is refused.
+func TestRestoreTakesTheTailnetNameOverOnHeadscale(t *testing.T) {
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	h.takeNameFails = true
+	out := t.TempDir()
+	kek, bek := operatorKeys(t, out)
+	o := options(h, &recorder{}, out)
+	o.RootKEKOut, o.BackupKeyOut = "", ""
+	o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
+	const control = "https://192.0.2.10:8443"
+	o.Given = Answers{Ingress: Tailnet, TailnetHostname: "varlatch", TailnetPort: "8687", TailnetTags: "tag:varlatch",
+		TailnetAuthKeyFile: "/etc/varlatch/tailnet-auth-key", TailnetControlURL: control, HeadscaleAPIKeyFile: "/srv/hs-api-key", Backups: "host"}
+	key := h.Path("/srv/hs-api-key")
+	if err := os.MkdirAll(filepath.Dir(key), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, []byte("hskey-api-test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "--headscale-api-key-file") || !strings.Contains(err.Error(), "tighten it to 0600") || len(h.adminCalls) != 0 {
+		t.Fatalf("a 0644 API key file: %v (admin %q)", err, h.adminCalls)
+	}
+	if err := os.Chmod(key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Stopped at the handoff (the fake's enroll refuses): the configuration
+	// already names the control server.
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "enroll") {
+		t.Fatalf("a failed handoff: %v", err)
+	}
+	conf, err := os.ReadFile(h.Path(ConfigFile))
+	if err != nil || !strings.Contains(string(conf), "tailnet_control_url = "+control+"\n") {
+		t.Fatalf("the configuration: %s %v", conf, err)
+	}
+	// Another control server on the rerun: refused, as answered.
+	other := o
+	other.Given.TailnetControlURL = "https://192.0.2.11:8443"
+	if err := Run(context.Background(), other); err == nil || !strings.Contains(err.Error(), "--tailnet-control-url differently") {
+		t.Fatalf("another control server on the rerun: %v", err)
+	}
+	// The rerun goes on with the same authority: Headscale's, not an OAuth
+	// client or a probe.
+	h.takeNameFails = false
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	take := "tailnet take-name --headscale-url " + control + " --headscale-api-key-file /srv/hs-api-key --json"
+	if !h.tookName || !slices.Contains(h.adminCalls, take) || slices.Contains(h.adminCalls, "tailnet probe-name --json") {
+		t.Fatalf("the takeover's commands: %q", h.adminCalls)
+	}
+	for _, c := range h.adminCalls {
+		if strings.Contains(c, "--oauth-client-file") {
+			t.Errorf("an OAuth client was passed: %q", c)
+		}
+	}
+}
+
+// The self-hosted control server's answers: its URL with the tailnet
+// ingress, canonical (an IP address, https); its API key file with that
+// URL, as an absolute path; Tailscale's OAuth client not with it; and, for
+// now, with --restore only.
+func TestHeadscaleRestoreAnswersRefused(t *testing.T) {
+	tailnet := func(mod func(*Answers)) Answers {
+		a := Answers{Ingress: Tailnet, TailnetHostname: "varlatch", TailnetPort: "8687", TailnetTags: "tag:varlatch", TailnetAuthKeyFile: "/k",
+			TailnetControlURL: "https://192.0.2.10", HeadscaleAPIKeyFile: "/hs-key", Backups: "host"}
+		mod(&a)
+		a.Defaults()
+		return a
+	}
+	for _, c := range []struct {
+		a    Answers
+		want string
+	}{
+		{tailnet(func(a *Answers) { a.TailnetControlURL = "https://headscale.example.test" }), "tailnet-control-url"},
+		{tailnet(func(a *Answers) { a.TailnetControlURL = "http://192.0.2.10" }), "tailnet-control-url"},
+		{tailnet(func(a *Answers) { a.TailnetControlURL = "https://192.0.2.10/" }), "is written https://192.0.2.10"},
+		{tailnet(func(a *Answers) { a.TailnetControlURL = "" }), "--headscale-api-key-file: goes with --tailnet-control-url"},
+		{tailnet(func(a *Answers) { a.HeadscaleAPIKeyFile = "hs-key" }), "--headscale-api-key-file: must be an absolute path"},
+		{tailnet(func(a *Answers) { a.HeadscaleAPIKeyFile, a.TailscaleOAuthClientFile = "", "/oauth.json" }), "give --headscale-api-key-file instead"},
+		{Answers{Ingress: Proxy, PublicURL: "https://v.example.test", TailnetControlURL: "https://192.0.2.10", Backups: "host"}, "--tailnet-control-url: goes with ingress tailnet only"},
+	} {
+		c := c
+		if err := c.a.Check(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%+v: %v, want %q", c.a, err, c.want)
+		}
+	}
+	if ok := tailnet(func(*Answers) {}); ok.Check() != nil {
+		t.Errorf("the answers as they should be: %v", ok.Check())
+	}
+	// A fresh setup (no --restore) on a self-hosted control server: not
+	// yet, refused before anything is made.
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	o := options(h, &recorder{}, t.TempDir())
+	o.Given = tailnet(func(a *Answers) { a.HeadscaleAPIKeyFile = "" })
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "--tailnet-control-url goes with --restore for now") || len(h.adminCalls) != 0 {
+		t.Fatalf("a fresh setup on Headscale: %v (admin %q)", err, h.adminCalls)
+	}
+}
