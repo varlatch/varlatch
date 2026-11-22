@@ -15,6 +15,13 @@
 # container, network and volume is named vl-rh-<run>-... and removed by
 # that name when the run ends (VL_RH_KEEP=1 keeps the installations).
 #
+# VL_RH_SOURCE=restore:<archive> (B6) restores that archive, with
+# VL_RH_RESTORE_BEK and VL_RH_RESTORE_KEK (its keys, files of mode 0600),
+# instead of seeding; the three are files the operator copied to this host,
+# mounted read-only into the runner. VL_RH_ONLY=bundle makes a synthetic
+# production-shaped archive and its keys in VL_RH_BUNDLE_OUT (an empty
+# directory), for B6 without production's.
+#
 # VL_RH_PROFILE=box (the experiments server; internal
 # docs/design/go-step8-rehearsals.md): run by the owner as root on the
 # host (sudo -i first), the test binary directly on the host, with real
@@ -107,9 +114,26 @@ cleanup_release() {
     done < <(node -e 'const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); for (const r of Object.values(d.images || {})) console.log(r);' "$release/images.json" 2>/dev/null || true)
   fi
 }
+# B6's inputs: the archive and its keys (read-only), and the synthetic
+# archive's directory, at their own paths in the runner.
+mounts=()
+bundle_out=
+if [ "${VL_RH_ONLY:-}" = bundle ] && [ -n "${VL_RH_BUNDLE_OUT:-}" ]; then
+  mkdir -p "$VL_RH_BUNDLE_OUT"
+  bundle_out=$(cd "$VL_RH_BUNDLE_OUT" && pwd)
+  mounts+=(-v "$bundle_out:$bundle_out")
+fi
+if [[ ${VL_RH_SOURCE:-} == restore:* ]]; then
+  for f in "${VL_RH_SOURCE#restore:}" "${VL_RH_RESTORE_BEK:-}" "${VL_RH_RESTORE_KEK:-}"; do
+    if [ -n "$f" ] && [ -f "$f" ]; then mounts+=(-v "$f:$f:ro"); fi
+  done
+fi
 cleanup() {
   if [ "$runner_built" = 1 ]; then
     docker run --rm --name "vl-rh-$run-chown" -u 0 -v "$root:$root" "$runner" chown -R "$(id -u):$(id -g)" "$root" || true
+    if [ -n "$bundle_out" ]; then
+      docker run --rm --name "vl-rh-$run-chown" -u 0 -v "$bundle_out:$bundle_out" "$runner" chown -R "$(id -u):$(id -g)" "$bundle_out" || true
+    fi
     docker image rm "$runner" >/dev/null 2>&1 || true
   fi
   if [ "${VL_RH_KEEP:-}" != 1 ]; then
@@ -153,7 +177,7 @@ docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e
 release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
-  VL_RH_KEEP VL_RH_ONLY)
+  VL_RH_KEEP VL_RH_ONLY VL_RH_RESTORE_BEK VL_RH_RESTORE_KEK VL_RH_BUNDLE_OUT VL_RH_RESTORE_READ)
 if [ "$profile" = box ]; then
   # On the box: as root on the host, real systemd, the target under a
   # root-owned path; the run's files handed back to the sudo user after.
@@ -173,7 +197,7 @@ runner_built=1
 envs=()
 for v in "${pass[@]}"; do envs+=(-e "$v"); done
 docker run --rm --name "vl-rh-$run-test" --network host -u 0 -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" -w "$root/work" \
+  -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" "${mounts[@]}" -w "$root/work" \
   -e VL_RH_RUN="$run" -e VL_RH_RELEASE_DIR="$release" -e VL_RH_BIN="$root/bin" -e VL_RH_WORK="$root/work" \
   -e VL_RH_REPORT="$root/report" -e VL_RH_TS="$ts" -e VL_RH_TARGET_ROOT="$target_root" "${envs[@]}" \
   "$runner" "$root/bin/rehearsal.test" -test.v -test.timeout 90m -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"

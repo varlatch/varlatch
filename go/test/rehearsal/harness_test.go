@@ -43,6 +43,8 @@ func TestMain(m *testing.M) {
 	case "squatter":
 		squat(os.Args[1])
 		return
+	case "envdigest":
+		os.Exit(envDigest(os.Args[1:]))
 	}
 	os.Exit(m.Run())
 }
@@ -308,6 +310,7 @@ type installation struct {
 	bek, destinations  string
 	readCreds          string
 	fakebin            string
+	kekCopy            string // a restored installation's copy of the operator's Root KEK
 	proxy              *http.Server
 	installationID     string
 	ingress            string       // proxy or public
@@ -319,6 +322,30 @@ type installation struct {
 // with its own public URL (a loopback proxy to its dashboard's port), its
 // target's host-install configuration, and its backup destination.
 func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *installation {
+	t.Helper()
+	in := prepareInstallation(t, rel, s3, name, nil)
+	in.up()
+	return in
+}
+
+// newSource is the run's source: a fresh installation (VL_RH_SOURCE=seed),
+// or the archive VL_RH_SOURCE names restored onto one (B6).
+func newSource(t *testing.T, rel release, s3 *s3Server, name string) *installation {
+	t.Helper()
+	if prof.restore == "" {
+		return newInstallation(t, rel, s3, name)
+	}
+	return restoredInstallation(t, rel, s3, name)
+}
+
+// operatorKeys are the keys of an installation restored from an archive
+// (B6): the operator's files, given by path, never generated.
+type operatorKeys struct{ kek, bek string }
+
+// prepareInstallation is an installation's files, its target's and its
+// backup destination, not started: with keys (a restore), its Root KEK
+// is the operator's and its BEK the operator's file.
+func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, keys *operatorKeys) *installation {
 	t.Helper()
 	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: prof.ingress}
 	base := filepath.Join(workDir, name)
@@ -346,7 +373,19 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	// needs it to: migrate streams the export (--out -) since 0.23.0.
 	kek := filepath.Join(in.dir, "secrets", "varlatch-kek")
 	// varlatchd (uid 999) reads the KEK through the secret's bind mount.
-	if err := os.WriteFile(kek, []byte(hexBytes(32)+"\n"), 0o644); err != nil {
+	kekText := []byte(hexBytes(32) + "\n")
+	if keys != nil {
+		// The operator's Root KEK, copied (the container's user must read
+		// it; the operator's file stays 0600) and removed with the
+		// installation.
+		b, err := os.ReadFile(keys.kek)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kekText = b
+		in.kekCopy = kek
+	}
+	if err := os.WriteFile(kek, kekText, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	in.webPort, in.proxyPort = freePort(t), freePort(t)
@@ -388,7 +427,11 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	// The operator's files: the BEK, the destination, its credentials.
 	op := filepath.Join(base, "operator")
 	in.bek = filepath.Join(op, "backup-key")
-	if err := os.WriteFile(in.bek, []byte(hexBytes(32)+"\n"), 0o600); err != nil {
+	if keys != nil {
+		// The operator's file itself: the archive's BEK seals the run's
+		// backups too, as on the operator's host.
+		in.bek = keys.bek
+	} else if err := os.WriteFile(in.bek, []byte(hexBytes(32)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	in.bucket = "vl-rh-" + name
@@ -438,7 +481,6 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 		t.Fatal(err)
 	}
 	t.Cleanup(in.remove)
-	in.up()
 	return in
 }
 
@@ -597,6 +639,9 @@ func (in *installation) remove() {
 		return
 	}
 	run(in.dir, nil, nil, "docker", "compose", "-p", in.project, "--profile", "deploy", "down", "-v", "--remove-orphans", "--timeout", "20")
+	if in.kekCopy != "" {
+		_ = os.Remove(in.kekCopy)
+	}
 	if in.targetRoot != "" && in.targetDir != "" {
 		_ = os.RemoveAll(in.targetDir)
 		_ = os.Remove(filepath.Join(in.targetRoot, runID))

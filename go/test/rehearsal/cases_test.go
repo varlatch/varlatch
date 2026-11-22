@@ -24,7 +24,10 @@ import (
 
 // TestRehearsal runs the must-cover list (internal docs/design/go-step7.md
 // 7.8b) against a real installation of the release: items 1 to 8 on one
-// installation, then the port-collision case of item 6 on a second.
+// installation, then the port-collision case of item 6 on a second. With
+// VL_RH_SOURCE=restore:<archive> (B6) it runs item 14 on the archive
+// restored instead (restore_test.go); VL_RH_ONLY=bundle makes a synthetic
+// archive for it.
 func TestRehearsal(t *testing.T) {
 	rel := loadRelease(t)
 	loadProfile(t)
@@ -42,25 +45,36 @@ func TestRehearsal(t *testing.T) {
 	case "public":
 		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
 	default:
-		// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL).
-		if os.Getenv("VL_RH_ONLY") == "kill" {
-			break
-		}
-		t.Run("main", func(t *testing.T) { mainCases(t, rel, s3) })
-		if os.Getenv("VL_RH_ONLY") == "setup" {
+		switch os.Getenv("VL_RH_ONLY") {
+		case "kill":
+			// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL).
+		case "bundle":
+			t.Run("bundle", func(t *testing.T) { makeBundle(t, rel, s3) })
 			return
-		}
-		// Item 6's squatter takes the dashboard's port from inside the
-		// workstation's fake systemctl, between the dashboard's stop and
-		// the target's start; on the box real systemd starts the target and
-		// nothing squats, so the case would record false failures there.
-		if prof.box {
-			measure("item 6: the port-collision case", "not run on the box: its squatter is the workstation profile's fake systemctl")
-		} else {
-			t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
+		default:
+			if prof.restore != "" {
+				// B6: the restored archive's run, then (VL_RH_KILL) the kill
+				// case on another restore of it; item 6's collision case
+				// needs no data, and runs on seeded sources only.
+				t.Run("restored", func(t *testing.T) { restoreCase(t, rel, s3) })
+				break
+			}
+			t.Run("main", func(t *testing.T) { mainCases(t, rel, s3) })
+			if os.Getenv("VL_RH_ONLY") == "setup" {
+				return
+			}
+			// Item 6's squatter takes the dashboard's port from inside the
+			// workstation's fake systemctl, between the dashboard's stop and
+			// the target's start; on the box real systemd starts the target and
+			// nothing squats, so the case would record false failures there.
+			if prof.box {
+				measure("item 6: the port-collision case", "not run on the box: its squatter is the workstation profile's fake systemctl")
+			} else {
+				t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
+			}
 		}
 	}
-	if prof.kill != "" {
+	if prof.kill != "" && os.Getenv("VL_RH_ONLY") != "setup" {
 		t.Run("kill", func(t *testing.T) { killCase(t, rel, s3) })
 	}
 }
