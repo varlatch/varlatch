@@ -28,14 +28,18 @@ type TargetMaker interface {
 	Missing() bool
 	// Make makes it, for the source's ingress (its public URL and
 	// dashboard's address) and shape; made is called with each item's
-	// name before the item is made.
-	Make(ctx context.Context, src IngressInfo, kind Ingress, made func(item string) error) error
+	// name before the item is made. earlier are the items an earlier run
+	// of the same migration made: migrate's, so made again where needed,
+	// never judged as what was there.
+	Make(ctx context.Context, src IngressInfo, kind Ingress, earlier []string, made func(item string) error) error
 	// Undo removes the items made, in the reverse order (each again
 	// harmlessly).
 	Undo(made []string) error
 	// KeyItems are the items the keys' files are, when migrate wrote them
 	// into a target it made.
 	KeyItems() (rootKEK, backupKey string)
+	// Present is whether one of KeyItems' files is there.
+	Present(item string) (bool, error)
 }
 
 // CreatedRecord is a target migrate made: its items, in the order made;
@@ -45,10 +49,20 @@ type CreatedRecord struct {
 	Undone string   `json:"undone,omitempty"`
 }
 
+// CleanupPending is whether the journal records a target migrate made
+// and has not removed: a released migration with one is not finished
+// (--abort and --resume go on removing it), and no new one starts over
+// it.
+func (j *Journal) CleanupPending() bool {
+	return j.Created != nil && j.Created.Undone == "" && len(j.Created.Made) > 0
+}
+
 // makeTarget makes the target when it is missing, journalling each item
 // first; a failure removes what was made. It returns the record (nil when
-// nothing was to be made and none was made before).
-func (e *Engine) makeTarget(ctx context.Context, prev *Journal, id string, src SourceInfo, ing IngressInfo) (*CreatedRecord, error) {
+// nothing was to be made and none was made before). The journal it writes
+// is the run's (a dry run's says so, so a dry run killed here and resumed
+// is a dry run still).
+func (e *Engine) makeTarget(ctx context.Context, prev *Journal, id string, src SourceInfo, ing IngressInfo, dryRunOnly bool) (*CreatedRecord, error) {
 	var rec *CreatedRecord
 	if prev != nil && prev.ID == id && prev.Created != nil && prev.Created.Undone == "" {
 		rec = prev.Created
@@ -61,12 +75,12 @@ func (e *Engine) makeTarget(ctx context.Context, prev *Journal, id string, src S
 	}
 	// The source's journal, before the target exists: the migration's id
 	// and what is being made.
-	pre := &Journal{Format: 1, ID: id, Phase: Started, Source: src, Ingress: e.Options.Ingress, Created: rec, History: []Step{}}
+	pre := &Journal{Format: 1, ID: id, Phase: Started, DryRunOnly: dryRunOnly, Source: src, Ingress: e.Options.Ingress, Created: rec, History: []Step{}}
 	if prev != nil && prev.ID == id {
 		pre.History = prev.History
 	}
 	e.say("Making the target: the Go installation on this host, with setup's steps (its keys will be the source's).")
-	err := e.Maker.Make(ctx, ing, e.Options.Ingress, func(item string) error {
+	err := e.Maker.Make(ctx, ing, e.Options.Ingress, slices.Clone(rec.Made), func(item string) error {
 		if !slices.Contains(rec.Made, item) {
 			rec.Made = append(rec.Made, item)
 		}
@@ -80,7 +94,13 @@ func (e *Engine) makeTarget(ctx context.Context, prev *Journal, id string, src S
 		if uerr := e.undoMade(pre); uerr != nil {
 			return rec, fmt.Errorf("making the target: %w; removing what was made: %v (varlatch migrate --abort tries again)", err, uerr)
 		}
-		return rec, fmt.Errorf("making the target: %w; what was made is removed", err)
+		// Stopped, as a failure before the barrier is: the next run starts
+		// again (it is not an interrupted one).
+		pre.Stopped = true
+		if werr := writeJournal(e.Source.Dir(), pre); werr != nil {
+			return rec, fmt.Errorf("making the target: %w; what was made is removed, but recording it as stopped: %v", err, werr)
+		}
+		return rec, fmt.Errorf("making the target: %w; what was made is removed (varlatch migrate starts again once that is fixed)", err)
 	}
 	return rec, nil
 }
@@ -104,34 +124,56 @@ func (e *Engine) undoMade(j *Journal) error {
 }
 
 // recordKeys journals the keys' files as made, before `admin migrate
-// keys` writes them, when the target is migrate's; after it, a key found
-// the same there (unchanged) is not migrate's and is struck.
-func (e *Engine) recordKeys(j *Journal, kekState, bekState string, before bool) error {
+// keys` writes them, when the target is migrate's: each one not there yet
+// and not already its (an earlier run of the same migration may have
+// written it: it stays recorded). A file there before is never migrate's,
+// so never removed. It returns the items it added.
+func (e *Engine) recordKeys(j *Journal) ([]string, error) {
 	if j.Created == nil || e.Maker == nil || !slices.Contains(j.Created.Made, "config") {
-		return nil
+		return nil, nil
 	}
 	kek, bek := e.Maker.KeyItems()
-	if before {
-		for _, item := range []string{kek, bek} {
-			if !slices.Contains(j.Created.Made, item) {
-				j.Created.Made = append(j.Created.Made, item)
-			}
+	var added []string
+	for _, item := range []string{kek, bek} {
+		if slices.Contains(j.Created.Made, item) {
+			continue
 		}
-		return writeJournal(e.Source.Dir(), j)
+		there, err := e.Maker.Present(item)
+		if err != nil {
+			return nil, fmt.Errorf("preflight: the target's %s: %w", item, err)
+		}
+		if !there {
+			added = append(added, item)
+		}
 	}
-	strike := func(item, state string) {
+	if len(added) == 0 {
+		return nil, nil
+	}
+	j.Created.Made = append(j.Created.Made, added...)
+	return added, writeJournal(e.Source.Dir(), j)
+}
+
+// strikeKeys takes back, after `admin migrate keys`, the items recordKeys
+// added whose file it did not write (found the same there after all).
+func (e *Engine) strikeKeys(j *Journal, added []string, kekState, bekState string) {
+	if len(added) == 0 {
+		return
+	}
+	kek, _ := e.Maker.KeyItems()
+	for _, item := range added {
+		state := bekState
+		if item == kek {
+			state = kekState
+		}
 		if state != "written" {
 			j.Created.Made = slices.DeleteFunc(j.Created.Made, func(s string) bool { return s == item })
 		}
 	}
-	strike(kek, kekState)
-	strike(bek, bekState)
-	return nil
 }
 
-// targetUnmade is whether the target migrate was making is not there yet
-// (its configuration missing): nothing was imported into it, and it has
-// no journal of its own.
+// targetUnmade is whether the target migrate was making is not there (not
+// made yet, or removed again: its configuration missing): nothing was
+// imported into it, and it has no journal of its own.
 func (e *Engine) targetUnmade(j *Journal) bool {
-	return j.Created != nil && j.Created.Undone == "" && e.Maker != nil && e.Maker.Missing()
+	return j.Created != nil && e.Maker != nil && e.Maker.Missing()
 }

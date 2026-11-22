@@ -4,6 +4,7 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,7 +38,7 @@ func TestPrepareTargetOnAnEmptyHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{MadeUser, MadeEtcDir, MadeDataDir, MadeConfig, MadeUnitEnabled}; !slices.Equal(made, want) {
+	if want := []string{MadeUser, MadeEtcDir, MadeDataDir, MadeUnitEnabled, MadeConfig}; !slices.Equal(made, want) {
 		t.Fatalf("made %v, want %v", made, want)
 	}
 	if a.PublicURL != "https://varlatch.example.test" || a.Listen != "127.0.0.1:8787" {
@@ -75,20 +76,29 @@ func TestPrepareTargetOnAnEmptyHost(t *testing.T) {
 	}
 }
 
-// What was there already is used and never named, so never removed: an
-// existing system user, /etc/varlatch holding the operator's file, an
-// empty data directory, the unit enabled. The undo then removes only the
-// configuration, and keeps /etc/varlatch with the operator's file.
+// What was there already is used as it is and never named, so never
+// removed: an existing system user, /etc/varlatch (root:root 0755, open
+// to the user: not setup's root:varlatch 0750, and kept so) holding the
+// operator's file, an empty data directory (varlatch's 0700),
+// the unit enabled; neither directory is chmodded or chowned. The undo
+// then removes only the configuration, and keeps /etc/varlatch with the
+// operator's file.
 func TestPrepareTargetUsesWhatIsThere(t *testing.T) {
 	skipOffUnix(t)
 	h, said := newFakeHost(t), &recorder{}
 	h.users[User], h.shells[User] = [2]int{985, 985}, "/usr/sbin/nologin"
 	h.enabled = true
-	for _, d := range []string{EtcDir, DataDir} {
-		if err := os.MkdirAll(h.Path(d), 0o750); err != nil {
+	for d, mode := range map[string]os.FileMode{EtcDir: 0o755, DataDir: 0o700} {
+		if err := os.MkdirAll(h.Path(d), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(h.Path(d), mode); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// Their owners, as the fake's Owner reads them (and its Chown would
+	// change them).
+	h.chowns[EtcDir], h.chowns[DataDir] = [2]int{0, 0}, [2]int{985, 985}
 	notes := filepath.Join(h.Path(EtcDir), "notes.txt")
 	if err := os.WriteFile(notes, []byte("the operator's"), 0o600); err != nil {
 		t.Fatal(err)
@@ -102,6 +112,14 @@ func TestPrepareTargetUsesWhatIsThere(t *testing.T) {
 	}
 	if !slices.Equal(made, []string{MadeConfig}) {
 		t.Fatalf("made %v, want the configuration only", made)
+	}
+	for d, want := range map[string]os.FileMode{EtcDir: 0o755, DataDir: 0o700} {
+		if st, err := os.Stat(h.Path(d)); err != nil || st.Mode().Perm() != want {
+			t.Errorf("%s was chmodded: %v %v", d, st, err)
+		}
+	}
+	if h.chowns[EtcDir] != [2]int{0, 0} || h.chowns[DataDir] != [2]int{985, 985} {
+		t.Errorf("a directory that was there was chowned: %v", h.chowns)
 	}
 	if err := UndoTarget(h, append(made, MadeEtcDir), said.say); err != nil {
 		t.Fatal(err)
@@ -167,8 +185,42 @@ func TestPrepareTargetRefusals(t *testing.T) {
 	}
 	h = newFakeHost(t)
 	h.active = true
-	if made, err := run(h, Options{}); err == nil || !strings.Contains(err.Error(), "is running") || slices.Contains(made, MadeUnitEnabled) {
-		t.Errorf("a running unit: %v %v", made, err)
+	if made, err := run(h, Options{}); err == nil || !strings.Contains(err.Error(), "is running") || len(made) != 0 {
+		t.Errorf("a running unit, refused before anything is made: %v %v", made, err)
+	}
+	// Directories there already, not as a target needs them: refused, and
+	// left as they were (no chmod, no chown), before anything is made.
+	h = newFakeHost(t)
+	h.users[User], h.shells[User] = [2]int{985, 985}, "/usr/sbin/nologin"
+	if err := os.MkdirAll(h.Path(EtcDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(h.Path(EtcDir), 0o775); err != nil {
+		t.Fatal(err)
+	}
+	if made, err := run(h, Options{}); err == nil || !strings.Contains(err.Error(), "/etc/varlatch is there, and not as a migration's target needs it") || len(made) != 0 {
+		t.Errorf("a group-writable /etc/varlatch: %v %v", made, err)
+	}
+	if st, _ := os.Stat(h.Path(EtcDir)); st.Mode().Perm() != 0o775 || len(h.chowns) != 0 {
+		t.Errorf("the /etc/varlatch that was there was changed: %v %v", st.Mode().Perm(), h.chowns)
+	}
+	h = newFakeHost(t)
+	h.users[User], h.shells[User] = [2]int{985, 985}, "/usr/sbin/nologin"
+	if err := os.MkdirAll(h.Path(DataDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if made, err := run(h, Options{}); err == nil || !strings.Contains(err.Error(), "/var/lib/varlatch is there, and not as a migration's target needs it") || len(made) != 0 {
+		t.Errorf("a data directory that is root's: %v %v", made, err)
+	}
+	if len(h.chowns) != 0 {
+		t.Errorf("the data directory that was there was chowned: %v", h.chowns)
+	}
+	h = newFakeHost(t)
+	if err := os.MkdirAll(h.Path(DataDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if made, err := run(h, Options{}); err == nil || !strings.Contains(err.Error(), "/var/lib/varlatch is there") || len(made) != 0 {
+		t.Errorf("a data directory and no varlatch user: %v %v", made, err)
 	}
 	h = newFakeHost(t)
 	_ = os.Remove(h.Path(UnitFile))
@@ -180,3 +232,49 @@ func TestPrepareTargetRefusals(t *testing.T) {
 		t.Errorf("a missing answer: %v %v", made, err)
 	}
 }
+
+// The configuration is made last: a run stopped at any item before it
+// leaves no configuration, so migrate finds the target missing and makes
+// the rest again (Ours: what the stopped run made is migrate's, made again
+// where needed), and the unit ends enabled.
+func TestPrepareTargetWritesItsConfigurationLast(t *testing.T) {
+	skipOffUnix(t)
+	for _, stop := range []string{MadeUser, MadeEtcDir, MadeDataDir, MadeUnitEnabled, MadeConfig} {
+		t.Run("stopped at "+stop, func(t *testing.T) {
+			h := newFakeHost(t)
+			if err := os.MkdirAll(filepath.Dir(h.Path(DataDir)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var made []string
+			_, err := PrepareTarget(context.Background(), Options{Host: h, Given: proxyAnswers()}, func(item string) error {
+				made = append(made, item)
+				if item == stop {
+					return errStopped
+				}
+				return nil
+			})
+			if err != errStopped {
+				t.Fatalf("not stopped: %v", err)
+			}
+			if _, err := os.Stat(h.Path(ConfigFile)); !os.IsNotExist(err) {
+				t.Fatalf("the configuration is there before the target is ready: %v", err)
+			}
+			if _, err := PrepareTarget(context.Background(), Options{Host: h, Given: proxyAnswers(), Ours: made}, func(item string) error {
+				if !slices.Contains(made, item) {
+					made = append(made, item)
+				}
+				return nil
+			}); err != nil {
+				t.Fatalf("made again: %v", err)
+			}
+			if _, err := os.Stat(h.Path(ConfigFile)); err != nil || !h.enabled {
+				t.Errorf("after: configuration %v, unit enabled %v", err, h.enabled)
+			}
+			if h.chowns[EtcDir] != [2]int{0, 990} || h.chowns[DataDir] != [2]int{990, 990} {
+				t.Errorf("the directories: %v", h.chowns)
+			}
+		})
+	}
+}
+
+var errStopped = errors.New("stopped")

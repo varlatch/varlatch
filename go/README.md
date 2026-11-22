@@ -3529,20 +3529,32 @@ migrations.
   - **The answers:** the source's public URL and ingress, and for an own
     proxy the dashboard's address; `--acme-email` and `--listen` for what
     the source cannot say.
+  - **Checked first:** nothing changes until the unit file is installed
+    and not running, an existing user passes, and an `/etc/varlatch` or
+    data directory there already is as a target needs (then used as it
+    is, never chmodded or chowned; refused otherwise).
   - **What it makes:**
     - the varlatch user (an existing one judged as setup judges it,
       supplementary groups included, unless `--accept-existing-user`);
     - `/etc/varlatch` and the data directory;
-    - the configuration, checked by varlatchd;
-    - the unit enabled but not started.
+    - the unit enabled but not started;
+    - the configuration, checked by varlatchd, last: a configuration
+      there is a target ready, so a run killed before it makes the rest
+      again.
   - **Never keys:** they are the source's, which `admin migrate keys`
     writes where the unit loads them (`CREDENTIALS_DIRECTORY`: the
     configuration names no key file).
   - **Journalled first:** each item goes in the source's journal before
-    it is made (`created`), the keys' files too.
+    it is made (`created`), the keys' files too, but only a key file not
+    there before (one there is never migrate's, so never removed).
   - **Undone:** an undo before the switch removes exactly those, after
     both journals say released (`UndoTarget`), as does `--abort` of a
-    run killed while making it.
+    run killed while making it. Until the removal is done the migration
+    is not released for good: `--abort` (or `--resume`) goes on removing
+    it, and no new migration starts over it.
+  - **Root:** whenever the target may change (its configuration missing
+    or unreadable, or one migrate made and has not removed), migrate
+    refuses to run without root.
   - **A prepared target** (another `--config`, or one already there) is
     used as it is.
   - **Tests:** G5's `maketarget_test.go` runs it under a test root

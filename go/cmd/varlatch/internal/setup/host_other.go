@@ -27,6 +27,7 @@ func (SystemHost) LoginShell(string) (string, error)                { return "",
 func (SystemHost) SupplementaryGroups(string) ([]string, error)     { return nil, errNotLinux }
 func (SystemHost) SysUIDMax() int                                   { return 999 }
 func (SystemHost) Chown(string, int, int) error                     { return errNotLinux }
+func (SystemHost) Owner(string) (int, int, error)                   { return 0, 0, errNotLinux }
 func (SystemHost) Systemctl(...string) (string, error)              { return "", errNotLinux }
 func (SystemHost) CheckConfig(string) (string, error)               { return "", errNotLinux }
 func (SystemHost) Ready(context.Context, string) error              { return errNotLinux }

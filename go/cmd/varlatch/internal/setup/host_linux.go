@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/diskprobe"
@@ -60,17 +61,78 @@ func (h SystemHost) CreateUser(name string) error {
 	return nil
 }
 
-// DeleteUser is `userdel <name>` (its own group goes with it).
+// DeleteUser is `userdel <name>`, then the user's own group when userdel
+// left it (login.defs' USERGROUPS_ENAB no) and nothing uses it: CreateUser
+// made it with the user (useradd --user-group), and a later useradd
+// --user-group would find it and fail.
 func (h SystemHost) DeleteUser(name string) error {
-	if _, _, found, err := h.LookupUser(name); err != nil || !found {
+	_, _, found, err := h.LookupUser(name)
+	if err != nil {
 		return err
 	}
-	cmd := exec.Command("userdel", name)
+	if found {
+		cmd := exec.Command("userdel", name)
+		cmd.Env = h.Env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("setup: userdel %s: %v %s", name, err, oneLine(string(out)))
+		}
+	}
+	return h.deleteUnusedGroup(name)
+}
+
+// deleteUnusedGroup is `groupdel <name>` when the group is there with no
+// member and no user's primary group (getent's view, the name service's
+// too).
+func (h SystemHost) deleteUnusedGroup(name string) error {
+	g, err := user.LookupGroup(name)
+	var unknown user.UnknownGroupError
+	if errors.As(err, &unknown) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	getent := func(args ...string) (string, error) {
+		cmd := exec.Command("getent", args...)
+		cmd.Env = h.Env
+		out, err := cmd.Output()
+		return string(out), err
+	}
+	entry, err := getent("group", name)
+	if err != nil {
+		return fmt.Errorf("setup: getent group %s: %v", name, err)
+	}
+	if f := strings.Split(strings.TrimSpace(entry), ":"); len(f) < 4 || f[3] != "" {
+		return nil // members, or not a group entry getent explains
+	}
+	users, err := getent("passwd")
+	if err != nil {
+		return fmt.Errorf("setup: getent passwd: %v", err)
+	}
+	for _, l := range strings.Split(users, "\n") {
+		if f := strings.Split(l, ":"); len(f) > 3 && f[3] == g.Gid {
+			return nil // some user's primary group
+		}
+	}
+	cmd := exec.Command("groupdel", name)
 	cmd.Env = h.Env
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("setup: userdel %s: %v %s", name, err, oneLine(string(out)))
+		return fmt.Errorf("setup: groupdel %s: %v %s", name, err, oneLine(string(out)))
 	}
 	return nil
+}
+
+// Owner is path's owner and group (stat's).
+func (SystemHost) Owner(path string) (int, int, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	s, ok := st.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, fmt.Errorf("setup: %s: no owner in its stat", path)
+	}
+	return int(s.Uid), int(s.Gid), nil
 }
 
 // LoginShell is the user's passwd entry's shell, as getent sees it (the

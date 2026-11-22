@@ -97,6 +97,13 @@ func (h *fakeHost) Chown(path string, uid, gid int) error {
 	h.chowns["/"+rel] = [2]int{uid, gid}
 	return nil
 }
+
+// Owner is what Chown made it, else root's.
+func (h *fakeHost) Owner(path string) (int, int, error) {
+	rel, _ := filepath.Rel(h.root, path)
+	ids := h.chowns["/"+rel]
+	return ids[0], ids[1], nil
+}
 func (h *fakeHost) Systemctl(args ...string) (string, error) {
 	h.systemctl = append(h.systemctl, strings.Join(args, " "))
 	switch args[0] {

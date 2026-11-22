@@ -398,6 +398,23 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 
 func ms(n int64) string { return (time.Duration(n) * time.Millisecond).Round(time.Second).String() }
 
+// targetNeedsRoot is why migrate may change the host target at setup's
+// place ("" when it will not): its configuration is missing (migrate makes
+// it) or cannot be read (it may be missing), or the journal records a
+// target migrate made and has not removed (an undo removes it, a run goes
+// on making it).
+func targetNeedsRoot(statErr error, j *migrate.Journal) string {
+	switch {
+	case errors.Is(statErr, fs.ErrNotExist):
+		return setup.ConfigFile + " does not exist: migrate makes the target there"
+	case statErr != nil:
+		return setup.ConfigFile + " cannot be read (" + Printable(statErr.Error()) + "): migrate may make the target there"
+	case j != nil && j.CleanupPending():
+		return "the migration " + j.ID + " made the target at " + setup.ConfigFile + " and has not removed it: migrate may change it"
+	}
+	return ""
+}
+
 // targetMaker sets the engine's maker of the host target (slice 7.4e) when
 // --config is setup's place: migrate makes the target there when it is
 // missing (as root, on a systemd host), and undoes what it made. Another
@@ -412,8 +429,9 @@ func (r *Run) targetMaker(e *migrate.Engine, o migrateOptions, varlatchd string)
 		}
 		return nil
 	}
-	if missing && !seam && (runtime.GOOS != "linux" || os.Geteuid() != 0) {
-		return Fail("varlatch migrate: "+setup.ConfigFile+" does not exist: migrate makes the target there, which needs root on a systemd host (sudo varlatch migrate ...)", ExitFailure)
+	j, _ := migrate.Status(e.Source.Dir()) // unreadable: the engine says so
+	if why := targetNeedsRoot(statErr, j); why != "" && !seam && (runtime.GOOS != "linux" || os.Geteuid() != 0) {
+		return Fail("varlatch migrate: "+why+", which needs root on a systemd host (sudo varlatch migrate ...)", ExitFailure)
 	}
 	e.Maker = &setupMaker{host: host, given: setup.Answers{ACMEEmail: o.acmeEmail, Listen: o.listen}, accept: o.acceptExistingUser,
 		say: func(s string) error { return r.warn(s) }}

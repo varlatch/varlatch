@@ -32,7 +32,7 @@ func (m *setupMaker) Missing() bool {
 	return errors.Is(err, fs.ErrNotExist)
 }
 
-func (m *setupMaker) Make(ctx context.Context, src migrate.IngressInfo, kind migrate.Ingress, made func(string) error) error {
+func (m *setupMaker) Make(ctx context.Context, src migrate.IngressInfo, kind migrate.Ingress, earlier []string, made func(string) error) error {
 	a := m.given
 	a.PublicURL = strings.TrimSuffix(src.PublicURL, "/")
 	switch kind {
@@ -53,13 +53,15 @@ func (m *setupMaker) Make(ctx context.Context, src migrate.IngressInfo, kind mig
 	if a.Backups == "" {
 		a.Backups = "host"
 	}
-	_, err := setup.PrepareTarget(ctx, setup.Options{Host: m.host, Given: a, Say: m.say, AcceptExistingUser: m.accept}, made)
+	_, err := setup.PrepareTarget(ctx, setup.Options{Host: m.host, Given: a, Say: m.say, AcceptExistingUser: m.accept, Ours: earlier}, made)
 	return err
 }
 
 func (m *setupMaker) Undo(made []string) error { return setup.UndoTarget(m.host, made, m.say) }
 
 func (m *setupMaker) KeyItems() (string, string) { return setup.MadeRootKEK, setup.MadeBackupKey }
+
+func (m *setupMaker) Present(item string) (bool, error) { return setup.ItemPresent(m.host, item) }
 
 // targetCredentials is the environment of the target's varlatchd: with
 // CREDENTIALS_DIRECTORY the configuration's directory when the

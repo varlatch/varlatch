@@ -8,7 +8,9 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -114,5 +116,41 @@ func TestPrepareTargetOnThisHost(t *testing.T) {
 	if out, _ := h.Systemctl("is-enabled", Unit); strings.TrimSpace(out) == "enabled" {
 		t.Error("the unit is left enabled")
 	}
+	if _, err := user.LookupGroup(User); err == nil {
+		t.Error("the varlatch group is left")
+	}
 	made = nil
+
+	// login.defs' USERGROUPS_ENAB no: userdel leaves the user's own group,
+	// which the undo removes too (useradd --user-group made it with the
+	// user), so the target made again finds no group in its way.
+	const defs = "/etc/login.defs"
+	st, err := os.Stat(defs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, err := os.ReadFile(defs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.WriteFile(defs, orig, st.Mode().Perm()) })
+	edited := regexp.MustCompile(`(?m)^\s*USERGROUPS_ENAB\b.*$`).ReplaceAllString(string(orig), "")
+	if err := os.WriteFile(defs, []byte(edited+"\nUSERGROUPS_ENAB no\n"), st.Mode().Perm()); err != nil {
+		t.Fatal(err)
+	}
+	for round := 1; round <= 2; round++ {
+		if _, err := PrepareTarget(context.Background(), Options{Host: h, Given: proxyAnswers()}, func(item string) error {
+			made = append(made, item)
+			return nil
+		}); err != nil {
+			t.Fatalf("USERGROUPS_ENAB no, round %d: %v", round, err)
+		}
+		if err := UndoTarget(h, made, nil); err != nil {
+			t.Fatalf("USERGROUPS_ENAB no, round %d, the undo: %v", round, err)
+		}
+		made = nil
+		if _, err := user.LookupGroup(User); err == nil {
+			t.Errorf("USERGROUPS_ENAB no, round %d: the varlatch group is left", round)
+		}
+	}
 }

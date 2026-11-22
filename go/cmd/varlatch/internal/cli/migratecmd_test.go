@@ -4,9 +4,14 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 )
 
 // `varlatch migrate` is a Go-only command (outside the parity table): its
@@ -77,3 +82,46 @@ func TestMigrateCommand(t *testing.T) {
 }
 
 func writeEmpty(path string) error { return os.WriteFile(path, []byte("\n"), 0o600) }
+
+// migrate needs root for the host target at setup's place whenever it may
+// change it: its configuration missing, or not readable (as when stat is
+// refused: it may be missing), or a journal recording a target migrate
+// made and has not removed (an --abort or --resume removes it, as root);
+// a prepared target, or one migrate made and removed again, needs none.
+func TestTargetNeedsRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	_, denied := os.Stat(filepath.Join(locked, "varlatchd.conf"))
+	if !errors.Is(denied, fs.ErrPermission) {
+		t.Fatalf("stat in a locked directory: %v", denied)
+	}
+	_, missing := os.Stat(filepath.Join(t.TempDir(), "varlatchd.conf"))
+	made := &migrate.Journal{ID: "m1", Phase: migrate.Released, Created: &migrate.CreatedRecord{Made: []string{"user", "config"}}}
+	removed := &migrate.Journal{ID: "m1", Phase: migrate.Released, Created: &migrate.CreatedRecord{Made: []string{"user", "config"}, Undone: "2026-11-22T00:00:00Z"}}
+	for _, c := range []struct {
+		name    string
+		statErr error
+		j       *migrate.Journal
+		want    string
+	}{
+		{"missing", missing, nil, "does not exist"},
+		{"stat refused", denied, nil, "cannot be read"},
+		{"made, not removed", nil, made, "has not removed it"},
+		{"prepared", nil, nil, ""},
+		{"made, removed again", nil, removed, ""},
+	} {
+		got := targetNeedsRoot(c.statErr, c.j)
+		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}

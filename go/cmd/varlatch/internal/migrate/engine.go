@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -183,6 +184,9 @@ func (e *Engine) Run(ctx context.Context, dryRunOnly bool) (*Journal, error) {
 		return nil, err
 	}
 	switch {
+	case j != nil && j.Phase == Released && j.CleanupPending():
+		return j, fmt.Errorf("the migration %s was undone, but what migrate made of the target (%s) is not all removed: varlatch migrate --abort removes it before a new migration",
+			j.ID, strings.Join(j.Created.Made, ", "))
 	case j == nil, j.Phase == Released, j.Stopped && slices.Contains(beforeBarrier, j.Phase):
 	case j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is open: this installation was migrated (varlatch migrate --status)", j.ID)
@@ -225,7 +229,7 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 		return prev, err
 	}
 	// The target, made when it is not there (slice 7.4e).
-	created, err := e.makeTarget(ctx, prev, id, src, ing)
+	created, err := e.makeTarget(ctx, prev, id, src, ing, dryRunOnly)
 	if err != nil {
 		return prev, err
 	}
@@ -397,16 +401,15 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	defer clear(kek)
 	// The keys' files, in a target migrate made, are journalled as its
 	// before they are written (struck after, when found the same there).
-	if err := e.recordKeys(j, "", "", true); err != nil {
+	added, err := e.recordKeys(j)
+	if err != nil {
 		return err
 	}
 	kekState, bekState, err := e.Target.Keys(ctx, kek, e.BEK)
 	if err != nil {
 		return fmt.Errorf("preflight: the target's keys: %w", err)
 	}
-	if err := e.recordKeys(j, kekState, bekState, false); err != nil {
-		return err
-	}
+	e.strikeKeys(j, added, kekState, bekState)
 	j.Preflight = &PreflightRecord{ArchiveID: archive, VerifiedAt: e.now().UTC().Format(time.RFC3339Nano), RootKEK: kekState, BEK: bekState}
 	return e.enter(ctx, j, Preflight)
 }
@@ -810,7 +813,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			return err
 		}
 		if err := e.undoMade(j); err != nil {
-			return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --resume finishes it", cause, err)
+			return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --abort (or --resume) finishes it", cause, err)
 		}
 		return fmt.Errorf("%w; what migrate made of the target is removed, and the old installation runs unchanged", cause)
 	}
@@ -823,7 +826,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	}
 	// The target migrate made goes too, once both journals say released.
 	if err := e.undoMade(j); err != nil {
-		return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --resume finishes it", cause, err)
+		return fmt.Errorf("%w; it was undone, but what migrate made of the target is not all removed: %v; varlatch migrate --abort (or --resume) finishes it", cause, err)
 	}
 	return fmt.Errorf("%w; the barrier was lifted and the old installation reopened unchanged", cause)
 }
@@ -1021,6 +1024,10 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 	switch {
 	case j == nil:
 		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to abort", e.Source.Dir())
+	case j.Phase == Released && j.CleanupPending():
+		// Undone, but what migrate made of the target is not all removed:
+		// removing it goes on.
+		return j, e.finishReleased(ctx, j)
 	case j.Phase == Released:
 		return j, nil
 	case slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer:
@@ -1040,7 +1047,7 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("the migration %s is %s: past its switch it goes forward only (varlatch migrate --resume)", j.ID, j.Phase)
 	}
 	err = e.undo(ctx, j, errors.New("aborted by the operator"))
-	if j.Phase == Released {
+	if j.Phase == Released && !j.CleanupPending() {
 		return j, nil
 	}
 	return j, err

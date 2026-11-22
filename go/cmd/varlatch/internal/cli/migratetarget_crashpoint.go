@@ -70,7 +70,9 @@ func (rootedHost) LoginShell(string) (string, error)            { return "/usr/s
 func (rootedHost) SupplementaryGroups(string) ([]string, error) { return nil, nil }
 func (rootedHost) SysUIDMax() int                               { return 1 << 30 }
 func (rootedHost) Chown(string, int, int) error                 { return nil }
-func (h rootedHost) Systemctl(args ...string) (string, error)   { return h.sys.Systemctl(args...) }
+
+func (h rootedHost) Owner(path string) (int, int, error)      { return h.sys.Owner(path) }
+func (h rootedHost) Systemctl(args ...string) (string, error) { return h.sys.Systemctl(args...) }
 func (rootedHost) Probe(context.Context, string) (diskprobe.Result, error) {
 	return diskprobe.Result{}, errors.New("no probe under a test root")
 }

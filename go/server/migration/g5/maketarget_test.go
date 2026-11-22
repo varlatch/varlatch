@@ -183,9 +183,33 @@ func TestG5MakesTheHostTarget(t *testing.T) {
 				t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
 			}
 			w.expect("resumed", "open", "open", "target-open", "migrated-out")
+			// Every step of the target's made, the unit enabled included
+			// (it starts again after a reboot).
+			if _, err := os.Stat(filepath.Join(w.stateDir, "unit-enabled")); err != nil {
+				t.Errorf("resumed: the unit is not enabled: %v", err)
+			}
 			w.noSecrets()
 		})
 	}
+	// A dry run killed while it made the target is a dry run still: resumed,
+	// it stops after the dry run, nothing switched; --abort then removes
+	// what it made.
+	t.Run("a dry run killed at target config, resumed", func(t *testing.T) {
+		w, root := madeWorld(t)
+		w.useState()
+		if code := w.run("target config", "--dry-run"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if code := w.run("", "--resume"); code != 0 {
+			t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.expect("resumed dry run", "dry-run", "dry-run", "source", "")
+		if code := w.run("", "--abort"); code != 0 {
+			t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.gone("aborted", root)
+		w.noSecrets()
+	})
 }
 
 // hexKEK is the seed's Root KEK as its file holds it.

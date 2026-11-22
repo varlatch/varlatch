@@ -73,6 +73,8 @@ type Host interface {
 	// SYS_UID_MAX, 999 when it says none).
 	SysUIDMax() int
 	Chown(path string, uid, gid int) error
+	// Owner is path's owner and group.
+	Owner(path string) (uid, gid int, err error)
 	// Systemctl runs systemctl with args.
 	Systemctl(args ...string) (string, error)
 	// Probe measures dir's disk (diskprobe, with files without a name).
@@ -141,6 +143,10 @@ type Options struct {
 	// AcceptExistingUser uses a varlatch user that exists already and is
 	// not a system account.
 	AcceptExistingUser bool
+	// Ours are the items an earlier run of the same migration made of its
+	// target (PrepareTarget only): migrate's, so made again where needed,
+	// never judged as what was there.
+	Ours []string
 	// StopAfter ends the run once that step is done (tests of resuming).
 	StopAfter string
 	Now       func() time.Time
@@ -201,6 +207,9 @@ type run struct {
 	// configExtra is appended to the configuration setup writes: a
 	// migration's target under a test root names its data directory there.
 	configExtra string
+	// keepEtc: /etc/varlatch was there before a migration's target was
+	// made in it, and is used as it is (never chmodded or chowned).
+	keepEtc bool
 }
 
 // Run runs setup, continuing where an earlier run stopped.
@@ -710,12 +719,14 @@ func (r *run) config() error {
 	if err != nil {
 		return err
 	}
-	etc := r.path(EtcDir)
-	if err := os.Chmod(etc, 0o750); err != nil {
-		return err
-	}
-	if err := r.h.Chown(etc, 0, gid); err != nil {
-		return err
+	if !r.keepEtc {
+		etc := r.path(EtcDir)
+		if err := os.Chmod(etc, 0o750); err != nil {
+			return err
+		}
+		if err := r.h.Chown(etc, 0, gid); err != nil {
+			return err
+		}
 	}
 	want := append(RenderConfig(r.j.Answers), r.configExtra...)
 	p := r.path(ConfigFile)
