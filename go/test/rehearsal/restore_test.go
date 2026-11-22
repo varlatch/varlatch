@@ -14,6 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -270,30 +272,42 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	if f.code != 0 {
 		return
 	}
+	// Go's discarded copy leaves its final archive's local file in the
+	// data directory's backups/, which the new migration's import leaves
+	// as it is (#414; r16f found it refused, after the barrier).
+	backups := filepath.Join(in.data, "backups")
+	kept := filesUnder(backups)
 	if !forwardAndCheck(t, in, rel, "the migration again", nil, rd, changed) {
-		// Finding of r16f: Go's discarded copy leaves its data directory's
-		// backups/ (the final archive's local file), which the new
-		// migration's import refuses only after the barrier. As an
-		// operator would: moved aside (kept), and the migration again.
-		backups := filepath.Join(in.data, "backups")
-		if _, err := os.Stat(backups); err != nil {
-			return
-		}
-		aside := filepath.Join(in.targetDir, "go-backups-of-the-discarded-copy")
-		if err := os.Rename(backups, aside); err != nil {
-			record(t, item, "Go's backups/ moved aside", false, err.Error())
-			return
-		}
-		measure("item 14: before the migration again", "Go's discarded copy left backups/ in the data directory, which the import refuses (after the barrier, the dry run having passed); moved aside, kept")
-		if !forwardAndCheck(t, in, rel, "the migration again, Go's backups/ moved aside", nil, rd, changed) {
-			return
-		}
+		return
 	}
+	still := filesUnder(backups)
+	record(t, item, "the migration again keeps Go's backups/ as it was", len(kept) > 0 && maps.Equal(kept, still),
+		fmt.Sprintf("%d files before, %d after, the same %v", len(kept), len(still), maps.Equal(kept, still)))
 	f = in.migrateFinish(rel)
 	record(t, item, "--finish --delete-old-data after the migration again", f.code == 0, f.String()+" "+lastLines(f.stdout, 4))
 	vols := run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "label=com.docker.compose.project="+in.project)
 	measure("item 14: the source's volumes after finish", fmt.Sprint(len(strings.Fields(vols.stdout))))
 	convertArchive(t, in, rel)
+}
+
+// filesUnder is each regular file under dir, by its path there, and its
+// SHA-256 (nothing when dir is missing).
+func filesUnder(dir string) map[string]string {
+	out := map[string]string{}
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		sum := sha256.Sum256(b)
+		rel, _ := filepath.Rel(dir, p)
+		out[rel] = hex.EncodeToString(sum[:])
+		return nil
+	})
+	return out
 }
 
 // forwardAndCheck is the migration with its prober, then the parity of
