@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/diskprobe"
@@ -213,4 +214,17 @@ func (SystemHost) Ready(ctx context.Context, listen string) error {
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// readNoFollow reads a file, never through a symbolic link (O_NOFOLLOW).
+func readNoFollow(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, fmt.Errorf("%s is a symbolic link", path)
+		}
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, 1<<20))
 }

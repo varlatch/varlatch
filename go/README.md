@@ -2393,11 +2393,15 @@ serves the tailnet listener on the node's own addresses
     made (while the takeover is still to do), and the answers are
     journalled, so a rerun takes the same authority and one naming another
     control server is refused (Tailscale's, answered as no URL, included).
-    A rerun reads where the takeover got to from the node's state (enrolled,
-    held, the takeover journal's phase), never by trying `take-name`, which
-    on Headscale expires its key every time; and a `varlatchd.conf` whose
-    `tailnet_control_url` is not the answered one is refused before the
-    node enrols. A fresh
+    A rerun reads where the takeover got to, never by trying `take-name`
+    (on Headscale it expires its key every time): enrolled only when
+    setup's journal records the enrolment succeeded (or this takeover's own
+    journal exists), held only under this operation's temporary name, done
+    only when varlatchd's takeover journal is this operation's (its
+    operation, name and control server) and says done; any other node or
+    record in the data directory is refused, with nothing run against it.
+    A `varlatchd.conf` whose `tailnet_control_url` is not the answered one
+    is refused before anything is recorded or enrolled. A fresh
     setup on a self-hosted control server is not built yet: setup refuses
     `--tailnet-control-url` without `--restore`
     (`TestRestoreTakesTheTailnetNameOverOnHeadscale`,

@@ -188,6 +188,13 @@ func (r *run) restore(ctx context.Context) error {
 // journalled first; a rerun finishes what an interrupted one began.
 func (r *run) takeName(ctx context.Context) error {
 	a := r.j.Answers
+	// The configuration must name the control server the answers do
+	// (varlatchd's tailnet_control_url): a hand-edited one is refused
+	// before anything is recorded or the node enrols against it.
+	if got := r.configValue("tailnet_control_url"); got != a.TailnetControlURL {
+		return fmt.Errorf("setup: %s's tailnet_control_url (%s) is not the answered control server (%s): nothing was changed; put it back as answered",
+			ConfigFile, orTailscale(got), orTailscale(a.TailnetControlURL))
+	}
 	resumed := r.j.Restore.TailnetOperation != ""
 	if !resumed {
 		op, err := tailcontrol.NewOperationID()
@@ -199,7 +206,8 @@ func (r *run) takeName(ctx context.Context) error {
 			return err
 		}
 	}
-	temp, err := tailcontrol.TempName(a.TailnetHostname, r.j.Restore.TailnetOperation, tailcontrol.RoleNew)
+	op := r.j.Restore.TailnetOperation
+	temp, err := tailcontrol.TempName(a.TailnetHostname, op, tailcontrol.RoleNew)
 	if err != nil {
 		return err
 	}
@@ -223,33 +231,66 @@ func (r *run) takeName(ctx context.Context) error {
 		}
 		return r.o.Say("This node holds the tailnet name " + a.TailnetHostname + "; the old node is renamed aside. Tailnet access opens when varlatchd starts.")
 	}
-	// The configuration must name the control server the answers do
-	// (varlatchd's tailnet_control_url): a hand-edited one is refused
-	// before the node enrols against it.
-	if got := r.configValue("tailnet_control_url"); got != a.TailnetControlURL {
-		return fmt.Errorf("setup: %s's tailnet_control_url (%s) is not the answered control server (%s): nothing was changed; put it back as answered",
-			ConfigFile, orTailscale(got), orTailscale(a.TailnetControlURL))
+	enroll := func() error {
+		if err := r.o.Say("Taking the tailnet name " + a.TailnetHostname + " over: this node joins as " + temp + " first (held, serving nothing), then the old node is renamed aside and this one takes the name."); err != nil {
+			return err
+		}
+		if _, err := r.h.Admin(ctx, "tailnet", "enroll", "--hostname", temp, "--json"); err != nil {
+			return err
+		}
+		r.j.Restore.TailnetEnrolled = true
+		return r.saveJournal()
 	}
-	// Where an earlier run got to is read from the node's own state, never
-	// by trying take-name (on Headscale every take-name expires its API
-	// key, a refusal included): not enrolled, it enrols (held under its
-	// temporary name) and takes the name once; held, it takes the name;
-	// enrolled and no longer held, the takeover is done once its journal
-	// says so (otherwise take-name finishes it).
-	st := r.takeoverState()
-	switch {
-	case resumed && st.enrolled && !st.held && st.phase == "done":
-		return r.o.Say("This node holds the tailnet name " + a.TailnetHostname + " (an earlier run took it over).")
-	case resumed && st.enrolled:
+	if !resumed {
+		if err := enroll(); err != nil {
+			return err
+		}
 		return take()
 	}
-	if err := r.o.Say("Taking the tailnet name " + a.TailnetHostname + " over: this node joins as " + temp + " first (held, serving nothing), then the old node is renamed aside and this one takes the name."); err != nil {
+	// A rerun: where this operation's takeover got to is read from the
+	// node's state and the takeover's own records, never by trying
+	// take-name (on Headscale every take-name expires its API key, a
+	// refusal included); a record of another operation, name or control
+	// server is not this takeover's.
+	st, err := r.takeoverState()
+	if err != nil {
 		return err
 	}
-	if _, err := r.h.Admin(ctx, "tailnet", "enroll", "--hostname", temp, "--json"); err != nil {
-		return err
+	ours := st.journal != nil && st.journal.Plan.Operation == op && strings.EqualFold(st.journal.Plan.Name, a.TailnetHostname) &&
+		st.journal.ControlURL == a.TailnetControlURL
+	// Enrolled: its enrol succeeded (recorded), or its takeover began.
+	enrolled := r.j.Restore.TailnetEnrolled || ours
+	switch {
+	case st.held && st.holdName != temp:
+		return fmt.Errorf("setup: the node is held as %s, not as this takeover's temporary name %s: nothing was done", st.holdName, temp)
+	case st.held && !enrolled:
+		// Held, but its enrolment did not say it succeeded (a refusal after
+		// it wrote the node, its tags say): enrolled again, then taken.
+		if err := enroll(); err != nil {
+			return err
+		}
+		return take()
+	case st.held:
+		return take()
+	case ours && st.journal.Phase == "done":
+		return r.o.Say("This node holds the tailnet name " + a.TailnetHostname + " (an earlier run took it over).")
+	case ours && st.journal.Phase == "switching" && st.journal.IncomingOpened:
+		// Stopped after the takeover opened the node (its hold removed),
+		// before its journal said done: take-name finishes it.
+		return take()
+	case !st.enrolled && !enrolled:
+		// Never enrolled (an enrolment that failed before writing the node).
+		if err := enroll(); err != nil {
+			return err
+		}
+		return take()
+	case !enrolled:
+		// No node held for this takeover, no record of it, and a node's
+		// state there (a reused data directory, or an enrolment that did
+		// not finish): nothing is tried against it.
+		return fmt.Errorf("setup: this data directory holds a tailnet node that is neither held for this takeover (%s) nor recorded as taking the name over: nothing was done", temp)
 	}
-	return take()
+	return fmt.Errorf("setup: the takeover %s is recorded as begun, but its node is not held and its record does not say it finished: nothing was done (varlatchd admin tailnet take-name says where it stands)", op)
 }
 
 // The node's files in the data directory that a takeover leaves, as
@@ -261,36 +302,73 @@ const (
 	takeoverFile     = "tailnet-takeover.json"
 )
 
-// takeover is where a restore's takeover got to, from the node's state:
-// enrolled (its tailnet state there), held (for the handoff, under its
-// temporary name), and the takeover journal's phase ("" without one).
+// takeoverRecord is what setup reads of varlatchd's takeover journal.
+type takeoverRecord struct {
+	Plan struct {
+		Operation string `json:"operation"`
+		Name      string `json:"name"`
+	} `json:"plan"`
+	Phase          string `json:"phase"`
+	IncomingOpened bool   `json:"incomingOpened"`
+	ControlURL     string `json:"controlUrl"`
+}
+
+// takeover is where a restore's takeover got to, from the node's files:
+// enrolled (its tailnet state there), held (and under which name), and
+// varlatchd's takeover journal (nil without one). None is followed
+// through a symbolic link.
 type takeover struct {
 	enrolled, held bool
-	phase          string
+	holdName       string
+	journal        *takeoverRecord
 }
 
-func (r *run) takeoverState() takeover {
+func (r *run) takeoverState() (takeover, error) {
 	dir := r.path(DataDir)
-	exists := func(p string) bool { _, err := os.Stat(filepath.Join(dir, p)); return err == nil }
-	t := takeover{enrolled: exists(tailnetStateFile), held: exists(tailnetHoldFile)}
-	if b, err := os.ReadFile(filepath.Join(dir, takeoverFile)); err == nil {
-		var j struct {
-			Phase string `json:"phase"`
-		}
-		if json.Unmarshal(b, &j) == nil {
-			t.phase = j.Phase
-		}
+	var t takeover
+	if st, err := os.Lstat(filepath.Join(dir, tailnetStateFile)); err == nil && st.Mode().IsRegular() {
+		t.enrolled = true
 	}
-	return t
+	read := func(name string, v any) (bool, error) {
+		b, err := readNoFollow(filepath.Join(dir, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("setup: %s: %w", name, err)
+		}
+		if err := json.Unmarshal(b, v); err != nil {
+			return false, fmt.Errorf("setup: %s is not readable: %w", name, err)
+		}
+		return true, nil
+	}
+	var hold struct {
+		Hostname string `json:"hostname"`
+	}
+	held, err := read(tailnetHoldFile, &hold)
+	if err != nil {
+		return t, err
+	}
+	t.held, t.holdName = held, hold.Hostname
+	var j takeoverRecord
+	ok, err := read(takeoverFile, &j)
+	if err != nil {
+		return t, err
+	}
+	if ok {
+		t.journal = &j
+	}
+	return t, nil
 }
 
-// configValue is varlatchd.conf's value for key ("" when it has none).
+// configValue is varlatchd.conf's value for key ("" when it has none),
+// read as varlatchd reads it (a leading UTF-8 byte order mark ignored).
 func (r *run) configValue(key string) string {
 	b, err := os.ReadFile(r.path(ConfigFile))
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for _, line := range strings.Split(strings.TrimPrefix(string(b), "\ufeff"), "\n") {
 		k, v, ok := strings.Cut(line, "=")
 		if ok && strings.TrimSpace(k) == key {
 			return strings.TrimSpace(v)

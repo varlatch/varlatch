@@ -165,6 +165,10 @@ type RestoreRecord struct {
 	// TailnetOperation is the tailnet handoff's (a restore with the
 	// tailnet's authority): its temporary names carry it.
 	TailnetOperation string `json:"tailnetOperation,omitempty"`
+	// TailnetEnrolled is that the handoff's `tailnet enroll` succeeded (its
+	// node held under the temporary name, its tags checked): only then is
+	// the enrolment not done again.
+	TailnetEnrolled bool `json:"tailnetEnrolled,omitempty"`
 }
 
 // ProbeRecord is what the fsync probe measured, and whether a slow disk

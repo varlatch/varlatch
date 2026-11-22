@@ -59,10 +59,13 @@ type fakeHost struct {
 	// takeRefused: take-name refuses (a holder seen alive, say) after its
 	// first checks; hsKeyExpired: the Headscale API key given has been
 	// expired (every take-name with one expires it, as varlatchd does).
-	takeRefused    bool
-	hsKeyExpired   bool
-	takeCalls      int
-	probeSingleUse bool
+	takeRefused  bool
+	hsKeyExpired bool
+	takeCalls    int
+	// enrollTagsDiffer: enroll writes the node (its state, its hold) and
+	// then refuses it (its tags are not tailnet_tags).
+	enrollTagsDiffer bool
+	probeSingleUse   bool
 	// The restored certificate issuance count for the public host.
 	issued int
 }
@@ -148,6 +151,9 @@ func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 		_ = os.MkdirAll(filepath.Join(data, "tailnet"), 0o700)
 		_ = os.WriteFile(filepath.Join(data, "tailnet", "tailscaled.state"), []byte("{}"), 0o600)
 		_ = os.WriteFile(filepath.Join(data, "tailnet-handoff.json"), []byte(`{"hostname":"`+args[3]+`"}`), 0o600)
+		if h.enrollTagsDiffer {
+			return nil, errors.New("varlatchd admin tailnet enroll: The node's tags (none) are not tailnet_tags (tag:varlatch)")
+		}
 		return []byte(`{"dnsName":"` + args[3] + `.corp.ts.net","stableId":"nNEW","held":true}`), nil
 	}
 	if args[0] == "tailnet" && args[1] == "take-name" {
@@ -169,8 +175,20 @@ func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 		if h.takeNameFails || h.takeRefused {
 			return nil, errors.New("varlatchd admin tailnet take-name: vault is connected to the tailnet now: nothing was renamed")
 		}
+		// The takeover's journal, as varlatchd writes it: the operation and
+		// name (from the hold's temporary name, <name>-vl-<op>-n), the
+		// control server.
+		hold, _ := os.ReadFile(filepath.Join(data, "tailnet-handoff.json"))
+		var held struct{ Hostname string }
+		_ = json.Unmarshal(hold, &held)
+		name, rest, _ := strings.Cut(held.Hostname, "-vl-")
+		control := ""
+		if i := slices.Index(args, "--headscale-url"); i >= 0 {
+			control = args[i+1]
+		}
+		rec, _ := json.Marshal(map[string]any{"plan": map[string]string{"operation": strings.TrimSuffix(rest, "-n"), "name": name}, "phase": "done", "controlUrl": control})
 		_ = os.Remove(filepath.Join(data, "tailnet-handoff.json"))
-		_ = os.WriteFile(filepath.Join(data, "tailnet-takeover.json"), []byte(`{"phase":"done"}`), 0o600)
+		_ = os.WriteFile(filepath.Join(data, "tailnet-takeover.json"), rec, 0o600)
 		h.tookName = true
 		return []byte(`{"operation":"x","name":"varlatch","phase":"done"}`), nil
 	}
@@ -1496,6 +1514,16 @@ func TestHeadscaleRestoreAfterARefusedTakeover(t *testing.T) {
 	if h.takeCalls != 1 || !h.hsKeyExpired {
 		t.Fatalf("take-name %d times, key expired %v", h.takeCalls, h.hsKeyExpired)
 	}
+	// Refused again on the rerun, with a fresh key: that refusal is what
+	// setup says (never an expired key's), and the node is not enrolled
+	// again.
+	h.hsKeyExpired = false
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "is connected to the tailnet now") || strings.Contains(err.Error(), "401") {
+		t.Fatalf("a refused takeover again: %v", err)
+	}
+	if h.takeCalls != 2 {
+		t.Fatalf("take-name %d times", h.takeCalls)
+	}
 	// varlatchd.conf edited to another control server: refused, nothing run.
 	conf := h.Path(ConfigFile)
 	orig, err := os.ReadFile(conf)
@@ -1522,8 +1550,107 @@ func TestHeadscaleRestoreAfterARefusedTakeover(t *testing.T) {
 			enrolls++
 		}
 	}
-	if !h.tookName || h.takeCalls != 2 || enrolls != 1 {
+	if !h.tookName || h.takeCalls != 3 || enrolls != 1 {
 		t.Fatalf("the rerun: %d take-name, %d enroll: %q", h.takeCalls, enrolls, h.adminCalls)
+	}
+}
+
+// A rerun trusts no takeover record but its own: a node's state and a
+// takeover journal left by another operation (a reused data directory), or
+// one of this operation against another control server, is refused, and
+// take-name never runs (it would expire the key).
+func TestHeadscaleRestoreIgnoresAnotherTakeover(t *testing.T) {
+	skipOffUnix(t)
+	h, o := headscaleRestore(t)
+	h.takeNameFails = true
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "enroll") {
+		t.Fatalf("a failed enrolment: %v", err)
+	}
+	var j JournalDoc
+	raw, _ := os.ReadFile(h.Path(Journal))
+	if err := json.Unmarshal(raw, &j); err != nil || j.Restore == nil || j.Restore.TailnetOperation == "" {
+		t.Fatalf("the journal: %s %v", raw, err)
+	}
+	h.takeNameFails = false
+	data := h.Path(DataDir)
+	if err := os.MkdirAll(filepath.Join(data, "tailnet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "tailnet", "tailscaled.state"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range []map[string]any{
+		{"plan": map[string]string{"operation": "another1", "name": "varlatch"}, "phase": "done", "controlUrl": hsControl},
+		{"plan": map[string]string{"operation": j.Restore.TailnetOperation, "name": "varlatch"}, "phase": "done", "controlUrl": "https://192.0.2.99"},
+		{"plan": map[string]string{"operation": j.Restore.TailnetOperation, "name": "other"}, "phase": "done", "controlUrl": hsControl},
+	} {
+		b, _ := json.Marshal(rec)
+		if err := os.WriteFile(filepath.Join(data, "tailnet-takeover.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "nor recorded as taking the name over") {
+			t.Errorf("a takeover record %v: %v", rec, err)
+		}
+		if h.takeCalls != 0 || h.tookName {
+			t.Fatalf("take-name ran against another takeover's record (%d calls)", h.takeCalls)
+		}
+	}
+}
+
+// An enrolment that wrote the node and its hold, then refused it (its tags
+// are not tailnet_tags): the rerun enrols it again, and only then takes the
+// name, once.
+func TestHeadscaleRestoreEnrolsAgainAfterARefusedEnrolment(t *testing.T) {
+	skipOffUnix(t)
+	h, o := headscaleRestore(t)
+	h.enrollTagsDiffer = true
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "are not tailnet_tags") {
+		t.Fatalf("a refused enrolment: %v", err)
+	}
+	if h.takeCalls != 0 {
+		t.Fatalf("take-name after a refused enrolment: %d", h.takeCalls)
+	}
+	h.enrollTagsDiffer = false // the node tagged in Headscale
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	enrolls := 0
+	for _, c := range h.adminCalls {
+		if strings.HasPrefix(c, "tailnet enroll") {
+			enrolls++
+		}
+	}
+	if !h.tookName || h.takeCalls != 1 || enrolls != 2 {
+		t.Fatalf("the rerun: %d take-name, %d enroll", h.takeCalls, enrolls)
+	}
+}
+
+// varlatchd.conf edited to another control server before the takeover
+// began: refused, and nothing recorded (no operation in the journal).
+func TestHeadscaleRestoreRefusesAnotherConfiguredServerFirst(t *testing.T) {
+	skipOffUnix(t)
+	h, o := headscaleRestore(t)
+	o.StopAfter = "issuances"
+	if err := Run(context.Background(), o); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+	conf := h.Path(ConfigFile)
+	orig, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A leading byte order mark is read past, as varlatchd does.
+	if err := os.WriteFile(conf, []byte("\ufeff"+strings.Replace(string(orig), hsControl, "https://192.0.2.99", 1)), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	o.StopAfter = ""
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "tailnet_control_url (https://192.0.2.99) is not the answered control server") {
+		t.Fatalf("another configured server: %v", err)
+	}
+	var j JournalDoc
+	raw, _ := os.ReadFile(h.Path(Journal))
+	if err := json.Unmarshal(raw, &j); err != nil || j.Restore == nil || j.Restore.TailnetOperation != "" || len(h.adminCalls) != 0 && slices.ContainsFunc(h.adminCalls, func(c string) bool { return strings.HasPrefix(c, "tailnet ") }) {
+		t.Fatalf("recorded or run: %s, %q", raw, h.adminCalls)
 	}
 }
 
