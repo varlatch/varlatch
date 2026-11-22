@@ -131,21 +131,22 @@ func (s *fakeSource) MarkMigratedOut(_ context.Context, id string) error {
 
 // fakeTarget is varlatchd's side: its journal, its keys, its database.
 type fakeTarget struct {
-	dataDir  string
-	journal  *JournalHead
-	database bool
-	calls    []string
-	runKeys  [][]byte // each check's run key
-	keys     [][]byte // what Keys was given
-	journals [][]byte
-	fail     map[string]error
-	pass     bool
-	info     TargetInfo
-	running  bool
-	gate     bool
-	human    bool // an image's service: the operator starts and stops it
-	failOpen error
-	bundles  []string
+	keysState string // Keys answers this for both files ("written" when empty)
+	dataDir   string
+	journal   *JournalHead
+	database  bool
+	calls     []string
+	runKeys   [][]byte // each check's run key
+	keys      [][]byte // what Keys was given
+	journals  [][]byte
+	fail      map[string]error
+	pass      bool
+	info      TargetInfo
+	running   bool
+	gate      bool
+	human     bool // an image's service: the operator starts and stops it
+	failOpen  error
+	bundles   []string
 }
 
 func (t *fakeTarget) call(name string) error {
@@ -253,6 +254,9 @@ func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, er
 }
 func (t *fakeTarget) Keys(_ context.Context, kek, bek []byte) (string, string, error) {
 	t.keys = append(t.keys, slices.Clone(kek), slices.Clone(bek))
+	if t.keysState != "" {
+		return t.keysState, t.keysState, t.call("keys")
+	}
 	return "written", "written", t.call("keys")
 }
 func (t *fakeTarget) WriteJournal(_ context.Context, j *Journal) error {

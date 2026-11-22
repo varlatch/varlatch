@@ -609,6 +609,14 @@ func runMigrateKeys(cfg *config.Config, stdin io.Reader, stdout io.Writer, fail 
 	var bekMaterial []byte
 	if len(in.BEK) > 0 {
 		if cfg.BackupKeyFile == "" {
+			// Under its unit varlatchd reads the backup-key credential
+			// beside the Root KEK's when it is there (config.Parse): a
+			// target setup's way, whose keys this writes, gets it there.
+			if dir := os.Getenv("CREDENTIALS_DIRECTORY"); dir != "" && cfg.RootKEKFile == filepath.Join(dir, "root-kek") {
+				cfg.BackupKeyFile = filepath.Join(dir, "backup-key")
+			}
+		}
+		if cfg.BackupKeyFile == "" {
 			return fail(ExitConfig, "a Backup Encryption Key was given and the configuration names no backup_key_file; nothing was written")
 		}
 		bekMaterial, err = backup.ParseKey(string(in.BEK))

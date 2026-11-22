@@ -12,8 +12,9 @@
 > `varlatchd`, delete this notice and the HTML comment sentinel below the
 > title, and complete Owner Sign-Off below. The gate reads the evidence as
 > plain lines, not rendered Markdown, so it also rejects any HTML comment
-> (`<!--`) or fenced code block: write notes, commands and logs as plain
-> lines or indented quotes.
+> (`<!--`), raw HTML block (such as `<details>`, `<pre>` or `<table>`) or
+> fenced code block, also one opened inside a list item or a quote: write
+> notes, commands and logs as plain lines.
 
 ## 1. Candidate and Environment Metadata
 

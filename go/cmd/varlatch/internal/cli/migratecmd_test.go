@@ -4,11 +4,14 @@ package cli
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 )
 
 // `varlatch migrate` is a Go-only command (outside the parity table): its
@@ -40,6 +43,10 @@ func TestMigrateCommand(t *testing.T) {
 		{[]string{"migrate", "--resume"}, "--resume and --abort need the target"},
 		{[]string{"migrate", "--abort", "--bek-file", "/b"}, "--resume and --abort need the target"},
 		{[]string{"migrate", "--rollback"}, "--rollback needs the target"},
+		{[]string{"migrate", "--forget-target", "--config", "/c"}, "--forget-target goes with --abort and --config only"},
+		{[]string{"migrate", "--abort", "--forget-target"}, "--forget-target goes with --abort and --config only"},
+		{[]string{"migrate", "--abort", "--forget-target", "--to-data", "/d", "--to-keys", "/k", "--to-config", "/c", "--to-image", "i", "--to-service", "s"}, "--forget-target goes with --abort and --config only"},
+		{[]string{"migrate", "--resume", "--forget-target", "--config", "/c"}, "--forget-target goes with --abort and --config only"},
 		{[]string{"migrate", "--rollback", "--config", "/c", "--ingress", "proxy"}, "--rollback takes --from, the target"},
 		{[]string{"migrate", "--rollback", "--config", "/c", "--bek-file", "/b"}, "--rollback takes --from, the target"},
 		{[]string{"migrate", "--rollback", "--resume", "--config", "/c"}, "--rollback takes --from, the target"},
@@ -50,6 +57,8 @@ func TestMigrateCommand(t *testing.T) {
 		{[]string{"migrate", "--finish", "--rollback", "--config", "/c"}, "--finish takes --from, the target"},
 		{[]string{"migrate", "--finish", "--ingress", "proxy", "--config", "/c"}, "--finish takes --from, the target"},
 		{[]string{"migrate", "--finish", "--yes", "--config", "/c"}, "unknown option --yes"},
+		{[]string{"migrate", "--rollback", "--config", "/c", "--listen", "127.0.0.1:1"}, "the answers of a host target migrate makes"},
+		{[]string{"migrate", "--ingress", "proxy", "--to-data", "/d", "--to-keys", "/k", "--to-config", "/c", "--to-image", "i", "--to-service", "s", "--accept-existing-user"}, "the answers of a host target migrate makes"},
 		{[]string{"migrate", "--ingress", "public", "--config", "/c", "--accept-rollback-certificate"}, "--accept-rollback-certificate goes with --tailscale-oauth-client-file"},
 		{[]string{"migrate", "--status", "--tailscale-oauth-client-file", "/o"}, "the tailnet's authority and --tailnet-auth-key-file go with a migration"},
 		{[]string{"migrate", "--finish", "--config", "/c", "--headscale-cli", "/usr/bin/headscale"}, "the tailnet's authority and --tailnet-auth-key-file go with a migration"},
@@ -113,5 +122,57 @@ func TestAnUnclosedHeadscaleKeyIsNamed(t *testing.T) {
 	markKeyClosed(dir)
 	if note := unclosedKeyNote(dir); note != "" {
 		t.Fatalf("after close: %q", note)
+	}
+}
+
+// migrate needs root for the host target at setup's place whenever it may
+// change it: its configuration missing, or not readable (stat refused: it
+// may be missing), or a journal recording a target migrate made and has
+// not removed, before its switch (an --abort or --resume removes it, as
+// root); a prepared target, one migrate made and removed again, or one
+// past its switch (kept: the installation) needs none. The stat errors are
+// built here, as no directory refuses its owner's stat on every platform.
+func TestTargetNeedsRoot(t *testing.T) {
+	conf := "/etc/varlatch/varlatchd.conf"
+	missing := &fs.PathError{Op: "stat", Path: conf, Err: fs.ErrNotExist}
+	denied := &fs.PathError{Op: "stat", Path: conf, Err: fs.ErrPermission}
+	journal := func(p migrate.Phase, undone string) *migrate.Journal {
+		return &migrate.Journal{ID: "m1", Phase: p, Created: &migrate.CreatedRecord{Made: []string{"user", "config"}, Undone: undone}}
+	}
+	for _, c := range []struct {
+		name    string
+		statErr error
+		j       *migrate.Journal
+		want    string
+	}{
+		{"missing", missing, nil, "does not exist"},
+		{"stat refused", denied, nil, "cannot be read"},
+		{"made, undone, not removed", nil, journal(migrate.Released, ""), "has not removed it"},
+		{"made, before the barrier", nil, journal(migrate.DryRun, ""), "has not removed it"},
+		{"prepared", nil, nil, ""},
+		{"made, removed again", nil, journal(migrate.Released, "2026-11-22T00:00:00Z"), ""},
+		{"made, open", nil, journal(migrate.Open, ""), ""},
+		{"made, finished", nil, journal(migrate.Finished, ""), ""},
+	} {
+		got := targetNeedsRoot(c.statErr, c.j)
+		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// --status of an undo whose removal of the made target is not done says
+// so, and names each item's place, for removing it by hand.
+func TestMigrateStatusRemovalPending(t *testing.T) {
+	dir := t.TempDir()
+	j := `{"format":1,"id":"mig_test","phase":"released","history":[],"created":{"made":["user","etc-dir","config"],"config":"/etc/varlatch/varlatchd.conf"}}`
+	if err := os.WriteFile(filepath.Join(dir, migrate.JournalFile), []byte(j), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := Main([]string{"migrate", "--status", "--from", dir}, MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut})
+	if code != 0 || !strings.Contains(out.String(), "removal pending: varlatch migrate --abort removes it") ||
+		!strings.Contains(out.String(), "  etc-dir: /etc/varlatch\n") || !strings.Contains(out.String(), "  config: /etc/varlatch/varlatchd.conf\n") {
+		t.Errorf("--status: %d %q %q", code, out.String(), errOut.String())
 	}
 }
