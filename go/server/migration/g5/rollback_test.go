@@ -829,9 +829,11 @@ func TestG5RollbackWhole(t *testing.T) {
 	// service:tailscale), its one-off commands too. With the sidecar
 	// running, a reverse whose checks fail is undone as anywhere else
 	// (the TypeScript varlatchd started without its dependencies). With
-	// it stopped (the old node, after a tailnet handoff), --rollback is
-	// refused before anything, with the step to take: no barrier, no
-	// one-off container, no start.
+	// it stopped and no tailnet handoff (these worlds have none: the
+	// sidecar is the operator's), --rollback is refused before anything,
+	// with the step to take: no barrier, no one-off container, no start.
+	// After a tailnet handoff, which stopped the sidecar itself, the
+	// reverse starts it (TestG5TailnetWhole and the tailnet matrix).
 	t.Run("shared ns, the sidecar running", func(t *testing.T) {
 		w := migratedWorld(t, false, false)
 		t.Setenv("G5_SHARED_NAMESPACE", "1")

@@ -176,6 +176,9 @@ type RestoreRecord struct {
 	Archive        string `json:"archive"`
 	ArchiveID      string `json:"archiveId,omitempty"`
 	InstallationID string `json:"installationId,omitempty"`
+	// TailnetOperation is the tailnet handoff's (a restore with the
+	// tailnet's authority): its temporary names carry it.
+	TailnetOperation string `json:"tailnetOperation,omitempty"`
 }
 
 // ProbeRecord is what the fsync probe measured, and whether a slow disk
