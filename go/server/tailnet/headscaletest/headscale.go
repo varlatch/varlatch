@@ -465,6 +465,41 @@ func (s *Server) Nodes(t testing.TB) []Node {
 	return res
 }
 
+// NodeID is Headscale's id of the node named name (its given name), as
+// `headscale nodes list` gives it: a number, which is also the node's
+// StableID on this control server.
+func (s *Server) NodeID(t testing.TB, name string) string {
+	t.Helper()
+	out, err := s.headscale("nodes", "list", "--output", "json")
+	if err != nil {
+		t.Fatalf("headscale nodes list: %v: %s", err, out)
+	}
+	var nodes []struct {
+		ID        json.RawMessage `json:"id"`
+		Name      string          `json:"name"`
+		GivenName string          `json:"given_name"`
+	}
+	if err := json.Unmarshal(out, &nodes); err != nil {
+		t.Fatalf("headscale nodes list: %v", err)
+	}
+	for _, n := range nodes {
+		if n.GivenName == name || (n.GivenName == "" && n.Name == name) {
+			return strings.Trim(string(n.ID), `"`)
+		}
+	}
+	t.Fatalf("headscale nodes list: no node %s", name)
+	return ""
+}
+
+// Tag sets the node's tags (headscale nodes tag), replacing the ones it
+// has: what an operator runs to give a node tailnet_tags.
+func (s *Server) Tag(t testing.TB, id string, tags ...string) {
+	t.Helper()
+	if out, err := s.headscale("nodes", "tag", "--identifier", id, "--tags", strings.Join(tags, ",")); err != nil {
+		t.Fatalf("headscale nodes tag: %v: %s", err, out)
+	}
+}
+
 // Stop makes the control server unreachable: its container is paused
 // (docker pause), so connections to it hang as to a server that is down,
 // and its state, in tmpfs, is kept for Resume. A stopped container would

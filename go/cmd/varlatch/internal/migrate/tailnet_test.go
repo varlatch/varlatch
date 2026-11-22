@@ -153,15 +153,16 @@ func (t *tnTarget) TailnetReaches(_ context.Context, name, stableID string, _ ti
 	return n == 1 && ok, nil
 }
 
-// failingProber answers as the world's prober, but fails once the
-// target's tailnet listener opened (the combined final check).
+// failingProber answers as the world's prober, but fails while the
+// target runs with its tailnet listener open (the combined final check).
+// Once the undo stopped it, the address answers from the source again.
 type failingProber struct {
 	*fakeProber
 	t *tnTarget
 }
 
 func (p failingProber) Probe(ctx context.Context, origin string) (string, string, error) {
-	if p.t.opened {
+	if p.t.opened && p.t.running {
 		return "", "", errors.New("connection reset")
 	}
 	return p.fakeProber.Probe(ctx, origin)
@@ -335,6 +336,33 @@ func TestAResumeWithoutTheAuthorityIsRefused(t *testing.T) {
 	}
 	if _, err := w.eng.handoffEngine(j, slotRollback); !errors.Is(err, ErrNoTailnetAuthority) {
 		t.Fatalf("handoffEngine: %v", err)
+	}
+	// A done handoff needs the authority to be reversed, and so does a
+	// reverse not finished.
+	j.Tailnet.Handoff.Phase = tailhandoff.Done
+	if err := w.eng.unwindTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) {
+		t.Fatalf("unwind, done, no reverse: %v", err)
+	}
+	for _, p := range []tailhandoff.Phase{tailhandoff.Prepared, tailhandoff.Switching, tailhandoff.Undoing, tailhandoff.UndoPending, tailhandoff.Undone} {
+		j.Tailnet.Reverse = &tailhandoff.State{Phase: p}
+		if err := w.eng.unwindTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) {
+			t.Fatalf("unwind, reverse %s: %v", p, err)
+		}
+	}
+	// A finished reverse gave the name back; a run that died before it
+	// held the target's node again leaves it unheld. Resumed without the
+	// authority, the undo holds it again, which needs none.
+	j.Tailnet.Reverse = &tailhandoff.State{Phase: tailhandoff.Done}
+	w.tgt.info.Tailnet.HeldAs = ""
+	if err := w.eng.unwindTailnet(context.Background(), j); err != nil {
+		t.Fatalf("unwind, reversed: %v", err)
+	}
+	temp, err := tailcontrol.TempName(j.Tailnet.Name, j.Tailnet.Operation, tailcontrol.RoleNew)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.tgt.info.Tailnet.HeldAs != temp {
+		t.Fatalf("the target's node is not held again: %q, want %q", w.tgt.info.Tailnet.HeldAs, temp)
 	}
 }
 
