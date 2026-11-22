@@ -1,0 +1,35 @@
+{
+  "name": "envprobe",
+  "networks": {
+    "default": {
+      "name": "envprobe_default"
+    }
+  },
+  "services": {
+    "a": {
+      "environment": [
+        "A=1",
+        "B",
+        "C=",
+        "D=b=c"
+      ],
+      "image": "busybox",
+      "networks": {
+        "default": null
+      }
+    },
+    "b": {
+      "environment": {
+        "FLAG": false,
+        "PORT": 8080,
+        "RATIO": 1.5,
+        "X": "1",
+        "Y": null
+      },
+      "image": "busybox",
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}
