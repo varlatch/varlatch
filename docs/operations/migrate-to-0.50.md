@@ -12,11 +12,10 @@ before the new server opens.
 > TypeScript release, 0.23.0, is published, and `varlatch migrate` starts
 > from its published image only.
 
-<!-- TODO before this guide leaves draft: four points still depend on
+<!-- TODO before this guide leaves draft: three points still depend on
      unmerged pull requests, each marked "TODO #n" where it applies: #385 (the
      tailnet handoff on Headscale), #405 and #408 (a restore on Headscale,
-     and `varlatch setup --restore` on a Headscale tailnet), and the migrate
-     fix that carries the outbound allow list over ("TODO outbound"). -->
+     and `varlatch setup --restore` on a Headscale tailnet). -->
 
 ## What people notice
 
@@ -102,19 +101,6 @@ the Linux host of the installation it migrates`):
       plain listener (Coolify's, or another address than the
       dashboard's); and `--accept-existing-user` to use a `varlatch` user
       that already exists.
-    - **Private destinations need the allow list on the target too.** If
-      the source's `.env` sets `VARLATCH_OUTBOUND_ALLOW` (Coolify, Convex,
-      webhooks or an OIDC issuer on a private address), put the same value
-      in the target's configuration as `outbound_allow` before you
-      migrate (the 0.50 image's: the file `--to-config` names). migrate
-      does not copy it, and without it the new server refuses those
-      destinations. Check it after the migration with `varlatchd admin
-      outbound check --config /etc/varlatch/varlatchd.conf` (for the
-      image, in its container), which lists every configured destination
-      and exits 0 when all are allowed.
-      <!-- TODO outbound: once migrate carries VARLATCH_OUTBOUND_ALLOW into
-      outbound_allow, say it is carried over, keep the check, and name the
-      GitHub destination if the check lists it then. -->
     - **No keys are generated:** the target's Root KEK and Backup
       Encryption Key are the source's, copied into its key files.
     - **An undo removes what it made.** Each item is recorded in the
@@ -142,6 +128,40 @@ the Linux host of the installation it migrates`):
   scheme, host and port alike: passkeys belong to that address. A
   migration onto another address is refused; move afterwards with
   [`varlatch move`](move-installation.md).
+
+  **The outbound allow list carries over.** The private destinations the
+  source may reach (its `VARLATCH_OUTBOUND_ALLOW`: Coolify, Convex,
+  webhooks, OIDC issuers or the audit export on a private address) are the
+  0.50 server's `outbound_allow`, with the same entries. migrate reads the
+  list from the running `varlatchd` container. When it is not running, it
+  reads `docker compose config` instead, and says so: `The source's
+  varlatchd is not running: its outbound allow list
+  (VARLATCH_OUTBOUND_ALLOW) is read from docker compose config, not from
+  its container.`
+
+  - **A host install migrate makes** gets the list as `outbound_allow`.
+  - **A target you prepared** (a host install, or the 0.50 image's
+    `--to-config` file) keeps its own configuration. If it sets no
+    `outbound_allow` while the source allows private destinations, migrate
+    refuses before anything is done:
+
+    ```text
+    preflight: the source allows private destinations (VARLATCH_OUTBOUND_ALLOW=<list>), and the target's configuration <file> sets no outbound_allow, so the Go installation would refuse them all: add the line outbound_allow = <list> to it; nothing was done
+    ```
+
+    If its `outbound_allow` lacks some of the source's entries, migrate goes
+    on and warns, since a wider entry of its own may cover them:
+
+    ```text
+    Warning: the target's outbound_allow (<target's list>) lacks entries the source allows (<missing entries>): unless its own entries cover them, the Go installation refuses those destinations; the source's list is VARLATCH_OUTBOUND_ALLOW=<list>.
+    ```
+
+  After the migration, check it on the 0.50 server: `varlatchd admin
+  outbound check --config /etc/varlatch/varlatchd.conf` (for the image, in
+  its container). It lists every configured destination, GitHub Sync
+  Targets' connections at `https://api.github.com` included, and exits 0
+  when all are allowed. For a refused one it names the `outbound_allow`
+  line to set in that file, and how to restart `varlatchd` after it.
 
 Run `varlatch migrate` from the Compose directory of the installation, or
 name that directory with `--from`. `varlatch migrate --help` lists every
