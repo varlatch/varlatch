@@ -54,7 +54,8 @@ import (
 
 // nodeCmd is a node command's arguments.
 type nodeCmd struct {
-	op           string // enroll, certificate, open, reaches
+	op           string // enroll, certificate, open, reaches, take-name
+	oauthFile    string
 	action       string // certificate: obtain or expiry
 	hostname     string
 	name         string
@@ -67,7 +68,8 @@ type nodeCmd struct {
 const nodeUsage = "Usage: varlatchd admin tailnet enroll --hostname <temporary name> [--certificate] [--timeout <d>] [--json] | " +
 	"varlatchd admin tailnet certificate obtain --name <name> [--timeout <d>] [--json] | varlatchd admin tailnet certificate expiry --name <name> [--json] | " +
 	"varlatchd admin tailnet open [--json] | " +
-	"varlatchd admin tailnet reaches --name <name> --stable-id <id> [--wait <d>] [--json]"
+	"varlatchd admin tailnet reaches --name <name> --stable-id <id> [--wait <d>] [--json] | " +
+	"varlatchd admin tailnet take-name --oauth-client-file <file> [--json]"
 
 // stableIDShape is a node's StableID as a control plane gives it
 // (Tailscale's n...CNTRL, Headscale's number).
@@ -75,7 +77,7 @@ var stableIDShape = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
 
 // isNodeCmd is whether `admin tailnet <op>` is a node command.
 func isNodeCmd(rest []string) bool {
-	return len(rest) > 0 && (rest[0] == "enroll" || rest[0] == "certificate" || rest[0] == "open" || rest[0] == "reaches")
+	return len(rest) > 0 && (rest[0] == "enroll" || rest[0] == "certificate" || rest[0] == "open" || rest[0] == "reaches" || rest[0] == "take-name")
 }
 
 // nodeArgs parses a node command; a non-empty message is a usage error.
@@ -99,6 +101,10 @@ func nodeArgs(rest []string) (nodeCmd, string) {
 		switch a := args[i]; {
 		case a == "--json":
 			c.asJSON, ok = true, true
+		case a == "--oauth-client-file" && c.op == "take-name":
+			c.oauthFile, ok = value(i)
+			ok = ok && filepath.IsAbs(c.oauthFile)
+			i++
 		case a == "--certificate" && c.op == "enroll":
 			c.certificate, ok = true, true
 		case a == "--hostname" && c.op == "enroll":
@@ -132,6 +138,8 @@ func nodeArgs(rest []string) (nodeCmd, string) {
 		return nodeCmd{}, "varlatchd admin tailnet enroll: --hostname takes the node's temporary name (lower-case letters, digits and -, at most 63)"
 	case (c.op == "certificate" || c.op == "reaches") && !tailnet.ValidHostname(strings.ToLower(c.name)):
 		return nodeCmd{}, "varlatchd admin tailnet " + c.op + ": --name takes a node's name (letters, digits and -, at most 63), without the tailnet's suffix"
+	case c.op == "take-name" && c.oauthFile == "":
+		return nodeCmd{}, "varlatchd admin tailnet take-name: --oauth-client-file takes the Tailscale OAuth client's file (an absolute path; the devices:core scope only)"
 	case c.op == "reaches" && !stableIDShape.MatchString(c.stableID):
 		return nodeCmd{}, "varlatchd admin tailnet reaches: --stable-id takes the node's StableID, as enroll reports it"
 	}
