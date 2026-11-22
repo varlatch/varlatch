@@ -24,13 +24,9 @@ func TestTheOverridesDoNothingWithoutATestTag(t *testing.T) {
 		}
 		e := &Engine{}
 		err := e.pinned(SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "registry.test/varlatchd"})
-		// The constants: refused as unpublished until 0.23.0's digest is
-		// pinned, then as another image than the pinned one.
-		want := "not yet published"
-		if LastTypeScriptDigest != "" {
-			want = LastTypeScriptRepository + "@" + LastTypeScriptDigest
-		}
-		if err == nil || !strings.Contains(err.Error(), want) {
+		// The constants: another image than the published one is refused,
+		// naming the published repository and digest.
+		if err == nil || !strings.Contains(err.Error(), LastTypeScriptRepository) || !strings.Contains(err.Error(), LastTypeScriptDigest) {
 			t.Fatalf("the pin is not the constants: %v", err)
 		}
 		return
