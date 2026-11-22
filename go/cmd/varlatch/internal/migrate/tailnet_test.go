@@ -42,6 +42,14 @@ type tnSource struct {
 	// slowGates is how many gate reads after a start fail (varlatchd
 	// restarting) before it answers.
 	slowGates, slowLeft int
+	// hangGates is how many gate reads after a start hang until their
+	// context ends (a `compose exec` that never returns).
+	hangGates, hangLeft int
+	// cancelAfterStart, when set, is called by the first gate read after a
+	// start (an operator's interrupt during the wait).
+	cancelAfterStart func()
+	// stopCtxErr is the last stop's context's error (nil: a live one).
+	stopCtxErr error
 }
 
 func (s *tnSource) SharesTailnetNetwork(context.Context) (bool, error) {
@@ -66,6 +74,24 @@ func (s *tnSource) netless() bool {
 var errNetless = errors.New(`service "varlatchd" is not running: it shares the stopped sidecar's network`)
 
 func (s *tnSource) Gate(ctx context.Context) (*Gate, error) {
+	s.mu.Lock()
+	hang, cancel := s.hangLeft > 0, s.cancelAfterStart
+	if hang {
+		s.hangLeft--
+	}
+	if s.starts > 0 {
+		s.cancelAfterStart = nil
+	} else {
+		cancel = nil
+	}
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if hang {
+		<-ctx.Done()
+		return nil, s.fakeSource.callErr("gate", ctx.Err())
+	}
 	if s.netless() {
 		return nil, s.fakeSource.callErr("gate", errNetless)
 	}
@@ -85,10 +111,11 @@ func (s *tnSource) MarkMigratedOut(ctx context.Context, id string) error {
 }
 
 func (s *tnSource) Tailnet(context.Context) (TailnetInfo, error) { return s.info, nil }
-func (s *tnSource) StopTailnet(context.Context) error {
+func (s *tnSource) StopTailnet(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stops++
+	s.stopCtxErr = ctx.Err()
 	if err := s.stopFails[s.stops]; err != nil {
 		return s.callErr("stop tailnet", err)
 	}
@@ -102,7 +129,7 @@ func (s *tnSource) StartTailnet(context.Context) error {
 	if err := s.call("start tailnet"); err != nil {
 		return err
 	}
-	s.slowLeft = s.slowGates
+	s.slowLeft, s.hangLeft = s.slowGates, s.hangGates
 	if s.halfStart != nil {
 		s.running = true
 		return s.halfStart
@@ -438,6 +465,37 @@ func TestTheSwitchsSidecar(t *testing.T) {
 		w.src.slowGates = 0
 		if j, err := w.eng.Resume(ctx); err != nil || j.Phase != Open || w.src.gate.Kind != "migrated-out" {
 			t.Fatalf("resume: %v %+v", err, j)
+		}
+	})
+}
+
+// The readiness wait's asks and the sidecar's cleanup (#416's review): an
+// ask that hangs ends within sourceReadyAsk, so the wait goes on to the
+// next; an interrupt during the wait (its context cancelled) still stops
+// the sidecar, on a context of its own.
+func TestTheSwitchsWaitAndCleanup(t *testing.T) {
+	t.Run("an ask that hangs", func(t *testing.T) {
+		defer func(d time.Duration) { sourceReadyAsk = d }(sourceReadyAsk)
+		sourceReadyAsk = 50 * time.Millisecond
+		w := newTailnetWorld(t)
+		w.src.hangGates = 2
+		j, err := w.eng.Run(context.Background(), false)
+		if err != nil || j.Phase != Open || w.src.gate.Kind != "migrated-out" || w.src.running {
+			t.Fatalf("%v %+v", err, j)
+		}
+	})
+	t.Run("interrupted during the wait", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		w.src.slowGates = 1 << 20
+		w.src.cancelAfterStart = cancel
+		j, err := w.eng.Run(ctx, false)
+		if err == nil || !errors.Is(err, context.Canceled) || j.Phase != Switched {
+			t.Fatalf("%v %+v", err, j)
+		}
+		if w.src.running || w.src.stopCtxErr != nil {
+			t.Fatalf("the sidecar: running %v, its stop's context %v", w.src.running, w.src.stopCtxErr)
 		}
 	})
 }

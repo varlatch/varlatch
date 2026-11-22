@@ -45,6 +45,8 @@ func TestUpgradeAppliesEveryStepInOneJob(t *testing.T) {
 	if err != nil || !up.Changed || up.From != SchemaVersion || up.To != target-1 || up.CompatibleFrom != CompatibleFrom {
 		t.Fatalf("upgrade by one rollback-safe step: %+v, %v", up, err)
 	}
+	// created_at stays: the backups' lifecycle (backup.Lifecycle) reads it
+	// as when the database was made, an import's included.
 	v := versionOf(t, ctx, query.New(s.Reader()))
 	if v.Version != target-1 || v.CompatibleFrom != CompatibleFrom || v.UpdatedByRelease != "0.50.1" ||
 		v.CreatedByRelease != before.CreatedByRelease || v.CreatedAt != before.CreatedAt || v.UpdatedAt <= before.UpdatedAt {
