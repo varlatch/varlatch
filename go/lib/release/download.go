@@ -49,6 +49,9 @@ type Downloader struct {
 	// then each wait for more of its body: a host that stops sending
 	// fails the download within it (0: requestTimeout, 30 s).
 	Stall time.Duration
+	// answerStall, when non-zero, overrides Stall while waiting for a
+	// hop's response headers (tests only; production leaves it zero).
+	answerStall time.Duration
 }
 
 // maxRedirects is how many redirects one download may follow.
@@ -98,6 +101,10 @@ func (d Downloader) Get(ctx context.Context, rawURL string, limit int64) ([]byte
 	if stall <= 0 {
 		stall = requestTimeout // fetch.go's bound, as for a TUF download
 	}
+	answerStall := d.answerStall
+	if answerStall <= 0 {
+		answerStall = stall
+	}
 	for hop := 0; ; hop++ {
 		if err := d.allowed(u); err != nil {
 			return nil, err
@@ -106,7 +113,7 @@ func (d Downloader) Get(ctx context.Context, rawURL string, limit int64) ([]byte
 		// nothing for stall: the headers, then every wait for the body.
 		hopCtx, cancel := context.WithCancel(ctx)
 		var stalled atomic.Bool
-		timer := time.AfterFunc(stall, func() { stalled.Store(true); cancel() })
+		timer := time.AfterFunc(answerStall, func() { stalled.Store(true); cancel() })
 		done := func() { timer.Stop(); cancel() }
 		req, err := http.NewRequestWithContext(hopCtx, http.MethodGet, u.String(), nil)
 		if err != nil {
@@ -120,7 +127,7 @@ func (d Downloader) Get(ctx context.Context, rawURL string, limit int64) ([]byte
 		if err != nil {
 			done()
 			if stalled.Load() {
-				return nil, &UnreachableError{fmt.Errorf("release: %s did not answer within %s", strip(u), stall)}
+				return nil, &UnreachableError{fmt.Errorf("release: %s did not answer within %s", strip(u), answerStall)}
 			}
 			return nil, &UnreachableError{fmt.Errorf("release: could not download %s: %w", strip(u), err)}
 		}
@@ -141,6 +148,10 @@ func (d Downloader) Get(ctx context.Context, rawURL string, limit int64) ([]byte
 			}
 			u = next
 			continue
+		}
+		// Headers arrived: give the body its full stall window.
+		if timer.Stop() {
+			timer.Reset(stall)
 		}
 		res.Body = progress{res.Body, func() { timer.Reset(stall) }}
 		body, err := d.read(u, res, limit)
