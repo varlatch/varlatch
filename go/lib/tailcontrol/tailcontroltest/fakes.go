@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -111,6 +112,13 @@ func (f *Tailscale) SetName(id, name string) {
 			n.Name = name
 		}
 	}
+}
+
+// Delete removes a device from the tailnet, as its admin console would.
+func (f *Tailscale) Delete(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nodes = slices.DeleteFunc(f.nodes, func(n *Node) bool { return n.ID == id })
 }
 
 // Nodes is a copy of the tailnet's devices.

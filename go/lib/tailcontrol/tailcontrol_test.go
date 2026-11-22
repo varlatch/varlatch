@@ -148,6 +148,20 @@ func TestTailscaleListsRenamesAndReadsBack(t *testing.T) {
 	}
 }
 
+// A listing's time is Tailscale's, from its answer's Date header.
+func TestTailscaleListingIsDated(t *testing.T) {
+	f := tailcontroltest.NewTailscale(tailcontroltest.Node{ID: "1", NodeID: "n1", Name: "vault"})
+	defer f.Close()
+	ts, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: f.URL, ClientID: f.ClientID, ClientSecret: f.ClientSecret, HTTP: f.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, at, err := ts.DevicesAt(ctx)
+	if err != nil || len(devices) != 1 || at.IsZero() || time.Since(at).Abs() > time.Minute {
+		t.Fatalf("%+v at %v, %v", devices, at, err)
+	}
+}
+
 func TestTailscaleRefusals(t *testing.T) {
 	f := tailcontroltest.NewTailscale(
 		tailcontroltest.Node{ID: "101", Name: "vault", Online: true},

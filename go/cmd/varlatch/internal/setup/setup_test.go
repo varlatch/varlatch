@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/diskprobe"
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 )
 
 // fakeHost is a host under a temporary root: users, chowns and systemctl
@@ -57,6 +58,8 @@ type fakeHost struct {
 	restoreURL string
 	// The tailnet probe's findings.
 	probeSeen      []string
+	takeNameFails  bool
+	tookName       bool
 	probeSingleUse bool
 	// The restored certificate issuance count for the public host.
 	issued int
@@ -170,6 +173,20 @@ func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 		return []byte("Restore completed for inst_old from archive bak_old (created 2026-11-01T00:00:00.000Z): the database is restored and its canary verified.\n" +
 			"The archive's settings, to compare with this host's varlatchd.conf:\n  backup_interval = 24h\n  public_url = " + h.restoreURL + "\n" +
 			"Next: start varlatchd, then take and check a fresh archive (`varlatchd admin backup run`).\n"), nil
+	}
+	if args[0] == "tailnet" && args[1] == "enroll" {
+		// Offline, before the unit: held under the temporary name.
+		if h.takeNameFails {
+			return nil, errors.New("varlatchd admin tailnet enroll: the node is enrolled as varlatch.corp.ts.net and not held for a handoff")
+		}
+		return []byte(`{"dnsName":"` + args[3] + `.corp.ts.net","stableId":"nNEW","held":true}`), nil
+	}
+	if args[0] == "tailnet" && args[1] == "take-name" {
+		if h.takeNameFails {
+			return nil, errors.New("varlatchd admin tailnet take-name: the handoff ended undo-pending: run take-name again")
+		}
+		h.tookName = true
+		return []byte(`{"operation":"x","name":"varlatch","phase":"done"}`), nil
 	}
 	if args[0] == "certificate" && args[1] == "issuances" {
 		// Offline, before the unit: the restored records' count.
@@ -1316,5 +1333,77 @@ func TestRestoreChecksTheTailnetName(t *testing.T) {
 	o3.Given = localhostAnswers()
 	if err := Run(context.Background(), o3); err != nil || slices.Contains(h3.adminCalls, "tailnet probe-name --json") {
 		t.Errorf("a localhost restore: %v %q", err, h3.adminCalls)
+	}
+}
+
+// A restore with the tailnet's authority (go-step7 decision 11): no probe;
+// the restored node enrols held under a temporary name carrying the
+// journalled operation, then varlatchd takes the old node's name over,
+// before the unit first starts. A failed takeover stops setup before the
+// unit; the rerun goes on under the same operation; a finished one is not
+// done again.
+func TestRestoreTakesTheTailnetNameOver(t *testing.T) {
+	skipOffUnix(t)
+	h := newFakeHost(t)
+	h.probeSeen = []string{"varlatch.corp.ts.net"} // held: no matter, it is taken over
+	h.takeNameFails = true
+	out := t.TempDir()
+	kek, bek := operatorKeys(t, out)
+	o := options(h, &recorder{}, out)
+	o.RootKEKOut, o.BackupKeyOut = "", ""
+	o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
+	o.Given = Answers{Ingress: Tailnet, TailnetHostname: "varlatch", TailnetPort: "8687", TailnetTags: "tag:varlatch",
+		TailnetAuthKeyFile: "/etc/varlatch/tailnet-auth-key", TailscaleOAuthClientFile: "/etc/varlatch/tailscale-oauth.json", Backups: "host"}
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "take-name") && !strings.Contains(err.Error(), "enroll") {
+		t.Fatalf("a failed takeover: %v", err)
+	}
+	if slices.Contains(h.systemctl, "enable --now varlatchd.service") {
+		t.Error("the unit started before the name was taken over")
+	}
+	var j JournalDoc
+	raw, _ := os.ReadFile(h.Path(Journal))
+	if err := json.Unmarshal(raw, &j); err != nil || j.Restore == nil || j.Restore.TailnetOperation == "" {
+		t.Fatalf("the journal's operation: %s %v", raw, err)
+	}
+	op := j.Restore.TailnetOperation
+	h.takeNameFails = false
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	temp, _ := tailcontrol.TempName("varlatch", op, tailcontrol.RoleNew)
+	enroll := "tailnet enroll --hostname " + temp + " --json"
+	take := "tailnet take-name --oauth-client-file /etc/varlatch/tailscale-oauth.json --json"
+	if !h.tookName || !slices.Contains(h.adminCalls, enroll) || !slices.Contains(h.adminCalls, take) || slices.Contains(h.adminCalls, "tailnet probe-name --json") {
+		t.Fatalf("the takeover's commands: %q", h.adminCalls)
+	}
+	last := -1
+	for i, c := range h.adminCalls {
+		if c == take {
+			last = i
+		}
+	}
+	if i := slices.Index(h.adminCalls, enroll); i > last {
+		t.Fatalf("enroll after take-name: %q", h.adminCalls)
+	}
+	if !slices.Contains(h.systemctl, "enable --now varlatchd.service") {
+		t.Errorf("systemctl %q", h.systemctl)
+	}
+	calls := len(h.adminCalls)
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range h.adminCalls[calls:] {
+		if strings.HasPrefix(c, "tailnet enroll") || strings.HasPrefix(c, "tailnet take-name") {
+			t.Errorf("a rerun took the name over again: %q", c)
+		}
+	}
+	// The authority goes with the tailnet ingress, as an absolute path.
+	for _, a := range []Answers{{Ingress: Proxy, PublicURL: "https://v.example.test", TailscaleOAuthClientFile: "/x.json", Backups: "host"},
+		{Ingress: Tailnet, TailnetHostname: "varlatch", TailnetPort: "8687", TailnetTags: "tag:varlatch", TailnetAuthKeyFile: "/k", TailscaleOAuthClientFile: "x.json", Backups: "host"}} {
+		a := a
+		a.Defaults()
+		if err := a.Check(); err == nil || !strings.Contains(err.Error(), "tailscale-oauth-client-file") {
+			t.Errorf("%+v: %v", a, err)
+		}
 	}
 }

@@ -81,6 +81,16 @@ type ControlPlane interface {
 	Close(ctx context.Context) error
 }
 
+// ClockedLister is a control plane whose listing says when it was made, by
+// the control plane's own clock (its answer's Date header): a device's
+// LastSeen is judged against that time, never the caller's clock, which
+// may be off.
+type ClockedLister interface {
+	// DevicesAt is Devices and the listing's time; zero when the answer
+	// carried no Date header, or one that does not parse.
+	DevicesAt(ctx context.Context) ([]Device, time.Time, error)
+}
+
 // OpError is a failed control-plane operation: which operation, on which
 // device (empty for a listing), and why. Its text never holds a
 // credential.
