@@ -68,11 +68,20 @@ var imageConfig = "/etc/varlatch/varlatchd.conf"
 // varlatchd's).
 const exitConfig = 78
 
+// imageAsRoot is whether this process runs as root (never on Windows,
+// where os.Geteuid is -1); a variable so the tests can be root.
+var imageAsRoot = func() bool { return os.Geteuid() == 0 }
+
 func imageRefusal() string {
 	if os.Getenv(keyenv.ImageMarker) == "" {
 		return ""
 	}
-	keys := keyenv.Configured(imageConfig, os.Getenv("CREDENTIALS_DIRECTORY"))
+	// The keys the configuration loads, where varlatchd admin finds them:
+	// the run's CREDENTIALS_DIRECTORY, or, as root, those beside the
+	// configuration (keyenv.CredentialsDir). A host command the CLI fronts
+	// never sees a variable varlatchdEnviron strips, so this check is the
+	// one that covers it.
+	keys := keyenv.Configured(imageConfig, keyenv.CredentialsDir(os.Getenv, imageConfig, imageAsRoot()))
 	why := keyenv.Refusal(os.Environ(), keys...)
 	for _, k := range keys {
 		clear(k.Bytes)

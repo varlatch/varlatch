@@ -583,6 +583,16 @@ func TestAdminFindsTheUnitsCredentials(t *testing.T) {
 	if c := cred(nil, filepath.Join(t.TempDir(), "varlatchd.conf")); c != "" {
 		t.Errorf("as root, without a Root KEK there: %q", c)
 	}
+	// An empty CREDENTIALS_DIRECTORY is none: replaced, never doubled.
+	env := hostCredentials([]string{"CREDENTIALS_DIRECTORY=", "PATH=/usr/bin"}, conf, true)
+	if n := strings.Count(strings.Join(env, "\n"), "CREDENTIALS_DIRECTORY="); n != 1 || cred(env, conf) != etc {
+		t.Errorf("as root, an empty CREDENTIALS_DIRECTORY: %q", env)
+	}
+	// A relative --config: the directory made absolute, as varlatchd's.
+	t.Chdir(etc)
+	if c := cred(nil, "varlatchd.conf"); c != etc {
+		t.Errorf("as root, a relative --config: %q, want %q", c, etc)
+	}
 }
 
 // offerA and offerB are offers as varlatchd's tokens look.

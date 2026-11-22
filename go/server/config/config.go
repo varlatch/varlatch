@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/whatwg"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/outbound"
@@ -789,18 +790,12 @@ func LoadHost(path string, env Env) (*Config, error) {
 //
 // Only as root, since host commands are root's: /etc/varlatch is 0750
 // root:varlatch, so a member of the varlatch group can see that root-kek
-// is there (though not read it), and gets no such directory. The varlatch
-// CLI's host front applies the same rule (hostCredentials).
+// is there (though not read it), and gets no such directory. The rule is
+// keyenv.CredentialsDir, which the varlatch CLI's host front and the
+// image's key refusal apply too.
 func HostEnv(env Env, path string, root bool) Env {
-	if !root || env("CREDENTIALS_DIRECTORY") != "" {
-		return env
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return env
-	}
-	dir := filepath.Dir(abs)
-	if !fileExists(filepath.Join(dir, "root-kek")) {
+	dir := keyenv.CredentialsDir(env, path, root)
+	if dir == env("CREDENTIALS_DIRECTORY") {
 		return env
 	}
 	return func(name string) string {

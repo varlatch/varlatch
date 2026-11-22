@@ -114,3 +114,35 @@ func TestConfigured(t *testing.T) {
 		t.Fatalf("root_kek_file named wins over the credential: %d", len(got))
 	}
 }
+
+// CredentialsDir: the run's own CREDENTIALS_DIRECTORY (an empty one is
+// none); else, as root only, the configuration's directory, made
+// absolute, when root-kek is there.
+func TestCredentialsDir(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "varlatchd.conf")
+	env := func(vars map[string]string) func(string) string { return func(k string) string { return vars[k] } }
+	none := env(nil)
+	if got := CredentialsDir(none, conf, true); got != "" {
+		t.Errorf("no root-kek there: %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "root-kek"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := CredentialsDir(none, conf, true); got != dir {
+		t.Errorf("as root, root-kek beside the configuration: %q", got)
+	}
+	if got := CredentialsDir(none, conf, false); got != "" {
+		t.Errorf("not as root: %q", got)
+	}
+	if got := CredentialsDir(env(map[string]string{"CREDENTIALS_DIRECTORY": ""}), conf, true); got != dir {
+		t.Errorf("an empty CREDENTIALS_DIRECTORY is none: %q", got)
+	}
+	if got := CredentialsDir(env(map[string]string{"CREDENTIALS_DIRECTORY": "/run/credentials/x"}), conf, false); got != "/run/credentials/x" {
+		t.Errorf("the run's own: %q", got)
+	}
+	t.Chdir(dir)
+	if got := CredentialsDir(none, "varlatchd.conf", true); got != dir {
+		t.Errorf("a relative path: %q", got)
+	}
+}

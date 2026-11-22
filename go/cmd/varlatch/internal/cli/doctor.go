@@ -204,7 +204,7 @@ func doctorCLIChecks(report doctorReport) []doctorCheck {
 		// It may well run: this user could not ask it (varlatchd said why
 		// on stderr).
 		running.Status, running.Detail = "unknown", "this user could not ask varlatchd on its control socket"
-		running.Remedy = "Run doctor as root (sudo varlatch doctor) or as the user varlatchd runs as"
+		running.Remedy = "Run doctor as root (sudo varlatch doctor), or as the user varlatchd runs as where the configuration names root_kek_file"
 	default:
 		running.Status, running.Detail = "fail", "varlatchd did not answer on its control socket"
 		running.Remedy = "Start varlatchd: sudo systemctl start varlatchd (journalctl -u varlatchd says why it stopped)"
