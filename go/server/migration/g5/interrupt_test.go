@@ -657,13 +657,56 @@ func randomBytes(n int) []byte {
 	return b
 }
 
+// freePort is a free port for a server the world starts later (the
+// target's varlatchd), chosen below the kernel's ephemeral range: a port
+// taken from :0 and released could be handed again to any listener a
+// world starts on :0 meanwhile (testcontrol's DERP server took one, and
+// the target then failed with "address already in use"). No :0 listener
+// is ever given a port outside that range.
 func freePort(t *testing.T) string {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	low := 32768
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range"); err == nil {
+		if f := strings.Fields(string(b)); len(f) == 2 {
+			if n, err := strconv.Atoi(f[0]); err == nil {
+				low = n
+			}
+		}
+	}
+	const from = 10000
+	if low <= from+100 {
+		t.Fatalf("the ephemeral port range starts at %d: no room below it for the target's port", low)
+	}
+	for range 200 {
+		b := randomBytes(2)
+		addr := "127.0.0.1:" + strconv.Itoa(from+(int(b[0])<<8|int(b[1]))%(low-from))
+		if l, err := net.Listen("tcp", addr); err == nil {
+			l.Close()
+			return addr
+		}
+	}
+	t.Fatal("no free port below the ephemeral range")
+	return ""
+}
+
+// shortTarget is where a world's target lives as varlatchd sees it: a short
+// path (/tmp/g5s<n>/t, a link to dir) so its data directory's control
+// socket stays within a Unix socket's 107 bytes whatever TMPDIR is (a long
+// TMPDIR and a long test name pushed it past, and the target varlatchd
+// would not start). The files stay in dir, under t.TempDir(); varlatchd
+// follows the link (an ancestor of the data directory, owned by this user
+// in a directory of its own) and refuses only a data directory that is
+// itself a link.
+func shortTarget(t *testing.T, dir string) string {
+	short, err := os.MkdirTemp("/tmp", "g5s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
-	return l.Addr().String()
+	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	link := filepath.Join(short, "t")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	return link
 }
 
 // newWorld is a fresh source and target, the public URL's proxy serving
@@ -702,7 +745,10 @@ func newWorld(t *testing.T, image bool) *world {
 			t.Fatal(err)
 		}
 	}
-	target := filepath.Join(base, "target")
+	if err := os.Mkdir(filepath.Join(base, "target"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := shortTarget(t, filepath.Join(base, "target"))
 	w.data, w.keys = filepath.Join(target, "data"), filepath.Join(target, "keys")
 	for _, d := range []string{w.data, w.keys} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
