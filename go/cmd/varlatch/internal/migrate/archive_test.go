@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -138,6 +139,35 @@ func (f *fakeRunner) Stream(ctx context.Context, dir, name string, args []string
 	return Ran{Said: r.Said, Code: r.Code}, nil
 }
 
+// unixOnly skips a test that reaches past the converter's platform check:
+// off Linux and macOS it refuses there (TestArchiveRefusedOffUnix).
+func unixOnly(t *testing.T) {
+	t.Helper()
+	if !conversionSupported {
+		t.Skipf("varlatch migrate --from-archive runs on Linux and macOS only; on %s it refuses (TestArchiveRefusedOffUnix)", runtime.GOOS)
+	}
+}
+
+// Off Linux and macOS the converter refuses, with nothing run or written,
+// once the options and keys are read: the platform check (lockConversion).
+func TestArchiveRefusedOffUnix(t *testing.T) {
+	if conversionSupported {
+		t.Skip("Linux and macOS run the converter")
+	}
+	v := loadVectors(t)[0]
+	run := &fakeRunner{}
+	out := filepath.Join(t.TempDir(), "out.vltbak")
+	_, err := ConvertArchive(context.Background(), ArchiveOptions{Archive: v.archive, Out: out, KEKFile: v.kekFile, BEKFile: v.bekFile,
+		TSImage: "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("ab", 32), Varlatchd: "varlatchd", Scratch: t.TempDir(), Run: run})
+	var refused *ErrArchive
+	if !errors.As(err, &refused) || !strings.Contains(err.Error(), "runs on a Linux or macOS host with Docker") || len(run.calls) != 0 {
+		t.Fatalf("got %v, ran %v; want the platform refusal", err, run.calls)
+	}
+	if _, err := os.Lstat(out); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("%s: %v", out, err)
+	}
+}
+
 // A conversion refuses, before any program runs and with nothing written,
 // what it cannot convert: no image or one not pinned by digest, an output
 // that exists, a Root KEK that is not this installation's, a wrong BEK, a
@@ -167,6 +197,9 @@ func TestArchiveRefusesBeforeAnyProgram(t *testing.T) {
 		t.Fatalf("the default with no digest: %q", d)
 	}
 
+	// Checked past the platform check (the archive opened): these cases
+	// run on Linux and macOS only.
+	pastPlatform := []string{"another installation's Root KEK", "a wrong BEK", "a Go archive"}
 	for _, c := range []struct {
 		name string
 		mod  func(*ArchiveOptions)
@@ -190,6 +223,9 @@ func TestArchiveRefusesBeforeAnyProgram(t *testing.T) {
 		}, "holds no 32-byte key"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			if slices.Contains(pastPlatform, c.name) {
+				unixOnly(t)
+			}
 			run := &fakeRunner{}
 			scratch := t.TempDir()
 			o := ArchiveOptions{Archive: keyVec.archive, Out: filepath.Join(dir, "out-"+strings.ReplaceAll(c.name, " ", "-")+".vltbak"),
@@ -267,6 +303,7 @@ func goFormatArchive(t *testing.T, dir string, v tsVector) string {
 // then varlatchd's import, check and backup, whose archive is the output.
 // The daemon of neither line runs.
 func TestArchiveConversionSequence(t *testing.T) {
+	unixOnly(t)
 	// The image given, or with none given the pinned default: the one the
 	// export runs.
 	given := "ghcr.io/varlatch/varlatchd@sha256:" + strings.Repeat("cd", 32)
@@ -404,6 +441,7 @@ func conversionSequence(t *testing.T, given, image string) {
 // leaves nothing: every container it started is removed, and the scratch
 // directory with the decrypted dump in it is gone.
 func TestArchiveInterruptCleansUp(t *testing.T) {
+	unixOnly(t)
 	v := loadVectors(t)[0]
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -472,6 +510,7 @@ func TestArchiveInterruptCleansUp(t *testing.T) {
 // ends without its summary, or fails, is never taken, and the conversion
 // stops there, before varlatchd's import, with no output.
 func TestArchiveExportStreamRefused(t *testing.T) {
+	unixOnly(t)
 	v := loadVectors(t)[0]
 	for name, export := range map[string]Ran{
 		"no summary": {Answer: []byte("half a bundle\n"), Said: []byte("exporting\n")},
@@ -511,6 +550,7 @@ func TestArchiveExportStreamRefused(t *testing.T) {
 // directories in the scratch root (directories only: a symbolic link of
 // that name, or a file, is left alone).
 func TestArchiveSweepsLeftovers(t *testing.T) {
+	unixOnly(t)
 	v := loadVectors(t)[0]
 	dir := t.TempDir()
 	old := filepath.Join(dir, "varlatch-convert-1234567")
@@ -594,6 +634,7 @@ func TestArchiveSweepsLeftovers(t *testing.T) {
 // One conversion at a time on a host: a second refuses before anything
 // runs, so its sweep never touches the first's containers.
 func TestArchiveOneAtATime(t *testing.T) {
+	unixOnly(t)
 	v := loadVectors(t)[0]
 	lockDir := t.TempDir()
 	unlock, err := lockConversion(lockDir)
@@ -615,11 +656,14 @@ func TestArchiveOneAtATime(t *testing.T) {
 // throwaway PostgreSQL's namespace, a process reaches PostgreSQL on the
 // loopback and nothing else, by address or by name.
 func TestArchiveIsolationHasNoNetwork(t *testing.T) {
-	if _, err := exec.LookPath("docker"); err != nil || exec.Command("docker", "info").Run() != nil {
+	unixOnly(t)
+	// Docker that runs Linux images (a Windows runner's runs Windows ones).
+	osType, err := exec.Command("docker", "info", "--format", "{{.OSType}}").Output()
+	if err != nil || strings.TrimSpace(string(osType)) != "linux" {
 		if os.Getenv("VARLATCH_REQUIRE_DOCKER") != "" {
-			t.Fatal("VARLATCH_REQUIRE_DOCKER is set and Docker is not available")
+			t.Fatalf("VARLATCH_REQUIRE_DOCKER is set and Docker for Linux images is not available: %v %q", err, osType)
 		}
-		t.Skip("no Docker")
+		t.Skipf("no Docker for Linux images: %v %q", err, strings.TrimSpace(string(osType)))
 	}
 	iso := &isolation{docker: "docker", run: ExecRunner{}, pgImage: PostgresImage, user: "0:0", say: func(string) {}}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

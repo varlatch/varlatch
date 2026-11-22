@@ -6,6 +6,10 @@ package migrate
 
 import "errors"
 
+// conversionSupported: the converter refuses off Linux and macOS (no
+// lock; Docker there runs no Linux image as the conversion needs).
+const conversionSupported = false
+
 func defaultLockDir() string { return "" }
 
 func lockConversion(string) (func(), error) {

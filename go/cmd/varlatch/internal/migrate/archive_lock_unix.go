@@ -13,6 +13,9 @@ import (
 
 // defaultLockDir is where the host-wide conversion lock lives, whatever
 // TMPDIR says: /run/lock when this user may write it, else /tmp.
+// conversionSupported: Linux and macOS run the converter.
+const conversionSupported = true
+
 func defaultLockDir() string {
 	if syscall.Access("/run/lock", 2 /* W_OK */) == nil {
 		return "/run/lock"
