@@ -262,7 +262,8 @@ func (r *run) takeName(ctx context.Context) error {
 	enrolled := r.j.Restore.TailnetEnrolled || ours
 	switch {
 	case st.held && st.holdName != temp:
-		return fmt.Errorf("setup: the node is held as %s, not as this takeover's temporary name %s: nothing was done", st.holdName, temp)
+		return fmt.Errorf("setup: the node is held as %s, not as this takeover's temporary name %s: nothing was done. %s",
+			st.holdName, temp, r.notOursNext())
 	case st.held && !enrolled:
 		// Held, but its enrolment did not say it succeeded (a refusal after
 		// it wrote the node, its tags say): enrolled again, then taken.
@@ -288,9 +289,34 @@ func (r *run) takeName(ctx context.Context) error {
 		// No node held for this takeover, no record of it, and a node's
 		// state there (a reused data directory, or an enrolment that did
 		// not finish): nothing is tried against it.
-		return fmt.Errorf("setup: this data directory holds a tailnet node that is neither held for this takeover (%s) nor recorded as taking the name over: nothing was done", temp)
+		return fmt.Errorf("setup: this data directory holds a tailnet node that is neither held for this takeover (%s) nor recorded as taking the name over: nothing was done. %s",
+			temp, r.notOursNext())
 	}
-	return fmt.Errorf("setup: the takeover %s is recorded as begun, but its node is not held and its record does not say it finished: nothing was done (varlatchd admin tailnet take-name says where it stands)", op)
+	// Enrolled for this takeover, no longer held, and its journal does not
+	// say it finished. take-name is not the way to find out: on a node not
+	// held it only refuses (and on Headscale expires its key).
+	read := "tailnet-takeover.json is absent"
+	if st.journal != nil && ours {
+		read = fmt.Sprintf("tailnet-takeover.json records phase %q (incoming opened: %t)", st.journal.Phase, st.journal.IncomingOpened)
+	} else if st.journal != nil {
+		read = "tailnet-takeover.json records another takeover"
+	}
+	return fmt.Errorf("setup: the takeover %s was enrolled, but its node is no longer held and %s: nothing was done. Inspect %s. If the node should be held for the takeover again, `varlatchd admin tailnet enroll --hostname %s` holds it (it checks the live name and uses no Headscale key); then run setup again",
+		op, read, r.takeoverPaths(), temp)
+}
+
+// takeoverPaths are the node's files a takeover leaves, as this host has
+// them.
+func (r *run) takeoverPaths() string {
+	dir := r.path(DataDir)
+	return filepath.Join(dir, takeoverFile) + ", " + filepath.Join(dir, tailnetHoldFile) + " and " + filepath.Join(dir, tailnetStateFile)
+}
+
+// notOursNext is the next step when the data directory holds a node or
+// hold that is not this takeover's: look, never remove first.
+func (r *run) notOursNext() string {
+	return "Inspect " + r.takeoverPaths() + ", and confirm whether another installation owns this data directory. Only on a fresh host, remove those leftovers (or start with a fresh " +
+		DataDir + "), then run setup again"
 }
 
 // The node's files in the data directory that a takeover leaves, as

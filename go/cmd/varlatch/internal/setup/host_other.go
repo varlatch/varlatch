@@ -34,5 +34,3 @@ func (SystemHost) Admin(context.Context, ...string) ([]byte, error) { return nil
 func (SystemHost) Probe(context.Context, string) (diskprobe.Result, error) {
 	return diskprobe.Result{}, errNotLinux
 }
-
-func readNoFollow(string) ([]byte, error) { return nil, errNotLinux }
