@@ -153,6 +153,9 @@ type fakeTarget struct {
 	human     bool // an image's service: the operator starts and stops it
 	failOpen  error
 	bundles   []string
+	// importRefusal is what the target's state says an import would be
+	// refused for ("" for none).
+	importRefusal string
 }
 
 func (t *fakeTarget) call(name string) error {
@@ -162,7 +165,7 @@ func (t *fakeTarget) call(name string) error {
 func (t *fakeTarget) Describe(context.Context) (TargetInfo, TargetState, error) {
 	info := t.info
 	info.Config, info.DataDir = "/etc/varlatch/varlatchd.conf", t.dataDir
-	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Running: t.running}, t.call("describe")
+	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Running: t.running, ImportRefusal: t.importRefusal}, t.call("describe")
 }
 func (t *fakeTarget) Start(context.Context) error {
 	if err := t.call("start"); err != nil {
@@ -588,6 +591,11 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 		{"a target with a database", func(w *world) { w.tgt.database = true }, "holds a database and no migration journal"},
 		{"a target of another migration", func(w *world) { w.tgt.journal = &JournalHead{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Copied} }, "holds the migration mig_aaaa"},
 		{"a failed backup", func(w *world) { w.src.fail["backup"] = errors.New("no space") }, "preflight: the backup"},
+		// The import's own refusal, which the target's state reports: made
+		// before the backup and the barrier (rehearsal r16f).
+		{"a target whose import would be refused", func(w *world) {
+			w.tgt.importRefusal = "the data directory /var/lib/varlatch is not empty (notes.txt): an import builds a fresh database only"
+		}, "preflight: the target's import would be refused: the data directory /var/lib/varlatch is not empty (notes.txt)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWorld(t)
@@ -598,6 +606,9 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 			}
 			if containsCall(w.src.calls, "barrier") || containsCall(w.tgt.calls, "import") {
 				t.Fatalf("it went on: %v %v", w.src.calls, w.tgt.calls)
+			}
+			if w.tgt.importRefusal != "" && containsCall(w.src.calls, "backup") {
+				t.Fatalf("a backup before the target's refusal: %v", w.src.calls)
 			}
 		})
 	}

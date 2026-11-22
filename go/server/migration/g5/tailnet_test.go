@@ -960,11 +960,8 @@ func TestG5TailnetMigrateAgainAfterARollback(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("--finish --delete-old-data: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
-	// The step the finish notice names: its final archive moved out of
-	// the data directory, which an import builds into empty only.
-	if err := os.Rename(filepath.Join(w.data, "backups"), filepath.Join(t.TempDir(), "backups")); err != nil {
-		t.Fatal(err)
-	}
+	// The final archive stays in the data directory's backups/, which the
+	// import leaves as it is.
 	if code := w.run(""); code != 0 {
 		t.Fatalf("the new migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}

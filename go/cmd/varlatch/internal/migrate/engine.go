@@ -385,6 +385,17 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	if g != nil {
 		return fmt.Errorf("the source is behind a %s gate (%s): a migration starts from an installation that serves; nothing was done", g.Kind, g.ID)
 	}
+	// The import's own check of the target's data directory, made now, so
+	// what it would refuse after the barrier is refused before any
+	// downtime (rehearsal r16f: a stray name passed the dry run, which
+	// imports into scratch, and cost a barrier).
+	_, st, err := e.Target.Describe(ctx)
+	if err != nil {
+		return fmt.Errorf("preflight: the target: %w", err)
+	}
+	if st.ImportRefusal != "" {
+		return fmt.Errorf("preflight: the target's import would be refused: %s; move what is not the migration's out of the data directory (Go's backups/ may stay), or give another target; nothing was done", st.ImportRefusal)
+	}
 	// What a run killed before it could clean up left on this host: the
 	// dry run's scratch directories and the bundles (the lock is held).
 	if err := e.Source.CleanLeftovers(); err != nil {
