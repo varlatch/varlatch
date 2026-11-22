@@ -263,47 +263,60 @@ func TestLoadReadError(t *testing.T) {
 	}
 }
 
-// A host command outside the unit (LoadHost) finds the keys beside the
-// configuration, as the unit hands them: only when the Root KEK is there,
-// and never over a CREDENTIALS_DIRECTORY or a root_kek_file given.
+// A host command run by hand as root outside the unit (LoadHost with
+// HostEnv) finds the keys beside the configuration, as the unit hands
+// them: only as root, only when the Root KEK is there, and never over a
+// CREDENTIALS_DIRECTORY or a root_kek_file given. Without a Root KEK, a
+// run by hand is told its own remedy, serve the unit's.
 func TestLoadHost(t *testing.T) {
 	dir := t.TempDir()
 	conf := filepath.Join(dir, "varlatchd.conf")
 	if err := os.WriteFile(conf, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	load := func(path string, root bool) (*Config, error) { return LoadHost(path, HostEnv(os.Getenv, path, root)) }
 	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	const byHand = "no Root KEK: set root_kek_file, or run this as root with the root-kek file beside the configuration (where setup writes it, and the unit's credential comes from)"
+	const unit = "no Root KEK: set root_kek_file, or run varlatchd under its unit, which hands it the root-kek credential"
 	var cerr *Error
-	if _, err := LoadHost(conf); !errors.As(err, &cerr) || !strings.Contains(err.Error(), "no Root KEK") {
+	if _, err := load(conf, true); !errors.As(err, &cerr) || !strings.Contains(err.Error(), byHand) {
 		t.Fatalf("no root-kek beside the configuration: %v", err)
+	}
+	if _, err := Load(conf); !errors.As(err, &cerr) || !strings.Contains(err.Error(), unit) {
+		t.Fatalf("serve's remedy: %v", err)
 	}
 	for _, k := range []string{"root-kek", "backup-key"} {
 		if err := os.WriteFile(filepath.Join(dir, k), []byte("x\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	c, err := LoadHost(conf)
+	c, err := load(conf, true)
 	if err != nil || c.RootKEKFile != filepath.Join(dir, "root-kek") || c.BackupKeyFile != filepath.Join(dir, "backup-key") {
 		t.Fatalf("the keys beside the configuration: %+v %v", c, err)
+	}
+	// Not as root: a member of the varlatch group sees root-kek in
+	// /etc/varlatch (0750 root:varlatch), and gets no such directory.
+	if _, err := load(conf, false); !errors.As(err, &cerr) || !strings.Contains(err.Error(), byHand) {
+		t.Fatalf("not as root: %v", err)
 	}
 	if _, err := Load(conf); !errors.As(err, &cerr) {
 		t.Fatalf("Load (serve) must not look beside the configuration: %v", err)
 	}
 	// A relative path: the directory is made absolute.
 	t.Chdir(dir)
-	if c, err := LoadHost("varlatchd.conf"); err != nil || c.RootKEKFile != filepath.Join(dir, "root-kek") {
+	if c, err := load("varlatchd.conf", true); err != nil || c.RootKEKFile != filepath.Join(dir, "root-kek") {
 		t.Fatalf("a relative --config: %+v %v", c, err)
 	}
 	other := t.TempDir()
 	t.Setenv("CREDENTIALS_DIRECTORY", other)
-	if c, err := LoadHost(conf); err != nil || c.RootKEKFile != filepath.Join(other, "root-kek") || c.BackupKeyFile != "" {
+	if c, err := load(conf, true); err != nil || c.RootKEKFile != filepath.Join(other, "root-kek") || c.BackupKeyFile != "" {
 		t.Fatalf("CREDENTIALS_DIRECTORY wins: %+v %v", c, err)
 	}
 	t.Setenv("CREDENTIALS_DIRECTORY", "")
 	if err := os.WriteFile(conf, []byte("root_kek_file = /etc/kek\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if c, err := LoadHost(conf); err != nil || c.RootKEKFile != "/etc/kek" {
+	if c, err := load(conf, true); err != nil || c.RootKEKFile != "/etc/kek" {
 		t.Fatalf("root_kek_file wins: %+v %v", c, err)
 	}
 }

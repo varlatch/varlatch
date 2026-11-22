@@ -22,6 +22,11 @@ export const releaseIdentity = (repository, version) =>
 export const releaseAssetUrl = (repository, version, asset) =>
   `https://github.com/${repository}/releases/download/v${version}/${encodeURIComponent(asset)}`;
 
+/** Whether a clients.json CLI entry is a pending (unreleased) placeholder. */
+export function isPendingCli(entry) {
+  return Boolean(entry && typeof entry === "object" && !Array.isArray(entry) && "pending" in entry);
+}
+
 /** Problems with clients.json's own shape; empty when it is valid. */
 export function validateClients(clients) {
   const problems = [];
@@ -40,11 +45,25 @@ export function validateClients(clients) {
   }
   const clis = Object.entries(clients.cli ?? {});
   if (clis.length === 0) problems.push("cli: expected at least one pinned CLI");
+  let pinnedCount = 0;
   for (const [version, cli] of clis) {
     if (!VERSION.test(version)) problems.push(`cli.${version}: a CLI is pinned by its x.y.z version, never a name such as latest`);
+    if (isPendingCli(cli)) {
+      if (typeof cli.pending !== "string" || cli.pending.trim() === "") {
+        problems.push(`cli.${version}: pending must be a non-empty reason`);
+      }
+      if ("commit" in cli || "sha256" in cli) {
+        problems.push(`cli.${version}: a pending CLI must not also set commit or sha256`);
+      }
+      const extra = Object.keys(cli).filter((k) => k !== "pending" && k !== "commit" && k !== "sha256");
+      if (extra.length > 0) problems.push(`cli.${version}: unexpected keys on pending CLI (${extra.join(", ")})`);
+      continue;
+    }
+    pinnedCount++;
     if (!COMMIT.test(String(cli?.commit))) problems.push(`cli.${version}: commit must be the release commit's 40-digit hash`);
     if (!SHA256.test(String(cli?.sha256))) problems.push(`cli.${version}: sha256 must be 64 lower-case hex digits`);
   }
+  if (clis.length > 0 && pinnedCount === 0) problems.push("cli: expected at least one pinned (non-pending) CLI");
   return problems;
 }
 

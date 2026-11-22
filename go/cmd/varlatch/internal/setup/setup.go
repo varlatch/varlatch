@@ -74,7 +74,7 @@ type Host interface {
 	Systemctl(args ...string) (string, error)
 	// Probe measures dir's disk (diskprobe, with files without a name).
 	Probe(ctx context.Context, dir string) (diskprobe.Result, error)
-	// CheckConfig is `varlatchd admin config-check --config path`: "" when
+	// CheckConfig is `varlatchd admin config check --config path`: "" when
 	// the configuration is valid, what varlatchd said otherwise.
 	CheckConfig(path string) (string, error)
 	// Ready waits until the plain listener's /readyz answers 200.

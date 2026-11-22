@@ -68,3 +68,30 @@ func TestAdminRefusesAKeyInTheImage(t *testing.T) {
 		t.Fatalf("no key left: %d %q %q", code, out, errOut)
 	}
 }
+
+// In the image, the keys varlatchd admin finds beside the configuration
+// (run as root, the configuration naming no key file) are as much the
+// configured keys as those it names: one in the environment is refused.
+func TestAdminRefusesAKeyFoundBesideTheConfigurationInTheImage(t *testing.T) {
+	defer func(was func() bool) { adminAsRoot = was }(adminAsRoot)
+	adminAsRoot = func() bool { return true }
+	in := newInstall(t, "")
+	if err := os.WriteFile(in.conf, []byte("listen = 127.0.0.1:0\ndata_dir = "+in.data+"\naccess_log = "+in.accessLog+"\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(in.kekFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := strings.TrimSpace(string(raw))
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	t.Setenv(keyenv.ImageMarker, "varlatchd")
+	if code, out, errOut := runAdmin(t, "kek", "verify", "--config", in.conf); code == ExitConfig {
+		t.Fatalf("no key in the environment: %d %q %q", code, out, errOut)
+	}
+	t.Setenv("DEPLOYMENT_SETTING", key)
+	code, out, errOut := runAdmin(t, "kek", "verify", "--config", in.conf)
+	if code != ExitConfig || !strings.Contains(errOut, "the environment variable DEPLOYMENT_SETTING holds the Root KEK") || strings.Contains(out+errOut, key) {
+		t.Fatalf("the Root KEK found beside the configuration: %d %q", code, strings.ReplaceAll(out+errOut, key, "[KEY]"))
+	}
+}
