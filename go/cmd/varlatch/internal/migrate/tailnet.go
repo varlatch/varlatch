@@ -569,18 +569,22 @@ func (e *Engine) ledgerPath() string {
 // name back from the target's. Nothing for one that changed nothing.
 func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 	rec := j.Tailnet
-	if rec == nil || rec.Handoff == nil || e.Tailnet == nil {
-		// A finished reverse gave the name back already: nothing is left
-		// that needs the authority.
-		reversed := rec != nil && rec.Reverse != nil && rec.Reverse.Phase == tailhandoff.Done
-		if rec != nil && rec.Handoff != nil && !reversed && rec.Handoff.Phase != tailhandoff.Prepared && rec.Handoff.Phase != tailhandoff.Undone {
-			return fmt.Errorf("%w: the tailnet name must be given back first", ErrNoTailnetAuthority)
-		}
+	if rec == nil || rec.Handoff == nil {
 		return nil
 	}
-	switch rec.Handoff.Phase {
-	case tailhandoff.Prepared, tailhandoff.Undone:
+	switch {
+	case rec.Handoff.Phase == tailhandoff.Prepared, rec.Handoff.Phase == tailhandoff.Undone:
 		return nil
+	case rec.Handoff.Phase == tailhandoff.Done && rec.Reverse != nil && rec.Reverse.Phase == tailhandoff.Done:
+		// The reverse gave the name back; the target's node is held again
+		// under its temporary name, which needs no tailnet authority (a
+		// run that died between the two, resumed without it, still holds
+		// it), as rollbackTailnet does.
+		return e.reholdTarget(ctx, rec)
+	case e.Tailnet == nil:
+		return fmt.Errorf("%w: the tailnet name must be given back first", ErrNoTailnetAuthority)
+	}
+	switch rec.Handoff.Phase {
 	case tailhandoff.Done:
 	default:
 		he, err := e.handoffEngine(j, slotForward)

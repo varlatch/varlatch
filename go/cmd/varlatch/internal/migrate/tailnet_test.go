@@ -337,15 +337,32 @@ func TestAResumeWithoutTheAuthorityIsRefused(t *testing.T) {
 	if _, err := w.eng.handoffEngine(j, slotRollback); !errors.Is(err, ErrNoTailnetAuthority) {
 		t.Fatalf("handoffEngine: %v", err)
 	}
-	// A done handoff whose reverse finished gave the name back already: an
-	// undo resumed without the authority goes on.
+	// A done handoff needs the authority to be reversed, and so does a
+	// reverse not finished.
 	j.Tailnet.Handoff.Phase = tailhandoff.Done
 	if err := w.eng.unwindTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) {
 		t.Fatalf("unwind, done, no reverse: %v", err)
 	}
+	for _, p := range []tailhandoff.Phase{tailhandoff.Prepared, tailhandoff.Switching, tailhandoff.Undoing, tailhandoff.UndoPending, tailhandoff.Undone} {
+		j.Tailnet.Reverse = &tailhandoff.State{Phase: p}
+		if err := w.eng.unwindTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) {
+			t.Fatalf("unwind, reverse %s: %v", p, err)
+		}
+	}
+	// A finished reverse gave the name back; a run that died before it
+	// held the target's node again leaves it unheld. Resumed without the
+	// authority, the undo holds it again, which needs none.
 	j.Tailnet.Reverse = &tailhandoff.State{Phase: tailhandoff.Done}
+	w.tgt.info.Tailnet.HeldAs = ""
 	if err := w.eng.unwindTailnet(context.Background(), j); err != nil {
 		t.Fatalf("unwind, reversed: %v", err)
+	}
+	temp, err := tailcontrol.TempName(j.Tailnet.Name, j.Tailnet.Operation, tailcontrol.RoleNew)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.tgt.info.Tailnet.HeldAs != temp {
+		t.Fatalf("the target's node is not held again: %q, want %q", w.tgt.info.Tailnet.HeldAs, temp)
 	}
 }
 
