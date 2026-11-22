@@ -206,6 +206,9 @@ type fakeProber struct {
 	sourceLate int
 	// sourceDown: the source's ingress, started, never answers.
 	sourceDown bool
+	// sourceNoID: the source answers without its installation id (its
+	// database briefly unreachable).
+	sourceNoID bool
 }
 
 func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, error) {
@@ -228,6 +231,9 @@ func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, er
 		if p.w.src.gate != nil {
 			// Behind a gate the old installation answers 503.
 			return "", "", errors.New("GET /v1/meta answered 503")
+		}
+		if p.sourceNoID {
+			return "", p.w.src.info.Release, nil
 		}
 		return "inst_fake", p.w.src.info.Release, nil
 	}
@@ -973,6 +979,69 @@ func TestAnUndoWaitsForTheSourceToAnswer(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An undo whose target could not be stopped (a unit that would not stop,
+// an image's service the operator stops) does not start the source's
+// ingress, which would collide with or race the target, nor wait on an
+// address the target may still answer: it stays resumable.
+func TestAnUndoLeavesTheIngressWhileTheTargetRuns(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		set  func(w *world)
+	}{
+		{"the stop failed", func(w *world) { w.tgt.fail["stop"] = errors.New("systemctl stop varlatchd failed") }},
+		{"the operator stops it", func(w *world) { w.tgt.human = true }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := interrupted(t, Transfer)
+			setIngress(t, w, Proxy)
+			c.set(w)
+			_, err := w.eng.Abort(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "the source's dashboard is not started again while the target may still serve the address") {
+				t.Fatalf("%v", err)
+			}
+			if containsCall(w.src.calls, "start proxy") || w.prober.probes != 0 {
+				t.Fatalf("started the ingress or waited: %v, %d probes", w.src.calls, w.prober.probes)
+			}
+			if j, rerr := readJournal(w.src.dir); rerr != nil || j.Phase != Transfer || !j.Undoing {
+				t.Fatalf("the journal: %+v %v", j, rerr)
+			}
+		})
+	}
+}
+
+// A journal that records no address (from before the transfer record) is
+// undone without a wait on a placeholder; a source answering without its
+// installation id is not taken for the installation serving.
+func TestTheUndoWaitsOnlyOnARealAnswer(t *testing.T) {
+	t.Run("no recorded address", func(t *testing.T) {
+		w := interrupted(t, Transfer)
+		setIngress(t, w, Proxy)
+		j, err := readJournal(w.src.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		j.Transfer = nil
+		if err := writeJournal(w.src.dir, j); err != nil {
+			t.Fatal(err)
+		}
+		if j, err := w.eng.Abort(context.Background()); err != nil || j.Phase != Released || w.prober.probes != 0 {
+			t.Fatalf("%+v %v, %d probes", j, err, w.prober.probes)
+		}
+		if !strings.Contains(strings.Join(w.said, "\n"), "the journal records no address to check it at") {
+			t.Errorf("said: %v", w.said)
+		}
+	})
+	t.Run("no installation id", func(t *testing.T) {
+		w := interrupted(t, Transfer)
+		setIngress(t, w, Proxy)
+		w.prober.sourceNoID = true
+		w.eng.Options.TransferTimeout = 10 * time.Second
+		if _, err := w.eng.Abort(context.Background()); err == nil || !strings.Contains(err.Error(), "it answers without an installation id") {
+			t.Fatalf("%v", err)
+		}
+	})
 }
 
 // setIngress gives an interrupted world's journal the shape kind, its

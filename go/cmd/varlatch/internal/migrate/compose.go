@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -261,17 +262,30 @@ func (c *Compose) StopIngress(ctx context.Context, kind Ingress) error {
 	return c.ingress(ctx, []string{"stop"}, kind)
 }
 
-// StartIngress is `docker compose up -d --no-deps --force-recreate` of it:
-// a new container, never the stopped one. A start that failed (its port
-// held, 7.8b rehearsal run r13) leaves the container with no network,
+// StartIngress is `docker compose up -d --no-deps` of it, recreating it
+// (--force-recreate) unless it runs. A start that failed (its port held,
+// 7.8b rehearsal run r13) leaves the stopped container with no network,
 // which `docker compose start` reuses: the dashboard then cannot resolve
-// varlatchd and never answers. Both services are stateless (the dashboard
-// is nginx in front of varlatchd; Caddy keeps its certificates in its
-// volumes), and the new container comes from the same Compose project, so
-// recreating changes nothing of the installation. --no-deps: the services
-// they depend on run already, and varlatch-migrate's one-off is not run
-// again.
+// varlatchd and never answers. Such a container restarts in a loop, so it
+// is not running, and is recreated. Both services are stateless (the
+// dashboard is nginx in front of varlatchd; Caddy keeps its certificates
+// in its volumes), and the new container comes from the same Compose
+// project, so recreating changes nothing of the installation. One that
+// runs is left as it is (a retry would otherwise kill a dashboard still
+// starting, or drop Caddy's connections). --no-deps: the services they
+// depend on run already, and varlatch-migrate's one-off is not run again.
 func (c *Compose) StartIngress(ctx context.Context, kind Ingress) error {
+	svc, err := ingressService(kind)
+	if err != nil {
+		return err
+	}
+	running, err := c.running(ctx)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(running, svc) {
+		return c.ingress(ctx, []string{"up", "-d", "--no-deps"}, kind)
+	}
 	return c.ingress(ctx, []string{"up", "-d", "--no-deps", "--force-recreate"}, kind)
 }
 

@@ -436,8 +436,8 @@ func TestComposeIngress(t *testing.T) {
 	for _, c2 := range []struct {
 		kind Ingress
 		want []string
-	}{{Public, []string{"docker compose stop caddy", "docker compose up -d --no-deps --force-recreate caddy"}},
-		{Proxy, []string{"docker compose stop varlatch-web", "docker compose up -d --no-deps --force-recreate varlatch-web"}}} {
+	}{{Public, []string{"docker compose stop caddy", "docker compose ps --status running --services", "docker compose up -d --no-deps --force-recreate caddy"}},
+		{Proxy, []string{"docker compose stop varlatch-web", "docker compose ps --status running --services", "docker compose up -d --no-deps --force-recreate varlatch-web"}}} {
 		run.ran = nil
 		if err := c.StopIngress(ctx, c2.kind); err != nil {
 			t.Fatal(err)
@@ -451,6 +451,24 @@ func TestComposeIngress(t *testing.T) {
 	}
 	if err := c.StopIngress(ctx, Coolify); err == nil {
 		t.Fatal("the Coolify shape has nothing here to stop")
+	}
+	// Running already (a retry): started again without being recreated, so
+	// a dashboard still starting is not killed nor Caddy's connections
+	// dropped.
+	up := &scripted{t: t, answers: map[string]Ran{
+		"docker compose ps --status running --services": {Answer: []byte("varlatchd\nvarlatch-web\ncaddy\n")},
+		"docker compose up -d --no-deps ":               {},
+	}}
+	cu := &Compose{Directory: dir, Run: up}
+	for _, k := range []Ingress{Public, Proxy} {
+		up.ran = nil
+		if err := cu.StartIngress(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		svc, _ := ingressService(k)
+		if want := "docker compose ps --status running --services|docker compose up -d --no-deps " + svc; strings.Join(up.ran, "|") != want {
+			t.Fatalf("%s running: %q", k, up.ran)
+		}
 	}
 }
 
@@ -487,12 +505,18 @@ func TestHostServiceAndAddress(t *testing.T) {
 }
 
 // The public URL's probe, end to end against a local server: GET
-// /v1/meta's installationId and serverVersion; anything else an error.
+// /v1/meta, asked past any cache, its installationId and serverVersion;
+// anything else an error.
 func TestHTTPProber(t *testing.T) {
 	status, body := http.StatusOK, `{"apiMajor":1,"serverVersion":"0.50.0","capabilities":[],"installationId":"inst_x"}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/meta" || r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// A proxy or CDN in front must not answer from its cache.
+		if r.Header.Get("Cache-Control") != "no-cache" || r.Header.Get("Pragma") != "no-cache" {
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(status)

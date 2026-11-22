@@ -345,6 +345,10 @@ func (e *Engine) waitForTypeScript(ctx context.Context, j *Journal, want string)
 		switch {
 		case err != nil:
 			last = err
+		case id == "":
+			// The TypeScript server omits it while its database does not
+			// answer: not yet the installation serving.
+			last = errors.New("it answers without an installation id")
 		case want != "" && id != want:
 			last = fmt.Errorf("it answers as the installation %s, not %s", orNone(id), want)
 		case version != j.Source.Release:

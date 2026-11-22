@@ -3449,6 +3449,11 @@ migrations.
     freeing its port, and the target starts on it. Coolify: the target
     starts, and `migrate` stops (exit 75) with the exact domain move to
     make; `--resume` checks it.
+  - Every check of the address (the transfer's, the reverse's and an
+    undo's) asks for `/v1/meta` with `Cache-Control: no-cache` and
+    `Pragma: no-cache`, and Go answers `/v1/meta` with `Cache-Control:
+    no-store` (a deliberate difference: the TypeScript route sets none),
+    so a proxy's cached answer never stands for the installation serving.
   - The check: `<origin>/v1/meta` must answer with the migrated
     installation's id and the target's release, within
     `--transfer-timeout` (3 minutes). Then the source is marked migrated
