@@ -12,25 +12,34 @@ import { spawn, spawnSync } from "node:child_process";
 import { createSign, generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:https";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { reservePort } from "../lib/ports.mjs";
 
 const FAKES = fileURLToPath(new URL("../lib/platform-fakes.cjs", import.meta.url));
 let dir;
 let child;
 let ports;
 
-const freePort = () => new Promise((resolve, reject) => {
-  const s = createServer();
-  s.once("error", reject);
-  s.listen(0, "127.0.0.1", () => {
-    const { port } = s.address();
-    s.close(() => resolve(port));
-  });
-});
+// Ports as go-binary takes them (lib/ports.mjs): out of the ephemeral
+// range, and never the same one twice in this process, so a retry's ports
+// differ from the ones that failed.
+const freePort = () => reservePort();
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const fakesState = () => fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
+
+/** The fakes' state once done(state) holds, polled until a 10 s deadline (a loaded runner is slow): the last one read. */
+async function stateUntil(done) {
+  let state = await fakesState();
+  for (const end = Date.now() + 10_000; !done(state) && Date.now() < end; ) {
+    await sleep(20);
+    state = await fakesState();
+  }
+  return state;
+}
 
 const control = (op) => fetch(`http://127.0.0.1:${ports.control}/_github`, { method: "POST", body: JSON.stringify(op) }).then((r) => r.json());
 
@@ -59,7 +68,6 @@ function jwt(issuer, pem) {
 
 /** How long the fakes may take to answer after they start: a loaded CI runner is slow to start a process. */
 const START_MS = 30_000;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Starts the fakes and waits until their control port answers, polling it
@@ -79,7 +87,9 @@ async function startFakes(script = FAKES, startMs = START_MS) {
     let exited = null;
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (c) => (stderr = (stderr + c).slice(-4000)));
-    child.on("exit", (code, signal) => (exited = signal ? `killed by ${signal}` : `exited ${code}`));
+    // "close", not "exit": it comes once stderr's last chunks are read, so a
+    // crash's message is in the error.
+    child.on("close", (code, signal) => (exited = signal ? `killed by ${signal}` : `exited ${code}`));
     const ready = () => fetch(`http://127.0.0.1:${ports.control}/_state`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok, () => false);
     for (const end = Date.now() + startMs; Date.now() < end && exited === null; await sleep(100)) {
       if (await ready()) return;
@@ -152,19 +162,12 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
   // A held repository: a write waits unanswered until released, then lands.
   await control({ op: "hold", repo: "acme-apps/api" });
   const pending = write("api", token);
-  let state = {};
-  for (let i = 0; i < 50 && !(state.held ?? []).length; i++) {
-    await new Promise((r) => setTimeout(r, 50));
-    state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-  }
+  let state = await stateUntil((st) => st.held.length > 0);
   assert.deepEqual(state.held, [{ repo: "acme-apps/api", name: "X", connected: true }]);
   const writesHeld = state.writes["acme-apps/api"];
   assert.deepEqual(await control({ op: "release", repo: "acme-apps/api" }), { released: ["X"], abandoned: [] });
   assert.equal((await pending).status, 204, "the held write is answered once released");
-  for (let i = 0; i < 50 && !(state.deliveries ?? []).some((d) => d.delivered !== null); i++) {
-    await new Promise((r) => setTimeout(r, 50));
-    state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-  }
+  state = await stateUntil((st) => (st.deliveries ?? []).some((d) => d.delivered !== null));
   assert.equal(state.writes["acme-apps/api"], writesHeld + 1);
   assert.deepEqual(state.deliveries, [{ repo: "acme-apps/api", name: "X", delivered: true }], "the released write was delivered");
   assert.deepEqual(state.held, []);
@@ -179,17 +182,10 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
   });
   gone.on("error", () => {});
   gone.end(JSON.stringify({ encrypted_value: "abc", key_id: "conformance-key" }));
-  state = {};
-  for (let i = 0; i < 50 && !(state.held ?? []).length; i++) {
-    await new Promise((r) => setTimeout(r, 50));
-    state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-  }
+  state = await stateUntil((st) => st.held.length > 0);
   assert.deepEqual(state.held, [{ repo: "acme-apps/api", name: "LATE", connected: true }]);
   gone.destroy();
-  for (let i = 0; i < 50 && state.held[0]?.connected !== false; i++) {
-    await new Promise((r) => setTimeout(r, 50));
-    state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-  }
+  state = await stateUntil((st) => st.held[0]?.connected === false);
   assert.deepEqual(state.held, [{ repo: "acme-apps/api", name: "LATE", connected: false }], "a disconnected client shows");
   assert.deepEqual(await control({ op: "release", repo: "acme-apps/api" }), { released: [], abandoned: ["LATE"] });
   state = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
@@ -209,22 +205,13 @@ test("the fake GitHub's repository writes take a suite's fine-grained token or a
     });
     racing.on("error", () => {});
     racing.end(JSON.stringify({ encrypted_value: "abc", key_id: "conformance-key" }));
-    // Polled until a deadline, not a count: a loaded runner is slow.
-    for (const end = Date.now() + 10_000; Date.now() < end; await sleep(20)) {
-      const st = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-      if (st.held.length) break;
-    }
+    await stateUntil((st) => st.held.length > 0);
     racing.destroy();
     const out = await control({ op: "release", repo: "acme-apps/api" });
     const name = `RACE${round}`;
     // Until the write's state is terminal: abandoned, or delivered true or false.
-    let st = {};
-    let delivery;
-    for (const end = Date.now() + 10_000; Date.now() < end; await sleep(20)) {
-      st = await fetch(`http://127.0.0.1:${ports.control}/_state`).then((r) => r.json());
-      delivery = st.deliveries?.find((d) => d.name === name);
-      if (out.abandoned.includes(name) || (delivery && delivery.delivered !== null)) break;
-    }
+    const st = await stateUntil((s) => out.abandoned.includes(name) || (s.deliveries ?? []).some((d) => d.name === name && d.delivered !== null));
+    const delivery = st.deliveries?.find((d) => d.name === name);
     if (out.abandoned.includes(name)) {
       assert.equal(st.writes["acme-apps/api"], writesRace, `round ${round}: an abandoned write was counted`);
       assert.equal(delivery, undefined, `round ${round}: an abandoned write has a delivery`);
@@ -247,9 +234,12 @@ test("fakes that do not start say how they ended and what they wrote", async () 
     const exits = join(dir, "exits.cjs");
     writeFileSync(exits, 'process.stderr.write("listen EADDRINUSE: address already in use\\n"); process.exit(3);\n');
     await assert.rejects(startFakes(exits), /the fake platforms did not start: exited 3, ports \d+\/\d+; stderr: listen EADDRINUSE/);
+    // A short budget: on a loaded runner the child may not have written
+    // yet, so its stderr is not asserted here (the exits case has the full
+    // budget and checks it).
     const hangs = join(dir, "hangs.cjs");
-    writeFileSync(hangs, 'process.stderr.write("still loading\\n"); setInterval(() => {}, 1000);\n');
-    await assert.rejects(startFakes(hangs, 500), /did not start: still running after 500 ms, .*stderr: still loading/);
+    writeFileSync(hangs, "setInterval(() => {}, 1000);\n");
+    await assert.rejects(startFakes(hangs, 500), /did not start: still running after 500 ms, ports \d+\/\d+; stderr: /);
   } finally {
     ({ child, ports } = kept);
   }
