@@ -508,8 +508,13 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	if err := os.WriteFile(filepath.Join(tsCLI, "varlatch-ts"), []byte("#!/bin/sh\nexec node "+cli+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	migrateUntilDone := func(what string, extra ...string) ran {
-		a := append(slices.Clone(args), extra...)
+	// --rollback takes the source, the target and the transfer's timeout
+	// only (the rest is in the journal); its --resume is migrate's.
+	rollbackArgs := []string{"migrate", "--rollback", "--from", prof.coolifySourceDir, "--to-data", filepath.Join(target, "data"),
+		"--to-keys", filepath.Join(target, "keys"), "--to-config", conf, "--to-image", prof.goImage, "--to-service", "varlatchd",
+		"--ts-cli", "varlatch-ts", "--transfer-timeout", "5m"}
+	migrateUntilDone := func(what string, first []string) ran {
+		a := slices.Clone(first)
 		for step := 1; ; step++ {
 			r := run(prof.coolifySourceDir, []string{"VARLATCH_MIGRATE_PIN=" + rel.pin(), "PATH=" + tsCLI + ":" + os.Getenv("PATH"), "TMPDIR=" + tmpDir}, nil, filepath.Join(binDir, "varlatch"), a...)
 			if r.code != 75 {
@@ -519,11 +524,11 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 			a = append(slices.Clone(args), "--resume")
 		}
 	}
-	r := migrateUntilDone("migrate")
+	r := migrateUntilDone("migrate", args)
 	record(t, item, "the migration opens on the Go app", r.code == 0, r.String())
 	code, after := get()
 	record(t, item, "the public URL answers from the Go app", code == 200 && !strings.HasPrefix(after, "0.23.0"), after)
-	r = migrateUntilDone("rollback", "--rollback")
+	r = migrateUntilDone("rollback", rollbackArgs)
 	record(t, item, "--rollback, the domain moved back by hand", r.code == 0, r.String())
 	code, back := get()
 	record(t, item, "the public URL answers from 0.23.0 again", code == 200 && strings.HasPrefix(back, "0.23.0"), back)

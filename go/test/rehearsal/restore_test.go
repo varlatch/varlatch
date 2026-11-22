@@ -135,7 +135,7 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	record(t, item, "the CLI reads the changes on Go", err == nil && changed.parts["values"] != before.parts["values"] && changed.parts["value names"] != before.parts["value names"],
 		rd.describe(changed, err))
 	// The rollback.
-	r = in.migrateEnv(rel, true, rel.pin(), "--rollback")
+	r = run(in.dir, in.migrateEnvVars(rel, true, rel.pin()), nil, filepath.Join(binDir, "varlatch"), in.rollbackArgs()...)
 	record(t, item, "--rollback", r.code == 0, r.String()+" "+lastLines(r.stdout, 4))
 	if r.code != 0 {
 		measure("item 14: --rollback's stdout", lastLines(r.stdout, 20))
@@ -153,7 +153,23 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 		return
 	}
 	if !forwardAndCheck(t, in, rel, "the migration again", nil, rd, changed) {
-		return
+		// Finding of r16f: Go's discarded copy leaves its data directory's
+		// backups/ (the final archive's local file), which the new
+		// migration's import refuses only after the barrier. As an
+		// operator would: moved aside (kept), and the migration again.
+		backups := filepath.Join(in.data, "backups")
+		if _, err := os.Stat(backups); err != nil {
+			return
+		}
+		aside := filepath.Join(in.targetDir, "go-backups-of-the-discarded-copy")
+		if err := os.Rename(backups, aside); err != nil {
+			record(t, item, "Go's backups/ moved aside", false, err.Error())
+			return
+		}
+		measure("item 14: before the migration again", "Go's discarded copy left backups/ in the data directory, which the import refuses (after the barrier, the dry run having passed); moved aside, kept")
+		if !forwardAndCheck(t, in, rel, "the migration again, Go's backups/ moved aside", nil, rd, changed) {
+			return
+		}
 	}
 	f = in.migrateFinish(rel)
 	record(t, item, "--finish --delete-old-data after the migration again", f.code == 0, f.String()+" "+lastLines(f.stdout, 4))
@@ -524,7 +540,10 @@ func (rd *reader) pick() error {
 		return err
 	}
 	for _, org := range orgs {
-		if err := rd.context(org, "", ""); err != nil {
+		// project list and env list read the repository's context, which
+		// names a Project and an Environment too: any slug, as they list
+		// the Organization's and the Project's.
+		if err := rd.context(org, "vl-rh-pick", "vl-rh-pick"); err != nil {
 			return err
 		}
 		_, projects, err := rd.listed("projects", "slug", "project", "list", "--json")
@@ -532,7 +551,7 @@ func (rd *reader) pick() error {
 			return err
 		}
 		for _, project := range projects {
-			if err := rd.context(org, project, ""); err != nil {
+			if err := rd.context(org, project, "vl-rh-pick"); err != nil {
 				return err
 			}
 			_, envs, err := rd.listed("environments", "name", "env", "list", "--json")
@@ -611,7 +630,8 @@ func (rd *reader) read() (reads, error) {
 }
 
 // change sets values on Go through the CLI: one value of the read
-// Environment replaced, and three new ones.
+// Environment replaced, and three new ones, each a new random value the
+// CLI generates (no value on a command line).
 func (rd *reader) change() (int, error) {
 	if err := rd.context(rd.org, rd.project, rd.env); err != nil {
 		return 0, err
@@ -630,7 +650,7 @@ func (rd *reader) change() (int, error) {
 		return nil
 	}
 	if len(names) > 0 {
-		if err := set("values", "set", names[0], secret("rh-"+hexBytes(16)), "--replace", names[0], "-e", rd.env); err != nil {
+		if err := set("values", "set", names[0], "--generate", "hex:32", "--replace", names[0], "-e", rd.env); err != nil {
 			return n, err
 		}
 	}
@@ -639,7 +659,7 @@ func (rd *reader) change() (int, error) {
 		if slices.Contains(names, name) {
 			continue
 		}
-		if err := set("values", "set", name, secret("rh-"+hexBytes(16)), "-e", rd.env); err != nil {
+		if err := set("values", "set", name, "--generate", "hex:32", "-e", rd.env); err != nil {
 			return n, err
 		}
 	}
@@ -683,8 +703,25 @@ func envDigest(args []string) int {
 func convertArchive(t *testing.T, in *installation, rel release) {
 	out := filepath.Join(in.state, "converted.vltbak")
 	defer os.Remove(out)
+	// The converter's export runs as this process's user with no
+	// capability, so it reads a key file this user owns only (r16h: the
+	// synthetic archive's keys are the workstation user's): a copy of the
+	// run's own, removed after.
+	kek := filepath.Join(in.state, "convert-root-kek")
+	b, err := os.ReadFile(prof.restoreKEK)
+	if err == nil {
+		err = os.WriteFile(kek, b, 0o600)
+	}
+	if err != nil {
+		record(t, restoreItem, "the converter turns the archive into a format 3 archive", false, err.Error())
+		return
+	}
+	defer os.Remove(kek)
 	r := run(in.dir, []string{"TMPDIR=" + in.state}, nil, filepath.Join(binDir, "varlatch"), "migrate", "--from-archive", prof.restore,
-		"--kek-file", prof.restoreKEK, "--bek-file", prof.restoreBEK, "--out", out, "--ts-image", rel.pin(), "--json")
+		"--kek-file", kek, "--bek-file", prof.restoreBEK, "--out", out, "--ts-image", rel.pin(), "--json",
+		// Its scratch varlatchd data directory where a data directory may
+		// be: on a path only root may change (the target's, r16i).
+		"--scratch-dir", in.targetDir)
 	var res struct {
 		Source struct {
 			Format  int    `json:"format"`

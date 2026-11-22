@@ -197,6 +197,16 @@ func (in *installation) migrateArgs(extra ...string) []string {
 	return append(args, extra...)
 }
 
+// rollbackArgs are --rollback's options: the source, the target, the
+// drain and the transfer's timeout; the rest is in the journal.
+func (in *installation) rollbackArgs() []string {
+	args := []string{"migrate", "--rollback", "--from", in.dir, "--config", in.conf, "--ts-cli", "varlatch-ts", "--transfer-timeout", "90s", "--drain", "20s"}
+	if prof.box {
+		args = append(args, "--unit", in.unitName())
+	}
+	return args
+}
+
 // migrateEnvVars are its environment: the run's PATH (varlatch-ts, and
 // systemctl's stand-in on a workstation) and the pin override (or none).
 func (in *installation) migrateEnvVars(rel release, withPin bool, pin string) []string {

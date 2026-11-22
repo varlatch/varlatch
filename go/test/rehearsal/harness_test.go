@@ -455,6 +455,11 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 			freePort(t), net.JoinHostPort(prof.publicBind, "443"), net.JoinHostPort(prof.publicBind, "80"), in.acme.hostDirectory, in.acme.apiRoot,
 			in.publicURL, in.data, filepath.Join(in.keys, "root-kek"), filepath.Join(in.keys, "backup-key"))
 	}
+	if keys != nil {
+		// A rollback's --finish discards Go's copy after a final archive
+		// of it, uploaded: Go's configuration names the run's destination.
+		host += fmt.Sprintf("backup_destinations_file = %s\nbackup_destination = offsite\n", in.destinations)
+	}
 	in.conf = filepath.Join(target, "varlatchd.conf")
 	for _, p := range []string{in.conf, filepath.Join(in.state, "service.conf")} {
 		if err := os.WriteFile(p, []byte(host), 0o600); err != nil {

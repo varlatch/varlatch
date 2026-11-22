@@ -62,6 +62,9 @@ func killCase(t *testing.T, rel release, s3 *s3Server) {
 		<-done
 	}
 	record(t, item, "killed at "+point, reached, lastLines(out.String(), 3))
+	if o := out.String(); strings.Contains(o, "panic:") || strings.Contains(o, "goroutine ") {
+		measure(fmt.Sprintf("item %d: migrate's output before the kill at %s (a stack in it)", item, point), lastLines(o, 60))
+	}
 	if !reached {
 		return
 	}

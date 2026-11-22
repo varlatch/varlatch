@@ -330,7 +330,7 @@ func TestComposeImportReverseStreams(t *testing.T) {
 	if err := os.WriteFile(bundle, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := "docker compose --profile varlatch-rollback run --rm -T varlatch-reverse-import node dist/cli.js admin migration import --in -"
+	cmd := "docker compose --profile varlatch-rollback run --rm -T varlatch-reverse-import admin migration import --in -"
 	run := &scripted{t: t, answers: map[string]Ran{cmd: {Answer: []byte(`{"installationId":"inst_x","auditPosition":"48","migratedOutGate":"lifted"}` + "\n")}}}
 	c := &Compose{Directory: dir, Run: run}
 	rec, err := c.ImportReverse(context.Background(), bundle)

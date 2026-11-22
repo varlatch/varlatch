@@ -418,13 +418,20 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		return 0, true
 	}
-	importArgs := []string{"compose", "--profile", "varlatch-rollback", "run", "--rm", "-T", "varlatch-reverse-import", "node", "dist/cli.js", "admin", "migration", "import", "--in", "-"}
+	importArgs := []string{"compose", "--profile", "varlatch-rollback", "run", "--rm", "-T", "varlatch-reverse-import", "admin", "migration", "import", "--in", "-"}
 	if slices.Equal(args, importArgs) {
 		return tsImport(), true
 	}
-	oneOff := []string{"compose", "run", "--rm", "-T", "--no-deps", "varlatchd", "node", "dist/cli.js", "admin", "migration"}
+	oneOff := []string{"compose", "run", "--rm", "-T", "--no-deps", "varlatchd", "admin", "migration"}
 	if len(args) > len(oneOff) && slices.Equal(args[:len(oneOff)], oneOff) {
 		return tsMigration(args[len(oneOff)], args[len(oneOff)+1:]), true
+	}
+	// compose run keeps 0.23.0's entrypoint (node dist/cli.js): a command
+	// that names node again reaches its CLI as a command, which refuses it
+	// (rehearsal r16d).
+	if i := slices.Index(args, "run"); i >= 0 && slices.Contains(args[i:], "node") {
+		fmt.Fprintln(os.Stderr, "Unknown command: node; Commands: serve | migrate | admin.")
+		return 1, true
 	}
 	return 0, false
 }

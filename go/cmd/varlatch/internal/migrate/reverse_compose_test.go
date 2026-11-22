@@ -143,14 +143,14 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 				t.Fatal(err)
 			}
 			run := &scripted{t: t, answers: map[string]Ran{
-				"docker compose stop ":                                 {},
-				"docker compose up -d postgres convex-backend":         {},
-				"docker ps -a --filter volume=":                        {},
-				"docker volume rm -f ":                                 {},
-				"docker compose config --no-interpolate --format json": {Answer: []byte(c.config)},
-				"docker compose ps --status running --services":        {Answer: []byte(c.running)},
-				"docker compose run --rm -T --no-deps varlatchd node dist/cli.js admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)},
-				"docker compose up -d --no-deps varlatchd":                                               {},
+				"docker compose stop ":                                                  {},
+				"docker compose up -d postgres convex-backend":                          {},
+				"docker ps -a --filter volume=":                                         {},
+				"docker volume rm -f ":                                                  {},
+				"docker compose config --no-interpolate --format json":                  {Answer: []byte(c.config)},
+				"docker compose ps --status running --services":                         {Answer: []byte(c.running)},
+				"docker compose run --rm -T --no-deps varlatchd admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)},
+				"docker compose up -d --no-deps varlatchd":                              {},
 			}}
 			cmp := &Compose{Directory: dir, Run: run}
 			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}})
