@@ -5,7 +5,8 @@
  * network and cosign are replaced; nothing here downloads anything.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -15,6 +16,7 @@ import {
   assetProblems,
   cliAsset,
   cosignBinaryFor,
+  isPendingCli,
   parseSha256Sums,
   releaseAssetUrl,
   releaseIdentity,
@@ -23,16 +25,19 @@ import {
 } from "../lib/clients.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, "..", "..", "..");
 const clientsJson = JSON.parse(readFileSync(join(here, "..", "clients.json"), "utf8"));
 const H = (c) => c.repeat(64);
 
-test("clients.json is valid and pins 0.21.0 and 0.22.0 by version, commit and hash", () => {
+test("clients.json is valid and pins 0.21.0, 0.22.0, 0.22.4, and 0.23.0 by version, commit and hash", () => {
   assert.deepEqual(validateClients(clientsJson), []);
-  assert.deepEqual(Object.keys(clientsJson.cli).sort(), ["0.21.0", "0.22.0"]);
+  assert.deepEqual(Object.keys(clientsJson.cli).sort(), ["0.21.0", "0.22.0", "0.22.4", "0.23.0"]);
+  assert.equal(isPendingCli(clientsJson.cli["0.22.4"]), false);
+  assert.equal(isPendingCli(clientsJson.cli["0.23.0"]), false);
   assert.equal(clientsJson.repository, "varlatch/varlatch");
 });
 
-test("clients.json: no name such as latest, and every pin complete", () => {
+test("clients.json: no name such as latest, every pin complete, and pending entries strict", () => {
   const good = () => structuredClone(clientsJson);
   const problems = (change) => {
     const c = good();
@@ -42,6 +47,10 @@ test("clients.json: no name such as latest, and every pin complete", () => {
   assert.match(problems((c) => (c.cli.latest = c.cli["0.22.0"])), /cli\.latest: a CLI is pinned by its x\.y\.z version/);
   assert.match(problems((c) => delete c.cli["0.22.0"].commit), /cli\.0\.22\.0: commit must be/);
   assert.match(problems((c) => (c.cli["0.22.0"].sha256 = "ABC")), /cli\.0\.22\.0: sha256 must be/);
+  assert.match(problems((c) => (c.cli["0.23.0"] = { pending: "   " })), /cli\.0\.23\.0: pending must be a non-empty reason/);
+  assert.match(problems((c) => (c.cli["0.23.0"] = { pending: "waiting", commit: "a".repeat(40) })), /cli\.0\.23\.0: a pending CLI must not also set commit or sha256/);
+  assert.match(problems((c) => (c.cli["0.23.0"] = { pending: "waiting", extra: true })), /cli\.0\.23\.0: unexpected keys on pending CLI/);
+  assert.match(problems((c) => (c.cli = { "0.23.0": { pending: "waiting" } })), /expected at least one pinned \(non-pending\) CLI/);
   assert.match(problems((c) => (c.cli = {})), /cli: expected at least one pinned CLI/);
   assert.match(problems((c) => (c.issuer = "https://example.com")), /issuer/);
   assert.match(problems((c) => (c.repository = "varlatch")), /repository/);
@@ -49,6 +58,89 @@ test("clients.json: no name such as latest, and every pin complete", () => {
   assert.match(problems((c) => (c.cosign.binaries["linux-x64"].sha256 = "")), /cosign\.binaries\.linux-x64: sha256/);
   assert.match(problems((c) => (c.cosign.binaries = {})), /cosign\.binaries: expected at least one platform/);
   assert.deepEqual(validateClients({ schema: 2 }), ["schema: expected 1"]);
+});
+
+test("conformance.yml pairs go-binary with 0.22.4 and 0.23.0 and only lists CLIs declared in clients.json", async () => {
+  const { parse } = await import("yaml");
+  const text = readFileSync(join(repoRoot, ".github/workflows/conformance.yml"), "utf8");
+  const wf = parse(text);
+  assert.ok(!("pull_request" in wf.on), "conformance.yml stays weekly/manual, never per-PR");
+  const options = wf.on.workflow_dispatch.inputs.cell.options;
+  assert.ok(options.includes("go-binary x 0.22.4"), "missing go-binary x 0.22.4 option");
+  assert.ok(options.includes("go-binary x 0.23.0"), "missing go-binary x 0.23.0 option");
+  for (const opt of options) {
+    if (opt === "all") continue;
+    const [, cli] = opt.split(" x ");
+    if (cli !== "source" && cli !== "go") {
+      assert.ok(Object.hasOwn(clientsJson.cli, cli), `conformance.yml cell ${opt} names CLI ${cli} missing from clients.json`);
+    }
+  }
+  const chooseStep = wf.jobs.cells.steps.find((s) => s.id === "cells");
+  assert.ok(chooseStep?.run, "missing cells step script");
+  if (spawnSync("jq", ["--version"]).status === 0) {
+    const runCells = (cell, { clientsOverride = null, expectStatus = 0 } = {}) => {
+      const dir = mkdtempSync(join(tmpdir(), "conformance-cells-test-"));
+      try {
+        let cwd = repoRoot;
+        if (clientsOverride) {
+          cwd = join(dir, "work");
+          mkdirSync(join(cwd, "scripts", "conformance"), { recursive: true });
+          writeFileSync(join(cwd, "scripts", "conformance", "clients.json"), JSON.stringify(clientsOverride));
+        }
+        const out = join(dir, "output");
+        const summary = join(dir, "summary");
+        writeFileSync(out, "");
+        writeFileSync(summary, "");
+        const r = spawnSync("bash", ["-e", "-c", chooseStep.run], {
+          cwd,
+          encoding: "utf8",
+          env: { ...process.env, CELL: cell, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: summary },
+        });
+        assert.equal(r.status, expectStatus, `cells step status for ${cell}: ${r.stderr}\n${r.stdout}`);
+        const rawOut = readFileSync(out, "utf8").trim();
+        const outputs = rawOut
+          ? Object.fromEntries(rawOut.split("\n").map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]))
+          : {};
+        return { stdout: r.stdout, stderr: r.stderr, summary: readFileSync(summary, "utf8"), outputs };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const allRun = runCells("all");
+    assert.equal(allRun.outputs.has_cells, "true");
+    const allMatrix = JSON.parse(allRun.outputs.matrix).include;
+    assert.ok(allMatrix.some((c) => c.target === "go-binary" && c.cli === "0.22.4"));
+    assert.ok(allMatrix.some((c) => c.target === "go-binary" && c.cli === "0.23.0"));
+    assert.doesNotMatch(allRun.stdout, /::notice::Skipping/);
+
+    const cutover224 = runCells("go-binary x 0.22.4");
+    assert.equal(cutover224.outputs.has_cells, "true");
+    assert.equal(cutover224.outputs.images, "false");
+    assert.deepEqual(JSON.parse(cutover224.outputs.matrix).include, [{ target: "go-binary", cli: "0.22.4" }]);
+
+    const cutover230 = runCells("go-binary x 0.23.0");
+    assert.equal(cutover230.outputs.has_cells, "true");
+    assert.equal(cutover230.outputs.images, "false");
+    assert.deepEqual(JSON.parse(cutover230.outputs.matrix).include, [{ target: "go-binary", cli: "0.23.0" }]);
+
+    // Pending machinery still skips an unreleased entry cleanly.
+    const withPending = structuredClone(clientsJson);
+    withPending.cli["0.23.0"] = { pending: "awaiting future release" };
+    const pendingAll = runCells("all", { clientsOverride: withPending });
+    assert.ok(!JSON.parse(pendingAll.outputs.matrix).include.some((c) => c.target === "go-binary" && c.cli === "0.23.0"));
+    assert.match(pendingAll.stdout, /::notice::Skipping go-binary x 0\.23\.0: awaiting future release/);
+    assert.match(pendingAll.summary, /Skipped `go-binary x 0\.23\.0`: awaiting future release/);
+
+    const pendingOnly = runCells("go-binary x 0.23.0", { clientsOverride: withPending });
+    assert.equal(pendingOnly.outputs.has_cells, "false");
+    assert.deepEqual(JSON.parse(pendingOnly.outputs.matrix).include, []);
+
+    // A stray pending key on a pinned entry fails closed instead of silently skipping.
+    const withBoth = structuredClone(clientsJson);
+    withBoth.cli["0.23.0"].pending = "stale";
+    const bothFailed = runCells("go-binary x 0.23.0", { clientsOverride: withBoth, expectStatus: 1 });
+    assert.match(bothFailed.stdout, /::error::Cell go-binary x 0\.23\.0 has both pending and commit\/sha256/);
+  }
 });
 
 test("the release's identity, asset and URL", () => {
@@ -182,4 +274,18 @@ test("a version clients.json does not pin is a usage error, never a download", a
       spec,
     );
   }
+});
+
+test("a pending CLI in clients.json is a usage error, never a download", async () => {
+  const release = fakeRelease();
+  release.clients.cli["0.23.0"] = { pending: "awaiting v0.23.0 release" };
+  await assert.rejects(
+    resolveCli("0.23.0", {
+      repoRoot: "/nonexistent",
+      workDir: tmpdir(),
+      log: () => {},
+      deps: { clients: release.clients, download: async () => assert.fail("downloaded"), verifyBlob: () => assert.fail("verified") },
+    }),
+    (err) => err.usage === true && /pending release \(awaiting v0\.23\.0 release\)/.test(err.message),
+  );
 });
