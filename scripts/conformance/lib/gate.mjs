@@ -35,10 +35,49 @@ import { compareVersions, VERSION } from "./inventory.mjs";
 export const EVIDENCE_DIR = "docs/evidence/";
 export const TEMPLATE_SENTINEL = "<!-- g1-walkthrough: TEMPLATE -->";
 const TEMPLATE_SENTINEL_RE = /<!--\s*g1-walkthrough:\s*TEMPLATE\s*-->/i;
-const UNCHECKED_ROW = /^\s*\|(?:[^\r\n]*\|)?\s*\[\s*\](?:\s|$|\|)/m;
-const PLACEHOLDER = /\bPENDING\b|<commit-sha>|<full-40-char-sha>|<sha256>|YYYY-MM-DD HH:MM UTC|<name \/ handle>/;
+const PLACEHOLDER =
+  /\bPENDING\b|<commit-sha>|<full-40-char-sha>|<sha256>|<version \/ sha256>|<e\.g\.[^>\r\n]*>|<GitHub Actions run URL \/ ID>|<summary of sign-off>|YYYY-MM-DD HH:MM UTC|<name \/ handle>/;
 const CANDIDATE_COMMIT_LINE = /^\s*(?:-\s*)?\*\*Candidate commit:\*\*\s*`?([^`\r\n]+?)`?\s*$/im;
-const VERDICT_PASS_LINE = /^\s*(?:-\s*)?\*\*Verdict:\*\*\s*`?PASS`?\s*$/m;
+const VERDICT_LINE = /^\s*(?:-\s*)?\*\*Verdict:\*\*.*$/gm;
+const VERDICT_PASS = /^\s*(?:-\s*)?\*\*Verdict:\*\*\s*`?PASS`?\s*$/;
+const TABLE_SEPARATOR = /^:?-{3,}:?$/;
+const CHECKED = /^\[[xX]\]$/;
+const UNCHECKED_CELL = /^\[\s*\](?:\s|$)/;
+
+/** A Markdown table row's cells, with or without its outer pipes; null for a line that is not one. */
+function tableCells(line) {
+  let s = line.trim();
+  if (!/(?<!\\)\|/.test(s)) return null;
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map((c) => c.trim());
+}
+
+/**
+ * The 1-based lines of checklist rows not checked off. In a table with a
+ * Done column, a row's Done cell must be [x] (whatever its Notes say); in
+ * any other table, a cell starting with [ ] is an unchecked row.
+ */
+export function uncheckedRows(content) {
+  const rows = content.split(/\r?\n/).map(tableCells);
+  const separator = (cells) => cells !== null && cells.every((c) => TABLE_SEPARATOR.test(c));
+  const lines = [];
+  let done = -1;
+  rows.forEach((cells, i) => {
+    if (!cells) {
+      done = -1;
+      return;
+    }
+    if (separator(cells)) return;
+    // A header is the row its separator row follows.
+    if (separator(rows[i + 1] ?? null)) {
+      done = cells.findIndex((c) => /^done$/i.test(c));
+      return;
+    }
+    if (done >= 0 ? !CHECKED.test(cells[done] ?? "") : cells.some((c) => UNCHECKED_CELL.test(c))) lines.push(i + 1);
+  });
+  return lines;
+}
 const HEX_40 = /^[0-9a-f]{40}$/i;
 
 /**
@@ -79,15 +118,19 @@ function walkthroughContentProblems(walkthrough, run) {
   if (TEMPLATE_SENTINEL_RE.test(content)) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} is still the template (${TEMPLATE_SENTINEL})`);
   }
-  if (UNCHECKED_ROW.test(content)) {
-    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has unchecked checklist rows (| [ ] |)`);
+  const unchecked = uncheckedRows(content);
+  if (unchecked.length > 0) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has unchecked checklist rows (| [ ] |, lines ${unchecked.join(", ")})`);
   }
   if (PLACEHOLDER.test(content)) {
     problems.push(
-      `the browser-walkthrough evidence ${walkthrough.path} still contains unreplaced placeholders (PENDING, <commit-sha>, <sha256>, YYYY-MM-DD HH:MM UTC, or <name / handle>)`,
+      `the browser-walkthrough evidence ${walkthrough.path} still contains unreplaced placeholders (PENDING, <commit-sha>, <sha256>, <version / sha256>, <e.g. ...>, <GitHub Actions run URL / ID>, <summary of sign-off>, YYYY-MM-DD HH:MM UTC, or <name / handle>)`,
     );
   }
-  if (!VERDICT_PASS_LINE.test(content)) {
+  const verdicts = content.match(VERDICT_LINE) ?? [];
+  if (verdicts.length > 1) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} records ${verdicts.length} **Verdict:** lines; Owner Sign-Off holds exactly one`);
+  } else if (verdicts.length === 0 || !VERDICT_PASS.test(verdicts[0])) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} must record **Verdict:** PASS in Owner Sign-Off`);
   }
   const commitMatch = content.match(CANDIDATE_COMMIT_LINE);

@@ -111,6 +111,24 @@ test("the browser-walkthrough evidence must be named, under docs/evidence/, pres
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Hash | \`<sha256>\` |` }), /unreplaced placeholders/);
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Date | \`YYYY-MM-DD HH:MM UTC\` |` }), /unreplaced placeholders/);
   assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n| Owner | \`<name / handle>\` |` }), /unreplaced placeholders/);
+  for (const placeholder of ["<version / sha256>", "<e.g. Chromium 13x / Firefox 13x>", "<e.g. Linux / macOS>", "<GitHub Actions run URL / ID>", "<summary of sign-off>"]) {
+    assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n\n- Field: \`${placeholder}\`` }), /unreplaced placeholders/, placeholder);
+  }
+  // The Done column decides a checklist row: a Notes cell starting with
+  // [ ] does not uncheck a checked row, and a row without its outer
+  // pipes, or with an empty Done cell, is still a row.
+  const withRows = (...rows) => signedWalkthroughContent().replace("| 1 | [x] | Projects |", ["| 1 | [x] | Projects |", ...rows].join("\n"));
+  assert.equal(problem({ ...walkthrough, content: withRows("| 2 | [x] | Audit | [ ] retest on Safari |") }), "");
+  assert.equal(problem({ ...walkthrough, content: withRows("| 2 | [X] | Audit |", "3 | [x] | Access") }), "");
+  assert.match(problem({ ...walkthrough, content: withRows("2 | [ ] | Audit") }), /unchecked checklist rows \(.*lines 6\)/);
+  assert.match(problem({ ...walkthrough, content: withRows("| 2 | [ ] | Audit |", "3 | [ ] | Access |") }), /lines 6, 7\)/);
+  assert.match(problem({ ...walkthrough, content: withRows("| 2 |  | Audit |") }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: withRows("| 2 | done | Audit |") }), /unchecked checklist rows/);
+  assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n\n4 | [ ] | Settings` }), /unchecked checklist rows/);
+  // Exactly one Verdict line, and it says PASS.
+  for (const second of ["`FAIL`", "`PASS`"]) {
+    assert.match(problem({ ...walkthrough, content: `${signedWalkthroughContent()}\n- **Verdict:** ${second}` }), /records 2 \*\*Verdict:\*\* lines; Owner Sign-Off holds exactly one/);
+  }
   // Verdict must be PASS (backticks optional).
   assert.equal(problem({ ...walkthrough, content: signedWalkthroughContent().replace("`PASS`", "PASS") }), "");
   assert.match(problem({ ...walkthrough, content: signedWalkthroughContent().replace("`PASS`", "`FAIL`") }), /\*\*Verdict:\*\* PASS/);
