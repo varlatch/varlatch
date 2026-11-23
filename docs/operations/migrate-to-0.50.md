@@ -562,7 +562,9 @@ until the address moves back:
    log records the migration.
 3. The TypeScript release starts on a **fresh** database: new PostgreSQL
    and Convex volumes. The volumes from before the migration are kept as
-   they are.
+   they are. Before PostgreSQL starts, its Compose configuration must name
+   the new volumes, and before the import, the running container must be on
+   its new one: otherwise the rollback refuses, naming both, and is undone.
 4. The rebuilt database is checked against the new server's copy.
 5. The address moves back: the new server stops serving it, and the
    TypeScript release and its ingress start on it. On Coolify, move the

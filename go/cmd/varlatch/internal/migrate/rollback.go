@@ -210,6 +210,11 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w", err))
 	}
 	crashPoint("rollback rebuilt")
+	// Never an import into the retained volume: refused before it, and
+	// undone.
+	if err := rs.CheckRebuilt(ctx, plan); err != nil {
+		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w", err))
+	}
 	imp, err := rs.ImportReverse(ctx, out)
 	if err != nil {
 		return e.undoReverse(ctx, j, fmt.Errorf("the import: %w", err))

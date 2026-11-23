@@ -67,7 +67,8 @@ fixes.
   refuses what does not agree instead of guessing. `--rollback` gives a
   Coolify installation its fresh volumes by the names its rendered file
   uses, and reaches Postgres on its network; before, the fresh volumes were
-  not used there. An installation with one `docker-compose.yml` migrates as
+  not used there. It refuses, before the import, a Postgres that is not on
+  its fresh volume. An installation with one `docker-compose.yml` migrates as
   before.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own

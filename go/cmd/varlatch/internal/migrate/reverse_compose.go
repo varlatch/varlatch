@@ -62,6 +62,9 @@ type ReverseSource interface {
 	// file and names it in COMPOSE_FILE, and starts Postgres on its fresh
 	// volume.
 	Rebuild(ctx context.Context, plan RebuildRecord) error
+	// CheckRebuilt refuses a Postgres that does not run on the plan's
+	// fresh volume, before anything is imported into it.
+	CheckRebuilt(ctx context.Context, plan RebuildRecord) error
 	// ImportReverse runs `admin migration import` of the bundle.
 	ImportReverse(ctx context.Context, bundle string) (TSImportRecord, error)
 	// ResetConvex starts Convex on its fresh volume and deploys its
@@ -106,7 +109,13 @@ type composeConfig struct {
 		Volumes     []composeVolume `json:"volumes"`
 		Networks    composeNetworks `json:"networks"`
 	} `json:"services"`
+	Volumes map[string]struct {
+		Name string `json:"name"`
+	} `json:"volumes"`
 }
+
+// postgresTarget is where the Postgres service mounts its data.
+const postgresTarget = "/var/lib/postgresql/data"
 
 // composeVolume is a service's volume: its long form, or the short one
 // (source:target[:mode]).
@@ -160,7 +169,7 @@ const (
 // ones in use.
 func (m composeConfig) volumeKeys() ([]string, error) {
 	var out []string
-	for _, w := range []struct{ service, target string }{{"postgres", "/var/lib/postgresql/data"}, {"convex-backend", "/convex/data"}, {service, "/var/lib/varlatch"}} {
+	for _, w := range []struct{ service, target string }{{"postgres", postgresTarget}, {"convex-backend", "/convex/data"}, {service, "/var/lib/varlatch"}} {
 		key := ""
 		for _, v := range m.Services[w.service].Volumes {
 			if v.Type == "volume" && v.Target == w.target {
@@ -489,7 +498,78 @@ func (c *Compose) Rebuild(ctx context.Context, plan RebuildRecord) error {
 	if err := c.setEnv("COMPOSE_FILE", &files); err != nil {
 		return err
 	}
+	// Before Postgres starts: what Compose would give it and Convex are the
+	// fresh volumes.
+	if err := c.checkVolumes(ctx, plan); err != nil {
+		return err
+	}
 	return c.compose(ctx, "docker compose up -d postgres", "up", "-d", "postgres")
+}
+
+// checkVolumes refuses Compose files that do not give Postgres and Convex
+// the plan's fresh volumes.
+func (c *Compose) checkVolumes(ctx context.Context, plan RebuildRecord) error {
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return err
+	}
+	keys, err := cfg.volumeKeys()
+	if err != nil {
+		return err
+	}
+	for i, svc := range []string{"postgres", "convex-backend"} {
+		name := cfg.Volumes[keys[i]].Name
+		if name == "" {
+			name = cfg.Name + "_" + keys[i]
+		}
+		if name != plan.Volumes[i] {
+			return fmt.Errorf("the Compose files give %s the volume %s, not the fresh %s the journal names: it was not started", svc, name, plan.Volumes[i])
+		}
+	}
+	return nil
+}
+
+// rebuiltFormat is what CheckRebuilt reads of a container: whether it
+// runs, and what is mounted at Postgres's data directory.
+const rebuiltFormat = `{{.State.Status}}{{range .Mounts}}{{if eq .Destination "` + postgresTarget + `"}} {{.Type}} {{json .Name}}{{end}}{{end}}`
+
+// CheckRebuilt reads the running Postgres container's mount: the fresh
+// volume the journal names, never the retained one. The configuration
+// (checkVolumes) says what Compose would do; this is what it did.
+func (c *Compose) CheckRebuilt(ctx context.Context, plan RebuildRecord) error {
+	r, err := c.docker(ctx, []string{"compose", "ps", "-a", "-q", "postgres"}, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return failure("docker compose ps", r)
+	}
+	ids := strings.Fields(string(r.Answer))
+	if len(ids) != 1 {
+		return fmt.Errorf("the installation has %d postgres containers, not one: the volume it runs on is not known (the journal names the fresh %s); nothing was imported", len(ids), plan.Volumes[0])
+	}
+	r, err = c.docker(ctx, []string{"inspect", "--type", "container", "--format", rebuiltFormat, ids[0]}, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return failure("docker inspect", r)
+	}
+	f := strings.Fields(string(r.Answer))
+	if len(f) == 0 || f[0] != "running" {
+		return fmt.Errorf("postgres does not run on the fresh volume %s (its container is %s); nothing was imported", plan.Volumes[0], strings.Join(f[:min(len(f), 1)], ""))
+	}
+	on := "no named volume"
+	if len(f) == 3 && f[1] == "volume" {
+		var name string
+		if json.Unmarshal([]byte(f[2]), &name) == nil && name != "" {
+			on = name
+		}
+	}
+	if on != plan.Volumes[0] {
+		return fmt.Errorf("postgres runs on %s, not on the fresh volume %s the journal names; nothing was imported", on, plan.Volumes[0])
+	}
+	return nil
 }
 
 // importAnswerLimit bounds what the import's standard output keeps: its

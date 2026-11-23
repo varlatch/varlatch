@@ -440,7 +440,15 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	}
 	dir := coolifyDir(t)
 	const project = "vl-migrate-test-coolify"
-	rendered := "services:\n  varlatchd:\n    image: " + image + "\n    command: [\"sleep\", \"1\"]\n    labels:\n      digest: ${VARLATCH_VARLATCHD_DIGEST:?set it}\n"
+	svc := func(name, vol, target, more string) string {
+		return "  " + name + ":\n    image: " + image + "\n    command: [\"sleep\", \"120\"]\n    stop_grace_period: 1s\n    networks: [" + project + "]\n    volumes: [\"" + project + "_" + vol + ":" + target + "\"]\n" + more
+	}
+	rendered := "services:\n" + svc("varlatchd", "varlatch-state", "/var/lib/varlatch", "    labels:\n      digest: ${VARLATCH_VARLATCHD_DIGEST:?set it}\n") +
+		svc("varlatch-migrate", "varlatch-state", "/var/lib/varlatch", "") + svc("postgres", "postgres-data", "/var/lib/postgresql/data", "") + svc("convex-backend", "convex-data", "/convex/data", "") +
+		"networks:\n  " + project + ": {}\nvolumes:\n"
+	for _, v := range []string{"varlatch-state", "postgres-data", "convex-data"} {
+		rendered += "  " + project + "_" + v + ":\n    name: " + project + "_" + v + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(dir, "docker-compose.coolify-tailscale.yml"), []byte(rendered), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +467,10 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	}
 	named := []string{"compose", "--project-name", project, "--project-directory", dir, "-f", filepath.Join(dir, "docker-compose.coolify-tailscale.yml")}
 	t.Cleanup(func() {
-		_, _ = x.Run(context.Background(), dir, "docker", append(slices.Clone(named), "down", "--remove-orphans"), nil)
+		_, _ = x.Run(context.Background(), dir, "docker", append(slices.Clone(named), "down", "-v", "--remove-orphans", "--timeout", "1"), nil)
+		for _, v := range []string{"postgres-data-abcdefgh", "convex-data-abcdefgh"} {
+			_, _ = x.Run(context.Background(), dir, "docker", []string{"volume", "rm", "-f", project + "_" + v}, nil)
+		}
 	})
 	docker(append(slices.Clone(named), "create", "--pull", "never")...)
 	c := &Compose{Directory: dir, Run: x}
@@ -480,6 +491,29 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	if err != nil || cfg.Code != 0 || !strings.Contains(string(cfg.Answer), "sha256:"+strings.Repeat("a", 64)) {
 		t.Errorf("config: %v %d %s", err, cfg.Code, cfg.Said)
 	}
+	// The reverse's rebuild: Postgres on the fresh volume, checked on the
+	// container; an override by the stock names is refused before Postgres
+	// starts, and a container on the retained volume before an import.
+	plan, err := c.RebuildPlan(ctx, &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	docker(append(slices.Clone(named), "up", "-d", "--no-deps", "postgres")...)
+	if err := c.CheckRebuilt(ctx, plan); err == nil || !strings.Contains(err.Error(), "postgres runs on "+project+"_postgres-data,") || !strings.Contains(err.Error(), plan.Volumes[0]) {
+		t.Errorf("on the retained volume: %v", err)
+	}
+	stock := plan
+	stock.Keys = nil
+	if err := c.Rebuild(ctx, stock); err == nil || !strings.Contains(err.Error(), "it was not started") {
+		t.Errorf("an override by the stock names: %v", err)
+	}
+	if err := c.Rebuild(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CheckRebuilt(ctx, plan); err != nil {
+		t.Errorf("rebuilt: %v", err)
+	}
+
 }
 
 // The engine gives every command that goes on with a migration the
@@ -519,6 +553,174 @@ func TestTheEngineKeepsTheProject(t *testing.T) {
 		}
 		if w.src.kept == nil || w.src.kept.Name != project.Name || !slices.Equal(w.src.kept.Files, project.Files) {
 			t.Errorf("%s: kept %v", c.name, w.src.kept)
+		}
+	}
+}
+
+// The rebuild never goes on with a Postgres on another volume than the
+// journal's fresh one: before it starts, what the Compose files would give
+// it (and Convex); before the import, what its container mounts. Each
+// refusal names both volumes.
+func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
+	const fresh, freshConvex, retained = appID + "_postgres-data-abcdefgh", appID + "_convex-data-abcdefgh", appID + "_postgres-data"
+	plan := RebuildRecord{Override: OverrideFile, Volumes: []string{fresh, freshConvex}, Keys: []string{retained, appID + "_convex-data", appID + "_varlatch-state"}, Image: "x@sha256:y"}
+	config := func(pg, convex string) Ran {
+		return Ran{Answer: []byte(`{"name":"` + appID + `","services":{"postgres":{"volumes":[{"type":"volume","source":"` + retained + `","target":"/var/lib/postgresql/data"}]},` +
+			`"convex-backend":{"volumes":[{"type":"volume","source":"` + appID + `_convex-data","target":"/convex/data"}]},"varlatchd":{"volumes":[{"type":"volume","source":"` + appID + `_varlatch-state","target":"/var/lib/varlatch"}]}},` +
+			`"volumes":{"` + retained + `":{"name":"` + pg + `"},"` + appID + `_convex-data":{"name":"` + convex + `"}}}`)}
+	}
+	for _, c := range []struct {
+		name, pg, convex string
+		refused          []string
+	}{
+		{"fresh", fresh, freshConvex, nil},
+		{"Postgres's retained", retained, freshConvex, []string{"give postgres the volume " + retained + ",", fresh}},
+		{"Convex's retained", fresh, appID + "_convex-data", []string{"give convex-backend the volume " + appID + "_convex-data,", freshConvex}},
+		{"unnamed: the project's", "", freshConvex, []string{"the volume " + appID + "_" + retained, fresh}},
+	} {
+		dir := coolifyDir(t)
+		run := &scripted{t: t, answers: map[string]Ran{"docker compose stop ": {}, "docker compose up -d postgres": {}, "docker compose config --no-interpolate --format json": config(c.pg, c.convex)}}
+		cmp := &Compose{Directory: dir, Run: run, resolved: &ComposeProject{Name: appID, Dir: dir, Files: []string{filepath.Join(dir, "docker-compose.coolify-tailscale.yml")}}}
+		err := cmp.Rebuild(t.Context(), plan)
+		started := slices.Contains(run.ran, "docker compose up -d postgres")
+		if started != (c.refused == nil) || (err == nil) != (c.refused == nil) {
+			t.Errorf("%s: %v, started %v", c.name, err, started)
+		}
+		for _, w := range c.refused {
+			if err == nil || !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: %v, want %q", c.name, err, w)
+			}
+		}
+		// The configuration asked names migrate's file too.
+		if last := run.argv[len(run.argv)-1]; !slices.Contains(last, filepath.Join(dir, OverrideFile)) {
+			t.Errorf("%s: %q", c.name, last)
+		}
+	}
+	const ps = "docker compose ps -a -q postgres"
+	for _, c := range []struct {
+		name, ids, inspect string
+		code               int
+		refused            []string
+	}{
+		{"fresh", "c1\n", `running volume "` + fresh + `"`, 0, nil},
+		{"retained", "c1\n", `running volume "` + retained + `"`, 0, []string{"postgres runs on " + retained + ",", fresh, "nothing was imported"}},
+		{"a longer name", "c1\n", `running volume "` + fresh + `x"`, 0, []string{fresh + "x,", fresh}},
+		{"a bind mount", "c1\n", `running bind ""`, 0, []string{"runs on no named volume", fresh}},
+		{"nothing mounted", "c1\n", `running`, 0, []string{"runs on no named volume", fresh}},
+		{"restarting", "c1\n", `restarting volume "` + fresh + `"`, 0, []string{"does not run", "restarting", fresh}},
+		{"no answer", "c1\n", ``, 0, []string{"does not run", fresh}},
+		{"no container", "", ``, 0, []string{"0 postgres containers", fresh}},
+		{"two", "c1\nc2\n", ``, 0, []string{"2 postgres containers", fresh}},
+		{"inspect fails", "c1\n", ``, 1, []string{"docker inspect"}},
+	} {
+		run := &scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte(c.ids)}, "docker inspect --type container --format " + rebuiltFormat + " c1": {Answer: []byte(c.inspect + "\n"), Code: c.code}}}
+		err := (&Compose{Directory: "/x", Run: run, resolved: testProject("/x")}).CheckRebuilt(t.Context(), plan)
+		if (err == nil) != (c.refused == nil) {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		for _, w := range c.refused {
+			if err == nil || !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: %v, want %q", c.name, err, w)
+			}
+		}
+	}
+}
+
+// reverseFake are the reverse's halves of the fakes, as far as the import.
+type reverseFake struct {
+	*fakeSource
+	checkErr, importErr error
+	did                 []string
+}
+
+func (r *reverseFake) do(what string) { r.did = append(r.did, what) }
+
+func (r *reverseFake) RebuildPlan(context.Context, *Journal) (RebuildRecord, error) {
+	return RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, nil
+}
+func (r *reverseFake) Rebuild(context.Context, RebuildRecord) error { r.do("rebuild"); return nil }
+func (r *reverseFake) CheckRebuilt(_ context.Context, p RebuildRecord) error {
+	r.do("check " + p.Volumes[0])
+	return r.checkErr
+}
+func (r *reverseFake) ImportReverse(context.Context, string) (TSImportRecord, error) {
+	r.do("import")
+	return TSImportRecord{}, r.importErr
+}
+func (r *reverseFake) ResetConvex(context.Context) error { r.do("convex"); return nil }
+func (r *reverseFake) ExportForCheck(context.Context, []byte) (string, error) {
+	return "", errors.New("not reached")
+}
+func (r *reverseFake) StartServing(context.Context, Ingress) error { return nil }
+func (r *reverseFake) StopServing(context.Context, Ingress) error  { return nil }
+func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord) error {
+	r.do("undo " + p.Volumes[0])
+	return nil
+}
+func (r *reverseFake) ReverseReady(context.Context) error      { return nil }
+func (r *reverseFake) StartNetworkOwner(context.Context) error { return nil }
+
+type reverseTargetFake struct {
+	*fakeTarget
+	released int
+}
+
+func (r *reverseTargetFake) Barrier(context.Context, string, time.Duration) (BarrierRecord, error) {
+	return BarrierRecord{GateID: "g", AuditPosition: "1"}, nil
+}
+
+// WriteJournal: a reverse's is written beside the running varlatchd.
+func (r *reverseTargetFake) WriteJournal(_ context.Context, j *Journal) error {
+	r.journal = &JournalHead{ID: j.ID, Phase: j.Phase}
+	return nil
+}
+func (r *reverseTargetFake) ReleaseBarrier(context.Context, string) error { r.released++; return nil }
+func (r *reverseTargetFake) ExportReverse(context.Context, string, string) (CopyRecord, error) {
+	return CopyRecord{InstallationID: "inst_x"}, nil
+}
+func (r *reverseTargetFake) CheckReverse(context.Context, string, string, []byte) (CheckSummary, error) {
+	return CheckSummary{}, errors.New("not reached")
+}
+func (r *reverseTargetFake) Archives(context.Context) ([]ArchiveInfo, error) { return nil, nil }
+
+// The check comes after the rebuild and before the import, on the
+// journalled volume; its refusal imports nothing and undoes the reverse
+// (Go open again, its barrier lifted), and --rollback may start again.
+func TestARebuildOnAnotherVolumeIsUndoneBeforeTheImport(t *testing.T) {
+	wrong := errors.New("postgres runs on p_postgres-data, not on the fresh volume p_postgres-data-abcdefgh the journal names; nothing was imported")
+	for _, c := range []struct {
+		name  string
+		check error
+		want  []string
+	}{
+		{"refused", wrong, []string{"rebuild", "check p_postgres-data-abcdefgh", "undo p_postgres-data-abcdefgh"}},
+		{"right", nil, []string{"rebuild", "check p_postgres-data-abcdefgh", "import", "undo p_postgres-data-abcdefgh"}},
+	} {
+		w := newWorld(t)
+		j := &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Open, Source: w.src.info, Ingress: Coolify, Transfer: &TransferRecord{},
+			History: []Step{{Phase: Switched, At: w.eng.now().Format(time.RFC3339Nano)}}}
+		if err := writeJournal(w.src.dir, j); err != nil {
+			t.Fatal(err)
+		}
+		w.tgt.journal, w.tgt.database, w.tgt.running = &JournalHead{ID: j.ID, Phase: Open}, true, true
+		src, tgt := &reverseFake{fakeSource: w.src, checkErr: c.check, importErr: errors.New("the import, reached")}, &reverseTargetFake{fakeTarget: w.tgt}
+		w.eng.Source, w.eng.Target = src, tgt
+		_, err := w.eng.Rollback(context.Background())
+		if !slices.Equal(src.did, c.want) {
+			t.Errorf("%s: %v, want %v (%v)", c.name, src.did, c.want, err)
+		}
+		if c.check != nil && (!errors.Is(err, wrong) || tgt.released != 1) {
+			t.Errorf("%s: %v, barrier lifted %d times", c.name, err, tgt.released)
+		}
+		after, rerr := readJournal(w.src.dir)
+		if rerr != nil || after.Phase != Open || after.Rollback == nil || after.Rollback.Undone == nil || !after.Rollback.Undone.Released ||
+			after.Rollback.Rebuild == nil || after.Rollback.Rebuild.Volumes[0] != "p_postgres-data-abcdefgh" || after.Rollback.Import != nil {
+			t.Errorf("%s: the journal after: %+v %v", c.name, after, rerr)
+		}
+		// It may start again.
+		src.did = nil
+		if _, err := w.eng.Rollback(context.Background()); len(src.did) == 0 {
+			t.Errorf("%s: a second --rollback did nothing: %v", c.name, err)
 		}
 	}
 }
