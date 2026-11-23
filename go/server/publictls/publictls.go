@@ -291,7 +291,6 @@ func (m *Manager) attempt(ctx context.Context) {
 	var err error
 	// A certificate in the store (served, or expired and no longer) is
 	// renewed; certmagic's obtain would see it there and do nothing.
-	stored := m.stored()
 	renewing := m.current.Load() != nil || m.cm.Storage.Exists(ctx, certmagic.StorageKeys.SiteCert(m.issuer.IssuerKey(), m.o.Host))
 	// The issuance count: the attempt is recorded before the CA is asked,
 	// and refused, without asking, when it would pass the limit.
@@ -302,7 +301,7 @@ func (m *Manager) attempt(ctx context.Context) {
 		} else {
 			err = m.cm.ObtainCertSync(ctx, m.o.Host)
 		}
-		m.endIssuance(ctx, issuance, err, stored)
+		m.endIssuance(issuance, err)
 		if err == nil {
 			err = m.load(ctx)
 		}
@@ -401,72 +400,30 @@ func rateLimitedUntil(err error) (bool, time.Time) {
 	return true, time.Time{}
 }
 
-// endIssuanceWait bounds the record of an attempt's end, made even when the
-// run is stopping. A write the database has begun is waited for all the
-// same: the caller bounds its own wait for Run.
-var endIssuanceWait = 5 * time.Second
-
 // endIssuance records how an attempt ended: issued, or refused when the CA
 // answered with a problem. Any other failure (a timeout, the network) is
 // left started, which counts as issued: the CA may have issued. So is the
 // CA's rate-limit problem: the CA counts what this installation asked for.
-// An attempt the stop cut short (ctx) before any order is refused too
-// (beforeOrder): nothing was asked for; stored is what the store held
-// before it.
-func (m *Manager) endIssuance(ctx context.Context, id int64, err error, stored bool) {
+func (m *Manager) endIssuance(id int64, err error) {
 	if id < 0 {
 		return
 	}
 	outcome := OutcomeIssued
 	if err != nil {
 		var problem acme.Problem
-		switch isProblem := errors.As(err, &problem); {
-		case isProblem:
-			if limited, _ := rateLimitedUntil(err); limited {
-				return
-			}
-		case ctx.Err() == nil || !m.beforeOrder(stored):
+		if !errors.As(err, &problem) {
+			return
+		}
+		if limited, _ := rateLimitedUntil(err); limited {
 			return
 		}
 		outcome = OutcomeRefused
 	}
 	// Recorded even when the run is stopping: the attempt happened.
-	ectx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endIssuanceWait)
-	defer cancel()
-	if err := m.o.Issuances.End(ectx, id, outcome, m.o.Now()); err != nil {
+	if err := m.o.Issuances.End(context.WithoutCancel(context.Background()), id, outcome, m.o.Now()); err != nil {
 		m.o.Log.Warn("the issuance count could not record an attempt's end; it counts as issued", "host", m.o.Host, "error", err)
 	}
 }
-
-// beforeOrder is whether an attempt that failed is known to have ended
-// before it asked the CA for an order. certmagic stores the ACME account it
-// registered before it creates the first order with it: with nothing in the
-// store before the attempt and nothing after it, there was no account, so
-// no order. Anything else (an account of an earlier attempt, a store that
-// cannot be read) is not known, and counts.
-func (m *Manager) beforeOrder(stored bool) bool { return !stored && !m.stored() }
-
-// stored is whether the store holds any file but certmagic's locks, or
-// cannot be read.
-func (m *Manager) stored() bool {
-	dir := filepath.Join(m.o.DataDir, StorageDir)
-	locks := filepath.Join(dir, "locks")
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		switch {
-		case err != nil:
-			return err
-		case d.IsDir() && path == locks:
-			return filepath.SkipDir
-		case !d.IsDir():
-			return errStored
-		}
-		return nil
-	})
-	return err != nil
-}
-
-// errStored ends stored's walk at the first file.
-var errStored = errors.New("publictls: the store holds a file")
 
 // load reads the certificate and its key from the store and serves them
 // when they are valid now for the host.

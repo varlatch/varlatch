@@ -72,12 +72,13 @@ fixes.
 ### Server
 
 - **A stop during a certificate issuance ends `varlatchd`.** With
-  `listen_https`, a stop that cut an issuance or a renewal short left the
-  Go server trying again without end; it no longer does. Every stop now
-  ends within 20 seconds, of which requests in flight get 15 (they had
-  20), also when a writer or a disk does not answer. An attempt stopped
-  before the installation has an ACME account, and so before any order, is
-  not counted against the weekly limit.
+  `listen_https`, the Go server kept trying again without end after a stop
+  interrupted an issuance or a renewal, until it was killed (after the 30
+  seconds of the shipped systemd unit). It no longer does.
+- **The image gets 30 seconds to stop on Coolify.**
+  `infra/coolify/varlatchd.compose.yml` sets `stop_grace_period: 30s`, as
+  the systemd unit has it; Docker's default, 10 seconds, can cut off
+  requests in flight. For `docker run`, give `--stop-timeout 30`.
 
 ### Documentation
 
