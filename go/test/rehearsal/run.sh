@@ -210,7 +210,7 @@ cleanup() {
       cleanup_release
     fi
     if [ -d "$target_root/$run" ]; then
-      rm -rf "$target_root/$run" 2>/dev/null || true
+      rm -rf "${target_root:?}/$run" 2>/dev/null || true
     fi
     if [ "$profile" = box ] && [ -d "/srv/vl-rh/$run" ]; then
       rm -rf "/srv/vl-rh/$run" 2>/dev/null || true

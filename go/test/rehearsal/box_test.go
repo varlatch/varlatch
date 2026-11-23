@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -330,9 +329,9 @@ var resolveHost = net.LookupHost
 
 // --- the image target's preconditions (B3) ---
 
-// imageUID is the Go image's user (go/image/Dockerfile): migrate's image
-// target runs the run's varlatchd as it, to read the configuration it
-// derives and the bind paths.
+// imageUID is the Go image's user and group (go/image/Dockerfile): migrate's
+// image target runs the run's varlatchd as it, to read the configuration
+// it derives and the bind paths.
 const imageUID = 65532
 
 // toImageForm is migrate's --to-image form (internal/migrate, imageRef):
@@ -340,100 +339,51 @@ const imageUID = 65532
 // and the digest.
 var toImageForm = regexp.MustCompile(`^([a-z0-9][a-z0-9._/-]*(?::[0-9]+)?/[a-z0-9._/-]+):([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})@(sha256:[0-9a-f]{64})$`)
 
-// hostRelease is the release of the run's varlatchd (its --version line,
-// "varlatchd <release>"); runBinaryBlocked is the first path on the way to
-// it the image's user cannot pass, or "". Variables, for the unit tests.
-var (
-	hostRelease = func() (string, error) {
-		out, err := exec.Command(filepath.Join(binDir, "varlatchd"), "--version").Output()
-		if err != nil {
-			return "", fmt.Errorf("%s --version: %v", filepath.Join(binDir, "varlatchd"), err)
-		}
-		f := strings.Fields(string(out))
-		if len(f) < 2 {
-			return "", fmt.Errorf("%s --version printed %q", filepath.Join(binDir, "varlatchd"), out)
-		}
-		return strings.TrimPrefix(f[1], "v"), nil
+// imageUserRelease runs the run's varlatchd --version, by the path migrate
+// runs it, as the image's user and group with no supplementary groups, as
+// migrate does: the kernel decides whether that user reaches it (modes,
+// ACLs, links), and the answer is its release. A variable, for the unit
+// tests.
+var imageUserRelease = func() (string, error) {
+	bin := filepath.Join(binDir, "varlatchd")
+	cmd := exec.Command(bin, "--version")
+	cmd.Dir = "/"
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: imageUID, Gid: imageUID, Groups: []uint32{}}}
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("%s --version as uid and gid %d, no other groups: %v", bin, imageUID, err)
 	}
-	runBinaryBlocked = func() (string, error) {
-		return firstBlocked(filepath.Join(binDir, "varlatchd"), imageUID, imageUID, os.Stat)
+	f := strings.Fields(string(out))
+	if len(f) < 2 {
+		return "", fmt.Errorf("%s --version printed %q", bin, out)
 	}
-)
+	return trimRelease(f[1]), nil
+}
+
+// trimRelease is a release without its "v" or "V" prefix, as migrate
+// compares an image's tag with its varlatchd's (image.go).
+func trimRelease(v string) string { return strings.TrimPrefix(strings.TrimPrefix(v, "v"), "V") }
 
 // checkImageTarget refuses, before the owner's first step, what migrate
 // would refuse only after it: VL_RH_GO_IMAGE not in --to-image's form or
 // not of the run's varlatchd release, and a run's varlatchd the image's
-// user cannot reach (a VL_RH_ROOT under a home of mode 0750).
+// user cannot run (a VL_RH_ROOT under a home of mode 0750). The value
+// refused is not repeated: it may be a registry URL with credentials, and
+// the refusal reaches the run's log.
 func checkImageTarget(goImage string) error {
 	m := toImageForm.FindStringSubmatch(goImage)
 	if m == nil {
-		return fmt.Errorf("VL_RH_GO_IMAGE %s is not migrate's --to-image form: give repository:<the run's varlatchd release>@sha256:<digest> (varlatchd --version in the run's bin/ names the release)", goImage)
+		return errors.New("VL_RH_GO_IMAGE is not migrate's --to-image form: give repository:<the run's varlatchd release>@sha256:<64 hex digits> (varlatchd --version in the run's bin/ names the release)")
 	}
-	rel, err := hostRelease()
+	rel, err := imageUserRelease()
 	if err != nil {
-		return fmt.Errorf("VL_RH_GO_IMAGE: the run's varlatchd release: %v", err)
+		return fmt.Errorf("the image target runs the run's varlatchd as the image's user, which cannot: %v. Set VL_RH_ROOT where uid %d can reach it, outside a home of mode 0750: /srv/vl-rh-runs for example (never /srv/vl-rh, the case's own)", err, imageUID)
 	}
-	if tag := strings.TrimPrefix(m[2], "v"); tag != rel {
-		return fmt.Errorf("VL_RH_GO_IMAGE is tagged %s; the run's varlatchd is %s: migrate refuses another release, so tag the image %s (go/image/build.sh --version %s, from the run's bin/)", m[2], rel, rel, rel)
-	}
-	blocked, err := runBinaryBlocked()
-	if err != nil {
-		return fmt.Errorf("the run's varlatchd: %v", err)
-	}
-	if blocked != "" {
-		return fmt.Errorf("the image target runs the run's varlatchd as the image's user (uid %d), which cannot pass %s: set VL_RH_ROOT outside a home of mode 0750, /srv/vl-rh-runs for example (never /srv/vl-rh, the case's own)", imageUID, blocked)
+	if trimRelease(m[2]) != rel {
+		return fmt.Errorf("VL_RH_GO_IMAGE's tag is not the run's varlatchd release, %s: migrate refuses another release, so tag the image %s (go/image/build.sh --version %s, from the run's bin/)", rel, rel, rel)
 	}
 	return nil
-}
-
-// firstBlocked is the first of path's directories (from the root down)
-// that uid, in group gid, cannot search, or path itself when it cannot
-// execute it; "" when it can. Owner bits apply to the owner, group bits to
-// the group, the rest to everyone else, as the kernel checks them for a
-// user that is not root.
-func firstBlocked(path string, uid, gid uint32, stat func(string) (fs.FileInfo, error)) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = real // the directories the kernel passes, not a link's
-	}
-	may := func(p string) (bool, error) {
-		fi, err := stat(p)
-		if err != nil {
-			return false, err
-		}
-		st, ok := fi.Sys().(*syscall.Stat_t)
-		if !ok {
-			return false, fmt.Errorf("%s: no owner to check", p)
-		}
-		perm := fi.Mode().Perm()
-		switch {
-		case st.Uid == uid:
-			return perm&0o100 != 0, nil
-		case st.Gid == gid:
-			return perm&0o010 != 0, nil
-		}
-		return perm&0o001 != 0, nil
-	}
-	var ways []string
-	for d := filepath.Dir(abs); ; d = filepath.Dir(d) {
-		ways = append([]string{d}, ways...)
-		if d == filepath.Dir(d) {
-			break
-		}
-	}
-	for _, p := range append(ways, abs) {
-		ok, err := may(p)
-		if err != nil {
-			return "", err
-		}
-		if !ok {
-			return p, nil
-		}
-	}
-	return "", nil
 }
 
 // --- real systemd (box): the target as a unit of the run's own ---
