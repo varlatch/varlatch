@@ -13,7 +13,9 @@
  *     passed in this run, or `none` with its reason. An `open` replacement
  *     fails the gate;
  *   - it names the browser-walkthrough evidence file (G1's full browser
- *     walkthrough, done by hand and kept under docs/evidence/);
+ *     walkthrough, done by hand and kept under docs/evidence/), which names
+ *     the run's commit, the candidate, and is therefore committed on top of
+ *     it and read from there (lib/gate-evidence.mjs);
  *   - it covers every suite (no --suite);
  *   - the target recorded what it ran (its implementation fingerprint:
  *     targets/*.mjs `fingerprint`);
@@ -184,6 +186,18 @@ function walkthroughContentProblems(walkthrough, run) {
   return problems;
 }
 
+/** Every rule on the browser-walkthrough evidence of a gate run: where it is, and what it says. */
+export function walkthroughProblems(walkthrough, run) {
+  if (!walkthrough) return [`the run names no browser-walkthrough evidence file (--walkthrough ${EVIDENCE_DIR}<file>)`];
+  if (!walkthrough.path.startsWith(EVIDENCE_DIR) || walkthrough.path.split("/").includes("..")) {
+    return [`the browser-walkthrough evidence ${walkthrough.path} is not under ${EVIDENCE_DIR} of this checkout`];
+  }
+  if (walkthrough.isSymlink) return [`the browser-walkthrough evidence ${walkthrough.path} is a symlink (symlinks are not allowed)`];
+  if (!walkthrough.exists) return [`the browser-walkthrough evidence ${walkthrough.path} does not exist`];
+  if (!(walkthrough.size > 0)) return [`the browser-walkthrough evidence ${walkthrough.path} is empty`];
+  return walkthroughContentProblems(walkthrough, run);
+}
+
 /** Every replacement the gate needs: the ts-stack checks' and the outside suites'. */
 export function replacements(inventory) {
   const out = [];
@@ -286,8 +300,9 @@ function runRules(inventory, run) {
  *
  *   run         { target, cli (the CLI's spec), partial, ok, checks: [{ id, outcome }], expectedInForce: [check ids],
  *                 lacksInForce: [operations], implementation (the target's fingerprint, or null),
- *                 commit (the checkout's 40-hex HEAD commit, or null) }
- *   walkthrough null, or { path (relative to the checkout), exists, isSymlink, size, sha256, content }
+ *                 commit (the candidate: the checkout's 40-hex commit, or null) }
+ *   walkthrough null, or { path (relative to the checkout), exists, isSymlink, size, sha256, content,
+ *                 evidenceCommit (the commit it was read from; not set for a file of the checkout) }
  *   recentCli   null, or the parsed report (conformance-report.json) of a
  *               run with a recent CLI
  *
@@ -297,13 +312,7 @@ export function judgeGate({ inventory, run, walkthrough = null, recentCli = null
   const { problems, open } = runRules(inventory, run);
   if (!run.implementation) problems.push(`target ${run.target} recorded no implementation fingerprint: the gate cannot name what passed`);
 
-  if (!walkthrough) problems.push(`the run names no browser-walkthrough evidence file (--walkthrough ${EVIDENCE_DIR}<file>)`);
-  else if (!walkthrough.path.startsWith(EVIDENCE_DIR) || walkthrough.path.split("/").includes("..")) {
-    problems.push(`the browser-walkthrough evidence ${walkthrough.path} is not under ${EVIDENCE_DIR} of this checkout`);
-  } else if (walkthrough.isSymlink) problems.push(`the browser-walkthrough evidence ${walkthrough.path} is a symlink (symlinks are not allowed)`);
-  else if (!walkthrough.exists) problems.push(`the browser-walkthrough evidence ${walkthrough.path} does not exist`);
-  else if (!(walkthrough.size > 0)) problems.push(`the browser-walkthrough evidence ${walkthrough.path} is empty`);
-  else problems.push(...walkthroughContentProblems(walkthrough, run));
+  problems.push(...walkthroughProblems(walkthrough, run));
 
   const predating = run.checks.filter((c) => c.outcome === "predates-cli").map((c) => c.id);
   if (predating.length > 0) {

@@ -9,7 +9,8 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *
  *   node scripts/conformance/run.mjs --target <target> --cli source|<version>|go:<path>
  *        [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]
- *        [--gate [--walkthrough <docs/evidence/file>] [--recent-cli-report <file.json>]]
+ *        [--gate [--walkthrough <docs/evidence/file> [--walkthrough-commit <commit>]] [--candidate <commit>]
+ *        [--recent-cli-report <file.json>]]
  *
  *   --target   the server under test (targets/index.mjs): ts-source,
  *              ts-release:<version> (a signed release, verified and pulled
@@ -41,7 +42,12 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *              (lib/gate.mjs): no expected failure, every replacement present
  *              and passing, the browser-walkthrough evidence named with
  *              --walkthrough, and, when a check predates the CLI, the passing
- *              gate report of a run with a recent CLI (--recent-cli-report)
+ *              gate report of a run with a recent CLI (--recent-cli-report).
+ *              With --walkthrough-commit the evidence is read from that
+ *              commit, which may differ from the checkout's only under
+ *              docs/evidence/ (lib/gate-evidence.mjs), and nothing of it is
+ *              checked out. --candidate is the commit the run must be at:
+ *              the checkout's, or the run does not start
  *
  * The target's expected failures (expect/<target name>.json, lib/expect.mjs)
  * are applied to the result: an expected failure is reported as one, and an
@@ -68,6 +74,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildSdk, loadClients, resolveCli, sha256 } from "./clients.mjs";
 import { applyExpectations, expectationsFor, lacksFor, validateExpectations } from "./lib/expect.mjs";
 import { judgeGate, readWalkthrough } from "./lib/gate.mjs";
+import { EvidenceRefused, readWalkthroughAt } from "./lib/gate-evidence.mjs";
 import { evaluate, TARGET_SPECIFIC, validateInventory } from "./lib/inventory.mjs";
 import { clientLackingChecks, loadClientLacks, validateClientLacks, withoutLacking } from "./lib/client-lacks.mjs";
 import { lackingChecks, NOT_IMPLEMENTED_YET, openapiOperations, operationProblems, setupLacks, skippedGroupProblems } from "./lib/operations.mjs";
@@ -89,7 +96,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function usage(message) {
   console.error(
     `${message}\nUsage: run.mjs --target ts-source|ts-release:<version>|go-binary:<path>|go-container:<image> --cli source|<version>|go:<path> [--handover-cli source|<version>] [--report <file.json>] [--suite <name>]... [--shard <k>/<n>]` +
-      " [--gate [--walkthrough <docs/evidence/file>] [--recent-cli-report <file.json>]]",
+      " [--gate [--walkthrough <docs/evidence/file> [--walkthrough-commit <commit>]] [--candidate <commit>] [--recent-cli-report <file.json>]]",
   );
   process.exit(64);
 }
@@ -110,6 +117,8 @@ function parseArgs(argv) {
     }
     else if (flag === "--gate") options.gate = true;
     else if (flag === "--walkthrough") options.walkthrough = value();
+    else if (flag === "--walkthrough-commit") options.walkthroughCommit = value();
+    else if (flag === "--candidate") options.candidate = value();
     else if (flag === "--recent-cli-report") options.recentCliReport = value();
     else usage(`unknown argument ${flag}`);
   }
@@ -118,6 +127,8 @@ function parseArgs(argv) {
   if (options.handoverCli !== undefined && !options.cli.startsWith("go:")) usage("--handover-cli pairs the Go CLI (--cli go:<path>) with a TypeScript CLI");
   if (options.handoverCli !== undefined && options.handoverCli.startsWith("go:")) usage("--handover-cli names a TypeScript CLI: source or a pinned version");
   if (!options.gate && (options.walkthrough || options.recentCliReport)) usage("--walkthrough and --recent-cli-report belong to --gate");
+  if (!options.gate && (options.walkthroughCommit !== undefined || options.candidate !== undefined)) usage("--walkthrough-commit and --candidate belong to --gate");
+  if (options.walkthroughCommit !== undefined && (!options.walkthrough || options.candidate === undefined)) usage("--walkthrough-commit needs --walkthrough and --candidate");
   if (options.gate && options.suites.length > 0) usage("--gate judges a whole run: --suite is not allowed");
   if (options.shard && options.suites.length > 0) usage("--shard selects the suites itself: --suite is not allowed");
   if (options.shard && options.gate) usage("--gate judges a whole run: --shard is not allowed");
@@ -233,13 +244,25 @@ async function main() {
   const lacking = lackingChecks(inventory, lacks.keys());
   // Gate evidence is checked before anything starts: a gate run without it
   // cannot pass, so it does not spend an hour finding that out.
-  const walkthrough = options.walkthrough ? readWalkthrough(options.walkthrough, REPO_ROOT) : null;
-  if (walkthrough && walkthrough.isSymlink) usage(`--walkthrough ${options.walkthrough}: symlinks are not allowed`);
-  if (walkthrough && !walkthrough.exists) usage(`--walkthrough ${options.walkthrough}: no such file`);
   // The commit the walkthrough's Candidate commit is compared with: the
-  // checkout's when the run starts, before anything is built from it, not
-  // whatever it holds an hour later.
+  // candidate, which is the checkout's commit when the run starts, before
+  // anything is built from it, not whatever it holds an hour later, and
+  // never the commit the evidence was read from.
   const gateCommit = options.gate ? checkoutCommit(REPO_ROOT) : null;
+  if (options.candidate !== undefined && options.candidate !== gateCommit) usage(`--candidate ${options.candidate}: the checkout is at ${gateCommit}`);
+  let walkthrough = null;
+  if (options.walkthroughCommit !== undefined) {
+    try {
+      walkthrough = readWalkthroughAt(REPO_ROOT, { path: options.walkthrough, candidate: gateCommit, evidence: options.walkthroughCommit });
+    } catch (err) {
+      if (!(err instanceof EvidenceRefused)) throw err;
+      usage(`--walkthrough ${options.walkthrough}: ${err.message}`);
+    }
+  } else if (options.walkthrough) {
+    walkthrough = readWalkthrough(options.walkthrough, REPO_ROOT);
+    if (walkthrough.isSymlink) usage(`--walkthrough ${options.walkthrough}: symlinks are not allowed`);
+    if (!walkthrough.exists) usage(`--walkthrough ${options.walkthrough}: no such file`);
+  }
   let recentCli = null;
   if (options.recentCliReport) {
     try {
@@ -682,7 +705,7 @@ async function main() {
         recentCli,
       });
       report.gate.walkthrough = walkthrough
-        ? { path: walkthrough.path, exists: walkthrough.exists, size: walkthrough.size, sha256: walkthrough.sha256 }
+        ? { path: walkthrough.path, exists: walkthrough.exists, size: walkthrough.size, sha256: walkthrough.sha256, candidate: gateCommit, evidenceCommit: walkthrough.evidenceCommit ?? null }
         : null;
       report.gate.recentCliReport = options.recentCliReport ? { file: options.recentCliReport, sha256: sha256(readFileSync(options.recentCliReport)) } : null;
     }
