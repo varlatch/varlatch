@@ -35,6 +35,9 @@ name: Conformance
 # `gate_target` (`go-binary` by default, or `go-container`) at `gate_ref`
 # instead of the matrix, uploads the gate report artifact, writes every
 # open/failing gate entry to the job summary, and fails if the gate fails.
+# The browser walkthrough is read from `walkthrough_ref`, a commit that may
+# differ from the candidate only under docs/evidence/, and nothing else is
+# taken from that ref (docs/evidence/README.md).
 # Hosted runners only; no secret beyond the read-only job token.
 on:
   schedule:
@@ -77,11 +80,15 @@ on:
           - source
           - go
       gate_ref:
-        description: Git ref (branch, tag, or SHA) for the G1 gate run (empty uses this ref)
+        description: The candidate, a Git ref (branch, tag, or SHA) for the G1 gate run (empty uses this ref)
         type: string
         default: ""
       walkthrough:
         description: Browser-walkthrough evidence path under docs/evidence/ (required for G1 to pass)
+        type: string
+        default: ""
+      walkthrough_ref:
+        description: Git ref (branch, tag, or SHA) the walkthrough is read from, the candidate plus files under docs/evidence/ (required with walkthrough)
         type: string
         default: ""
 
@@ -307,6 +314,24 @@ jobs:
         with:
           ref: ${{ inputs.gate_ref || github.ref }}
           persist-credentials: false
+      # The candidate: what was checked out, before anything else is fetched.
+      - name: The candidate commit
+        id: candidate
+        run: echo "commit=$(git rev-parse --verify 'HEAD^{commit}')" >> "$GITHUB_OUTPUT"
+      # The evidence first: a run that cannot pass ends before it builds. The
+      # ref is fetched and read from git's objects, never checked out or run;
+      # it must differ from the candidate only under docs/evidence/. Naming
+      # the file without its ref, or the ref without a file, is refused.
+      - name: Check the walkthrough evidence
+        id: evidence
+        if: inputs.walkthrough != '' || inputs.walkthrough_ref != ''
+        env:
+          CANDIDATE: ${{ steps.candidate.outputs.commit }}
+          WALKTHROUGH: ${{ inputs.walkthrough }}
+          WALKTHROUGH_REF: ${{ inputs.walkthrough_ref }}
+        run: |
+          node scripts/conformance/gate-evidence.mjs --candidate "$CANDIDATE" \
+            --ref "$WALKTHROUGH_REF" --path "$WALKTHROUGH" --output "$GITHUB_OUTPUT"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.27.4
@@ -377,7 +402,9 @@ jobs:
         env:
           TARGET: ${{ inputs.gate_target }}
           CLI: ${{ inputs.gate_cli }}
+          CANDIDATE: ${{ steps.candidate.outputs.commit }}
           WALKTHROUGH: ${{ inputs.walkthrough }}
+          WALKTHROUGH_COMMIT: ${{ steps.evidence.outputs.evidence }}
         run: |
           if [ "$TARGET" = go-binary ]; then
             TARGET_ARG="go-binary:$RUNNER_TEMP/varlatchd"
@@ -388,9 +415,10 @@ jobs:
           if [ "$CLI" = go ]; then
             CLI_ARG="go:$RUNNER_TEMP/varlatch"
           fi
-          set -- --target "$TARGET_ARG" --cli "$CLI_ARG" --gate --report conformance-report.json
+          set -- --target "$TARGET_ARG" --cli "$CLI_ARG" --gate --candidate "$CANDIDATE" --report conformance-report.json
           if [ -n "$WALKTHROUGH" ]; then
-            set -- "$@" --walkthrough "$WALKTHROUGH"
+            # Only ever from the commit the evidence step accepted.
+            set -- "$@" --walkthrough "$WALKTHROUGH" --walkthrough-commit "$WALKTHROUGH_COMMIT"
           fi
           node scripts/conformance/run.mjs "$@"
       - name: Write G1 gate job summary
@@ -434,7 +462,7 @@ jobs:
           lines.push(`| Target | \`${esc(process.env.GATE_TARGET)}\` (\`${esc(report.target)}\`) |`);
           lines.push(`| CLI | \`${esc(report.cli?.spec)}\`${report.cli?.version ? ` (${esc(report.cli.version)})` : ""} |`);
           lines.push(`| Implementation | \`${esc(JSON.stringify(report.implementation ?? null))}\` |`);
-          lines.push(`| Walkthrough evidence | ${gate.walkthrough ? `\`${esc(gate.walkthrough.path)}\` (sha256 \`${esc(gate.walkthrough.sha256)}\`)` : "none supplied"} |`);
+          lines.push(`| Walkthrough evidence | ${gate.walkthrough ? `\`${esc(gate.walkthrough.path)}\` (sha256 \`${esc(gate.walkthrough.sha256)}\`, evidence commit \`${esc(gate.walkthrough.evidenceCommit ?? "none")}\`, candidate \`${esc(gate.walkthrough.candidate)}\`)` : "none supplied"} |`);
           lines.push(`| Conformance run | ${report.ok ? "PASS" : "FAIL"} (${checks.length} checks: ${count("pass")} pass, ${count("fail")} fail, ${count("expected-fail")} expected-fail, ${count("not-applicable")} N/A, ${count("target-lacks")} target-lacks, ${count("client-lacks")} client-lacks, ${count("predates-cli")} predates-cli) |`);
           lines.push(`| Gate verdict | ${gate.passed ? "PASSED" : "FAILED"} |`);
           lines.push("");

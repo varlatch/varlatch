@@ -99,7 +99,7 @@ export function WebhooksSection({ org, orgId, className }: { org: string; orgId:
           if (URL_PATTERN.test(url) && !create.isPending) create.mutate();
         }}
       >
-        <Field label="Endpoint URL" className="min-w-64 flex-[2]">
+        <Field label="Endpoint URL" className="min-w-0 flex-[2_1_16rem]">
           <Input
             data-testid="webhook-url"
             mono
@@ -109,7 +109,7 @@ export function WebhooksSection({ org, orgId, className }: { org: string; orgId:
             onChange={(e) => setUrl(e.target.value)}
           />
         </Field>
-        <Field label="Event types" className="min-w-52 flex-1">
+        <Field label="Event types" className="min-w-0 flex-[1_1_13rem]">
           <Input
             data-testid="webhook-event-types"
             mono
@@ -241,10 +241,10 @@ export function WebhooksSection({ org, orgId, className }: { org: string; orgId:
                             if (URL_PATTERN.test(editUrl)) update.mutate(w);
                           }}
                         >
-                          <Field label="Endpoint URL" className="min-w-64 flex-[2]">
+                          <Field label="Endpoint URL" className="min-w-0 flex-[2_1_16rem]">
                             <Input mono className="w-full" value={editUrl} onChange={(e) => setEditUrl(e.target.value)} />
                           </Field>
-                          <Field label="Event types" className="min-w-52 flex-1">
+                          <Field label="Event types" className="min-w-0 flex-[1_1_13rem]">
                             <Input
                               mono
                               className="w-full"
