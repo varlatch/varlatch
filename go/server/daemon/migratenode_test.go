@@ -133,6 +133,17 @@ func TestTheImportBesideAHeldNode(t *testing.T) {
 	})
 }
 
+// `admin migrate state` names a self-hosted control server, canonical, as
+// varlatch migrate compares it with the source sidecar's.
+func TestTheStateNamesTheControlServer(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	in.write(t, "backup_interval = off\ntailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://192.0.2.10:443/\n")
+	code, out, errOut := runAdmin(t, "migrate", "state", "--config", in.conf)
+	if code != ExitOK || !strings.Contains(out, `"pinnedTo":"","controlUrl":"https://192.0.2.10"}`) {
+		t.Fatalf("state: %d %q %q", code, out, errOut)
+	}
+}
+
 // `admin migrate keys` writes the new tailnet node's auth key into the
 // target's tailnet_auth_key_file (0600) beside the Root KEK, finds it the
 // same on a second run, refuses another before anything is written, and

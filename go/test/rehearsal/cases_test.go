@@ -24,7 +24,10 @@ import (
 
 // TestRehearsal runs the must-cover list (internal docs/design/go-step7.md
 // 7.8b) against a real installation of the release: items 1 to 8 on one
-// installation, then the port-collision case of item 6 on a second.
+// installation, then the port-collision case of item 6 on a second. With
+// VL_RH_SOURCE=restore:<archive> (B6) it runs item 14 on the archive
+// restored instead (restore_test.go); VL_RH_ONLY=bundle makes a synthetic
+// archive for it.
 func TestRehearsal(t *testing.T) {
 	rel := loadRelease(t)
 	loadProfile(t)
@@ -41,27 +44,46 @@ func TestRehearsal(t *testing.T) {
 		return
 	case "public":
 		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
+	case "tailnet":
+		t.Run("tailnet", func(t *testing.T) { tailnetCase(t, rel, s3) })
+		return
 	default:
-		// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL).
-		if os.Getenv("VL_RH_ONLY") == "kill" {
-			break
-		}
-		t.Run("main", func(t *testing.T) { mainCases(t, rel, s3) })
-		if os.Getenv("VL_RH_ONLY") == "setup" {
+		switch os.Getenv("VL_RH_ONLY") {
+		case "kill", "sync":
+			// VL_RH_ONLY=kill runs the kill case alone (with VL_RH_KILL), and
+			// VL_RH_ONLY=sync the sync case (with VL_RH_SYNC=fakes).
+		case "bundle":
+			t.Run("bundle", func(t *testing.T) { makeBundle(t, rel, s3) })
 			return
-		}
-		// Item 6's squatter takes the dashboard's port from inside the
-		// workstation's fake systemctl, between the dashboard's stop and
-		// the target's start; on the box real systemd starts the target and
-		// nothing squats, so the case would record false failures there.
-		if prof.box {
-			measure("item 6: the port-collision case", "not run on the box: its squatter is the workstation profile's fake systemctl")
-		} else {
-			t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
+		default:
+			if prof.restore != "" {
+				// B6: the restored archive's run, then (VL_RH_KILL) the kill
+				// case on another restore of it; item 6's collision case
+				// needs no data, and runs on seeded sources only.
+				t.Run("restored", func(t *testing.T) { restoreCase(t, rel, s3) })
+				break
+			}
+			t.Run("main", func(t *testing.T) { mainCases(t, rel, s3) })
+			if os.Getenv("VL_RH_ONLY") == "setup" {
+				return
+			}
+			// Item 6's squatter takes the dashboard's port from inside the
+			// workstation's fake systemctl, between the dashboard's stop and
+			// the target's start; on the box real systemd starts the target and
+			// nothing squats, so the case would record false failures there.
+			if prof.box {
+				measure("item 6: the port-collision case", "not run on the box: its squatter is the workstation profile's fake systemctl")
+			} else {
+				t.Run("collision", func(t *testing.T) { collisionCase(t, rel, s3) })
+			}
 		}
 	}
-	if prof.kill != "" {
+	only := os.Getenv("VL_RH_ONLY")
+	if prof.kill != "" && only != "sync" && only != "setup" {
 		t.Run("kill", func(t *testing.T) { killCase(t, rel, s3) })
+	}
+	if prof.sync == "fakes" && only != "kill" {
+		t.Run("sync", func(t *testing.T) { syncCase(t, rel, s3) })
 	}
 }
 
@@ -131,11 +153,16 @@ func imagePin(t *testing.T, in *installation, rel release) {
 	base := rel.Images["varlatchd"][:strings.Index(rel.Images["varlatchd"], "@")]
 	must(t, run("", nil, []byte("FROM "+base+"\nLABEL org.varlatch.rehearsal.local="+runID+"\n"), "docker", "build", "-q", "-t", local, "-"), "build a local image")
 	t.Cleanup(func() { run("", nil, nil, "docker", "image", "rm", local) })
-	digests := strings.TrimSpace(run("", nil, nil, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", local).stdout)
+	raw := strings.TrimSpace(must(t, run("", nil, nil, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", local), "inspect the local image").stdout)
+	repoDigests, err := decodeRepoDigests(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digests := raw
 	measure("item 8: the local image's RepoDigests", digests)
 	in.swapImage(t, local)
 	r = in.migrateEnv(rel, true, rel.pin(), "--dry-run")
-	if digests == "[]" {
+	if len(repoDigests) == 0 {
 		// The classic image store: no RepoDigests, the no-digest refusal.
 		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "not pinned by a registry digest"), r.String())
 	} else {
@@ -149,6 +176,17 @@ func imagePin(t *testing.T, in *installation, rel release) {
 		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "the source's image is repository "+localRepo+",") && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
 	}
 	in.swapImage(t, rel.Images["varlatchd"])
+}
+
+// decodeRepoDigests is `docker image inspect --format '{{json
+// .RepoDigests}}'`'s answer: a JSON list of name@sha256:... (or null, an
+// image without any).
+func decodeRepoDigests(raw string) ([]string, error) {
+	var d []string
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		return nil, fmt.Errorf("docker image inspect's RepoDigests %q: %v", raw, err)
+	}
+	return d, nil
 }
 
 // swapImage points the source's varlatchd service at image and recreates
@@ -183,6 +221,17 @@ func (in *installation) migrateArgs(extra ...string) []string {
 	return append(args, extra...)
 }
 
+// rollbackArgs are --rollback's options: the source, the target, the
+// drain and the transfer's timeout, then a case's own (the tailnet
+// case's authority); the rest is in the journal.
+func (in *installation) rollbackArgs(extra ...string) []string {
+	args := []string{"migrate", "--rollback", "--from", in.dir, "--config", in.conf, "--ts-cli", "varlatch-ts", "--transfer-timeout", "90s", "--drain", "20s"}
+	if prof.box {
+		args = append(args, "--unit", in.unitName())
+	}
+	return append(args, extra...)
+}
+
 // migrateEnvVars are its environment: the run's PATH (varlatch-ts, and
 // systemctl's stand-in on a workstation) and the pin override (or none).
 func (in *installation) migrateEnvVars(rel release, withPin bool, pin string) []string {
@@ -190,7 +239,7 @@ func (in *installation) migrateEnvVars(rel release, withPin bool, pin string) []
 	if withPin {
 		env = append(env, "VARLATCH_MIGRATE_PIN="+pin)
 	}
-	return env
+	return append(env, in.migrateExtraEnv...)
 }
 
 // migrateEnv is migrate with the pin override set to pin (or unset).

@@ -2329,6 +2329,98 @@ serves the tailnet listener on the node's own addresses
     The tailnet's access rules must let the node's tags see each other,
     or the probe sees nothing and the check fails closed: the answer then
     says so and names the tags.
+  - `varlatchd admin tailnet take-name (--oauth-client-file <file> | --headscale-url <https://IP[:port]> --headscale-api-key-file <file>) [--json]`
+    is the restore's handoff (step 7, slices 7.5b part 2c and 7.5c c4;
+    decision 11, in place of step 6 decision 16's interim rule). A restore
+    onto a fresh host takes the dead installation's name over, by rename,
+    rather than waiting for its node to be deleted. It runs offline, under
+    the lock, after `enroll` held the restored node under
+    `<name>-vl-<op>-n`, and before varlatchd first starts:
+    - on Tailscale (`tailnet_control_url` unset), the control plane is
+      Tailscale's API with the operator's OAuth client (`devices:core`
+      only), read from its file (an absolute path, regular file, mode 0600
+      or tighter, never printed);
+    - on a self-hosted Headscale (`tailnet_control_url` set), the control
+      plane is Headscale's API (`--headscale-url`, canonicalised by
+      `tailcontrol.CanonicalControlURL` and required to equal
+      `tailnet_control_url`, and `--headscale-api-key-file`, read with the
+      same secret-file checks). The key must expire within the hour and is
+      expired however `take-name` ends after its first checks (the tailnet
+      off, an authority that does not match `tailnet_control_url`, an
+      authority file refused: those leave the key to expire by itself
+      within the hour), a refusal before the handoff included; when it
+      cannot be expired that way (Headscale unreachable, the outbound
+      policy refused it, or the key refused for expiring too late), the
+      answer says why and names the command that does it on the control
+      server (`headscale apikeys expire --prefix hskey-api-<12>`), and a
+      run killed outright leaves its key to expire by itself within the
+      hour. The authority's file is checked before anything starts. A
+      handoff under way goes on only against the control server it began
+      on (its journal records `tailnet_control_url`) and only for the node
+      it planned for: Headscale's node ids are small integers that
+      another server, or another node, can carry. `--headscale-cli` is
+      refused because Headscale's CLI listing carries no HTTP `Date` header
+      by which to judge liveness against `deadGrace`;
+    - both go through the outbound policy's client (purpose
+      `tailnet_control`, `outbound_allow` as configured). Because a
+      self-hosted Headscale usually listens on a private or host-only IP,
+      add it to `outbound_allow` in `varlatchd.conf` (for example
+      `outbound_allow = 192.0.2.10/32:8443`, `192.0.2.10/32` for port 443,
+      or `[fd00::10/128]:8443` for IPv6); when refused, `take-name` prints
+      the exact `outbound_allow = ...` line to add;
+    - the one device under the configured name, the dead node, is judged
+      dead by the control plane's `Date` header (not online, `lastSeen`
+      known and older than `deadGrace`, `Date` within 1 hour of the host
+      clock, re-checked right before the first rename), renamed
+      `<name>-vl-<op>-o`, and the restored node renamed to the name, each
+      read back; the dead node is never closed or reopened; on Tailscale
+      with tailnet HTTPS the name's certificate is obtained, counted in
+      `tailnet-issuances.json` (skipped on Headscale, which has no
+      certificates); the reach probe must see the name reach the restored
+      node; then the hold is removed, so varlatchd listens when it starts;
+    - the state is journalled in `tailnet-takeover.json` (0600) before each
+      act. Run again, it resumes: an unfinished switch is undone (the dead
+      node takes its name back), then done again; once done, it changes
+      nothing.
+
+    `varlatch setup --restore ... --tailscale-oauth-client-file <file>`
+    (ingress tailnet) runs it in place of the name probe: the operation
+    journalled first, then `enroll` and `take-name`, before the unit. On a
+    self-hosted control server the restore answers
+    `--tailnet-control-url <https://IP[:port]>` (canonical, written as
+    `tailnet_control_url`) and `--headscale-api-key-file <file>` instead,
+    and `take-name` gets `--headscale-url` (that same URL) and the key file;
+    both files' modes are checked at the answers step, before anything is
+    made (while the takeover is still to do), and the answers are
+    journalled, so a rerun takes the same authority and one naming another
+    control server is refused (Tailscale's, answered as no URL, included).
+    A rerun reads where the takeover got to, never by trying `take-name`
+    (on Headscale it expires its key every time): enrolled only when
+    setup's journal records the enrolment succeeded (or this takeover's own
+    journal exists), held only under this operation's temporary name, done
+    only when varlatchd's takeover journal is this operation's (its
+    operation, name and control server) and says done; any other node or
+    record in the data directory is refused, with nothing run against it.
+    A `varlatchd.conf` whose `tailnet_control_url` is not the answered one
+    is refused before anything is recorded or enrolled. A fresh
+    setup on a self-hosted control server is not built yet: setup refuses
+    `--tailnet-control-url` without `--restore`
+    (`TestRestoreTakesTheTailnetNameOverOnHeadscale`,
+    `TestHeadscaleRestoreAnswersRefused`).
+    Tests: `daemon`'s `TestTheRestoreTakesTheName` (testcontrol and a fake
+    of Tailscale's API over it, a rename the control server's: the dead
+    node offline under the name, the takeover through the outbound policy,
+    varlatchd serving under the name, a client node's map),
+    `TestATakeoverCutShortIsResumed` (the control plane lost after the
+    first rename), `TestTakeNameRefusals`, `TestHeadscaleTakeNameFakes`,
+    `TestHeadscaleOutboundAllowEntry`, in a crashpoint build
+    `TestKillTheTakeoverAtEveryStep` (killed at each journalled step in a
+    process of its own, then resumed), and against a real Headscale 0.29.7
+    container (`headscale` build tag) `TestHeadscaleTakeNameDeadHolder`,
+    `TestHeadscaleTakeNameLiveHolderRefused`,
+    `TestHeadscaleTakeNameHolderReturnsBeforeRename`, and (`headscale &&
+    crashpoint`) `TestKillTheHeadscaleTakeoverAtEveryStep`; `setup`'s
+    `TestRestoreTakesTheTailnetNameOver`.
   - **Tests.** `daemon`'s `TestTheHandoffNode` uses testcontrol and a
     test CA: enrolment, held, pinned and certified, run again, refusals,
     the expiry read without an issuance, varlatchd started held, silent on
@@ -3459,8 +3551,7 @@ migrations.
     `TestEachDamageFailsAtItsCheck`); the reports are scanned for every
     seeded plaintext, the Root KEK, the run key and every digest.
 - G5's damage gate (step 7, slice 7.3c; `server/migration/g5`, build tag
-  `g5`, its own step in go.yml's go-g5 job, beside go, with the Headscale
-  tests): the migration's Go path through the
+  `g5`, its own step in the go job): the migration's Go path through the
   varlatchd binary, on the seeded installation. The seeded bundle imports
   and passes every check. Each damage of the bundle stream (a changed
   byte, cut short, no end line, the end line's digest or counts, digests

@@ -33,9 +33,42 @@ type headscaleNode struct {
 	GivenName    string          `json:"givenName"`
 	GivenNameCLI string          `json:"given_name"`
 	Online       bool            `json:"online"`
-	Expiry       *time.Time      `json:"expiry"`
-	LastSeen     *time.Time      `json:"lastSeen"`
-	LastSeenCLI  *time.Time      `json:"last_seen"`
+	Expiry       *headscaleTime  `json:"expiry"`
+	LastSeen     *headscaleTime  `json:"lastSeen"`
+	LastSeenCLI  *headscaleTime  `json:"last_seen"`
+}
+
+// headscaleTime is a timestamp as Headscale writes it: RFC 3339 from its
+// API, a protobuf Timestamp ({"seconds": ..., "nanos": ...}) from its
+// CLI's JSON (0.29.7), null when unset.
+type headscaleTime struct{ time.Time }
+
+func (t *headscaleTime) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		v, err := time.Parse(time.RFC3339Nano, s)
+		t.Time = v
+		return err
+	}
+	var ts struct {
+		Seconds json.Number `json:"seconds"`
+		Nanos   int64       `json:"nanos"`
+	}
+	if err := json.Unmarshal(b, &ts); err != nil {
+		return fmt.Errorf("a timestamp that is neither RFC 3339 nor {seconds, nanos}: %w", err)
+	}
+	sec := int64(0)
+	if ts.Seconds != "" {
+		var err error
+		if sec, err = ts.Seconds.Int64(); err != nil {
+			return fmt.Errorf("a timestamp's seconds: %w", err)
+		}
+	}
+	t.Time = time.Unix(sec, ts.Nanos).UTC()
+	return nil
 }
 
 func (n headscaleNode) device(now time.Time) (Device, error) {
@@ -56,15 +89,21 @@ func (n headscaleNode) device(now time.Time) (Device, error) {
 		return Device{}, fmt.Errorf("node %s has no name", id)
 	}
 	d := Device{ID: id, Name: name, Online: n.Online}
-	// Headscale writes an unset expiry as the zero time.
-	if n.Expiry != nil && n.Expiry.Year() > 1 && n.Expiry.Before(now) {
+	// Headscale writes an unset expiry as the zero time (or the zero
+	// Timestamp, the Unix epoch).
+	if n.Expiry != nil && n.Expiry.Year() > 1970 && n.Expiry.Before(now) {
 		d.Expired = true
 	}
 	switch {
 	case n.LastSeen != nil:
-		d.LastSeen = *n.LastSeen
+		d.LastSeen = n.LastSeen.Time
 	case n.LastSeenCLI != nil:
-		d.LastSeen = *n.LastSeenCLI
+		d.LastSeen = n.LastSeenCLI.Time
+	}
+	// A timestamp at the Unix epoch or before is unset, as the zero
+	// Timestamp a protobuf writes.
+	if d.LastSeen.Year() <= 1970 {
+		d.LastSeen = time.Time{}
 	}
 	return d, nil
 }
@@ -115,6 +154,18 @@ type HeadscaleAPI struct {
 	http   *http.Client
 	now    func() time.Time
 	prefix string // the key's prefix, as Headscale lists it; set by Open
+	keyID  string // its id, for a key of the masked format; set by Open
+}
+
+// listedPrefix is the part of a listed key prefix a key starts with.
+// Headscale 0.28 and later make keys hskey-api-<prefix>-<secret> and list
+// their prefix masked, hskey-api-<prefix>-***; earlier ones list the
+// plain prefix of a <prefix>.<secret> key.
+func listedPrefix(p string) (string, bool) {
+	if s, ok := strings.CutSuffix(p, "***"); ok {
+		return s, true
+	}
+	return p, false
 }
 
 // NewHeadscaleAPI checks a configuration and builds the control plane from
@@ -149,11 +200,16 @@ func (h *HeadscaleAPI) err(op, device string, err error) error {
 }
 
 func (h *HeadscaleAPI) request(ctx context.Context, method, path string, body any, out any) error {
+	_, err := h.requestDated(ctx, method, path, body, out)
+	return err
+}
+
+func (h *HeadscaleAPI) requestDated(ctx context.Context, method, path string, body any, out any) (time.Time, error) {
 	var r *bytes.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return time.Time{}, err
 		}
 		r = bytes.NewReader(b)
 	} else {
@@ -161,13 +217,13 @@ func (h *HeadscaleAPI) request(ctx context.Context, method, path string, body an
 	}
 	req, err := http.NewRequestWithContext(ctx, method, h.base+path, r)
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+h.key())
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return do(h.http, req, out, h.key())
+	return doDated(h.http, req, out, h.key())
 }
 
 // Open checks the key: Headscale lists it, it has not expired, and it
@@ -176,8 +232,9 @@ func (h *HeadscaleAPI) Open(ctx context.Context) error {
 	const op = "check key"
 	var got struct {
 		APIKeys []struct {
-			Prefix     string     `json:"prefix"`
-			Expiration *time.Time `json:"expiration"`
+			ID         json.RawMessage `json:"id"`
+			Prefix     string          `json:"prefix"`
+			Expiration *time.Time      `json:"expiration"`
 		} `json:"apiKeys"`
 	}
 	if err := h.request(ctx, http.MethodGet, "/api/v1/apikey", nil, &got); err != nil {
@@ -185,10 +242,11 @@ func (h *HeadscaleAPI) Open(ctx context.Context) error {
 	}
 	// The key's own entry: the longest listed prefix the key starts with.
 	key := h.key()
-	best := -1
+	best, bestLen := -1, 0
 	for i, k := range got.APIKeys {
-		if len(k.Prefix) >= 4 && strings.HasPrefix(key, k.Prefix) && (best < 0 || len(k.Prefix) > len(got.APIKeys[best].Prefix)) {
-			best = i
+		p, _ := listedPrefix(k.Prefix)
+		if len(p) >= 4 && strings.HasPrefix(key, p) && len(p) > bestLen {
+			best, bestLen = i, len(p)
 		}
 	}
 	if best < 0 {
@@ -205,6 +263,9 @@ func (h *HeadscaleAPI) Open(ctx context.Context) error {
 		return h.err(op, "", fmt.Errorf("the API key expires at %s, more than an hour from now: every Headscale key is a full administrator, so create one with --expiration 1h", k.Expiration.UTC().Format(time.RFC3339)))
 	}
 	h.prefix = k.Prefix
+	if _, masked := listedPrefix(k.Prefix); masked {
+		h.keyID = strings.Trim(string(k.ID), `"`)
+	}
 	return nil
 }
 
@@ -215,23 +276,33 @@ func (h *HeadscaleAPI) opened(op, device string) error {
 	return nil
 }
 
+var _ ClockedLister = (*HeadscaleAPI)(nil)
+
 // Devices lists every node.
 func (h *HeadscaleAPI) Devices(ctx context.Context) ([]Device, error) {
+	d, _, err := h.DevicesAt(ctx)
+	return d, err
+}
+
+// DevicesAt is Devices, with the listing's time by Headscale's clock (its
+// answer's Date header; zero without a usable one).
+func (h *HeadscaleAPI) DevicesAt(ctx context.Context) ([]Device, time.Time, error) {
 	const op = "list devices"
 	if err := h.opened(op, ""); err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	var got struct {
 		Nodes []headscaleNode `json:"nodes"`
 	}
-	if err := h.request(ctx, http.MethodGet, "/api/v1/node", nil, &got); err != nil {
-		return nil, h.err(op, "", err)
+	at, err := h.requestDated(ctx, http.MethodGet, "/api/v1/node", nil, &got)
+	if err != nil {
+		return nil, time.Time{}, h.err(op, "", err)
 	}
 	devices, err := headscaleDevices(got.Nodes, h.now())
 	if err != nil {
-		return nil, h.err(op, "", err)
+		return nil, time.Time{}, h.err(op, "", err)
 	}
-	return devices, nil
+	return devices, at, nil
 }
 
 // Rename gives the node the name, which must be canonical.
@@ -252,16 +323,29 @@ func (h *HeadscaleAPI) Rename(ctx context.Context, deviceID, name string) error 
 	return nil
 }
 
+// KeyPrefix is the key's prefix as `headscale apikeys expire --prefix`
+// takes it (never the secret); "" before Open.
+func (h *HeadscaleAPI) KeyPrefix() string {
+	p, _ := listedPrefix(h.prefix)
+	return strings.TrimSuffix(p, "-")
+}
+
 // Close expires the key, so the authority given for the work ends with it.
 // Closing twice, or after a failed Open, does nothing.
 func (h *HeadscaleAPI) Close(ctx context.Context) error {
 	if h.prefix == "" {
 		return nil
 	}
-	if err := h.request(ctx, http.MethodPost, "/api/v1/apikey/expire", map[string]string{"prefix": h.prefix}, nil); err != nil {
+	// A masked key is expired by its id (Headscale 0.28 and later), an
+	// earlier one by its prefix.
+	body := map[string]string{"prefix": h.prefix}
+	if h.keyID != "" {
+		body = map[string]string{"id": h.keyID}
+	}
+	if err := h.request(ctx, http.MethodPost, "/api/v1/apikey/expire", body, nil); err != nil {
 		return h.err("close", "", fmt.Errorf("expiring the API key: %w", err))
 	}
-	h.prefix = ""
+	h.prefix, h.keyID = "", ""
 	return nil
 }
 

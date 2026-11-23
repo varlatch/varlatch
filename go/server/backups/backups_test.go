@@ -510,6 +510,49 @@ func TestSchedule(t *testing.T) {
 	}
 }
 
+// A data directory a migration imported into again (rolled back, its old
+// data deleted, then migrated anew: #414 keeps Go's backups/) holds the
+// earlier database's final archive record, two hours old, verified and
+// delivered. It says nothing of this database's backups: the first is due
+// at once, and until one exists the status warns of no archive within 48
+// hours. Another installation's record neither. Once this database has its
+// own, the schedule goes by it.
+func TestScheduleAfterAMigrationImportedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	s := f.service(nil)
+	life, err := ReadLifecycle(ctx, f.store.Reader())
+	if err != nil || life.InstallationID != f.inst || life.Since.IsZero() {
+		t.Fatalf("the lifecycle: %+v %v", life, err)
+	}
+	stamp := func(d time.Duration) string { return f.clock().Add(d).Format("2006-01-02T15:04:05.000Z") }
+	checked := &backup.Verification{Integrity: true, Compatibility: true, KeyMatch: true, CheckedAt: stamp(-2 * time.Hour), TargetRelease: "0.50.0"}
+	for _, r := range []backup.StatusRecord{
+		{ArchiveID: "00000000-0000-4000-8000-0000000000a1", InstallationID: f.inst, CreatedAt: stamp(-2 * time.Hour), Release: "0.50.0", RequiredKeyVersions: []int{1},
+			Verification: checked, Delivery: &backup.Delivery{Destination: "offsite", UploadedAt: stamp(-2 * time.Hour), RemoteVerification: checked}},
+		{ArchiveID: "00000000-0000-4000-8000-0000000000b1", InstallationID: "inst_other", CreatedAt: stamp(time.Second), Release: "0.50.0", RequiredKeyVersions: []int{1}, Verification: checked},
+	} {
+		if err := backup.SaveStatus(f.dir, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := s.Status()
+	if err != nil || len(st.Archives) != 2 || !slices.Contains(st.Warnings, "No archive created within the last 48 hours") {
+		t.Fatalf("before this database's first backup: %+v %v", st, err)
+	}
+	if wait := s.tick(ctx); wait != 24*time.Hour {
+		t.Fatalf("the first tick: %s (not due by the earlier database's archive?)", wait)
+	}
+	st, err = s.Status()
+	if err != nil || len(st.Archives) != 3 || slices.Contains(st.Warnings, "No archive created within the last 48 hours") {
+		t.Fatalf("after it: %+v %v", st, err)
+	}
+	f.add(10 * time.Hour)
+	if wait := s.tick(ctx); wait != 14*time.Hour {
+		t.Errorf("by its own archive: %s", wait)
+	}
+}
+
 // A run is admitted as a request is, in one step: a gate that opens while
 // it runs sees it in Busy until it ends, and a run while the gate is open
 // is refused.

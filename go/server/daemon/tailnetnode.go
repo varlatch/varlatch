@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
@@ -54,20 +55,25 @@ import (
 
 // nodeCmd is a node command's arguments.
 type nodeCmd struct {
-	op           string // enroll, certificate, open, reaches
-	action       string // certificate: obtain or expiry
-	hostname     string
-	name         string
-	stableID     string
-	certificate  bool
-	asJSON       bool
-	wait, budget time.Duration
+	op               string // enroll, certificate, open, reaches, take-name
+	oauthFile        string
+	headscaleURL     string
+	headscaleKeyFile string
+	headscaleCLI     string
+	action           string // certificate: obtain or expiry
+	hostname         string
+	name             string
+	stableID         string
+	certificate      bool
+	asJSON           bool
+	wait, budget     time.Duration
 }
 
 const nodeUsage = "Usage: varlatchd admin tailnet enroll --hostname <temporary name> [--certificate] [--timeout <d>] [--json] | " +
 	"varlatchd admin tailnet certificate obtain --name <name> [--timeout <d>] [--json] | varlatchd admin tailnet certificate expiry --name <name> [--json] | " +
 	"varlatchd admin tailnet open [--json] | " +
-	"varlatchd admin tailnet reaches --name <name> --stable-id <id> [--wait <d>] [--json]"
+	"varlatchd admin tailnet reaches --name <name> --stable-id <id> [--wait <d>] [--json] | " +
+	"varlatchd admin tailnet take-name (--oauth-client-file <file> | --headscale-url <https://IP[:port]> --headscale-api-key-file <file>) [--json]"
 
 // stableIDShape is a node's StableID as a control plane gives it
 // (Tailscale's n...CNTRL, Headscale's number).
@@ -75,7 +81,7 @@ var stableIDShape = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
 
 // isNodeCmd is whether `admin tailnet <op>` is a node command.
 func isNodeCmd(rest []string) bool {
-	return len(rest) > 0 && (rest[0] == "enroll" || rest[0] == "certificate" || rest[0] == "open" || rest[0] == "reaches")
+	return len(rest) > 0 && (rest[0] == "enroll" || rest[0] == "certificate" || rest[0] == "open" || rest[0] == "reaches" || rest[0] == "take-name")
 }
 
 // nodeArgs parses a node command; a non-empty message is a usage error.
@@ -99,6 +105,20 @@ func nodeArgs(rest []string) (nodeCmd, string) {
 		switch a := args[i]; {
 		case a == "--json":
 			c.asJSON, ok = true, true
+		case a == "--oauth-client-file" && c.op == "take-name":
+			c.oauthFile, ok = value(i)
+			ok = ok && filepath.IsAbs(c.oauthFile)
+			i++
+		case a == "--headscale-url" && c.op == "take-name":
+			c.headscaleURL, ok = value(i)
+			i++
+		case a == "--headscale-api-key-file" && c.op == "take-name":
+			c.headscaleKeyFile, ok = value(i)
+			ok = ok && filepath.IsAbs(c.headscaleKeyFile)
+			i++
+		case a == "--headscale-cli" && c.op == "take-name":
+			c.headscaleCLI, ok = value(i)
+			i++
 		case a == "--certificate" && c.op == "enroll":
 			c.certificate, ok = true, true
 		case a == "--hostname" && c.op == "enroll":
@@ -132,6 +152,20 @@ func nodeArgs(rest []string) (nodeCmd, string) {
 		return nodeCmd{}, "varlatchd admin tailnet enroll: --hostname takes the node's temporary name (lower-case letters, digits and -, at most 63)"
 	case (c.op == "certificate" || c.op == "reaches") && !tailnet.ValidHostname(strings.ToLower(c.name)):
 		return nodeCmd{}, "varlatchd admin tailnet " + c.op + ": --name takes a node's name (letters, digits and -, at most 63), without the tailnet's suffix"
+	case c.op == "take-name" && c.headscaleCLI != "":
+		return nodeCmd{}, "varlatchd admin tailnet take-name: --headscale-cli cannot be used with take-name: Headscale's CLI listing carries no HTTP Date header by which to judge whether the old node is dead (a host whose clock is off could rename a live installation). Give --headscale-url and --headscale-api-key-file (a key created with headscale apikeys create --expiration 1h)"
+	case c.op == "take-name" && (c.headscaleURL != "") != (c.headscaleKeyFile != ""):
+		return nodeCmd{}, "varlatchd admin tailnet take-name: --headscale-url and --headscale-api-key-file go together (the API key file must be an absolute path)"
+	case c.op == "take-name" && c.oauthFile != "" && c.headscaleURL != "":
+		return nodeCmd{}, "varlatchd admin tailnet take-name: give one tailnet authority: --oauth-client-file (Tailscale) or --headscale-url and --headscale-api-key-file (Headscale), not both"
+	case c.op == "take-name" && c.oauthFile == "" && c.headscaleURL == "":
+		return nodeCmd{}, "varlatchd admin tailnet take-name: give --oauth-client-file (Tailscale, devices:core scope only) or --headscale-url and --headscale-api-key-file (Headscale), each file an absolute path"
+	case c.op == "take-name" && c.headscaleURL != "":
+		canon, why := tailcontrol.CanonicalControlURL(c.headscaleURL)
+		if why != "" {
+			return nodeCmd{}, "varlatchd admin tailnet take-name: --headscale-url: " + why
+		}
+		c.headscaleURL = canon
 	case c.op == "reaches" && !stableIDShape.MatchString(c.stableID):
 		return nodeCmd{}, "varlatchd admin tailnet reaches: --stable-id takes the node's StableID, as enroll reports it"
 	}
@@ -154,6 +188,12 @@ var (
 		return certPEM, err
 	}
 )
+
+// keyTags is whether the node commands' nodes take their tags from the
+// auth key (tailnet.NodeConfig's KeyTags): on a configured self-hosted
+// control server (Headscale), which refuses a pre-auth key's node that
+// advertises tags, as varlatchd's own node does (startTailnet).
+func keyTags(cfg *config.Config) bool { return cfg.Tailnet != nil && cfg.Tailnet.ControlURL != "" }
 
 func nodeControl(cfg *config.Config) string {
 	if nodeControlURL != "" {
@@ -280,7 +320,7 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	controlURL := nodeControl(cfg)
 	// On a self-hosted control server the node's tags are its pre-auth
 	// key's (it advertises none: Headscale refuses a key's node that does).
-	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: c.hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: t.ControlURL != ""})
+	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: c.hostname, ControlURL: controlURL, AuthKey: authKey, Tags: t.Tags, KeyTags: keyTags(cfg)})
 	authKey = ""
 	if err != nil {
 		return fail("%v", err)
@@ -497,7 +537,7 @@ func nodeFor(ctx context.Context, env *hostEnv) (*tailnet.TSNode, func(), error)
 	if h, err := tailnet.LoadHold(cfg.DataDir); err == nil && h != nil {
 		hostname = h.Hostname
 	}
-	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags, KeyTags: cfg.Tailnet.ControlURL != ""})
+	node, err := tailnet.StartNode(tailnet.NodeConfig{Dir: dir, Hostname: hostname, ControlURL: nodeControl(cfg), Tags: cfg.Tailnet.Tags, KeyTags: keyTags(cfg)})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -582,7 +622,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	defer stop()
 	ctx, cancel := context.WithTimeout(sctx, c.wait+reachSlack)
 	defer cancel()
-	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(cfg), AuthKey: key, Tags: t.Tags, KeyTags: t.ControlURL != ""}, c.name, c.stableID, c.wait)
+	res, err := tailnet.Reaches(ctx, tailnet.ProbeConfig{Dir: dir, ControlURL: nodeControl(cfg), AuthKey: key, Tags: t.Tags, KeyTags: keyTags(cfg)}, c.name, c.stableID, c.wait)
 	if err != nil {
 		return fail("%v", err)
 	}

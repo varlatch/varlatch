@@ -32,20 +32,110 @@ type tnSource struct {
 	running  bool // the sidecar
 	stops    int
 	starts   int
+	// stopFails is what the n-th stop answers (1 is the first).
+	stopFails map[int]error
+	// ownNetwork: varlatchd has its own network, not the sidecar's.
+	ownNetwork bool
+	// halfStart: a start runs the sidecar, then fails (varlatchd's
+	// restart).
+	halfStart error
+	// slowGates is how many gate reads after a start fail (varlatchd
+	// restarting) before it answers.
+	slowGates, slowLeft int
+	// hangGates is how many gate reads after a start hang until their
+	// context ends (a `compose exec` that never returns).
+	hangGates, hangLeft int
+	// cancelAfterStart, when set, is called by the first gate read after a
+	// start (an operator's interrupt during the wait).
+	cancelAfterStart func()
+	// stopCtxErr is the last stop's context's error (nil: a live one).
+	stopCtxErr error
+}
+
+func (s *tnSource) SharesTailnetNetwork(context.Context) (bool, error) {
+	return !s.ownNetwork, s.call("network mode")
+}
+
+// netless reports whether a command in varlatchd's container fails now:
+// in the sidecar's network with the sidecar stopped, or still starting.
+func (s *tnSource) netless() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.slowLeft > 0 {
+		s.slowLeft--
+		return true
+	}
+	return !s.ownNetwork && !s.running
+}
+
+// netless is the stock Tailscale topology's varlatchd with its sidecar
+// stopped: it shares the sidecar's network, so it exits, and a command in
+// its container (the gate's status, release, the mark) cannot run.
+var errNetless = errors.New(`service "varlatchd" is not running: it shares the stopped sidecar's network`)
+
+func (s *tnSource) Gate(ctx context.Context) (*Gate, error) {
+	s.mu.Lock()
+	hang, cancel := s.hangLeft > 0, s.cancelAfterStart
+	if hang {
+		s.hangLeft--
+	}
+	if s.starts > 0 {
+		s.cancelAfterStart = nil
+	} else {
+		cancel = nil
+	}
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if hang {
+		<-ctx.Done()
+		return nil, s.fakeSource.callErr("gate", ctx.Err())
+	}
+	if s.netless() {
+		return nil, s.fakeSource.callErr("gate", errNetless)
+	}
+	return s.fakeSource.Gate(ctx)
+}
+func (s *tnSource) Release(ctx context.Context, id string) error {
+	if s.netless() {
+		return s.fakeSource.callErr("release "+id, errNetless)
+	}
+	return s.fakeSource.Release(ctx, id)
+}
+func (s *tnSource) MarkMigratedOut(ctx context.Context, id string) error {
+	if s.netless() {
+		return s.fakeSource.callErr("migrated-out "+id, errNetless)
+	}
+	return s.fakeSource.MarkMigratedOut(ctx, id)
 }
 
 func (s *tnSource) Tailnet(context.Context) (TailnetInfo, error) { return s.info, nil }
-func (s *tnSource) StopTailnet(context.Context) error {
+func (s *tnSource) StopTailnet(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.running, s.stops = false, s.stops+1
+	s.stops++
+	s.stopCtxErr = ctx.Err()
+	if err := s.stopFails[s.stops]; err != nil {
+		return s.callErr("stop tailnet", err)
+	}
+	s.running = false
 	return s.call("stop tailnet")
 }
 func (s *tnSource) StartTailnet(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.running, s.starts = true, s.starts+1
-	return s.call("start tailnet")
+	s.starts++
+	if err := s.call("start tailnet"); err != nil {
+		return err
+	}
+	s.slowLeft, s.hangLeft = s.slowGates, s.hangGates
+	if s.halfStart != nil {
+		s.running = true
+		return s.halfStart
+	}
+	s.running = true
+	return nil
 }
 func (s *tnSource) isRunning() bool {
 	s.mu.Lock()
@@ -229,6 +319,12 @@ func TestTheTailnetNameMoves(t *testing.T) {
 	if i, k := index(calls, "stop public"), index(calls, "stop tailnet"); i < 0 || k < 0 || i > k {
 		t.Fatalf("the order: %q", calls)
 	}
+	// The mark runs in varlatchd's container, in the sidecar's network: the
+	// sidecar started for it, varlatchd answering (sourceAnswers), then
+	// stopped again (switchSource).
+	if got := strings.Join(afterSwitch(calls, j.Barrier.GateID), "|"); got != "start tailnet|gate|gate|migrated-out "+j.Barrier.GateID+"|stop tailnet" {
+		t.Fatalf("the switch: %q", got)
+	}
 	// The journal holds the handoff, in both places, and no secret.
 	saved, err := readJournal(w.src.dir)
 	if err != nil || saved.Tailnet == nil || saved.Tailnet.Handoff.Phase != tailhandoff.Done {
@@ -246,6 +342,162 @@ func TestTheTailnetNameMoves(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(w.src.dir, LedgerFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
+}
+
+// afterSwitch are the source's calls from the handoff's stop of the
+// sidecar on, the handoff's own stop left out.
+func afterSwitch(calls []string, gate string) []string {
+	i := index(calls, "stop tailnet")
+	if i < 0 {
+		return nil
+	}
+	var out []string
+	for _, c := range calls[i+1:] {
+		if c == "start tailnet" || c == "gate" || c == "stop tailnet" || c == "migrated-out "+gate {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// A switch stopped with the sidecar stopped and the source not marked (a
+// failed start, or a release before this order whose mark ran in a
+// varlatchd without its network): --resume marks it, the sidecar started
+// for it and stopped again, and opens. Stopped once the source is marked,
+// before the sidecar stopped again: --resume marks nothing again, stops it
+// and opens. --abort refuses either: past the switch, forward only.
+func TestAStuckSwitchIsResumed(t *testing.T) {
+	t.Run("not marked, the sidecar stopped", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		w.src.fail["start tailnet"] = errors.New("cannot join network namespace")
+		j, err := w.eng.Run(context.Background(), false)
+		if err == nil || j.Phase != Switched || !strings.Contains(err.Error(), "--resume goes on") || w.src.running || w.src.gate == nil || w.src.gate.Kind != "migration" {
+			t.Fatalf("%v %+v, sidecar running %v, gate %+v", err, j, w.src.running, w.src.gate)
+		}
+		if _, err := w.eng.Abort(context.Background()); err == nil || !strings.Contains(err.Error(), "forward only") {
+			t.Fatalf("--abort: %v", err)
+		}
+		delete(w.src.fail, "start tailnet")
+		j, err = w.eng.Resume(context.Background())
+		if err != nil || j.Phase != Open || w.src.gate == nil || w.src.gate.Kind != "migrated-out" || w.src.running || !w.tgt.opened {
+			t.Fatalf("resume: %v %+v, gate %+v, sidecar running %v", err, j, w.src.gate, w.src.running)
+		}
+	})
+	t.Run("marked, the sidecar running", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		// The handoff's stop is the first; the switch's, after the mark,
+		// the second.
+		w.src.stopFails = map[int]error{2: errors.New("docker compose stop tailscale: exit 1")}
+		j, err := w.eng.Run(context.Background(), false)
+		if err == nil || j.Phase != Switched || !w.src.running || w.src.gate == nil || w.src.gate.Kind != "migrated-out" {
+			t.Fatalf("%v %+v, sidecar running %v, gate %+v", err, j, w.src.running, w.src.gate)
+		}
+		marks := 0
+		for _, c := range w.src.calls {
+			if strings.HasPrefix(c, "migrated-out ") {
+				marks++
+			}
+		}
+		j, err = w.eng.Resume(context.Background())
+		if err != nil || j.Phase != Open || w.src.running || w.src.gate.Kind != "migrated-out" {
+			t.Fatalf("resume: %v %+v, sidecar running %v", err, j, w.src.running)
+		}
+		for _, c := range w.src.calls {
+			if strings.HasPrefix(c, "migrated-out ") {
+				marks--
+			}
+		}
+		if marks != 0 {
+			t.Fatalf("the resume marked the source again: %q", w.src.calls)
+		}
+	})
+}
+
+// The switch's sidecar (#413's review): a start that runs the sidecar but
+// fails to restart varlatchd stops the sidecar again; a varlatchd with its
+// own network is marked without the sidecar; a varlatchd restarted with
+// the sidecar is waited for, within sourceReadyWait, before the mark; one
+// that never answers stops the sidecar again and leaves --resume.
+func TestTheSwitchsSidecar(t *testing.T) {
+	ctx := context.Background()
+	t.Run("half started", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		w.src.halfStart = errors.New("docker compose restart varlatchd: exit 1")
+		j, err := w.eng.Run(ctx, false)
+		if err == nil || j.Phase != Switched || !strings.Contains(err.Error(), "restart varlatchd") || !strings.Contains(err.Error(), "--resume goes on") || w.src.running {
+			t.Fatalf("%v %+v, sidecar running %v", err, j, w.src.running)
+		}
+		w.src.halfStart = nil
+		if j, err := w.eng.Resume(ctx); err != nil || j.Phase != Open || w.src.running || w.src.gate.Kind != "migrated-out" {
+			t.Fatalf("resume: %v %+v, sidecar running %v", err, j, w.src.running)
+		}
+	})
+	t.Run("varlatchd on its own network", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		w.src.ownNetwork = true
+		j, err := w.eng.Run(ctx, false)
+		if err != nil || j.Phase != Open || w.src.gate.Kind != "migrated-out" || w.src.running {
+			t.Fatalf("%v %+v", err, j)
+		}
+		if got := strings.Join(afterSwitch(w.src.calls, j.Barrier.GateID), "|"); got != "gate|migrated-out "+j.Barrier.GateID {
+			t.Fatalf("the switch: %q", got)
+		}
+	})
+	t.Run("varlatchd slow to answer", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		w.src.slowGates = 5
+		start := w.src.clock.now()
+		j, err := w.eng.Run(ctx, false)
+		if err != nil || j.Phase != Open || w.src.gate.Kind != "migrated-out" || w.src.running {
+			t.Fatalf("%v %+v", err, j)
+		}
+		if waited := w.src.clock.now().Sub(start); waited < 5*sourceReadyEvery {
+			t.Fatalf("the switch waited %s", waited)
+		}
+	})
+	t.Run("varlatchd never answers", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		w.src.slowGates = 1 << 20
+		j, err := w.eng.Run(ctx, false)
+		if err == nil || j.Phase != Switched || !strings.Contains(err.Error(), "did not answer within "+sourceReadyWait.String()) || w.src.running || w.src.gate.Kind != "migration" {
+			t.Fatalf("%v %+v, sidecar running %v", err, j, w.src.running)
+		}
+		w.src.slowGates = 0
+		if j, err := w.eng.Resume(ctx); err != nil || j.Phase != Open || w.src.gate.Kind != "migrated-out" {
+			t.Fatalf("resume: %v %+v", err, j)
+		}
+	})
+}
+
+// The readiness wait's asks and the sidecar's cleanup (#416's review): an
+// ask that hangs ends within sourceReadyAsk, so the wait goes on to the
+// next; an interrupt during the wait (its context cancelled) still stops
+// the sidecar, on a context of its own.
+func TestTheSwitchsWaitAndCleanup(t *testing.T) {
+	t.Run("an ask that hangs", func(t *testing.T) {
+		defer func(d time.Duration) { sourceReadyAsk = d }(sourceReadyAsk)
+		sourceReadyAsk = 50 * time.Millisecond
+		w := newTailnetWorld(t)
+		w.src.hangGates = 2
+		j, err := w.eng.Run(context.Background(), false)
+		if err != nil || j.Phase != Open || w.src.gate.Kind != "migrated-out" || w.src.running {
+			t.Fatalf("%v %+v", err, j)
+		}
+	})
+	t.Run("interrupted during the wait", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		w.src.slowGates = 1 << 20
+		w.src.cancelAfterStart = cancel
+		j, err := w.eng.Run(ctx, false)
+		if err == nil || !errors.Is(err, context.Canceled) || j.Phase != Switched {
+			t.Fatalf("%v %+v", err, j)
+		}
+		if w.src.running || w.src.stopCtxErr != nil {
+			t.Fatalf("the sidecar: running %v, its stop's context %v", w.src.running, w.src.stopCtxErr)
+		}
+	})
 }
 
 func index(calls []string, c string) int {
@@ -327,7 +579,7 @@ func TestAResumeWithoutTheAuthorityIsRefused(t *testing.T) {
 	}
 	w.eng.Tailnet = nil
 	j.Tailnet.Handoff.Phase = tailhandoff.Prepared
-	if err := w.eng.switchTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) || !strings.Contains(err.Error(), "--resume --tailscale-oauth-client-file") {
+	if err := w.eng.switchTailnet(context.Background(), j); !errors.Is(err, ErrNoTailnetAuthority) || !strings.Contains(err.Error(), "--resume with the authority and --tailnet-auth-key-file") {
 		t.Fatalf("switch: %v", err)
 	}
 	j.Tailnet.Handoff.Phase = tailhandoff.Switching

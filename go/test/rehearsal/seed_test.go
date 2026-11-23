@@ -29,7 +29,8 @@ import (
 //
 // Left out, since they reach outside the installation: webhooks, Platform
 // Connections, a GitHub App and Sync Targets (the outbound policy refuses
-// loopback stand-ins; the box's rehearsals have the real ones).
+// loopback stand-ins). The sync case (VL_RH_SYNC=fakes, sync_test.go)
+// makes its own Connections and Targets against the platform stand-ins.
 
 type apiClient struct {
 	t      *testing.T
@@ -102,10 +103,13 @@ func str(m map[string]any, k string) string {
 type seeded struct {
 	values, versions, rateLimited int
 	took                          time.Duration
+	client                        *apiClient // the bootstrap admin's, for more (makeBundle)
+	service                       string     // the api-svc identity's id
 }
 
-func seed(t *testing.T, in *installation) seeded {
-	began := time.Now()
+// adminClient bootstraps the installation's first admin with a CLI
+// credential and answers a client of its /v1 at the public URL.
+func adminClient(t *testing.T, in *installation) *apiClient {
 	r := must(t, in.admin(nil, "bootstrap", "--cli-credential", "--name", "Rehearsal Admin"), "bootstrap")
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
 	token := strings.TrimSpace(lines[len(lines)-1])
@@ -117,7 +121,12 @@ func seed(t *testing.T, in *installation) seeded {
 	if in.client != nil {
 		hc.Transport = in.client.Transport
 	}
-	c := &apiClient{t: t, base: in.publicURL, token: token, http: hc}
+	return &apiClient{t: t, base: in.publicURL, token: token, http: hc}
+}
+
+func seed(t *testing.T, in *installation) seeded {
+	began := time.Now()
+	c := adminClient(t, in)
 	n := 400
 	if v, err := strconv.Atoi(os.Getenv("VL_RH_SEED_VALUES")); err == nil && v > 0 {
 		n = v
@@ -152,5 +161,5 @@ func seed(t *testing.T, in *installation) seeded {
 	c.ok("POST", acme+"/teams/"+team+"/projects", map[string]any{"projectId": project})
 	c.ok("POST", acme+"/grants", map[string]any{"subjectIdentityId": service, "scope": map[string]any{"kind": "project", "projectId": project}, "actions": []string{"project.read"}})
 	c.ok("POST", acme+"/grants", map[string]any{"subjectIdentityId": ci, "scope": map[string]any{"kind": "organization"}, "actions": []string{"project.read"}})
-	return seeded{values: values, versions: versions, rateLimited: c.waited, took: time.Since(began)}
+	return seeded{values: values, versions: versions, rateLimited: c.waited, took: time.Since(began), client: c, service: service}
 }

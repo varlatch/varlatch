@@ -148,6 +148,20 @@ func TestTailscaleListsRenamesAndReadsBack(t *testing.T) {
 	}
 }
 
+// A listing's time is Tailscale's, from its answer's Date header.
+func TestTailscaleListingIsDated(t *testing.T) {
+	f := tailcontroltest.NewTailscale(tailcontroltest.Node{ID: "1", NodeID: "n1", Name: "vault"})
+	defer f.Close()
+	ts, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: f.URL, ClientID: f.ClientID, ClientSecret: f.ClientSecret, HTTP: f.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, at, err := ts.DevicesAt(ctx)
+	if err != nil || len(devices) != 1 || at.IsZero() || time.Since(at).Abs() > time.Minute {
+		t.Fatalf("%+v at %v, %v", devices, at, err)
+	}
+}
+
 func TestTailscaleRefusals(t *testing.T) {
 	f := tailcontroltest.NewTailscale(
 		tailcontroltest.Node{ID: "101", Name: "vault", Online: true},
@@ -285,6 +299,76 @@ func TestHeadscaleAPI(t *testing.T) {
 	again := headscaleOf(t, f, f.Key)
 	if err := again.Open(ctx); err == nil || strings.Contains(err.Error(), f.Key) {
 		t.Errorf("an expired key: %v", err)
+	}
+}
+
+// An earlier Headscale's keys (<prefix>.<secret>, listed by their plain
+// prefix, expired by it) work as 0.28's masked ones do.
+func TestHeadscaleAPILegacyKeys(t *testing.T) {
+	f := tailcontroltest.NewHeadscaleLegacy(50*time.Minute, tailcontroltest.Node{ID: "1", Name: "vault", Online: true})
+	defer f.Close()
+	hs := headscaleOf(t, f, f.Key)
+	if err := hs.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if devices, err := hs.Devices(ctx); err != nil || len(devices) != 1 {
+		t.Fatalf("%+v, %v", devices, err)
+	}
+	if err := hs.Close(ctx); err != nil || !f.KeyExpired() {
+		t.Fatalf("close: %v, expired %v", err, f.KeyExpired())
+	}
+}
+
+// Headscale's timestamps: RFC 3339 from its API, protobuf Timestamps from
+// its CLI's JSON (0.29.7), null or the zero time or the epoch when unset.
+func TestHeadscaleTimestamps(t *testing.T) {
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		json     string
+		lastSeen time.Time
+		expired  bool
+	}{
+		{`{"id":"1","given_name":"vault","last_seen":{"seconds":1795262400,"nanos":5},"expiry":null}`, time.Unix(1795262400, 5).UTC(), false},
+		{`{"id":1,"given_name":"vault","last_seen":null,"expiry":{"seconds":0}}`, time.Time{}, false},
+		{`{"id":1,"given_name":"vault","expiry":{"seconds":1700000000}}`, time.Time{}, true},
+		{`{"id":"1","givenName":"vault","lastSeen":"2026-11-21T11:59:00Z","expiry":"0001-01-01T00:00:00Z"}`, time.Date(2026, 11, 21, 11, 59, 0, 0, time.UTC), false},
+		{`{"id":"1","givenName":"vault","lastSeen":"0001-01-01T00:00:00Z"}`, time.Time{}, false},
+	} {
+		out := "[" + c.json + "]"
+		cli := &tailcontrol.HeadscaleCLI{Run: func(context.Context, ...string) ([]byte, error) { return []byte(out), nil }, Now: func() time.Time { return now }}
+		devices, err := cli.Devices(ctx)
+		if err != nil || len(devices) != 1 || !devices[0].LastSeen.Equal(c.lastSeen) || devices[0].Expired != c.expired {
+			t.Errorf("%s: %+v %v", c.json, devices, err)
+		}
+	}
+}
+
+// A listing's time is Headscale's, from its answer's Date header;
+// HeadscaleCLI has no Date header and does not implement ClockedLister.
+func TestHeadscaleAPIListingIsDated(t *testing.T) {
+	f := tailcontroltest.NewHeadscale(50*time.Minute, tailcontroltest.Node{ID: "1", Name: "vault", LastSeen: time.Now().Add(-time.Hour)})
+	defer f.Close()
+	hs := headscaleOf(t, f, f.Key)
+	if err := hs.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	devices, at, err := hs.DevicesAt(ctx)
+	if err != nil || len(devices) != 1 || at.IsZero() || time.Since(at).Abs() > time.Minute {
+		t.Fatalf("%+v at %v, %v", devices, at, err)
+	}
+	f.DateSkew = 15 * time.Minute
+	_, skewed, err := hs.DevicesAt(ctx)
+	if err != nil || skewed.Sub(time.Now().Add(15*time.Minute)).Abs() > time.Minute {
+		t.Fatalf("skewed Date: %v, %v", skewed, err)
+	}
+	f.DateSkew, f.NoDate = 0, true
+	_, missing, err := hs.DevicesAt(ctx)
+	if err != nil || !missing.IsZero() {
+		t.Fatalf("missing Date: %v, %v", missing, err)
+	}
+	var cli tailcontrol.ControlPlane = &tailcontrol.HeadscaleCLI{Run: f.Run}
+	if _, ok := cli.(tailcontrol.ClockedLister); ok {
+		t.Error("HeadscaleCLI must not implement ClockedLister")
 	}
 }
 

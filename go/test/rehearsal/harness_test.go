@@ -43,6 +43,8 @@ func TestMain(m *testing.M) {
 	case "squatter":
 		squat(os.Args[1])
 		return
+	case "envdigest":
+		os.Exit(envDigest(os.Args[1:]))
 	}
 	os.Exit(m.Run())
 }
@@ -108,6 +110,9 @@ func startService(bin, conf string) error {
 	}
 	defer log.Close()
 	cmd := exec.Command(bin, "serve", "--config", conf)
+	// The case's own environment for the target (its trust roots), as a
+	// unit's Environment= lines would give it.
+	cmd.Env = append(os.Environ(), serviceEnv(state("service.env"))...)
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -135,6 +140,24 @@ func startService(bin, conf string) error {
 		}
 	}
 	return errors.New("varlatchd did not start within 30 s")
+}
+
+// serviceEnv is a service.env file's KEY=VALUE lines (none when it is
+// missing), blank lines and # comments left out.
+func serviceEnv(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") || !strings.Contains(l, "=") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 func stopService() error {
@@ -308,19 +331,67 @@ type installation struct {
 	bek, destinations  string
 	readCreds          string
 	fakebin            string
+	kekCopy            string // a restored installation's copy of the operator's Root KEK
+	isolated           bool   // a restored copy: no sync, no audit export, no egress (isolationOverride)
 	proxy              *http.Server
 	installationID     string
 	ingress            string       // proxy or public
 	acme               *acmeStack   // public ingress: the run's Pebble
 	client             *http.Client // the public URL's client (TLS for public ingress)
+	migrateExtraEnv    []string     // the cases' additions to migrate's environment
+}
+
+// installExtra is what a case adds to an installation: .env variables,
+// the release bundle's own Compose files and a Compose overlay (a file
+// name and its text), added to COMPOSE_FILE in that order, lines for the
+// target's configuration ({keys} stands for its keys directory), the
+// target varlatchd's environment, and migrate's.
+type installExtra struct {
+	env                      map[string]string
+	bundleFiles              []string
+	composeFile, composeText string
+	conf                     string
+	serviceEnv               []string
+	migrateEnv               []string
 }
 
 // newInstallation is a fresh installation of the release, up and serving,
 // with its own public URL (a loopback proxy to its dashboard's port), its
 // target's host-install configuration, and its backup destination.
-func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *installation {
+func newInstallation(t *testing.T, rel release, s3 *s3Server, name string, extras ...installExtra) *installation {
 	t.Helper()
-	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: prof.ingress}
+	in := prepareInstallation(t, rel, s3, name, nil, extras...)
+	in.up()
+	return in
+}
+
+// newSource is the run's source: a fresh installation (VL_RH_SOURCE=seed),
+// or the archive VL_RH_SOURCE names restored onto one (B6).
+func newSource(t *testing.T, rel release, s3 *s3Server, name string) *installation {
+	t.Helper()
+	if prof.restore == "" {
+		return newInstallation(t, rel, s3, name)
+	}
+	return restoredInstallation(t, rel, s3, name)
+}
+
+// operatorKeys are the keys of an installation restored from an archive
+// (B6): the operator's files, given by path, never generated.
+type operatorKeys struct{ kek, bek string }
+
+// prepareInstallation is an installation's files, its target's and its
+// backup destination, not started: with keys (a restore), its Root KEK
+// is the operator's and its BEK the operator's file, and it is isolated
+// (isolationExtra), before the case's extras.
+func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, keys *operatorKeys, extras ...installExtra) *installation {
+	t.Helper()
+	// The tailnet case's source serves its address through the own
+	// proxy; its tailnet name moves beside it.
+	ingress := prof.ingress
+	if ingress == "tailnet" {
+		ingress = "proxy"
+	}
+	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: ingress}
 	base := filepath.Join(workDir, name)
 	in.dir, in.state = filepath.Join(base, "compose"), filepath.Join(base, "state")
 	// The target host install: under a root-owned path when the harness runs
@@ -346,7 +417,19 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	// needs it to: migrate streams the export (--out -) since 0.23.0.
 	kek := filepath.Join(in.dir, "secrets", "varlatch-kek")
 	// varlatchd (uid 999) reads the KEK through the secret's bind mount.
-	if err := os.WriteFile(kek, []byte(hexBytes(32)+"\n"), 0o644); err != nil {
+	kekText := []byte(hexBytes(32) + "\n")
+	if keys != nil {
+		// The operator's Root KEK, copied (the container's user must read
+		// it; the operator's file stays 0600) and removed with the
+		// installation.
+		b, err := os.ReadFile(keys.kek)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kekText = b
+		in.kekCopy = kek
+	}
+	if err := os.WriteFile(kek, kekText, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	in.webPort, in.proxyPort = freePort(t), freePort(t)
@@ -378,6 +461,42 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 		env["VARLATCH_HTTPS_PORT"] = net.JoinHostPort(prof.publicBind, "443")
 		env["VARLATCH_ACME_CA"] = "https://pebble:14000/dir"
 	}
+	if keys != nil {
+		in.isolated = true
+		extras = append([]installExtra{isolationExtra(filepath.Join(base, "operator", "backup-destinations.json"))}, extras...)
+	}
+	for _, x := range extras {
+		for k, v := range x.env {
+			env[k] = v
+		}
+		add := func(file string) {
+			files := env["COMPOSE_FILE"]
+			if files == "" {
+				files = "docker-compose.yml"
+			}
+			env["COMPOSE_FILE"] = files + ":" + file
+		}
+		for _, f := range x.bundleFiles {
+			// The bundle's, or images.sh's copy beside it.
+			if _, err := os.Stat(filepath.Join(in.dir, f)); err != nil {
+				b, err := os.ReadFile(filepath.Join(releaseDir, f))
+				if err != nil {
+					t.Fatalf("the release's %s: %v", f, err)
+				}
+				if err := os.WriteFile(filepath.Join(in.dir, f), b, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			add(f)
+		}
+		if x.composeFile != "" {
+			if err := os.WriteFile(filepath.Join(in.dir, x.composeFile), []byte(x.composeText), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			add(x.composeFile)
+		}
+		in.migrateExtraEnv = append(in.migrateExtraEnv, x.migrateEnv...)
+	}
 	var text strings.Builder
 	for k, v := range env {
 		fmt.Fprintf(&text, "%s=%s\n", k, v)
@@ -388,7 +507,11 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 	// The operator's files: the BEK, the destination, its credentials.
 	op := filepath.Join(base, "operator")
 	in.bek = filepath.Join(op, "backup-key")
-	if err := os.WriteFile(in.bek, []byte(hexBytes(32)+"\n"), 0o600); err != nil {
+	if keys != nil {
+		// The operator's file itself: the archive's BEK seals the run's
+		// backups too, as on the operator's host.
+		in.bek = keys.bek
+	} else if err := os.WriteFile(in.bek, []byte(hexBytes(32)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	in.bucket = "vl-rh-" + name
@@ -411,6 +534,16 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 		host = fmt.Sprintf("listen = 127.0.0.1:%s\nlisten_https = %s\nlisten_http_redirect = %s\nacme_ca = %s\nacme_ca_root = %s\npublic_url = %s\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\n",
 			freePort(t), net.JoinHostPort(prof.publicBind, "443"), net.JoinHostPort(prof.publicBind, "80"), in.acme.hostDirectory, in.acme.apiRoot,
 			in.publicURL, in.data, filepath.Join(in.keys, "root-kek"), filepath.Join(in.keys, "backup-key"))
+	}
+	var service []string
+	for _, x := range extras {
+		host += strings.ReplaceAll(x.conf, "{keys}", in.keys)
+		service = append(service, x.serviceEnv...)
+	}
+	if len(service) > 0 {
+		if err := os.WriteFile(filepath.Join(in.state, "service.env"), []byte(strings.Join(service, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	in.conf = filepath.Join(target, "varlatchd.conf")
 	for _, p := range []string{in.conf, filepath.Join(in.state, "service.conf")} {
@@ -438,9 +571,41 @@ func newInstallation(t *testing.T, rel release, s3 *s3Server, name string) *inst
 		t.Fatal(err)
 	}
 	t.Cleanup(in.remove)
-	in.up()
 	return in
 }
+
+// isolationExtra is a restored copy's (B6). The copy holds what
+// production's would: webhooks, Sync Targets and audit export streams
+// aimed at real destinations, with the keys that sign and open them. It
+// reaches none: sync and the audit export off, its network internal
+// (isolationOverride), its webhooks revoked once restored (neutralise);
+// and Go's target neither (sync = off, audit_export = off), its backups
+// to the run's destination (a rollback's --finish uploads a final
+// archive of Go's copy before it discards it).
+func isolationExtra(destinations string) installExtra {
+	return installExtra{
+		env:         map[string]string{"VARLATCH_SYNC": "off", "VARLATCH_AUDIT_EXPORT": "off"},
+		composeFile: "docker-compose.isolated.yml", composeText: isolationOverride,
+		conf: fmt.Sprintf("backup_destinations_file = %s\nbackup_destination = offsite\nsync = off\naudit_export = off\n", destinations),
+	}
+}
+
+// isolationOverride is a restored copy's Compose file (B6): its network
+// internal, so no container of it reaches anything outside it; only the
+// dashboard joins a second network, for its published port, which the
+// run's proxy reaches (nginx there proxies to varlatchd and Convex only).
+const isolationOverride = `# Written by the rehearsal harness (B6): a restored copy reaches nothing
+# outside its own network.
+networks:
+  default:
+    internal: true
+  edge: {}
+services:
+  varlatch-web:
+    networks:
+      default: {}
+      edge: {}
+`
 
 func (in *installation) startProxy() {
 	target, _ := url.Parse("http://127.0.0.1:" + in.webPort)
@@ -597,6 +762,22 @@ func (in *installation) remove() {
 		return
 	}
 	run(in.dir, nil, nil, "docker", "compose", "-p", in.project, "--profile", "deploy", "down", "-v", "--remove-orphans", "--timeout", "20")
+	// down -v removes the volumes the Compose files name now: after a
+	// rollback those are its fresh ones, so the installation's earlier
+	// ones (kept until a --finish --delete-old-data) are removed by the
+	// project's label, each by its name (run r16e left two).
+	vols := run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "label=com.docker.compose.project="+in.project)
+	for _, v := range strings.Fields(vols.stdout) {
+		if strings.HasPrefix(v, in.project+"_") {
+			run("", nil, nil, "docker", "volume", "rm", v)
+		}
+	}
+	if in.kekCopy != "" {
+		_ = os.Remove(in.kekCopy)
+	}
+	// The run's own files of the installation: logs, the reader's
+	// repository and home (its credential), its HMAC key.
+	_ = os.RemoveAll(in.state)
 	if in.targetRoot != "" && in.targetDir != "" {
 		_ = os.RemoveAll(in.targetDir)
 		_ = os.Remove(filepath.Join(in.targetRoot, runID))

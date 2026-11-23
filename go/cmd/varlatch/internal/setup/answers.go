@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 )
 
 // Answers are setup's answers: one per question, each with its flag (the
@@ -36,6 +38,20 @@ type Answers struct {
 	TailnetTags        string `json:"tailnetTags,omitempty"`
 	TailnetPort        string `json:"tailnetPort,omitempty"`
 	TailnetAuthKeyFile string `json:"tailnetAuthKeyFile,omitempty"`
+	// TailscaleOAuthClientFile is a restore's authority over the tailnet
+	// (an OAuth client with the devices:core scope only, go-step7 O4): the
+	// restored node takes the dead one's name over, by rename, rather than
+	// waiting for it to be deleted. A path; varlatchd reads it.
+	TailscaleOAuthClientFile string `json:"tailscaleOAuthClientFile,omitempty"`
+	// TailnetControlURL is a self-hosted control server's URL (Headscale:
+	// https://<its IP>[:port], tailnet_control_url), canonical; "" for
+	// Tailscale's. A restore's only, for now.
+	TailnetControlURL string `json:"tailnetControlUrl,omitempty"`
+	// HeadscaleAPIKeyFile is a restore's authority over a self-hosted
+	// control server: a Headscale API key expiring within the hour, in a
+	// file (0600); varlatchd reads it, takes the dead node's name over and
+	// expires the key.
+	HeadscaleAPIKeyFile string `json:"headscaleApiKeyFile,omitempty"`
 	// Backups: where archives go (Decision 7). Backups is "host" (this
 	// host only) or "bucket" (a destinations file the operator wrote);
 	// Varlatch's hosted backups are not available yet (O5).
@@ -66,6 +82,9 @@ var Flags = []Flag{
 	{"tailnet-tags", func(a *Answers, v string) { a.TailnetTags = v }, func(a *Answers) string { return a.TailnetTags }},
 	{"tailnet-port", func(a *Answers, v string) { a.TailnetPort = v }, func(a *Answers) string { return a.TailnetPort }},
 	{"tailnet-auth-key-file", func(a *Answers, v string) { a.TailnetAuthKeyFile = v }, func(a *Answers) string { return a.TailnetAuthKeyFile }},
+	{"tailscale-oauth-client-file", func(a *Answers, v string) { a.TailscaleOAuthClientFile = v }, func(a *Answers) string { return a.TailscaleOAuthClientFile }},
+	{"tailnet-control-url", func(a *Answers, v string) { a.TailnetControlURL = v }, func(a *Answers) string { return a.TailnetControlURL }},
+	{"headscale-api-key-file", func(a *Answers, v string) { a.HeadscaleAPIKeyFile = v }, func(a *Answers) string { return a.HeadscaleAPIKeyFile }},
 	{"backups", func(a *Answers, v string) { a.Backups = v }, func(a *Answers) string { return a.Backups }},
 	{"backup-destinations-file", func(a *Answers, v string) { a.BackupDestinationsFile = v }, func(a *Answers) string { return a.BackupDestinationsFile }},
 	{"backup-destination", func(a *Answers, v string) { a.BackupDestination = v }, func(a *Answers) string { return a.BackupDestination }},
@@ -246,6 +265,37 @@ func (a *Answers) Check() error {
 		}
 		if !strings.HasPrefix(a.TailnetAuthKeyFile, "/") {
 			return bad("tailnet-auth-key-file", "must be an absolute path (the key is read by varlatchd, never by setup)")
+		}
+	}
+	if a.TailscaleOAuthClientFile != "" {
+		if a.Ingress != Tailnet {
+			return bad("tailscale-oauth-client-file", "goes with ingress tailnet only: it takes the old node's tailnet name over")
+		}
+		if !strings.HasPrefix(a.TailscaleOAuthClientFile, "/") {
+			return bad("tailscale-oauth-client-file", "must be an absolute path (the client is read by varlatchd, never by setup)")
+		}
+		if a.TailnetControlURL != "" {
+			return bad("tailscale-oauth-client-file", "is Tailscale's authority, and --tailnet-control-url names a self-hosted control server: give --headscale-api-key-file instead")
+		}
+	}
+	if a.TailnetControlURL != "" {
+		if a.Ingress != Tailnet {
+			return bad("tailnet-control-url", "goes with ingress tailnet only")
+		}
+		canonical, why := tailcontrol.CanonicalControlURL(a.TailnetControlURL)
+		if why != "" {
+			return bad("tailnet-control-url", why)
+		}
+		if canonical != a.TailnetControlURL {
+			return bad("tailnet-control-url", "is written "+canonical+" (as varlatchd and varlatch migrate spell it)")
+		}
+	}
+	if a.HeadscaleAPIKeyFile != "" {
+		if a.TailnetControlURL == "" {
+			return bad("headscale-api-key-file", "goes with --tailnet-control-url: it is a self-hosted control server's authority (Tailscale's is --tailscale-oauth-client-file)")
+		}
+		if !strings.HasPrefix(a.HeadscaleAPIKeyFile, "/") {
+			return bad("headscale-api-key-file", "must be an absolute path (the key is read by varlatchd, never by setup)")
 		}
 	}
 	for _, p := range []struct{ flag, v string }{{"acme-ca-root", a.ACMECARoot}, {"backup-destinations-file", a.BackupDestinationsFile}} {

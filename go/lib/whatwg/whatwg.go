@@ -685,7 +685,7 @@ func IsIP(s string) int {
 	return 0
 }
 
-// isJSSpace is ECMAScript's WhiteSpace and LineTerminator: what trim and
+// IsJSSpace is ECMAScript's WhiteSpace and LineTerminator: what trim and
 // \s remove and match.
 func IsJSSpace(r rune) bool {
 	switch r {
@@ -694,6 +694,10 @@ func IsJSSpace(r rune) bool {
 	}
 	return r >= 0x2000 && r <= 0x200a
 }
+
+// IsJSWhitespace is JavaScript's \s: IsJSSpace, and any other code point
+// Unicode puts in Zs (ECMAScript's WhiteSpace is every Zs code point).
+func IsJSWhitespace(r rune) bool { return IsJSSpace(r) || unicode.Is(unicode.Zs, r) }
 
 // Trim is String.prototype.trim.
 func Trim(s string) string { return strings.TrimFunc(s, IsJSSpace) }

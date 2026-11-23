@@ -143,14 +143,14 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 				t.Fatal(err)
 			}
 			run := &scripted{t: t, answers: map[string]Ran{
-				"docker compose stop ":                                 {},
-				"docker compose up -d postgres convex-backend":         {},
-				"docker ps -a --filter volume=":                        {},
-				"docker volume rm -f ":                                 {},
-				"docker compose config --no-interpolate --format json": {Answer: []byte(c.config)},
-				"docker compose ps --status running --services":        {Answer: []byte(c.running)},
-				"docker compose run --rm -T --no-deps varlatchd node dist/cli.js admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)},
-				"docker compose up -d --no-deps varlatchd":                                               {},
+				"docker compose stop ":                                                  {},
+				"docker compose up -d postgres convex-backend":                          {},
+				"docker ps -a --filter volume=":                                         {},
+				"docker volume rm -f ":                                                  {},
+				"docker compose config --no-interpolate --format json":                  {Answer: []byte(c.config)},
+				"docker compose ps --status running --services":                         {Answer: []byte(c.running)},
+				"docker compose run --rm -T --no-deps varlatchd admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)},
+				"docker compose up -d --no-deps varlatchd":                              {},
 			}}
 			cmp := &Compose{Directory: dir, Run: run}
 			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}})
@@ -224,6 +224,64 @@ func TestSidecarOwned(t *testing.T) {
 	} {
 		if got := sidecarOwned(c.j); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// A service's environment as `docker compose config --format json`
+// prints it, in both forms: testdata/compose-config holds Compose 5.6.1's
+// own output (docker compose -f docker-compose.yml [-f override.yml]
+// config --no-interpolate --format json) for a list (- A=1), a map, and a
+// map an overlay merged a list into (printed as a list). A name without a
+// value is not set.
+func TestComposeEnvironmentForms(t *testing.T) {
+	str := func(v string) *string { return &v }
+	for file, want := range map[string]map[string]composeEnv{
+		// The map's unquoted number and boolean are JSON ones there.
+		"map-and-list.json": {
+			"a": {"A": str("1"), "B": nil, "C": str(""), "D": str("b=c")},
+			"b": {"X": str("1"), "Y": nil, "PORT": str("8080"), "FLAG": str("false"), "RATIO": str("1.5")},
+		},
+		"overlay-list.json": {
+			"a": {"A": str("1"), "B": nil, "C": str(""), "D": str("b=c")},
+			"b": {"X": str("1"), "Y": nil, "Z": str("2"), "PORT": str("8080"), "FLAG": str("false"), "RATIO": str("1.5")},
+		},
+	} {
+		b, err := os.ReadFile(filepath.Join("testdata", "compose-config", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: b}}}
+		cfg, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context())
+		if err != nil || cfg.Name != "envprobe" {
+			t.Fatalf("%s: %+v %v", file, cfg, err)
+		}
+		for svc, env := range want {
+			got := cfg.Services[svc].Environment
+			if len(got) != len(env) {
+				t.Errorf("%s %s: %v", file, svc, got)
+			}
+			for k, v := range env {
+				g, ok := got[k]
+				if !ok || (v == nil) != (g == nil) || v != nil && *v != *g {
+					t.Errorf("%s %s %s: %v, want %v", file, svc, k, g, v)
+				}
+			}
+		}
+	}
+	// A name a list repeats: the last one holds, as in a container's
+	// environment.
+	run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"p","services":{"a":{"environment":["A=1","A=2","B=x","B"]}}}`)}}}
+	cfg, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context())
+	if env := cfg.Services["a"].Environment; err != nil || env["A"] == nil || *env["A"] != "2" || env["B"] != nil || len(env) != 2 {
+		t.Fatalf("a repeated name: %v %v", env, err)
+	}
+	// What Compose cannot have printed is said as such, not as a project
+	// without a name.
+	for _, bad := range []string{`42`, `{"A":{"x":1}}`, `{"A":["x"]}`, `[1]`} {
+		run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"p","services":{"a":{"environment":` + bad + `}}}`)}}}
+		if _, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context()); err == nil || !strings.Contains(err.Error(), "a configuration migrate cannot read") {
+			t.Errorf("the environment %s: %v", bad, err)
 		}
 	}
 }

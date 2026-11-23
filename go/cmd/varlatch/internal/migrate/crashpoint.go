@@ -7,6 +7,7 @@ package migrate
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // Crash points for G5's interruption gate (go test -tags g5, which builds
@@ -20,7 +21,10 @@ import (
 //     journalled in both places; "barrier held" once the source's barrier
 //     is up and recorded; "transfer started" once the target serves under
 //     the transfer's gate; "open source" when the source's journal says
-//     open but the live open has not run yet;
+//     open but the live open has not run yet; "switch sidecar started"
+//     once the sidecar the tailnet handoff stopped runs again for the
+//     source's mark, and "switch marked" once the source is marked
+//     migrated out, before the sidecar stops again;
 //   - the reverse (--rollback): "rollback barrier held" once Go's barrier
 //     is up; "rollback rebuilt" once the TypeScript side runs on its fresh
 //     volumes; "rollback go stopped" and "rollback transfer started" in
@@ -74,6 +78,12 @@ func crashPoint(point string) {
 	if point == cp.pause {
 		fmt.Fprintf(cp.log, "paused %s\n", point)
 		_ = cp.log.Sync()
-		select {}
+		// Asleep on a timer, not in select {}: with every other goroutine
+		// blocked, the runtime ends a program that has none
+		// ("all goroutines are asleep - deadlock!") before the kill comes
+		// (rehearsal r16b and r16c, the kill at "transfer started").
+		for {
+			time.Sleep(time.Hour)
+		}
 	}
 }

@@ -217,6 +217,68 @@ func (c *Compose) envFile() (map[string]string, error) {
 	return out, nil
 }
 
+// outboundEnv is the source's outbound allow list's variable.
+const outboundEnv = "VARLATCH_OUTBOUND_ALLOW"
+
+// outboundAllow is the source's outbound allow list, the value Compose
+// gave varlatchd (from .env, the shell or an overlay, its own way with
+// quotes and comments): the running container's environment (docker
+// inspect), else, the service not running, `docker compose config` with
+// interpolation (fromConfig). Only this variable is read of either: no
+// other value is kept, and no error carries their output.
+func (c *Compose) outboundAllow(ctx context.Context) (value string, fromConfig bool, err error) {
+	r, err := c.docker(ctx, []string{"compose", "ps", "-q", service}, nil)
+	if err != nil {
+		return "", false, err
+	}
+	ids := strings.Fields(string(r.Answer))
+	switch {
+	case r.Code != 0:
+		// Not "not running": Docker did not say.
+		return "", false, fmt.Errorf("docker compose ps -q %s failed (exit %d), so migrate cannot tell whether the source's %s runs: its %s cannot be read", service, r.Code, service, outboundEnv)
+	case len(ids) > 1:
+		return "", false, fmt.Errorf("docker compose ps -q %s names %d running containers (%s): a migration takes an installation with one %s; its %s cannot be read", service, len(ids), strings.Join(ids, ", "), service, outboundEnv)
+	}
+	if len(ids) == 1 {
+		r, err := c.docker(ctx, []string{"inspect", "--format", "{{json .Config.Env}}", ids[0]}, nil)
+		if err != nil {
+			return "", false, err
+		}
+		var env []string
+		if r.Code != 0 || json.Unmarshal(bytes.TrimSpace(r.Answer), &env) != nil {
+			return "", false, fmt.Errorf("docker inspect did not give the %s container's environment: its %s cannot be read", service, outboundEnv)
+		}
+		for _, kv := range env {
+			if name, v, ok := strings.Cut(kv, "="); ok && name == outboundEnv {
+				value = v // the last of a name holds, as in the process
+			}
+		}
+		return strings.TrimSpace(value), false, nil
+	}
+	r, err = c.docker(ctx, []string{"compose", "config", "--format", "json"}, nil)
+	if err != nil {
+		return "", true, err
+	}
+	if r.Code != 0 {
+		// Its output is not said: with the variables resolved, it can
+		// hold any value of the installation's.
+		hint := "run docker compose config in " + c.Directory + " to see why"
+		if said := strings.ToLower(string(r.Said)); strings.Contains(said, "variable") &&
+			(strings.Contains(said, "not set") || strings.Contains(said, "missing a value") || strings.Contains(said, "required")) {
+			hint = "a variable the Compose files need is unset (docker compose config in " + c.Directory + " names it)"
+		}
+		return "", true, fmt.Errorf("docker compose config failed (exit %d; %s), with the source's %s not running: its %s cannot be read", r.Code, hint, service, outboundEnv)
+	}
+	var m composeConfig
+	if json.Unmarshal(bytes.TrimSpace(r.Answer), &m) != nil {
+		return "", true, fmt.Errorf("docker compose config did not give the %s service's environment: its %s cannot be read", service, outboundEnv)
+	}
+	if v := m.Services[service].Environment[outboundEnv]; v != nil {
+		value = *v
+	}
+	return strings.TrimSpace(value), true, nil
+}
+
 // kekPath is the source's Root KEK file on this host: KEKFile, else .env's
 // VARLATCH_KEK_HOST_PATH (relative to Directory), else secrets/varlatch-kek, as
 // the Compose file has it.
@@ -240,14 +302,18 @@ func (c *Compose) kekPath() (string, error) {
 
 // Ingress reads the installation's .env as its Compose files do: the
 // public URL (VARLATCH_PUBLIC_URL), the Caddy overlay in COMPOSE_FILE
-// (public ingress), and the dashboard's published address
-// (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default).
-func (c *Compose) Ingress(context.Context) (IngressInfo, error) {
+// (public ingress), the dashboard's published address
+// (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default); and the
+// outbound allow list as varlatchd has it (outboundAllow).
+func (c *Compose) Ingress(ctx context.Context) (IngressInfo, error) {
 	env, err := c.envFile()
 	if err != nil {
 		return IngressInfo{}, err
 	}
 	info := IngressInfo{PublicURL: env["VARLATCH_PUBLIC_URL"]}
+	if info.OutboundAllow, info.OutboundAllowFromConfig, err = c.outboundAllow(ctx); err != nil {
+		return IngressInfo{}, err
+	}
 	for _, f := range strings.Split(env["COMPOSE_FILE"], string(os.PathListSeparator)) {
 		if filepath.Base(strings.TrimSpace(f)) == "docker-compose.caddy.yml" {
 			info.Caddy = true

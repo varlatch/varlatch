@@ -108,6 +108,15 @@ func TestG5MakesTheHostTarget(t *testing.T) {
 	t.Run("made, migrated into", func(t *testing.T) {
 		w, root := madeWorld(t)
 		w.useState()
+		// The source's outbound allow list, which the target made carries.
+		envFile := filepath.Join(w.compose, ".env")
+		env, err := os.ReadFile(envFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(envFile, append(env, "VARLATCH_OUTBOUND_ALLOW=coolify.lan,10.0.0.0/8:8000\n"...), 0o600); err != nil {
+			t.Fatal(err)
+		}
 		before := w.sourceHash()
 		if code := w.run(""); code != 0 {
 			t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
@@ -120,7 +129,8 @@ func TestG5MakesTheHostTarget(t *testing.T) {
 			}
 		}
 		conf, err := os.ReadFile(w.conf)
-		if err != nil || !strings.Contains(string(conf), "public_url = "+w.origin) || !strings.Contains(string(conf), "listen = "+w.listen) || strings.Contains(string(conf), "root_kek_file") {
+		if err != nil || !strings.Contains(string(conf), "public_url = "+w.origin) || !strings.Contains(string(conf), "listen = "+w.listen) || strings.Contains(string(conf), "root_kek_file") ||
+			!strings.Contains(string(conf), "\noutbound_allow = coolify.lan,10.0.0.0/8:8000\n") {
 			t.Errorf("the configuration made: %s %v", conf, err)
 		}
 		for _, k := range []string{"root-kek", "backup-key"} {

@@ -914,6 +914,142 @@ func TestAThirdDeviceTakesTheFreedName(t *testing.T) {
 	}
 }
 
+// restoreRig is a restore on Tailscale's API: the dead node "1", offline
+// for a day, under the name; the restored node "2" under its temporary
+// name.
+func restoreRig(t *testing.T, extra ...tailcontroltest.Node) (*rig, tailhandoff.Plan) {
+	t.Helper()
+	const rop = "ssssssss25"
+	in, _ := tailcontrol.TempName("vault", rop, tailcontrol.RoleNew)
+	r := newRigWith(t, append([]tailcontroltest.Node{
+		{ID: "1", NodeID: "nDead1", Name: "vault", LastSeen: time.Now().Add(-24 * time.Hour)},
+		{ID: "2", NodeID: "nNew2", Name: in, Online: true},
+	}, extra...))
+	p, err := tailhandoff.NewRestore(rop, "vault", "1", "2", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.engine.Prepare(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	return r, p
+}
+
+// TestADeadNodeDeletedBeforeTheSwitch: the operator deleted the dead
+// node's device after the plan; its rename finds it gone at once (not
+// tried again until the deadline), the undo has nothing to give the name
+// back to, and the restored node takes the free name.
+func TestADeadNodeDeletedBeforeTheSwitch(t *testing.T) {
+	r, p := restoreRig(t)
+	r.f.Delete("1")
+	r.engine.Deadline = time.Minute
+	start := time.Now()
+	s, err := r.engine.Switch(ctx, p.Operation)
+	if err != nil || s.Phase != tailhandoff.Done || !s.ServingGone {
+		t.Fatalf("%+v, %v", s, err)
+	}
+	if took := time.Since(start); took > 20*time.Second {
+		t.Errorf("the switch took %v: the gone device was tried again", took)
+	}
+	if n := r.names(); n["2"] != "vault" || len(n) != 1 {
+		t.Errorf("names %v", n)
+	}
+	if _, incoming := r.ep.state(); !incoming {
+		t.Error("the restored installation did not open")
+	}
+}
+
+// TestADeadNodeDeletedDuringTheSwitch: the dead node is renamed away, the
+// restored node takes the name, and the reach check fails; meanwhile the
+// operator deleted the dead node's device. The undo cannot give the name
+// back to a device that is gone, so it goes forward, and fails again while
+// nothing reaches the name: the undo is pending, saying why, never looping
+// on the gone device. Resumed once the name reaches, the restore is done.
+func TestADeadNodeDeletedDuringTheSwitch(t *testing.T) {
+	r, p := restoreRig(t)
+	r.engine.Deadline = 300 * time.Millisecond
+	r.f.AfterRename = func(id, name string, _ func(id, name string)) {
+		if id == "2" && name == "vault" {
+			go r.f.Delete("1") // the fake's lock is held here
+		}
+	}
+	r.r.never.Store(true)
+	s, err := r.engine.Switch(ctx, p.Operation)
+	var he *tailhandoff.HandoffError
+	var gone *tailhandoff.GoneError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || !errors.As(err, &gone) || gone.ID != "1" || !s.ServingGone {
+		t.Fatalf("%+v, %v", s, err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "the device 1 is no longer in the tailnet") || !strings.Contains(msg, "could not take its free name") {
+		t.Fatalf("the message: %s", msg)
+	}
+	if n := r.names(); n["2"] != p.IncomingName {
+		t.Errorf("names after the pending undo %v", n)
+	}
+	r.f.AfterRename = nil
+	r.r.never.Store(false)
+	s, err = r.engine.Resume(ctx, p.Operation)
+	if err != nil || s.Phase != tailhandoff.Done {
+		t.Fatalf("resumed: %+v, %v", s, err)
+	}
+	if n := r.names(); n["2"] != "vault" {
+		t.Errorf("names %v", n)
+	}
+	if _, incoming := r.ep.state(); !incoming {
+		t.Error("the restored installation did not open")
+	}
+}
+
+// TestAThirdDeviceTakesTheNameADeletionFreed: the dead node's device is
+// deleted, and a laptop takes the name it freed before the restored node
+// can: the pending undo leads with the device that holds the name now,
+// and names it, as the operator's step is to rename it.
+func TestAThirdDeviceTakesTheNameADeletionFreed(t *testing.T) {
+	r, p := restoreRig(t, tailcontroltest.Node{ID: "3", NodeID: "nLaptop3", Name: "laptop", Online: true})
+	r.f.Delete("1")
+	r.f.SetName("3", "vault")
+	_, err := r.engine.Switch(ctx, p.Operation)
+	var he *tailhandoff.HandoffError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || !errors.Is(err, tailcontrol.ErrNameTaken) {
+		t.Fatalf("%v", err)
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "the handoff failed and its undo could not give a name back: another device holds it now") ||
+		!strings.Contains(msg, "the dead node 1 was deleted from the tailnet, and vault (3, online) took its free name before the restored node could") {
+		t.Fatalf("the message: %s", msg)
+	}
+	if n := r.names(); n["2"] != p.IncomingName || n["3"] != "vault" {
+		t.Errorf("names %v", n)
+	}
+}
+
+// TestAServingNodeGoneIsFinal: outside a restore, a serving node deleted
+// mid-switch leaves the undo pending at once, naming it, instead of trying
+// the gone device until the undo's wait ends.
+func TestAServingNodeGoneIsFinal(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
+		t.Fatal(err)
+	}
+	r.engine.UndoWait = time.Minute
+	r.f.AfterRename = func(id, name string, _ func(id, name string)) {
+		if id == "2" && name == "vault" {
+			go r.f.Delete("1")
+		}
+	}
+	r.r.never.Store(true)
+	start := time.Now()
+	_, err := r.engine.Switch(ctx, op)
+	var he *tailhandoff.HandoffError
+	var gone *tailhandoff.GoneError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || !errors.As(err, &gone) || gone.ID != "1" {
+		t.Fatalf("%v", err)
+	}
+	if took := time.Since(start); took > 30*time.Second {
+		t.Errorf("the undo took %v: the gone device was tried again", took)
+	}
+}
+
 // TestARenewalNeedsRoomForTwo: renewing the serving certificate before the
 // barrier is one issuance for the name, and the switch another: with four
 // in the week, the renewal is refused before it is spent.

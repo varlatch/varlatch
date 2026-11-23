@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -111,6 +112,13 @@ func (f *Tailscale) SetName(id, name string) {
 			n.Name = name
 		}
 	}
+}
+
+// Delete removes a device from the tailnet, as its admin console would.
+func (f *Tailscale) Delete(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nodes = slices.DeleteFunc(f.nodes, func(n *Node) bool { return n.ID == id })
 }
 
 // Nodes is a copy of the tailnet's devices.
@@ -263,12 +271,18 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 // (Run) on the same state.
 type Headscale struct {
 	*httptest.Server
-	// Key is an API key the fake knows, with Prefix as Headscale lists it.
+	// Key is an API key the fake knows, with Prefix as Headscale lists it:
+	// hskey-api-<prefix>-<secret>, listed hskey-api-<prefix>-*** (0.28 and
+	// later, as the pinned 0.29.7), or <prefix>.<secret> (Legacy).
 	Key, Prefix string
 	// KeyExpires is when Key expires.
 	KeyExpires time.Time
 	// RewriteRename, when set, turns a requested name into the one stored.
 	RewriteRename func(string) string
+	// DateSkew moves the listing's Date header off this host's clock; NoDate
+	// omits the Date header.
+	DateSkew time.Duration
+	NoDate   bool
 
 	mu          sync.Mutex
 	nodes       []*Node
@@ -285,10 +299,25 @@ func (f *Headscale) SetUnavailable(down bool) {
 	f.unavailable = down
 }
 
-// NewHeadscale serves a fake whose key expires after keyLife.
+// NewHeadscale serves a fake whose key expires after keyLife, in the key
+// format of Headscale 0.28 and later.
 func NewHeadscale(keyLife time.Duration, nodes ...Node) *Headscale {
+	prefix := strings.ToLower(random(9))[:12]
+	f := newHeadscale(keyLife, nodes...)
+	f.Prefix, f.Key = "hskey-api-"+prefix+"-***", "hskey-api-"+prefix+"-"+random(24)
+	return f
+}
+
+// NewHeadscaleLegacy is NewHeadscale with an earlier Headscale's keys.
+func NewHeadscaleLegacy(keyLife time.Duration, nodes ...Node) *Headscale {
 	prefix := random(5)
-	f := &Headscale{Prefix: prefix, Key: prefix + "." + random(16), KeyExpires: time.Now().Add(keyLife)}
+	f := newHeadscale(keyLife, nodes...)
+	f.Prefix, f.Key = prefix, prefix+"."+random(16)
+	return f
+}
+
+func newHeadscale(keyLife time.Duration, nodes ...Node) *Headscale {
+	f := &Headscale{KeyExpires: time.Now().Add(keyLife)}
 	for _, n := range nodes {
 		n := n
 		f.nodes = append(f.nodes, &n)
@@ -315,10 +344,32 @@ func (f *Headscale) KeyExpired() bool {
 	return f.expired
 }
 
+// SetPresence updates a node's online flag and last-seen time.
+func (f *Headscale) SetPresence(id string, online bool, lastSeen time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, n := range f.nodes {
+		if n.ID == id {
+			n.Online, n.LastSeen = online, lastSeen
+		}
+	}
+}
+
 func (f *Headscale) node(n *Node, camel bool) map[string]any {
 	idKey, given, seen := "id", "givenName", "lastSeen"
 	if !camel {
 		given, seen = "given_name", "last_seen"
+	}
+	if !camel {
+		// The CLI's JSON (0.29.7) writes timestamps as protobuf
+		// Timestamps, an unset one as null.
+		ts := func(t time.Time) any {
+			if t.IsZero() {
+				return nil
+			}
+			return map[string]any{"seconds": t.Unix(), "nanos": t.Nanosecond()}
+		}
+		return map[string]any{idKey: n.ID, "name": "host-" + n.ID, given: n.Name, "online": n.Online, "expiry": ts(n.Expires), seen: ts(n.LastSeen)}
 	}
 	expiry := "0001-01-01T00:00:00Z"
 	if !n.Expires.IsZero() {
@@ -374,16 +425,23 @@ func (f *Headscale) serve(w http.ResponseWriter, r *http.Request) {
 			{"id": "2", "prefix": f.Prefix, "expiration": f.KeyExpires.UTC().Format(time.RFC3339Nano)},
 		}})
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/apikey/expire":
+		// By the key's prefix as listed, or by its id (0.28 and later).
 		var body struct {
 			Prefix string `json:"prefix"`
+			ID     string `json:"id"`
 		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Prefix != f.Prefix {
+		if json.NewDecoder(r.Body).Decode(&body) != nil || !(body.Prefix == f.Prefix || body.ID == "2" && strings.HasSuffix(f.Prefix, "***")) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"message": "api key not found"})
 			return
 		}
 		f.expired = true
 		writeJSON(w, http.StatusOK, map[string]any{})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/node":
+		if f.NoDate {
+			w.Header()["Date"] = nil
+		} else if f.DateSkew != 0 {
+			w.Header().Set("Date", time.Now().Add(f.DateSkew).UTC().Format(http.TimeFormat))
+		}
 		nodes := []map[string]any{}
 		for _, n := range f.nodes {
 			nodes = append(nodes, f.node(n, true))
