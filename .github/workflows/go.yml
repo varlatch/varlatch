@@ -332,10 +332,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    # The race detector's run (go-race) and the cross-platform builds
-    # (go-platforms) run beside this job. G5 alone takes over 10 minutes
-    # since the tailnet matrix and the whole job about 55 with a cold Go
-    # cache; a cancelled job saves no cache, so the limit leaves room: 75.
+    # The race detector's run (go-race), the cross-platform builds
+    # (go-platforms), and G5 with the Headscale tests (go-g5) run beside
+    # this job. A cancelled job saves no cache, so the limit leaves room
+    # for a cold Go cache: 75.
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -449,24 +449,6 @@ jobs:
       - name: Every timing test runs alone
         run: scripts/check-timing-tests.sh
 
-      # G5's damage gate (ADR-0059 G5; internal docs/design/go-step7.md
-      # slice 7.3c; go/server/migration/g5): the migration's Go path through
-      # the varlatchd binary on a seeded installation, every damage of the
-      # bundle stream, its check sections and the imported database failing
-      # at its stage and check, named, a killed import cleared by the next,
-      # and nothing secret printed; its interrupted half (7.4c) and its
-      # reverse half (7.6a: Go's barrier, the reverse export and checks, a
-      # second forward migration reproducing the state, after each kind of
-      # change on Go; varlatch migrate --rollback interrupted at every
-      # phase boundary; --finish and --delete-old-data). Its own step, so the gate's evidence is its own line
-      # in the run.
-      - name: G5, the migration's damage gate
-        working-directory: go
-        env:
-          CGO_ENABLED: "0"
-        # -timeout: go test's default 10m is shorter than the G5 package now.
-        run: go test -count=1 -tags g5 -timeout 25m -run '^TestG5' -v ./server/migration/g5/
-
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's
       # rollback-safety declaration, matches this build's schema version,
@@ -516,49 +498,6 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -tags conformance ./server/outbound
-
-      # A self-hosted control server (ADR-0059 Decision 5 as amended for
-      # step 7.5c; go/server/tailnet/headscaletest): varlatchd's node joins
-      # Headscale 0.29.7 (by digest, in a container named for the run,
-      # unprivileged, its embedded DERP only) on https at an IP address,
-      # tagged by its pre-auth key, and is pinned to it; while Headscale is
-      # unreachable, no bootstrap DNS query. Its tags must be tailnet_tags,
-      # and the identity cases (tagged peer, user's device, self,
-      # unrecognized; StableID = Headscale's node id) hold, in the node and
-      # through varlatchd's tailnet listener and a handoff's node commands
-      # (step 7.5c c3). The restore's take-name on Headscale (c4: a dead
-      # holder renamed away through Headscale's API, its key expired however
-      # the run ends; a live one, and one back before the rename, refused
-      # with nothing renamed) runs here too, server/daemon's
-      # TestHeadscaleTakeName*. Its own build tag: it needs Docker.
-      - name: Headscale, a self-hosted control server
-        working-directory: go
-        env:
-          CGO_ENABLED: "0"
-        run: go test -count=1 -tags headscale -run '^TestHeadscale' -v ./server/tailnet/ ./server/daemon/
-
-      # G5's tailnet half on a self-hosted control server (step 7.5c c2;
-      # go/server/migration/g5/headscale_test.go): varlatch migrate moves
-      # the tailnet name on Headscale 0.29.7, its authority Headscale's API
-      # (a key expiring within the hour, expired by each run) or its CLI;
-      # the rollback gives it back; a handoff killed mid-switch is aborted
-      # (the name back) or resumed (open). No certificates.
-      - name: G5 on Headscale, the tailnet handoff on a self-hosted control server
-        working-directory: go
-        env:
-          CGO_ENABLED: "0"
-        run: go test -count=1 -tags "g5 headscale" -run '^TestG5Headscale' -v ./server/migration/g5/
-
-      # The restore's take-name on Headscale killed at each journalled step
-      # (step 7.5c c4, crashpoint; go/server/daemon/
-      # tailnettakename_headscale_crash_test.go), then run again: resumed
-      # to done, no issuance count. Its other cases run in the Headscale
-      # step above.
-      - name: Headscale, the restore's take-name killed at every step
-        working-directory: go
-        env:
-          CGO_ENABLED: "0"
-        run: go test -count=1 -tags "headscale crashpoint" -run '^TestKillTheHeadscaleTakeoverAtEveryStep$' -v ./server/daemon/
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a
@@ -869,6 +808,111 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-${{ runner.os }}-go-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+
+  # G5's damage gate and the self-hosted control server's tests (Headscale,
+  # G5 on Headscale, the restore's take-name), in a job of their own beside
+  # go: neither needs go's earlier steps (each test builds what it runs;
+  # the dashboard's placeholder is committed). go-ok needs it, so the
+  # required check still covers them. release.yml runs its own G5 for the
+  # release being cut.
+  go-g5:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    # G5's own -timeout is 25 minutes; the Headscale steps add about 10.
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      # Its own cache key (go-g5), so its save never races go's; restored
+      # from go's when it has none of its own yet. Saved, as go's is, by
+      # the nightly run on main only.
+      - name: Restore Go's caches
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-g5-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-g5-${{ hashFiles('go/go.sum') }}-
+            go-${{ runner.os }}-g5-
+            go-${{ runner.os }}-go-${{ hashFiles('go/go.sum') }}-
+
+      # G5's damage gate (ADR-0059 G5; internal docs/design/go-step7.md
+      # slice 7.3c; go/server/migration/g5): the migration's Go path through
+      # the varlatchd binary on a seeded installation, every damage of the
+      # bundle stream, its check sections and the imported database failing
+      # at its stage and check, named, a killed import cleared by the next,
+      # and nothing secret printed; its interrupted half (7.4c) and its
+      # reverse half (7.6a: Go's barrier, the reverse export and checks, a
+      # second forward migration reproducing the state, after each kind of
+      # change on Go; varlatch migrate --rollback interrupted at every
+      # phase boundary; --finish and --delete-old-data). Its own step, so the gate's evidence is its own line
+      # in the run.
+      - name: G5, the migration's damage gate
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        # -timeout: go test's default 10m is shorter than the G5 package now.
+        run: go test -count=1 -tags g5 -timeout 25m -run '^TestG5' -v ./server/migration/g5/
+
+      # A self-hosted control server (ADR-0059 Decision 5 as amended for
+      # step 7.5c; go/server/tailnet/headscaletest): varlatchd's node joins
+      # Headscale 0.29.7 (by digest, in a container named for the run,
+      # unprivileged, its embedded DERP only) on https at an IP address,
+      # tagged by its pre-auth key, and is pinned to it; while Headscale is
+      # unreachable, no bootstrap DNS query. Its tags must be tailnet_tags,
+      # and the identity cases (tagged peer, user's device, self,
+      # unrecognized; StableID = Headscale's node id) hold, in the node and
+      # through varlatchd's tailnet listener and a handoff's node commands
+      # (step 7.5c c3). The restore's take-name on Headscale (c4: a dead
+      # holder renamed away through Headscale's API, its key expired however
+      # the run ends; a live one, and one back before the rename, refused
+      # with nothing renamed) runs here too, server/daemon's
+      # TestHeadscaleTakeName*. Its own build tag: it needs Docker.
+      - name: Headscale, a self-hosted control server
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags headscale -run '^TestHeadscale' -v ./server/tailnet/ ./server/daemon/
+
+      # G5's tailnet half on a self-hosted control server (step 7.5c c2;
+      # go/server/migration/g5/headscale_test.go): varlatch migrate moves
+      # the tailnet name on Headscale 0.29.7, its authority Headscale's API
+      # (a key expiring within the hour, expired by each run) or its CLI;
+      # the rollback gives it back; a handoff killed mid-switch is aborted
+      # (the name back) or resumed (open). No certificates.
+      - name: G5 on Headscale, the tailnet handoff on a self-hosted control server
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags "g5 headscale" -run '^TestG5Headscale' -v ./server/migration/g5/
+
+      # The restore's take-name on Headscale killed at each journalled step
+      # (step 7.5c c4, crashpoint; go/server/daemon/
+      # tailnettakename_headscale_crash_test.go), then run again: resumed
+      # to done, no issuance count. Its other cases run in the Headscale
+      # step above.
+      - name: Headscale, the restore's take-name killed at every step
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags "headscale crashpoint" -run '^TestKillTheHeadscaleTakeoverAtEveryStep$' -v ./server/daemon/
+
+      - name: Save Go's caches
+        if: success() && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-g5-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
 
   # The storage engine is concurrent (writer, checkpointer, snapshots):
   # every package but the installer's under the race detector, in a job of
@@ -1777,7 +1821,7 @@ jobs:
     # and in the merge queue, which go-ok accepts): listed so that a failed
     # nightly run's go-ok is red too, not green beside a red job.
     if: always()
-    needs: [changes, go, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
+    needs: [changes, go, go-g5, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
