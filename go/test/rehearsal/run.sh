@@ -70,7 +70,9 @@
 # over Git (VL_RH_GIT_NAME, a name that leads to the lab Coolify's proxy),
 # with two settings and a mount added to the sidecar: the login server (the
 # run's Headscale, published on docker0's address) and its CA.
-# VL_RH_COOLIFY_TARGET is the Go app's UUID. The run writes the route migrate
+# VL_RH_COOLIFY_TARGET is the Go app's UUID; its paths are the Compose file's
+# defaults, in /srv/varlatch (Coolify ignores the variables), which must not
+# be there: the run makes it, marks it as its own, and removes it. The run writes the route migrate
 # prints to the proxy's dynamic configuration, and removes it.
 #
 # VL_RH_INGRESS=tailnet (a workstation or the box): the tailnet case, the
@@ -220,6 +222,10 @@ cleanup() {
     if [ "$profile" = box ] && [ -n "${VL_RH_PUBLIC_NAME:-}" ] && [ "${VL_RH_INGRESS:-}" = combined ] &&
       grep -qsF "Host(\`$VL_RH_PUBLIC_NAME\`)" /data/coolify/proxy/dynamic/varlatch-rollback.yaml; then
       rm -f /data/coolify/proxy/dynamic/varlatch-rollback.yaml
+    fi
+    # Its Go app's directory, only when this run made it.
+    if [ "$profile" = box ] && [ -e "/srv/varlatch/.vl-rh-$run" ]; then
+      rm -rf /srv/varlatch
     fi
     docker network rm "vl-rh-$run-tailnet" >/dev/null 2>&1 || true
     rm -rf "$root/work/tailnet-net" 2>/dev/null || true

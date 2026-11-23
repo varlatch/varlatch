@@ -47,6 +47,12 @@ const combinedItem = 15
 // routePath is where migrate's route goes (internal/migrate, routePath).
 const routePath = "/data/coolify/proxy/dynamic/varlatch-rollback.yaml"
 
+// goTarget is the Go app's bind paths' directory: what the Compose file's
+// defaults name. Coolify 4.7.6 puts a mount's default in place of its
+// variable (parseDockerVolumeString), so VARLATCH_DATA_DIR, _KEYS_DIR and
+// _CONFIG_FILE move nothing there.
+const goTarget = "/srv/varlatch"
+
 // gitImage serves the run's repository (busybox's httpd).
 const gitImage = "busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
 
@@ -94,6 +100,9 @@ func checkCombinedHost() (bridge string, err error) {
 	}
 	if _, err := os.Lstat(routePath); !os.IsNotExist(err) {
 		return "", fmt.Errorf("%s is there already (%v): another run's route, or the owner's; the run replaces none", routePath, err)
+	}
+	if _, err := os.Lstat(goTarget); !os.IsNotExist(err) {
+		return "", fmt.Errorf("%s is there already (%v): the Go app's paths in the lab Coolify are its, and the run makes them; it replaces none", goTarget, err)
 	}
 	r := run("", nil, nil, "docker", "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}")
 	if bridge = strings.TrimSpace(r.stdout); r.code != 0 || net.ParseIP(bridge) == nil {
@@ -659,13 +668,18 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 		"the tailnet handoff's certificate step is not rehearsed here (B4 on Tailscale is)")
 	f := coolifyFilesFor(t, s3, "vl-rh-combined")
 	w := startTailnetOn(t, bridge)
-	c := &combined{t: t, rel: rel, w: w, f: f, source: filepath.Base(prof.coolifySourceDir), machine: w.machine("combined"), client: &http.Client{Timeout: 10 * time.Second}, target: filepath.Join(f.base, "go"), tsBin: filepath.Join(f.base, "bin")}
+	c := &combined{t: t, rel: rel, w: w, f: f, source: filepath.Base(prof.coolifySourceDir), machine: w.machine("combined"), client: &http.Client{Timeout: 10 * time.Second}, target: goTarget, tsBin: filepath.Join(f.base, "bin")}
 	t.Cleanup(func() {
 		run("", nil, nil, "docker", "rm", "-fv", "vl-rh-"+runID+"-address")
 		if b, err := os.ReadFile(routePath); err == nil && strings.Contains(string(b), "Host(`"+prof.publicName+"`)") {
 			_ = os.Remove(routePath)
 		}
 	})
+	// As /tmp: varlatchd's reach probe, the image's user, makes its own
+	// directory in it.
+	if err := os.Chmod(f.tmp, 0o777|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
 	// The CA where the sidecar's mount and the image's user reach it.
 	caDir := filepath.Join(f.base, "tailnet")
 	if err := os.MkdirAll(caDir, 0o755); err != nil {
@@ -694,7 +708,8 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 		"its domain https://"+prof.publicName+" on varlatch-web, and these variables (the run's images, the secrets as host files, paths only):",
 		strings.TrimSpace(string(digests)), strings.Join(f.lines, "\n  "), "TS_AUTHKEY_HOST_PATH="+authKey,
 		"VARLATCH_TAILNET_NAME="+w.suffix, "VARLATCH_TAILNET_MACHINE="+c.machine, "VARLATCH_PUBLIC_URL=https://"+prof.publicName, "CONVEX_CLOUD_ORIGIN=https://"+prof.publicName+"/convex",
-		"Its resource directory must be "+prof.coolifySourceDir+".")
+		"Its resource directory must be "+prof.coolifySourceDir+".",
+		"When the first deploy fails on convex-supervisor.cjs (Coolify makes an empty directory of it as it reads the file): rmdir that, deploy again.")
 
 	// Production's layout.
 	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "docker-compose.coolify-tailscale.yml", ".env"} {
@@ -719,7 +734,19 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 	c.record("the source app serves 0.23.0 at the public URL", true, before)
 	c.name("the tailnet name is the sidecar's", isTS)
 
-	// The target, in setup mode.
+	// The target, in setup mode, in a directory of this run's (its mark).
+	if err := os.Mkdir(c.target, 0o711); err != nil {
+		t.Fatal(err)
+	}
+	mark := filepath.Join(c.target, ".vl-rh-"+runID)
+	t.Cleanup(func() {
+		if _, err := os.Stat(mark); err == nil && os.Getenv("VL_RH_KEEP") != "1" {
+			_ = os.RemoveAll(c.target)
+		}
+	})
+	if err := os.WriteFile(mark, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, d := range []string{"data", "keys"} {
 		if err := os.MkdirAll(filepath.Join(c.target, d), 0o700); err != nil {
 			t.Fatal(err)
@@ -759,7 +786,7 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 	pause(t, "target-app",
 		"In the same project, make the Go app "+prof.coolifyTarget+" ready, from this checkout's infra/coolify/varlatchd.compose.yml (Base Directory /, no domain), in setup mode: do not deploy it. Its variables:",
 		"VARLATCH_IMAGE_REGISTRY="+strings.TrimSuffix(repository[:strings.LastIndex(repository, ":")], "/varlatchd"), "VARLATCH_VARLATCHD_DIGEST="+digest,
-		"VARLATCH_DATA_DIR="+filepath.Join(c.target, "data"), "VARLATCH_KEYS_DIR="+keys, "VARLATCH_CONFIG_FILE="+c.conf, "SSL_CERT_FILE=/keys/go-roots.pem")
+		"SSL_CERT_FILE=/keys/go-roots.pem (its paths are the file's defaults, in "+c.target+")")
 
 	// The forward migration: killed once at its transfer, resumed.
 	measure("item 15: the source's addresses before", c.addresses())
