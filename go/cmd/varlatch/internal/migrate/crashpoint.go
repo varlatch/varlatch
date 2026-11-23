@@ -7,6 +7,7 @@ package migrate
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // Crash points for G5's interruption gate (go test -tags g5, which builds
@@ -77,6 +78,12 @@ func crashPoint(point string) {
 	if point == cp.pause {
 		fmt.Fprintf(cp.log, "paused %s\n", point)
 		_ = cp.log.Sync()
-		select {}
+		// Asleep on a timer, not in select {}: with every other goroutine
+		// blocked, the runtime ends a program that has none
+		// ("all goroutines are asleep - deadlock!") before the kill comes
+		// (rehearsal r16b and r16c, the kill at "transfer started").
+		for {
+			time.Sleep(time.Hour)
+		}
 	}
 }

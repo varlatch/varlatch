@@ -61,6 +61,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 )
@@ -156,7 +157,39 @@ func New(o Options) *Service {
 // Status is the backup status (backupStatus): the archives' records,
 // newest first, and the warnings.
 func (s *Service) Status() (backup.Status, error) {
-	return backup.ReadStatus(s.dir, s.o.Now())
+	life, err := s.lifecycle(context.Background())
+	if err != nil {
+		return backup.Status{}, err
+	}
+	return backup.ReadStatusFor(s.dir, s.o.Now(), life)
+}
+
+// lifecycle is the live database's (backup.Lifecycle): its installation
+// and schema_version's created_at. Without a store (or before the
+// installation exists), the zero one: every record counts.
+func (s *Service) lifecycle(ctx context.Context) (backup.Lifecycle, error) {
+	if s.o.Store == nil {
+		return backup.Lifecycle{}, nil
+	}
+	return ReadLifecycle(ctx, s.o.Store.Reader())
+}
+
+// ReadLifecycle reads the database's lifecycle (backup.Lifecycle): its
+// installation (none yet: no installation filter) and when the database
+// was made, which a migration's import is.
+func ReadLifecycle(ctx context.Context, db query.DBTX) (backup.Lifecycle, error) {
+	var life backup.Lifecycle
+	var created int64
+	if err := db.QueryRowContext(ctx, "SELECT created_at FROM schema_version").Scan(&created); err != nil {
+		return life, fmt.Errorf("backup: the database's schema_version: %w", err)
+	}
+	life.Since = time.UnixMicro(created).UTC()
+	switch err := db.QueryRowContext(ctx, "SELECT id FROM installation").Scan(&life.InstallationID); {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return life, fmt.Errorf("backup: the database's installation: %w", err)
+	}
+	return life, nil
 }
 
 // StatusJSON is Status as JSON, for getInstallationBackups.
@@ -837,14 +870,24 @@ func (s *Service) Loop(ctx context.Context) {
 func (s *Service) tick(ctx context.Context) time.Duration {
 	interval := s.o.Config.BackupInterval
 	now := s.o.Now()
-	if st, err := s.Status(); err != nil {
+	// Only this database's archives count (backup.Lifecycle): an earlier
+	// one's, kept through a migration rolled back and made again, says
+	// nothing of whether this one's backups are recent.
+	life, err := s.lifecycle(ctx)
+	if err != nil {
+		s.o.Log.Warn("backup: the database's lifecycle cannot be read; taking a backup", "error", err)
+	} else if st, err := backup.ReadStatusFor(s.dir, now, life); err != nil {
 		s.o.Log.Warn("backup: the status records cannot be read; taking a backup", "error", err)
 	} else {
 		// The newest archive not dated in the future decides. One from the
 		// future means the clock moved back: its age says nothing, so with
 		// no other recent archive a backup is taken now, not once the clock
 		// has caught up with it.
+		life = life.At(now)
 		for _, a := range st.Archives {
+			if !life.Holds(a) {
+				continue
+			}
 			created, err := time.Parse(time.RFC3339Nano, a.CreatedAt)
 			if err != nil {
 				continue

@@ -28,24 +28,6 @@ import (
 // tailnet listener's identity cases, against Headscale in a container
 // (ADR-0059 Decision 5 and amendment 11; step 7.5c c3).
 
-var headscaleCA *headscaletest.CA
-
-func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "headscaletest-ca-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	// Before anything in the process uses TLS: Go reads the roots once.
-	if headscaleCA, err = headscaletest.Trust(dir); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	_ = os.RemoveAll(dir)
-	os.Exit(code)
-}
-
 // hsPeer is a client node on Headscale, tagged (or not) by its key.
 func hsPeer(t *testing.T, ctx context.Context, hs *headscaletest.Server, name, key string) *tsnet.Server {
 	t.Helper()

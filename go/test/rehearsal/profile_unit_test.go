@@ -13,7 +13,8 @@ import (
 
 // TestProfileRefusals: the profile's checks, without a container. The box
 // runs as root; the Coolify case needs its release variables and the
-// candidate checkout's Coolify files before anything starts.
+// candidate checkout's Coolify files before anything starts; B6 needs an
+// archive and its keys on this host, by path.
 func TestProfileRefusals(t *testing.T) {
 	dir := t.TempDir()
 	defer func(r, ts string) { releaseDir, tsCheckout = r, ts }(releaseDir, tsCheckout)
@@ -38,7 +39,8 @@ func TestProfileRefusals(t *testing.T) {
 		t.Setenv("VL_RH_INGRESS", "")
 		for _, c := range []struct{ only, kill, sync, want string }{
 			{"kill", "", "", "VL_RH_ONLY=kill needs VL_RH_KILL"},
-			{"everything", "", "", "VL_RH_ONLY is setup, kill or sync"},
+			{"everything", "", "", "VL_RH_ONLY is setup, kill, sync or bundle"},
+			{"bundle", "", "", "VL_RH_BUNDLE_OUT, an absolute path"},
 			{"kill", "transfer", "", ""},
 			{"setup", "", "", ""},
 			{"sync", "", "", "VL_RH_ONLY=sync needs VL_RH_SYNC=fakes"},
@@ -73,6 +75,60 @@ func TestProfileRefusals(t *testing.T) {
 			if c.want == "" && p.sync != c.sync {
 				t.Errorf("VL_RH_SYNC=%s read as %q", c.sync, p.sync)
 			}
+		}
+	})
+	t.Run("B6: the restored archive and its keys", func(t *testing.T) {
+		t.Setenv("VL_RH_PROFILE", "")
+		t.Setenv("VL_RH_INGRESS", "")
+		t.Setenv("VL_RH_ONLY", "")
+		t.Setenv("VL_RH_KILL", "")
+		archive, bek, kek := filepath.Join(dir, "b6", "archive.vltbak"), filepath.Join(dir, "b6", "backup-key"), filepath.Join(dir, "b6", "root-kek")
+		if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{archive, bek, kek} {
+			if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, c := range []struct{ source, bek, kek, ingress, want string }{
+			{"restore:https://backups.example/a.vltbak", bek, kek, "", "the harness fetches nothing"},
+			{"restore:a.vltbak", bek, kek, "", "absolute path"},
+			{"restore:" + archive, "", kek, "", "VL_RH_RESTORE_BEK"},
+			{"restore:" + archive, bek, "", "", "VL_RH_RESTORE_KEK"},
+			{"restore:" + filepath.Join(dir, "b6", "none"), bek, kek, "", "no such file"},
+			{"restore:" + filepath.Dir(archive), bek, kek, "", "not a regular file"},
+			{"restore:" + archive, bek, kek, "", ""},
+		} {
+			t.Setenv("VL_RH_SOURCE", c.source)
+			t.Setenv("VL_RH_RESTORE_BEK", c.bek)
+			t.Setenv("VL_RH_RESTORE_KEK", c.kek)
+			p, err := readProfile(1000)
+			if (c.want == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s: %v, want %q", c.source, err, c.want)
+			}
+			if c.want == "" && (p.restore != archive || p.restoreBEK != bek || p.restoreKEK != kek) {
+				t.Errorf("%+v", p)
+			}
+		}
+		t.Setenv("VL_RH_SOURCE", "restore:"+archive)
+		t.Setenv("VL_RH_RESTORE_BEK", bek)
+		t.Setenv("VL_RH_RESTORE_KEK", kek)
+		if err := os.Chmod(kek, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readProfile(1000); err == nil || !strings.Contains(err.Error(), "readable by others") {
+			t.Errorf("a key readable by others: %v", err)
+		}
+		t.Setenv("VL_RH_SOURCE", "")
+		t.Setenv("VL_RH_ONLY", "bundle")
+		t.Setenv("VL_RH_BUNDLE_OUT", filepath.Dir(archive))
+		if _, err := readProfile(1000); err == nil || !strings.Contains(err.Error(), "is not empty") {
+			t.Errorf("VL_RH_ONLY=bundle into a directory with files: %v", err)
+		}
+		t.Setenv("VL_RH_BUNDLE_OUT", filepath.Join(dir, "out"))
+		if p, err := readProfile(1000); err != nil || p.bundleOut != filepath.Join(dir, "out") {
+			t.Errorf("VL_RH_ONLY=bundle: %+v, %v", p, err)
 		}
 	})
 	t.Run("the box not as root", func(t *testing.T) {

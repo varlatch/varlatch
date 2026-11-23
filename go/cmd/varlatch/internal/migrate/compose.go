@@ -231,7 +231,15 @@ func (c *Compose) outboundAllow(ctx context.Context) (value string, fromConfig b
 	if err != nil {
 		return "", false, err
 	}
-	if ids := strings.Fields(string(r.Answer)); r.Code == 0 && len(ids) == 1 {
+	ids := strings.Fields(string(r.Answer))
+	switch {
+	case r.Code != 0:
+		// Not "not running": Docker did not say.
+		return "", false, fmt.Errorf("docker compose ps -q %s failed (exit %d), so migrate cannot tell whether the source's %s runs: its %s cannot be read", service, r.Code, service, outboundEnv)
+	case len(ids) > 1:
+		return "", false, fmt.Errorf("docker compose ps -q %s names %d running containers (%s): a migration takes an installation with one %s; its %s cannot be read", service, len(ids), strings.Join(ids, ", "), service, outboundEnv)
+	}
+	if len(ids) == 1 {
 		r, err := c.docker(ctx, []string{"inspect", "--format", "{{json .Config.Env}}", ids[0]}, nil)
 		if err != nil {
 			return "", false, err
@@ -251,8 +259,18 @@ func (c *Compose) outboundAllow(ctx context.Context) (value string, fromConfig b
 	if err != nil {
 		return "", true, err
 	}
+	if r.Code != 0 {
+		// Its output is not said: with the variables resolved, it can
+		// hold any value of the installation's.
+		hint := "run docker compose config in " + c.Directory + " to see why"
+		if said := strings.ToLower(string(r.Said)); strings.Contains(said, "variable") &&
+			(strings.Contains(said, "not set") || strings.Contains(said, "missing a value") || strings.Contains(said, "required")) {
+			hint = "a variable the Compose files need is unset (docker compose config in " + c.Directory + " names it)"
+		}
+		return "", true, fmt.Errorf("docker compose config failed (exit %d; %s), with the source's %s not running: its %s cannot be read", r.Code, hint, service, outboundEnv)
+	}
 	var m composeConfig
-	if r.Code != 0 || json.Unmarshal(bytes.TrimSpace(r.Answer), &m) != nil {
+	if json.Unmarshal(bytes.TrimSpace(r.Answer), &m) != nil {
 		return "", true, fmt.Errorf("docker compose config did not give the %s service's environment: its %s cannot be read", service, outboundEnv)
 	}
 	if v := m.Services[service].Environment[outboundEnv]; v != nil {

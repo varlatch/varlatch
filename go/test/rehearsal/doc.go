@@ -16,6 +16,11 @@
 // runs as this binary's child under the name systemctl, as in G5) and the
 // operator's reverse proxy (a loopback proxy to the dashboard's port).
 //
+// B6 (VL_RH_SOURCE=restore:<archive>, restore_test.go) runs the migration
+// on an installation restored from a backup archive the operator copied to
+// the host with its keys, never fetched by the harness; VL_RH_ONLY=bundle
+// makes a synthetic production-shaped archive for it.
+//
 // It runs by hand, never in CI: run.sh builds the binaries and the images
 // and runs this package's test binary on the host with Docker. Every
 // container, network and volume it makes is named vl-rh-<run>-..., and is

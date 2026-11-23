@@ -279,6 +279,10 @@ type Headscale struct {
 	KeyExpires time.Time
 	// RewriteRename, when set, turns a requested name into the one stored.
 	RewriteRename func(string) string
+	// DateSkew moves the listing's Date header off this host's clock; NoDate
+	// omits the Date header.
+	DateSkew time.Duration
+	NoDate   bool
 
 	mu          sync.Mutex
 	nodes       []*Node
@@ -338,6 +342,17 @@ func (f *Headscale) KeyExpired() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.expired
+}
+
+// SetPresence updates a node's online flag and last-seen time.
+func (f *Headscale) SetPresence(id string, online bool, lastSeen time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, n := range f.nodes {
+		if n.ID == id {
+			n.Online, n.LastSeen = online, lastSeen
+		}
+	}
 }
 
 func (f *Headscale) node(n *Node, camel bool) map[string]any {
@@ -422,6 +437,11 @@ func (f *Headscale) serve(w http.ResponseWriter, r *http.Request) {
 		f.expired = true
 		writeJSON(w, http.StatusOK, map[string]any{})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/node":
+		if f.NoDate {
+			w.Header()["Date"] = nil
+		} else if f.DateSkew != 0 {
+			w.Header().Set("Date", time.Now().Add(f.DateSkew).UTC().Format(http.TimeFormat))
+		}
 		nodes := []map[string]any{}
 		for _, n := range f.nodes {
 			nodes = append(nodes, f.node(n, true))

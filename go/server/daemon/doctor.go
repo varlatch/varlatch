@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/custody"
 	"github.com/varlatch/varlatch/go/server/doctor"
@@ -138,6 +139,9 @@ func runDoctorLive(ctx context.Context, env *hostEnv, rest []string, stdout, std
 	live.Schema, live.KEK, live.Installation = b.Ready(ctx)
 	if live.Installation {
 		live.InstallationID, _ = b.InstallationID(ctx)
+		if life, err := backups.ReadLifecycle(ctx, env.store.Reader()); err == nil {
+			live.DatabaseCreatedAt = life.Since.Format(time.RFC3339Nano)
+		}
 	}
 	if env.admission != nil {
 		live.Maintenance = env.admission.Isolated()

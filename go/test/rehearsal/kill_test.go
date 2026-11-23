@@ -22,11 +22,12 @@ var killPoints = map[string]string{"barrier": "barrier held", "transfer": "trans
 
 // killCase (VL_RH_KILL): a migration killed (SIGKILL) where the
 // crashpoint build pauses, then --status and --abort, on a fresh
-// installation: the source must answer again as it was.
+// installation (B6: the archive restored again): the source must answer
+// again as it was.
 func killCase(t *testing.T, rel release, s3 *s3Server) {
 	const item = 12
 	point := killPoints[prof.kill]
-	in := newInstallation(t, rel, s3, "kill-"+prof.kill)
+	in := newSource(t, rel, s3, "kill-"+prof.kill)
 	registerSecrets(in)
 	log := filepath.Join(in.state, "crashpoints.log")
 	cmd := exec.Command(filepath.Join(binDir, "varlatch"), in.migrateArgs()...)
@@ -61,6 +62,9 @@ func killCase(t *testing.T, rel release, s3 *s3Server) {
 		<-done
 	}
 	record(t, item, "killed at "+point, reached, lastLines(out.String(), 3))
+	if o := out.String(); strings.Contains(o, "panic:") || strings.Contains(o, "goroutine ") {
+		measure(fmt.Sprintf("item %d: migrate's output before the kill at %s (a stack in it)", item, point), lastLines(o, 60))
+	}
 	if !reached {
 		return
 	}
