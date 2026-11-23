@@ -127,16 +127,37 @@ func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 	if info.Release == "" {
 		info.Release = strings.TrimPrefix(img.Tag, "v")
 	}
-	// The digest of the image's own repository, not of another name the
-	// same image was pulled under.
-	for _, d := range inspect.RepoDigests {
-		repo, digest, ok := strings.Cut(d, "@")
-		if ok && repo == img.Repository && strings.HasPrefix(digest, "sha256:") {
-			info.Digest, info.DigestRepository = digest, repo
-			break
+	info.Digest, info.DigestRepository = repoDigest(inspect.RepoDigests, img.Repository, releasePin())
+	return info, nil
+}
+
+// repoDigest is the registry digest an image is checked by, of the
+// repository and digest pairs Docker lists for it (RepoDigests, in no
+// order that means anything): the pinned image's when the image is it
+// (pulled by tag and by digest, an index and a platform's manifest, under
+// several names), else the first of the pinned repository, else the
+// first of the name it runs under. A digest of another repository is
+// never taken for the pinned one's: the pin compares both.
+func repoDigest(repoDigests []string, running string, pin imagePin) (digest, repository string) {
+	var ofPin, ofRunning [2]string
+	for _, d := range repoDigests {
+		repo, dig, ok := strings.Cut(d, "@")
+		if !ok || !strings.HasPrefix(dig, "sha256:") {
+			continue
+		}
+		switch {
+		case repo == pin.Repository && dig == pin.Digest:
+			return dig, repo
+		case repo == pin.Repository && ofPin[0] == "":
+			ofPin = [2]string{dig, repo}
+		case repo == running && ofRunning[0] == "":
+			ofRunning = [2]string{dig, repo}
 		}
 	}
-	return info, nil
+	if ofPin[0] != "" {
+		return ofPin[0], ofPin[1]
+	}
+	return ofRunning[0], ofRunning[1]
 }
 
 // Gate is the source's gate (`admin migration status`).
@@ -196,6 +217,68 @@ func (c *Compose) envFile() (map[string]string, error) {
 	return out, nil
 }
 
+// outboundEnv is the source's outbound allow list's variable.
+const outboundEnv = "VARLATCH_OUTBOUND_ALLOW"
+
+// outboundAllow is the source's outbound allow list, the value Compose
+// gave varlatchd (from .env, the shell or an overlay, its own way with
+// quotes and comments): the running container's environment (docker
+// inspect), else, the service not running, `docker compose config` with
+// interpolation (fromConfig). Only this variable is read of either: no
+// other value is kept, and no error carries their output.
+func (c *Compose) outboundAllow(ctx context.Context) (value string, fromConfig bool, err error) {
+	r, err := c.docker(ctx, []string{"compose", "ps", "-q", service}, nil)
+	if err != nil {
+		return "", false, err
+	}
+	ids := strings.Fields(string(r.Answer))
+	switch {
+	case r.Code != 0:
+		// Not "not running": Docker did not say.
+		return "", false, fmt.Errorf("docker compose ps -q %s failed (exit %d), so migrate cannot tell whether the source's %s runs: its %s cannot be read", service, r.Code, service, outboundEnv)
+	case len(ids) > 1:
+		return "", false, fmt.Errorf("docker compose ps -q %s names %d running containers (%s): a migration takes an installation with one %s; its %s cannot be read", service, len(ids), strings.Join(ids, ", "), service, outboundEnv)
+	}
+	if len(ids) == 1 {
+		r, err := c.docker(ctx, []string{"inspect", "--format", "{{json .Config.Env}}", ids[0]}, nil)
+		if err != nil {
+			return "", false, err
+		}
+		var env []string
+		if r.Code != 0 || json.Unmarshal(bytes.TrimSpace(r.Answer), &env) != nil {
+			return "", false, fmt.Errorf("docker inspect did not give the %s container's environment: its %s cannot be read", service, outboundEnv)
+		}
+		for _, kv := range env {
+			if name, v, ok := strings.Cut(kv, "="); ok && name == outboundEnv {
+				value = v // the last of a name holds, as in the process
+			}
+		}
+		return strings.TrimSpace(value), false, nil
+	}
+	r, err = c.docker(ctx, []string{"compose", "config", "--format", "json"}, nil)
+	if err != nil {
+		return "", true, err
+	}
+	if r.Code != 0 {
+		// Its output is not said: with the variables resolved, it can
+		// hold any value of the installation's.
+		hint := "run docker compose config in " + c.Directory + " to see why"
+		if said := strings.ToLower(string(r.Said)); strings.Contains(said, "variable") &&
+			(strings.Contains(said, "not set") || strings.Contains(said, "missing a value") || strings.Contains(said, "required")) {
+			hint = "a variable the Compose files need is unset (docker compose config in " + c.Directory + " names it)"
+		}
+		return "", true, fmt.Errorf("docker compose config failed (exit %d; %s), with the source's %s not running: its %s cannot be read", r.Code, hint, service, outboundEnv)
+	}
+	var m composeConfig
+	if json.Unmarshal(bytes.TrimSpace(r.Answer), &m) != nil {
+		return "", true, fmt.Errorf("docker compose config did not give the %s service's environment: its %s cannot be read", service, outboundEnv)
+	}
+	if v := m.Services[service].Environment[outboundEnv]; v != nil {
+		value = *v
+	}
+	return strings.TrimSpace(value), true, nil
+}
+
 // kekPath is the source's Root KEK file on this host: KEKFile, else .env's
 // VARLATCH_KEK_HOST_PATH (relative to Directory), else secrets/varlatch-kek, as
 // the Compose file has it.
@@ -219,14 +302,18 @@ func (c *Compose) kekPath() (string, error) {
 
 // Ingress reads the installation's .env as its Compose files do: the
 // public URL (VARLATCH_PUBLIC_URL), the Caddy overlay in COMPOSE_FILE
-// (public ingress), and the dashboard's published address
-// (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default).
-func (c *Compose) Ingress(context.Context) (IngressInfo, error) {
+// (public ingress), the dashboard's published address
+// (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default); and the
+// outbound allow list as varlatchd has it (outboundAllow).
+func (c *Compose) Ingress(ctx context.Context) (IngressInfo, error) {
 	env, err := c.envFile()
 	if err != nil {
 		return IngressInfo{}, err
 	}
 	info := IngressInfo{PublicURL: env["VARLATCH_PUBLIC_URL"]}
+	if info.OutboundAllow, info.OutboundAllowFromConfig, err = c.outboundAllow(ctx); err != nil {
+		return IngressInfo{}, err
+	}
 	for _, f := range strings.Split(env["COMPOSE_FILE"], string(os.PathListSeparator)) {
 		if filepath.Base(strings.TrimSpace(f)) == "docker-compose.caddy.yml" {
 			info.Caddy = true
@@ -258,25 +345,76 @@ func ingressService(kind Ingress) (string, error) {
 // StopIngress is `docker compose stop` of the service that serves the
 // address (idempotent).
 func (c *Compose) StopIngress(ctx context.Context, kind Ingress) error {
-	return c.ingress(ctx, "stop", kind)
+	return c.ingress(ctx, []string{"stop"}, kind)
 }
 
-// StartIngress is `docker compose start` of it.
-func (c *Compose) StartIngress(ctx context.Context, kind Ingress) error {
-	return c.ingress(ctx, "start", kind)
-}
-
-func (c *Compose) ingress(ctx context.Context, verb string, kind Ingress) error {
+// StartIngress is `docker compose up -d --no-deps` of it, recreating it
+// (--force-recreate) unless its container serves (containerServes), and
+// always with recreate. A start that failed (its port held, 7.8b
+// rehearsal run r13) leaves the container with no network, which `docker
+// compose start` reuses: the dashboard then cannot resolve varlatchd and
+// never answers. Such a container can still be running (Caddy resolves
+// its upstream per request, so it runs and answers 502), or be caught
+// running between restarts. Both services are stateless (the dashboard is
+// nginx in front of varlatchd; Caddy keeps its certificates in its
+// volumes), and the new container comes from the same Compose project, so
+// recreating changes nothing of the installation. One that serves is left
+// as it is (a retry would otherwise kill a dashboard still starting, or
+// drop Caddy's connections). --no-deps: the services they depend on run
+// already, and varlatch-migrate's one-off is not run again.
+func (c *Compose) StartIngress(ctx context.Context, kind Ingress, recreate bool) error {
 	svc, err := ingressService(kind)
 	if err != nil {
 		return err
 	}
-	r, err := c.docker(ctx, []string{"compose", verb, svc}, nil)
+	if !recreate {
+		serves, err := c.containerServes(ctx, svc)
+		if err != nil {
+			return err
+		}
+		if serves {
+			return c.ingress(ctx, []string{"up", "-d", "--no-deps"}, kind)
+		}
+	}
+	return c.ingress(ctx, []string{"up", "-d", "--no-deps", "--force-recreate"}, kind)
+}
+
+// containerFormat is what containerServes reads of a container.
+const containerFormat = "{{.State.Status}} {{.State.Restarting}} {{.RestartCount}} {{len .NetworkSettings.Networks}}"
+
+// containerServes reports whether the service's one container is running,
+// not restarting, never restarted by its restart policy (a crash loop can
+// be caught running), and attached to a network. Anything else, or what
+// Docker cannot say, is a container to recreate.
+func (c *Compose) containerServes(ctx context.Context, svc string) (bool, error) {
+	r, err := c.docker(ctx, []string{"compose", "ps", "-a", "-q", svc}, nil)
+	if err != nil {
+		return false, err
+	}
+	ids := strings.Fields(string(r.Answer))
+	if r.Code != 0 || len(ids) != 1 {
+		return false, nil
+	}
+	r, err = c.docker(ctx, []string{"inspect", "--format", containerFormat, ids[0]}, nil)
+	if err != nil {
+		return false, err
+	}
+	f := strings.Fields(string(r.Answer))
+	return r.Code == 0 && len(f) == 4 && f[0] == "running" && f[1] == "false" && f[2] == "0" && f[3] != "0", nil
+}
+
+func (c *Compose) ingress(ctx context.Context, verb []string, kind Ingress) error {
+	svc, err := ingressService(kind)
+	if err != nil {
+		return err
+	}
+	args := append(append([]string{"compose"}, verb...), svc)
+	r, err := c.docker(ctx, args, nil)
 	if err != nil {
 		return err
 	}
 	if r.Code != 0 {
-		return failure("docker compose "+verb+" "+svc, r)
+		return failure("docker "+strings.Join(args, " "), r)
 	}
 	return nil
 }
@@ -420,10 +558,8 @@ func (c *Compose) Export(ctx context.Context, runKey []byte, dryRun bool) (strin
 const ExportSummaryPrefix = "varlatch-export-summary: "
 
 // export runs the export with the command prefix gives (exec into the
-// running daemon's container, or a one-off one). The bundle streams into
-// a .partial beside its name, renamed to it only once the export ended
-// with status 0 and its summary: a killed run leaves the .partial, which
-// CleanLeftovers removes, and never a bundle.
+// running daemon's container, or a one-off one), into a new name in the
+// installation's backups directory (receiveBundle).
 func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix func(...string) []string) (string, error) {
 	suffix := make([]byte, 6)
 	if _, err := rand.Read(suffix); err != nil {
@@ -431,18 +567,39 @@ func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix
 	}
 	backups := filepath.Join(c.Directory, "backups")
 	host := filepath.Join(backups, "migration-"+hex.EncodeToString(suffix)+".jsonl")
-	partial := host + ".partial"
-	out, err := createOwned(partial, backups)
-	if err != nil {
-		return "", fmt.Errorf("the bundle in the installation's backups directory: %w", err)
-	}
 	args := []string{"migration", "export", "--out", "-", "--digests"}
 	if dryRun {
 		args = append(args, "--dry-run")
 	}
+	err := receiveBundle(ctx, "the source's migration export", host, runKey, func(ctx context.Context, in io.Reader, out io.Writer) (Ran, error) {
+		return c.stream(ctx, prefix(args...), in, out)
+	})
+	if err != nil {
+		return "", err
+	}
+	return host, nil
+}
+
+// receiveBundle runs an export that writes its bundle on its standard
+// output (the last TypeScript release's `admin migration export --out -`),
+// the run key line on its input, into path on this host: mode 0600, owned
+// as path's directory is when this process is root. The bundle streams
+// into a .partial beside path, never held in memory, and is renamed to
+// path only once the export ended with status 0 and its summary (the last
+// line of its standard error, ExportSummaryPrefix and a JSON object); the
+// rename is then made durable. Anything else removes the .partial: a
+// killed run leaves only it (CleanLeftovers, the converter's scratch), and
+// never a bundle. what names the export in its failure.
+func receiveBundle(ctx context.Context, what, path string, runKey []byte, run func(ctx context.Context, in io.Reader, out io.Writer) (Ran, error)) error {
+	dir := filepath.Dir(path)
+	partial := path + ".partial"
+	out, err := createOwned(partial, dir)
+	if err != nil {
+		return fmt.Errorf("the bundle in %s: %w", dir, err)
+	}
 	key := RunKeyText(runKey)
 	defer clear(key)
-	r, err := c.stream(ctx, prefix(args...), bytes.NewReader(key), out)
+	r, err := run(ctx, bytes.NewReader(key), out)
 	if serr := out.Sync(); err == nil && serr != nil {
 		err = serr
 	}
@@ -450,25 +607,25 @@ func (c *Compose) export(ctx context.Context, runKey []byte, dryRun bool, prefix
 		err = cerr
 	}
 	if err == nil && r.Code != 0 {
-		err = failure("the source's migration export", r)
+		err = failure(what, r)
 	}
 	if err == nil && !exportSummary(r.Said) {
-		err = errors.New("the source's migration export ended without its summary: the bundle it wrote is not taken")
+		err = fmt.Errorf("%s ended without its summary: the bundle it wrote is not taken", what)
 	}
 	if err == nil {
-		err = os.Rename(partial, host)
+		err = os.Rename(partial, path)
 	}
 	if err != nil {
 		_ = os.Remove(partial)
-		return "", err
+		return err
 	}
 	// The rename made durable, as writeJournal's is: the bundle the
 	// journal will name is there after a crash.
-	if err := syncDir(backups); err != nil {
-		_ = os.Remove(host)
-		return "", err
+	if err := syncDir(dir); err != nil {
+		_ = os.Remove(path)
+		return err
 	}
-	return host, nil
+	return nil
 }
 
 // syncDir makes a directory's entries durable (a rename into it).

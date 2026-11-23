@@ -102,9 +102,69 @@ func (c *Compose) projectName(ctx context.Context) (string, error) {
 type composeConfig struct {
 	Name     string `json:"name"`
 	Services map[string]struct {
-		NetworkMode string             `json:"network_mode"`
-		Environment map[string]*string `json:"environment"`
+		NetworkMode string     `json:"network_mode"`
+		Environment composeEnv `json:"environment"`
 	} `json:"services"`
+}
+
+// composeEnv is a service's environment as `docker compose config --format
+// json` prints it: a map ({"A": "1", "B": null}), or, when the Compose file
+// writes it as a list (- A=1) or an overlay merges one in, a list
+// (["A=1", "B"]), as Compose 5.6 does. A name without a value (null, or a
+// list entry without =) is taken from the shell when Compose runs, so it
+// is nil here: not set. A map's unquoted number or boolean (PORT: 8080,
+// TS_USERSPACE: false) is a JSON number or boolean there: its text is the
+// value, as the container gets it.
+type composeEnv map[string]*string
+
+func (e *composeEnv) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if bytes.Equal(b, []byte("null")) {
+		*e = nil
+		return nil
+	}
+	if len(b) > 0 && b[0] == '[' {
+		var list []string
+		if err := json.Unmarshal(b, &list); err != nil {
+			return err
+		}
+		m := composeEnv{}
+		for _, kv := range list {
+			name, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				m[name] = nil
+				continue
+			}
+			m[name] = &v
+		}
+		*e = m
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	m := composeEnv{}
+	for name, v := range raw {
+		v = bytes.TrimSpace(v)
+		switch {
+		case bytes.Equal(v, []byte("null")):
+			m[name] = nil
+		case len(v) > 0 && v[0] == '"':
+			var str string
+			if err := json.Unmarshal(v, &str); err != nil {
+				return err
+			}
+			m[name] = &str
+		case bytes.Equal(v, []byte("true")), bytes.Equal(v, []byte("false")), len(v) > 0 && (v[0] == '-' || v[0] >= '0' && v[0] <= '9'):
+			str := string(v)
+			m[name] = &str
+		default:
+			return fmt.Errorf("the environment's %s is neither a value nor null", name)
+		}
+	}
+	*e = m
+	return nil
 }
 
 func (c *Compose) config(ctx context.Context) (composeConfig, error) {
@@ -116,7 +176,10 @@ func (c *Compose) config(ctx context.Context) (composeConfig, error) {
 		return composeConfig{}, errors.New("docker compose config failed: the installation's Compose project could not be read")
 	}
 	var m composeConfig
-	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &m); err != nil || m.Name == "" || strings.ContainsAny(m.Name, "/ \t\n") {
+	if err := json.Unmarshal(bytes.TrimSpace(r.Answer), &m); err != nil {
+		return composeConfig{}, fmt.Errorf("docker compose config answered with a configuration migrate cannot read: %v", err)
+	}
+	if m.Name == "" || strings.ContainsAny(m.Name, "/ \t\n") {
 		return composeConfig{}, errors.New("docker compose config did not name the installation's Compose project")
 	}
 	return m, nil
@@ -334,8 +397,10 @@ func (c *Compose) ImportReverse(ctx context.Context, bundle string) (TSImportRec
 	}
 	defer in.Close()
 	answer := &tail{n: importAnswerLimit}
+	// The service's image runs its entrypoint (node dist/cli.js): run's
+	// command is the CLI's arguments only.
 	r, err := c.stream(ctx, []string{"compose", "--profile", reverseProfile, "run", "--rm", "-T", "varlatch-reverse-import",
-		"node", "dist/cli.js", "admin", "migration", "import", "--in", "-"}, in, answer)
+		"admin", "migration", "import", "--in", "-"}, in, answer)
 	if err != nil {
 		return TSImportRecord{}, err
 	}
@@ -359,9 +424,11 @@ func (c *Compose) ResetConvex(ctx context.Context) error {
 }
 
 // oneOff is the TypeScript CLI in a one-off container of the varlatchd
-// service, its daemon not started.
+// service, its daemon not started. Unlike exec, run keeps the image's
+// entrypoint (node dist/cli.js), so its command is the CLI's arguments
+// only (rehearsal r16d: "Unknown command: node").
 func oneOff(args ...string) []string {
-	return append([]string{"compose", "run", "--rm", "-T", "--no-deps", service, "node", "dist/cli.js", "admin"}, args...)
+	return append([]string{"compose", "run", "--rm", "-T", "--no-deps", service, "admin"}, args...)
 }
 
 // ExportForCheck is `admin migration export --dry-run --digests` of the
@@ -379,7 +446,7 @@ func (c *Compose) StartServing(ctx context.Context, kind Ingress) error {
 	if kind == Coolify {
 		return nil
 	}
-	return c.StartIngress(ctx, kind)
+	return c.StartIngress(ctx, kind, false)
 }
 
 // StopServing: the shape's ingress, then varlatchd.

@@ -311,7 +311,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   nothing. `.github/workflows/published-release.yml` (step 6.1b) checks a
   published release of the Go line as people install it, on Linux, macOS
   and Windows (`install/published_test.go`, G8's published-asset half):
-  after the Release workflow publishes a prerelease, or by hand for any.
+  after the Release workflow publishes a release (a prerelease or a final
+  one), or by hand for any.
 - `image/` (step 6, slice 6.10a): the single-container image, varlatchd
   and the CLI in one distroless image for linux/amd64 and arm64, built by
   `image/build.sh` from the release's own Linux binaries. See "The
@@ -3629,6 +3630,11 @@ migrations.
     freeing its port, and the target starts on it. Coolify: the target
     starts, and `migrate` stops (exit 75) with the exact domain move to
     make; `--resume` checks it.
+  - Every check of the address (the transfer's, the reverse's and an
+    undo's) asks for `/v1/meta` with `Cache-Control: no-cache` and
+    `Pragma: no-cache`, and Go answers `/v1/meta` with `Cache-Control:
+    no-store` (a deliberate difference: the TypeScript route sets none),
+    so a proxy's cached answer never stands for the installation serving.
   - The check: `<origin>/v1/meta` must answer with the migrated
     installation's id and the target's release, within
     `--transfer-timeout` (3 minutes). Then the source is marked migrated
@@ -3702,6 +3708,57 @@ migrations.
   the stated end, a second `--resume` changing nothing; the Coolify shape
   and the image's operator steps too. Every output, journal and log is
   scanned for the keys and the run keys.
+- The host target `varlatch migrate` makes (step 7, slice 7.4e; decision
+  20): with `--config /etc/varlatch/varlatchd.conf` not there, migrate (as
+  root, on a systemd host) makes the Go installation with setup's steps
+  (`internal/setup` `PrepareTarget`):
+  - **The answers:** the source's public URL and ingress, and for an own
+    proxy the dashboard's address; `--acme-email` and `--listen` for what
+    the source cannot say.
+  - **Checked first:** nothing changes until the unit file is installed
+    and not running, an existing user passes, and an `/etc/varlatch` or
+    data directory there already is as a target needs (then used as it
+    is, never chmodded or chowned; refused otherwise).
+  - **What it makes:**
+    - the varlatch user (an existing one judged as setup judges it,
+      supplementary groups included, unless `--accept-existing-user`);
+    - `/etc/varlatch` and the data directory;
+    - the unit enabled but not started;
+    - the configuration, checked by varlatchd, last: a configuration
+      there is a target ready, so a run killed before it makes the rest
+      again.
+  - **Never keys:** they are the source's, which `admin migrate keys`
+    writes where the unit loads them (`CREDENTIALS_DIRECTORY`: the
+    configuration names no key file).
+  - **Journalled first:** each item goes in the source's journal before
+    it is made (`created`), the keys' files too, but only a key file not
+    there before (one there is never migrate's, so never removed).
+  - **Undone:** an undo before the switch removes exactly those, after
+    both journals say released (`UndoTarget`), as does `--abort` of a
+    run killed while making it. Until the removal is done the migration
+    is not released for good: `--abort` (or `--resume`) goes on removing
+    it, and no new migration starts over it. Should it keep failing,
+    `--status` names each item's place: removed by hand, then
+    `--abort --forget-target` clears the record (it removes nothing, and
+    refuses while any item recorded is still there, each checked as the
+    undo removes it, the user's own group too). The unit's undo is done
+    again harmlessly (nothing to disable once its file is gone, or in a
+    state systemctl names as not enabled; any other state is disabled).
+    The journal's record is checked as it is read (plain item names, and
+    setup's configuration as where it was made).
+  - **Root:** whenever the target may change (its configuration missing
+    or unreadable, or one migrate made and has not removed, before the
+    switch), migrate refuses to run without root.
+  - **Never on a tailnet:** setup's answers for a made target are public
+    or own proxy (`tailnet = off`), so a source serving a tailnet address,
+    or the tailnet's authority given, is refused before anything is made
+    or backed up: prepare the configuration with `tailnet = on` first.
+    Tailnet on a made target is backlog.
+  - **A prepared target** (another `--config`, or one already there) is
+    used as it is.
+  - **Tests:** G5's `maketarget_test.go` runs it under a test root
+    (the crashpoint build's seam); go.yml's runner-only step makes and
+    undoes it on a real systemd.
 - `varlatch migrate --rollback` (step 7, slice 7.6a; decisions 16 and
   17): the reverse migration, within 30 days of the switch, back to the
   last TypeScript release. Its phases are journalled in both places, as
@@ -3766,6 +3823,47 @@ migrations.
   stopped one by writing its journal and starting it. A switch is the
   journal's word alone, written beside the varlatchd serving under the
   transfer's gate.
+- `varlatch migrate --from-archive`, the backup converter (step 7, slice
+  7.7b; go-step7 decision 18; `cmd/varlatch/internal/migrate` archive.go):
+  a TypeScript archive (format 1 or 2) to a format 3 archive of the same
+  installation (`--out`), by the migration's own path, on a host with
+  Docker. It opens the archive with the BEK (`--bek-file`, a key or a
+  passphrase; a passphrase needs `--out-bek-file`, the key file the output
+  is sealed with) and checks the Root KEK (`--kek-file`) against its
+  canaries, refusing a wrong key, a varlatchd archive, an output that
+  exists or an image not pinned by digest before any container starts.
+  Then an isolated restore: a throwaway PostgreSQL 17.6 (by digest) with
+  `--network none` takes the Secret Plane's dump as the TypeScript
+  restore does, and the last TypeScript release's image (by default the
+  one `LastTypeScriptDigest` pins, v0.23.0's; `--ts-image` gives another
+  by registry digest, and a local image ID only with
+  `VARLATCH_ALLOW_LOCAL_TS_IMAGE=1`, for the tests, with a warning) runs
+  in its namespace, read-only, as this
+  user, with no capability: `migrate` (an older schema brought forward),
+  `admin migration backfill` (the exposure index an archive from before
+  0.20.0 lacks) and `admin migration export --dry-run --digests`, the run
+  key on its stdin. Never a daemon. Then varlatchd, as a process, on a
+  scratch data directory: `admin migrate import`, `admin migrate check`
+  (every check passes) and `admin backup run`, whose archive is placed at
+  `--out` once its installation and key versions are the source's. Both
+  containers and the scratch directory are removed, on an interrupt too
+  (SIGINT, SIGTERM, SIGHUP end it through its context), and when a
+  removal fails it says the cleanup is incomplete. One conversion runs at
+  a time per host, whoever runs it (an flock on
+  /run/lock/varlatch-convert.lock, or /tmp's, whatever TMPDIR says), and
+  each starts by sweeping what a killed one left: the converter's
+  labelled containers, by ID, its working directories in the scratch
+  root and the copy it was placing beside `--out` (directories or regular
+  files of its own names, never a symbolic link; one it may not remove is
+  warned about). Linux and macOS only. PostgreSQL's own
+  messages (psql, pg_restore) are not shown: they can quote the
+  archive's data. Its tests: the
+  refusals before any program runs and the conversion's sequence, with
+  fakes; the isolation per pull request in go.yml
+  (`TestArchiveIsolationHasNoNetwork`, Docker); the conversions of
+  release/0.22's generated archives (format 1 and 2 of the seeded
+  installation, format 1 of a 0.7.0 installation), each restored after,
+  in the nightly converter job (`TestConvertArchives`).
 - `db.go`: `Init` creates the schema on an empty file in one write job and
   records `SchemaVersion` in the `schema_version` table (a row rather than
   `PRAGMA user_version`; `db.go` says why), and on later starts checks the

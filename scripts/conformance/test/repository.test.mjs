@@ -290,7 +290,11 @@ test("the Go tests a none replacement names exist, by their package", () => {
     assert.deepEqual(found.problems, [], where);
     named += found.named.length;
     if (!why.includes("go.yml")) continue;
-    for (const [, step] of why.matchAll(/'([^']+)'/g)) assert.ok(steps.has(step), `${where}: '${step}' is not a step of go.yml`);
+    // A step is quoted '...', or "..." when its name holds an apostrophe.
+    for (const [, single, double] of why.matchAll(/'([^']+)'|"([^"]+)"/g)) {
+      const step = single ?? double;
+      assert.ok(steps.has(step), `${where}: '${step}' is not a step of go.yml`);
+    }
   }
   assert.ok(named >= 10, `only ${named} Go tests named`);
   // The step 'Test' runs every package under go/.
@@ -322,6 +326,106 @@ test("the Go tests a none replacement names exist, by their package", () => {
     assert.ok(run.includes(` ./${dir.replace(/^go\//, "")}`), `the S3 step does not run ${dir}`);
     assert.ok(run.includes(t), `the S3 step does not run ${t}`);
   }
+});
+
+// A step of a workflow, by its name: from its "- name:" line to the next
+// step, or the end of its job.
+function stepOf(workflow, name) {
+  const at = workflow.indexOf(`      - name: ${name}\n`);
+  assert.ok(at >= 0, `no step '${name}'`);
+  const rest = workflow.slice(at);
+  const ends = [rest.indexOf("\n      - ", 1), rest.search(/\n  [a-z][\w-]*:\n/)].filter((i) => i > 0);
+  return rest.slice(0, Math.min(rest.length, ...ends));
+}
+
+// The steps the setup, public ingress and installers replacements name run
+// what they say, in a way that cannot skip it: each of those tests skips
+// without its environment (Pebble, Windows, a published release), so a
+// step that loses its environment or its -run would go green on skips.
+test("the steps the setup, ingress and installers replacements name cannot skip their tests", () => {
+  const workflow = readFileSync(join(repoRoot, ".github/workflows/go.yml"), "utf8");
+  const named = (suite) => [...inventory.externalSuites[suite].replacement.none.matchAll(QUALIFIED)].map(([, dir, t]) => ({ dir, t }));
+  const runs = (step, dir, t) => {
+    // A go test line of the step that runs dir, and whose -run selects t.
+    const line = step.split("\n").find((l) => l.includes("go test") && l.includes(` ./${dir.replace(/^go\//, "")}`));
+    assert.ok(line, `no go test of ${dir} in:\n${step}`);
+    const run = /-run '([^']+)'/.exec(line);
+    assert.ok(run && new RegExp(run[1]).test(t), `${t} is not selected by: ${line}`);
+    return line;
+  };
+  // Pebble: required, not skipped, for each package named.
+  const pebble = stepOf(workflow, "Public HTTPS against Pebble");
+  assert.match(pebble, /working-directory: go\n/);
+  assert.match(pebble, /pebble\.sh start/);
+  const pebbleTests = named("ingress-public").filter(({ dir }) => dir !== "go/install");
+  assert.ok(pebbleTests.length >= 4, "the Pebble tests named");
+  for (const { dir, t } of pebbleTests) assert.match(runs(pebble, dir, t), /VARLATCH_REQUIRE_PEBBLE=1 go test/);
+  // install.ps1: the windows job, on windows-latest, the disposable runner
+  // set (the end-to-end install changes its PATH), its tests selected.
+  const windows = workflow.slice(workflow.indexOf("\n  windows:\n"));
+  const windowsJob = windows.slice(0, windows.slice(1).search(/\n  [a-z][\w-]*:\n/) + 1);
+  assert.match(windowsJob, /runs-on: windows-latest\n/);
+  const ps1 = stepOf(windowsJob, "install.ps1 under PowerShell 5.1 and 7");
+  assert.match(ps1, /VARLATCH_TEST_DISPOSABLE: "1"/);
+  const ps1Tests = named("installers").filter(({ t }) => t.startsWith("TestPS1"));
+  assert.ok(ps1Tests.length >= 2, "the install.ps1 tests named");
+  for (const { dir, t } of ps1Tests) runs(ps1, dir, t);
+  // install.sh under shellcheck.
+  assert.match(stepOf(workflow, "install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck"), /shellcheck -s sh go\/install\/install\.sh /);
+  // Setup from an empty host: test-setup.sh with Pebble, so its public
+  // mode runs rather than saying SKIP.
+  const setup = stepOf(workflow, "varlatch setup from an empty host, on this runner's systemd");
+  assert.match(setup, /eval "\$\(go\/server\/publictls\/testdata\/pebble\.sh start /);
+  assert.match(setup, /VARLATCH_TEST_PEBBLE="\$VARLATCH_TEST_PEBBLE" VARLATCH_TEST_PEBBLE_ROOT="\$VARLATCH_TEST_PEBBLE_ROOT"/);
+  assert.match(setup, /go\/install\/test-setup\.sh /);
+  for (const suite of ["setup", "ingress-public"]) assert.match(inventory.externalSuites[suite].replacement.none, /go\/install\/test-setup\.sh/, suite);
+  // The published release: published-release.yml runs the tests named,
+  // with the release's version, after every Release run of the Go line
+  // (prereleases and final releases) and by hand.
+  const published = readFileSync(join(repoRoot, ".github/workflows/published-release.yml"), "utf8");
+  assert.match(published, /workflow_run:\n\s+workflows: \[Release\]/);
+  assert.match(published, /workflow_dispatch:/);
+  assert.doesNotMatch(published, /isPrerelease --jq/, "a run after the Release workflow checks final releases too");
+  const pub = stepOf(published, "The installers against the published release");
+  assert.match(pub, /VARLATCH_TEST_PUBLISHED: \$\{\{ needs\.version\.outputs\.version \}\}/);
+  const pubTests = named("installers").filter(({ t }) => t.startsWith("TestPublished"));
+  assert.ok(pubTests.length >= 3, "the published-release tests named");
+  for (const { dir, t } of pubTests) runs(pub, dir, t);
+  assert.deepEqual(publishedReleaseProblems(published), []);
+});
+
+/**
+ * What published-release.yml must keep: the installers on Windows too
+ * (install.ps1), on a runner it may change (VARLATCH_TEST_DISPOSABLE), and
+ * a draft release refused explicitly before anything is checked.
+ */
+function publishedReleaseProblems(workflow) {
+  const problems = [];
+  const matrix = workflow.match(/^\s+os: \[([^\]\n]*)\]/m);
+  if (!matrix || !matrix[1].split(",").map((s) => s.trim()).includes("windows-latest")) problems.push("the installers matrix lacks windows-latest");
+  const step = workflow.indexOf("- name: The installers against the published release");
+  const stepText = step < 0 ? "" : workflow.slice(step, workflow.indexOf("\n      - ", step + 1) > 0 ? workflow.indexOf("\n      - ", step + 1) : undefined);
+  if (!/\n\s+VARLATCH_TEST_DISPOSABLE: "1"\n/.test(stepText)) problems.push('the installers step lacks VARLATCH_TEST_DISPOSABLE: "1"');
+  if (!/gh release view "\$TAG" --repo "\$REPO" --json isDraft --jq \.isDraft/.test(workflow) || !/if \[ "\$draft" != "false" \]; then\n\s+echo "::error::[^"\n]*draft[^"\n]*"\n\s+exit 1/.test(workflow)) {
+    problems.push("a draft release is not refused explicitly");
+  }
+  return problems;
+}
+
+test("the published-release guard fails when the workflow loses Windows, the disposable runner or the draft refusal", () => {
+  const published = readFileSync(join(repoRoot, ".github/workflows/published-release.yml"), "utf8");
+  assert.deepEqual(publishedReleaseProblems(published), []);
+  const mutated = (from, to, want) => {
+    assert.ok(published.includes(from), `the workflow has ${from}`);
+    const p = publishedReleaseProblems(published.replace(from, to));
+    assert.ok(p.length === 1 && p[0].includes(want), `${from} -> ${to}: ${JSON.stringify(p)}`);
+  };
+  mutated("os: [ubuntu-latest, macos-latest, windows-latest]", "os: [ubuntu-latest, macos-latest]", "windows-latest");
+  mutated("os: [ubuntu-latest, macos-latest, windows-latest]", "os: [ubuntu-latest, macos-latest, windows-2022]", "windows-latest");
+  mutated('VARLATCH_TEST_DISPOSABLE: "1"', 'VARLATCH_TEST_DISPOSABLE: "0"', "VARLATCH_TEST_DISPOSABLE");
+  mutated('          VARLATCH_TEST_DISPOSABLE: "1"\n', "", "VARLATCH_TEST_DISPOSABLE");
+  mutated("--json isDraft --jq .isDraft", "--json tagName --jq .tagName", "draft");
+  mutated('if [ "$draft" != "false" ]; then', 'if [ "$draft" = "maybe" ]; then', "draft");
 });
 
 test("the Go test reference guard: renames, removals, the old form and build tags", () => {

@@ -626,12 +626,16 @@ export async function platformFakes(state, action, ...args) {
   }
   if (action !== "start") throw new Error(`unknown platform-fakes action ${action}`);
   if (!(await platformFakesControl(state, "GET", "/_state"))) {
-    const child = spawn(process.execPath, [PLATFORM_FAKES, String(state.fakesPort), String(state.fakesControlPort),
-      join(state.oidcDir, "fakes-cert.pem"), join(state.oidcDir, "fakes-key.pem"), state.dir], { stdio: "ignore", detached: true });
-    writeFileSync(state.fakesPidFile, `${child.pid}\n`);
-    child.unref();
-    for (let i = 0; i < 50 && !(await platformFakesControl(state, "GET", "/_state")); i++) await sleep(100);
-    if (!(await platformFakesControl(state, "GET", "/_state"))) throw new Error("the fake platforms did not start");
+    // As the other fixtures: polled until FIXTURE_START_MS, and one that
+    // does not start says its exit, its port and its log.
+    await startFixture(state, {
+      name: "the fake platforms",
+      args: [PLATFORM_FAKES, String(state.fakesPort), String(state.fakesControlPort),
+        join(state.oidcDir, "fakes-cert.pem"), join(state.oidcDir, "fakes-key.pem"), state.dir],
+      pidFile: state.fakesPidFile,
+      port: state.fakesControlPort,
+      ready: () => platformFakesControl(state, "GET", "/_state"),
+    });
   }
   return { coolify: "https://coolify.conformance.test", convex: "https://convex.conformance.test", github: "acme" };
 }
@@ -692,7 +696,7 @@ export async function webhookReceiver(state, action) {
 
 const ISSUER = fileURLToPath(ISSUER_SOURCE);
 
-/** How long a fixture process (the OIDC issuer, the webhook receiver) may take to answer after it starts. */
+/** How long a fixture process (the OIDC issuer, the webhook receiver, the fake platforms) may take to answer after it starts. */
 const FIXTURE_START_MS = 30_000;
 
 /**

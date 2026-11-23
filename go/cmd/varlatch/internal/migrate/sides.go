@@ -28,9 +28,18 @@ type imagePin struct {
 	Repository, Digest string
 }
 
-// testPin replaces the constants in a crashpoint build only (G5's
-// interruption gate, crashpoint.go); nil in a release.
+// testPin replaces the constants in a crashpoint or rehearsal build only
+// (testonly.go); nil in a release.
 var testPin *imagePin
+
+// releasePin is the image a migration starts from in this build: the
+// constants, or a crashpoint build's testPin.
+func releasePin() imagePin {
+	if testPin != nil {
+		return *testPin
+	}
+	return imagePin{Repository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
+}
 
 // Source is the old installation, driven as processes (go-step7 decision
 // 2): its CLI's commands inside its containers, and its host CLI. A
@@ -69,8 +78,10 @@ type Source interface {
 	// StopIngress and StartIngress stop and start what serves the
 	// address (Caddy for public ingress, the dashboard's port for an own
 	// proxy); the Coolify shape has nothing here to stop or start.
+	// StartIngress recreates what does not serve as it is, and with
+	// recreate, whatever it reports.
 	StopIngress(ctx context.Context, kind Ingress) error
-	StartIngress(ctx context.Context, kind Ingress) error
+	StartIngress(ctx context.Context, kind Ingress, recreate bool) error
 }
 
 // Ingress is a source's ingress shape (decision 12).
@@ -93,6 +104,13 @@ type IngressInfo struct {
 	PublicURL  string
 	Caddy      bool
 	WebAddress string
+	// OutboundAllow is the source's outbound allow list
+	// (VARLATCH_OUTBOUND_ALLOW), "" for none: the target's outbound_allow
+	// takes the same entries.
+	OutboundAllow string
+	// OutboundAllowFromConfig: varlatchd was not running, so OutboundAllow
+	// is docker compose config's value, not the container's.
+	OutboundAllowFromConfig bool
 }
 
 // SourceInfo is what a migration starts from.
@@ -169,6 +187,8 @@ type TargetInfo struct {
 	PublicURL   string `json:"publicUrl"`
 	Listen      string `json:"listen"`
 	ListenHTTPS string `json:"listenHttps"`
+	// OutboundAllow is its configuration's outbound_allow ("" for none).
+	OutboundAllow string `json:"outboundAllow,omitempty"`
 	// Tailnet is its tailnet settings and node, nil when tailnet = off.
 	Tailnet *TargetTailnet `json:"tailnet,omitempty"`
 }
@@ -184,6 +204,10 @@ type TargetState struct {
 	Gate    bool
 	Barrier string
 	Running bool
+	// ImportRefusal is why the target's import into its data directory
+	// would be refused now (varlatchd's check, the import's own), empty
+	// when it would not: the preflight refuses it before the barrier.
+	ImportRefusal string
 }
 
 // JournalHead is what the target's journal says.

@@ -333,8 +333,10 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     # The race detector's run (go-race) and the cross-platform builds
-    # (go-platforms) run beside this job.
-    timeout-minutes: 40
+    # (go-platforms) run beside this job. G5 alone takes over 10 minutes
+    # since the tailnet matrix and the whole job about 55 with a cold Go
+    # cache; a cancelled job saves no cache, so the limit leaves room: 75.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -418,6 +420,7 @@ jobs:
           go vet ./...
           go vet -tags conformance ./...
           go vet -tags crashpoint ./...
+          go vet -tags rehearsal ./...
           go vet -tags g9a ./...
           go vet -tags g5 ./server/migration/g5/
           go vet -tags headscale ./server/tailnet/... ./server/daemon/...
@@ -461,7 +464,8 @@ jobs:
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 -tags g5 -run '^TestG5' -v ./server/migration/g5/
+        # -timeout: go test's default 10m is shorter than the G5 package now.
+        run: go test -count=1 -tags g5 -timeout 25m -run '^TestG5' -v ./server/migration/g5/
 
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's
@@ -670,6 +674,19 @@ jobs:
           VARLATCH_REQUIRE_PEBBLE=1 go test -count=1 -v -run '^TestPebble' ./server/publictls
           VARLATCH_REQUIRE_PEBBLE=1 go test -count=1 -v -run '^TestPublicHTTPS' ./server/daemon
 
+      # The backup converter's isolation (go-step7 decision 18, slice
+      # 7.7b): in its throwaway PostgreSQL's network namespace (--network
+      # none), started with the converter's own arguments, a process reaches
+      # PostgreSQL on the loopback and nothing else, by address or by name.
+      # With the converter's refusals before any program runs (unit tests),
+      # this is 7.7's pull request half; the conversions are the nightly
+      # converter job's.
+      - name: The backup converter's isolation has no network
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: VARLATCH_REQUIRE_DOCKER=1 go test -count=1 -v -run '^TestArchiveIsolationHasNoNetwork$' ./cmd/varlatch/internal/migrate
+
       # G9a at smoke scale (ADR-0059 step 3.6): 5 % of the profile's
       # length against varlatchd built with the g9a tag (the production
       # serve path with the W1 seed, the converge simulation and paced
@@ -801,6 +818,23 @@ jobs:
           trap 'go/server/publictls/testdata/pebble.sh stop' EXIT
           sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_PEBBLE="$VARLATCH_TEST_PEBBLE" VARLATCH_TEST_PEBBLE_ROOT="$VARLATCH_TEST_PEBBLE_ROOT" \
             go/install/test-setup.sh "$RUNNER_TEMP/setup-bin"
+
+      # A migration's host target (step 7, slice 7.4e): varlatch migrate
+      # makes it with setup's steps, keys aside, on this runner's systemd,
+      # then undoes it (setup's PrepareTarget and UndoTarget for real:
+      # useradd, /etc/varlatch, the data directory, the unit enabled, not
+      # started; then all of it removed). GitHub-hosted runners only, as the
+      # setup step above: it changes the machine's users, /etc and systemd.
+      - name: varlatch migrate makes and removes its host target, on this runner's systemd
+        if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go build -o "$RUNNER_TEMP/target-bin/varlatchd" ./cmd/varlatchd
+          go test -c -o "$RUNNER_TEMP/target-bin/setup.test" ./cmd/varlatch/internal/setup/
+          sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_VARLATCHD="$RUNNER_TEMP/target-bin/varlatchd" \
+            "$RUNNER_TEMP/target-bin/setup.test" -test.count=1 -test.run '^TestPrepareTargetOnThisHost$' -test.v
 
       # ADR-0059 Order step 3: envelopes cross between the servers in both
       # directions. The Go tests open what TypeScript releases sealed
@@ -1674,6 +1708,67 @@ jobs:
 
   # The required check (the main ruleset's merge queue): every Go job
   # succeeded or was skipped because none of its paths changed.
+  # The backup converter's conversions (go-step7 decision 18, slice 7.7b),
+  # in the nightly slow tier: on the nightly and a dispatched run only, not a
+  # pull request's or the merge queue's, and not in go-ok. The TypeScript
+  # side is release/0.22's (the last TypeScript release's line): its image
+  # built here, and its generator (services/varlatchd
+  # test/converter-archives.test.ts) writing format 1 and 2 archives of the
+  # seeded installation and a format 1 archive of a 0.7.0 installation (the
+  # published image, by digest), every key made by the run. varlatchd from
+  # this commit then converts each one (varlatch migrate --from-archive's
+  # path), every check passing, and restores the result.
+  converter:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: release/0.22
+          path: ts
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - name: The last TypeScript release's image and the archives to convert
+        working-directory: ts
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          image=$(docker build -q -f services/varlatchd/Dockerfile .)
+          echo "TS_IMAGE=$image" >> "$GITHUB_ENV"
+          name="vlt-convgen-pg-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          secret=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+          echo "::add-mask::$secret"
+          POSTGRES_PASSWORD="$secret" docker run -d --rm --name "$name" -p 127.0.0.1::5432 -e POSTGRES_PASSWORD \
+            postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929 > /dev/null
+          trap 'docker rm -fv "$name" > /dev/null 2>&1 || true' EXIT
+          port=$(docker port "$name" 5432/tcp | head -n 1 | sed 's/.*://')
+          for _ in $(seq 1 120); do docker exec "$name" psql -h 127.0.0.1 -U postgres -Atc 'SELECT 1' > /dev/null 2>&1 && break; sleep 0.5; done
+          VARLATCH_TEST_CONVERTER_OUT="$RUNNER_TEMP/converter" VARLATCH_TEST_DATABASE_URL="postgres://postgres:$secret@127.0.0.1:$port/postgres" \
+            pnpm --filter @varlatch/varlatchd exec vitest run test/converter-archives.test.ts
+      - name: varlatchd converts each archive and restores the result
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go build -o "$RUNNER_TEMP/varlatchd" ./cmd/varlatchd
+          VARLATCH_REQUIRE_CONVERTER=1 VARLATCH_ALLOW_LOCAL_TS_IMAGE=1 VARLATCH_TEST_CONVERTER_DIR="$RUNNER_TEMP/converter" VARLATCH_TEST_TS_IMAGE="$TS_IMAGE" \
+            VARLATCH_TEST_VARLATCHD="$RUNNER_TEMP/varlatchd" go test -count=1 -v -timeout 50m -run '^TestConvertArchives$' ./cmd/varlatch/internal/migrate
+
   go-ok:
     name: go-ok
     # On a draft it runs too, and fails: every other job is skipped then, and

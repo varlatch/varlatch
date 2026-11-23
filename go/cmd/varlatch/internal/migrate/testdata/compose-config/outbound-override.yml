@@ -1,0 +1,4 @@
+services:
+  varlatchd:
+    environment:
+      - VARLATCH_OUTBOUND_ALLOW=convex.lan:3210

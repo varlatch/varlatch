@@ -253,12 +253,59 @@ func at(iso string) time.Time {
 	return t
 }
 
-// ReadStatus reads every status record under dir and judges them as
+// Lifecycle is the live database's: its installation, and when the
+// database was made (schema_version's created_at: a migration's import
+// makes it then; a restore keeps the archive's). A data directory can
+// hold the records of an earlier database (a migration rolled back, then
+// a new one, keeps Go's backups/): they are listed, but say nothing of
+// whether this one's backups are recent. The zero Lifecycle holds every
+// record.
+type Lifecycle struct {
+	InstallationID string
+	Since          time.Time
+}
+
+// lifecycleSlack is how much earlier than Since a record may be dated and
+// still be the database's: records keep milliseconds, and an earlier
+// database's last archive is older than a new import by far more (the
+// new migration's preflight, dry run and copy come between).
+const lifecycleSlack = time.Minute
+
+// At is the lifecycle as judged at now. A clock that reads earlier than
+// the database's making (moved back; within lifecycleSlack is the same
+// moment) says nothing of what was made since: only the installation
+// counts then.
+func (l Lifecycle) At(now time.Time) Lifecycle {
+	if !l.Since.IsZero() && now.Before(l.Since.Add(-lifecycleSlack)) {
+		l.Since = time.Time{}
+	}
+	return l
+}
+
+// Holds is whether the record is of this lifecycle: the same
+// installation, made since the database was (within lifecycleSlack).
+func (l Lifecycle) Holds(r StatusRecord) bool {
+	if l.InstallationID != "" && r.InstallationID != l.InstallationID {
+		return false
+	}
+	return l.Since.IsZero() || !at(r.CreatedAt).Before(l.Since.Add(-lifecycleSlack))
+}
+
+// ReadStatus is ReadStatusFor with the zero Lifecycle: every record
+// counts.
+func ReadStatus(dir string, now time.Time) (Status, error) {
+	return ReadStatusFor(dir, now, Lifecycle{})
+}
+
+// ReadStatusFor reads every status record under dir and judges them as
 // backupStatus does: no archive within 48 hours, the newest one not
 // verified or not delivered, the latest remote check failed or older than
 // 30 days, and a required Root KEK version without a key check within 30
-// days.
-func ReadStatus(dir string, now time.Time) (Status, error) {
+// days. The first three count only the records life holds; every record
+// is listed, and the remote and key checks cover them all (an earlier
+// database's archives stay restorable, and need their keys).
+func ReadStatusFor(dir string, now time.Time, life Lifecycle) (Status, error) {
+	life = life.At(now)
 	entries, err := os.ReadDir(filepath.Join(dir, "backups"))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Status{}, err
@@ -287,8 +334,11 @@ func ReadStatus(dir string, now time.Time) (Status, error) {
 	slices.SortStableFunc(typescript, newestFirst)
 	warnings := []string{}
 	var newest *StatusRecord
-	if len(archives) > 0 {
-		newest = &archives[0]
+	for i := range archives {
+		if life.Holds(archives[i]) {
+			newest = &archives[i]
+			break
+		}
 	}
 	if newest == nil || now.Sub(at(newest.CreatedAt)) > 48*time.Hour {
 		warnings = append(warnings, "No archive created within the last 48 hours")

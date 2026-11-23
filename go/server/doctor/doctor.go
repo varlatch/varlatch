@@ -111,6 +111,10 @@ type Live struct {
 	KEK            bool   `json:"kek"`
 	Installation   bool   `json:"installation"`
 	InstallationID string `json:"installationId,omitempty"`
+	// DatabaseCreatedAt is when the live database was made (schema_version;
+	// a migration's import makes it then): the backups' check counts only
+	// this database's archives (backup.Lifecycle).
+	DatabaseCreatedAt string `json:"databaseCreatedAt,omitempty"`
 	// Maintenance: a maintenance gate holds the installation.
 	Maintenance bool `json:"maintenance"`
 	// Storage is the engine's metrics (ADR-0059 Decision 2) and WALBound
@@ -705,7 +709,17 @@ func backupsStatus(in Inputs) Check {
 		c.Status, c.Detail, c.Remedy = Fail, "backup_interval = off: no scheduled backup", remedy
 		return c
 	}
-	st, err := backup.ReadStatus(cfg.DataDir, in.Now())
+	// This database's archives only, when a varlatchd says which it is:
+	// an earlier one's (a migration rolled back, then made again) neither
+	// makes the backups recent nor stands for the newest.
+	var life backup.Lifecycle
+	if in.Live != nil && in.Live.InstallationID != "" {
+		life.InstallationID = in.Live.InstallationID
+		if t, err := time.Parse(time.RFC3339Nano, in.Live.DatabaseCreatedAt); err == nil {
+			life.Since = t
+		}
+	}
+	st, err := backup.ReadStatusFor(cfg.DataDir, in.Now(), life)
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) {
 			c.Status, c.Detail, c.Remedy = Unknown, "the backups' status cannot be read by this user", "Run doctor as root: sudo varlatch doctor"
@@ -725,6 +739,12 @@ func backupsStatus(in Inputs) Check {
 	}
 	if n := len(st.Archives); n > 0 {
 		newest := st.Archives[0] // newest first
+		for _, a := range st.Archives {
+			if life.At(in.Now()).Holds(a) {
+				newest = a
+				break
+			}
+		}
 		c.Status, c.Detail = Pass, fmt.Sprintf("%d archives; the newest %s, %s", n, newest.ArchiveID, newest.CreatedAt)
 		return c
 	}

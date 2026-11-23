@@ -35,10 +35,75 @@ import { compareVersions, VERSION } from "./inventory.mjs";
 export const EVIDENCE_DIR = "docs/evidence/";
 export const TEMPLATE_SENTINEL = "<!-- g1-walkthrough: TEMPLATE -->";
 const TEMPLATE_SENTINEL_RE = /<!--\s*g1-walkthrough:\s*TEMPLATE\s*-->/i;
-const UNCHECKED_ROW = /^\s*\|(?:[^\r\n]*\|)?\s*\[\s*\](?:\s|$|\|)/m;
-const PLACEHOLDER = /\bPENDING\b|<commit-sha>|<full-40-char-sha>|<sha256>|YYYY-MM-DD HH:MM UTC|<name \/ handle>/;
-const CANDIDATE_COMMIT_LINE = /^\s*(?:-\s*)?\*\*Candidate commit:\*\*\s*`?([^`\r\n]+?)`?\s*$/im;
-const VERDICT_PASS_LINE = /^\s*(?:-\s*)?\*\*Verdict:\*\*\s*`?PASS`?\s*$/m;
+const PLACEHOLDER =
+  /\bPENDING\b|<commit-sha>|<full-40-char-sha>|<sha256>|<version \/ sha256>|<e\.g\.[^>\r\n]*>|<GitHub Actions run URL \/ ID>|<summary of sign-off>|YYYY-MM-DD HH:MM UTC|<name \/ handle>/;
+// A sign-off line starts within three spaces (four would be a code block).
+const CANDIDATE_COMMIT_LINE = /^ {0,3}(?:[-*+][ \t]*)?\*\*Candidate commit:\*\*[ \t]*`?([^`\r\n]+?)`?[ \t]*\r?$/im;
+const VERDICT_LINE = /^ {0,3}(?:[-*+][ \t]*)?\*\*Verdict:\*\*.*$/gim;
+const VERDICT_PASS = /^ {0,3}(?:[-*+][ \t]*)?\*\*Verdict:\*\*[ \t]*`?PASS`?[ \t]*\r?$/i;
+// GFM: a separator cell is one or more hyphens, with optional colons.
+const TABLE_SEPARATOR = /^:?-+:?$/;
+const CHECKED = /^\[[xX]\]$/;
+const UNCHECKED_CELL = /^\[\s*\](?:\s|$)/;
+
+/**
+ * The evidence is read as plain lines, not rendered: an HTML comment, a
+ * raw HTML block or a fenced code block (at the margin, or opened inside a
+ * list item or a blockquote) could hide a line Markdown would not show, or
+ * show one the gate would not read, so a file with any of them is refused
+ * (fail closed) rather than parsed as CommonMark would. The raw HTML is
+ * the elements that open a block or hide their content (a route
+ * placeholder such as <org> is none of them).
+ */
+const HTML_COMMENT = /<!--/;
+// The tag name ends as a tag's does (space, / or >), so <table-name> is a
+// placeholder, not a table.
+const RAW_HTML = /<(?:details|pre|style|script|textarea|template|noscript|xmp|iframe|table|div)(?=[\s/>]|$)/i;
+const CODE_FENCE = /^[ \t]*(?:>[ \t]*|(?:[-*+]|\d+[.)])[ \t]+)*(?:`{3,}|~{3,})/m;
+
+/** A Markdown table row's cells, with or without its outer pipes; null for a line that is not one. */
+function tableCells(line) {
+  let s = line.trim();
+  if (!/(?<!\\)\|/.test(s)) return null;
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map((c) => c.trim());
+}
+
+/**
+ * The 1-based lines of checklist rows not checked off. In a table with a
+ * Done column, a row's Done cell must be [x] (whatever its Notes say); in
+ * any other table, a cell starting with [ ] is an unchecked row.
+ */
+export function uncheckedRows(content) {
+  const rows = content.split(/\r?\n/).map(tableCells);
+  const separator = (cells) => cells !== null && cells.every((c) => TABLE_SEPARATOR.test(c));
+  const lines = [];
+  // done: the current table's Done column (-1: none); active: a table
+  // runs, so a row a separator follows is one of its rows, not a header.
+  let done = -1;
+  let active = false;
+  rows.forEach((cells, i) => {
+    if (!cells) {
+      done = -1;
+      active = false;
+      return;
+    }
+    if (separator(cells)) {
+      active = true;
+      return;
+    }
+    // A table's header is its first row, the one its separator row follows.
+    if (!active && separator(rows[i + 1] ?? null)) {
+      done = cells.findIndex((c) => /^done$/i.test(c));
+      active = true;
+      return;
+    }
+    active = true;
+    if (done >= 0 ? !CHECKED.test(cells[done] ?? "") : cells.some((c) => UNCHECKED_CELL.test(c))) lines.push(i + 1);
+  });
+  return lines;
+}
 const HEX_40 = /^[0-9a-f]{40}$/i;
 
 /**
@@ -79,15 +144,24 @@ function walkthroughContentProblems(walkthrough, run) {
   if (TEMPLATE_SENTINEL_RE.test(content)) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} is still the template (${TEMPLATE_SENTINEL})`);
   }
-  if (UNCHECKED_ROW.test(content)) {
-    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has unchecked checklist rows (| [ ] |)`);
+  if (HTML_COMMENT.test(content) || RAW_HTML.test(content) || CODE_FENCE.test(content)) {
+    problems.push(
+      `the browser-walkthrough evidence ${walkthrough.path} has HTML comments, raw HTML or fenced code blocks: remove them (the evidence is read as plain lines, not rendered)`,
+    );
+  }
+  const unchecked = uncheckedRows(content);
+  if (unchecked.length > 0) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has unchecked checklist rows (| [ ] |, lines ${unchecked.join(", ")})`);
   }
   if (PLACEHOLDER.test(content)) {
     problems.push(
-      `the browser-walkthrough evidence ${walkthrough.path} still contains unreplaced placeholders (PENDING, <commit-sha>, <sha256>, YYYY-MM-DD HH:MM UTC, or <name / handle>)`,
+      `the browser-walkthrough evidence ${walkthrough.path} still contains unreplaced placeholders (PENDING, <commit-sha>, <sha256>, <version / sha256>, <e.g. ...>, <GitHub Actions run URL / ID>, <summary of sign-off>, YYYY-MM-DD HH:MM UTC, or <name / handle>)`,
     );
   }
-  if (!VERDICT_PASS_LINE.test(content)) {
+  const verdicts = content.match(VERDICT_LINE) ?? [];
+  if (verdicts.length > 1) {
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} records ${verdicts.length} **Verdict:** lines; Owner Sign-Off holds exactly one`);
+  } else if (verdicts.length === 0 || !VERDICT_PASS.test(verdicts[0])) {
     problems.push(`the browser-walkthrough evidence ${walkthrough.path} must record **Verdict:** PASS in Owner Sign-Off`);
   }
   const commitMatch = content.match(CANDIDATE_COMMIT_LINE);

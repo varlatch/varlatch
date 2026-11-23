@@ -45,6 +45,12 @@ func destinationsDB(t *testing.T) *sql.DB {
 				('whk_8', 'org_g', 'https://private.test/g', '{}', 8, 0)`,
 			`INSERT INTO webhooks (id, organization_id, url, secret_envelope, created_at, cursor_occurred_at, revoked_at) VALUES ('whk_9', 'org_a', 'https://private.test/r', '{}', 9, 0, 10)`,
 			`INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope) VALUES ('pcn_1', 'org_a', 'coolify', 'https://private.test', 'Lab', '{}')`,
+			// GitHub Connections: RunCheck leaves them out, RunAdminCheck lists the live ones.
+			`INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope) VALUES
+				('pcn_g1', 'org_a', 'github-actions', 'acme', 'Acme on GitHub', '{}'),
+				('pcn_g2', 'org_b', 'github-actions', 'beta', 'Beta on GitHub', '{}'),
+				('pcn_g3', 'org_g', 'github-actions', 'gone', 'Gone', '{}')`,
+			`INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, revoked_at) VALUES ('pcn_g4', 'org_a', 'github-actions', 'old', 'Old', '{}', 1)`,
 		} {
 			if _, err := tx.ExecContext(ctx, q); err != nil {
 				return err
@@ -124,6 +130,70 @@ func TestRunCheck(t *testing.T) {
 	// Nothing configured: exit 0, and the line that says so.
 	if r, _ := p.RunCheck(context.Background(), nil, "", now); r.ExitCode != 0 || !strings.Contains(strings.Join(r.Lines(), "\n"), "No destinations configured.") {
 		t.Errorf("no database: %+v", r)
+	}
+}
+
+// The admin check's GitHub Connections: GitHub's API, after the other
+// destinations, in the same scan (resolved once however many Connections
+// point at it); one Organization's with org; refused when the name
+// resolves to a private address, and then in the suggestion and the exit
+// code as any refused destination is.
+func TestRunAdminCheck(t *testing.T) {
+	reader := destinationsDB(t)
+	dns := checkDNS()
+	dns.set("api.github.com", v4("140.82.121.6"))
+	p := New(nil, Options{Resolve: dns.resolve})
+	now := func() time.Time { return time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC) }
+	r, err := p.RunAdminCheck(context.Background(), reader, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, d := range r.Destinations {
+		got = append(got, d.ID+" "+d.Verdict)
+	}
+	want := "whk_1 public|whk_2 refused|whk_3 refused|whk_4 refused|whk_5 refused|whk_6 unresolved|whk_7 refused|pcn_1 refused|pcn_g1 public|pcn_g2 public"
+	if strings.Join(got, "|") != want {
+		t.Errorf("destinations %q, want %q", got, want)
+	}
+	if n := dns.count("api.github.com"); n != 1 {
+		t.Errorf("api.github.com was resolved %d times in one scan", n)
+	}
+	g := r.Destinations[len(r.Destinations)-2]
+	if g.Organization != "acme" || g.Kind != KindGitHub || g.Scheme != "https" || g.Host != "api.github.com" || g.Port != 443 {
+		t.Errorf("acme's GitHub destination: %+v", g)
+	}
+	if lines := strings.Join(r.Lines(), "\n"); !strings.Contains(lines, `acme  GitHub  pcn_g1 "Acme on GitHub"  https://api.github.com:443  [140.82.121.6]  public`) {
+		t.Errorf("the lines:\n%s", lines)
+	}
+	// RunCheck (the API's report) leaves them out.
+	if r, _ := p.RunCheck(context.Background(), reader, "", now); len(r.Destinations) != 8 {
+		t.Errorf("RunCheck lists %d destinations", len(r.Destinations))
+	}
+	// Refused: suggested, and exit 1, with nothing else refused.
+	dns.set("api.github.com", v4("10.1.2.3"))
+	r, err = New(nil, Options{Resolve: dns.resolve}).RunAdminCheck(context.Background(), reader, "beta", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Destinations) != 2 || r.Destinations[1].ID != "pcn_g2" || r.Destinations[1].Verdict != "refused" || r.Destinations[1].Reason != "private_address" ||
+		r.Suggested == nil || *r.Suggested != "private.test,api.github.com" || r.ExitCode != 1 {
+		t.Errorf("beta, GitHub's API private: %+v, suggested %v", r.Destinations, r.Suggested)
+	}
+	if r, err := p.RunAdminCheck(context.Background(), nil, "", now); err != nil || len(r.Destinations) != 0 || r.ExitCode != 0 {
+		t.Errorf("no database: %+v %v", r, err)
+	}
+}
+
+// The report names the setting as its caller says, with its suggestion.
+func TestReportLinesFor(t *testing.T) {
+	v := "private.test"
+	r := Report{Suggested: &v}
+	s := Setting{Name: "outbound_allow (/etc/varlatchd.conf)", Suggest: func(v string) []string { return []string{"Set:", "  outbound_allow = " + v} }}
+	lines := strings.Join(r.LinesFor(s), "\n")
+	if !strings.HasPrefix(lines, "outbound_allow (/etc/varlatchd.conf): (not set)\n") || !strings.HasSuffix(lines, "\n\nSet:\n  outbound_allow = private.test") ||
+		strings.Contains(lines, "VARLATCH_OUTBOUND_ALLOW") {
+		t.Errorf("the lines:\n%s", lines)
 	}
 }
 

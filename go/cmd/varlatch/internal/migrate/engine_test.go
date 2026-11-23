@@ -33,11 +33,19 @@ type fakeSource struct {
 	exportTakes time.Duration
 	ingress     IngressInfo
 	ingressDown bool
+	// recreates are the ingress starts asked to recreate it.
+	recreates int
 }
 
 func (s *fakeSource) call(name string) error {
 	s.calls = append(s.calls, name)
 	return s.fail[name]
+}
+
+// callErr records the call, failing with err.
+func (s *fakeSource) callErr(name string, err error) error {
+	s.calls = append(s.calls, name)
+	return err
 }
 
 func (s *fakeSource) Dir() string { return s.dir }
@@ -55,16 +63,16 @@ func (s *fakeSource) StopIngress(_ context.Context, kind Ingress) error {
 	return nil
 }
 
-// StartIngress fails behind a gate, as the real one does: Compose starts
-// the ingress's one-off dependency (varlatch-migrate) again with it, and
-// the TypeScript migrate refuses during maintenance (run r8 of the 7.8b
-// rehearsal).
-func (s *fakeSource) StartIngress(_ context.Context, kind Ingress) error {
+// StartIngress starts the ingress without its dependencies, as the real
+// one does (up -d --no-deps): it comes up behind a gate too, and answers
+// with the gate's 503 (the prober) until the barrier is lifted. A start
+// asked to recreate is recorded too.
+func (s *fakeSource) StartIngress(_ context.Context, kind Ingress, recreate bool) error {
 	if err := s.call("start " + string(kind)); err != nil {
 		return err
 	}
-	if s.gate != nil {
-		return errors.New(`docker compose start failed (exit 1): service "varlatch-migrate" didn't complete successfully: exit 1`)
+	if recreate {
+		s.recreates++
 	}
 	s.ingressDown = false
 	return nil
@@ -129,21 +137,25 @@ func (s *fakeSource) MarkMigratedOut(_ context.Context, id string) error {
 
 // fakeTarget is varlatchd's side: its journal, its keys, its database.
 type fakeTarget struct {
-	dataDir  string
-	journal  *JournalHead
-	database bool
-	calls    []string
-	runKeys  [][]byte // each check's run key
-	keys     [][]byte // what Keys was given
-	journals [][]byte
-	fail     map[string]error
-	pass     bool
-	info     TargetInfo
-	running  bool
-	gate     bool
-	human    bool // an image's service: the operator starts and stops it
-	failOpen error
-	bundles  []string
+	keysState string // Keys answers this for both files ("written" when empty)
+	dataDir   string
+	journal   *JournalHead
+	database  bool
+	calls     []string
+	runKeys   [][]byte // each check's run key
+	keys      [][]byte // what Keys was given
+	journals  [][]byte
+	fail      map[string]error
+	pass      bool
+	info      TargetInfo
+	running   bool
+	gate      bool
+	human     bool // an image's service: the operator starts and stops it
+	failOpen  error
+	bundles   []string
+	// importRefusal is what the target's state says an import would be
+	// refused for ("" for none).
+	importRefusal string
 }
 
 func (t *fakeTarget) call(name string) error {
@@ -153,7 +165,7 @@ func (t *fakeTarget) call(name string) error {
 func (t *fakeTarget) Describe(context.Context) (TargetInfo, TargetState, error) {
 	info := t.info
 	info.Config, info.DataDir = "/etc/varlatch/varlatchd.conf", t.dataDir
-	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Running: t.running}, t.call("describe")
+	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Running: t.running, ImportRefusal: t.importRefusal}, t.call("describe")
 }
 func (t *fakeTarget) Start(context.Context) error {
 	if err := t.call("start"); err != nil {
@@ -205,6 +217,14 @@ type fakeProber struct {
 	moved   bool // Coolify: the operator moved the domain
 	wrong   string
 	release string // another release answering (the old installation's)
+	// sourceLate is how many probes the source's ingress, started, still
+	// does not answer (its dashboard not yet listening).
+	sourceLate int
+	// sourceDown: the source's ingress, started, never answers.
+	sourceDown bool
+	// sourceNoID: the source answers without its installation id (its
+	// database briefly unreachable).
+	sourceNoID bool
 }
 
 func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, error) {
@@ -214,7 +234,24 @@ func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, er
 	}
 	served := p.w.tgt.running && (p.w.src.ingressDown || (p.w.eng.Options.Ingress == Coolify && p.moved))
 	if !served {
-		return "", "", errors.New("connection refused")
+		// The source answers at the address while its ingress is up and
+		// the address is not the target's (an own proxy or Caddy; in
+		// Coolify, until the domain moves).
+		if p.w.src.ingressDown || p.w.tgt.running && p.w.eng.Options.Ingress != Coolify || p.sourceDown {
+			return "", "", errors.New("connection refused")
+		}
+		if p.sourceLate > 0 {
+			p.sourceLate--
+			return "", "", errors.New("GET /v1/meta answered 502")
+		}
+		if p.w.src.gate != nil {
+			// Behind a gate the old installation answers 503.
+			return "", "", errors.New("GET /v1/meta answered 503")
+		}
+		if p.sourceNoID {
+			return "", p.w.src.info.Release, nil
+		}
+		return "inst_fake", p.w.src.info.Release, nil
 	}
 	if p.wrong != "" {
 		return p.wrong, "0.50.0", nil
@@ -226,6 +263,9 @@ func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, er
 }
 func (t *fakeTarget) Keys(_ context.Context, kek, bek []byte) (string, string, error) {
 	t.keys = append(t.keys, slices.Clone(kek), slices.Clone(bek))
+	if t.keysState != "" {
+		return t.keysState, t.keysState, t.call("keys")
+	}
 	return "written", "written", t.call("keys")
 }
 func (t *fakeTarget) WriteJournal(_ context.Context, j *Journal) error {
@@ -546,11 +586,16 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 		{"no digest", func(w *world) { w.src.info.Digest = "" }, "not pinned by a registry digest"},
 		{"another digest", func(w *world) { w.src.info.Digest = "sha256:" + hexOf(randomBytes(32)) }, "not the published 0.23.0 image"},
 		{"another repository", func(w *world) { w.src.info.DigestRepository = "ghcr.io/someone/varlatchd" }, "not the published 0.23.0 image"},
-		{"the published pin, another image", func(w *world) { w.eng.pin = nil }, "not the published 0.23.0 image"},
+		{"the release's own pin, another image", func(w *world) { w.eng.pin = nil }, "not the published 0.23.0 image"},
 		{"a source behind a gate", func(w *world) { w.src.gate = &Gate{Kind: "restore", ID: "g"} }, "behind a restore gate"},
 		{"a target with a database", func(w *world) { w.tgt.database = true }, "holds a database and no migration journal"},
 		{"a target of another migration", func(w *world) { w.tgt.journal = &JournalHead{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Copied} }, "holds the migration mig_aaaa"},
 		{"a failed backup", func(w *world) { w.src.fail["backup"] = errors.New("no space") }, "preflight: the backup"},
+		// The import's own refusal, which the target's state reports: made
+		// before the backup and the barrier (rehearsal r16f).
+		{"a target whose import would be refused", func(w *world) {
+			w.tgt.importRefusal = "the data directory /var/lib/varlatch is not empty (notes.txt): an import builds a fresh database only"
+		}, "preflight: the target's import would be refused: the data directory /var/lib/varlatch is not empty (notes.txt)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWorld(t)
@@ -561,6 +606,9 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 			}
 			if containsCall(w.src.calls, "barrier") || containsCall(w.tgt.calls, "import") {
 				t.Fatalf("it went on: %v %v", w.src.calls, w.tgt.calls)
+			}
+			if w.tgt.importRefusal != "" && containsCall(w.src.calls, "backup") {
+				t.Fatalf("a backup before the target's refusal: %v", w.src.calls)
 			}
 		})
 	}
@@ -865,22 +913,34 @@ func TestATransferThatFailsGoesBack(t *testing.T) {
 	}
 }
 
-// The published pin (0.23.0's Step 7 item): migrate no longer refuses as
-// unpublished, and a source on v0.23.0's varlatchd image index passes the
-// pin while any other image is refused.
+// The published pin (0.23.0's Step 7 item): a source on v0.23.0's
+// varlatchd image index passes it; another digest, the same digest of
+// another repository, or none, is refused.
 func TestThePublishedPin(t *testing.T) {
 	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(LastTypeScriptDigest) || LastTypeScriptRepository != "ghcr.io/varlatch/varlatchd" {
 		t.Fatalf("the pin: %s@%s", LastTypeScriptRepository, LastTypeScriptDigest)
+	}
+	if testPin != nil {
+		t.Skip("a crashpoint build run with VARLATCH_MIGRATE_PIN pins its own image")
 	}
 	e := &Engine{}
 	ok := SourceInfo{Release: LastTypeScriptRelease, DigestRepository: LastTypeScriptRepository, Digest: LastTypeScriptDigest}
 	if err := e.pinned(ok); err != nil {
 		t.Fatalf("the published image refused: %v", err)
 	}
-	other := ok
-	other.Digest = "sha256:" + strings.Repeat("0", 64)
-	if err := e.pinned(other); err == nil || strings.Contains(err.Error(), "not yet published") || !strings.Contains(err.Error(), "not the published 0.23.0 image") {
-		t.Fatalf("another image: %v", err)
+	for name, c := range map[string]struct {
+		set  func(*SourceInfo)
+		want string
+	}{
+		"another digest":     {func(s *SourceInfo) { s.Digest = "sha256:" + strings.Repeat("0", 64) }, "not the published 0.23.0 image"},
+		"another repository": {func(s *SourceInfo) { s.DigestRepository = "registry.example.test/varlatchd" }, "not the published 0.23.0 image"},
+		"no digest":          {func(s *SourceInfo) { s.Digest, s.DigestRepository = "", "" }, "not pinned by a registry digest"},
+	} {
+		src := ok
+		c.set(&src)
+		if err := e.pinned(src); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 
@@ -935,6 +995,136 @@ func TestAnUndoInTheTransferLiftsTheBarrierFirst(t *testing.T) {
 			})
 		}
 	}
+}
+
+// An undo in the transfer reopens the old installation only once it
+// answers at its address: the ingress started is not yet its dashboard
+// listening (7.8b rehearsal, run r12: --abort said it reopened while the
+// source still answered 502). A source that answers a little later is
+// waited for; one that never answers leaves the undo resumable, and
+// --resume finishes it once it does.
+func TestAnUndoWaitsForTheSourceToAnswer(t *testing.T) {
+	for _, kind := range []Ingress{Public, Proxy} {
+		t.Run(string(kind)+", a little later", func(t *testing.T) {
+			w := interrupted(t, Transfer)
+			setIngress(t, w, kind)
+			w.prober.sourceLate = 3
+			j, err := w.eng.Abort(context.Background())
+			if err != nil || j.Phase != Released {
+				t.Fatalf("--abort: %+v %v", j, err)
+			}
+			if w.prober.sourceLate != 0 {
+				t.Errorf("released before the source answered (%d probes left)", w.prober.sourceLate)
+			}
+		})
+		t.Run(string(kind)+", not at all", func(t *testing.T) {
+			w := interrupted(t, Transfer)
+			setIngress(t, w, kind)
+			w.prober.sourceDown = true
+			w.eng.Options.TransferTimeout = 10 * time.Second
+			_, err := w.eng.Abort(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "was started again, but the public URL https://vault.example.test did not answer from the TypeScript release") ||
+				!strings.Contains(err.Error(), "varlatch migrate --resume tries again") {
+				t.Fatalf("--abort with the source not answering: %v", err)
+			}
+			// Recorded, so the next try recreates the ingress whatever its
+			// container reports.
+			if j, rerr := readJournal(w.src.dir); rerr != nil || j.Phase != Transfer || !j.Undoing || !j.UndoUnanswered || w.src.recreates != 0 {
+				t.Fatalf("the journal: %+v %v, %d recreates", j, rerr, w.src.recreates)
+			}
+			// It answers now: --resume finishes the undo, the ingress
+			// recreated.
+			w.prober.sourceDown = false
+			j, err := w.eng.Resume(context.Background())
+			if err != nil && !strings.Contains(err.Error(), "reopened unchanged") || j.Phase != Released || j.UndoUnanswered || w.src.recreates != 1 {
+				t.Fatalf("--resume once it answers: %+v %v, %d recreates", j, err, w.src.recreates)
+			}
+		})
+	}
+}
+
+// An undo whose target could not be stopped (a unit that would not stop,
+// an image's service the operator stops) does not start the source's
+// ingress, which would collide with or race the target, nor wait on an
+// address the target may still answer: it stays resumable.
+func TestAnUndoLeavesTheIngressWhileTheTargetRuns(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		set  func(w *world)
+	}{
+		{"the stop failed", func(w *world) { w.tgt.fail["stop"] = errors.New("systemctl stop varlatchd failed") }},
+		{"the operator stops it", func(w *world) { w.tgt.human = true }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := interrupted(t, Transfer)
+			setIngress(t, w, Proxy)
+			c.set(w)
+			_, err := w.eng.Abort(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "the source's dashboard is not started again while the target may still serve the address") {
+				t.Fatalf("%v", err)
+			}
+			if containsCall(w.src.calls, "start proxy") || w.prober.probes != 0 {
+				t.Fatalf("started the ingress or waited: %v, %d probes", w.src.calls, w.prober.probes)
+			}
+			// Its database is kept while it may run: no discard to refuse.
+			if strings.Contains(err.Error(), "discarding") || slices.ContainsFunc(w.tgt.calls, func(c string) bool { return strings.HasPrefix(c, "discard ") }) {
+				t.Fatalf("discarded while the target may run: %v %v", err, w.tgt.calls)
+			}
+			if j, rerr := readJournal(w.src.dir); rerr != nil || j.Phase != Transfer || !j.Undoing {
+				t.Fatalf("the journal: %+v %v", j, rerr)
+			}
+		})
+	}
+}
+
+// A journal that records no address (from before the transfer record) is
+// undone without a wait on a placeholder; a source answering without its
+// installation id is not taken for the installation serving.
+func TestTheUndoWaitsOnlyOnARealAnswer(t *testing.T) {
+	t.Run("no recorded address", func(t *testing.T) {
+		w := interrupted(t, Transfer)
+		setIngress(t, w, Proxy)
+		j, err := readJournal(w.src.dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		j.Transfer = nil
+		if err := writeJournal(w.src.dir, j); err != nil {
+			t.Fatal(err)
+		}
+		if j, err := w.eng.Abort(context.Background()); err != nil || j.Phase != Released || w.prober.probes != 0 {
+			t.Fatalf("%+v %v, %d probes", j, err, w.prober.probes)
+		}
+		if !strings.Contains(strings.Join(w.said, "\n"), "the journal records no address to check it at") {
+			t.Errorf("said: %v", w.said)
+		}
+	})
+	t.Run("no installation id", func(t *testing.T) {
+		w := interrupted(t, Transfer)
+		setIngress(t, w, Proxy)
+		w.prober.sourceNoID = true
+		w.eng.Options.TransferTimeout = 10 * time.Second
+		if _, err := w.eng.Abort(context.Background()); err == nil || !strings.Contains(err.Error(), "it answers without an installation id") {
+			t.Fatalf("%v", err)
+		}
+	})
+}
+
+// setIngress gives an interrupted world's journal the shape kind, its
+// ingress stopped and the target serving, as a kill in the transfer
+// leaves them.
+func setIngress(t *testing.T, w *world, kind Ingress) {
+	t.Helper()
+	j, err := readJournal(w.src.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Ingress = kind
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	w.eng.Options.Ingress = kind
+	w.src.ingressDown, w.tgt.running = true, true
 }
 
 // An undo in the transfer that cannot show the source's gate is gone
@@ -1260,5 +1450,49 @@ func TestAReleaseWaitsForTheImagesStop(t *testing.T) {
 	w.tgt.running = false
 	if _, err := w.eng.Resume(context.Background()); err != nil || w.tgt.journal.Phase != Released || w.tgt.gate {
 		t.Fatalf("after the stop: %v %+v gate %v", err, w.tgt.journal, w.tgt.gate)
+	}
+}
+
+// The source's outbound allow list against the target's: none at the
+// source changes nothing; a target with none while the source allows some
+// is refused before anything is done; one that lacks some of the source's
+// entries goes on, the missing ones named. Entries compare without blanks,
+// case or a name's trailing dot.
+func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
+	for _, c := range []struct {
+		name, src, tgt, refused, warned string
+	}{
+		{"none at the source", "", "", "", ""},
+		{"none at the target", "coolify.lan,10.0.0.0/8:8000", "", "sets no outbound_allow", ""},
+		{"the same", "coolify.lan, 10.0.0.0/8:8000", "10.0.0.0/8:8000,COOLIFY.lan", "", ""},
+		{"a wider target", "coolify.lan", "coolify.lan,*.lan", "", ""},
+		{"a name's trailing dot", "coolify.lan.,Convex.LAN.:3210,10.0.0.0/8", "coolify.lan,convex.lan:3210,10.0.0.0/8", "", ""},
+		// JavaScript's \s, as outbound.ParseAllow drops it: a no-break
+		// space, a byte order mark, an ideographic space.
+		{"Unicode blanks", "coolify.lan\u00a0,\ufeffconvex.lan:3210\u3000", "coolify.lan,convex.lan:3210", "", ""},
+		{"one missing", "coolify.lan,convex.lan:3210", "coolify.lan", "", "lacks entries the source allows (convex.lan:3210)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			w.src.ingress.OutboundAllow = c.src
+			w.tgt.info.OutboundAllow = c.tgt
+			_, err := w.eng.Run(context.Background(), true)
+			said := strings.Join(w.said, "\n")
+			if c.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), c.refused) || !strings.Contains(err.Error(), "outbound_allow = "+c.src) || !strings.Contains(err.Error(), "nothing was done") {
+					t.Fatalf("%v", err)
+				}
+				if slices.Contains(w.src.calls, "backup") {
+					t.Fatalf("a backup was made before the refusal: %v", w.src.calls)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (c.warned != "") != strings.Contains(said, "Warning: the target's outbound_allow") || c.warned != "" && !strings.Contains(said, c.warned) {
+				t.Errorf("said: %s", said)
+			}
+		})
 	}
 }
