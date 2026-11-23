@@ -102,21 +102,37 @@ different index digests, so a second push would move the tag off the
 signed record. The release workflow runs one release per tag at a time,
 and go-image refuses a version unless it knows the version is unpublished
 (`check-unpublished.sh`): the releases API must answer "Not Found" for the
-tag, and the registry, after a successful token exchange, "manifest
-unknown" for the image tag. Any other answer (a release or a tag that
-exists, 401, 403, 429, 5xx, no answer) stops the run.
+tag, and the registry, after a successful token exchange, exactly
+"manifest unknown" for the image tag. Any other answer (a release or a tag
+that exists, 401, 403, 429, 5xx, an incomplete transfer, no answer) stops
+the run. The package must exist already: `ghcr.io/varlatch/varlatchd`
+does (it holds the TypeScript line's images). A registry that does not
+know the package says nothing about the tag, so for a new package (a
+fork's, say) push its first image by hand under a tag that is not a
+version, and link the package to the repository with Actions access.
+
+### When a release run fails after go-image
 
 A run that pushed its image and failed later resumes with "Re-run failed
 jobs", which keeps go-image's outputs (the pushed digest) and pushes
-nothing again. That recovery has a deadline: 30 days after the run
-started, when GitHub stops allowing re-runs; the go-assets artifact the
-later jobs download is kept as long. After that, or to start a version
-over for any other reason:
+nothing again. GitHub allows re-running a run for 30 days after it
+started; the go-assets artifact the later jobs download is kept as long.
+The workflow runs only on a tag push, so after those 30 days the run
+cannot be resumed or restarted at all.
 
-1. Check the version has no GitHub release (a published version is never
-   pushed again; cut a new version instead).
-2. In GHCR (the organization's packages, `varlatchd`, "Manage versions"),
-   delete the package version that carries the version's tag. Only a
-   package admin can.
-3. Run the release workflow for the tag again from the start ("Re-run all
-   jobs"); go-image's guard then finds no tag and builds a new image.
+Within those 30 days, a version can also start over: check it has no
+GitHub release, check the run still offers "Re-run all jobs", then delete
+the package version that carries its tag in GHCR (the organization's
+packages, `varlatchd`, "Manage versions"; a package admin can) and re-run
+all jobs. go-image's guard then finds no tag and builds a new image.
+
+After the 30 days, or whenever the run cannot be re-run: do not delete the
+image, and do not delete and re-push the tag. Cut the next patch version
+instead (0.50.1 after a stranded 0.50.0), the normal path with its guards.
+The stranded version keeps its image and has no GitHub release, so
+installers and `published-release.yml`, which go by releases, never offer
+it; its tag counts as a Go release for `release.json`'s `previous` (G6),
+so name it there as after any tag. This costs a version number, and
+nothing else: deleting the image without a run that can rebuild it would
+leave the version with neither, and re-pushing a tag depends on tag rules
+and on GitHub starting a new run, which nothing here can check first.

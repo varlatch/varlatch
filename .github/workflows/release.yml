@@ -663,8 +663,10 @@ jobs:
       # A run whose go-image succeeded and a later job failed is resumed
       # with "Re-run failed jobs" (within 30 days), which keeps go-image's
       # outputs (the pushed digest) and pushes nothing; "Re-run all jobs"
-      # stops here. To start a version over, delete its package version in
-      # GHCR by hand first (go/image/README.md).
+      # stops here. Starting a version over, and what to do once the run
+      # can no longer be re-run (the next patch version, never deleting the
+      # image): go/image/README.md, "When a release run fails after
+      # go-image".
       - name: Not released or pushed before
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

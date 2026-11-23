@@ -123,7 +123,8 @@ IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${
 ISSUER=https://token.actions.githubusercontent.com
 mkdir "varlatch-$V" && cd "varlatch-$V"
 gh release download "v$V" --repo "$REPO" -p SHA256SUMS -p SHA256SUMS.sigstore.json -p varlatchd-image.txt
-if gh release view "v$V" --repo "$REPO" --json assets -q '.assets[].name' | grep -q '^sbom-varlatchd-'; then
+assets=$(gh release view "v$V" --repo "$REPO" --json assets -q '.assets[].name')
+if grep -q '^sbom-varlatchd-' <<< "$assets"; then
   gh release download "v$V" --repo "$REPO" -p 'sbom-varlatchd-*.spdx.json'
 fi
 
@@ -142,8 +143,8 @@ COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures \
 # Provenance and an SBOM for each platform, from the repository at the
 # release's tag: an attested SBOM, or an SBOM release file whose bytes
 # match the signed SHA256SUMS.
-curl -fsSLo check-attestations.sh \
-  "https://raw.githubusercontent.com/$REPO/v$V/go/image/check-attestations.sh"
+gh api -H 'Accept: application/vnd.github.raw' \
+  "repos/$REPO/contents/go/image/check-attestations.sh?ref=v$V" > check-attestations.sh
 bash check-attestations.sh "$image" "$V" --sbom-dir . --sums SHA256SUMS
 
 echo "verified $image"
