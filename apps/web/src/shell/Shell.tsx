@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useMatches, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
@@ -37,6 +37,7 @@ import { TAILNET_ONLY_GUIDANCE, isTailnetDenial } from "../lib/tailnet";
 import { NewerReleaseDot, RELEASE_TAB_PATH, useInstallationRelease } from "../features/installation/releaseNotice";
 import { DeletionBanner } from "../features/settings/OrganizationDeletion";
 import { FreezeGate } from "../features/security-controls/IncidentFreeze";
+import { isNotFound } from "./notFound";
 
 const LAST_ORG_KEY = "varlatch:last-org";
 const SIDEBAR_KEY = "varlatch:sidebar";
@@ -88,6 +89,7 @@ export function Shell() {
   const { org: orgParam } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const notFound = isNotFound(useMatches());
   const narrow = useNarrow();
   const [pinnedCollapsed, setPinnedCollapsed] = useState(() => localStorage.getItem(SIDEBAR_KEY) === "collapsed");
   const collapsed = narrow || pinnedCollapsed;
@@ -220,7 +222,7 @@ export function Shell() {
       <main className="min-w-0 flex-1">
         <div className="mx-auto w-full max-w-[1480px] px-8 pb-24 pt-3.5">
           <DeletionBanner org={orgParam} />
-          <FreezeGate org={orgParam}>
+          <FreezeGate org={orgParam} notFound={notFound}>
             <Outlet />
           </FreezeGate>
         </div>

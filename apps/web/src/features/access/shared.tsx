@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useQuery } from "@tanstack/react-query";
-import type { Tier } from "@varlatch/protocol";
+import type { OrganizationPermissions, Tier } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
+import { useCapability } from "../projects/hooks";
+import { myPermissionsKey } from "../security-controls/keys";
 
 /** Constants and hooks shared across the Access tabs. */
 
@@ -96,6 +98,21 @@ export const ALL_ACTIONS = [
   "audit.read",
   "config.sync.manage",
 ];
+
+/**
+ * Whether the caller has an organization-wide permission, as the server
+ * answers it (GET .../me/permissions). Three answers: "unknown" until the
+ * server has said, after a failed check, and on a server that cannot be
+ * asked; a control that needs the permission shows on "allowed" only.
+ */
+export function useOrganizationPermission(org: string, action: OrganizationPermissions["actions"][number]): "unknown" | "allowed" | "denied" {
+  const { api } = useSession();
+  const supported = useCapability("organizations.permissions");
+  const permissions = useQuery({ queryKey: myPermissionsKey(org), queryFn: () => api.myOrganizationPermissions(org), enabled: supported });
+  // isSuccess, not data: an answer kept from before a failed check is not one.
+  if (!supported || !permissions.isSuccess) return "unknown";
+  return permissions.data.actions.includes(action) ? "allowed" : "denied";
+}
 
 export function useIdentities(org: string | undefined) {
   const { api } = useSession();

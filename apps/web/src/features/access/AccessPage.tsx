@@ -11,6 +11,7 @@ import { MachinesTab } from "./MachinesTab";
 import { RolesTab } from "./RolesTab";
 import { GrantsTab } from "./GrantsTab";
 import { AdvancedTab } from "./AdvancedTab";
+import { myPermissionsKey } from "../security-controls/keys";
 import { useIdentities } from "./shared";
 
 /**
@@ -43,6 +44,7 @@ export function AccessPage() {
       ["groups", org],
       ["teams", org],
       ["invitations", org],
+      myPermissionsKey(org),
     ],
   );
   const identities = useIdentities(org);

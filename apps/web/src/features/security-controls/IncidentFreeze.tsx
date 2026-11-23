@@ -97,13 +97,17 @@ function FreezeBanner({ org, freeze, onlyBanner }: { org: string; freeze: Incide
   );
 }
 
-/** The banner on every page of a frozen organization; the page itself only where it can work. */
-export function FreezeGate({ org, children }: { org: string | undefined; children: React.ReactNode }) {
+/**
+ * The banner on every page of a frozen organization; the page itself only
+ * where it can work. An address without a page (`notFound`) has nothing to
+ * refuse: it says so under the banner.
+ */
+export function FreezeGate({ org, notFound = false, children }: { org: string | undefined; notFound?: boolean; children: React.ReactNode }) {
   const state = useIncidentFreeze(org);
   const { pathname } = useLocation();
   const freeze = state.data?.freeze ?? null;
   if (!org || !freeze) return <>{children}</>;
-  const works = pageWorksWhileFrozen(pathname, org);
+  const works = notFound || pageWorksWhileFrozen(pathname, org);
   return (
     <>
       <FreezeBanner org={org} freeze={freeze} onlyBanner={!works} />

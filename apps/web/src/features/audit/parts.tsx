@@ -182,7 +182,8 @@ export function ActorMark({ actor, size = "sm" }: { actor: Actor; size?: "xs" | 
 
 export function SentenceText({ segments, className }: { segments: Segment[]; className?: string }) {
   return (
-    <span className={className}>
+    // A long word (an event type, an address) breaks rather than leave the line.
+    <span className={cn("[overflow-wrap:anywhere]", className)}>
       {segments.map((s, i) =>
         typeof s === "string" ? (
           <React.Fragment key={i}>{s}</React.Fragment>
@@ -191,7 +192,7 @@ export function SentenceText({ segments, className }: { segments: Segment[]; cla
             {s.text}
           </span>
         ) : (
-          <span key={i} className={cn("font-mono text-[12.5px] text-fg", s.kind === "place" && "whitespace-nowrap")}>
+          <span key={i} className={cn("font-mono text-[12.5px] text-fg", s.kind === "place" && "@3xl:whitespace-nowrap")}>
             {s.text}
           </span>
         ),
