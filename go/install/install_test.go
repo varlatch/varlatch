@@ -868,18 +868,22 @@ func TestInstallCLIRerunOverAGoBinary(t *testing.T) {
 }
 
 // A copy Homebrew installed is refused, nothing written: by where it is
-// (a Cellar, through a link as Homebrew links it, or a chain of links),
-// at the target or on PATH; and the TypeScript CLI's formula's wrapper
-// script, by what it says.
+// (in a Cellar, through a link as Homebrew links it, a linked directory,
+// or a chain of links), at the target or on PATH; and the TypeScript
+// CLI's formula's wrapper script, by what it says. The located copies
+// carry no Homebrew message, so only their place can tell (rc.2's script
+// let the first two through).
 func TestInstallRefusesHomebrew(t *testing.T) {
 	stub := goStub(t)
+	// A binary in a Cellar, with no "installed with Homebrew" in it.
+	plain := []byte(stubCLI)
 	cellar := func(t *testing.T) (prefix, file string) {
 		prefix = t.TempDir()
 		file = filepath.Join(prefix, "Cellar", "varlatch", version, "bin", "varlatch")
 		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(file, stub, 0o755); err != nil {
+		if err := os.WriteFile(file, plain, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return prefix, file
@@ -913,6 +917,21 @@ func TestInstallRefusesHomebrew(t *testing.T) {
 			_, file := cellar(t)
 			return []string{"PATH_FIRST=" + filepath.Dir(file)}
 		}},
+		{"the target's directory, a link to a keg's bin", func(t *testing.T, dir string) []string {
+			_, file := cellar(t)
+			// dir itself is the link: --dir names it, and its varlatch is
+			// the keg's binary.
+			if err := os.Remove(dir); err != nil {
+				t.Fatal(err)
+			}
+			link(t, filepath.Dir(file), dir)
+			return nil
+		}},
+		{"the target, an absolute link straight into a Cellar", func(t *testing.T, dir string) []string {
+			_, file := cellar(t)
+			link(t, file, filepath.Join(dir, "varlatch"))
+			return nil
+		}},
 		{"the TypeScript formula's wrapper script", func(t *testing.T, dir string) []string {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
@@ -940,6 +959,35 @@ func TestInstallRefusesHomebrew(t *testing.T) {
 			}
 			emptyTmp(t, res)
 		})
+	}
+}
+
+// A link whose path goes through a Cellar but resolves outside it is no
+// Homebrew copy: the place that counts is the resolved one (and the path
+// as given), as for self-update, never a link's raw text.
+func TestInstallThroughACellarToElsewhere(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	for _, d := range []string{filepath.Join(root, "Cellar"), filepath.Join(root, "plain")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elsewhere := filepath.Join(root, "plain", "varlatch")
+	if err := os.WriteFile(elsewhere, []byte(stubCLI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	// The link's text as written, not cleaned (filepath.Join would drop
+	// the Cellar from it).
+	if err := os.Symlink(root+"/Cellar/../plain/varlatch", filepath.Join(dir, "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code != 0 || !strings.Contains(res.out, "Installed varlatch "+version) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
 	}
 }
 

@@ -164,27 +164,39 @@ put_cli() {
   fi
 }
 
-# A Homebrew copy is Homebrew's to update. Homebrew is told by where the
-# file is, as varlatch self-update tells it (selfupdate.Locate): the path,
-# or any link on its way to the file, in a Cellar or under Homebrew's
-# prefixes. And the TypeScript CLI's formula installed a script wrapper,
-# which says so. Never by the message in a binary: every Go varlatch
-# carries self-update's refusal text.
-homebrew() {
-  [ -e "$1" ] || [ -L "$1" ] || return 0
-  hops=0 p=$1
+# resolved prints the file's path with every link on its way resolved, its
+# directories' links as well (cd -P, pwd -P) as its own (readlink, one
+# level at a time, up to 40). A path whose directory does not exist is
+# printed as it is.
+resolved() {
+  hb_p=$1 hb_hops=0
   while :; do
-    case "$p" in
-      */Cellar/* | */cellar/* | /opt/homebrew/* | /home/linuxbrew/.linuxbrew/*)
+    hb_d=$(cd -P "$(dirname "$hb_p")" 2>/dev/null && pwd -P) || break
+    hb_p=$hb_d/$(basename "$hb_p")
+    [ -L "$hb_p" ] && [ "$hb_hops" -lt 40 ] || break
+    hb_link=$(readlink "$hb_p" 2>/dev/null) || break
+    case "$hb_link" in
+      /*) hb_p=$hb_link ;;
+      *) hb_p=$hb_d/$hb_link ;;
+    esac
+    hb_hops=$((hb_hops + 1))
+  done
+  printf '%s\n' "$hb_p"
+}
+
+# A Homebrew copy is Homebrew's to update. It is told as varlatch
+# self-update tells it (selfupdate.Locate): the path as given, or the path
+# with every link resolved, in lower case, has /cellar/ in it or starts
+# with /opt/homebrew/ or /home/linuxbrew/.linuxbrew/. And the TypeScript
+# CLI's formula installed a script wrapper, which says so. Never by the
+# message in a binary: every Go varlatch carries self-update's refusal.
+homebrew() {
+  [ -e "$1" ] || return 0
+  for hb_path in "$1" "$(resolved "$1")"; do
+    case "$(printf '%s' "$hb_path" | tr '[:upper:]' '[:lower:]')" in
+      */cellar/* | /opt/homebrew/* | /home/linuxbrew/.linuxbrew/*)
         stop "varlatch is installed with Homebrew at $1; update it with: brew upgrade varlatch" ;;
     esac
-    [ -L "$p" ] && [ "$hops" -lt 40 ] || break
-    link=$(readlink "$p" 2>/dev/null) || break
-    case "$link" in
-      /*) p=$link ;;
-      *) p=$(dirname "$p")/$link ;;
-    esac
-    hops=$((hops + 1))
   done
   if [ "$(head -c 2 "$1" 2>/dev/null)" = '#!' ] && grep -q 'installed with Homebrew' "$1" 2>/dev/null; then
     stop "varlatch is installed with Homebrew at $1; update it with: brew upgrade varlatch"

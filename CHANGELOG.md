@@ -62,10 +62,12 @@ fixes.
   it with: brew upgrade varlatch": it took the message every Go binary
   carries (`varlatch self-update`'s refusal for a Homebrew copy) for a sign
   of Homebrew. It now tells a Homebrew copy as `varlatch self-update` does,
-  by where it is (in a Cellar, or under `/opt/homebrew` or
-  `/home/linuxbrew/.linuxbrew`, the path itself or any link on the way to
-  the file), and still refuses the TypeScript CLI's formula's wrapper
-  script. `install.ps1` was not affected.
+  by two paths: the path as given, and the path with every link resolved
+  (linked directories included). Either one, compared in lower case, marks
+  a Homebrew copy when it has `/cellar/` in it or starts with
+  `/opt/homebrew/` or `/home/linuxbrew/.linuxbrew/`. It still refuses the
+  TypeScript CLI's formula's wrapper script, which says it is Homebrew's.
+  `install.ps1` was not affected.
 
 ### Documentation
 
