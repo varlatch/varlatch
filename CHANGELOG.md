@@ -71,6 +71,421 @@ fixes.
   `--cpu-shares` in its custom run options is overridden, and that a
   Compose resource needs `cpu_shares` in its Compose file.
 
+## 0.50.0-rc.2 (2026-11-20)
+
+The second prerelease of the Go line (ADR-0059), published to test more of
+the Go CLI and server against real installations. **It is not for
+production.** The TypeScript line (0.22.x) is unaffected: its images,
+Compose set and CLI do not change.
+
+- **What it contains.** As in 0.50.0-rc.1: `varlatch`, the CLI, for Linux,
+  macOS and Windows on amd64 and arm64; `varlatchd`, the server, for Linux
+  on amd64 and arm64; `install.sh` and `install.ps1` for this version; the
+  `varlatchd` systemd unit and its example configuration. New:
+  `release.json`, the release's manifest (#324). `SHA256SUMS` lists every
+  asset and is signed keyless by the release workflow; the installers
+  check the signature before they install anything.
+
+Changes since 0.50.0-rc.1, by pull request:
+
+- **Organization administration in the Go CLI (#290).** `varlatch org`,
+  `project`, `env-create`, `env-delete`, `identity`, `member`,
+  `credential`, `invite`, `tailnet` and `audit` run in the Go CLI, as in
+  the TypeScript CLI. A subcommand the Go CLI does not have yet says so
+  and exits 1.
+- **`varlatch security` (#299).** `varlatch security status`, `report`,
+  `controls` and `set` run in the Go CLI, as in the TypeScript CLI.
+- **Deletion, freezes and the audit export in the Go CLI (#302).**
+  `varlatch project delete`, `org delete` (scheduled, approved or
+  cancelled), `org deletion`, `org freeze`, `org unfreeze`, `audit-export`
+  and `audit export` run in the Go CLI, as in the TypeScript CLI: each
+  destructive command asks for the target's name again before it writes,
+  and the audit export's secret key is read from standard input, a file
+  or a hidden prompt, never the command line.
+- **`varlatch scan` (#301).** Looks for the values of your Secrets in
+  files or staged changes, in every encoded form, and reports each finding
+  by path, line and item, never the value; `varlatch:allow` markers, a
+  baseline and `--json` as in the TypeScript CLI.
+- **`varlatch sync check` and `sync push` (#310).** Run in the Go CLI, as
+  in the TypeScript CLI.
+- **`varlatch run --strict` (#306).** One strict retrieval; every value is
+  checked as the command will receive it, and any violation (names and
+  reasons, never a value) stops the run with exit 78 before the command
+  starts.
+- **The local Broker in the Go CLI (#308).** The Broker's placement and
+  streaming rules, as the TypeScript CLI has them. No command of this
+  prerelease uses it.
+- **Host commands of a Go installation (#316).** `varlatch admin backup
+  run`, `backup status`, `backup test-bucket`, `backup restore`, `admin
+  security reset`, `admin unfreeze`, `admin outbound check` and `admin
+  maintenance` run `varlatchd admin` on the installation's host. A Compose
+  installation's host commands stay the TypeScript CLI's.
+- **`varlatch self-update` (#327).** Replaces the Go CLI with the newest
+  Go release, a prerelease only when this binary is one or with
+  `--prerelease`. It verifies the release's signature before it downloads
+  anything else, checks the binary against `SHA256SUMS`, runs it once, and
+  only then puts it in place. It never goes to an older release without
+  `--allow-downgrade`, and a Homebrew or winget copy is told to use its
+  own package manager. `install.sh` now replaces the TypeScript CLI's
+  single-file build; on a host with a Compose installation it keeps it
+  beside the Go CLI as `varlatch-ts`, for that installation's host
+  commands.
+- **The installation serves its own CLI (#331).** With `serve_cli = on`,
+  `varlatchd` serves its own release's Go CLI for every platform, and
+  `install.sh` and `install.ps1` that install it from the installation.
+  The files come from github.com only, through the outbound policy, are
+  checked against the release's signature before anything is served, and
+  are checked again at every start. Off by default.
+- **Moving an installation (#345).** `varlatch move --public-url <url>`
+  moves a Go installation to another address, on its host as root: it
+  shows the plan, takes an archive, rewrites `public_url` (and the public
+  HTTPS settings when the ingress changes), restarts `varlatchd`, and
+  issues each person a re-enrollment link, since passkeys belong to an
+  address. Browser sessions end and passkeys are removed; CLI, agent and
+  machine credentials keep working. `varlatch move` run again finishes a
+  move in progress, and `varlatch move --abandon` gives one up.
+- **`varlatch tailnet repin` (#319).** Shows the tailnet `varlatchd` has
+  pinned and the one it observes, and re-pins with `--yes`; a re-pin is
+  recorded in the audit log as `tailnet.repinned`.
+- **Public HTTPS (#323).** `varlatchd` can serve HTTPS itself with a
+  certificate it obtains and renews over ACME (Let's Encrypt by default):
+  `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca` and
+  `acme_ca_root` in `varlatchd.conf`. Off by default.
+- **The certificate issuance count (#344).** Every certificate request
+  `varlatchd` makes is counted in its database, so the count survives a
+  backup and a restore. With Let's Encrypt, a request that would pass its
+  five certificates per name per week is refused before it is made, and
+  retried once the week allows. This is schema version 2; it is
+  rollback-safe, so the previous release still opens the database.
+- **A self-hosted tailnet control server (#375).** `tailnet_control_url`
+  can name a self-hosted control server, such as Headscale, given as
+  `https://` and its IP address (a host name is refused, since the tailnet
+  client would look it up through Tailscale when the ordinary lookup
+  fails). On a self-hosted server the node takes its tags from its
+  pre-auth key. The dashboard's Tailnet tab shows the control server.
+- **The release manifest and schema upgrades (#324).** Each release
+  carries `release.json`: the database schema it writes, the oldest
+  schema whose `varlatchd` can still open its database, whether it is
+  rollback-safe, and the release it was checked against. `varlatchd admin
+  schema status` reports a database's schema, and `admin schema upgrade`
+  brings it to the release's, offline.
+- **The migration's rollback window in the manifest (#368).** A release's
+  `release.json` (now format 2) also says what it does to a migration's
+  rollback window: reversible to the last TypeScript release, or ending
+  the window. A release that says neither is refused when it is built.
+- **One relying party, whatever the ingress (#326).** Passkey sign-in and
+  registration, like every browser request that changes something, are
+  accepted only from the exact origin of `public_url`, on this machine,
+  behind your own reverse proxy or with public HTTPS. A client's address
+  comes from `X-Forwarded-For` only behind a trusted proxy.
+- **A URL's path is not masked (#335).** The CLI's masking of credentials
+  in URLs no longer masks an at-sign in a URL's path, such as
+  `/@scope/package`; anything that could be a URL's credentials is still
+  masked.
+- **A Sync Target with an unreadable mapping (#366).** A Sync Target whose
+  stored mapping cannot be read fails its own runs, said in its status,
+  instead of stopping `varlatchd`.
+- **TypeScript-format archives kept apart (#356).** `varlatchd`'s backup
+  retention never deletes an archive the TypeScript server made, and
+  `varlatchd admin backup status` lists those archives apart, as
+  restorable through the coming backup converter.
+- **`varlatch migrate` (#342, #348, #352, #371).** The host command that
+  migrates a TypeScript installation of the last TypeScript release to a
+  Go installation, on its host as root, either a host install or the
+  container image's service:
+  - a preflight with a fresh, verified backup, then a dry run that copies
+    and checks everything against a downtime budget, with nothing closed;
+  - the barrier, the final copy and its checks (every row, every encrypted
+    item by keyed digests, every access decision, the audit log), then
+    the address moved, the TypeScript installation marked migrated out,
+    and the Go installation open;
+  - every phase journalled in both installations, `--resume` and `--abort`
+    from the journal, and each interruption tested to its stated end;
+  - `--rollback` within 30 days, back to the last TypeScript release on a
+    fresh database rebuilt from the Go installation's, which keeps serving
+    until the address moves back;
+  - `--finish` ends the rollback window, and `--delete-old-data` removes
+    the old data after a verified final archive.
+
+  It migrates from the last TypeScript release's published image only:
+  0.23.0's, pinned by its registry digest (#402, #403); any other source
+  is refused before anything is done. The tailnet name's handoff (#360,
+  #365) moves the name with the migration (#379).
+- **The container image's definition (#338).** `go/image` builds
+  `varlatchd` and `varlatch` from the release's own assets into a
+  distroless image that runs as a non-root user. The image is not
+  published with this prerelease.
+- **The Secret matcher holds less (#298).** The CLI's matcher keeps no
+  reference to output it has already passed on.
+- **Published releases checked as people install them (#334).** Each
+  published Go release is installed and its signature checked on Linux,
+  macOS and Windows by CI.
+- **Test reliability (#336).** The CLI's masking timing tests measure
+  longer runs. No change to what is shipped.
+- **Test reliability (#347).** The CLI's timing tests run with the
+  collector off, best of five. No change to what is shipped.
+- **Test reliability (#349).** CI runs the timing tests on their own,
+  after the other tests. No change to what is shipped.
+- **Test reliability (#350).** `varlatch scan`'s timing test sizes itself
+  by its measured run. No change to what is shipped.
+- **Conformance reliability (#355).** The access suite waits for the
+  server's answer before its next step. No change to what is shipped.
+- **Conformance reliability (#358, #374).** Test fixtures use ports
+  outside the ephemeral range, a fixture that does not start is named on
+  its checks, and each failure is attributed to its own suite. No change
+  to what is shipped.
+- **Test reliability (#376).** The matcher's timing tests collect only
+  past a heap margin. No change to what is shipped.
+
+- **`varlatch setup` (#341).** Installs a Go installation on a systemd
+  host, as root, from an empty host to a running, administered and
+  backed-up installation:
+  - the questions (the ingress: public HTTPS, your own proxy, this machine
+    only or a tailnet; where backups go: this host or a bucket), each also
+    a flag or an entry of an answers file (`--answers <file>`), so setup
+    runs without a terminal too;
+  - the `varlatch` system user, the data directory (checked with an fsync
+    probe of its disk), the Root KEK and the backup key (made here,
+    root's, 0600, never in an argument, the environment or a log), the
+    configuration and the systemd unit, started and checked ready;
+  - the first administrator's one-time enrollment link, shown on the
+    terminal or written to `--admin-link-out <file>`, and setup waits for
+    the passkey;
+  - each key shown once and pasted back to check it was copied (or, off a
+    terminal, written to `--root-kek-out` and `--backup-key-out`), the
+    Custody Attestation recorded, a first backup made and verified, then
+    `varlatch doctor`.
+
+  Interrupted, setup run again goes on where it stopped; run again after
+  it finished, it changes nothing. `varlatch setup --restore <archive>
+  --root-kek-file <file> --backup-key-file <file>` restores an archive
+  onto a fresh host the same way: the administrators keep their passkeys,
+  so no link is issued, and a backup of the restored installation is
+  verified.
+- **`varlatch doctor` for a Go installation (#328, landed with #341).**
+  Checks the configuration, the data directory and the key files' modes
+  (read with `stat` only: doctor never opens a key file), free space, the
+  disk's fsync latency, the running `varlatchd`, its backups and the keys'
+  custody, and says what to do for each check that fails. It changes
+  nothing; `--json` gives the report as a document.
+- **`varlatch upgrade` (#330).** Upgrades a Go installation on its host,
+  as root: the release's binaries and `release.json` are checked against
+  its signed `SHA256SUMS` first, a release whose database schema this
+  installation cannot be upgraded to is refused, a backup is made, and a
+  release that is not rollback-safe is installed only with
+  `--accept-not-rollback-safe`. An interrupted upgrade is finished or
+  undone by the next run. `varlatch upgrade --check` records the newest
+  release, which the dashboard's release notice shows.
+- **A migration's rollback window and upgrades (#387).** While a
+  migration's rollback window is open, `varlatch upgrade` to a release
+  that ends the window says so and goes on only once you confirm it (on a
+  terminal, or with `--end-rollback-window`).
+- **Host commands and the keys (#391).** A host command run by hand
+  outside the unit (`varlatchd admin ...`, or `varlatch admin ...`) finds
+  the keys beside the configuration, where setup wrote them, only when it
+  runs as root. Without a Root KEK it now says what to do: set
+  `root_kek_file`, or run it as root. In the container image the CLI's
+  refusal of a key in its environment also covers the keys found that
+  way.
+- **`varlatch run --agent-safe` and `varlatch request` (#313).** Run in
+  the Go CLI, as in the TypeScript CLI, with the local Broker (#308): the
+  Agent gets a placeholder for each Secret, and the Broker puts the value
+  in only for the targets you allowed. `--strict` works with
+  `--agent-safe` too.
+- **A Sync Target that fails while it runs (#369).** An unexpected failure
+  inside one Sync Target's run fails that run, counted toward its disable
+  budget and said in its status, instead of stopping `varlatchd`. The log
+  names the Target and the failure, never a value.
+- **The tailnet name moves with the migration (#379).** For a source that
+  serves a tailnet address, `varlatch migrate` moves the name to the Go
+  installation's node: give it `--tailscale-oauth-client-file` (an OAuth
+  client with the `devices:core` scope only) and `--tailnet-auth-key-file`
+  (a reusable key with the node's tags), both from files. The Go node
+  joins under a temporary name before the barrier and takes the name at
+  the switch; an undo or a rollback gives the name back to the old node
+  first. `--accept-rollback-certificate` goes on when the old node's
+  certificate cannot be renewed to last the rollback window.
+- **The tailnet node's tags on a self-hosted control server (#383).** On
+  Headscale the node's tags are its pre-auth key's, and they must be
+  exactly `tailnet_tags`: any other set keeps tailnet access closed until
+  they match, and `varlatch doctor` names both sets and what to do (the
+  API side is described under Unreleased, API: `TAGS_DIFFER`).
+- **The self-hosted tailnet control server, documented (#382).** A new
+  self-hosting page covers running the built-in tailnet node against
+  Headscale: `tailnet_control_url` as `https://` and an IP address, the
+  certificate it needs, tagged pre-auth keys, and what is refused and why.
+- **`varlatch migrate` makes the host target (#392).** When `--config
+  /etc/varlatch/varlatchd.conf` is not there yet, migrate makes the Go
+  installation itself with setup's steps (as root, on a systemd host): the
+  `varlatch` user, the data directory, the configuration from the
+  source's answers and the unit, never keys, which are the source's.
+  `--acme-email`, `--listen` and `--accept-existing-user` as in setup. An
+  undo removes what it made; `--abort --forget-target` clears its record
+  after you removed what an undo could not.
+- **`varlatch migrate --from-archive` (#362).** The backup converter:
+  turns an archive the TypeScript server made (format 1 or 2) into a Go
+  archive (format 3) of the same installation, by the migration's own
+  checks, with the archive's Root KEK and backup key from files
+  (`--kek-file`, `--bek-file`) and `--out <archive>`.
+- **The migration's bundles over standard input and output (#384).** The
+  TypeScript side's export and the reverse's import now pass through the
+  container's standard input and output, so its user never writes or
+  reads your backups directory, which failed every dry run on a real
+  installation. A dry run that failed can be run again.
+- **An undo reopens the source in order (#386, #401).** An undo in the
+  transfer lifts the source's barrier before it gives the address back,
+  so the source's dashboard comes up again, and it reports the old
+  installation reopened only once its public URL answers from it (up to
+  `--transfer-timeout`). A dashboard that a failed start left without its
+  network is made again.
+- **A reverse refuses a stopped tailnet sidecar first (#389).** Where the
+  TypeScript `varlatchd` runs in the Tailscale sidecar's network and the
+  sidecar is stopped, `--rollback` is refused before anything is done,
+  with the step to take (start the sidecar, then run it again), instead
+  of failing after the rebuild.
+- **The Coolify Compose file for the Go image (#390).**
+  `infra/coolify/varlatchd.compose.yml` runs the Go `varlatchd` image as
+  one Coolify service, pinned by its digest (an unset digest is refused),
+  with the setup and upgrade steps in `infra/coolify/README.md`, for when
+  the image is published.
+- **Release builds hold no test overrides (#377).** The overrides the
+  migration's tests and rehearsals use are built with a test tag only, and
+  a check fails the build if a release binary would contain them.
+- **Published releases checked before they are trusted (#395).** The
+  release workflow's check of a published release refuses a draft
+  release outright.
+- **Old CLIs against the Go server (#397).** CI runs the last published
+  TypeScript CLIs against the Go server (ship gate G2), weekly and on
+  demand.
+- **The ship gates' own checks (#394, #399, #400, #403, #407).** The
+  nightly container conformance run serves the CLI release as the binary
+  run does, and its result now counts; ship gate G1 can be run on demand;
+  its browser walkthrough has a checklist and an evidence template, whose
+  check refuses anything Markdown would render differently from what it
+  reads. No change to what is shipped.
+- **The migration's rehearsal on a real installation (#406).** The
+  rehearsal checks that the source answers again after `--abort` as a
+  client would, polling its address. No change to what is shipped.
+- **Test reliability (#388, #393, #396, #398, #404).** More transcripts
+  for `run --agent-safe --strict`, recorded from the TypeScript CLI; three
+  flaky Go tests, an audit export test at an hour's boundary and the
+  conformance runner's platform fakes fixed. No change to what is shipped.
+
+- **`--rollback` after a tailnet handoff (#380).** Where the TypeScript
+  `varlatchd` runs in the Tailscale sidecar's network and the migration's
+  handoff stopped that sidecar, `--rollback` now starts it itself for the
+  reverse's commands (the old node under its temporary name: the name
+  stays with the Go node until the reverse hands it back), and an undo of
+  the reverse stops it again. A sidecar you stopped yourself is still
+  refused first, as in #389.
+- **A restore takes the tailnet name over (#381).** `varlatchd admin
+  tailnet take-name --oauth-client-file <file>` gives a restored
+  installation the dead installation's tailnet name, by renaming the dead
+  node and then the restored one, each read back, before `varlatchd`
+  first starts. It takes the name only from a node that is not connected
+  and was last seen more than 5 minutes ago, by the control plane's own
+  clock, checked again right before the first rename: a node seen since
+  may be the old installation still running, and there is no override.
+  Interrupted, it resumes from its journal (`tailnet-takeover.json`).
+  `varlatch setup --restore --tailscale-oauth-client-file <file>` runs it
+  for you.
+- **Headscale as the migration's tailnet authority (#385).** On a
+  self-hosted Headscale, `varlatch migrate` moves the tailnet name with
+  `--headscale-url https://<IP>[:port]` and `--headscale-api-key-file`, a
+  key from `headscale apikeys create --expiration 1h`, or with
+  `--headscale-cli <absolute path>` when migrate runs on the control
+  server. The API key must expire within the hour; it is expired when the
+  run ends, so each run takes a new one, and a run killed first names the
+  key's prefix to expire. Both nodes must be on the same control server as
+  the authority, and the tailnet HTTPS overlay is refused on Headscale,
+  which issues no certificates. A resume, abort or rollback with another
+  server or the other form is refused before anything is renamed.
+- **A restore on Headscale (#405, #408).** `varlatchd admin tailnet
+  take-name` takes the name over on Headscale too, with `--headscale-url`
+  and `--headscale-api-key-file`; the URL must be `tailnet_control_url`.
+  The key file, and the OAuth client file too, must be a regular file of
+  mode 0600 or tighter, holding one line. A Headscale on a private address
+  that the outbound policy refuses is named with the exact
+  `outbound_allow` line to add. `varlatch setup --restore` drives it with
+  `--tailnet-control-url https://<IP>[:port]` and
+  `--headscale-api-key-file <file>` (in the answers file,
+  `tailnetControlUrl` and `headscaleApiKeyFile`): the URL is written as
+  `tailnet_control_url`, the key file is checked before anything is made,
+  and a rerun naming another control server is refused. A fresh setup on
+  a self-hosted control server is not supported yet: the URL goes with
+  `--restore` only.
+- **Compose settings and the outbound allow list (#410).** `varlatch
+  migrate` reads a Compose service's `environment` in its list form (`- A=1`)
+  too, and unquoted numbers and booleans in its map form, so preflight no
+  longer fails saying the Compose project was not named. The source's
+  `VARLATCH_OUTBOUND_ALLOW`, as Compose gave it to the running container,
+  becomes the target's `outbound_allow`:
+  - a host target migrate makes gets the same list;
+  - a target you prepared without `outbound_allow` is refused before
+    anything is done, with the line to add;
+  - one that lacks some of the source's entries gets a warning, since a
+    wider entry may cover them.
+
+  `varlatchd admin outbound check` names `outbound_allow` in the
+  configuration file, suggests the line to set with the restart a host
+  install or the image takes, and lists the GitHub Sync Targets'
+  destination, `https://api.github.com`.
+- **The source marked migrated out with its sidecar's network (#413).** In
+  the stock Tailscale topology the migration's handoff stopped the
+  sidecar, which took the TypeScript `varlatchd`'s network away, so
+  marking the source migrated out failed and the migration stopped in
+  `switched`. The switch now starts the sidecar again for that step (its
+  node under its temporary name), then stops it. `varlatch migrate
+  --resume` finishes a migration stopped that way.
+- **The switch, more robust (#416, #420, #423).** The sidecar is started
+  for that step only when `varlatchd` shares its network; the restarted
+  `varlatchd` is waited for, at most a minute, before the source is
+  marked; and every stop of the sidecar runs even when the run is
+  interrupted, so the old node never stays on the tailnet until
+  `--resume`. `ps` or `docker compose config` failing is said as such,
+  without their output, and more than one `varlatchd` container is
+  refused.
+- **A migration after a rollback (#414).** After `--rollback` and
+  `--finish --delete-old-data`, a new migration into the same data
+  directory keeps Go's `backups/` and the earlier final archive in it.
+  Anything else in the data directory is refused at the preflight, before
+  the backup and the barrier, with what to move.
+- **Backup status after a new migration (#415).** The schedule and the
+  "no archive created within the last 48 hours" warning count only the
+  live database's archives (the same installation, made since the
+  database was), so an earlier database's archive no longer delays the
+  first backup or silences the warning. Every archive is still listed;
+  `varlatch doctor` judges the same way.
+- **`--rollback` against the published image (#412).** The reverse's
+  one-off commands named `node dist/cli.js` again after the image's own
+  entrypoint, which already runs it, so every rollback of a 0.23.0
+  installation failed at the import and was undone. Fixed.
+- **Migrating to 0.50, documented (#372).** A new operator's guide,
+  `docs/operations/migrate-to-0.50.md`, linked from the README, walks
+  through a migration from 0.23.0: what it needs, the dry run and its
+  report, the phases and their journal, `--resume` and `--abort`, the
+  address transfer for each ingress and the tailnet handoff, the host and
+  image targets, what people notice, the rollback window and `--finish`,
+  and the backup converter.
+- **The migration's rehearsals (#409, #411, #412, #424).** The rehearsal
+  harness runs the sync case against platform stand-ins and against a
+  real GitHub repository and Coolify application, the tailnet handoff on
+  a Headscale of its own, and the migration of an installation restored
+  from a backup archive, isolated from everything outside it. No change to
+  what is shipped.
+- **CI (#380, #422, #425).** G5 and the Headscale tests run in a job of
+  their own beside the Go tests, which saves about 24 minutes a run; the
+  go job's limit is 75 minutes and G5's tests get 25; G5's cleanup of
+  abandoned runs no longer removes a live run it cannot see, such as one
+  in a container. No change to what is shipped.
+
+- **Prerelease only.** It is published as a GitHub prerelease and never
+  becomes the latest release, so nothing that follows the latest release
+  (`varlatch upgrade`, the release notice, `varlatch self-update`) offers
+  it. The Go server has no published container image yet, and `varlatch
+  migrate` migrates from the last TypeScript release's published image
+  (0.23.0) only.
+
 ## 0.50.0-rc.1 (2026-11-20)
 
 A prerelease of the Go line (ADR-0059): the first release built from the
