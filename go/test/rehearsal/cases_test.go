@@ -42,6 +42,9 @@ func TestRehearsal(t *testing.T) {
 	case "coolify":
 		t.Run("coolify", func(t *testing.T) { coolifyCase(t, rel, s3) })
 		return
+	case "combined":
+		t.Run("combined", func(t *testing.T) { combinedCase(t, rel, s3) })
+		return
 	case "public":
 		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
 	case "tailnet":
