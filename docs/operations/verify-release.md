@@ -116,11 +116,17 @@ container image in `varlatchd-image.txt`, which its signed `SHA256SUMS`
 lists. Check the record, then the image by its digest:
 
 ```sh
+set -euo pipefail
 V=0.50.0                                      # the release to verify
 REPO=varlatch/varlatch
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
+mkdir "varlatch-$V" && cd "varlatch-$V"
 gh release download "v$V" --repo "$REPO" -p SHA256SUMS -p SHA256SUMS.sigstore.json -p varlatchd-image.txt
+assets=$(gh release view "v$V" --repo "$REPO" --json assets -q '.assets[].name')
+if grep -q '^sbom-varlatchd-' <<< "$assets"; then
+  gh release download "v$V" --repo "$REPO" -p 'sbom-varlatchd-*.spdx.json'
+fi
 
 # SHA256SUMS is the release workflow's, and lists the record.
 cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
@@ -132,25 +138,27 @@ grep -E '^[0-9a-f]{64}  varlatchd-image\.txt$' SHA256SUMS | sha256sum --check --
 ref=$(cat varlatchd-image.txt)                # ghcr.io/varlatch/varlatchd:V@sha256:...
 image="${ref%%:*}@${ref##*@}"
 COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures \
-  cosign verify "$image" --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null \
-  && echo "verified $image"
+  cosign verify "$image" --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null
 
-# Provenance and an SBOM for each platform. A platform without an
-# attestation reads as {}, which these refuse.
-for arch in amd64 arm64; do
-  docker buildx imagetools inspect "$image" --format "{{ json (index .Provenance \"linux/$arch\") }}" \
-    | jq -e '.SLSA.buildDefinition.buildType // .SLSA.buildType' >/dev/null && echo "provenance linux/$arch"
-  docker buildx imagetools inspect "$image" --format "{{ json (index .SBOM \"linux/$arch\") }}" \
-    | jq -e '.SPDX.spdxVersion' >/dev/null && echo "SBOM linux/$arch"
-done
+# Provenance and an SBOM for each platform, from the repository at the
+# release's tag: an attested SBOM, or an SBOM release file whose bytes
+# match the signed SHA256SUMS.
+gh api -H 'Accept: application/vnd.github.raw' \
+  "repos/$REPO/contents/go/image/check-attestations.sh?ref=v$V" > check-attestations.sh
+bash check-attestations.sh "$image" "$V" --sbom-dir . --sums SHA256SUMS
+
+echo "verified $image"
 ```
 
-Pull and run the image by that digest. An image built on a self-hosted
-runner has no SBOM attestation: its SBOMs are release files instead
-(`sbom-varlatchd-VERSION-linux-ARCH.spdx.json`), which `SHA256SUMS` lists.
-Check them as any other asset (`sha256sum --check --ignore-missing
-SHA256SUMS` after downloading them). `go/image/check-attestations.sh` in
-the repository makes all of these checks, as the release workflow does.
+Save it as `verify-go.sh` and run it with Bash (`bash verify-go.sh`; it
+needs `gh`, `cosign`, `docker buildx` and `jq`). It stops at the first
+failed check, with a nonzero status, and prints `verified` only when every
+check passed. An image built on a hosted runner carries its SBOMs as
+attestations and the release has no SBOM files; one built on a
+self-hosted runner has SBOM release files instead
+(`sbom-varlatchd-VERSION-linux-ARCH.spdx.json`), which
+`check-attestations.sh` checks against `SHA256SUMS`. Then pull and run the
+image by that digest.
 
 ## Unsigned releases
 
