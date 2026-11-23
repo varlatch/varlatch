@@ -100,6 +100,23 @@ release file whose bytes match the signed `SHA256SUMS`).
 A version's image is pushed once: two builds of the same assets give
 different index digests, so a second push would move the tag off the
 signed record. The release workflow runs one release per tag at a time,
-and go-image refuses a version that already has a GitHub release or whose
-tag is already in the registry. A run that pushed its image and failed
-later resumes with "Re-run failed jobs", which pushes nothing again.
+and go-image refuses a version unless it knows the version is unpublished
+(`check-unpublished.sh`): the releases API must answer "Not Found" for the
+tag, and the registry, after a successful token exchange, "manifest
+unknown" for the image tag. Any other answer (a release or a tag that
+exists, 401, 403, 429, 5xx, no answer) stops the run.
+
+A run that pushed its image and failed later resumes with "Re-run failed
+jobs", which keeps go-image's outputs (the pushed digest) and pushes
+nothing again. That recovery has a deadline: 30 days after the run
+started, when GitHub stops allowing re-runs; the go-assets artifact the
+later jobs download is kept as long. After that, or to start a version
+over for any other reason:
+
+1. Check the version has no GitHub release (a published version is never
+   pushed again; cut a new version instead).
+2. In GHCR (the organization's packages, `varlatchd`, "Manage versions"),
+   delete the package version that carries the version's tag. Only a
+   package admin can.
+3. Run the release workflow for the tag again from the start ("Re-run all
+   jobs"); go-image's guard then finds no tag and builds a new image.
