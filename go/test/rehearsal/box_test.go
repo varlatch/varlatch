@@ -12,13 +12,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -48,7 +52,7 @@ type profileConfig struct {
 	publicName, publicBind string
 	source, kill, sync     string
 	continueDir            string
-	goImage                string // the 0.50 image for the image target, name@sha256:...
+	goImage                string // the 0.50 image for the image target, repository:<the run's varlatchd release>@sha256:...
 	coolifySourceDir       string // the source app's directory in the lab Coolify
 	// The tailnet case on Tailscale's control server (the owner's
 	// throwaway tailnet), instead of the run's Headscale: the OAuth
@@ -163,7 +167,10 @@ func readProfile(euid int) (profileConfig, error) {
 		}
 	case prof.ingress == "coolify":
 		if prof.target != "image" || prof.goImage == "" || prof.coolifySourceDir == "" || prof.publicName == "" {
-			return prof, errors.New("the Coolify domain move (B3) needs VL_RH_TARGET=image, VL_RH_GO_IMAGE (name@sha256:...), VL_RH_COOLIFY_SOURCE_DIR and VL_RH_PUBLIC_NAME")
+			return prof, errors.New("the Coolify domain move (B3) needs VL_RH_TARGET=image, VL_RH_GO_IMAGE (repository:<the run's varlatchd release>@sha256:...), VL_RH_COOLIFY_SOURCE_DIR and VL_RH_PUBLIC_NAME")
+		}
+		if err := checkImageTarget(prof.goImage); err != nil {
+			return prof, err
 		}
 		// What the owner's source app is made from: the release's Coolify
 		// variables (images.sh writes them) and the candidate checkout's
@@ -309,6 +316,114 @@ func pause(t *testing.T, step string, lines ...string) {
 		time.Sleep(time.Second)
 	}
 	t.Fatalf("the owner's step %q was not continued within %s", step, limit)
+}
+
+// --- the image target's preconditions (B3) ---
+
+// imageUID is the Go image's user (go/image/Dockerfile): migrate's image
+// target runs the run's varlatchd as it, to read the configuration it
+// derives and the bind paths.
+const imageUID = 65532
+
+// toImageForm is migrate's --to-image form (internal/migrate, imageRef):
+// a repository, a tag that is the release of the varlatchd migrate runs,
+// and the digest.
+var toImageForm = regexp.MustCompile(`^([a-z0-9][a-z0-9._/-]*(?::[0-9]+)?/[a-z0-9._/-]+):([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})@(sha256:[0-9a-f]{64})$`)
+
+// hostRelease is the release of the run's varlatchd (its --version line,
+// "varlatchd <release>"); runBinaryBlocked is the first path on the way to
+// it the image's user cannot pass, or "". Variables, for the unit tests.
+var (
+	hostRelease = func() (string, error) {
+		out, err := exec.Command(filepath.Join(binDir, "varlatchd"), "--version").Output()
+		if err != nil {
+			return "", fmt.Errorf("%s --version: %v", filepath.Join(binDir, "varlatchd"), err)
+		}
+		f := strings.Fields(string(out))
+		if len(f) < 2 {
+			return "", fmt.Errorf("%s --version printed %q", filepath.Join(binDir, "varlatchd"), out)
+		}
+		return strings.TrimPrefix(f[1], "v"), nil
+	}
+	runBinaryBlocked = func() (string, error) {
+		return firstBlocked(filepath.Join(binDir, "varlatchd"), imageUID, imageUID, os.Stat)
+	}
+)
+
+// checkImageTarget refuses, before the owner's first step, what migrate
+// would refuse only after it: VL_RH_GO_IMAGE not in --to-image's form or
+// not of the run's varlatchd release, and a run's varlatchd the image's
+// user cannot reach (a VL_RH_ROOT under a home of mode 0750).
+func checkImageTarget(goImage string) error {
+	m := toImageForm.FindStringSubmatch(goImage)
+	if m == nil {
+		return fmt.Errorf("VL_RH_GO_IMAGE %s is not migrate's --to-image form: give repository:<the run's varlatchd release>@sha256:<digest> (varlatchd --version in the run's bin/ names the release)", goImage)
+	}
+	rel, err := hostRelease()
+	if err != nil {
+		return fmt.Errorf("VL_RH_GO_IMAGE: the run's varlatchd release: %v", err)
+	}
+	if tag := strings.TrimPrefix(m[2], "v"); tag != rel {
+		return fmt.Errorf("VL_RH_GO_IMAGE is tagged %s; the run's varlatchd is %s: migrate refuses another release, so tag the image %s (go/image/build.sh --version %s, from the run's bin/)", m[2], rel, rel, rel)
+	}
+	blocked, err := runBinaryBlocked()
+	if err != nil {
+		return fmt.Errorf("the run's varlatchd: %v", err)
+	}
+	if blocked != "" {
+		return fmt.Errorf("the image target runs the run's varlatchd as the image's user (uid %d), which cannot pass %s: set VL_RH_ROOT outside a home of mode 0750, /srv/vl-rh-runs for example (never /srv/vl-rh, the case's own)", imageUID, blocked)
+	}
+	return nil
+}
+
+// firstBlocked is the first of path's directories (from the root down)
+// that uid, in group gid, cannot search, or path itself when it cannot
+// execute it; "" when it can. Owner bits apply to the owner, group bits to
+// the group, the rest to everyone else, as the kernel checks them for a
+// user that is not root.
+func firstBlocked(path string, uid, gid uint32, stat func(string) (fs.FileInfo, error)) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = real // the directories the kernel passes, not a link's
+	}
+	may := func(p string) (bool, error) {
+		fi, err := stat(p)
+		if err != nil {
+			return false, err
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok {
+			return false, fmt.Errorf("%s: no owner to check", p)
+		}
+		perm := fi.Mode().Perm()
+		switch {
+		case st.Uid == uid:
+			return perm&0o100 != 0, nil
+		case st.Gid == gid:
+			return perm&0o010 != 0, nil
+		}
+		return perm&0o001 != 0, nil
+	}
+	var ways []string
+	for d := filepath.Dir(abs); ; d = filepath.Dir(d) {
+		ways = append([]string{d}, ways...)
+		if d == filepath.Dir(d) {
+			break
+		}
+	}
+	for _, p := range append(ways, abs) {
+		ok, err := may(p)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return p, nil
+		}
+	}
+	return "", nil
 }
 
 // --- real systemd (box): the target as a unit of the run's own ---
@@ -480,11 +595,17 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	// The source app's secrets are 0644 files in 0700 directories, as
 	// infra/coolify/README.md has them: its containers' own users (uid 999)
 	// must read them, which a root-owned 0600 file refuses (varlatchd then
-	// does not start); the directories keep everyone else out. MkdirAll
-	// leaves an existing directory's mode, and the umask may narrow a new
-	// one, so each is set here.
-	for _, d := range []string{filepath.Dir(base), base, secretsDir, op, tmpDir} {
-		if err := os.Chmod(d, 0o700); err != nil {
+	// does not start); the directories keep everyone else out. The way to
+	// them, and TMPDIR, are 0711: migrate runs the run's varlatchd as the
+	// image's user (uid 65532), which must reach the configuration migrate
+	// derives under TMPDIR and the bind paths under go/, listing nothing.
+	// MkdirAll leaves an existing directory's mode, and the umask may
+	// narrow a new one, so each is set here.
+	for _, d := range []struct {
+		path string
+		mode os.FileMode
+	}{{filepath.Dir(base), 0o711}, {base, 0o711}, {tmpDir, 0o711}, {secretsDir, 0o700}, {op, 0o700}} {
+		if err := os.Chmod(d.path, d.mode); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -536,6 +657,10 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 			t.Fatal(err)
 		}
 		must(t, run("", nil, nil, "chown", "65532:65532", filepath.Join(target, d)), "own the image's "+d)
+	}
+	// The bind paths' directory: the image's user passes through it (0711).
+	if err := os.Chmod(target, 0o711); err != nil {
+		t.Fatal(err)
 	}
 	conf := filepath.Join(target, "varlatchd.conf")
 	svc := fmt.Sprintf("listen = 0.0.0.0:8080\npublic_url = https://%s\ndata_dir = /var/lib/varlatch\nroot_kek_file = /keys/root-kek\nbackup_key_file = /keys/backup-key\nbackup_interval = off\n", prof.publicName)

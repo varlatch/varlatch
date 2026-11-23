@@ -5,10 +5,13 @@
 package rehearsal_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // TestProfileRefusals: the profile's checks, without a container. The box
@@ -19,10 +22,14 @@ func TestProfileRefusals(t *testing.T) {
 	dir := t.TempDir()
 	defer func(r, ts string) { releaseDir, tsCheckout = r, ts }(releaseDir, tsCheckout)
 	releaseDir, tsCheckout = filepath.Join(dir, "release"), filepath.Join(dir, "ts")
+	defer func(r func() (string, error), b func() (string, error)) { hostRelease, runBinaryBlocked = r, b }(hostRelease, runBinaryBlocked)
+	hostRelease = func() (string, error) { return "0.50.0-dev", nil }
+	blocked := ""
+	runBinaryBlocked = func() (string, error) { return blocked, nil }
 	coolify := func(t *testing.T) {
 		for k, v := range map[string]string{
 			"VL_RH_PROFILE": "box", "VL_RH_INGRESS": "coolify", "VL_RH_TARGET": "image", "VL_RH_PUBLIC_NAME": "rh.example",
-			"VL_RH_GO_IMAGE": "registry.example/varlatchd@sha256:" + strings.Repeat("a", 64), "VL_RH_COOLIFY_SOURCE_DIR": filepath.Join(dir, "app"),
+			"VL_RH_GO_IMAGE": "127.0.0.1:5000/vl-rh/varlatchd:0.50.0-dev@sha256:" + strings.Repeat("a", 64), "VL_RH_COOLIFY_SOURCE_DIR": filepath.Join(dir, "app"),
 		} {
 			t.Setenv(k, v)
 		}
@@ -169,4 +176,78 @@ func TestProfileRefusals(t *testing.T) {
 			t.Fatalf("%+v, %v", p, err)
 		}
 	})
+	// The image target's preconditions, refused before the owner's first
+	// step (B3's first two runs got as far as migrate).
+	t.Run("coolify: the image target", func(t *testing.T) {
+		digest := "@sha256:" + strings.Repeat("a", 64)
+		for _, c := range []struct{ image, blocked, want string }{
+			{"127.0.0.1:5000/vl-rh/varlatchd" + digest, "", "not migrate's --to-image form"},
+			{"127.0.0.1:5000/vl-rh/varlatchd:0.50.0-dev@sha256:abc", "", "not migrate's --to-image form"},
+			{"127.0.0.1:5000/vl-rh/varlatchd:0.50.0-rc.2" + digest, "", "tagged 0.50.0-rc.2; the run's varlatchd is 0.50.0-dev"},
+			{"127.0.0.1:5000/vl-rh/varlatchd:0.50.0-dev" + digest, "/home/owner", "cannot pass /home/owner: set VL_RH_ROOT outside"},
+			{"127.0.0.1:5000/vl-rh/varlatchd:v0.50.0-dev" + digest, "", ""},
+		} {
+			coolify(t)
+			t.Setenv("VL_RH_GO_IMAGE", c.image)
+			blocked = c.blocked
+			_, err := readProfile(0)
+			if (c.want == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s, blocked %q: %v, want %q", c.image, c.blocked, err, c.want)
+			}
+		}
+		blocked = ""
+	})
+}
+
+// fakeInfo is a stat answer: a mode and an owner.
+type fakeInfo struct {
+	mode     fs.FileMode
+	uid, gid uint32
+}
+
+func (f fakeInfo) Name() string       { return "" }
+func (f fakeInfo) Size() int64        { return 0 }
+func (f fakeInfo) Mode() fs.FileMode  { return f.mode }
+func (f fakeInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f fakeInfo) Sys() any           { return &syscall.Stat_t{Uid: f.uid, Gid: f.gid} }
+
+// TestFirstBlocked: the way to the run's varlatchd as the image's user
+// (65532) sees it: owner, group and other bits each for their class.
+func TestFirstBlocked(t *testing.T) {
+	const bin = "/srv/vl-rh-runs/b3/bin/varlatchd"
+	base := map[string]fakeInfo{
+		"/": {fs.ModeDir | 0o755, 0, 0}, "/srv": {fs.ModeDir | 0o755, 0, 0}, "/srv/vl-rh-runs": {fs.ModeDir | 0o755, 0, 0},
+		"/srv/vl-rh-runs/b3": {fs.ModeDir | 0o755, 1001, 1001}, "/srv/vl-rh-runs/b3/bin": {fs.ModeDir | 0o755, 1001, 1001},
+		bin: {0o755, 1001, 1001},
+	}
+	for _, c := range []struct {
+		name string
+		edit map[string]fakeInfo
+		want string
+	}{
+		{"open all the way", nil, ""},
+		{"a home of mode 0750", map[string]fakeInfo{"/srv/vl-rh-runs/b3": {fs.ModeDir | 0o750, 1001, 1001}}, "/srv/vl-rh-runs/b3"},
+		{"0711 passes", map[string]fakeInfo{"/srv/vl-rh-runs": {fs.ModeDir | 0o711, 0, 0}}, ""},
+		{"the image's own directory, owner bits", map[string]fakeInfo{"/srv/vl-rh-runs/b3": {fs.ModeDir | 0o700, 65532, 0}}, ""},
+		{"its group's, group bits", map[string]fakeInfo{"/srv/vl-rh-runs/b3": {fs.ModeDir | 0o750, 0, 65532}}, ""},
+		{"the binary not executable for others", map[string]fakeInfo{bin: {0o750, 1001, 1001}}, bin},
+	} {
+		infos := map[string]fakeInfo{}
+		for k, v := range base {
+			infos[k] = v
+		}
+		for k, v := range c.edit {
+			infos[k] = v
+		}
+		got, err := firstBlocked(bin, 65532, 65532, func(p string) (fs.FileInfo, error) {
+			if fi, ok := infos[p]; ok {
+				return fi, nil
+			}
+			return nil, fs.ErrNotExist
+		})
+		if err != nil || got != c.want {
+			t.Errorf("%s: %q, %v; want %q", c.name, got, err, c.want)
+		}
+	}
 }

@@ -138,10 +138,11 @@ func imagePin(t *testing.T, in *installation, rel release) {
 	// Another digest than the source's.
 	other := rel.pin()[:strings.Index(rel.pin(), "@")] + "@sha256:" + strings.Repeat("0", 64)
 	r = in.migrateEnv(rel, true, other, "--dry-run")
-	// The message names both images; the CLI's fail-safe masks a registry
-	// with a port as a URL's user name and password (finding of run r1).
-	// The override took effect: the refusal names its digest as the one
-	// wanted.
+	// The message names both images. The CLI's fail-safe once masked a
+	// registry with a port as a URL's user name and password (finding of
+	// run r1; an image digest's at-sign is no credential's since B3's
+	// rerun): recorded as a difference if it comes back. The override took
+	// effect: the refusal names its digest as the one wanted.
 	record(t, item, "another digest: refused", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image") && strings.Contains(r.stderr, "sha256:"+strings.Repeat("0", 64)), r.String())
 	if strings.Contains(r.stderr, "[redacted]@") {
 		differs(item, "G5's pin is ghcr.io/varlatch/varlatchd@sha256:..., a repository without a port.",

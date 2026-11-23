@@ -37,4 +37,7 @@ On $host, as root (sudo -i first, alone), then:
 
 It pauses for your steps (it prints each, and the file to touch). When it
 ends, the agent fetches the report with fetch-report.sh $host $run.
+With VL_RH_TARGET=image (B3), use VL_RH_ROOT=/srv/vl-rh-runs instead: the
+image's user (uid 65532) must reach the run's varlatchd, which a home of mode
+0750 refuses; the agent then fetches with fetch-report.sh $host $run /srv/vl-rh-runs.
 OWNER
