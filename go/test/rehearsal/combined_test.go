@@ -675,11 +675,8 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 			_ = os.Remove(routePath)
 		}
 	})
-	// As /tmp: varlatchd's reach probe, the image's user, makes its own
-	// directory in it.
-	if err := os.Chmod(f.tmp, 0o777|os.ModeSticky); err != nil {
-		t.Fatal(err)
-	}
+	// TMPDIR is the operator's, which the image's user passes through and
+	// cannot write in: its programs have their own (B3 try 4's failure).
 	// The CA where the sidecar's mount and the image's user reach it.
 	caDir := filepath.Join(f.base, "tailnet")
 	if err := os.MkdirAll(caDir, 0o755); err != nil {
