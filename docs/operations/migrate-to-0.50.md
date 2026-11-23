@@ -12,10 +12,9 @@ before the new server opens.
 > TypeScript release, 0.23.0, is published, and `varlatch migrate` starts
 > from its published image only.
 
-<!-- TODO before this guide leaves draft: two points still depend on
-     unmerged pull requests, marked "TODO #405 and #408" where they apply:
-     a restore on Headscale, and `varlatch setup --restore` on a Headscale
-     tailnet. -->
+<!-- TODO before this guide leaves draft: one point still depends on an
+     unmerged pull request, marked "TODO #408" where it applies: `varlatch
+     setup --restore` on a Headscale tailnet. -->
 
 ## What people notice
 
@@ -624,9 +623,45 @@ an interruption: a cut-short rename is undone, then done again, and one
 stopped after the rename is checked again and finished. The old node stays in the
 tailnet under its `-o` name until you remove it in the admin console.
 
-<!-- TODO #405 and #408: a restore on a Headscale tailnet (take-name
-     refuses a self-hosted control server until then), and `varlatch
-     setup --restore` driving it. Describe both here once they merge. -->
+**On a Headscale tailnet**, the takeover (`varlatchd admin tailnet
+take-name`) takes Headscale's API as its authority, in place of the OAuth
+client: `--headscale-url https://<its IP address>[:port]
+--headscale-api-key-file <file>`. The key comes from `headscale apikeys
+create --expiration 1h`, in a file of one line, mode 0600 or tighter. The
+same rules hold as for the migration's handoff:
+
+- **The URL is the configuration's `tailnet_control_url`.** Another one
+  is refused: `--headscale-url (<url>) does not match tailnet_control_url
+  (<url>): the API authority must be the installation's own control
+  server; nothing was done`. The OAuth client on a self-hosted server is
+  refused too, naming the options to give instead.
+- **Not the CLI.** `--headscale-cli` is refused for the takeover: the
+  CLI's listing has no HTTP `Date`, by which the old node's last-seen time
+  is judged.
+- **The old node must be dead** by Headscale's own listing (its `Date`,
+  and the node's online state and last-seen time): offline, and last seen
+  more than 5 minutes ago, checked again right before the rename. A
+  listing without a `Date`, or one more than an hour off this host's
+  clock, is refused, and nothing is renamed.
+- **The key is expired when the takeover ends.** When it cannot be (the
+  control server unreachable, say), the warning names the command that
+  expires it on the control server, `headscale apikeys expire --prefix
+  <prefix>`.
+- **A takeover under way finishes only where it began.** Its journal
+  records the control server and the restored node's StableID (Headscale's
+  node ids are small numbers another server or node can carry). A rerun
+  against another `tailnet_control_url`, or on another node, is refused
+  before anything is renamed: `the handoff under way (<operation>) began
+  against <url>, not this tailnet_control_url (<url>): set
+  tailnet_control_url back to finish it; nothing was done`.
+- **A Headscale on a private address needs `outbound_allow`.** The
+  takeover's calls go through the outbound policy; when it refuses them,
+  the message names the line to add to `varlatchd.conf`.
+- **No certificates** are asked for on Headscale.
+
+<!-- TODO #408: `varlatch setup --restore` driving the takeover on a
+     Headscale tailnet (today it passes the OAuth client only). Describe
+     its options here once it merges. -->
 
 ### Finish
 
