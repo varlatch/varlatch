@@ -342,23 +342,72 @@ var toImageForm = regexp.MustCompile(`^([a-z0-9][a-z0-9._/-]*(?::[0-9]+)?/[a-z0-
 // imageUserRelease runs the run's varlatchd --version, by the path migrate
 // runs it, as the image's user and group with no supplementary groups, as
 // migrate does: the kernel decides whether that user reaches it (modes,
-// ACLs, links), and the answer is its release. A variable, for the unit
-// tests.
+// ACLs, links), and the answer is its release. Within versionProbeTimeout,
+// reading at most versionProbeMax bytes of its output. A variable, for the
+// unit tests.
 var imageUserRelease = func() (string, error) {
 	bin := filepath.Join(binDir, "varlatchd")
-	cmd := exec.Command(bin, "--version")
+	ctx, cancel := context.WithTimeout(context.Background(), versionProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "--version")
 	cmd.Dir = "/"
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: imageUID, Gid: imageUID, Groups: []uint32{}}}
-	out, err := cmd.Output()
-	if err != nil {
+	cmd.WaitDelay = time.Second
+	out := &cappedOutput{max: versionProbeMax}
+	cmd.Stdout = out
+	err := cmd.Run()
+	switch {
+	case out.over:
+		return "", fmt.Errorf("%s --version printed more than %d bytes: not varlatchd's version line", bin, versionProbeMax)
+	case err != nil && ctx.Err() != nil:
+		return "", fmt.Errorf("%s --version as uid and gid %d, no other groups: no answer within %s", bin, imageUID, versionProbeTimeout)
+	case err != nil:
 		return "", fmt.Errorf("%s --version as uid and gid %d, no other groups: %v", bin, imageUID, err)
 	}
-	f := strings.Fields(string(out))
-	if len(f) < 2 {
-		return "", fmt.Errorf("%s --version printed %q", bin, out)
+	rel, err := versionRelease(out.b)
+	if err != nil {
+		return "", fmt.Errorf("%s --version: %v", bin, err)
 	}
-	return trimRelease(f[1]), nil
+	return rel, nil
+}
+
+// The version probe's limits: varlatchd answers at once with one short
+// line.
+var (
+	versionProbeTimeout = 30 * time.Second
+	versionProbeMax     = 4096
+)
+
+// cappedOutput keeps at most max bytes of what is written to it and notes
+// that there was more; it never blocks the writer.
+type cappedOutput struct {
+	b    []byte
+	max  int
+	over bool
+}
+
+func (c *cappedOutput) Write(p []byte) (int, error) {
+	if room := c.max - len(c.b); len(p) > room {
+		c.b, c.over = append(c.b, p[:max(room, 0)]...), true
+		return len(p), nil
+	}
+	c.b = append(c.b, p...)
+	return len(p), nil
+}
+
+// versionLine is varlatchd --version's whole output (cmd/varlatchd:
+// fmt.Fprintln(stdout, server.Name, buildinfo.Version)).
+var versionLine = regexp.MustCompile(`^varlatchd ([0-9A-Za-z][0-9A-Za-z.+-]*)\n$`)
+
+// versionRelease is the release in varlatchd's version line, its "v" or
+// "V" prefix trimmed; anything else is refused.
+func versionRelease(out []byte) (string, error) {
+	m := versionLine.FindSubmatch(out)
+	if m == nil {
+		return "", fmt.Errorf("printed %q, not varlatchd's version line (varlatchd <release>)", out)
+	}
+	return trimRelease(string(m[1])), nil
 }
 
 // trimRelease is a release without its "v" or "V" prefix, as migrate
