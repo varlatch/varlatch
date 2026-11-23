@@ -40,6 +40,7 @@ const setupUsage = `Usage:
                       [--root-kek-out <file> --backup-key-out <file>] [--accept-slow-disk] [--accept-existing-user]
                       [--admin-link-out <file>] [--admin-wait <duration>] [--attest]
   sudo varlatch setup --restore <archive> --root-kek-file <file> --backup-key-file <file> [the flags above]
+                      [--tailscale-oauth-client-file <file> | --tailnet-control-url <https://IP[:port]> --headscale-api-key-file <file>]
                (a Go installation on this host: the varlatch user, /etc/varlatch/varlatchd.conf, the Root KEK and
                 the backup key (root, 0600), the data directory after an fsync probe of its disk, and the varlatchd
                 unit started; then the first administrator's passkey, from a one-time link shown on a terminal or,

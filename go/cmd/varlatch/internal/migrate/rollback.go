@@ -502,7 +502,7 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	// name is Go's node's, so the old node is stopped again (not logged
 	// out), its state kept for the window.
 	if ts, ok := e.Source.(TailnetSource); ok && sidecarOwned(j) {
-		if err := ts.StopTailnet(ctx); err != nil {
+		if err := stopSidecar(ctx, ts); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", err))
 		}
 	}
