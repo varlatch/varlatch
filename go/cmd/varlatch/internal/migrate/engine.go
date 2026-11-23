@@ -731,14 +731,7 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 		}
 		owned = shared
 	}
-	// The sidecar's stops are cleanup: done even when ctx is cancelled (an
-	// interrupted run would leave the old node on the tailnet until
-	// --resume), each within its own bound.
-	stop := func() error {
-		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sidecarStopWait)
-		defer cancel()
-		return ts.StopTailnet(sctx)
-	}
+	stop := func() error { return stopSidecar(ctx, ts) }
 	if owned {
 		temp := "its temporary name"
 		if j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.ServingTemp != "" {
@@ -777,6 +770,16 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 		}
 	}
 	return nil
+}
+
+// stopSidecar stops the source's tailnet sidecar on a context of its own
+// (context.WithoutCancel, within sidecarStopWait): a stop is cleanup, done
+// even when the run's ctx is cancelled, since an interrupted run would
+// otherwise leave the old node on the tailnet until --resume.
+func stopSidecar(ctx context.Context, ts TailnetSource) error {
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sidecarStopWait)
+	defer cancel()
+	return ts.StopTailnet(sctx)
 }
 
 // networkSharer is a source that says whether its varlatchd runs in its

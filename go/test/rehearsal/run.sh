@@ -33,7 +33,28 @@
 #
 # VL_RH_SYNC=fakes (a workstation): the sync case, Sync Targets to the
 # conformance suites' platform stand-ins, migrated and then pushed from Go
-# (VL_RH_ONLY=sync runs it alone).
+# (VL_RH_ONLY=sync runs it alone). VL_RH_SYNC=real (the owner, on the box):
+# the same case against a throwaway GitHub repository and a lab Coolify
+# application, VL_RH_SYNC_GITHUB_REPO (owner/vl-rh-...) and
+# VL_RH_SYNC_GITHUB_TOKEN_FILE (a fine-grained token for that repository
+# only, Secrets read and write), VL_RH_SYNC_COOLIFY_URL,
+# VL_RH_SYNC_COOLIFY_TOKEN_FILE and VL_RH_SYNC_COOLIFY_APP (the
+# application's UUID, its name vl-rh-...); the token files of mode 0600.
+# VL_RH_SYNC_ALLOW_REPO and VL_RH_SYNC_ALLOW_APP name a throwaway without
+# the vl-rh- prefix. The run writes and then deletes its own VLRH_<hex>_*
+# values only (the report names the prefix before the first write); after
+# an abnormal end (a kill, a power cut), delete VLRH_* by hand from the
+# throwaway repository and application. VL_RH_KEEP=1 keeps the source,
+# whose database holds both tokens sealed, beside its Root KEK: remove it
+# by hand when done.
+#
+# VL_RH_INGRESS=tailnet (a workstation or the box): the tailnet case, the
+# name handoff on a Headscale the run starts; with VL_RH_TAILSCALE_OAUTH_FILE,
+# VL_RH_TAILSCALE_AUTH_KEY_FILE and VL_RH_TAILSCALE_TAILNET (the owner, on
+# the box), on the owner's Tailscale tailnet instead. There, only the client
+# node logs out at the end: the sidecars' and targets' devices
+# (vl-rh-<run>-tailnet, vl-rh-<run>-tailnet-abort and their -vl-<op>-o and -n
+# renames) stay in the tailnet; delete vl-rh-<run>-* in its admin console.
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: run.sh <typescript-checkout> <run> [<release-dir>]" >&2; exit 64; }
 profile=${VL_RH_PROFILE:-workstation}
@@ -142,8 +163,15 @@ cleanup() {
     fi
     docker image rm "$runner" >/dev/null 2>&1 || true
   fi
-  # The stand-ins' key goes whatever VL_RH_KEEP says.
-  rm -f "$root/work/sync-fakes/key.pem" 2>/dev/null || true
+  # The stand-ins' key and the tailnet case's keys go whatever VL_RH_KEEP
+  # says.
+  rm -f "$root/work/sync-fakes/key.pem" "$root/work/tailnet-net/hs/tls.key" "$root/work/tailnet-net/node-auth-key" \
+    "$root/work/tailnet-net/client.env" "$root"/work/tailnet-net/api-key-* 2>/dev/null || true
+  # The tailnet installations' .env carry the nodes' auth key (on Tailscale
+  # the owner's reusable one): the line goes, VL_RH_KEEP or not.
+  for f in "$root"/work/tailnet/compose/.env "$root"/work/tailnet-abort/compose/.env; do
+    [ -f "$f" ] && sed -i '/^TS_AUTHKEY=/d' "$f" 2>/dev/null || true
+  done
   if [ "${VL_RH_KEEP:-}" != 1 ]; then
     # The sync case's (VL_RH_SYNC=fakes), when an interrupt left them (the
     # test binary has no signal handler): its Compose stack, the
@@ -153,6 +181,16 @@ cleanup() {
     docker rm -fv "vl-rh-$run-sync-fakes" >/dev/null 2>&1 || true
     docker network rm "vl-rh-$run-sync" >/dev/null 2>&1 || true
     rm -rf "$root/work/sync-fakes" 2>/dev/null || true
+    # The tailnet case's (VL_RH_INGRESS=tailnet), the same way: its two
+    # Compose stacks, Headscale and its network holder, the client node
+    # (logged out first on the owner's tailnet), the network, the directory.
+    for p in tailnet tailnet-abort; do
+      docker compose -p "vl-rh-$run-$p" --profile deploy down -v --remove-orphans --timeout 20 >/dev/null 2>&1 || true
+    done
+    [ -z "${VL_RH_TAILSCALE_OAUTH_FILE:-}" ] || docker exec "vl-rh-$run-tailnet-client" tailscale logout >/dev/null 2>&1 || true
+    docker rm -fv "vl-rh-$run-tailnet-client" "vl-rh-$run-headscale" "vl-rh-$run-headscale-net" >/dev/null 2>&1 || true
+    docker network rm "vl-rh-$run-tailnet" >/dev/null 2>&1 || true
+    rm -rf "$root/work/tailnet-net" 2>/dev/null || true
     if [ "$created_release" = 1 ]; then
       cleanup_release
     fi
@@ -196,7 +234,8 @@ cp "$gomod/../scripts/conformance/lib/platform-fakes.cjs" "$root/bin/platform-fa
 release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
-  VL_RH_KEEP VL_RH_ONLY VL_RH_RESTORE_BEK VL_RH_RESTORE_KEK VL_RH_BUNDLE_OUT VL_RH_RESTORE_READ)
+  VL_RH_KEEP VL_RH_ONLY VL_RH_RESTORE_BEK VL_RH_RESTORE_KEK VL_RH_BUNDLE_OUT VL_RH_RESTORE_READ
+  VL_RH_TAILSCALE_OAUTH_FILE VL_RH_TAILSCALE_AUTH_KEY_FILE VL_RH_TAILSCALE_TAILNET)
 if [ "$profile" = box ]; then
   # On the box: as root on the host, real systemd, the target under a
   # root-owned path; the run's files handed back to the sudo user after.

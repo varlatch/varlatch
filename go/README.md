@@ -2385,7 +2385,28 @@ serves the tailnet listener on the node's own addresses
 
     `varlatch setup --restore ... --tailscale-oauth-client-file <file>`
     (ingress tailnet) runs it in place of the name probe: the operation
-    journalled first, then `enroll` and `take-name`, before the unit.
+    journalled first, then `enroll` and `take-name`, before the unit. On a
+    self-hosted control server the restore answers
+    `--tailnet-control-url <https://IP[:port]>` (canonical, written as
+    `tailnet_control_url`) and `--headscale-api-key-file <file>` instead,
+    and `take-name` gets `--headscale-url` (that same URL) and the key file;
+    both files' modes are checked at the answers step, before anything is
+    made (while the takeover is still to do), and the answers are
+    journalled, so a rerun takes the same authority and one naming another
+    control server is refused (Tailscale's, answered as no URL, included).
+    A rerun reads where the takeover got to, never by trying `take-name`
+    (on Headscale it expires its key every time): enrolled only when
+    setup's journal records the enrolment succeeded (or this takeover's own
+    journal exists), held only under this operation's temporary name, done
+    only when varlatchd's takeover journal is this operation's (its
+    operation, name and control server) and says done; any other node or
+    record in the data directory is refused, with nothing run against it.
+    A `varlatchd.conf` whose `tailnet_control_url` is not the answered one
+    is refused before anything is recorded or enrolled. A fresh
+    setup on a self-hosted control server is not built yet: setup refuses
+    `--tailnet-control-url` without `--restore`
+    (`TestRestoreTakesTheTailnetNameOverOnHeadscale`,
+    `TestHeadscaleRestoreAnswersRefused`).
     Tests: `daemon`'s `TestTheRestoreTakesTheName` (testcontrol and a fake
     of Tailscale's API over it, a rename the control server's: the dead
     node offline under the name, the takeover through the outbound policy,
@@ -3530,7 +3551,8 @@ migrations.
     `TestEachDamageFailsAtItsCheck`); the reports are scanned for every
     seeded plaintext, the Root KEK, the run key and every digest.
 - G5's damage gate (step 7, slice 7.3c; `server/migration/g5`, build tag
-  `g5`, its own step in the go job): the migration's Go path through the
+  `g5`, its own step in go.yml's go-g5 job, beside go, with the Headscale
+  tests): the migration's Go path through the
   varlatchd binary, on the seeded installation. The seeded bundle imports
   and passes every check. Each damage of the bundle stream (a changed
   byte, cut short, no end line, the end line's digest or counts, digests

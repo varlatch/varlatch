@@ -599,18 +599,53 @@ var shared struct {
 	err                    error
 }
 
-// ownerFile names, in a run's shared directory, the process that made it.
+// ownerFile names, in a run's shared directory, the process that made it:
+// its pid and its PID namespace (ownerLine).
 const ownerFile = "g5-owner.pid"
+
+// pidNamespace is this process's PID namespace ("pid:[4026531836]"), ""
+// when it cannot be read.
+func pidNamespace() string {
+	ns, err := os.Readlink("/proc/self/ns/pid")
+	if err != nil {
+		return ""
+	}
+	return ns
+}
+
+// ownerLine is what ownerFile holds: "<pid> <PID namespace>".
+func ownerLine() []byte {
+	return []byte(strings.TrimSpace(strconv.Itoa(os.Getpid()) + " " + pidNamespace()))
+}
+
+// ownerGone reports whether the process an owner file names is known to be
+// gone: its pid is in this PID namespace and not running. A pid of another
+// namespace (a run in a container), or a file without one (a branch before
+// namespaces were written), cannot be judged: false.
+func ownerGone(owner []byte) bool {
+	f := strings.Fields(string(owner))
+	if len(f) != 2 {
+		return false
+	}
+	pid, err := strconv.Atoi(f[0])
+	if err != nil || pid <= 0 {
+		return false
+	}
+	if ns := pidNamespace(); ns == "" || f[1] != ns {
+		return false
+	}
+	return !alive(pid)
+}
 
 // sweepAbandoned removes the temporary directories of earlier runs whose
 // process is gone: one killed (SIGKILL, or go test's -timeout panic) runs
-// none of its cleanup. Only this user's; a shared directory only when the
-// process its owner file names is dead; one without an owner file (a
-// scratch directory, the Headscale cases' CA, or a run of a branch from
-// before owner files) only once it is older than abandonedAfter, longer
-// than any G5 run, so a live run's is never removed. A live run is judged
-// by its pid, so this assumes one PID namespace for every run (a run in
-// another container would look dead).
+// none of its cleanup. Only this user's. A directory older than
+// abandonedAfter, longer than any G5 run, goes whatever its owner file
+// says; a younger one only when its owner is known to be gone (ownerGone:
+// a pid of this PID namespace that is not running). A younger one whose
+// owner cannot be judged (another PID namespace, such as a run in a
+// container, or an owner file without one) stays, as does one without an
+// owner file (a scratch directory, the Headscale cases' CA).
 func sweepAbandoned() {
 	var globs []string
 	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*", "g5-headscale-ca-*"} {
@@ -629,16 +664,12 @@ func sweepAbandoned() {
 			if sys, ok := st.Sys().(*syscall.Stat_t); !ok || int(sys.Uid) != os.Getuid() {
 				continue
 			}
-			b, err := os.ReadFile(filepath.Join(d, ownerFile))
-			switch {
-			case errors.Is(err, os.ErrNotExist):
-				if time.Since(st.ModTime()) > abandonedAfter {
-					_ = os.RemoveAll(d)
-				}
-			case err == nil:
-				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 && !alive(pid) {
-					_ = os.RemoveAll(d)
-				}
+			if time.Since(st.ModTime()) > abandonedAfter {
+				_ = os.RemoveAll(d)
+				continue
+			}
+			if b, err := os.ReadFile(filepath.Join(d, ownerFile)); err == nil && ownerGone(b) {
+				_ = os.RemoveAll(d)
 			}
 		}
 	}
@@ -661,7 +692,7 @@ func setUpShared(t *testing.T) {
 			return
 		}
 		registerCleanupDir(dir)
-		if err := os.WriteFile(filepath.Join(dir, ownerFile), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, ownerFile), ownerLine(), 0o600); err != nil {
 			shared.err = err
 			return
 		}
@@ -823,7 +854,7 @@ func shortTarget(t *testing.T, dir string) string {
 		_ = os.RemoveAll(short)
 		unregisterCleanupDir(short)
 	})
-	if err := os.WriteFile(filepath.Join(short, ownerFile), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(short, ownerFile), ownerLine(), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(short, "t")

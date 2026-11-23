@@ -217,6 +217,8 @@ The same documentation, searchable, is at
   recovery
 - [`docs/operations/verify-release.md`](docs/operations/verify-release.md):
   verifying a release's signatures and provenance
+- [`docs/operations/migrate-to-0.50.md`](docs/operations/migrate-to-0.50.md):
+  migrating an installation to Varlatch 0.50
 - [`docs/reference/env-schema.md`](docs/reference/env-schema.md): the
   `.env.schema` contract file format
 - [`docs/reference/agent-safe-runs.md`](docs/reference/agent-safe-runs.md):

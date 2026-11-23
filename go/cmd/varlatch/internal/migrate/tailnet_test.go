@@ -48,8 +48,10 @@ type tnSource struct {
 	// cancelAfterStart, when set, is called by the first gate read after a
 	// start (an operator's interrupt during the wait).
 	cancelAfterStart func()
-	// stopCtxErr is the last stop's context's error (nil: a live one).
+	// stopCtxErr is the last stop's context's error (nil: a live one);
+	// onStop, when set, sees each stop's context.
 	stopCtxErr error
+	onStop     func(context.Context)
 }
 
 func (s *tnSource) SharesTailnetNetwork(context.Context) (bool, error) {
@@ -116,6 +118,9 @@ func (s *tnSource) StopTailnet(ctx context.Context) error {
 	defer s.mu.Unlock()
 	s.stops++
 	s.stopCtxErr = ctx.Err()
+	if s.onStop != nil {
+		s.onStop(ctx)
+	}
 	if err := s.stopFails[s.stops]; err != nil {
 		return s.callErr("stop tailnet", err)
 	}
@@ -498,6 +503,28 @@ func TestTheSwitchsWaitAndCleanup(t *testing.T) {
 			t.Fatalf("the sidecar: running %v, its stop's context %v", w.src.running, w.src.stopCtxErr)
 		}
 	})
+}
+
+// A stop of the sidecar is cleanup (#420's review): on a cancelled context
+// it still runs, on a live one bounded by sidecarStopWait, whether the
+// switch's, the reverse's undo's (stopSidecar) or the handoff's own let go
+// of the tailnet (CloseServing).
+func TestTheSidecarStopsOnACancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := newTailnetWorld(t)
+	var deadline time.Time
+	w.src.onStop = func(sctx context.Context) { deadline, _ = sctx.Deadline() }
+	if err := stopSidecar(ctx, w.src); err != nil || w.src.running || w.src.stopCtxErr != nil {
+		t.Fatalf("stopSidecar: %v, running %v, its context %v", err, w.src.running, w.src.stopCtxErr)
+	}
+	if left := time.Until(deadline); left <= 0 || left > sidecarStopWait {
+		t.Fatalf("the stop's deadline is %s away", left)
+	}
+	w.src.running = true
+	if err := (handoffEndpoints{src: w.src}).CloseServing(ctx); err != nil || w.src.running || w.src.stopCtxErr != nil {
+		t.Fatalf("CloseServing: %v, running %v, its context %v", err, w.src.running, w.src.stopCtxErr)
+	}
 }
 
 func index(calls []string, c string) int {
