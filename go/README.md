@@ -3551,7 +3551,8 @@ migrations.
     `TestEachDamageFailsAtItsCheck`); the reports are scanned for every
     seeded plaintext, the Root KEK, the run key and every digest.
 - G5's damage gate (step 7, slice 7.3c; `server/migration/g5`, build tag
-  `g5`, its own step in the go job): the migration's Go path through the
+  `g5`, its own step in go.yml's go-g5 job, beside go, with the Headscale
+  tests): the migration's Go path through the
   varlatchd binary, on the seeded installation. The seeded bundle imports
   and passes every check. Each damage of the bundle stream (a changed
   byte, cut short, no end line, the end line's digest or counts, digests
