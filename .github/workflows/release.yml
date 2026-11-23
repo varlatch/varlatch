@@ -70,6 +70,13 @@ on:
 permissions:
   contents: read
 
+# One run per tag at a time, never cancelled: a second run for the same
+# tag (a rerun) waits, and then meets the guards below (go-image refuses a
+# version already released or already pushed).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   SIGN: ${{ !github.event.repository.private || vars.SIGN_PRIVATE_RELEASES == 'true' }}
 
@@ -644,6 +651,34 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # A version's image is pushed once. Two builds of the same assets
+      # give different index digests (provenance mode=max records the run),
+      # so a second push would move the tag off the digest the signed
+      # record names. Before anything is built: a version with a GitHub
+      # release, or whose tag is already in the registry, is refused. A run
+      # whose go-image succeeded and a later job failed is resumed with
+      # "Re-run failed jobs", which keeps go-image's outputs (the pushed
+      # digest) and pushes nothing; "Re-run all jobs" stops here. To start
+      # a version over, delete its package version in GHCR by hand first.
+      - name: Not released or pushed before
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.line.outputs.version }}
+          IMAGE: ${{ steps.names.outputs.varlatchd }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
+            echo "$GITHUB_REF_NAME already has a GitHub release: a published version is never pushed again" >&2
+            exit 1
+          fi
+          if out=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{println .Manifest.Digest}}' 2>&1); then
+            echo "$IMAGE:$VERSION is already in the registry ($(head -1 <<< "$out")): an earlier run pushed it. Re-run only the failed jobs to resume that run, or delete the package version in GHCR by hand to start over." >&2
+            exit 1
+          fi
+          # Absent, not unreadable: anything but "not found" stops too.
+          grep -qiE 'not found|manifest unknown|name unknown' <<< "$out" \
+            || { echo "cannot tell whether $IMAGE:$VERSION exists: $out" >&2; exit 1; }
+          echo "$IMAGE:$VERSION is not in the registry yet"
       # The image only copies the binaries; the arm64 stage's few file
       # steps run under emulation.
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -847,6 +882,9 @@ jobs:
             --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
           echo "verified ${REF}"
+          # The tag still names the signed index (nothing pushed it since).
+          [ "$(docker buildx imagetools inspect "${REF%@*}" --format '{{println .Manifest.Digest}}' | head -1)" = "${REF##*@}" ] \
+            || { echo "${REF%@*} no longer names ${REF##*@}" >&2; exit 1; }
       # The image's record, listed in SHA256SUMS before it is signed, so the
       # one signature covers it: the cutover and the docs pin the image by
       # it. An image built on a self-hosted runner has no SBOM attestation:
@@ -886,6 +924,14 @@ jobs:
           sboms=()
           [ "$HOSTED" = true ] || sboms=(--sboms)
           go/release/check-assets.sh go-assets "$VERSION" --image "$REF" "${sboms[@]}"
+      # The image's attestations, as published-release.yml checks them: an
+      # SLSA provenance predicate and an SPDX SBOM (attested, or the
+      # release file just listed) for each platform.
+      - name: The image's attestations
+        env:
+          VERSION: ${{ needs.line.outputs.version }}
+          REF: ${{ needs.go-image.outputs.ref }}
+        run: go/image/check-attestations.sh "${REF%%:*}@${REF##*@}" "$VERSION" --sbom-dir go-assets --sums go-assets/SHA256SUMS
 
       # The Go line is always signed: the installers refuse an unsigned
       # release, so SIGN does not apply to it.

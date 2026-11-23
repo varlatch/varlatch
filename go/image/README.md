@@ -93,4 +93,13 @@ publishes, checked against their `SHA256SUMS` first:
 The published-release workflow checks it again from outside: the record
 against `SHA256SUMS` and its signature, the tag still on the recorded
 digest, the image's signature, and provenance and an SBOM for both
-platforms.
+platforms (`check-attestations.sh`, which go-release also runs before it
+publishes: an SLSA predicate and an SPDX SBOM per platform, or an SBOM
+release file whose bytes match the signed `SHA256SUMS`).
+
+A version's image is pushed once: two builds of the same assets give
+different index digests, so a second push would move the tag off the
+signed record. The release workflow runs one release per tag at a time,
+and go-image refuses a version that already has a GitHub release or whose
+tag is already in the registry. A run that pushed its image and failed
+later resumes with "Re-run failed jobs", which pushes nothing again.

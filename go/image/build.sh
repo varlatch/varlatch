@@ -32,7 +32,9 @@ while [ $# -gt 0 ]; do
     *) stop "unknown option $1" ;;
   esac
 done
-[ -n "$version" ] && [ -n "$assets" ] && [ -n "$tag" ] && [ -n "$platforms" ] && [ -n "$mode" ] || stop "usage: build.sh --version <v> --assets <dir> --tag <image> --platforms <list> (--load | --check | --push --metadata-file <file> [--sbom])"
+if [ -z "$version" ] || [ -z "$assets" ] || [ -z "$tag" ] || [ -z "$platforms" ] || [ -z "$mode" ]; then
+  stop "usage: build.sh --version <v> --assets <dir> --tag <image> --platforms <list> (--load | --check | --push --metadata-file <file> [--sbom])"
+fi
 if [ "$mode" = --push ]; then
   [ -n "$metadata" ] || stop "--push needs --metadata-file"
 else

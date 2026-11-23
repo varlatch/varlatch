@@ -125,6 +125,11 @@ jobs:
       contents: read
       packages: read
     steps:
+      # The checks' script from the default branch, as the installers' tests.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
@@ -152,6 +157,10 @@ jobs:
           fi
           mkdir rel && cd rel
           gh release download "$tag" --repo "$REPO" -p SHA256SUMS -p SHA256SUMS.sigstore.json -p varlatchd-image.txt
+          # An image built self-hosted attaches its SBOMs as release files.
+          if grep -q '^sbom-varlatchd-.*\.spdx\.json$' <<< "$assets"; then
+            gh release download "$tag" --repo "$REPO" -p 'sbom-varlatchd-*.spdx.json'
+          fi
           identity="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${tag}"
           issuer=https://token.actions.githubusercontent.com
           # SHA256SUMS is signed by the release workflow for this tag, and
@@ -174,15 +183,11 @@ jobs:
           # in their own package.
           COSIGN_REPOSITORY="ghcr.io/${owner}/varlatch-signatures" cosign verify "$name@$digest" \
             --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" > /dev/null
-          # Both platforms, each with provenance, and an SBOM attested or
-          # attached as a release file (an image built self-hosted).
-          for arch in amd64 arm64; do
-            prov=$(docker buildx imagetools inspect "$name@$digest" --format "{{ json (index .Provenance \"linux/$arch\") }}")
-            if [ -z "$prov" ] || [ "$prov" = null ]; then echo "::error::no provenance for linux/$arch"; exit 1; fi
-            sbom=$(docker buildx imagetools inspect "$name@$digest" --format "{{ json (index .SBOM \"linux/$arch\") }}")
-            if [ -z "$sbom" ] || [ "$sbom" = null ]; then
-              grep -qx "sbom-varlatchd-${VERSION}-linux-${arch}.spdx.json" <<< "$assets" \
-                || { echo "::error::no SBOM for linux/$arch, attested or attached"; exit 1; }
-            fi
-          done
+          # Both platforms: an SLSA provenance predicate each, and an SPDX
+          # SBOM attested or attached as a release file whose bytes match
+          # the signed SHA256SUMS (buildx renders a missing predicate as {},
+          # which is refused).
+          cd ..
+          go/image/check-attestations.sh "$name@$digest" "$VERSION" --sbom-dir rel --sums rel/SHA256SUMS
+          cd rel
           echo "$ref: signed, recorded and attested for linux/amd64 and linux/arm64" | tee -a "$GITHUB_STEP_SUMMARY"
