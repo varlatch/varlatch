@@ -12,10 +12,6 @@ before the new server opens.
 > TypeScript release, 0.23.0, is published, and `varlatch migrate` starts
 > from its published image only.
 
-<!-- TODO before this guide leaves draft: one point still depends on an
-     unmerged pull request, marked "TODO #408" where it applies: `varlatch
-     setup --restore` on a Headscale tailnet. -->
-
 ## What people notice
 
 - **They sign in again, with the same passkey.** Every browser session ends
@@ -623,12 +619,40 @@ an interruption: a cut-short rename is undone, then done again, and one
 stopped after the rename is checked again and finished. The old node stays in the
 tailnet under its `-o` name until you remove it in the admin console.
 
-**On a Headscale tailnet**, the takeover (`varlatchd admin tailnet
-take-name`) takes Headscale's API as its authority, in place of the OAuth
-client: `--headscale-url https://<its IP address>[:port]
---headscale-api-key-file <file>`. The key comes from `headscale apikeys
-create --expiration 1h`, in a file of one line, mode 0600 or tighter. The
-same rules hold as for the migration's handoff:
+**On a Headscale tailnet**, give `setup --restore` the control server and
+Headscale's API key in place of the OAuth client (both files by absolute
+path, the key's mode 0600):
+
+```sh
+sudo varlatch setup --restore <archive> \
+  --root-kek-file /path/to/varlatch-kek --backup-key-file /path/to/backup-key \
+  --ingress tailnet --tailnet-hostname <name> \
+  --tailnet-control-url https://<its IP address>[:port] \
+  --tailnet-auth-key-file /root/auth-key \
+  --headscale-api-key-file /root/headscale-api-key
+```
+
+- **`--tailnet-control-url`** is the control server, https on its IP
+  address, written as varlatchd and `varlatch migrate` write it (setup
+  refuses another spelling, naming the canonical one). It goes into the
+  new installation's configuration as `tailnet_control_url`. For now it
+  goes with `--restore` only: `setup: --tailnet-control-url goes with
+  --restore for now: setup does not yet set up a fresh installation on a
+  self-hosted control server`.
+- **`--headscale-api-key-file`** is a key from `headscale apikeys create
+  --expiration 1h`, one line in a file of mode 0600, checked before
+  anything is made. It goes with `--tailnet-control-url`, and the OAuth
+  client goes without it: setup refuses either the other way round.
+- **The auth key** is a reusable pre-auth key tagged with the node's tags,
+  as for the migration.
+- **A rerun takes the same authority.** The answers are journalled in
+  `/etc/varlatch/setup.json`, and a rerun naming another control server is
+  refused. A rerun reads where the takeover got to from the node's own
+  state, and finishes it or leaves it done.
+
+The takeover setup runs (`varlatchd admin tailnet take-name
+--headscale-url <the URL> --headscale-api-key-file <file>`) follows the
+same rules as the migration's handoff:
 
 - **The URL is the configuration's `tailnet_control_url`.** Another one
   is refused: `--headscale-url (<url>) does not match tailnet_control_url
@@ -659,9 +683,6 @@ same rules hold as for the migration's handoff:
   the message names the line to add to `varlatchd.conf`.
 - **No certificates** are asked for on Headscale.
 
-<!-- TODO #408: `varlatch setup --restore` driving the takeover on a
-     Headscale tailnet (today it passes the OAuth client only). Describe
-     its options here once it merges. -->
 
 ### Finish
 
