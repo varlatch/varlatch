@@ -269,6 +269,8 @@ jobs:
           TARGET: ${{ matrix.target }}
           CLI: ${{ matrix.cli }}
         run: echo "artifact=conformance-report-${TARGET//:/-}-cli-${CLI}" >> "$GITHUB_OUTPUT"
+      - name: MinIO's image
+        uses: ./.github/actions/minio-image
       - name: Run the conformance suites
         env:
           TARGET: ${{ matrix.target }}
@@ -367,6 +369,10 @@ jobs:
           go build -o "$RUNNER_TEMP/varlatch" ./cmd/varlatch
       - name: Install Chromium
         run: scripts/ci-install-chromium.sh
+      # A candidate from before the action pulls as it did.
+      - name: MinIO's image
+        if: hashFiles('.github/actions/minio-image/action.yml') != ''
+        uses: ./.github/actions/minio-image
       - name: Run ship gate G1
         env:
           TARGET: ${{ inputs.gate_target }}
