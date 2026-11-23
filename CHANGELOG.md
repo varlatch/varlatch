@@ -88,11 +88,6 @@ Compose set and CLI do not change.
 
 Changes since 0.50.0-rc.1, by pull request:
 
-<!-- rc.2 slots: fill from `git log --first-parent v0.50.0-rc.1..origin/main`
-     once the queue has drained; remove the slots of PRs that did not merge.
-     Filled through main 5d439f67 (#420); #422 and #423 written while queued
-     (check they merged). Still queued: #408, #411 (slots below). -->
-
 - **Organization administration in the Go CLI (#290).** `varlatch org`,
   `project`, `env-create`, `env-delete`, `identity`, `member`,
   `credential`, `invite`, `tailnet` and `audit` run in the Go CLI, as in
@@ -405,14 +400,20 @@ Changes since 0.50.0-rc.1, by pull request:
   the authority, and the tailnet HTTPS overlay is refused on Headscale,
   which issues no certificates. A resume, abort or rollback with another
   server or the other form is refused before anything is renamed.
-- **A restore on Headscale (#405).** `varlatchd admin tailnet take-name`
-  takes the name over on Headscale too, with `--headscale-url` and
-  `--headscale-api-key-file`; the URL must be `tailnet_control_url`. The
-  key file, and the OAuth client file too, must be a regular file of mode
-  0600 or tighter, holding one line. A Headscale on a private address that
-  the outbound policy refuses is named with the exact `outbound_allow`
-  line to add. `varlatch setup --restore` does not drive a Headscale
-  restore yet: run `take-name` by hand.
+- **A restore on Headscale (#405, #408).** `varlatchd admin tailnet
+  take-name` takes the name over on Headscale too, with `--headscale-url`
+  and `--headscale-api-key-file`; the URL must be `tailnet_control_url`.
+  The key file, and the OAuth client file too, must be a regular file of
+  mode 0600 or tighter, holding one line. A Headscale on a private address
+  that the outbound policy refuses is named with the exact
+  `outbound_allow` line to add. `varlatch setup --restore` drives it with
+  `--tailnet-control-url https://<IP>[:port]` and
+  `--headscale-api-key-file <file>` (in the answers file,
+  `tailnetControlUrl` and `headscaleApiKeyFile`): the URL is written as
+  `tailnet_control_url`, the key file is checked before anything is made,
+  and a rerun naming another control server is refused. A fresh setup on
+  a self-hosted control server is not supported yet: the URL goes with
+  `--restore` only.
 - **Compose settings and the outbound allow list (#410).** `varlatch
   migrate` reads a Compose service's `environment` in its list form (`- A=1`)
   too, and unquoted numbers and booleans in its map form, so preflight no
@@ -459,17 +460,24 @@ Changes since 0.50.0-rc.1, by pull request:
   one-off commands named `node dist/cli.js` again after the image's own
   entrypoint, which already runs it, so every rollback of a 0.23.0
   installation failed at the import and was undone. Fixed.
-- **The migration's rehearsals (#409, #412).** The rehearsal harness runs
-  the sync case against platform stand-ins and the migration of an
-  installation restored from a backup archive, isolated from everything
-  outside it. No change to what is shipped.
-- **CI (#380, #422).** The go job's limit is 75 minutes and G5's tests get
-  25; G5's cleanup of abandoned runs no longer removes a live run it
-  cannot see, such as one in a container. No change to what is shipped.
-
-<!-- SLOT #411 (queued): the rehearsal harness's tailnet case (B4) on the
-     run's Headscale: fold into the rehearsals line above once it merges. -->
-<!-- SLOT #408 (queued): fill from its PR once it merges. -->
+- **Migrating to 0.50, documented (#372).** A new operator's guide,
+  `docs/operations/migrate-to-0.50.md`, linked from the README, walks
+  through a migration from 0.23.0: what it needs, the dry run and its
+  report, the phases and their journal, `--resume` and `--abort`, the
+  address transfer for each ingress and the tailnet handoff, the host and
+  image targets, what people notice, the rollback window and `--finish`,
+  and the backup converter.
+- **The migration's rehearsals (#409, #411, #412, #424).** The rehearsal
+  harness runs the sync case against platform stand-ins and against a
+  real GitHub repository and Coolify application, the tailnet handoff on
+  a Headscale of its own, and the migration of an installation restored
+  from a backup archive, isolated from everything outside it. No change to
+  what is shipped.
+- **CI (#380, #422, #425).** G5 and the Headscale tests run in a job of
+  their own beside the Go tests, which saves about 24 minutes a run; the
+  go job's limit is 75 minutes and G5's tests get 25; G5's cleanup of
+  abandoned runs no longer removes a live run it cannot see, such as one
+  in a container. No change to what is shipped.
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release, so nothing that follows the latest release
