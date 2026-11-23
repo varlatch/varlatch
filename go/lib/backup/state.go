@@ -271,6 +271,13 @@ type Lifecycle struct {
 // new migration's preflight, dry run and copy come between).
 const lifecycleSlack = time.Minute
 
+// A host whose clock ran ahead when the import made the database has a
+// Since in the future: once its clock is put right, At judges by
+// installation only until the clock passes Since, and the archives made
+// meanwhile, dated before Since, then no longer count. The cost is one
+// backup taken early and the 48 hours warning until it exists, never a
+// backup skipped.
+//
 // At is the lifecycle as judged at now. A clock that reads earlier than
 // the database's making (moved back; within lifecycleSlack is the same
 // moment) says nothing of what was made since: only the installation

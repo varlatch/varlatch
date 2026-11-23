@@ -5,11 +5,13 @@
 package daemon
 
 import (
+	"context"
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -19,6 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/backups"
+	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/doctor"
 )
 
@@ -266,5 +271,36 @@ func TestDoctorSaysWhyItCouldNotAsk(t *testing.T) {
 	}
 	if c := reportCheck(t, rep, "secret-plane.ready"); c.Status != doctor.Unknown || !strings.Contains(c.Remedy, "sudo varlatch doctor") {
 		t.Errorf("readiness: %+v", c)
+	}
+}
+
+// The running varlatchd's live answer names its database's making
+// (databaseCreatedAt, RFC3339Nano): schema_version's created_at, as the
+// backups' lifecycle reads it (backups.ReadLifecycle), so doctor judges
+// the archives as the schedule does.
+func TestDoctorLiveNamesTheDatabasesMaking(t *testing.T) {
+	in := newInstall(t, "public_url = https://vault.example.com\n")
+	r := start(t, in)
+	cfg, err := config.Load(in.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, unasked := doctorLive(cfg, io.Discard)
+	r.stop(t)
+	if live == nil || unasked != "" || live.InstallationID == "" {
+		t.Fatalf("the live answer: %+v %q", live, unasked)
+	}
+	made, err := time.Parse(time.RFC3339Nano, live.DatabaseCreatedAt)
+	if err != nil {
+		t.Fatalf("databaseCreatedAt %q: %v", live.DatabaseCreatedAt, err)
+	}
+	store, err := storage.Open(context.Background(), storage.Options{Path: filepath.Join(in.data, config.DatabaseFile)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	life, err := backups.ReadLifecycle(context.Background(), store.Reader())
+	if err != nil || !made.Equal(life.Since) || life.InstallationID != live.InstallationID {
+		t.Fatalf("databaseCreatedAt %s, the lifecycle %+v %v", made, life, err)
 	}
 }
