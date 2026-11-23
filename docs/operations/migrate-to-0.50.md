@@ -489,6 +489,8 @@ sudo varlatch migrate --ingress coolify \
   variable pins the digest matching `--to-image`.
 - `--to-image` is pinned by its digest, and its tag is the release of the
   `varlatchd` on this host, which fills the bind paths as the image's user.
+  The release's `varlatchd-image.txt`, listed in its signed `SHA256SUMS`,
+  holds that exact reference ([verifying a release](verify-release.md)).
   The migration does not run Docker against the service: that it runs this
   digest is yours to check.
 - Starting and stopping the service are yours. The migration stops (exit

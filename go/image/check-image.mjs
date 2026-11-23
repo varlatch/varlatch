@@ -33,6 +33,10 @@
  * Every container and volume it makes is named vl-image-test-<run>-*, and
  * it removes exactly those. Keys are random, made inside a container from
  * /dev/urandom; this script never prints one. Docker only; no privileges.
+ *
+ * VARLATCH_TEST_SLOWDOWN (a whole number, 1 by default) multiplies every
+ * wait: the release checks the arm64 image under emulation where no arm64
+ * runner is available (.github/workflows/release.yml, go-image-arm64).
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -46,6 +50,13 @@ const DATA = "/var/lib/varlatch";
 /** The key and passphrase variable names varlatchd refuses (go/lib/keyenv/keyenv.go Variables). */
 const KEY_VARIABLES = ["VARLATCH_KEK", "VARLATCH_KEK_PASSPHRASE", "VARLATCH_ROOT_KEK", "VARLATCH_BEK", "VARLATCH_BEK_PASSPHRASE", "VARLATCH_BACKUP_KEY"];
 const EXIT_CONFIG = 78;
+const SLOWDOWN = Number.parseInt(process.env.VARLATCH_TEST_SLOWDOWN || "1", 10);
+if (!Number.isInteger(SLOWDOWN) || SLOWDOWN < 1) {
+  console.error("VARLATCH_TEST_SLOWDOWN must be a whole number of at least 1");
+  process.exit(2);
+}
+/** A wait, scaled by VARLATCH_TEST_SLOWDOWN. */
+const wait = (ms) => ms * SLOWDOWN;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const image = process.argv[2];
@@ -59,7 +70,7 @@ const containers = new Set();
 const volumes = new Set();
 
 function docker(args, { input, allowFail = false } = {}) {
-  const r = spawnSync("docker", args, { encoding: "utf8", input, timeout: 120_000 });
+  const r = spawnSync("docker", args, { encoding: "utf8", input, timeout: wait(120_000) });
   if (!allowFail && r.status !== 0) {
     throw new Error(`docker ${args.slice(0, 2).join(" ")} exited ${r.status ?? r.signal}: ${(r.stderr || r.stdout).trim().slice(0, 600)}`);
   }
@@ -96,14 +107,14 @@ async function serve(name, data, keys, conf) {
   return { c, origin: `http://127.0.0.1:${port}` };
 }
 async function readyz(origin) {
-  return fetch(`${origin}/readyz`, { signal: AbortSignal.timeout(2_000) }).then(
+  return fetch(`${origin}/readyz`, { signal: AbortSignal.timeout(wait(2_000)) }).then(
     (r) => r.status,
     () => 0,
   );
 }
 /** Waits until /readyz answers `status` (or the container stops). */
 async function until(server, status, what) {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + wait(30_000);
   let last = 0;
   while (Date.now() < deadline) {
     last = await readyz(server.origin);
@@ -239,7 +250,7 @@ async function main() {
   remove(first.c);
   const second = await serve("serve-2", data, keys, conf);
   await until(second, 503, "a container on a volume with a lease");
-  const api = await fetch(`${second.origin}/v1/organizations`, { signal: AbortSignal.timeout(5_000) });
+  const api = await fetch(`${second.origin}/v1/organizations`, { signal: AbortSignal.timeout(wait(5_000)) });
   assert.equal(api.status, 503, "the API under the lease");
   assert.equal((await api.json()).error?.code, "MAINTENANCE", "the API answers MAINTENANCE");
   admin(second, ["maintenance", "end", leaseId]);
