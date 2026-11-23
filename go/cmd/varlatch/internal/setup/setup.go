@@ -111,6 +111,10 @@ type Asker interface {
 // Options are a run's.
 type Options struct {
 	Host Host
+	// OutboundAllow is a migration target's outbound_allow: the source's
+	// VARLATCH_OUTBOUND_ALLOW, carried as it is (the entries are the same
+	// on both lines). PrepareTarget only; setup asks no such question.
+	OutboundAllow string
 	// Given are the answers from the flags and the answers file.
 	Given Answers
 	// Ask is nil without a terminal: every answer must be given.
@@ -176,6 +180,9 @@ type RestoreRecord struct {
 	Archive        string `json:"archive"`
 	ArchiveID      string `json:"archiveId,omitempty"`
 	InstallationID string `json:"installationId,omitempty"`
+	// TailnetOperation is the tailnet handoff's (a restore with the
+	// tailnet's authority): its temporary names carry it.
+	TailnetOperation string `json:"tailnetOperation,omitempty"`
 }
 
 // ProbeRecord is what the fsync probe measured, and whether a slow disk
@@ -356,7 +363,36 @@ func (r *run) answers() error {
 	if err := a.Check(); err != nil {
 		return &UsageError{err.Error()}
 	}
+	// A restore's OAuth client: varlatchd reads it at the takeover, after
+	// the node enrols, and refuses one open to group or others; so its file
+	// is checked now (never read by setup), before anything is made.
+	if f := a.TailscaleOAuthClientFile; f != "" {
+		if err := secretFileMode(r.path(f)); err != nil {
+			return &UsageError{"setup: --tailscale-oauth-client-file: " + err.Error() + "; nothing was changed"}
+		}
+	}
 	r.j.Answers = a
+	return nil
+}
+
+// secretFileMode checks a credential file as varlatchd reads one, without
+// reading it: there, a regular file and no symbolic link, readable by its
+// owner alone (0600 or tighter). Setup runs on Linux only (host_other.go's
+// SystemHost refuses everything elsewhere), so the mode is a Unix one.
+func secretFileMode(p string) error {
+	st, err := os.Lstat(p)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%s does not exist", p)
+	case err != nil:
+		return err
+	case st.Mode()&fs.ModeSymlink != 0:
+		return fmt.Errorf("%s is a symbolic link: give the regular file itself", p)
+	case !st.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file", p)
+	case st.Mode().Perm()&0o077 != 0:
+		return fmt.Errorf("%s has mode %04o (accessible to group or others): tighten it to 0600, as varlatchd requires", p, st.Mode().Perm())
+	}
 	return nil
 }
 

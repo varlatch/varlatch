@@ -333,8 +333,10 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     # The race detector's run (go-race) and the cross-platform builds
-    # (go-platforms) run beside this job.
-    timeout-minutes: 40
+    # (go-platforms) run beside this job. G5 alone takes over 10 minutes
+    # since the tailnet matrix and the whole job about 55 with a cold Go
+    # cache; a cancelled job saves no cache, so the limit leaves room: 75.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -422,6 +424,8 @@ jobs:
           go vet -tags g9a ./...
           go vet -tags g5 ./server/migration/g5/
           go vet -tags headscale ./server/tailnet/... ./server/daemon/...
+          go vet -tags "headscale crashpoint" ./server/daemon/
+          go vet -tags "g5 headscale" ./server/migration/g5/
 
       # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
       # shared libraries) may depend on an AGPL-3.0-or-later one (G12), and
@@ -460,7 +464,8 @@ jobs:
         working-directory: go
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 -tags g5 -run '^TestG5' -v ./server/migration/g5/
+        # -timeout: go test's default 10m is shorter than the G5 package now.
+        run: go test -count=1 -tags g5 -timeout 25m -run '^TestG5' -v ./server/migration/g5/
 
       # G6's static half (ADR-0059 Decision 8; internal docs/design/
       # go-step6.md decision 5): go/release/release.json, the release's
@@ -521,12 +526,39 @@ jobs:
       # and the identity cases (tagged peer, user's device, self,
       # unrecognized; StableID = Headscale's node id) hold, in the node and
       # through varlatchd's tailnet listener and a handoff's node commands
-      # (step 7.5c c3). Its own build tag: it needs Docker.
+      # (step 7.5c c3). The restore's take-name on Headscale (c4: a dead
+      # holder renamed away through Headscale's API, its key expired however
+      # the run ends; a live one, and one back before the rename, refused
+      # with nothing renamed) runs here too, server/daemon's
+      # TestHeadscaleTakeName*. Its own build tag: it needs Docker.
       - name: Headscale, a self-hosted control server
         working-directory: go
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -tags headscale -run '^TestHeadscale' -v ./server/tailnet/ ./server/daemon/
+
+      # G5's tailnet half on a self-hosted control server (step 7.5c c2;
+      # go/server/migration/g5/headscale_test.go): varlatch migrate moves
+      # the tailnet name on Headscale 0.29.7, its authority Headscale's API
+      # (a key expiring within the hour, expired by each run) or its CLI;
+      # the rollback gives it back; a handoff killed mid-switch is aborted
+      # (the name back) or resumed (open). No certificates.
+      - name: G5 on Headscale, the tailnet handoff on a self-hosted control server
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags "g5 headscale" -run '^TestG5Headscale' -v ./server/migration/g5/
+
+      # The restore's take-name on Headscale killed at each journalled step
+      # (step 7.5c c4, crashpoint; go/server/daemon/
+      # tailnettakename_headscale_crash_test.go), then run again: resumed
+      # to done, no issuance count. Its other cases run in the Headscale
+      # step above.
+      - name: Headscale, the restore's take-name killed at every step
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -tags "headscale crashpoint" -run '^TestKillTheHeadscaleTakeoverAtEveryStep$' -v ./server/daemon/
 
       # G7 against the server (ADR-0059 step 3.6): a full disk refuses
       # writes, keeps reads and recovers, and a disk-full error in a

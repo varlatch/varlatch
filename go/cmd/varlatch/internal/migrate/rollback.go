@@ -62,6 +62,15 @@ func (e *Engine) reverseSides() (ReverseSource, ReverseTarget, error) {
 	return rs, rt, nil
 }
 
+// sidecarOwned is whether the forward migration's tailnet handoff moved
+// the name (done), stopping the source's sidecar at the switch: the
+// sidecar is then migrate's own to start for the reverse and to stop
+// again on its undo. Without a handoff, a stopped sidecar is the
+// operator's to start (ReverseReady says how).
+func sidecarOwned(j *Journal) bool {
+	return j != nil && j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.Phase == tailhandoff.Done
+}
+
 // switchedAt is when the migration switched (its history's step).
 func switchedAt(j *Journal) (time.Time, bool) {
 	for _, s := range j.History {
@@ -122,9 +131,13 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, errors.New("the Go installation does not run: a reverse migration starts from the installation that serves (start it; it stays running until the address moves)")
 	}
 	// Refused here, before Go's barrier and anything journalled, rather
-	// than at the rebuilt database's export after the rebuild.
-	if err := rs.ReverseReady(ctx); err != nil {
-		return j, err
+	// than at the rebuilt database's export after the rebuild. A sidecar
+	// the forward handoff stopped is migrate's own: the reverse starts it
+	// (reverse), and its undo stops it again.
+	if !sidecarOwned(j) {
+		if err := rs.ReverseReady(ctx); err != nil {
+			return j, err
+		}
 	}
 	// What a killed run left on this host (the bundles in the
 	// installation's backups directory, the export's directories), under
@@ -183,6 +196,13 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 		return e.undoReverse(ctx, j, err)
 	}
 	e.say("The TypeScript release on a fresh database: new volumes %v (the old ones kept as they are).", plan.Volumes)
+	if sidecarOwned(j) {
+		// Its one-off commands run in the sidecar's network.
+		e.say("Tailnet: the TypeScript release's sidecar starts again (its old node, under its temporary name; the name stays with Go's node until the transfer).")
+		if err := rs.StartNetworkOwner(ctx); err != nil {
+			return e.undoReverse(ctx, j, fmt.Errorf("starting the TypeScript release's tailnet sidecar: %w", err))
+		}
+	}
 	if err := rs.Rebuild(ctx, plan); err != nil {
 		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w", err))
 	}
@@ -464,15 +484,24 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		}
 	}
 	if j.Rollback.Rebuild != nil {
+		// A sidecar the forward handoff stopped is started for the undo's
+		// one-off commands, and stopped again below.
+		if sidecarOwned(j) {
+			if err := rs.StartNetworkOwner(ctx); err != nil {
+				problems = append(problems, fmt.Errorf("starting the TypeScript release's tailnet sidecar: %w", err))
+			}
+		}
 		if err := rs.UndoRebuild(ctx, *j.Rollback.Rebuild); err != nil {
 			problems = append(problems, fmt.Errorf("putting the TypeScript installation back: %w", err))
 		}
 	}
-	// The TypeScript side as the forward migration left it: starting its
-	// varlatchd started its tailnet sidecar (they share its network); the
+	// The TypeScript side as the forward migration left it: the reverse
+	// started its tailnet sidecar for its one-off commands
+	// (StartNetworkOwner, before Rebuild and again before UndoRebuild),
+	// and starting its varlatchd needs it (they share its network); the
 	// name is Go's node's, so the old node is stopped again (not logged
 	// out), its state kept for the window.
-	if ts, ok := e.Source.(TailnetSource); ok && j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.Phase == tailhandoff.Done {
+	if ts, ok := e.Source.(TailnetSource); ok && sidecarOwned(j) {
 		if err := ts.StopTailnet(ctx); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", err))
 		}

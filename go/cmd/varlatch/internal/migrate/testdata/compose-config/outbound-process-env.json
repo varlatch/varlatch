@@ -1,0 +1,23 @@
+{
+  "name": "outprobe",
+  "networks": {
+    "default": {
+      "name": "outprobe_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "varlatchd": {
+      "command": null,
+      "entrypoint": null,
+      "environment": {
+        "VARLATCH_OUTBOUND_ALLOW": "from.shell.lan",
+        "VARLATCH_PUBLIC_URL": "https://vault.example.test"
+      },
+      "image": "busybox",
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

@@ -545,7 +545,7 @@ func runTailnetProbe(cfg *config.Config, rest []string, stdout, stderr io.Writer
 	}
 	key := strings.TrimSpace(string(raw))
 	clear(raw)
-	res, err := tailnet.ProbeName(context.Background(), tailnet.ProbeConfig{Dir: cfg.DataDir, Hostname: t.Hostname, ControlURL: t.ControlURL, AuthKey: key, Tags: t.Tags, KeyTags: t.ControlURL != ""})
+	res, err := tailnet.ProbeName(context.Background(), tailnet.ProbeConfig{Dir: cfg.DataDir, Hostname: t.Hostname, ControlURL: t.ControlURL, AuthKey: key, Tags: t.Tags, KeyTags: keyTags(cfg)})
 	if err != nil {
 		return fail("%v", err)
 	}

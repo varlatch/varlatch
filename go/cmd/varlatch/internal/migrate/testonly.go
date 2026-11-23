@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The overrides of a test build only: G5's interruption gate (the
@@ -21,7 +22,11 @@ import (
 //     place of LastTypeScriptRepository and LastTypeScriptDigest (a
 //     release pins 0.23.0's published image, by its registry digest);
 //   - VARLATCH_MIGRATE_IMAGE_USER=<uid>:<gid> is the image target's user,
-//     for a test that does not run as root.
+//     for a test that does not run as root;
+//   - VARLATCH_TEST_HANDOFF_UNDO_WAIT and VARLATCH_TEST_HANDOFF_DEADLINE
+//     (Go durations) shorten the tailnet handoff's undo wait and its
+//     deadline, for G5's undo cases (an undo cut short by a control plane
+//     gone, or a control plane failing on one device's rename).
 
 var pinText = regexp.MustCompile(`^([^@\s]+)@(sha256:[0-9a-f]{64})$`)
 
@@ -41,5 +46,11 @@ func init() {
 			panic("VARLATCH_MIGRATE_IMAGE_USER is <uid>:<gid>")
 		}
 		ImageUser = Owner{UID: uint32(uid), GID: uint32(gid)}
+	}
+	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_UNDO_WAIT")); err == nil && d > 0 {
+		testHandoffUndoWait = d
+	}
+	if d, err := time.ParseDuration(os.Getenv("VARLATCH_TEST_HANDOFF_DEADLINE")); err == nil && d > 0 {
+		testHandoffDeadline = d
 	}
 }

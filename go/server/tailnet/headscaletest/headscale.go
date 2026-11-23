@@ -353,6 +353,118 @@ func (s *Server) userID() (string, error) {
 	return "", fmt.Errorf("headscale users list: no user %s", User)
 }
 
+// APIKey is a new API key expiring within the hour (headscale apikeys
+// create --expiration 1h), as an operator gives a handoff its authority.
+// The caller passes it to a file only, never to a log.
+func (s *Server) APIKey(t testing.TB) string {
+	t.Helper()
+	out, err := s.headscale("apikeys", "create", "--expiration", "1h")
+	if err != nil {
+		// Headscale's output can carry the key: never shown.
+		t.Fatalf("headscale apikeys create failed: %v", err)
+	}
+	key := strings.Trim(strings.TrimSpace(string(out)), `"`)
+	if key == "" || strings.ContainsAny(key, " \n\t") {
+		t.Fatalf("headscale apikeys create: an answer that is not one key (%d bytes)", len(out))
+	}
+	return key
+}
+
+// CLI is an executable that runs the container's headscale command with
+// its arguments, as `varlatch migrate --headscale-cli` runs the control
+// server's own: its absolute path.
+func (s *Server) CLI(t testing.TB) string {
+	t.Helper()
+	// Docker by its absolute path, as found now: the caller's PATH may
+	// put a stand-in first.
+	docker, err := exec.LookPath("docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if docker, err = filepath.Abs(docker); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "headscale")
+	script := "#!/bin/sh\nexec '" + docker + "' exec " + s.name + " headscale \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// LiveAPIKeys is how many API keys have not expired yet.
+func (s *Server) LiveAPIKeys(t testing.TB) int {
+	t.Helper()
+	out, err := s.headscale("apikeys", "list", "--output", "json")
+	if err != nil {
+		t.Fatalf("headscale apikeys list: %v: %s", err, out)
+	}
+	var keys []map[string]json.RawMessage
+	if err := json.Unmarshal(out, &keys); err != nil {
+		t.Fatalf("headscale apikeys list: %v", err)
+	}
+	live := 0
+	for _, k := range keys {
+		if end, ok := protoTime(k["expiration"]); !ok || end.After(time.Now()) {
+			live++
+		}
+	}
+	return live
+}
+
+// protoTime reads a timestamp as Headscale's CLI writes it: RFC 3339, or a
+// protobuf Timestamp ({"seconds": ..., "nanos": ...}).
+func protoTime(raw json.RawMessage) (time.Time, bool) {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		t, err := time.Parse(time.RFC3339Nano, s)
+		return t, err == nil
+	}
+	var ts struct {
+		Seconds json.Number `json:"seconds"`
+		Nanos   int64       `json:"nanos"`
+	}
+	if json.Unmarshal(raw, &ts) != nil || ts.Seconds == "" {
+		return time.Time{}, false
+	}
+	sec, err := ts.Seconds.Int64()
+	return time.Unix(sec, ts.Nanos), err == nil
+}
+
+// Node is a node as Headscale's CLI lists it.
+type Node struct {
+	ID        string
+	GivenName string
+	Online    bool
+}
+
+// Nodes lists the nodes (headscale nodes list).
+func (s *Server) Nodes(t testing.TB) []Node {
+	t.Helper()
+	out, err := s.headscale("nodes", "list", "--output", "json")
+	if err != nil {
+		t.Fatalf("headscale nodes list: %v: %s", err, out)
+	}
+	var nodes []struct {
+		ID        json.RawMessage `json:"id"`
+		GivenName string          `json:"given_name"`
+		Name      string          `json:"name"`
+		Online    bool            `json:"online"`
+	}
+	if err := json.Unmarshal(out, &nodes); err != nil {
+		t.Fatalf("headscale nodes list: %v: %s", err, out)
+	}
+	res := make([]Node, 0, len(nodes))
+	for _, n := range nodes {
+		name := n.GivenName
+		if name == "" {
+			name = n.Name
+		}
+		res = append(res, Node{ID: strings.Trim(string(n.ID), `"`), GivenName: name, Online: n.Online})
+	}
+	return res
+}
+
 // NodeID is Headscale's id of the node named name (its given name), as
 // `headscale nodes list` gives it: a number, which is also the node's
 // StableID on this control server.

@@ -21,7 +21,7 @@ import (
 // no release path builds with either tag, and the binary a build without
 // tags makes does not contain them.
 
-var overrideVariables = []string{"VARLATCH_MIGRATE_PIN", "VARLATCH_MIGRATE_IMAGE_USER"}
+var overrideVariables = []string{"VARLATCH_MIGRATE_PIN", "VARLATCH_MIGRATE_IMAGE_USER", "VARLATCH_TEST_HANDOFF_UNDO_WAIT", "VARLATCH_TEST_HANDOFF_DEADLINE"}
 
 // repoRoot is the repository's root: the directory above go/.
 func repoRoot(t *testing.T) string {

@@ -15,12 +15,25 @@
 # container, network and volume is named vl-rh-<run>-... and removed by
 # that name when the run ends (VL_RH_KEEP=1 keeps the installations).
 #
+# VL_RH_SOURCE=restore:<archive> (B6) restores that archive, with
+# VL_RH_RESTORE_BEK and VL_RH_RESTORE_KEK (its keys, files of mode 0600),
+# instead of seeding; the three are files the operator copied to this host,
+# mounted read-only into the runner. VL_RH_ONLY=bundle makes a synthetic
+# production-shaped archive and its keys in VL_RH_BUNDLE_OUT (an empty
+# directory), for B6 without production's. With VL_RH_KEEP=1 a restored
+# installation is kept whole, the Root KEK's copy in its Compose
+# directory's secrets/ included: remove it by hand (shred -u) when done.
+#
 # VL_RH_PROFILE=box (the experiments server; internal
 # docs/design/go-step8-rehearsals.md): run by the owner as root on the
 # host (sudo -i first), the test binary directly on the host, with real
 # systemd and the box's cases (VL_RH_INGRESS=public|coolify, ...). It never
 # stops, removes or rebinds anything that is not this run's; the run's
 # files are handed back to the user who ran sudo.
+#
+# VL_RH_SYNC=fakes (a workstation): the sync case, Sync Targets to the
+# conformance suites' platform stand-ins, migrated and then pushed from Go
+# (VL_RH_ONLY=sync runs it alone).
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: run.sh <typescript-checkout> <run> [<release-dir>]" >&2; exit 64; }
 profile=${VL_RH_PROFILE:-workstation}
@@ -107,12 +120,39 @@ cleanup_release() {
     done < <(node -e 'const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); for (const r of Object.values(d.images || {})) console.log(r);' "$release/images.json" 2>/dev/null || true)
   fi
 }
+# B6's inputs: the archive and its keys (read-only), and the synthetic
+# archive's directory, at their own paths in the runner.
+mounts=()
+bundle_out=
+if [ "${VL_RH_ONLY:-}" = bundle ] && [ -n "${VL_RH_BUNDLE_OUT:-}" ]; then
+  mkdir -p "$VL_RH_BUNDLE_OUT"
+  bundle_out=$(cd "$VL_RH_BUNDLE_OUT" && pwd)
+  mounts+=(-v "$bundle_out:$bundle_out")
+fi
+if [[ ${VL_RH_SOURCE:-} == restore:* ]]; then
+  for f in "${VL_RH_SOURCE#restore:}" "${VL_RH_RESTORE_BEK:-}" "${VL_RH_RESTORE_KEK:-}"; do
+    if [ -n "$f" ] && [ -f "$f" ]; then mounts+=(-v "$f:$f:ro"); fi
+  done
+fi
 cleanup() {
   if [ "$runner_built" = 1 ]; then
     docker run --rm --name "vl-rh-$run-chown" -u 0 -v "$root:$root" "$runner" chown -R "$(id -u):$(id -g)" "$root" || true
+    if [ -n "$bundle_out" ]; then
+      docker run --rm --name "vl-rh-$run-chown" -u 0 -v "$bundle_out:$bundle_out" "$runner" chown -R "$(id -u):$(id -g)" "$bundle_out" || true
+    fi
     docker image rm "$runner" >/dev/null 2>&1 || true
   fi
+  # The stand-ins' key goes whatever VL_RH_KEEP says.
+  rm -f "$root/work/sync-fakes/key.pem" 2>/dev/null || true
   if [ "${VL_RH_KEEP:-}" != 1 ]; then
+    # The sync case's (VL_RH_SYNC=fakes), when an interrupt left them (the
+    # test binary has no signal handler): its Compose stack, the
+    # stand-ins' container and network, and their directory, by their
+    # exact names. After a clean run there is nothing left to remove.
+    docker compose -p "vl-rh-$run-sync" --profile deploy down -v --remove-orphans --timeout 20 >/dev/null 2>&1 || true
+    docker rm -fv "vl-rh-$run-sync-fakes" >/dev/null 2>&1 || true
+    docker network rm "vl-rh-$run-sync" >/dev/null 2>&1 || true
+    rm -rf "$root/work/sync-fakes" 2>/dev/null || true
     if [ "$created_release" = 1 ]; then
       cleanup_release
     fi
@@ -150,10 +190,13 @@ docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e
     go build -tags rehearsal,crashpoint -o /out/varlatch ./cmd/varlatch &&
     go build -o /out/varlatchd ./cmd/varlatchd &&
     go test -c -tags rehearsal -o /out/rehearsal.test ./test/rehearsal/'
+# The sync case's platform stand-ins (VL_RH_SYNC=fakes), beside the
+# binaries: the runner sees the run's directory, not this checkout.
+cp "$gomod/../scripts/conformance/lib/platform-fakes.cjs" "$root/bin/platform-fakes.cjs"
 release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
-  VL_RH_KEEP VL_RH_ONLY)
+  VL_RH_KEEP VL_RH_ONLY VL_RH_RESTORE_BEK VL_RH_RESTORE_KEK VL_RH_BUNDLE_OUT VL_RH_RESTORE_READ)
 if [ "$profile" = box ]; then
   # On the box: as root on the host, real systemd, the target under a
   # root-owned path; the run's files handed back to the sudo user after.
@@ -173,7 +216,7 @@ runner_built=1
 envs=()
 for v in "${pass[@]}"; do envs+=(-e "$v"); done
 docker run --rm --name "vl-rh-$run-test" --network host -u 0 -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" -w "$root/work" \
+  -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" ${mounts[@]+"${mounts[@]}"} -w "$root/work" \
   -e VL_RH_RUN="$run" -e VL_RH_RELEASE_DIR="$release" -e VL_RH_BIN="$root/bin" -e VL_RH_WORK="$root/work" \
   -e VL_RH_REPORT="$root/report" -e VL_RH_TS="$ts" -e VL_RH_TARGET_ROOT="$target_root" "${envs[@]}" \
   "$runner" "$root/bin/rehearsal.test" -test.v -test.timeout 90m -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"

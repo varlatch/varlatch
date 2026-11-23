@@ -7,6 +7,7 @@ package migrate
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // Crash points for G5's interruption gate (go test -tags g5, which builds
@@ -20,7 +21,10 @@ import (
 //     journalled in both places; "barrier held" once the source's barrier
 //     is up and recorded; "transfer started" once the target serves under
 //     the transfer's gate; "open source" when the source's journal says
-//     open but the live open has not run yet;
+//     open but the live open has not run yet; "switch sidecar started"
+//     once the sidecar the tailnet handoff stopped runs again for the
+//     source's mark, and "switch marked" once the source is marked
+//     migrated out, before the sidecar stops again;
 //   - the reverse (--rollback): "rollback barrier held" once Go's barrier
 //     is up; "rollback rebuilt" once the TypeScript side runs on its fresh
 //     volumes; "rollback go stopped" and "rollback transfer started" in
@@ -33,7 +37,11 @@ import (
 //     reverse, the source's alone) say it; "finish containers removed"
 //     after docker compose down; "finish volume removed" between a
 //     volume's removal and its journal entry; "finish go discarded" once
-//     Go's copy is discarded after a reverse.
+//     Go's copy is discarded after a reverse;
+//   - the tailnet handoff: "tailnet <forward|undo|rollback> <step>" once
+//     it has journalled a step (prepared, switching, serving closed,
+//     serving renamed, incoming renamed, opening, done, undoing, undone,
+//     undo-pending), before its act.
 //
 // The gate's stand-in source and target also take testonly.go's overrides
 // (the image pin and the image's user), which this build has too. A
@@ -70,6 +78,12 @@ func crashPoint(point string) {
 	if point == cp.pause {
 		fmt.Fprintf(cp.log, "paused %s\n", point)
 		_ = cp.log.Sync()
-		select {}
+		// Asleep on a timer, not in select {}: with every other goroutine
+		// blocked, the runtime ends a program that has none
+		// ("all goroutines are asleep - deadlock!") before the kill comes
+		// (rehearsal r16b and r16c, the kill at "transfer started").
+		for {
+			time.Sleep(time.Hour)
+		}
 	}
 }

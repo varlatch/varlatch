@@ -37,8 +37,8 @@ type ProbeConfig struct {
 	ControlURL string
 	AuthKey    string
 	Tags       []string
-	// KeyTags: the probe's tags are its auth key's (a self-hosted control
-	// server), and it advertises none (NodeConfig.KeyTags).
+	// KeyTags is NodeConfig's: on a self-hosted control server the probe
+	// node advertises no tags, and takes its auth key's.
 	KeyTags bool
 	// Timeout bounds each probe node's join (default 60 s).
 	Timeout time.Duration

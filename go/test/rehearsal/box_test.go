@@ -50,6 +50,11 @@ type profileConfig struct {
 	continueDir            string
 	goImage                string // the 0.50 image for the image target, name@sha256:...
 	coolifySourceDir       string // the source app's directory in the lab Coolify
+	// B6: the archive VL_RH_SOURCE=restore:<archive> names, and its keys
+	// (VL_RH_RESTORE_BEK, VL_RH_RESTORE_KEK), all files the operator copied
+	// to this host; the harness never fetches one.
+	restore, restoreBEK, restoreKEK string
+	bundleOut                       string // VL_RH_ONLY=bundle: where the synthetic archive and its keys go
 }
 
 var prof profileConfig
@@ -82,7 +87,9 @@ func readProfile(euid int) (profileConfig, error) {
 		source: env("VL_RH_SOURCE", "seed"), kill: os.Getenv("VL_RH_KILL"), sync: os.Getenv("VL_RH_SYNC"),
 		continueDir: env("VL_RH_CONTINUE_DIR", filepath.Join(workDir, "continue")),
 		goImage:     os.Getenv("VL_RH_GO_IMAGE"), coolifySourceDir: os.Getenv("VL_RH_COOLIFY_SOURCE_DIR"),
+		restoreBEK: os.Getenv("VL_RH_RESTORE_BEK"), restoreKEK: os.Getenv("VL_RH_RESTORE_KEK"), bundleOut: os.Getenv("VL_RH_BUNDLE_OUT"),
 	}
+	only := os.Getenv("VL_RH_ONLY")
 	if p := env("VL_RH_PROFILE", "workstation"); p != "workstation" && p != "box" {
 		return prof, fmt.Errorf("VL_RH_PROFILE is workstation or box, not %q", p)
 	}
@@ -97,10 +104,15 @@ func readProfile(euid int) (profileConfig, error) {
 		return prof, fmt.Errorf("VL_RH_INGRESS=%s runs on the box only (VL_RH_PROFILE=box)", prof.ingress)
 	case prof.ingress == "tailnet" || prof.ingress == "combined":
 		return prof, errors.New("the tailnet handoff (B4) needs varlatch migrate's tailnet options (step 7.5b2's wiring), which this stack does not have yet")
-	case prof.sync != "":
-		return prof, errors.New("Sync Targets to real endpoints (B5) need the owner's destinations (internal#221, question 2); not built yet")
+	case prof.sync != "" && prof.sync != "fakes":
+		return prof, fmt.Errorf("VL_RH_SYNC is fakes (the platform stand-ins), not %q: Sync Targets to real endpoints (B5's owner session) need the owner's destinations (internal#221, question 2); not built yet", prof.sync)
+	case prof.sync == "fakes" && prof.box:
+		return prof, errors.New("VL_RH_SYNC=fakes runs on a workstation only: it points the platforms' host names at the stand-ins in the runner container's /etc/hosts, which the box profile does not have")
 	case strings.HasPrefix(prof.source, "restore:"):
-		return prof, errors.New("the restored-production runs (B6) need 0.23.0 published and production on it (go-step8.md phase 1)")
+		prof.restore = strings.TrimPrefix(prof.source, "restore:")
+		if err := checkRestore(prof); err != nil {
+			return prof, err
+		}
 	case prof.source != "seed":
 		return prof, fmt.Errorf("VL_RH_SOURCE is seed or restore:<archive>, not %q", prof.source)
 	case prof.target == "image" && prof.ingress != "coolify":
@@ -134,14 +146,53 @@ func readProfile(euid int) (profileConfig, error) {
 	if prof.kill != "" && prof.kill != "transfer" && prof.kill != "barrier" {
 		return prof, fmt.Errorf("VL_RH_KILL is transfer or barrier, not %q", prof.kill)
 	}
-	switch only := os.Getenv("VL_RH_ONLY"); {
-	case only != "" && only != "setup" && only != "kill":
-		return prof, fmt.Errorf("VL_RH_ONLY is setup or kill, not %q", only)
+	switch {
+	case only != "" && only != "setup" && only != "kill" && only != "sync" && only != "bundle":
+		return prof, fmt.Errorf("VL_RH_ONLY is setup, kill, sync or bundle, not %q", only)
 	case only == "kill" && prof.kill == "":
 		// Alone, it would run nothing between the guard and the report.
 		return prof, errors.New("VL_RH_ONLY=kill needs VL_RH_KILL (transfer or barrier): it runs the kill case alone")
+	case only == "sync" && prof.sync != "fakes":
+		return prof, errors.New("VL_RH_ONLY=sync needs VL_RH_SYNC=fakes: it runs the sync case alone")
+	case only == "bundle":
+		if prof.restore != "" || prof.kill != "" || prof.sync != "" || prof.ingress != "proxy" {
+			return prof, errors.New("VL_RH_ONLY=bundle makes the synthetic archive alone: on a seeded source (VL_RH_SOURCE=seed), with the own proxy, no VL_RH_KILL or VL_RH_SYNC")
+		}
+		if !filepath.IsAbs(prof.bundleOut) {
+			return prof, errors.New("VL_RH_ONLY=bundle needs VL_RH_BUNDLE_OUT, an absolute path: the directory the archive and its keys go to")
+		}
+		if entries, err := os.ReadDir(prof.bundleOut); err == nil && len(entries) > 0 {
+			return prof, fmt.Errorf("VL_RH_BUNDLE_OUT %s is not empty: the run never replaces an archive or a key", prof.bundleOut)
+		}
 	}
 	return prof, nil
+}
+
+// checkRestore checks B6's inputs before anything starts: the archive and
+// its two keys are regular files on this host (a path, never a URL: the
+// harness fetches nothing), the keys readable by their owner only.
+func checkRestore(prof profileConfig) error {
+	if prof.ingress != "proxy" || prof.target != "host" {
+		return errors.New("the restored-production run (B6) runs with the own proxy's ingress and the host-install target (VL_RH_INGRESS=proxy, VL_RH_TARGET=host)")
+	}
+	if strings.Contains(prof.restore, "://") || !filepath.IsAbs(prof.restore) {
+		return fmt.Errorf("VL_RH_SOURCE=restore:<archive> takes the archive's absolute path on this host, copied there by hand, not %q: the harness fetches nothing", prof.restore)
+	}
+	if prof.restoreBEK == "" || prof.restoreKEK == "" {
+		return errors.New("the restored-production run (B6) needs the archive's keys: VL_RH_RESTORE_BEK (its Backup Encryption Key file) and VL_RH_RESTORE_KEK (the installation's Root KEK file)")
+	}
+	for _, f := range []struct{ what, path string }{{"the archive", prof.restore}, {"VL_RH_RESTORE_BEK", prof.restoreBEK}, {"VL_RH_RESTORE_KEK", prof.restoreKEK}} {
+		st, err := os.Lstat(f.path)
+		switch {
+		case err != nil:
+			return fmt.Errorf("%s: %v", f.what, err)
+		case !st.Mode().IsRegular():
+			return fmt.Errorf("%s %s is not a regular file", f.what, f.path)
+		case f.what != "the archive" && st.Mode().Perm()&0o077 != 0:
+			return fmt.Errorf("%s %s is readable by others (mode %04o): copy it with mode 0600", f.what, f.path, st.Mode().Perm())
+		}
+	}
+	return nil
 }
 
 // --- the guard: nothing of the box's own is touched ---
@@ -461,8 +512,13 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	if err := os.WriteFile(filepath.Join(tsCLI, "varlatch-ts"), []byte("#!/bin/sh\nexec node "+cli+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	migrateUntilDone := func(what string, extra ...string) ran {
-		a := append(slices.Clone(args), extra...)
+	// --rollback takes the source, the target and the transfer's timeout
+	// only (the rest is in the journal); its --resume is migrate's.
+	rollbackArgs := []string{"migrate", "--rollback", "--from", prof.coolifySourceDir, "--to-data", filepath.Join(target, "data"),
+		"--to-keys", filepath.Join(target, "keys"), "--to-config", conf, "--to-image", prof.goImage, "--to-service", "varlatchd",
+		"--ts-cli", "varlatch-ts", "--transfer-timeout", "5m"}
+	migrateUntilDone := func(what string, first []string) ran {
+		a := slices.Clone(first)
 		for step := 1; ; step++ {
 			r := run(prof.coolifySourceDir, []string{"VARLATCH_MIGRATE_PIN=" + rel.pin(), "PATH=" + tsCLI + ":" + os.Getenv("PATH"), "TMPDIR=" + tmpDir}, nil, filepath.Join(binDir, "varlatch"), a...)
 			if r.code != 75 {
@@ -472,11 +528,11 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 			a = append(slices.Clone(args), "--resume")
 		}
 	}
-	r := migrateUntilDone("migrate")
+	r := migrateUntilDone("migrate", args)
 	record(t, item, "the migration opens on the Go app", r.code == 0, r.String())
 	code, after := get()
 	record(t, item, "the public URL answers from the Go app", code == 200 && !strings.HasPrefix(after, "0.23.0"), after)
-	r = migrateUntilDone("rollback", "--rollback")
+	r = migrateUntilDone("rollback", rollbackArgs)
 	record(t, item, "--rollback, the domain moved back by hand", r.code == 0, r.String())
 	code, back := get()
 	record(t, item, "the public URL answers from 0.23.0 again", code == 200 && strings.HasPrefix(back, "0.23.0"), back)

@@ -42,6 +42,12 @@ func (s *fakeSource) call(name string) error {
 	return s.fail[name]
 }
 
+// callErr records the call, failing with err.
+func (s *fakeSource) callErr(name string, err error) error {
+	s.calls = append(s.calls, name)
+	return err
+}
+
 func (s *fakeSource) Dir() string { return s.dir }
 func (s *fakeSource) CleanLeftovers() error {
 	return s.call("clean")
@@ -147,6 +153,9 @@ type fakeTarget struct {
 	human     bool // an image's service: the operator starts and stops it
 	failOpen  error
 	bundles   []string
+	// importRefusal is what the target's state says an import would be
+	// refused for ("" for none).
+	importRefusal string
 }
 
 func (t *fakeTarget) call(name string) error {
@@ -156,7 +165,7 @@ func (t *fakeTarget) call(name string) error {
 func (t *fakeTarget) Describe(context.Context) (TargetInfo, TargetState, error) {
 	info := t.info
 	info.Config, info.DataDir = "/etc/varlatch/varlatchd.conf", t.dataDir
-	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Running: t.running}, t.call("describe")
+	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Running: t.running, ImportRefusal: t.importRefusal}, t.call("describe")
 }
 func (t *fakeTarget) Start(context.Context) error {
 	if err := t.call("start"); err != nil {
@@ -582,6 +591,11 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 		{"a target with a database", func(w *world) { w.tgt.database = true }, "holds a database and no migration journal"},
 		{"a target of another migration", func(w *world) { w.tgt.journal = &JournalHead{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Copied} }, "holds the migration mig_aaaa"},
 		{"a failed backup", func(w *world) { w.src.fail["backup"] = errors.New("no space") }, "preflight: the backup"},
+		// The import's own refusal, which the target's state reports: made
+		// before the backup and the barrier (rehearsal r16f).
+		{"a target whose import would be refused", func(w *world) {
+			w.tgt.importRefusal = "the data directory /var/lib/varlatch is not empty (notes.txt): an import builds a fresh database only"
+		}, "preflight: the target's import would be refused: the data directory /var/lib/varlatch is not empty (notes.txt)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newWorld(t)
@@ -592,6 +606,9 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 			}
 			if containsCall(w.src.calls, "barrier") || containsCall(w.tgt.calls, "import") {
 				t.Fatalf("it went on: %v %v", w.src.calls, w.tgt.calls)
+			}
+			if w.tgt.importRefusal != "" && containsCall(w.src.calls, "backup") {
+				t.Fatalf("a backup before the target's refusal: %v", w.src.calls)
 			}
 		})
 	}
@@ -1433,5 +1450,49 @@ func TestAReleaseWaitsForTheImagesStop(t *testing.T) {
 	w.tgt.running = false
 	if _, err := w.eng.Resume(context.Background()); err != nil || w.tgt.journal.Phase != Released || w.tgt.gate {
 		t.Fatalf("after the stop: %v %+v gate %v", err, w.tgt.journal, w.tgt.gate)
+	}
+}
+
+// The source's outbound allow list against the target's: none at the
+// source changes nothing; a target with none while the source allows some
+// is refused before anything is done; one that lacks some of the source's
+// entries goes on, the missing ones named. Entries compare without blanks,
+// case or a name's trailing dot.
+func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
+	for _, c := range []struct {
+		name, src, tgt, refused, warned string
+	}{
+		{"none at the source", "", "", "", ""},
+		{"none at the target", "coolify.lan,10.0.0.0/8:8000", "", "sets no outbound_allow", ""},
+		{"the same", "coolify.lan, 10.0.0.0/8:8000", "10.0.0.0/8:8000,COOLIFY.lan", "", ""},
+		{"a wider target", "coolify.lan", "coolify.lan,*.lan", "", ""},
+		{"a name's trailing dot", "coolify.lan.,Convex.LAN.:3210,10.0.0.0/8", "coolify.lan,convex.lan:3210,10.0.0.0/8", "", ""},
+		// JavaScript's \s, as outbound.ParseAllow drops it: a no-break
+		// space, a byte order mark, an ideographic space.
+		{"Unicode blanks", "coolify.lan\u00a0,\ufeffconvex.lan:3210\u3000", "coolify.lan,convex.lan:3210", "", ""},
+		{"one missing", "coolify.lan,convex.lan:3210", "coolify.lan", "", "lacks entries the source allows (convex.lan:3210)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			w.src.ingress.OutboundAllow = c.src
+			w.tgt.info.OutboundAllow = c.tgt
+			_, err := w.eng.Run(context.Background(), true)
+			said := strings.Join(w.said, "\n")
+			if c.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), c.refused) || !strings.Contains(err.Error(), "outbound_allow = "+c.src) || !strings.Contains(err.Error(), "nothing was done") {
+					t.Fatalf("%v", err)
+				}
+				if slices.Contains(w.src.calls, "backup") {
+					t.Fatalf("a backup was made before the refusal: %v", w.src.calls)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (c.warned != "") != strings.Contains(said, "Warning: the target's outbound_allow") || c.warned != "" && !strings.Contains(said, c.warned) {
+				t.Errorf("said: %s", said)
+			}
+		})
 	}
 }

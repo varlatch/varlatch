@@ -330,7 +330,7 @@ func TestComposeImportReverseStreams(t *testing.T) {
 	if err := os.WriteFile(bundle, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := "docker compose --profile varlatch-rollback run --rm -T varlatch-reverse-import node dist/cli.js admin migration import --in -"
+	cmd := "docker compose --profile varlatch-rollback run --rm -T varlatch-reverse-import admin migration import --in -"
 	run := &scripted{t: t, answers: map[string]Ran{cmd: {Answer: []byte(`{"installationId":"inst_x","auditPosition":"48","migratedOutGate":"lifted"}` + "\n")}}}
 	c := &Compose{Directory: dir, Run: run}
 	rec, err := c.ImportReverse(context.Background(), bundle)
@@ -448,18 +448,26 @@ func TestHostCommands(t *testing.T) {
 // services the transfer stops and starts.
 func TestComposeIngress(t *testing.T) {
 	dir := t.TempDir()
-	run := &scripted{t: t, answers: map[string]Ran{"docker compose": {}}}
-	c := &Compose{Directory: dir, Run: run}
-	ing, err := c.Ingress(context.Background())
-	if err != nil || ing.PublicURL != "" || ing.Caddy || ing.WebAddress != "127.0.0.1:8787" {
+	running := func(env string) *scripted {
+		return &scripted{t: t, answers: map[string]Ran{
+			"docker compose ps -q varlatchd":                  {Answer: []byte("c1\n")},
+			"docker inspect --format {{json .Config.Env}} c1": {Answer: []byte(env)},
+		}}
+	}
+	ing, err := (&Compose{Directory: dir, Run: running(`["PATH=/bin"]`)}).Ingress(context.Background())
+	if err != nil || ing.PublicURL != "" || ing.Caddy || ing.WebAddress != "127.0.0.1:8787" || ing.OutboundAllow != "" || ing.OutboundAllowFromConfig {
 		t.Fatalf("no .env: %+v %v", ing, err)
 	}
 	_ = os.WriteFile(filepath.Join(dir, ".env"), []byte("# the installation\nVARLATCH_PUBLIC_URL=\"https://vault.example.test\"\n"+
-		"COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml\nVARLATCH_WEB_PORT=9000\nBIND_ADDRESS=0.0.0.0\n"), 0o600)
-	ing, err = c.Ingress(context.Background())
-	if err != nil || ing.PublicURL != "https://vault.example.test" || !ing.Caddy || ing.WebAddress != "0.0.0.0:9000" {
+		"COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml\nVARLATCH_WEB_PORT=9000\nBIND_ADDRESS=0.0.0.0\n"+
+		"VARLATCH_OUTBOUND_ALLOW=not.what.compose.gave\n"), 0o600)
+	// The allow list is the container's, not .env's line.
+	ing, err = (&Compose{Directory: dir, Run: running(`["VARLATCH_OUTBOUND_ALLOW= coolify.lan, 10.0.0.0/8:8000 "]`)}).Ingress(context.Background())
+	if err != nil || ing.PublicURL != "https://vault.example.test" || !ing.Caddy || ing.WebAddress != "0.0.0.0:9000" || ing.OutboundAllow != "coolify.lan, 10.0.0.0/8:8000" {
 		t.Fatalf(".env: %+v %v", ing, err)
 	}
+	run := &scripted{t: t, answers: map[string]Ran{"docker compose": {}}}
+	c := &Compose{Directory: dir, Run: run}
 	ctx := context.Background()
 	for _, c2 := range []struct {
 		kind Ingress
@@ -613,6 +621,85 @@ func TestOrigin(t *testing.T) {
 	for _, bad := range []string{"", "vault.example.test", "ftp://x", "https://"} {
 		if _, _, err := origin(bad); err == nil {
 			t.Errorf("%q", bad)
+		}
+	}
+}
+
+// The source's outbound allow list is the value Compose gave varlatchd:
+// the running container's environment (an overlay's value, the shell's,
+// .env's with its quotes and an inline comment taken as Compose takes
+// them); with the service not running, docker compose config's, said
+// so. Only that variable is read: an error carries no other value.
+func TestComposeOutboundAllow(t *testing.T) {
+	const ps, inspect, config = "docker compose ps -q varlatchd", "docker inspect --format {{json .Config.Env}} c1", "docker compose config --format json"
+	stopped := func(fixture string) *scripted {
+		b, err := os.ReadFile(filepath.Join("testdata", "compose-config", fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &scripted{t: t, answers: map[string]Ran{ps: {}, config: {Answer: b}}}
+	}
+	for _, c := range []struct {
+		name       string
+		run        *scripted
+		want       string
+		fromConfig bool
+	}{
+		{"running", &scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")},
+			inspect: {Answer: []byte(`["VARLATCH_PUBLIC_URL=https://vault.example.test","VARLATCH_OUTBOUND_ALLOW=old.lan","VARLATCH_OUTBOUND_ALLOW=coolify.lan"]`)}}}, "coolify.lan", false},
+		{"running, not set", &scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")}, inspect: {Answer: []byte(`["VARLATCH_OUTBOUND_ALLOW="]`)}}}, "", false},
+		// docker compose config's own output (testdata/compose-config:
+		// outbound-docker-compose.yml, outbound-override.yml).
+		{"stopped, .env's inline comment", stopped("outbound-comment.json"), "coolify.lan,10.0.0.0/8:8000", true},
+		{"stopped, .env's quoted value", stopped("outbound-quoted.json"), "coolify.lan, 10.0.0.0/8:8000", true},
+		{"stopped, an overlay's value", stopped("outbound-overlay.json"), "convex.lan:3210", true},
+		{"stopped, the shell's value", stopped("outbound-process-env.json"), "from.shell.lan", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			v, fromConfig, err := (&Compose{Directory: t.TempDir(), Run: c.run}).outboundAllow(context.Background())
+			if err != nil || v != c.want || fromConfig != c.fromConfig {
+				t.Fatalf("%q %v %v, want %q %v", v, fromConfig, err, c.want, c.fromConfig)
+			}
+		})
+	}
+	secret := `["VARLATCH_PUBLIC_URL=https://vault.example.test",`
+	// What each says, beyond that the variable cannot be read; never a
+	// value Docker printed (config's stderr can hold any).
+	for name, c := range map[string]struct {
+		run  *scripted
+		says string
+	}{
+		"inspect fails":    {&scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")}, inspect: {Code: 1, Said: []byte("Error: no such object")}}}, "docker inspect"},
+		"inspect not JSON": {&scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")}, inspect: {Answer: []byte(secret)}}}, "docker inspect"},
+		// Not "not running": ps failed, or found more than one.
+		"ps fails":       {&scripted{t: t, answers: map[string]Ran{ps: {Code: 1, Said: []byte("no configuration file provided")}}}, "docker compose ps -q varlatchd failed (exit 1), so migrate cannot tell whether"},
+		"two containers": {&scripted{t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\nc2\n")}}}, "names 2 running containers (c1, c2)"},
+		"config fails": {&scripted{t: t, answers: map[string]Ran{ps: {}, config: {Code: 1, Said: []byte("invalid interpolation format for https://vault.example.test")}}},
+			"docker compose config failed (exit 1; run docker compose config in"},
+		"config needs a variable": {&scripted{t: t, answers: map[string]Ran{ps: {}, config: {Code: 1, Said: []byte(`required variable VARLATCH_TAILNET_NAME is missing a value: set in .env, near https://vault.example.test`)}}},
+			"a variable the Compose files need is unset"},
+		"config not JSON": {&scripted{t: t, answers: map[string]Ran{ps: {}, config: {Answer: []byte(`{"name":"p","services":` + secret)}}}, "did not give the varlatchd service's environment"},
+	} {
+		_, _, err := (&Compose{Directory: t.TempDir(), Run: c.run}).outboundAllow(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "VARLATCH_OUTBOUND_ALLOW cannot be read") || !strings.Contains(err.Error(), c.says) ||
+			strings.Contains(err.Error(), "vault.example.test") || strings.Contains(err.Error(), "missing a value") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Whether varlatchd runs in its sidecar's network, from its Compose
+// project: the stock Tailscale topology's network_mode, or its own.
+func TestComposeSharesTailnetNetwork(t *testing.T) {
+	const config = "docker compose config --no-interpolate --format json"
+	for answer, want := range map[string]bool{
+		`{"name":"p","services":{"varlatchd":{"network_mode":"service:tailscale"},"tailscale":{}}}`: true,
+		`{"name":"p","services":{"varlatchd":{},"tailscale":{}}}`:                                   false,
+		`{"name":"p","services":{"varlatchd":{"network_mode":"host"},"tailscale":{}}}`:              false,
+	} {
+		run := &scripted{t: t, answers: map[string]Ran{config: {Answer: []byte(answer)}}}
+		if got, err := (&Compose{Directory: t.TempDir(), Run: run}).SharesTailnetNetwork(context.Background()); err != nil || got != want {
+			t.Errorf("%s: %v %v", answer, got, err)
 		}
 	}
 }

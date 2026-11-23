@@ -104,6 +104,13 @@ type IngressInfo struct {
 	PublicURL  string
 	Caddy      bool
 	WebAddress string
+	// OutboundAllow is the source's outbound allow list
+	// (VARLATCH_OUTBOUND_ALLOW), "" for none: the target's outbound_allow
+	// takes the same entries.
+	OutboundAllow string
+	// OutboundAllowFromConfig: varlatchd was not running, so OutboundAllow
+	// is docker compose config's value, not the container's.
+	OutboundAllowFromConfig bool
 }
 
 // SourceInfo is what a migration starts from.
@@ -180,6 +187,8 @@ type TargetInfo struct {
 	PublicURL   string `json:"publicUrl"`
 	Listen      string `json:"listen"`
 	ListenHTTPS string `json:"listenHttps"`
+	// OutboundAllow is its configuration's outbound_allow ("" for none).
+	OutboundAllow string `json:"outboundAllow,omitempty"`
 	// Tailnet is its tailnet settings and node, nil when tailnet = off.
 	Tailnet *TargetTailnet `json:"tailnet,omitempty"`
 }
@@ -195,6 +204,10 @@ type TargetState struct {
 	Gate    bool
 	Barrier string
 	Running bool
+	// ImportRefusal is why the target's import into its data directory
+	// would be refused now (varlatchd's check, the import's own), empty
+	// when it would not: the preflight refuses it before the barrier.
+	ImportRefusal string
 }
 
 // JournalHead is what the target's journal says.

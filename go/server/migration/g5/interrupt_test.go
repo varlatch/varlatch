@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -72,6 +73,61 @@ func (stdTB) Helper()                      {}
 func (stdTB) Fatal(args ...any)            { fmt.Fprintln(os.Stderr, args...); os.Exit(1) }
 func (stdTB) Fatalf(f string, args ...any) { fmt.Fprintf(os.Stderr, f+"\n", args...); os.Exit(1) }
 
+// cleanupDirs are package-wide temporary directories (shared binaries,
+// test CA) removed when the test run ends or is interrupted.
+var cleanupDirs struct {
+	mu   sync.Mutex
+	dirs []string
+}
+
+func registerCleanupDir(dir string) {
+	cleanupDirs.mu.Lock()
+	cleanupDirs.dirs = append(cleanupDirs.dirs, dir)
+	cleanupDirs.mu.Unlock()
+}
+
+// unregisterCleanupDir forgets dir once its test removed it itself.
+func unregisterCleanupDir(dir string) {
+	cleanupDirs.mu.Lock()
+	cleanupDirs.dirs = slices.DeleteFunc(cleanupDirs.dirs, func(d string) bool { return d == dir })
+	cleanupDirs.mu.Unlock()
+}
+
+func removeCleanupDirs() {
+	cleanupDirs.mu.Lock()
+	dirs := slices.Clone(cleanupDirs.dirs)
+	cleanupDirs.dirs = nil
+	cleanupDirs.mu.Unlock()
+	for _, d := range dirs {
+		_ = os.RemoveAll(d)
+	}
+}
+
+func runTestMain(m *testing.M) int {
+	defer removeCleanupDirs()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	defer func() {
+		close(done)
+		signal.Stop(sig)
+	}()
+	go func() {
+		select {
+		case s := <-sig:
+			removeCleanupDirs()
+			signal.Reset(s)
+			if ss, ok := s.(syscall.Signal); ok {
+				_ = syscall.Kill(os.Getpid(), ss)
+			} else {
+				os.Exit(1)
+			}
+		case <-done:
+		}
+	}()
+	return m.Run()
+}
+
 func TestMain(m *testing.M) {
 	switch filepath.Base(os.Args[0]) {
 	case "docker":
@@ -80,8 +136,10 @@ func TestMain(m *testing.M) {
 		os.Exit(fakeTSCLI(os.Args[1:]))
 	case "systemctl":
 		os.Exit(fakeSystemctl(os.Args[1:]))
+	case "g5-sidecar":
+		os.Exit(runSidecar())
 	}
-	os.Exit(m.Run())
+	os.Exit(runTestMain(m))
 }
 
 // state is the stand-ins' state directory (G5_STATE).
@@ -167,6 +225,11 @@ func writeGate(g *gateDoc) error {
 // fakeDocker answers as Docker and the TypeScript CLI in its container.
 func fakeDocker(args []string) int {
 	fail := func(f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1 }
+	if os.Getenv("G5_TAILNET") != "" {
+		if code, ok := fakeDockerTailnet(args); ok {
+			return code
+		}
+	}
 	if code, ok := fakeDockerReverse(args); ok {
 		return code
 	}
@@ -177,6 +240,33 @@ func fakeDocker(args []string) int {
 		return 0
 	case j == "image inspect --format {{json .}} sha256:g5image":
 		fmt.Printf(`{"RepoDigests":["%s"],"Config":{"Labels":{"org.opencontainers.image.version":"0.23.0"}}}`+"\n", os.Getenv("VARLATCH_MIGRATE_PIN"))
+		return 0
+	case j == "compose ps -q varlatchd":
+		// The running service's container, as migrate reads its
+		// environment (the outbound allow list).
+		if !stopped("varlatchd") {
+			fmt.Println("g5-varlatchd-1")
+		}
+		return 0
+	case j == "inspect --format {{json .Config.Env}} g5-varlatchd-1", j == "compose config --format json":
+		// The value Compose gives varlatchd: .env's VARLATCH_OUTBOUND_ALLOW
+		// (the Compose file's ${VARLATCH_OUTBOUND_ALLOW:-}), as the
+		// running container has it or, stopped, docker compose config.
+		allow := ""
+		env, _ := os.ReadFile(".env")
+		for _, l := range strings.Split(string(env), "\n") {
+			if v, ok := strings.CutPrefix(l, "VARLATCH_OUTBOUND_ALLOW="); ok {
+				allow = v
+			}
+		}
+		vars := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "VARLATCH_OUTBOUND_ALLOW=" + allow}
+		if args[0] == "inspect" {
+			out, _ := json.Marshal(vars)
+			fmt.Println(string(out))
+			return 0
+		}
+		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{"varlatchd": map[string]any{"environment": map[string]string{"VARLATCH_OUTBOUND_ALLOW": allow}}}})
+		fmt.Println(string(out))
 		return 0
 	case len(args) == 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start") && args[2] == "varlatch-web":
 		if args[1] == "stop" {
@@ -437,10 +527,20 @@ func startService(bin, conf string) error {
 			return nil
 		}
 		if !alive(cmd.Process.Pid) {
-			return errors.New("varlatchd exited at start (service.log)")
+			return fmt.Errorf("varlatchd exited at start; service.log ends:\n%s", serviceLogTail())
 		}
 	}
-	return errors.New("varlatchd did not start within 30 s")
+	return fmt.Errorf("varlatchd did not start within 30 s; service.log ends:\n%s", serviceLogTail())
+}
+
+// serviceLogTail is the end of the target varlatchd's log, for a start
+// that failed (as kinds_test.go's tail).
+func serviceLogTail() string {
+	b, _ := os.ReadFile(state("service.log"))
+	if len(b) > 4000 {
+		b = b[len(b)-4000:]
+	}
+	return string(b)
 }
 
 func stopService() error {
@@ -472,6 +572,15 @@ type world struct {
 	origin, listen    string
 	outputs           [][]byte
 	installationID    string
+	// env and extraArgs are a world's own, for every run (the tailnet's).
+	env       []string
+	extraArgs []string
+	// secrets are a world's own, scanned for too (the tailnet's OAuth
+	// client secret and auth key).
+	secrets [][]byte
+	// beforeRun runs before every varlatch migrate (Headscale's world
+	// writes a new API key: each run expires its own).
+	beforeRun func()
 	// extraEnv is the CLI's added environment (a target made under a test
 	// root, maketarget_test.go).
 	extraEnv []string
@@ -490,10 +599,69 @@ var shared struct {
 	err                    error
 }
 
+// ownerFile names, in a run's shared directory, the process that made it.
+const ownerFile = "g5-owner.pid"
+
+// sweepAbandoned removes the temporary directories of earlier runs whose
+// process is gone: one killed (SIGKILL, or go test's -timeout panic) runs
+// none of its cleanup. Only this user's; a shared directory only when the
+// process its owner file names is dead; one without an owner file (a
+// scratch directory, the Headscale cases' CA, or a run of a branch from
+// before owner files) only once it is older than abandonedAfter, longer
+// than any G5 run, so a live run's is never removed. A live run is judged
+// by its pid, so this assumes one PID namespace for every run (a run in
+// another container would look dead).
+func sweepAbandoned() {
+	var globs []string
+	for _, pattern := range []string{"g5-interrupt-*", "g5-decide-*", "g5-headscale-ca-*"} {
+		globs = append(globs, filepath.Join(os.TempDir(), pattern))
+	}
+	// The worlds' short target directories (shortTarget), in shortRoot
+	// whatever TMPDIR is: each holds its run's owner file.
+	globs = append(globs, filepath.Join(shortRoot, "g5s*"))
+	for _, glob := range globs {
+		dirs, _ := filepath.Glob(glob)
+		for _, d := range dirs {
+			st, err := os.Lstat(d)
+			if err != nil || !st.IsDir() {
+				continue
+			}
+			if sys, ok := st.Sys().(*syscall.Stat_t); !ok || int(sys.Uid) != os.Getuid() {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(d, ownerFile))
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				if time.Since(st.ModTime()) > abandonedAfter {
+					_ = os.RemoveAll(d)
+				}
+			case err == nil:
+				if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 && !alive(pid) {
+					_ = os.RemoveAll(d)
+				}
+			}
+		}
+	}
+}
+
+// abandonedAfter is the age past which a G5 directory without an owner
+// file is no live run's.
+const abandonedAfter = 6 * time.Hour
+
+// shortRoot is where shortTarget makes the worlds' short directories
+// (/tmp; a variable so the sweep's test can use its own).
+var shortRoot = "/tmp"
+
 func setUpShared(t *testing.T) {
 	shared.once.Do(func() {
+		sweepAbandoned()
 		dir, err := os.MkdirTemp("", "g5-interrupt-")
 		if err != nil {
+			shared.err = err
+			return
+		}
+		registerCleanupDir(dir)
+		if err := os.WriteFile(filepath.Join(dir, ownerFile), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 			shared.err = err
 			return
 		}
@@ -501,7 +669,10 @@ func setUpShared(t *testing.T) {
 		root, _ := filepath.Abs(filepath.Join("..", "..", ".."))
 		bin := filepath.Join(dir, "bin")
 		_ = os.Mkdir(bin, 0o755)
-		for _, b := range []struct{ out, pkg, tags string }{{"varlatchd", "./cmd/varlatchd", ""}, {"varlatch", "./cmd/varlatch", "crashpoint"}} {
+		// varlatchd with the crashpoint tag too: its tailnet node joins the
+		// gate's control server (tailnethook_crashpoint.go); without
+		// VARLATCH_TEST_TAILNET_CONTROL it is as a release builds it.
+		for _, b := range []struct{ out, pkg, tags string }{{"varlatchd", "./cmd/varlatchd", "crashpoint"}, {"varlatch", "./cmd/varlatch", "crashpoint"}} {
 			args := []string{"build", "-o", filepath.Join(bin, b.out)}
 			if b.tags != "" {
 				args = append(args, "-tags", b.tags)
@@ -517,7 +688,7 @@ func setUpShared(t *testing.T) {
 		shared.fakebin = filepath.Join(dir, "fakebin")
 		_ = os.Mkdir(shared.fakebin, 0o755)
 		self, _ := os.Executable()
-		for _, n := range []string{"docker", "varlatch-ts", "systemctl"} {
+		for _, n := range []string{"docker", "varlatch-ts", "systemctl", "g5-sidecar"} {
 			if err := os.Symlink(self, filepath.Join(shared.fakebin, n)); err != nil {
 				shared.err = err
 				return
@@ -568,13 +739,98 @@ func randomBytes(n int) []byte {
 	return b
 }
 
+// freePort is a free port for a server the world starts later (the
+// target's varlatchd), chosen below the kernel's ephemeral range: a port
+// taken from :0 and released could be handed again to any listener a
+// world starts on :0 meanwhile (testcontrol's DERP server took one, and
+// the target then failed with "address already in use"). No :0 listener
+// is ever given a port outside that range.
 func freePort(t *testing.T) string {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	low := 32768
+	if b, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range"); err == nil {
+		if f := strings.Fields(string(b)); len(f) == 2 {
+			if n, err := strconv.Atoi(f[0]); err == nil {
+				low = n
+			}
+		}
+	}
+	const from = 10000
+	if low <= from+100 {
+		t.Fatalf("the ephemeral port range starts at %d: no room below it for the target's port", low)
+	}
+	for range 200 {
+		b := randomBytes(2)
+		addr := "127.0.0.1:" + strconv.Itoa(from+(int(b[0])<<8|int(b[1]))%(low-from))
+		if !reservePort(t, addr) {
+			continue
+		}
+		if l, err := net.Listen("tcp", addr); err == nil {
+			l.Close()
+			return addr
+		}
+	}
+	t.Fatal("no free port below the ephemeral range")
+	return ""
+}
+
+// reservedPorts are the ports freePort handed to a test still running: a
+// port is free once it is bound by no one, which another world's freePort
+// in this process could also see before the first target binds it.
+var reservedPorts struct {
+	mu    sync.Mutex
+	addrs map[string]bool
+}
+
+// reservePort reserves addr for t until its cleanup; false when another
+// test holds it.
+func reservePort(t *testing.T, addr string) bool {
+	reservedPorts.mu.Lock()
+	defer reservedPorts.mu.Unlock()
+	if reservedPorts.addrs[addr] {
+		return false
+	}
+	if reservedPorts.addrs == nil {
+		reservedPorts.addrs = map[string]bool{}
+	}
+	reservedPorts.addrs[addr] = true
+	t.Cleanup(func() {
+		reservedPorts.mu.Lock()
+		delete(reservedPorts.addrs, addr)
+		reservedPorts.mu.Unlock()
+	})
+	return true
+}
+
+// shortTarget is where a world's target lives as varlatchd sees it: a short
+// path (/tmp/g5s<n>/t, a link to dir) so its data directory's control
+// socket stays within a Unix socket's 107 bytes whatever TMPDIR is (a long
+// TMPDIR and a long test name pushed it past, and the target varlatchd
+// would not start). The files stay in dir, under t.TempDir(); varlatchd
+// follows the link (an ancestor of the data directory, owned by this user
+// in a directory of its own) and refuses only a data directory that is
+// itself a link.
+//
+// The short directory carries the run's owner file and is a cleanup
+// directory too, so an interrupted run (SIGINT, SIGTERM) removes it, and
+// the next run's sweepAbandoned removes a killed run's.
+func shortTarget(t *testing.T, dir string) string {
+	short, err := os.MkdirTemp(shortRoot, "g5s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
-	return l.Addr().String()
+	registerCleanupDir(short)
+	t.Cleanup(func() {
+		_ = os.RemoveAll(short)
+		unregisterCleanupDir(short)
+	})
+	if err := os.WriteFile(filepath.Join(short, ownerFile), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(short, "t")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	return link
 }
 
 // newWorld is a fresh source and target, the public URL's proxy serving
@@ -613,7 +869,10 @@ func newWorld(t *testing.T, image bool) *world {
 			t.Fatal(err)
 		}
 	}
-	target := filepath.Join(base, "target")
+	if err := os.Mkdir(filepath.Join(base, "target"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := shortTarget(t, filepath.Join(base, "target"))
 	w.data, w.keys = filepath.Join(target, "data"), filepath.Join(target, "keys")
 	for _, d := range []string{w.data, w.keys} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -712,7 +971,7 @@ func (w *world) args(extra ...string) []string {
 	} else {
 		a = append(a, "--config", w.conf)
 	}
-	return append(a, extra...)
+	return append(append(a, w.extraArgs...), extra...)
 }
 
 // run runs varlatch migrate; with pause, it is killed (SIGKILL) where it
@@ -726,12 +985,16 @@ func (w *world) run(pause string, extra ...string) int {
 func (w *world) runArgs(pause string, args []string) int {
 	t := w.t
 	t.Helper()
+	if w.beforeRun != nil {
+		w.beforeRun()
+	}
 	log := filepath.Join(w.stateDir, "crashpoints.log")
 	_ = os.Remove(log)
 	cmd := exec.Command(shared.varlatch, args...)
 	cmd.Env = append(os.Environ(), "PATH="+shared.fakebin+":"+os.Getenv("PATH"), "G5_STATE="+w.stateDir, "VARLATCH_MIGRATE_PIN="+shared.pin,
 		"VARLATCH_MIGRATE_LOG="+log, "VARLATCH_MIGRATE_PAUSE="+pause, "TMPDIR="+w.stateDir,
 		fmt.Sprintf("VARLATCH_MIGRATE_IMAGE_USER=%d:%d", os.Getuid(), os.Getgid()))
+	cmd.Env = append(cmd.Env, w.env...)
 	cmd.Env = append(cmd.Env, w.extraEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -877,7 +1140,7 @@ func (w *world) noSecrets() {
 	t := w.t
 	t.Helper()
 	bek, _ := os.ReadFile(filepath.Join(w.compose, "bek"))
-	secrets := [][]byte{shared.source.RootKEK, bytes.TrimSpace(bek)}
+	secrets := append([][]byte{shared.source.RootKEK, bytes.TrimSpace(bek)}, w.secrets...)
 	if b, err := os.ReadFile(filepath.Join(w.stateDir, "runkeys")); err == nil {
 		for _, l := range strings.Fields(string(b)) {
 			k, _ := hex.DecodeString(l)

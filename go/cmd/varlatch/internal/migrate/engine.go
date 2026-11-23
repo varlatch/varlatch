@@ -44,6 +44,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/whatwg"
 )
 
 // Options are a migration's settings.
@@ -225,6 +227,9 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if err != nil {
 		return prev, err
 	}
+	if ing.OutboundAllowFromConfig {
+		e.say("The source's varlatchd is not running: its outbound allow list (VARLATCH_OUTBOUND_ALLOW) is read from docker compose config, not from its container.")
+	}
 	id := ""
 	if reuse {
 		id = prev.ID
@@ -251,6 +256,9 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	}
 	origin, err := e.sameAddress(ing, tgt)
 	if err != nil {
+		return prev, err
+	}
+	if err := e.sameOutbound(ing, tgt); err != nil {
 		return prev, err
 	}
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
@@ -378,6 +386,17 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	}
 	if g != nil {
 		return fmt.Errorf("the source is behind a %s gate (%s): a migration starts from an installation that serves; nothing was done", g.Kind, g.ID)
+	}
+	// The import's own check of the target's data directory, made now, so
+	// what it would refuse after the barrier is refused before any
+	// downtime (rehearsal r16f: a stray name passed the dry run, which
+	// imports into scratch, and cost a barrier).
+	_, st, err := e.Target.Describe(ctx)
+	if err != nil {
+		return fmt.Errorf("preflight: the target: %w", err)
+	}
+	if st.ImportRefusal != "" {
+		return fmt.Errorf("preflight: the target's import would be refused: %s; move what is not the migration's out of the data directory (Go's backups/ may stay), or give another target; nothing was done", st.ImportRefusal)
 	}
 	// What a run killed before it could clean up left on this host: the
 	// dry run's scratch directories and the bundles (the lock is held).
@@ -682,11 +701,126 @@ func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 	if err := e.enter(ctx, j, Switched); err != nil {
 		return err
 	}
-	if err := e.migratedOut(ctx, j); err != nil {
+	if err := e.switchSource(ctx, j); err != nil {
 		return err
 	}
 	e.say("Switched: the source refuses writes from now on.")
 	return e.open(ctx, j)
+}
+
+// switchSource marks the source migrated out (migratedOut). A source whose
+// varlatchd runs in its Tailscale sidecar's network lost that network when
+// the forward handoff stopped the sidecar (sidecarOwned): its varlatchd
+// exits so (it reaches Postgres through that network too), and the mark,
+// a command in its container, cannot run. The sidecar is started for the
+// mark, and varlatchd with it, then stopped again. Its node comes up under
+// its temporary name (the name is the target's node's from the handoff),
+// as the reverse starts it. Marking the source before the handoff instead
+// would leave a failed handoff no undo: a migrated-out gate is not lifted.
+// Each step holds when it is done again, so --resume from switched runs
+// them all again.
+func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
+	ts, ok := e.Source.(TailnetSource)
+	owned := ok && sidecarOwned(j)
+	if sh, ok := e.Source.(networkSharer); owned && ok {
+		// Only a varlatchd in the sidecar's network lost it with the
+		// sidecar: one with its own network is marked as it is.
+		shared, err := sh.SharesTailnetNetwork(ctx)
+		if err != nil {
+			return fmt.Errorf("reading whether the source's varlatchd runs in its tailnet sidecar's network: %w; varlatch migrate --resume goes on", err)
+		}
+		owned = shared
+	}
+	// The sidecar's stops are cleanup: done even when ctx is cancelled (an
+	// interrupted run would leave the old node on the tailnet until
+	// --resume), each within its own bound.
+	stop := func() error {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sidecarStopWait)
+		defer cancel()
+		return ts.StopTailnet(sctx)
+	}
+	if owned {
+		temp := "its temporary name"
+		if j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.ServingTemp != "" {
+			temp = j.Tailnet.Handoff.ServingTemp
+		}
+		e.say("Tailnet: the source's sidecar starts again (its node under %s), so that its varlatchd, which shares its network, is marked migrated out; then it stops.", temp)
+		if err := ts.StartTailnet(ctx); err != nil {
+			// The sidecar may have started and varlatchd not: as the
+			// handoff left it, the old node off the tailnet.
+			if serr := stop(); serr != nil {
+				err = fmt.Errorf("%w; stopping the sidecar again: %v", err, serr)
+			}
+			return fmt.Errorf("starting the source's tailnet sidecar to mark the source migrated out: %w; varlatch migrate --resume goes on", err)
+		}
+		crashPoint("switch sidecar started")
+		if err := e.sourceAnswers(ctx); err != nil {
+			if serr := stop(); serr != nil {
+				err = fmt.Errorf("%w; stopping the sidecar again: %v", err, serr)
+			}
+			return fmt.Errorf("%w; varlatch migrate --resume goes on", err)
+		}
+	}
+	if err := e.migratedOut(ctx, j); err != nil {
+		if owned {
+			// As the handoff left it: the old node off the tailnet.
+			if serr := stop(); serr != nil {
+				return fmt.Errorf("%w; stopping the source's tailnet sidecar again: %v", err, serr)
+			}
+		}
+		return err
+	}
+	crashPoint("switch marked")
+	if owned {
+		if err := stop(); err != nil {
+			return fmt.Errorf("stopping the source's tailnet sidecar after the source was marked migrated out: %w; varlatch migrate --resume goes on", err)
+		}
+	}
+	return nil
+}
+
+// networkSharer is a source that says whether its varlatchd runs in its
+// tailnet sidecar's network (Compose: network_mode service:tailscale).
+// A source that does not say is taken to.
+type networkSharer interface {
+	SharesTailnetNetwork(ctx context.Context) (bool, error)
+}
+
+// sourceReadyWait bounds the wait for the source's varlatchd, restarted
+// with its sidecar, to answer a command in its container; it is asked
+// every sourceReadyEvery, each ask within sourceReadyAsk (a command that
+// hangs does not outlast the wait). sidecarStopWait bounds a stop of the
+// sidecar.
+var (
+	sourceReadyWait, sourceReadyEvery, sourceReadyAsk = time.Minute, 2 * time.Second, 15 * time.Second
+	sidecarStopWait                                   = 2 * time.Minute
+)
+
+// sourceAnswers waits, at most sourceReadyWait, for the source's varlatchd
+// to answer its gate's status (a command in its container): restarted
+// with its sidecar, it may not be up yet.
+func (e *Engine) sourceAnswers(ctx context.Context) error {
+	sleep := e.sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	deadline := e.now().Add(sourceReadyWait)
+	for {
+		ask := min(max(deadline.Sub(e.now()), time.Second), sourceReadyAsk)
+		actx, cancel := context.WithTimeout(ctx, ask)
+		_, err := e.Source.Gate(actx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !e.now().Before(deadline) {
+			return fmt.Errorf("the source's varlatchd did not answer within %s of its sidecar's start: %w", sourceReadyWait, err)
+		}
+		sleep(sourceReadyEvery)
+	}
 }
 
 // open restarts the target out of the transfer's isolation: stopped, its
@@ -982,7 +1116,7 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 		return j, e.switchAndOpen(ctx, j)
 	case j.Phase == Switched:
 		e.say("The migration %s was switched: it goes on to open.", j.ID)
-		if err := e.migratedOut(ctx, j); err != nil {
+		if err := e.switchSource(ctx, j); err != nil {
 			return j, err
 		}
 		return j, e.open(ctx, j)
@@ -1130,5 +1264,70 @@ func RunKeyText(k []byte) []byte {
 	out := make([]byte, hex.EncodedLen(len(k))+1)
 	hex.Encode(out, k)
 	out[len(out)-1] = '\n'
+	return out
+}
+
+// sameOutbound holds the target's outbound allow list to the source's
+// (VARLATCH_OUTBOUND_ALLOW, the same entries as outbound_allow): the
+// private destinations the TypeScript server reached stay reachable.
+//   - A target that sets no outbound_allow while the source allows some
+//     is refused, nothing done: Go would refuse every one of them (Sync
+//     Targets, webhooks, OIDC issuers, the audit export) once it serves,
+//     and the fix is one line of its configuration. A target migrate
+//     makes carries the source's list, so it is never refused.
+//   - A target whose list lacks some of the source's entries goes on,
+//     with a warning naming them: a wider entry of its own may cover
+//     them, which comparing entries cannot tell.
+func (e *Engine) sameOutbound(ing IngressInfo, tgt TargetInfo) error {
+	src := allowEntries(ing.OutboundAllow)
+	if len(src) == 0 {
+		return nil
+	}
+	have := allowEntries(tgt.OutboundAllow)
+	if len(have) == 0 {
+		return fmt.Errorf("preflight: the source allows private destinations (VARLATCH_OUTBOUND_ALLOW=%s), and the target's configuration %s sets no outbound_allow, so the Go installation would refuse them all: add the line outbound_allow = %s to it; nothing was done",
+			ing.OutboundAllow, tgt.Config, ing.OutboundAllow)
+	}
+	var missing []string
+	for _, x := range src {
+		if !slices.Contains(have, x) {
+			missing = append(missing, x)
+		}
+	}
+	if len(missing) > 0 {
+		e.say("Warning: the target's outbound_allow (%s) lacks entries the source allows (%s): unless its own entries cover them, the Go installation refuses those destinations; the source's list is VARLATCH_OUTBOUND_ALLOW=%s.",
+			tgt.OutboundAllow, strings.Join(missing, ","), ing.OutboundAllow)
+	}
+	return nil
+}
+
+// allowEntries are an allow list's entries as compared: without blanks,
+// lower-cased (names and IPv6 addresses), a name's trailing dot dropped
+// (outbound.ParseAllow), empty ones dropped.
+func allowEntries(spec string) []string {
+	var out []string
+	for _, raw := range strings.Split(spec, ",") {
+		// Without JavaScript's \s anywhere, lower-cased as ASCII: as
+		// outbound.ParseAllow reads an entry.
+		x := whatwg.ToLower(strings.Map(func(r rune) rune {
+			if whatwg.IsJSWhitespace(r) {
+				return -1
+			}
+			return r
+		}, raw))
+		if x == "" {
+			continue
+		}
+		// A host name's one trailing dot, before its port, is the same
+		// name (outbound.ParseAllow); an address or a range keeps its text.
+		if !strings.HasPrefix(x, "[") && !strings.Contains(x, "/") && strings.Count(x, ":") <= 1 {
+			host, port, hasPort := strings.Cut(x, ":")
+			x = strings.TrimSuffix(host, ".")
+			if hasPort {
+				x += ":" + port
+			}
+		}
+		out = append(out, x)
+	}
 	return out
 }
