@@ -338,16 +338,21 @@ type installation struct {
 	ingress            string       // proxy or public
 	acme               *acmeStack   // public ingress: the run's Pebble
 	client             *http.Client // the public URL's client (TLS for public ingress)
+	migrateExtraEnv    []string     // the cases' additions to migrate's environment
 }
 
-// installExtra is what a case adds to an installation: .env variables, a
-// Compose overlay (a file name and its text, added to COMPOSE_FILE), lines
-// for the target's configuration, and the target varlatchd's environment.
+// installExtra is what a case adds to an installation: .env variables,
+// the release bundle's own Compose files and a Compose overlay (a file
+// name and its text), added to COMPOSE_FILE in that order, lines for the
+// target's configuration ({keys} stands for its keys directory), the
+// target varlatchd's environment, and migrate's.
 type installExtra struct {
 	env                      map[string]string
+	bundleFiles              []string
 	composeFile, composeText string
 	conf                     string
 	serviceEnv               []string
+	migrateEnv               []string
 }
 
 // newInstallation is a fresh installation of the release, up and serving,
@@ -380,7 +385,13 @@ type operatorKeys struct{ kek, bek string }
 // (isolationExtra), before the case's extras.
 func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, keys *operatorKeys, extras ...installExtra) *installation {
 	t.Helper()
-	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: prof.ingress}
+	// The tailnet case's source serves its address through the own
+	// proxy; its tailnet name moves beside it.
+	ingress := prof.ingress
+	if ingress == "tailnet" {
+		ingress = "proxy"
+	}
+	in := &installation{t: t, name: name, project: "vl-rh-" + runID + "-" + name, ingress: ingress}
 	base := filepath.Join(workDir, name)
 	in.dir, in.state = filepath.Join(base, "compose"), filepath.Join(base, "state")
 	// The target host install: under a root-owned path when the harness runs
@@ -458,16 +469,33 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 		for k, v := range x.env {
 			env[k] = v
 		}
-		if x.composeFile != "" {
-			if err := os.WriteFile(filepath.Join(in.dir, x.composeFile), []byte(x.composeText), 0o644); err != nil {
-				t.Fatal(err)
-			}
+		add := func(file string) {
 			files := env["COMPOSE_FILE"]
 			if files == "" {
 				files = "docker-compose.yml"
 			}
-			env["COMPOSE_FILE"] = files + ":" + x.composeFile
+			env["COMPOSE_FILE"] = files + ":" + file
 		}
+		for _, f := range x.bundleFiles {
+			// The bundle's, or images.sh's copy beside it.
+			if _, err := os.Stat(filepath.Join(in.dir, f)); err != nil {
+				b, err := os.ReadFile(filepath.Join(releaseDir, f))
+				if err != nil {
+					t.Fatalf("the release's %s: %v", f, err)
+				}
+				if err := os.WriteFile(filepath.Join(in.dir, f), b, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			add(f)
+		}
+		if x.composeFile != "" {
+			if err := os.WriteFile(filepath.Join(in.dir, x.composeFile), []byte(x.composeText), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			add(x.composeFile)
+		}
+		in.migrateExtraEnv = append(in.migrateExtraEnv, x.migrateEnv...)
 	}
 	var text strings.Builder
 	for k, v := range env {
@@ -509,7 +537,7 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 	}
 	var service []string
 	for _, x := range extras {
-		host += x.conf
+		host += strings.ReplaceAll(x.conf, "{keys}", in.keys)
 		service = append(service, x.serviceEnv...)
 	}
 	if len(service) > 0 {
