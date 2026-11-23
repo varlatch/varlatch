@@ -148,7 +148,8 @@ func TestSyncReal(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/applications/k8s0abc123/envs":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"uuid": "p1", "key": "VLRH_AB_PORT", "value": "stale", "is_preview": true, "updated_at": "u0"},
-				{"uuid": "e1", "key": "VLRH_AB_PORT", "value": "masked", "real_value": "8080", "is_preview": false, "updated_at": "u1"},
+				{"uuid": "e1", "key": "VLRH_AB_PORT", "value": "masked", "real_value": "8080", "is_preview": false, "updated_at": "u1",
+					"is_buildtime": false, "is_runtime": true, "is_shown_once": false, "is_literal": false, "is_multiline": false},
 				{"uuid": "e3", "key": "VLRH_AB_PORT_X", "value": "x", "is_preview": false},
 				{"uuid": "e4", "key": "VLRH_CD_PORT", "value": "y", "is_preview": false},
 				{"uuid": "e2", "key": "OTHER", "value": "x", "is_preview": false},
@@ -156,7 +157,8 @@ func TestSyncReal(t *testing.T) {
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/applications/k8s0abc123/envs":
 			var b map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&b)
-			written = append(written, fmt.Sprintf("PATCH %v=%v preview %v", b["key"], b["value"], b["is_preview"]))
+			written = append(written, fmt.Sprintf("PATCH %v=%v preview %v literal %v multiline %v buildtime %v runtime %v shown-once %v",
+				b["key"], b["value"], b["is_preview"], b["is_literal"], b["is_multiline"], b["is_buildtime"], b["is_runtime"], b["is_shown_once"]))
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodDelete && r.URL.Path == secrets+"/VLRH_AB_DEBUG":
 			deleted = append(deleted, r.URL.Path)
@@ -207,7 +209,10 @@ func TestSyncReal(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		// A sealed box: the ephemeral key (32), the box (16 + the value's 5).
-		want := []string{"PUT /repos/acme/vl-rh-sync/actions/secrets/VLRH_AB_DEBUG key k1 sealed 53", "PATCH VLRH_AB_PORT=8081 preview false"}
+		// The PATCH carries the flags the adapter's updateFlags sends for the
+		// row (its current style): the value literal, the row's others kept.
+		want := []string{"PUT /repos/acme/vl-rh-sync/actions/secrets/VLRH_AB_DEBUG key k1 sealed 53",
+			"PATCH VLRH_AB_PORT=8081 preview false literal true multiline true buildtime false runtime true shown-once false"}
 		if !slices.Equal(written, want) {
 			t.Errorf("written %v, want %v", written, want)
 		}
@@ -227,6 +232,50 @@ func TestSyncReal(t *testing.T) {
 		}
 		if strings.Join(removed, ",") != "GitHub VLRH_AB_PORT,Coolify VLRH_AB_PORT (preview),Coolify VLRH_AB_PORT" || strings.Join(gone, ",") != "GitHub VLRH_AB_DEBUG" {
 			t.Errorf("removed %v, gone %v", removed, gone)
+		}
+	})
+	t.Run("the update flags, as the adapter's", func(t *testing.T) {
+		for name, c := range map[string]struct {
+			row  map[string]any
+			want map[string]any
+		}{
+			"current": {map[string]any{"is_buildtime": true, "is_shown_once": "yes"},
+				map[string]any{"is_literal": true, "is_multiline": true, "is_shown_once": true, "is_buildtime": true, "is_runtime": true}},
+			"current, runtime off": {map[string]any{"is_runtime": false},
+				map[string]any{"is_literal": true, "is_multiline": true, "is_shown_once": false, "is_buildtime": false, "is_runtime": false}},
+			"legacy": {map[string]any{"is_build_time": float64(1)}, map[string]any{"is_literal": true, "is_build_time": true}},
+			"none":   {map[string]any{}, map[string]any{"is_literal": true}},
+		} {
+			got := coolifyUpdateFlags(c.row)
+			gb, _ := json.Marshal(got)
+			wb, _ := json.Marshal(c.want)
+			if string(gb) != string(wb) {
+				t.Errorf("%s: %s, want %s", name, gb, wb)
+			}
+		}
+		if jsTruthy(nil) || jsTruthy(false) || jsTruthy(float64(0)) || jsTruthy("") || !jsTruthy("0") || !jsTruthy(map[string]any{}) {
+			t.Error("JavaScript's truthiness")
+		}
+	})
+	t.Run("a listing that leaves GitHub, or does not end", func(t *testing.T) {
+		mode := "elsewhere"
+		var other *httptest.Server
+		other = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next := other.URL + r.URL.Path + "?page=next"
+			if mode == "elsewhere" {
+				next = "https://elsewhere.example" + r.URL.Path + "?page=2"
+			}
+			w.Header().Set("Link", "<"+next+">; rel=\"next\"")
+			_ = json.NewEncoder(w).Encode(map[string]any{"secrets": []map[string]string{}})
+		}))
+		defer other.Close()
+		q := &realPlatforms{owner: "acme", repo: "vl-rh-sync", ghToken: "x-test-gh", http: other.Client(), tokens: []string{"x-test-gh"}, githubBase: other.URL}
+		if _, err := q.secretsUpdated(); err == nil || !strings.Contains(err.Error(), "next page is not on") {
+			t.Errorf("a next page on another host: %v", err)
+		}
+		mode = "forever"
+		if _, err := q.secretsUpdated(); err == nil || !strings.Contains(err.Error(), "did not end within 100 pages") {
+			t.Errorf("a listing that never ends: %v", err)
 		}
 	})
 	t.Run("a listing's next page", func(t *testing.T) {

@@ -362,11 +362,67 @@ func (p *realPlatforms) env(key string) (e coolifyEnv, ok bool, err error) {
 }
 
 // patchEnv writes one of the run's variables as Varlatch's adapter does
-// (the calibration's write).
+// (the calibration's write): a PATCH with the row's flags as
+// lib/sync's updateFlags sends them for a Target with no buildTime and no
+// expanded names, so a Coolify that resets an omitted flag (and so moves
+// updated_at) sees the same request as from Varlatch.
 func (p *realPlatforms) patchEnv(key, value string) error {
-	_, err := p.request(http.MethodPatch, p.coolURL+"/api/v1/applications/"+p.app+"/envs", p.coolToken,
-		map[string]any{"key": key, "value": value, "is_preview": false}, nil)
+	var rows []map[string]any
+	if err := p.call(http.MethodGet, p.coolURL+"/api/v1/applications/"+p.app+"/envs", p.coolToken, &rows); err != nil {
+		return err
+	}
+	var row map[string]any
+	for _, r := range rows {
+		if k, _ := r["key"].(string); k == key && !jsTruthy(r["is_preview"]) {
+			row = r
+			break
+		}
+	}
+	if row == nil {
+		return fmt.Errorf("Coolify has no variable %s to write again", key)
+	}
+	body := map[string]any{"key": key, "value": value, "is_preview": false}
+	for k, v := range coolifyUpdateFlags(row) {
+		body[k] = v
+	}
+	_, err := p.request(http.MethodPatch, p.coolURL+"/api/v1/applications/"+p.app+"/envs", p.coolToken, body, nil)
 	return err
+}
+
+// coolifyUpdateFlags are lib/sync's updateFlags(row, nil, false): the
+// row's flag style ("current" when it has is_buildtime or is_runtime,
+// "legacy" when it has is_build_time), the value literal.
+func coolifyUpdateFlags(row map[string]any) map[string]any {
+	_, build := row["is_buildtime"]
+	_, runtime := row["is_runtime"]
+	_, legacy := row["is_build_time"]
+	switch {
+	case build || runtime:
+		var rt any = true
+		if v, ok := row["is_runtime"]; ok && v != nil {
+			rt = v
+		}
+		return map[string]any{"is_literal": true, "is_multiline": true, "is_shown_once": jsTruthy(row["is_shown_once"]),
+			"is_buildtime": jsTruthy(row["is_buildtime"]), "is_runtime": rt}
+	case legacy:
+		return map[string]any{"is_literal": true, "is_build_time": jsTruthy(row["is_build_time"])}
+	}
+	return map[string]any{"is_literal": true}
+}
+
+// jsTruthy is JavaScript's truthiness of a JSON value.
+func jsTruthy(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case string:
+		return x != ""
+	}
+	return true
 }
 
 func (p *realPlatforms) appName() (string, error) {
@@ -610,30 +666,37 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 	// platform's updated_at? The harness writes its own value once, the
 	// same as the source delivered: if it does not move, step 4 cannot
 	// prove "nothing resent" on that platform, and says so.
-	calibrate := func(what string, read func() (string, error), write func() error) bool {
+	// Each answers whether it moved, and, when not, why: the platform's
+	// updated_at does not move on an identical write, or the calibration
+	// itself failed.
+	calibrate := func(what string, read func() (string, error), write func() error) (bool, string) {
 		at0, err := read()
 		if err != nil {
 			measure("item 13 (real): the "+what+" calibration", "not read: "+err.Error())
-			return false
+			return false, what + "'s calibration failed"
 		}
 		time.Sleep(2 * time.Second)
 		if err := write(); err != nil {
 			measure("item 13 (real): the "+what+" calibration", "the write failed: "+err.Error())
-			return false
+			return false, what + "'s calibration failed"
 		}
 		at1, err := read()
-		moved := err == nil && at1 != at0
+		if err != nil {
+			measure("item 13 (real): the "+what+" calibration", "not read after the write: "+err.Error())
+			return false, what + "'s calibration failed"
+		}
+		moved := at1 != at0
 		measure("item 13 (real): the "+what+" calibration", fmt.Sprintf("an identical write moved updated_at %v (%s then %s)", moved, at0, at1))
-		return moved
+		return moved, "an identical write does not move " + what + "'s updated_at"
 	}
-	ghProves := calibrate("GitHub", func() (string, error) {
+	ghProves, ghWhy := calibrate("GitHub", func() (string, error) {
 		m, err := p.secretsUpdated()
 		if err == nil && m[debugName] == "" {
 			err = fmt.Errorf("GitHub has no secret %s", debugName)
 		}
 		return m[debugName], err
 	}, func() error { return p.putSecret(debugName, "false") })
-	coolProves := calibrate("Coolify", func() (string, error) { return coolUpdated(portName) },
+	coolProves, coolWhy := calibrate("Coolify", func() (string, error) { return coolUpdated(portName) },
 		func() error { return p.patchEnv(portName, "8081") })
 	var ghBefore map[string]string
 	ghBefore, err = p.secretsUpdated()
@@ -703,11 +766,14 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 		codes, both, ours(ghBefore), ours(ghAfter), coolBefore, coolAfter, target(tGh), target(tApp))
 	settledOK := pushOK && both && target(tGh).ok() && target(tApp).ok()
 	if len(proven) == 0 {
-		measure("item 13 (real): nothing resent", "not provable on these platforms: an identical write moved neither GitHub's nor Coolify's updated_at")
+		measure("item 13 (real): nothing resent", "not provable here: "+ghWhy+", and "+coolWhy)
 		record(t, item, "(real) after the migration, Go's runs of both Targets end settled (a resend is not visible on these platforms)", settledOK, detail)
 	} else {
-		if len(proven) == 1 {
-			measure("item 13 (real): nothing resent", "proven on "+proven[0]+" only: an identical write does not move the other's updated_at")
+		switch {
+		case len(proven) == 1 && ghProves:
+			measure("item 13 (real): nothing resent", "proven on GitHub only: "+coolWhy)
+		case len(proven) == 1:
+			measure("item 13 (real): nothing resent", "proven on Coolify only: "+ghWhy)
 		}
 		record(t, item, "(real) after the migration, Go sends nothing the source delivered ("+strings.Join(proven, " and ")+")", settledOK && same, detail)
 	}
