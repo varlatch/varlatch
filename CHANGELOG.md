@@ -54,6 +54,21 @@ fixes.
   authority is a Grant scoped to a Project or an environment, and the
   Organization's own machines are not affected.
 
+### CLI
+
+- **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
+  refused to replace any Go varlatch already installed, a run over its own
+  fresh install included, with "varlatch is installed with Homebrew; update
+  it with: brew upgrade varlatch": it took the message every Go binary
+  carries (`varlatch self-update`'s refusal for a Homebrew copy) for a sign
+  of Homebrew. It now tells a Homebrew copy as `varlatch self-update` does,
+  by two paths: the path as given, and the path with every link resolved
+  (linked directories included). Either one, compared in lower case, marks
+  a Homebrew copy when it has `/cellar/` in it or starts with
+  `/opt/homebrew/` or `/home/linuxbrew/.linuxbrew/`. It still refuses the
+  TypeScript CLI's formula's wrapper script, which says it is Homebrew's.
+  `install.ps1` was not affected.
+
 ### Documentation
 
 - **Sharing the host with other workloads.** [Host requirements](docs/self-hosting/requirements.md#sharing-the-host-with-other-workloads)
