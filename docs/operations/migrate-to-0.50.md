@@ -298,6 +298,38 @@ After the switch it goes forward: `--resume` finishes the open. `varlatch
 migrate --abort` undoes a migration that has not switched yet, in the same
 order.
 
+**Ctrl-C or a kill ends `varlatch migrate` at once**, wherever it is: it
+undoes nothing as it goes. The journal says where it stands, and
+`--resume` or `--abort` goes on from there. Let an undo that is still
+saying its steps finish.
+
+### What you see printed
+
+`varlatch migrate` writes what it does on stderr, one line at a time. Each
+step of an undo and of a rollback, each wait for an address to answer, and
+each step that moves the tailnet name or starts or stops the sidecar says
+when it starts, every 15 seconds while it lasts, and when it ends:
+
+```text
+Step: waiting for https://vault.example.com to answer from the TypeScript release (at most 3m0s).
+Still going after 15s: waiting for https://vault.example.com to answer from the TypeScript release (at most 3m0s).
+Done in 22s: waiting for https://vault.example.com to answer from the TypeScript release (at most 3m0s).
+```
+
+- `Failed after` is a step that did not succeed. Why, and what to do, is in
+  the last line of the command.
+- `Left to you after` is a step that is yours; the line beside it says
+  what to do.
+- `Still going` says that `varlatch migrate` waits, and for what. A step
+  that names a limit (`at most`) ends by itself; one that runs a command,
+  as a service's stop, lasts as long as that command.
+- An undo of the address transfer can take minutes: a service may take its
+  time to stop, the address has up to `--transfer-timeout` (3 minutes by
+  default) to answer, and the tailnet name moves back first.
+- With `--json` these lines are left out, and the journal is printed as
+  JSON on stdout at the end. The other messages, what is left to you among
+  them, still go to stderr.
+
 ## The address transfer
 
 The address moves before the switch, so an undo still reopens the old
