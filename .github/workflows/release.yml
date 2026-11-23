@@ -538,7 +538,10 @@ jobs:
           name: go-assets
           path: ${{ runner.temp }}/go-assets/
           if-no-files-found: error
-          retention-days: 1
+          # As long as the run can be re-run (30 days): a run whose image
+          # was pushed and a later job failed resumes with "Re-run failed
+          # jobs", which downloads this artifact again (go/image/README.md).
+          retention-days: 30
 
   # G5 for the release being cut (internal docs/design/go-step7.md
   # decision 17, slice 7.6b): a release that keeps the migration's rollback
@@ -654,31 +657,24 @@ jobs:
       # A version's image is pushed once. Two builds of the same assets
       # give different index digests (provenance mode=max records the run),
       # so a second push would move the tag off the digest the signed
-      # record names. Before anything is built: a version with a GitHub
-      # release, or whose tag is already in the registry, is refused. A run
-      # whose go-image succeeded and a later job failed is resumed with
-      # "Re-run failed jobs", which keeps go-image's outputs (the pushed
-      # digest) and pushes nothing; "Re-run all jobs" stops here. To start
-      # a version over, delete its package version in GHCR by hand first.
+      # record names. Before anything is built, the version must be known
+      # unpublished: an explicit "not found" from the releases API for the
+      # tag and from the registry for the image tag; any other answer stops.
+      # A run whose go-image succeeded and a later job failed is resumed
+      # with "Re-run failed jobs" (within 30 days), which keeps go-image's
+      # outputs (the pushed digest) and pushes nothing; "Re-run all jobs"
+      # stops here. Starting a version over, and what to do once the run
+      # can no longer be re-run (the next patch version, never deleting the
+      # image): go/image/README.md, "When a release run fails after
+      # go-image".
       - name: Not released or pushed before
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.line.outputs.version }}
           IMAGE: ${{ steps.names.outputs.varlatchd }}
         run: |
-          set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json tagName > /dev/null 2>&1; then
-            echo "$GITHUB_REF_NAME already has a GitHub release: a published version is never pushed again" >&2
-            exit 1
-          fi
-          if out=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{println .Manifest.Digest}}' 2>&1); then
-            echo "$IMAGE:$VERSION is already in the registry ($(head -1 <<< "$out")): an earlier run pushed it. Re-run only the failed jobs to resume that run, or delete the package version in GHCR by hand to start over." >&2
-            exit 1
-          fi
-          # Absent, not unreadable: anything but "not found" stops too.
-          grep -qiE 'not found|manifest unknown|name unknown' <<< "$out" \
-            || { echo "cannot tell whether $IMAGE:$VERSION exists: $out" >&2; exit 1; }
-          echo "$IMAGE:$VERSION is not in the registry yet"
+          go/image/check-unpublished.sh --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" \
+            --image "$IMAGE" --version "$VERSION"
       # The image only copies the binaries; the arm64 stage's few file
       # steps run under emulation.
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
