@@ -108,7 +108,8 @@ the Linux host of the installation it migrates`):
       as its data directory is empty and it has not been started.
     - **A source that serves a tailnet address needs a prepared target.**
       The host install migrate makes is never on a tailnet, so migrate
-      refuses before anything is made or backed up: `the target migrate
+      refuses before anything is made or backed up: `the source serves a
+      tailnet address (its Tailscale sidecar), and the target migrate
       makes at /etc/varlatch/varlatchd.conf is never on a tailnet: write
       /etc/varlatch/varlatchd.conf with tailnet = on and the tailnet
       settings first (a prepared target, which migrate uses as it is),
@@ -154,9 +155,11 @@ the Linux host of the installation it migrates`):
   After the migration, check it on the 0.50 server: `varlatchd admin
   outbound check --config /etc/varlatch/varlatchd.conf` (for the image, in
   its container). It lists every configured destination, GitHub Sync
-  Targets' connections at `https://api.github.com` included, and exits 0
-  when all are allowed. For a refused one it names the `outbound_allow`
-  line to set in that file, and how to restart `varlatchd` after it.
+  Targets' connections at `https://api.github.com` included. It exits 0
+  when every destination is allowed, 1 when one is refused, and 2 when
+  none is refused but a name did not resolve. For a refused one it names
+  the `outbound_allow` line to set in that file, and how to restart
+  `varlatchd` after it.
 
 Run `varlatch migrate` from the Compose directory of the installation, or
 name that directory with `--from`. `varlatch migrate --help` lists every
@@ -550,8 +553,8 @@ the new server first. People sign in again after a rollback too.
 On a Tailscale topology (`varlatchd` with `network_mode: service:tailscale`):
 
 - **After a migration that moved the tailnet name**, the rollback starts
-  the old `tailscale` sidecar itself, which the migration stopped at the
-  switch. Its old node comes back under its temporary name. The name stays
+  the old `tailscale` sidecar itself, which the migration stopped during
+  the tailnet transfer. Its old node comes back under its temporary name. The name stays
   with the new server's node until the address moves back, then returns
   to the old node. An undo of the rollback stops the sidecar again. Give
   the tailnet authority again (see [The tailnet authority](#the-tailnet-authority)).
@@ -587,7 +590,8 @@ or by the installation a later forward migration makes.
 **On a Tailscale tailnet, the restore takes the old installation's name
 over.** Give `setup --restore` the tailnet ingress and an OAuth client, as
 for the migration (see [The tailnet authority](#the-tailnet-authority);
-both files by absolute path):
+both files by absolute path, the OAuth client a regular file, not a link,
+of mode 0600, checked before anything is made):
 
 ```sh
 sudo varlatch setup --restore <archive> \
@@ -603,10 +607,12 @@ deleted, before `varlatchd` first starts:
 1. The restored node joins under a temporary name, `<name>-vl-<op>-n`,
    held: it serves nothing yet.
 2. The old node must be dead: not connected to the tailnet, and last seen
-   more than 5 minutes ago by the control plane's clock. This is checked
-   again right before the rename. A node seen since may be the old
-   installation still running, so its name is never taken; there is no
-   override. Stop the old installation, wait, and run setup again.
+   more than 5 minutes ago by the control plane's clock. A node with no
+   last-seen time is refused too. This is checked again right before the
+   rename. A node seen since may be the old installation still running,
+   so its name is never taken; there is no override. Stop the old
+   installation, wait, and run setup again (on Headscale, with a new API
+   key: see below).
 3. The old node is renamed `<name>-vl-<op>-o`, and the restored node
    takes the name. With tailnet HTTPS, the name's certificate is obtained
    (and counted against the name's issuances).
@@ -618,6 +624,11 @@ Each step is journalled before it acts. Run the same command again after
 an interruption: a cut-short rename is undone, then done again, and one
 stopped after the rename is checked again and finished. The old node stays in the
 tailnet under its `-o` name until you remove it in the admin console.
+
+Without an authority file, setup takes no name over: it checks with a
+probe node that the name is free, and while the old node still holds it,
+it stops: `delete that node in the tailnet's admin console, then run
+setup again; nothing has enrolled`.
 
 **On a Headscale tailnet**, give `setup --restore` the control server and
 Headscale's API key in place of the OAuth client (both files by absolute
@@ -645,10 +656,14 @@ sudo varlatch setup --restore <archive> \
   client goes without it: setup refuses either the other way round.
 - **The auth key** is a reusable pre-auth key tagged with the node's tags,
   as for the migration.
-- **A rerun takes the same authority.** The answers are journalled in
-  `/etc/varlatch/setup.json`, and a rerun naming another control server is
-  refused. A rerun reads where the takeover got to from the node's own
-  state, and finishes it or leaves it done.
+- **A rerun takes the same authority, with a new key.** The answers are
+  journalled in `/etc/varlatch/setup.json`, and a rerun naming another
+  control server is refused. Every takeover expires its API key when it
+  ends, refusals included, so a rerun that still has the takeover to do
+  needs a new key (`headscale apikeys create --expiration 1h`, in the same
+  file): the old one is refused with `the API key has expired`. A rerun
+  reads where the takeover got to from the node's own state, and finishes
+  it or leaves it done.
 
 The takeover setup runs (`varlatchd admin tailnet take-name
 --headscale-url <the URL> --headscale-api-key-file <file>`) follows the
@@ -664,10 +679,12 @@ same rules as the migration's handoff:
   is judged.
 - **The old node must be dead** by Headscale's own listing (its `Date`,
   and the node's online state and last-seen time): offline, and last seen
-  more than 5 minutes ago, checked again right before the rename. A
-  listing without a `Date`, or one more than an hour off this host's
-  clock, is refused, and nothing is renamed.
-- **The key is expired when the takeover ends.** When it cannot be (the
+  more than 5 minutes ago, checked again right before the rename. A node
+  with no last-seen time is refused, and so is a listing without a
+  `Date`, or one more than an hour off this host's clock; nothing is
+  renamed.
+- **The key is expired when the takeover ends**, refusals included. When
+  it cannot be (the
   control server unreachable, say), the warning names the command that
   expires it on the control server, `headscale apikeys expire --prefix
   <prefix>`.
@@ -728,6 +745,12 @@ the rollback rebuilt the database, are removed.
 
 On Coolify, the removals are yours: `--finish` names each resource to
 delete in Coolify, and does not reach Coolify itself.
+
+After a migration that moved the tailnet name, the old node stays in the
+control plane under its `<name>-vl-<op>-o` name: `--finish` removes its
+local state only, and takes no tailnet authority. Delete that node
+yourself, in the tailnet's admin console on Tailscale, or with
+`headscale nodes delete --identifier <its id>` on Headscale.
 
 In the tailnet shape (varlatchd with `network_mode: service:tailscale`),
 run `--finish --delete-old-data` straight away rather than a plain
