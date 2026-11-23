@@ -32,8 +32,9 @@ import (
 //     the rebuilt database held against the kept copy (CHECKS.md, "The
 //     reverse checks");
 //  5. rollback-transfer: the address moved back (Go stops serving it, the
-//     TypeScript release starts; in Coolify the operator moves the domain);
-//     once the public URL answers from the TypeScript release,
+//     TypeScript release starts; in Coolify the operator routed the name
+//     back before phase 1, routeBack, and Go stops once it answers); once
+//     the public URL answers from the TypeScript release,
 //  6. rolled-back: Go's journal says so, and its varlatchd never starts on
 //     that data directory again; the report lists the Go archives made
 //     since the switch, which the TypeScript release cannot read.
@@ -149,11 +150,102 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("removing what an interrupted run left: %w", err)
 	}
 	e.cleanReverseScratch()
+	if j.Ingress == Coolify {
+		if err := e.routeBack(ctx, j); err != nil {
+			return j, err
+		}
+	}
 	j.Rollback = &RollbackRecord{StartedAt: e.now().UTC().Format(time.RFC3339Nano)}
 	if err := e.enter(ctx, j, Rollback); err != nil {
 		return j, err
 	}
 	return j, e.reverse(ctx, j)
+}
+
+// routedSource is a source whose address the operator routes back
+// (Coolify's proxy).
+type routedSource interface {
+	// RouteFile is the proxy's file that routes origin to the source's
+	// dashboard, whatever the containers' labels say: where it goes, and
+	// its text.
+	RouteFile(ctx context.Context, origin string) (path, text string, err error)
+}
+
+// routeBack is the Coolify shape's way back, held to work before anything
+// of a reverse is done. Coolify's domain setting changes no container until
+// one is made again, and the TypeScript application's must not be: so the
+// operator puts a route of their own in the proxy, above the containers'
+// labels, to the TypeScript dashboard. Without it, migrate says it and
+// stops (exit 75), the migration still open. With it, the name must reach
+// the TypeScript installation, migrated out as the forward migration left
+// it, through its dashboard.
+func (e *Engine) routeBack(ctx context.Context, j *Journal) error {
+	rs, ok := e.Source.(routedSource)
+	gp, ok2 := e.Prober.(GateProber)
+	if !ok || !ok2 {
+		return errors.New("the address's way back to this source cannot be checked: nothing was done")
+	}
+	path, text, err := rs.RouteFile(ctx, originOf(j))
+	if err != nil {
+		return fmt.Errorf("%w; nothing was done", err)
+	}
+	ask := func(why string) error {
+		e.say("Address back, by hand, before the reverse begins (%s): do not Deploy, Restart or Stop the TypeScript application in Coolify (it would make its containers again, from its own Compose file, on the volumes from before the migration). "+
+			"Put this in the proxy, as %s on the host (or in Coolify: the server's Proxy, Dynamic Configurations). It routes the name to the TypeScript dashboard, above the containers' own routers, at once; the address does not answer from Go from then on:\n%s"+
+			"Then run varlatch migrate --rollback again: it starts the dashboard, and checks the name reaches the TypeScript installation, before anything is done. To leave it: remove the file, and Go serves the address as before.", why, path, text)
+		return ErrAwaitingOperator
+	}
+	// With its dashboard stopped, whatever answers is not the TypeScript
+	// installation.
+	if err := e.Source.StopIngress(ctx, Coolify); err != nil {
+		return fmt.Errorf("stopping the source's dashboard: %w; nothing was done", err)
+	}
+	if id, version, err := e.Prober.Probe(ctx, originOf(j)); err == nil {
+		return ask(fmt.Sprintf("the address answers as the installation %s, release %s", orNone(id), orNone(version)))
+	}
+	if state, err := gp.ProbeGate(ctx, originOf(j)); err == nil {
+		return ask("the address answers from a Varlatch server in the state " + orWord(state, "ready"))
+	}
+	e.say("The address is routed away from Go: the TypeScript dashboard starts, behind its migrated-out gate.")
+	err = e.Source.StartIngress(ctx, Coolify, false)
+	if err == nil {
+		err = e.waitForGate(ctx, gp, j)
+	}
+	if err != nil {
+		if serr := e.Source.StopIngress(ctx, Coolify); serr != nil {
+			err = fmt.Errorf("%w; stopping the dashboard again: %v", err, serr)
+		}
+		return fmt.Errorf("%w; nothing was done: check %s names the dashboard's container (its text is below), then varlatch migrate --rollback again; or remove it, and Go serves the address as before:\n%s", err, path, text)
+	}
+	return nil
+}
+
+// waitForGate waits, at most the transfer's timeout, until the address
+// answers from the TypeScript installation's migrated-out gate.
+func (e *Engine) waitForGate(ctx context.Context, gp GateProber, j *Journal) error {
+	timeout := e.Options.TransferTimeout
+	if timeout <= 0 {
+		timeout = DefaultTransferTimeout
+	}
+	sleep := e.sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+	deadline := e.now().Add(timeout)
+	for {
+		state, err := gp.ProbeGate(ctx, originOf(j))
+		switch {
+		case err == nil && state == "migrated-out":
+			e.say("The name reaches the TypeScript installation, migrated out: the way back works.")
+			return nil
+		case err == nil:
+			err = fmt.Errorf("it answers in the state %s, not migrated-out", orWord(state, "ready"))
+		}
+		if !e.now().Before(deadline) {
+			return fmt.Errorf("%s did not reach the TypeScript installation through its dashboard within %s: %v", originOf(j), timeout, err)
+		}
+		sleep(2 * time.Second)
+	}
 }
 
 // reverse runs phases 1 to 4, then the transfer.
@@ -205,6 +297,16 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 		if err := rs.StartNetworkOwner(ctx); err != nil {
 			return e.undoReverse(ctx, j, fmt.Errorf("starting the TypeScript release's tailnet sidecar: %w", err))
 		}
+	}
+	made, err := rs.MakeVolumes(ctx, plan)
+	if err != nil {
+		return e.undoReverse(ctx, j, fmt.Errorf("the fresh volumes: %w", err))
+	}
+	crashPoint("rollback volumes made")
+	plan.Made = made
+	j.Rollback.Rebuild = &plan
+	if err := e.save(ctx, j); err != nil {
+		return e.undoReverse(ctx, j, err)
 	}
 	if err := rs.Rebuild(ctx, plan); err != nil {
 		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w", err))
@@ -320,20 +422,9 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 		return e.undoReverse(ctx, j, fmt.Errorf("starting the TypeScript release: %w", err))
 	}
 	crashPoint("rollback transfer started")
-	if kind == Coolify && !j.Rollback.Asked {
-		j.Rollback.Asked = true
-		if err := e.save(ctx, j); err != nil {
-			return err
-		}
-		e.say("Address back, by hand: do not Deploy or Redeploy the TypeScript application (Coolify would make its containers from its own Compose file, on the volumes from before the migration; migrate checks, and refuses that). "+
-			"In Coolify, move the domain of %s from the Go application back to the TypeScript one (its domain setting), "+
-			"and redeploy the proxy if Coolify asks. Then varlatch migrate --resume checks it answers from the TypeScript release; "+
-			"or varlatch migrate --abort undoes the reverse (move the domain back to Go first).", originOf(j))
-		return ErrAwaitingOperator
-	}
 	if err := e.waitForSource(ctx, j); err != nil {
 		if kind == Coolify {
-			return fmt.Errorf("%w; once the domain is moved, varlatch migrate --resume checks again; varlatch migrate --abort undoes (move the domain back to Go first)", err)
+			return fmt.Errorf("%w; the route put in the proxy before the reverse must still be there, to the TypeScript dashboard; then varlatch migrate --resume checks again (Go was not stopped), or varlatch migrate --abort undoes the reverse", err)
 		}
 		return e.undoReverse(ctx, j, err)
 	}
@@ -484,8 +575,9 @@ func (e *Engine) rolledBack(ctx context.Context, j *Journal) error {
 	e.cleanReverseScratch()
 	e.say("Rolled back: the TypeScript release serves %s again, on a fresh database rebuilt from Go's. The volumes it ran on before the migration are kept until varlatch migrate --finish --delete-old-data.", originOf(j))
 	if j.Ingress == Coolify {
-		e.say("Do not Deploy or Redeploy the TypeScript application in Coolify now: Coolify starts it from its own Compose file, which names the volumes it ran on before the migration, without what was written since. " +
-			"Its containers may be restarted (docker restart), not made again.")
+		e.say("By hand: 1. in Coolify, move the domain of %s back to the TypeScript application (its domain setting; Save only). 2. Remove the route put in the proxy before the reverse, and check that the address still answers: the dashboard's container routes it itself, and Go's is stopped.", originOf(j))
+		e.say("Do not Deploy, Restart or Redeploy the TypeScript application in Coolify now: Coolify starts it from its own Compose file, which names the volumes it ran on before the migration, without what was written since. " +
+			"Its containers may be restarted (docker restart), not made again. (Coolify's Restart of a Compose application deploys it.)")
 	}
 	e.say("Go's copy stays in %s, stopped, behind the reverse's barrier (its paused gate, and its frozen copy %s): varlatch migrate --finish --delete-old-data archives it, lifts the barrier (removing the frozen copy) and discards it; a plain --finish keeps it.",
 		j.Target.DataDir, ".migration-frozen-"+j.ID+".db")
@@ -532,9 +624,6 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		if err := rs.StopServing(ctx, j.Ingress); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release: %w", err))
 		}
-		if j.Ingress == Coolify {
-			e.say("The address goes back by hand: in Coolify, move the domain of %s back to the Go application.", originOf(j))
-		}
 		if err := e.Target.Start(ctx); err != nil {
 			var human *HumanStep
 			if errors.As(err, &human) {
@@ -544,6 +633,14 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		} else {
 			j.Rollback.GoStopped = false
 		}
+	}
+	if j.Ingress == Coolify {
+		// routeBack started it: while it runs, its router names the domain
+		// beside Go's.
+		if err := e.Source.StopIngress(ctx, Coolify); err != nil {
+			problems = append(problems, fmt.Errorf("stopping the TypeScript release's dashboard: %w", err))
+		}
+		e.say("The address goes back by hand: remove the route put in the proxy before the reverse; Go's container routes %s itself.", originOf(j))
 	}
 	if j.Rollback.Rebuild != nil {
 		// A sidecar the forward handoff stopped is started for the undo's

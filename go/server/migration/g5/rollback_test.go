@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -249,16 +248,12 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 			if svc == "postgres" {
 				// A fresh volume is made empty: no database file yet.
-				vols, _ := os.ReadFile(state("volumes"))
-				if v := configuredVolume("postgres"); v != ownVolume("postgres") && !bytes.Contains(vols, []byte(v+"\n")) {
-					f, err := os.OpenFile(state("volumes"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-					if err != nil {
-						return fail("%v", err)
+				for _, s := range []string{"postgres", "convex-backend"} {
+					if v := configuredVolume(s); v != ownVolume(s) {
+						if err := makeVolume(v, nil); err != nil {
+							return fail("%v", err)
+						}
 					}
-					// Convex's fresh volume beside it.
-					fmt.Fprintln(f, v)
-					fmt.Fprintln(f, configuredVolume("convex-backend"))
-					f.Close()
 				}
 			}
 			if err := setStopped(svc, false); err != nil {
@@ -291,7 +286,13 @@ func fakeDockerReverse(args []string) (int, bool) {
 		if !volumeThere(args[4]) {
 			return fail("Error response from daemon: get %s: no such volume", args[4])
 		}
-		fmt.Printf("%q \"2026-01-01T00:00:00Z\" %q\n", args[4], shape().Project)
+		printVolume(args[4])
+		return 0, true
+	case len(args) == 9 && args[0] == "volume" && args[1] == "create":
+		if err := makeVolume(args[8], []string{args[3], args[5], args[7]}); err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println(args[8])
 		return 0, true
 	case j == "ps -a -q --no-trunc --filter label=com.docker.compose.project":
 		for _, c := range containers() {
@@ -503,10 +504,8 @@ func migratedWorld(t *testing.T, image, coolify bool) *world {
 		code = w.run("", "--resume")
 	}
 	if coolify && code == 75 {
-		// The operator moves the domain to Go.
-		if err := os.WriteFile(filepath.Join(w.stateDir, "web-stopped"), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		// The operator sets the domain on the Go application, and deploys it.
+		w.domainToGo()
 		code = w.run("", "--resume")
 	}
 	if code != 0 {
@@ -1011,46 +1010,90 @@ func TestG5RollbackImage(t *testing.T) {
 	})
 }
 
-// The Coolify shape: the TypeScript release starts, migrate stops (exit
-// 75) for the operator's domain move back, Go running and isolated; once
-// the public URL answers from the TypeScript release, Go stops and the
-// reverse finishes.
+// The Coolify shape: nothing begins until the operator's route leads the
+// name to the TypeScript installation (exit 75, Go serving); with it the
+// reverse runs to its end, Go stopping once the TypeScript release answers
+// at the address.
 func TestG5RollbackCoolify(t *testing.T) {
 	w := migratedWorld(t, false, true)
-	if code := w.rollback("", "--rollback"); code != 75 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "In Coolify, move the domain of "+w.origin) {
-		t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	for range 2 {
+		before := len(w.calls("docker-calls"))
+		code := w.rollback("", "--rollback")
+		out := string(w.outputs[len(w.outputs)-1])
+		if code != 75 || !strings.Contains(out, "the address answers as the installation "+w.installationID) || !strings.Contains(out, "/data/coolify/proxy/dynamic/varlatch-rollback.yaml") ||
+			!strings.Contains(out, "url: \"http://g5-varlatch-web-1:80\"") || !strings.Contains(out, "do not Deploy, Restart or Stop the TypeScript application") {
+			t.Fatalf("--rollback without a route: %d\n%s", code, out)
+		}
+		for _, c := range w.calls("docker-calls")[before:] {
+			if strings.HasPrefix(c, "compose up") || strings.HasPrefix(c, "compose run") || strings.HasPrefix(c, "volume create") {
+				t.Errorf("ran %q", c)
+			}
+		}
+		w.expectReverse("no route", undoneState)
 	}
-	w.expectReverse("waiting for the move", rbState{"rollback-transfer", "rollback-transfer", "target-gated", "", true, true, true})
-	if code := w.rollback("", "--resume", "--transfer-timeout", "3s"); code != 1 {
-		t.Fatalf("--resume before the move: %d", code)
-	}
-	w.expectReverse("still waiting", rbState{"rollback-transfer", "rollback-transfer", "target-gated", "", true, true, true})
-	// The operator moves the domain back.
-	if err := os.Remove(filepath.Join(w.stateDir, "web-stopped")); err != nil {
-		t.Fatal(err)
-	}
-	if code := w.rollback("", "--resume"); code != 0 {
-		t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	w.routeBack()
+	if code := w.rollback("", "--rollback"); code != 0 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the way back works") {
+		t.Fatalf("--rollback with the route: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
 	w.expectReverse("rolled back", rolledBackState)
-	res, err := http.Get(w.origin + "/v1/meta")
-	if err == nil {
-		res.Body.Close()
-	}
+	// The route is not needed any more.
+	w.routeAway()
+	w.expectReverse("the route removed", rolledBackState)
 	w.noSecrets()
 
-	// Aborted while waiting for the move: the operator is told to move the
-	// domain back to Go, and Go serves again (the domain still Go's).
+	// Aborted, or interrupted: the dashboard stops again, the operator is
+	// told to remove the route, and Go serves.
+	for _, how := range []string{"--abort", "--resume"} {
+		w = migratedWorld(t, false, true)
+		w.routeBack()
+		if code := w.rollback("entered rollback-checked", "--rollback"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if code := w.rollback("", how); (how == "--abort") != (code == 0) {
+			t.Fatalf("%s: %d\n%s", how, code, w.outputs[len(w.outputs)-1])
+		}
+		if !strings.Contains(string(w.outputs[len(w.outputs)-1]), "remove the route put in the proxy before the reverse") || !w.has("web-stopped") {
+			t.Errorf("%s: the dashboard stopped %v:\n%s", how, w.has("web-stopped"), w.outputs[len(w.outputs)-1])
+		}
+		w.routeAway()
+		w.expectReverse("undone by "+how, undoneState)
+	}
+	// Volumes of the names the reverse planned, made by another while it was
+	// killed before it made its own: its undo leaves them.
 	w = migratedWorld(t, false, true)
-	if code := w.rollback("", "--rollback"); code != 75 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "move the domain back to Go first") {
-		t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	w.routeBack()
+	if code := w.rollback("entered rollback-exported", "--rollback"); code != -1 {
+		t.Fatalf("not killed: %d", code)
 	}
 	if code := w.rollback("", "--abort"); code != 0 {
-		t.Fatalf("--abort during the transfer: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
-	if !strings.Contains(string(w.outputs[len(w.outputs)-1]), "in Coolify, move the domain of "+w.origin+" back to the Go application") {
-		t.Errorf("no move back to Go:\n%s", w.outputs[len(w.outputs)-1])
+	if code := w.rollback("rollback volumes made", "--rollback"); code != -1 {
+		t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
-	w.expectReverse("aborted", undoneState)
+	b, _ := os.ReadFile(filepath.Join(w.stateDir, "volumes"))
+	fresh := strings.Fields(string(b))
+	if len(fresh) != 2 {
+		t.Fatalf("the volumes made: %q", b)
+	}
+	// One is another's now; the killed run's own other one goes.
+	if err := os.WriteFile(filepath.Join(w.stateDir, "owner-"+fresh[0]), []byte("mig_another"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.rollback("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone") {
+		t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if b, _ := os.ReadFile(filepath.Join(w.stateDir, "volumes")); strings.TrimSpace(string(b)) != fresh[0] {
+		t.Errorf("volumes left: %q, want %s", b, fresh[0])
+	}
+	// And the next reverse takes another name.
+	w.routeAway()
+	w.routeBack()
+	if code := w.rollback("", "--rollback"); code != 0 {
+		t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if v, _ := w.volume(); v == fresh[0] || !strings.HasPrefix(v, coolifyApp+"_postgres-data-") {
+		t.Errorf("the reverse took %s", v)
+	}
 	w.noSecrets()
 }

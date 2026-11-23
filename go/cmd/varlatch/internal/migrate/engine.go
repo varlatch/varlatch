@@ -175,7 +175,7 @@ func (e *Engine) enter(ctx context.Context, j *Journal, p Phase) error {
 // commands that go on with a migration use that one only, and refuse when
 // the installation is now of another.
 type projectKeeper interface {
-	KeepProject(p *ComposeProject)
+	KeepProject(p *ComposeProject, reversed bool)
 	CheckProject(ctx context.Context) error
 }
 
@@ -188,11 +188,17 @@ func (e *Engine) keepProject(ctx context.Context, j *Journal, check bool) error 
 	if !ok || j == nil {
 		return nil
 	}
-	k.KeepProject(j.Source.Project)
+	k.KeepProject(j.Source.Project, reversed(j))
 	if !check {
 		return nil
 	}
 	return k.CheckProject(ctx)
+}
+
+// reversed is whether j, or the migration before it, records a reverse's
+// rebuild of the source.
+func reversed(j *Journal) bool {
+	return j.Rollback != nil && j.Rollback.Rebuild != nil || j.Source.Project != nil && j.Source.Project.Reversed
 }
 
 // checkProject refuses, now, a source that is no longer the project this
@@ -252,6 +258,11 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	kept := &Journal{}
 	if reuse {
 		kept = prev
+	} else if prev != nil {
+		kept.Rollback = prev.Rollback
+		if p := prev.Source.Project; p != nil && p.Reversed {
+			kept.Rollback = &RollbackRecord{Rebuild: &RebuildRecord{}}
+		}
 	}
 	if err := e.keepProject(ctx, kept, false); err != nil {
 		return prev, err
@@ -1003,10 +1014,6 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	}
 	if from == Transfer && nameBack {
 		switch {
-		case j.Ingress == Coolify:
-			// Coolify's domain goes back by hand, whatever the gate or the
-			// target: there is nothing of this host's to start or wait for.
-			problems = append(problems, e.returnAddress(ctx, j)...)
 		case !stopped:
 			// The target may still hold the address (an image's service
 			// the operator stops, a unit that would not stop): the source's

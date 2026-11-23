@@ -37,11 +37,12 @@ type fakeSource struct {
 	recreates int
 	// kept is the project the engine gave it last; projectErr refuses it.
 	kept       *ComposeProject
+	reversed   bool
 	checked    int
 	projectErr error
 }
 
-func (s *fakeSource) KeepProject(p *ComposeProject) { s.kept = p }
+func (s *fakeSource) KeepProject(p *ComposeProject, reversed bool) { s.kept, s.reversed = p, reversed }
 
 func (s *fakeSource) CheckProject(context.Context) error {
 	s.checked++
@@ -243,7 +244,7 @@ func (p *fakeProber) Probe(_ context.Context, origin string) (string, string, er
 	if origin != "https://vault.example.test" {
 		return "", "", errors.New("probed " + origin)
 	}
-	served := p.w.tgt.running && (p.w.src.ingressDown || (p.w.eng.Options.Ingress == Coolify && p.moved))
+	served := p.w.tgt.running && p.w.src.ingressDown && (p.w.eng.Options.Ingress != Coolify || p.moved)
 	if !served {
 		// The source answers at the address while its ingress is up and
 		// the address is not the target's (an own proxy or Caddy; in
@@ -1191,7 +1192,7 @@ func TestCoolifysTransferByHand(t *testing.T) {
 	w.eng.Options.Ingress = Coolify
 	w.eng.Options.TransferTimeout = 4 * time.Second
 	j, err := w.eng.Run(context.Background(), false)
-	if !errors.Is(err, ErrAwaitingOperator) || j.Phase != Transfer || !j.Transfer.Asked || !w.tgt.running || w.src.ingressDown {
+	if !errors.Is(err, ErrAwaitingOperator) || j.Phase != Transfer || !j.Transfer.Asked || !w.tgt.running || !w.src.ingressDown {
 		t.Fatalf("the prompt: %+v %v", j, err)
 	}
 	said := strings.Join(w.said, "\n")

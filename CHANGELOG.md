@@ -74,9 +74,20 @@ fixes.
   removes the volumes recorded when the rollback began, each checked to be
   the same, the project's and unused, and discards Go's copy only after
   them. A container of the same project from another directory on the host
-  is refused before every command that changes something. `.env` is read as
-  Compose reads it (quotes, comments, `export`). An installation with one
-  `docker-compose.yml` migrates as before.
+  is refused before every command that changes something. Its
+  containers must all be made from the same list of files. `.env` is read
+  as Compose reads it (quotes, comments, `export`). `--finish` removes only
+  the volumes the installation's containers were on when it began, each
+  checked to be the same one right before. `--rollback` makes its fresh
+  volumes under names no volume has, labelled, and its undo removes only
+  those.
+- **`varlatch migrate` on Coolify no longer depends on a domain set back in
+  Coolify.** Coolify applies a domain when containers are made, so a domain
+  moved without a deploy does nothing, and after a deploy of the new
+  application both containers answered for it, at random. The migration now
+  stops the TypeScript dashboard's container for the transfer, and starts it
+  again when it is undone. `--rollback` begins only once a route you put in
+  Coolify's proxy, which it prints, reaches the TypeScript installation.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own
   fresh install included, with "varlatch is installed with Homebrew; update

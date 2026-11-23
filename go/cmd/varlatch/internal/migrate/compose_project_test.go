@@ -22,7 +22,9 @@ type labelled struct {
 	volumes    map[string]VolumeRecord
 	users      map[string]string // the containers that mount a volume
 	removed    []string
-	failRemove string
+	// inspected is called before a volume is inspected, created once one is.
+	inspected func(name string)
+	made      []string
 	// seen is called before each listing of the containers.
 	seen func()
 }
@@ -33,20 +35,34 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 	}
 	switch {
 	case len(args) == 5 && args[0] == "volume" && args[1] == "inspect" && args[3] == volumeFormat:
+		if h.inspected != nil {
+			h.inspected(args[4])
+		}
 		v, ok := h.volumes[args[4]]
 		if !ok {
 			return Ran{Code: 1, Said: []byte("Error response from daemon: get " + args[4] + ": no such volume")}, true
 		}
-		b, _ := json.Marshal(v.Name)
-		at, _ := json.Marshal(v.CreatedAt)
-		p, _ := json.Marshal(v.Project)
-		return Ran{Answer: []byte(string(b) + " " + string(at) + " " + string(p) + "\n")}, true
-	case h.volumes != nil && len(args) == 3 && args[0] == "volume" && args[1] == "rm":
-		if args[2] == h.failRemove {
-			return Ran{Code: 1, Said: []byte("the disk failed")}, true
+		var out strings.Builder
+		for _, f := range []string{v.Name, v.CreatedAt, v.Mountpoint, v.Project, v.Key, v.Owner} {
+			b, _ := json.Marshal(f)
+			out.Write(append(b, ' '))
 		}
-		delete(h.volumes, args[2])
-		h.removed = append(h.removed, args[2])
+		return Ran{Answer: []byte(out.String())}, true
+	case h.volumes != nil && len(args) == 9 && args[0] == "volume" && args[1] == "create":
+		// As Docker: a name that is there is answered, not made again.
+		if _, ok := h.volumes[args[8]]; !ok {
+			v := VolumeRecord{Name: args[8], CreatedAt: "2026-11-09T09:09:09Z", Mountpoint: "/v/" + args[8]}
+			for i, f := range []*string{&v.Project, &v.Key, &v.Owner} {
+				_, *f, _ = strings.Cut(args[3+2*i], "=")
+			}
+			h.volumes[v.Name] = v
+			h.made = append(h.made, v.Name)
+		}
+		return Ran{Answer: []byte(args[8] + "\n")}, true
+	case h.volumes != nil && len(args) >= 3 && args[0] == "volume" && args[1] == "rm":
+		name := args[len(args)-1]
+		delete(h.volumes, name)
+		h.removed = append(h.removed, name)
 		return Ran{}, true
 	case h.volumes != nil && args[0] == "ps" && len(args) == 6 && strings.HasPrefix(args[3], "volume="):
 		return Ran{Answer: []byte(h.users[strings.TrimPrefix(args[3], "volume=")])}, true
@@ -59,7 +75,7 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 	case len(args) > 4 && args[0] == "inspect" && slices.Contains(args, containersFormat):
 		var b strings.Builder
 		for _, l := range h.containers {
-			for _, v := range []string{l.project, l.service, l.files, l.dir, l.oneOff} {
+			for _, v := range []string{l.project, l.service, l.files, l.dir, l.oneOff, "/" + l.name} {
 				q, _ := json.Marshal(v)
 				b.Write(q)
 				b.WriteByte(' ')
@@ -193,12 +209,12 @@ func TestComposeProject(t *testing.T) {
 		{"a one-off of the project from this directory, of files none of which are the project's", coolifyDir,
 			func(d string) []composeContainer {
 				return []composeContainer{at(appID, "varlatchd", d, "docker-compose.coolify-tailscale.yml"), ctr(appID, "x", filepath.Join(d, stock), d, "True")}
-			}, nil, "", nil, []string{"none of which is among the project's files"}},
+			}, nil, "", nil, []string{"and its files are", "would act on both"}},
 		{"a container of a file since renamed", func(t *testing.T) string {
 			return installationDir(t, map[string]string{stock: "services: {}\n"})
 		}, func(d string) []composeContainer {
 			return []composeContainer{at("varlatch", "varlatchd", d, stock), at("varlatch", "postgres", d, "compose.old.yml")}
-		}, nil, "varlatch", []string{stock}, nil},
+		}, nil, "", nil, []string{"made from different files"}},
 		{"the stock file and its override, no containers", func(t *testing.T) string {
 			return installationDir(t, map[string]string{stock: "services: {}\n", "docker-compose.override.yml": "services: {}\n"})
 		}, nil, nil, "asked", []string{stock, "docker-compose.override.yml"}, nil},
@@ -209,7 +225,31 @@ func TestComposeProject(t *testing.T) {
 			return installationDir(t, map[string]string{stock: "services: {}\n", "docker-compose.caddy.yml": "services: {}\n", ".env": "COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml\n"})
 		}, func(d string) []composeContainer {
 			return []composeContainer{at("varlatch", "varlatchd", d, stock), at("varlatch", "caddy", d, stock, "docker-compose.caddy.yml")}
-		}, nil, "varlatch", []string{stock, "docker-compose.caddy.yml"}, nil},
+		}, nil, "", nil, []string{"made from different files: varlatchd from ", "caddy from ", "docker-compose.caddy.yml", "--force-recreate"}},
+		{"another overlay of the project", func(t *testing.T) string {
+			return installationDir(t, map[string]string{"base.yml": "", "prod.yml": "", "other.yml": "", ".env": "COMPOSE_FILE=base.yml:prod.yml\n"})
+		}, func(d string) []composeContainer {
+			return []composeContainer{at("varlatch", "varlatchd", d, "base.yml", "prod.yml"), at("varlatch", "postgres", d, "base.yml", "other.yml")}
+		}, nil, "", nil, []string{"base.yml", "prod.yml", "other.yml"}},
+		{"another overlay of the project, a one-off", func(t *testing.T) string {
+			return installationDir(t, map[string]string{"base.yml": "", "prod.yml": "", "other.yml": "", ".env": "COMPOSE_FILE=base.yml:prod.yml\n"})
+		}, func(d string) []composeContainer {
+			return []composeContainer{at("varlatch", "varlatchd", d, "base.yml", "prod.yml"), ctr("varlatch", "x", filepath.Join(d, "base.yml")+","+filepath.Join(d, "other.yml"), d, "True")}
+		}, nil, "", nil, []string{"has a x container made from", "other.yml", "prod.yml"}},
+		{"the same files in another order", func(t *testing.T) string {
+			return installationDir(t, map[string]string{"base.yml": "", "prod.yml": "", ".env": "COMPOSE_FILE=base.yml:prod.yml\n"})
+		}, func(d string) []composeContainer {
+			return []composeContainer{at("varlatch", "varlatchd", d, "base.yml", "prod.yml"), at("varlatch", "postgres", d, "prod.yml", "base.yml")}
+		}, nil, "", nil, []string{"made from different files"}},
+		{"a relative label, a link in it: the same file", func(t *testing.T) string {
+			d := installationDir(t, map[string]string{"base.yml": ""})
+			if err := os.Symlink("base.yml", filepath.Join(d, "link.yml")); err != nil {
+				t.Fatal(err)
+			}
+			return d
+		}, func(d string) []composeContainer {
+			return []composeContainer{at("varlatch", "varlatchd", d, "base.yml"), ctr("varlatch", "postgres", "link.yml", d, "False")}
+		}, nil, "varlatch", []string{"base.yml"}, nil},
 		{"containers of different files, the directory names neither", coolifyDir,
 			func(d string) []composeContainer {
 				return []composeContainer{at(appID, "varlatchd", d, "docker-compose.coolify-tailscale.yml"), at(appID, "postgres", d, "docker-compose.yaml")}
@@ -241,11 +281,11 @@ func TestComposeProject(t *testing.T) {
 		{"a label without files", coolifyDir,
 			func(d string) []composeContainer { return []composeContainer{ctr(appID, "varlatchd", "", d, "False")} }, nil, "", nil,
 			[]string{"names no Compose file it was made from"}},
-		{"migrate's own file is not the installation's", func(t *testing.T) string {
+		{"migrate's own file, which no journal records", func(t *testing.T) string {
 			return installationDir(t, map[string]string{stock: "services: {}\n", OverrideFile: "services: {}\n", ".env": "COMPOSE_FILE=docker-compose.yml:" + OverrideFile + "\n"})
 		}, func(d string) []composeContainer {
 			return []composeContainer{at("varlatch", "varlatchd", d, stock), at("varlatch", "postgres", d, stock, OverrideFile)}
-		}, nil, "varlatch", []string{stock}, nil},
+		}, nil, "", nil, []string{"made from different files", OverrideFile}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := c.dir(t)
@@ -279,6 +319,39 @@ func TestComposeProject(t *testing.T) {
 				t.Errorf("%v, want %s of %v", p, c.project, want)
 			}
 		})
+	}
+}
+
+// migrate's own file, the last of a container's, is not the installation's
+// where a journal records the reverse that wrote it; only that very file.
+func TestComposeProjectReversed(t *testing.T) {
+	for _, c := range []struct {
+		name, file string
+		reversed   bool
+		refused    string
+	}{
+		{"journalled", OverrideFile, true, ""},
+		{"not journalled", OverrideFile, false, "made from different files"},
+		{"another directory's", "x/" + OverrideFile, true, "made from different files"},
+	} {
+		dir := installationDir(t, map[string]string{"docker-compose.yml": "", OverrideFile: "", ".env": "COMPOSE_FILE=docker-compose.yml:" + OverrideFile + "\n"})
+		if err := os.Mkdir(filepath.Join(dir, "x"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "x", OverrideFile), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		base := filepath.Join(dir, "docker-compose.yml")
+		host := &labelled{containers: []composeContainer{ctr("varlatch", "varlatch-web", base, dir, "False"), ctr("varlatch", "postgres", base+","+filepath.Join(dir, c.file), dir, "False")}}
+		cmp := &Compose{Directory: dir, Run: &scripted{t: t, host: host}}
+		cmp.KeepProject(nil, c.reversed)
+		p, err := cmp.project(t.Context())
+		if (err == nil) != (c.refused == "") || err != nil && !strings.Contains(err.Error(), c.refused) {
+			t.Errorf("%s: %v %v", c.name, p, err)
+		}
+		if err == nil && (!p.Reversed || !slices.Equal(p.Files, []string{base})) {
+			t.Errorf("%s: %+v", c.name, p)
+		}
 	}
 }
 
@@ -345,7 +418,7 @@ func TestComposeProjectJournalled(t *testing.T) {
 			host.containers = nil
 		}
 		cmp := &Compose{Directory: dir, Run: &scripted{t: t, host: host}}
-		cmp.KeepProject(kept)
+		cmp.KeepProject(kept, false)
 		err := cmp.CheckProject(t.Context())
 		if (c.refused == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), c.refused) {
 			t.Errorf("%s: %v, want %q", c.name, err, c.refused)
@@ -355,7 +428,7 @@ func TestComposeProjectJournalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmp := &Compose{Directory: dir, Run: &scripted{t: t, host: &labelled{}}}
-	cmp.KeepProject(kept)
+	cmp.KeepProject(kept, false)
 	if err := cmp.CheckProject(t.Context()); err == nil || !strings.Contains(err.Error(), "which is not there") {
 		t.Errorf("a file gone: %v", err)
 	}
@@ -413,6 +486,7 @@ func TestComposeCommandsNameTheProject(t *testing.T) {
 		t.Errorf("by hand: %s", said)
 	}
 	// A reverse's database in use.
+	c.reversed = true
 	f := "docker-compose.coolify-tailscale.yml:" + OverrideFile
 	if err := c.setEnv("COMPOSE_FILE", &f, ""); err != nil {
 		t.Fatal(err)
@@ -517,7 +591,7 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	named := []string{"compose", "--project-name", project, "--project-directory", dir, "-f", filepath.Join(dir, "docker-compose.coolify-tailscale.yml")}
 	t.Cleanup(func() {
 		_, _ = x.Run(context.Background(), dir, "docker", append(slices.Clone(named), "down", "-v", "--remove-orphans", "--timeout", "1"), nil)
-		for _, v := range []string{"postgres-data-abcdefgh", "convex-data-abcdefgh"} {
+		for _, v := range []string{"postgres-data-abcdefgh", "convex-data-abcdefgh", "unrelated"} {
 			_, _ = x.Run(context.Background(), dir, "docker", []string{"volume", "rm", "-f", project + "_" + v}, nil)
 		}
 	})
@@ -551,6 +625,15 @@ func TestComposeProjectOnDocker(t *testing.T) {
 		if r := plan.Retained[i]; r.Name != project+"_"+v || r.Project != project || r.CreatedAt == "" {
 			t.Errorf("retained: %+v", r)
 		}
+	}
+	if _, err := c.MakeVolumes(ctx, RebuildRecord{Volumes: []string{project + "_postgres-data"}, Owner: plan.Owner}); err == nil || !strings.Contains(err.Error(), "is not this migration's") {
+		t.Errorf("a volume that is there, taken for a fresh one: %v", err)
+	}
+	if plan.Made, err = c.MakeVolumes(ctx, plan); err != nil || plan.Made[0].Owner != plan.Owner || plan.Made[0].Mountpoint == "" {
+		t.Fatalf("the fresh volumes: %+v %v", plan.Made, err)
+	}
+	if again, err := c.RebuildPlan(ctx, &Journal{ID: plan.Owner, Source: SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}}); err != nil || again.Volumes[0] == plan.Volumes[0] {
+		t.Errorf("a name that is taken: %v %v", again.Volumes, err)
 	}
 	docker(append(slices.Clone(named), "up", "-d", "--no-deps", "postgres")...)
 	if err := c.CheckRebuilt(ctx, plan, false); err == nil || !strings.Contains(err.Error(), "give postgres the volume "+project+"_postgres-data,") || !strings.Contains(err.Error(), plan.Volumes[0]) {
@@ -609,7 +692,9 @@ func TestComposeProjectOnDocker(t *testing.T) {
 		"check":  func() error { return c.CheckProject(ctx) },
 		"stop":   func() error { return c.StopServing(ctx, Coolify) },
 		"remove": func() error { return c.RemoveRetained(ctx, plan, none) },
-		"empty":  func() error { return (&Compose{Directory: t.TempDir(), Run: x, kept: p}).CheckProject(ctx) },
+		"empty": func() error {
+			return (&Compose{Directory: t.TempDir(), Run: x, resolved: &ComposeProject{Name: p.Name, Dir: other, Files: []string{filepath.Join(other, "compose.yml")}}}).CheckProject(ctx)
+		},
 	} {
 		if err := do(); err == nil || !strings.Contains(err.Error(), "container made from ") {
 			t.Errorf("%s, with another directory's container: %v", name, err)
@@ -621,22 +706,66 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	remade := plan
 	remade.Retained = slices.Clone(plan.Retained)
 	remade.Retained[1].CreatedAt = "2020-01-01T00:00:00Z"
-	if err := c.RemoveRetained(ctx, remade, none); err == nil || !strings.Contains(err.Error(), "it is another one") {
+	if err := c.RemoveRetained(ctx, remade, none); err == nil || !strings.Contains(err.Error(), "is not the one the journal records") {
 		t.Errorf("a volume made since: %v", err)
 	}
-	if err := c.CheckData(ctx, Coolify, &plan, none); err != nil {
+	if err := c.CheckData(ctx, Coolify, &plan, nil, none); err != nil {
 		t.Errorf("before the removal: %v", err)
 	}
 	if err := c.RemoveRetained(ctx, plan, none); err != nil {
 		t.Errorf("removing the retained volumes: %v", err)
 	}
 	for i, v := range []string{plan.Retained[0].Name, plan.Retained[1].Name, plan.Volumes[0], plan.Volumes[1]} {
-		if there, err := c.volumeThere(ctx, v); err != nil || there != (i > 1) {
+		if there, err := c.volume(ctx, v); err != nil || (there != nil) != (i > 1) {
 			t.Errorf("%s after: %v %v", v, there, err)
 		}
 	}
 	if err := c.CheckRebuilt(ctx, plan, true); err != nil {
 		t.Errorf("at the end: %v", err)
+	}
+	// A forward --finish: what the containers mount, held against the
+	// files; another name in them since (the containers as they were) is
+	// refused, before and after they are down, and neither is removed.
+	data, others, err := c.MountedVolumes(ctx)
+	if err != nil || data[0].Name != plan.Volumes[0] || data[1].Name != plan.Volumes[1] || len(others) != 1 || others[0].Name != project+"_"+stateKey {
+		t.Fatalf("mounted: %+v %+v %v", data, others, err)
+	}
+	if err := c.CheckData(ctx, Public, nil, data, none); err != nil {
+		t.Errorf("the data: %v", err)
+	}
+	docker("volume", "create", "--label", labelProject+"="+project, project+"_unrelated")
+	text, _ := os.ReadFile(filepath.Join(dir, OverrideFile))
+	if err := os.WriteFile(filepath.Join(dir, OverrideFile), []byte(strings.Replace(string(text), plan.Volumes[0], project+"_unrelated", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CheckData(ctx, Public, nil, data, none); err == nil || !strings.Contains(err.Error(), project+"_unrelated") {
+		t.Errorf("a name changed since: %v", err)
+	}
+	if _, _, err := c.MountedVolumes(ctx); err == nil || !strings.Contains(err.Error(), project+"_unrelated") {
+		t.Errorf("a name changed before: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, OverrideFile), text, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// An undo removes only volumes of this migration.
+	foreign := plan
+	foreign.Owner = "mig_another"
+	for _, p := range []RebuildRecord{foreign, {Override: OverrideFile, Volumes: plan.Volumes}} {
+		_ = c.compose(ctx, "stop", "stop", "postgres", "convex-backend")
+		for _, name := range p.Volumes {
+			v, err := c.volume(ctx, name)
+			if err != nil || v == nil || p.ours(0, *v) && p.ours(1, *v) {
+				t.Errorf("taken for %q's: %+v %v", p.Owner, v, err)
+			}
+		}
+	}
+	if err := c.RemoveOld(ctx, Public, data, others, none); err != nil {
+		t.Errorf("removing: %v", err)
+	}
+	for i, v := range []string{plan.Volumes[0], plan.Volumes[1], project + "_" + stateKey, project + "_unrelated"} {
+		if there, err := c.volume(ctx, v); err != nil || (there != nil) != (i == 3) {
+			t.Errorf("%s after: %v %v", v, there, err)
+		}
 	}
 }
 
@@ -687,7 +816,12 @@ func TestTheEngineKeepsTheProject(t *testing.T) {
 // refusal names both volumes.
 func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 	const fresh, freshConvex, retained = appID + "_postgres-data-abcdefgh", appID + "_convex-data-abcdefgh", appID + "_postgres-data"
-	plan := RebuildRecord{Override: OverrideFile, Volumes: []string{fresh, freshConvex}, Keys: []string{retained, appID + "_convex-data", appID + "_varlatch-state"}, Image: "x@sha256:y"}
+	plan := RebuildRecord{Override: OverrideFile, Volumes: []string{fresh, freshConvex}, Keys: []string{retained, appID + "_convex-data", appID + "_varlatch-state"}, Image: "x@sha256:y", Owner: "mig_x"}
+	madeVolumes := map[string]VolumeRecord{}
+	for _, n := range plan.Volumes {
+		v := VolumeRecord{Name: n, CreatedAt: "2026-11-01T00:00:00Z", Mountpoint: "/v/" + n, Project: appID, Owner: "mig_x"}
+		madeVolumes[n], plan.Made = v, append(plan.Made, v)
+	}
 	config := func(pg, convex string) Ran {
 		return Ran{Answer: []byte(`{"name":"` + appID + `","services":{"postgres":{"volumes":[{"type":"volume","source":"` + retained + `","target":"/var/lib/postgresql/data"}]},` +
 			`"convex-backend":{"volumes":[{"type":"volume","source":"` + appID + `_convex-data","target":"/convex/data"}]},"varlatchd":{"volumes":[{"type":"volume","source":"` + appID + `_varlatch-state","target":"/var/lib/varlatch"}]}},` +
@@ -703,7 +837,7 @@ func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 		{"unnamed: the project's", "", freshConvex, []string{"the volume " + appID + "_" + retained, fresh}},
 	} {
 		dir := coolifyDir(t)
-		run := &scripted{t: t, answers: map[string]Ran{"docker compose stop ": {}, "docker compose up -d postgres": {}, "docker compose config --no-interpolate --format json": config(c.pg, c.convex)}}
+		run := &scripted{t: t, host: &labelled{volumes: madeVolumes}, answers: map[string]Ran{"docker compose stop ": {}, "docker compose up -d postgres": {}, "docker compose config --no-interpolate --format json": config(c.pg, c.convex)}}
 		cmp := &Compose{Directory: dir, Run: run, resolved: &ComposeProject{Name: appID, Dir: dir, Files: []string{filepath.Join(dir, "docker-compose.coolify-tailscale.yml")}}}
 		err := cmp.Rebuild(t.Context(), plan)
 		started := slices.Contains(run.ran, "docker compose up -d postgres")
@@ -758,7 +892,7 @@ func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 	} {
 		dir := coolifyDir(t)
 		file := filepath.Join(dir, "docker-compose.coolify-tailscale.yml")
-		host := &labelled{}
+		host := &labelled{volumes: madeVolumes}
 		for _, l := range c.containers {
 			l.dir, l.files = dir, file+","+filepath.Join(dir, OverrideFile)
 			host.containers = append(host.containers, l)
@@ -773,7 +907,7 @@ func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 		}
 		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config --no-interpolate --format json": c.config}}
 		cmp := &Compose{Directory: dir, Run: run}
-		cmp.KeepProject(&ComposeProject{Name: appID, Dir: dir, Files: []string{file}})
+		cmp.KeepProject(&ComposeProject{Name: appID, Dir: dir, Files: []string{file}}, true)
 		if c.env == "" {
 			v := "docker-compose.coolify-tailscale.yml:" + OverrideFile
 			if err := cmp.setEnv("COMPOSE_FILE", &v, ""); err != nil {
@@ -799,6 +933,7 @@ func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 type reverseFake struct {
 	*fakeSource
 	checkErr, importErr error
+	makeErr             error
 	// check, when set, answers instead of checkErr.
 	check func() error
 	did   []string
@@ -808,6 +943,13 @@ func (r *reverseFake) do(what string) { r.did = append(r.did, what) }
 
 func (r *reverseFake) RebuildPlan(context.Context, *Journal) (RebuildRecord, error) {
 	return RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, nil
+}
+func (r *reverseFake) MakeVolumes(_ context.Context, p RebuildRecord) ([]VolumeRecord, error) {
+	r.do("make")
+	if r.makeErr != nil {
+		return nil, r.makeErr
+	}
+	return []VolumeRecord{{Name: p.Volumes[0], Owner: p.Owner}, {Name: p.Volumes[1], Owner: p.Owner}}, nil
 }
 func (r *reverseFake) Rebuild(context.Context, RebuildRecord) error { r.do("rebuild"); return nil }
 func (r *reverseFake) CheckRebuilt(_ context.Context, p RebuildRecord, convex bool) error {
@@ -871,11 +1013,11 @@ func TestARebuildOnAnotherVolumeIsUndoneBeforeTheImport(t *testing.T) {
 		check error
 		want  []string
 	}{
-		{"refused", wrong, []string{"rebuild", "check p_postgres-data-abcdefgh", "undo p_postgres-data-abcdefgh"}},
-		{"right", nil, []string{"rebuild", "check p_postgres-data-abcdefgh", "import", "undo p_postgres-data-abcdefgh"}},
+		{"refused", wrong, []string{"make", "rebuild", "check p_postgres-data-abcdefgh", "undo p_postgres-data-abcdefgh"}},
+		{"right", nil, []string{"make", "rebuild", "check p_postgres-data-abcdefgh", "import", "undo p_postgres-data-abcdefgh"}},
 	} {
 		w := newWorld(t)
-		j := &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Open, Source: w.src.info, Ingress: Coolify, Transfer: &TransferRecord{},
+		j := &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Open, Source: w.src.info, Ingress: Public, Transfer: &TransferRecord{},
 			History: []Step{{Phase: Switched, At: w.eng.now().Format(time.RFC3339Nano)}}}
 		if err := writeJournal(w.src.dir, j); err != nil {
 			t.Fatal(err)

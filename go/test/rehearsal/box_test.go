@@ -703,8 +703,14 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 			if r.code != 75 {
 				return r
 			}
-			pause(t, fmt.Sprintf("%s-%d", what, step), "varlatch migrate stopped for your step (exit 75):", redact(lastLines(r.stdout+"\n"+r.stderr, 12)))
+			out := r.stdout + "\n" + r.stderr
+			pause(t, fmt.Sprintf("%s-%d", what, step), "varlatch migrate stopped for your step (exit 75):", redact(lastLines(out, 40)))
 			a = append(slices.Clone(args), "--resume")
+			if strings.Contains(out, "run varlatch migrate --rollback again") {
+				// The route back asked for first: nothing of a reverse is
+				// begun, so there is none to resume.
+				a = slices.Clone(first)
+			}
 		}
 	}
 	r := migrateUntilDone("migrate", args)

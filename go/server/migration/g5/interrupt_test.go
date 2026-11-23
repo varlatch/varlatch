@@ -950,7 +950,22 @@ func rowValue(o jsvalue.Object, k string) string {
 // serveOrigin is the public URL: the TypeScript side's /v1/meta while its
 // dashboard runs (503 behind a gate), the target's listen once it stopped.
 func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
-	if _, err := os.Stat(filepath.Join(w.stateDir, "web-stopped")); err == nil {
+	toGo := w.has("web-stopped")
+	if w.coolify {
+		// Coolify's proxy: the operator's route, else whichever container's
+		// router there is (the dashboard's, while it runs).
+		switch {
+		case w.has("route-ts") && w.has("web-stopped"):
+			rw.WriteHeader(http.StatusBadGateway)
+			return
+		case w.has("route-ts"):
+			toGo = false
+		case w.has("web-stopped") && !w.has("go-domain"):
+			rw.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+	}
+	if toGo {
 		u, _ := url.Parse("http://" + w.listen)
 		httputil.NewSingleHostReverseProxy(u).ServeHTTP(rw, r)
 		return
@@ -982,6 +997,11 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 	b, _ := os.ReadFile(filepath.Join(w.stateDir, "gate.json"))
 	if len(b) > 0 {
 		rw.WriteHeader(http.StatusServiceUnavailable)
+		var g gateDoc
+		if r.URL.Path == "/readyz" && json.Unmarshal(b, &g) == nil {
+			fmt.Fprintf(rw, `{"ready":false,"checks":{"maintenance":false},"state":%q}`, g.Kind)
+			return
+		}
 		_, _ = rw.Write([]byte(`{"error":{"code":"MAINTENANCE"}}`))
 		return
 	}
@@ -1489,6 +1509,7 @@ func TestG5InterruptionsImage(t *testing.T) {
 func TestG5InterruptionsCoolify(t *testing.T) {
 	w := newWorld(t, false)
 	w.coolify = true
+	w.coolifyLayout()
 	w.useState()
 	before := w.sourceHash()
 	if code := w.run(""); code != 75 {
@@ -1497,16 +1518,14 @@ func TestG5InterruptionsCoolify(t *testing.T) {
 	if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "in Coolify, move the domain of "+w.origin) {
 		t.Fatalf("no domain move:\n%s", out)
 	}
-	w.expect("waiting for the move", "transfer", "transfer", "source-barrier", "migration")
+	w.expect("waiting for the move", "transfer", "transfer", "none", "migration")
 	// Before the move: still waiting, nothing undone.
 	if code := w.run("", "--resume", "--transfer-timeout", "3s"); code != 1 {
 		t.Fatalf("--resume before the move: %d", code)
 	}
-	w.expect("still waiting", "transfer", "transfer", "source-barrier", "migration")
+	w.expect("still waiting", "transfer", "transfer", "none", "migration")
 	// The operator moves the domain: the public URL leads to the target.
-	if err := os.WriteFile(filepath.Join(w.stateDir, "web-stopped"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	w.domainToGo()
 	if code := w.run("entered switched", "--resume"); code != -1 {
 		t.Fatalf("not killed at the switch: %d", code)
 	}

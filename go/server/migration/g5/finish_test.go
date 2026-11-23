@@ -259,6 +259,71 @@ func TestG5Finish(t *testing.T) {
 		}
 		w.expect("refused", "finished", "finished", "target-open", "migrated-out")
 	})
+	// The Compose files name another volume than the one Postgres is on (an
+	// explicit name: changed, the container as it was): refused before its
+	// archive, and neither volume removed. Changed only once the containers
+	// are down, or the volume made again: the recorded one is held to.
+	t.Run("volume renamed", func(t *testing.T) {
+		w := migratedWorld(t, false, false)
+		renamed, other := filepath.Join(w.stateDir, "renamed-postgres"), "g5-installation_other"
+		if err := os.WriteFile(filepath.Join(w.stateDir, "volumes"), []byte(other+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(renamed, []byte(other), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := len(w.calls("ts-calls"))
+		refused := func(what, why, src string) {
+			t.Helper()
+			code := w.finish("", "--delete-old-data")
+			out := string(w.outputs[len(w.outputs)-1])
+			if code != 1 || !strings.Contains(out, why) {
+				t.Fatalf("%s: %d\n%s", what, code, out)
+			}
+			if vols, _ := w.removed(); slices.Contains(vols, other) || slices.Contains(vols, "g5-installation_postgres-data") {
+				t.Errorf("%s: removed %v", what, vols)
+			}
+			if p := w.journalPhase(); p != src {
+				t.Errorf("%s: the journal %s", what, p)
+			}
+			if slices.ContainsFunc(w.calls("ts-calls")[before:], func(c string) bool { return strings.HasPrefix(c, "admin backup create") }) {
+				t.Errorf("%s: an archive was made", what)
+			}
+		}
+		refused("renamed under a running Postgres", "is on g5-installation_postgres-data, and its Compose files give it "+other, "open")
+		if err := os.Remove(renamed); err != nil {
+			t.Fatal(err)
+		}
+		if code := w.finish(""); code != 0 {
+			t.Fatalf("--finish: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if err := os.WriteFile(renamed, []byte(other), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		refused("renamed once the containers are down", "give postgres the volume "+other+", and the installation ran on g5-installation_postgres-data", "finished")
+		if err := os.Remove(renamed); err != nil {
+			t.Fatal(err)
+		}
+		again := filepath.Join(w.stateDir, "another-g5-installation_postgres-data")
+		if err := os.WriteFile(again, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		refused("made again", "is not the one the journal records", "finished")
+		if err := os.Remove(again); err != nil {
+			t.Fatal(err)
+		}
+		// Renamed after the archive: what was archived is removed.
+		if code := w.finish("finish archived", "--delete-old-data"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if err := os.WriteFile(renamed, []byte(other), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_ = w.finish("", "--delete-old-data")
+		if vols, _ := w.removed(); slices.Contains(vols, other) {
+			t.Errorf("after the archive: removed %v", vols)
+		}
+	})
 	// A data volume not there: refused before the window closes.
 	t.Run("volume gone", func(t *testing.T) {
 		w := migratedWorld(t, false, false)
@@ -267,7 +332,7 @@ func TestG5Finish(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := len(w.calls("ts-calls"))
-		if code := w.finish("", "--delete-old-data"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "g5-installation_convex-data are not there") {
+		if code := w.finish("", "--delete-old-data"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the volume g5-installation_convex-data is not there") {
 			t.Fatalf("--delete-old-data, a volume gone: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
 		w.expect("refused", "open", "open", "target-open", "migrated-out")

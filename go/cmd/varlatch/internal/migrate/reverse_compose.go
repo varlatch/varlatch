@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,6 +59,9 @@ const reverseProfile = "varlatch-rollback"
 type ReverseSource interface {
 	// RebuildPlan names what the rebuild makes, before anything is made.
 	RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, error)
+	// MakeVolumes makes the plan's fresh volumes (journalled, once made, as
+	// plan's Made).
+	MakeVolumes(ctx context.Context, plan RebuildRecord) ([]VolumeRecord, error)
 	// Rebuild stops what holds the database, writes the plan's Compose
 	// file and names it in COMPOSE_FILE, and starts Postgres on its fresh
 	// volume.
@@ -287,9 +291,34 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 	if j.Source.Digest == "" || j.Source.DigestRepository == "" {
 		return RebuildRecord{}, errors.New("the journal records no image digest of the source: the rebuild runs the release's own image only")
 	}
+	// Names no volume has: one there already is another's, whatever it is.
+	var names []string
 	short := j.ID[len(j.ID)-8:]
-	plan := RebuildRecord{Override: OverrideFile, Image: j.Source.DigestRepository + "@" + j.Source.Digest,
-		Volumes: []string{project + "_postgres-data-" + short, project + "_convex-data-" + short}}
+	for try := 0; ; try++ {
+		names = []string{project + "_postgres-data-" + short, project + "_convex-data-" + short}
+		taken := ""
+		for _, n := range names {
+			v, err := c.volume(ctx, n)
+			if err != nil {
+				return RebuildRecord{}, err
+			}
+			if v != nil {
+				taken = n
+			}
+		}
+		if taken == "" {
+			break
+		}
+		if try == 4 {
+			return RebuildRecord{}, fmt.Errorf("the volume %s is there already: the reverse makes its fresh volumes, and takes none", taken)
+		}
+		id, err := newID()
+		if err != nil {
+			return RebuildRecord{}, err
+		}
+		short = id[len(id)-8:]
+	}
+	plan := RebuildRecord{Override: OverrideFile, Image: j.Source.DigestRepository + "@" + j.Source.Digest, Volumes: names, Owner: j.ID}
 	if !slices.Equal(keys, stockKeys) {
 		plan.Keys = keys
 	}
@@ -329,13 +358,8 @@ func (c *Compose) retained(ctx context.Context, cfg composeConfig, keys []string
 	var out []VolumeRecord
 	for i, d := range dataMounts {
 		name := cfg.volumeName(keys[i])
-		for _, l := range all {
-			if l.project != p.Name || l.service != d.service || l.isOneOff() {
-				continue
-			}
-			if on := l.volumeAt(d.target); on != name {
-				return nil, fmt.Errorf("the installation's %s container is on %s, and its Compose files give it %s: which volume is the installation's is not known", d.service, orWord(on, "no named volume"), name)
-			}
+		if _, err := mountedAs(p, all, d.service, d.target, name); err != nil {
+			return nil, err
 		}
 		v, err := c.volume(ctx, name)
 		if err != nil {
@@ -349,8 +373,30 @@ func (c *Compose) retained(ctx context.Context, cfg composeConfig, keys []string
 	return out, nil
 }
 
+// mountedAs refuses a service whose containers are not on the volume its
+// Compose files give it (name): which one is the installation's is not
+// known then. live is whether it has a container at all.
+func mountedAs(p *ComposeProject, all []composeContainer, svc, target, name string) (live bool, err error) {
+	for _, l := range all {
+		if l.project != p.Name || l.service != svc || l.isOneOff() {
+			continue
+		}
+		live = true
+		if on := l.volumeAt(target); on != name {
+			return live, fmt.Errorf("the installation's %s container is on %s, and its Compose files give it %s: which volume is the installation's is not known", svc, orWord(on, "no named volume"), name)
+		}
+	}
+	return live, nil
+}
+
+// The labels on a volume: Compose's, and migrate's on the ones it makes.
+const (
+	labelVolume = "com.docker.compose.volume"
+	labelOwner  = "varlatch.migrate.id"
+)
+
 // volumeFormat is what migrate reads of a volume.
-const volumeFormat = `{{json .Name}} {{json .CreatedAt}} {{json (index .Labels "` + labelProject + `")}}`
+const volumeFormat = `{{json .Name}} {{json .CreatedAt}} {{json .Mountpoint}} {{json (index .Labels "` + labelProject + `")}} {{json (index .Labels "` + labelVolume + `")}} {{json (index .Labels "` + labelOwner + `")}}`
 
 // volume is a volume's identity (nil when it is not there).
 func (c *Compose) volume(ctx context.Context, name string) (*VolumeRecord, error) {
@@ -366,15 +412,101 @@ func (c *Compose) volume(ctx context.Context, name string) (*VolumeRecord, error
 	}
 	var v VolumeRecord
 	dec := json.NewDecoder(bytes.NewReader(r.Answer))
-	for _, f := range []*string{&v.Name, &v.CreatedAt, &v.Project} {
+	for _, f := range []*string{&v.Name, &v.CreatedAt, &v.Mountpoint, &v.Project, &v.Key, &v.Owner} {
 		if err := dec.Decode(f); err != nil {
-			return nil, fmt.Errorf("docker volume inspect %s did not give the volume's name, creation and labels", name)
+			return nil, fmt.Errorf("docker volume inspect %s did not give the volume's name, creation, place and labels", name)
 		}
 	}
 	if v.Name != name {
 		return nil, nil
 	}
 	return &v, nil
+}
+
+// differs says how v is not the recorded volume ("" when it is): by when
+// it was made, where it is, and its labels, not by its name alone.
+func (v VolumeRecord) differs(want VolumeRecord) string {
+	switch {
+	case v.Name != want.Name:
+		return fmt.Sprintf("it is %s, not %s", v.Name, want.Name)
+	case !sameTime(v.CreatedAt, want.CreatedAt):
+		return fmt.Sprintf("it was made %s, and the journal's %s", v.CreatedAt, orWord(want.CreatedAt, "was not there"))
+	case v.Mountpoint != want.Mountpoint:
+		return fmt.Sprintf("it is at %s, and the journal's at %s", v.Mountpoint, want.Mountpoint)
+	case v.Project != want.Project || v.Key != want.Key || v.Owner != want.Owner:
+		return fmt.Sprintf("its labels (project %s, volume %s, migration %s) are not the journal's (%s, %s, %s)", orWord(v.Project, "none"), orWord(v.Key, "none"), orWord(v.Owner, "none"),
+			orWord(want.Project, "none"), orWord(want.Key, "none"), orWord(want.Owner, "none"))
+	}
+	return ""
+}
+
+// ours is whether v is the plan's i-th fresh volume: labelled with the
+// migration's id, and, once that is journalled, the very one made.
+func (plan RebuildRecord) ours(i int, v VolumeRecord) bool {
+	return plan.Owner != "" && v.Owner == plan.Owner && (i >= len(plan.Made) || v.differs(plan.Made[i]) == "")
+}
+
+// MakeVolumes makes the plan's fresh volumes, labelled with the migration's
+// id, and gives what they are. Docker answers a name that is there with
+// the volume there: one without the label is another's, refused.
+func (c *Compose) MakeVolumes(ctx context.Context, plan RebuildRecord) ([]VolumeRecord, error) {
+	p, _, err := c.verified(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if plan.Owner == "" {
+		return nil, errors.New("the journal's rebuild names no migration its volumes are of")
+	}
+	keys := stockKeys
+	if len(plan.Keys) == 3 {
+		keys = plan.Keys
+	}
+	var out []VolumeRecord
+	for i, name := range plan.Volumes {
+		r, err := c.docker(ctx, []string{"volume", "create", "--label", labelProject + "=" + p.Name, "--label", labelVolume + "=" + keys[i], "--label", labelOwner + "=" + plan.Owner, name}, nil)
+		if err != nil {
+			return nil, err
+		}
+		if r.Code != 0 {
+			return nil, failure("docker volume create "+name, r)
+		}
+		v, err := c.volume(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil || v.Owner != plan.Owner || v.Project != p.Name {
+			return nil, fmt.Errorf("the volume %s is there, and is not this migration's (its label %s is not %s): the reverse does not use it", name, labelOwner, plan.Owner)
+		}
+		users, err := c.volumeUsers(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if len(users) > 0 {
+			return nil, fmt.Errorf("the fresh volume %s is used by %s already", name, strings.Join(users, ", "))
+		}
+		out = append(out, *v)
+	}
+	return out, nil
+}
+
+// checkMade refuses fresh volumes that are not the ones MakeVolumes made.
+func (c *Compose) checkMade(ctx context.Context, plan RebuildRecord) error {
+	if len(plan.Made) != len(plan.Volumes) || plan.Owner == "" {
+		return errors.New("the journal does not record the fresh volumes the reverse made")
+	}
+	for i, name := range plan.Volumes {
+		v, err := c.volume(ctx, name)
+		if err != nil {
+			return err
+		}
+		if v == nil {
+			return fmt.Errorf("the fresh volume %s is not there", name)
+		}
+		if why := v.differs(plan.Made[i]); why != "" || v.Owner != plan.Owner {
+			return fmt.Errorf("the volume %s is not the fresh one the reverse made: %s", name, orWord(why, "another migration's"))
+		}
+	}
+	return nil
 }
 
 var stockKeys = []string{postgresKey, convexKey, stateKey}
@@ -423,6 +555,42 @@ services:
         condition: service_healthy
 `
 }
+
+// routePath is where the proxy's file goes, as Coolify's proxy reads them.
+const routePath = "/data/coolify/proxy/dynamic/varlatch-rollback.yaml"
+
+// RouteFile: a Traefik router for the origin's host, above those the
+// containers' labels give, to the dashboard's container by its name (which
+// it keeps while it is not deployed again), with the certificate the
+// proxy's resolver has for the host.
+func (c *Compose) RouteFile(ctx context.Context, origin string) (string, string, error) {
+	p, all, err := c.verified(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	var names []string
+	for _, l := range all {
+		if l.project == p.Name && l.service == dashboardService && !l.isOneOff() {
+			names = append(names, l.name)
+		}
+	}
+	if len(names) != 1 || names[0] == "" {
+		return "", "", fmt.Errorf("the installation has %d %s containers, not one: what the address goes back to is not known", len(names), dashboardService)
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Hostname() == "" {
+		return "", "", fmt.Errorf("the journal's address %q has no host", origin)
+	}
+	entry, tls := "http", ""
+	if u.Scheme == "https" {
+		entry, tls = "https", "      tls:\n        certResolver: letsencrypt\n"
+	}
+	return routePath, "http:\n  routers:\n    varlatch-rollback:\n      rule: \"Host(`" + u.Hostname() + "`)\"\n      entryPoints: [" + entry + "]\n      priority: 100000\n      service: varlatch-rollback\n" + tls +
+		"  services:\n    varlatch-rollback:\n      loadBalancer:\n        servers:\n          - url: \"http://" + names[0] + ":80\"\n", nil
+}
+
+// dashboardService is the source's dashboard in its Compose file.
+const dashboardService = "varlatch-web"
 
 // composeFiles is COMPOSE_FILE's value naming migrate's file after the
 // installation's own: its value now, else the project's files, by their
@@ -491,8 +659,12 @@ func (c *Compose) compose(ctx context.Context, what string, args ...string) erro
 // started on its fresh volume (its init scripts make the roles and
 // databases). Each step is done again harmlessly.
 func (c *Compose) Rebuild(ctx context.Context, plan RebuildRecord) error {
-	p, err := c.project(ctx)
+	c.reversed = true
+	p, _, err := c.verified(ctx)
 	if err != nil {
+		return err
+	}
+	if err := c.checkMade(ctx, plan); err != nil {
 		return err
 	}
 	if err := c.compose(ctx, "docker compose stop", "stop", "varlatchd", "convex-backend", "postgres"); err != nil {
@@ -564,8 +736,12 @@ var dataMounts = []struct{ service, target string }{{"postgres", postgresTarget}
 // from its own file, without migrate's: they then run on the retained
 // volumes, and answer as the same installation and release.
 func (c *Compose) CheckRebuilt(ctx context.Context, plan RebuildRecord, convex bool) error {
+	c.reversed = true
 	p, all, err := c.verified(ctx)
 	if err != nil {
+		return err
+	}
+	if err := c.checkMade(ctx, plan); err != nil {
 		return err
 	}
 	if err := c.checkVolumes(ctx, plan); err != nil {
@@ -608,8 +784,8 @@ func (c *Compose) rebuiltHelp(p *ComposeProject, plan RebuildRecord) string {
 		return err.Error()
 	}
 	files := append(slices.Clone(p.Files), path)
-	return fmt.Sprintf("to run it on them again: 1. set COMPOSE_FILE=%s in %s; 2. in %s: docker %s up -d --no-deps postgres convex-backend %s (it makes those that are on another volume again; no volume is removed)",
-		value, c.envPath(), c.Directory, strings.Join(c.globalArgs(p, files), " "), service)
+	return fmt.Sprintf("to run it on them again: 1. set COMPOSE_FILE=%s in %s; 2. docker %s up -d --no-deps postgres convex-backend %s (it makes those that are on another volume again; no volume is removed)",
+		value, c.envPath(), shellArgs(c.globalArgs(p, files)), service)
 }
 
 // importAnswerLimit bounds what the import's standard output keeps: its
@@ -669,23 +845,18 @@ func (c *Compose) ExportForCheck(ctx context.Context, runKey []byte) (string, er
 }
 
 // StartServing: varlatchd up, then the shape's ingress (Caddy, or the
-// dashboard an own proxy targets); Coolify's proxy routes by itself.
+// dashboard an own proxy or Coolify's targets).
 func (c *Compose) StartServing(ctx context.Context, kind Ingress) error {
 	if err := c.compose(ctx, "docker compose up -d varlatchd", "up", "-d", service); err != nil {
 		return err
-	}
-	if kind == Coolify {
-		return nil
 	}
 	return c.StartIngress(ctx, kind, false)
 }
 
 // StopServing: the shape's ingress, then varlatchd.
 func (c *Compose) StopServing(ctx context.Context, kind Ingress) error {
-	if kind != Coolify {
-		if err := c.StopIngress(ctx, kind); err != nil {
-			return err
-		}
+	if err := c.StopIngress(ctx, kind); err != nil {
+		return err
 	}
 	return c.compose(ctx, "docker compose stop varlatchd", "stop", service)
 }
@@ -697,6 +868,7 @@ func (c *Compose) StopServing(ctx context.Context, kind Ingress) error {
 // migrated-out gate made again if the import lifted it; varlatchd started
 // behind it, as the forward migration left it.
 func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
+	c.reversed = true
 	if err := c.compose(ctx, "docker compose stop", "stop", service, "convex-backend", "postgres"); err != nil {
 		return err
 	}
@@ -716,23 +888,32 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 	if err := c.compose(ctx, "docker compose up -d postgres convex-backend", "up", "-d", "postgres", "convex-backend"); err != nil {
 		return err
 	}
-	for _, v := range plan.Volumes {
+	for i, name := range plan.Volumes {
+		// Only a volume this migration made (its label, and, once it is
+		// journalled, the very one): whatever else has the name is left.
+		v, err := c.volume(ctx, name)
+		if err != nil {
+			return err
+		}
+		if v == nil || !plan.ours(i, *v) {
+			continue
+		}
 		// Asked directly before its removal: no container, running or
 		// stopped, still uses the fresh volume (the services are back on
 		// their own ones).
-		users, err := c.volumeUsers(ctx, v)
+		users, err := c.volumeUsers(ctx, name)
 		if err != nil {
 			return err
 		}
 		if len(users) > 0 {
-			return fmt.Errorf("the reverse's fresh volume %s is still used by %s: left as it is", v, strings.Join(users, ", "))
+			return fmt.Errorf("the reverse's fresh volume %s is still used by %s: left as it is", name, strings.Join(users, ", "))
 		}
-		r, err := c.docker(ctx, []string{"volume", "rm", "-f", v}, nil)
+		r, err := c.docker(ctx, []string{"volume", "rm", "-f", name}, nil)
 		if err != nil {
 			return err
 		}
 		if r.Code != 0 {
-			return failure("docker volume rm "+v, r)
+			return failure("docker volume rm "+name, r)
 		}
 	}
 	// The one-off commands below and varlatchd itself run in varlatchd's

@@ -179,18 +179,26 @@ type RebuildRecord struct {
 	// OverrideWas is the file beside Override that keeps an earlier
 	// reverse's, which an undo puts back.
 	OverrideWas string `json:"overrideWas,omitempty"`
+	// Owner is the migration's id, the label on the fresh volumes it makes;
+	// Made are those, once made. An undo removes only what matches both.
+	Owner string         `json:"owner,omitempty"`
+	Made  []VolumeRecord `json:"made,omitempty"`
 	// Retained are the Postgres and the Convex volume the installation ran
 	// on before the reverse, as they were then: --finish --delete-old-data
 	// removes these, and nothing by a name it makes up.
 	Retained []VolumeRecord `json:"retained,omitempty"`
 }
 
-// VolumeRecord is a volume's identity: its name, when it was made, and
-// Compose's project label on it ("" for none).
+// VolumeRecord is a volume's identity: its name, when it was made, where
+// it is, and what its labels say: Compose's project and key, and the
+// migration that made it ("" for none).
 type VolumeRecord struct {
-	Name      string `json:"name"`
-	CreatedAt string `json:"createdAt"`
-	Project   string `json:"project"`
+	Name       string `json:"name"`
+	CreatedAt  string `json:"createdAt"`
+	Mountpoint string `json:"mountpoint"`
+	Project    string `json:"project"`
+	Key        string `json:"key,omitempty"`
+	Owner      string `json:"owner,omitempty"`
 }
 
 // TSImportRecord is the TypeScript release's `admin migration import`.

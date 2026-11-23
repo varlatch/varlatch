@@ -71,8 +71,8 @@ func (w *world) coolifyLayout() {
 const (
 	containersFormat = `{{json (index .Config.Labels "com.docker.compose.project")}} {{json (index .Config.Labels "com.docker.compose.service")}} ` +
 		`{{json (index .Config.Labels "com.docker.compose.project.config_files")}} {{json (index .Config.Labels "com.docker.compose.project.working_dir")}} ` +
-		`{{json (index .Config.Labels "com.docker.compose.oneoff")}} {{json .State.Status}} {{json .Mounts}}`
-	volumeFormat = `{{json .Name}} {{json .CreatedAt}} {{json (index .Labels "com.docker.compose.project")}}`
+		`{{json (index .Config.Labels "com.docker.compose.oneoff")}} {{json .Name}} {{json .State.Status}} {{json .Mounts}}`
+	volumeFormat = `{{json .Name}} {{json .CreatedAt}} {{json .Mountpoint}} {{json (index .Labels "com.docker.compose.project")}} {{json (index .Labels "com.docker.compose.volume")}} {{json (index .Labels "varlatch.migrate.id")}}`
 )
 
 const overrideFile = "docker-compose.varlatch-rollback.yml"
@@ -180,10 +180,13 @@ func mountAsConfigured(args []string) error {
 }
 
 // container is one of the host's Compose containers.
-type container struct{ id, project, service, files, dir, status, mounts string }
+type container struct {
+	id, project, service, files, dir, status, mounts string
+	volumes                                          []string
+}
 
 func (c container) print() {
-	for _, v := range []string{c.project, c.service, c.files, c.dir, "False", c.status} {
+	for _, v := range []string{c.project, c.service, c.files, c.dir, "False", "/" + c.id, c.status} {
 		b, _ := json.Marshal(v)
 		fmt.Print(string(b), " ")
 	}
@@ -203,11 +206,7 @@ func containers() []container {
 	if _, err := os.Stat(state("down")); err == nil {
 		down = true
 	}
-	services := []string{"postgres", "varlatchd", "convex-backend", "varlatch-web"}
-	if sharedNamespace() {
-		services = append(services, "tailscale")
-	}
-	for _, svc := range services {
+	for _, svc := range []string{"postgres", "varlatchd", "convex-backend", "varlatch-web", "tailscale", "caddy"} {
 		c := container{id: "g5-" + svc + "-1", project: s.Project, service: svc, files: strings.Join(files, ","), dir: s.Dir, status: "running", mounts: "[]"}
 		if stopped(svc) {
 			if down {
@@ -215,14 +214,26 @@ func containers() []container {
 			}
 			c.status = "exited"
 		}
+		mounts := []map[string]string{{"Type": "bind", "Source": "/x", "Destination": "/x"}}
 		if t, ok := dataTargets[svc]; ok {
-			c.mounts = fmt.Sprintf(`[{"Type":"bind","Source":"/x","Destination":"/x"},{"Type":"volume","Name":%q,"Destination":%q}]`, mounted(svc), t)
+			c.volumes = []string{mounted(svc)}
+			mounts = append(mounts, map[string]string{"Type": "volume", "Name": mounted(svc), "Destination": t})
 		}
+		for _, v := range map[string][]string{"tailscale": {"tailscale-state", "tailscale-socket"}, "caddy": {"caddy-data", "caddy-config"}}[svc] {
+			c.volumes = append(c.volumes, s.Project+"_"+v)
+			mounts = append(mounts, map[string]string{"Type": "volume", "Name": s.Project + "_" + v, "Destination": "/" + v})
+		}
+		b, _ := json.Marshal(mounts)
+		c.mounts = string(b)
 		out = append(out, c)
 	}
 	if b, err := os.ReadFile(state("stranger")); err == nil {
 		dir := string(b)
-		out = append(out, container{"g5-stranger-1", s.Project, "postgres", filepath.Join(dir, "docker-compose.yml"), dir, "running", "[]"})
+		files := filepath.Join(dir, "docker-compose.yml")
+		if dir == s.Dir {
+			files = strings.Join([]string{filepath.Join(dir, s.Files[0]), filepath.Join(dir, "other.yml")}, ",")
+		}
+		out = append(out, container{id: "g5-stranger-1", project: s.Project, service: "postgres", files: files, dir: dir, status: "running", mounts: "[]"})
 	}
 	return out
 }
@@ -231,11 +242,47 @@ func containers() []container {
 func volumeUsers(name string) []string {
 	var out []string
 	for _, c := range containers() {
-		if dataTargets[c.service] != "" && c.mounts != "[]" && mounted(c.service) == name {
+		if slices.Contains(c.volumes, name) {
 			out = append(out, c.id)
 		}
 	}
 	return out
+}
+
+// printVolume is `docker volume inspect`'s answer (a volume made again by
+// the test: another-<name>).
+func printVolume(name string) {
+	s := shape()
+	key, _ := strings.CutPrefix(name, s.Project+"_")
+	owner, _ := os.ReadFile(state("owner-" + name))
+	at := "2026-01-01T00:00:00Z"
+	if _, err := os.Stat(state("another-" + name)); err == nil {
+		at = "2026-11-01T00:00:00Z"
+	}
+	for _, v := range []string{name, at, "/volumes/" + name, s.Project, key, string(owner)} {
+		b, _ := json.Marshal(v)
+		fmt.Print(string(b), " ")
+	}
+	fmt.Println()
+}
+
+// makeVolume is `docker volume create`: a name that is there is answered.
+func makeVolume(name string, labels []string) error {
+	if volumeThere(name) {
+		return nil
+	}
+	f, err := os.OpenFile(state("volumes"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fmt.Fprintln(f, name)
+	for _, l := range labels {
+		if v, ok := strings.CutPrefix(l, "varlatch.migrate.id="); ok {
+			return os.WriteFile(state("owner-"+name), []byte(v), 0o600)
+		}
+	}
+	return nil
 }
 
 // volumeThere is the stand-in's Docker volumes: the project's own (its
@@ -268,7 +315,12 @@ func printConfig(more map[string]map[string]any) {
 		key := s.Prefix + dataKey(svc)
 		m["volumes"] = []any{map[string]any{"type": "volume", "source": key, "target": target, "volume": map[string]any{}}}
 		services[svc] = m
-		volumes[key] = map[string]any{"name": configuredVolume(svc)}
+		name := configuredVolume(svc)
+		if b, err := os.ReadFile(state("renamed-" + svc)); err == nil {
+			// The operator's change of the volume's name: in the files.
+			name = string(b)
+		}
+		volumes[key] = map[string]any{"name": name}
 	}
 	if s.Prefix != "" {
 		services["varlatch-migrate"] = map[string]any{"networks": map[string]any{s.Project: nil}}
@@ -298,6 +350,11 @@ func (w *world) redeploy() {
 			t.Fatal(err)
 		}
 	}
+	for _, svc := range []string{"postgres", "convex-backend", "varlatchd", "varlatch-web"} {
+		if err := setStopped(svc, false); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // recover does what migrate said: COMPOSE_FILE set, and the docker compose
@@ -305,7 +362,7 @@ func (w *world) redeploy() {
 func (w *world) recover(said string) {
 	t := w.t
 	t.Helper()
-	m := regexp.MustCompile(`set (COMPOSE_FILE=\S+) in \S+; 2\. in \S+: docker (compose .*? up -d --no-deps postgres convex-backend varlatchd) `).FindStringSubmatch(said)
+	m := regexp.MustCompile(`set (COMPOSE_FILE=\S+) in \S+; 2\. docker (compose .*? up -d --no-deps postgres convex-backend varlatchd) `).FindStringSubmatch(said)
 	if m == nil {
 		t.Fatalf("no recovery said:\n%s", said)
 	}
@@ -327,8 +384,37 @@ func (w *world) recover(said string) {
 	}
 }
 
+// The operator's steps on Coolify's proxy. Both applications' containers
+// keep the router their labels give them: while the TypeScript dashboard
+// runs, the name may reach it, whatever Coolify's domain setting says.
+// domainToGo is the domain set on the Go application and that deployed.
+func (w *world) domainToGo() { w.flag("go-domain") }
+
+// routeBack is the operator's route to the dashboard in the proxy;
+// routeAway removes it.
+func (w *world) routeBack() { w.flag("route-ts") }
+
+func (w *world) routeAway() {
+	w.t.Helper()
+	if err := os.Remove(filepath.Join(w.stateDir, "route-ts")); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+func (w *world) flag(name string) {
+	w.t.Helper()
+	if err := os.WriteFile(filepath.Join(w.stateDir, name), nil, 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+func (w *world) has(name string) bool {
+	_, err := os.Stat(filepath.Join(w.stateDir, name))
+	return err == nil
+}
+
 // Coolify's layout, the TypeScript application deployed again while the
-// reverse waits for the domain: it answers at the address as the same
+// reverse is in its transfer: it answers at the address as the same
 // installation and release, from the retained volumes. Each --resume
 // refuses, Go running and isolated, nothing of either side changed; what
 // migrate says puts it back on the fresh volumes, and the reverse
@@ -338,15 +424,12 @@ func (w *world) recover(said string) {
 func TestG5CoolifyRedeployed(t *testing.T) {
 	w := migratedWorld(t, false, true)
 	old := w.oldDB()
-	if code := w.rollback("", "--rollback"); code != 75 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "do not Deploy or Redeploy the TypeScript application") {
-		t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	w.routeBack()
+	if code := w.rollback("entered rollback-transfer", "--rollback"); code != -1 {
+		t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
-	waiting := rbState{"rollback-transfer", "rollback-transfer", "target-gated", "", true, true, true}
-	w.expectReverse("waiting for the move", waiting)
+	w.expectReverse("killed in the transfer", rbState{"rollback-transfer", "rollback-transfer", "none", "", true, true, true})
 	w.redeploy()
-	if err := os.Remove(filepath.Join(w.stateDir, "web-stopped")); err != nil {
-		t.Fatal(err)
-	}
 	for range 2 {
 		before := len(w.calls("docker-calls"))
 		if code := w.rollback("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "is not on the fresh volumes the reverse rebuilt it on") ||
@@ -354,7 +437,7 @@ func TestG5CoolifyRedeployed(t *testing.T) {
 			t.Fatalf("--resume once deployed again: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
 		for _, c := range w.calls("docker-calls")[before:] {
-			if !strings.HasPrefix(c, "ps ") && !strings.HasPrefix(c, "inspect ") && !strings.HasPrefix(c, "compose config ") {
+			if !strings.HasPrefix(c, "ps ") && !strings.HasPrefix(c, "inspect ") && !strings.HasPrefix(c, "compose config ") && !strings.HasPrefix(c, "volume inspect ") {
 				t.Errorf("ran %q", c)
 			}
 		}
@@ -451,9 +534,12 @@ func TestG5AnotherInstallationOfTheProject(t *testing.T) {
 		}
 		w.useState()
 		stranger := filepath.Join(w.stateDir, "stranger")
-		refuses := func(what string, run func() int) {
+		if err := os.WriteFile(filepath.Join(w.compose, "other.yml"), []byte("services: {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		refusesOf := func(what, dir, want string, run func() int) {
 			t.Helper()
-			if err := os.WriteFile(stranger, []byte("/srv/live"), 0o600); err != nil {
+			if err := os.WriteFile(stranger, []byte(dir), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			w.useState()
@@ -461,7 +547,7 @@ func TestG5AnotherInstallationOfTheProject(t *testing.T) {
 			src, tgt := w.phases()
 			code := run()
 			out := string(w.outputs[len(w.outputs)-1])
-			if code != 1 || !strings.Contains(out, "has a postgres container made from /srv/live (files /srv/live/docker-compose.yml), not from "+w.compose) {
+			if code != 1 || !strings.Contains(out, want) {
 				t.Fatalf("%s: %d\n%s", what, code, out)
 			}
 			for _, c := range w.calls("docker-calls")[before:] {
@@ -476,6 +562,12 @@ func TestG5AnotherInstallationOfTheProject(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		refuses := func(what string, run func() int) {
+			t.Helper()
+			refusesOf(what, "/srv/live", "has a postgres container made from /srv/live (files /srv/live/docker-compose.yml), not from "+w.compose, run)
+			// Of this directory, by another overlay.
+			refusesOf(what+", another overlay", w.compose, filepath.Join(w.compose, "other.yml"), run)
+		}
 		refuses("a new migration", func() int { return w.run("") })
 		if code := w.run("barrier held"); code != -1 {
 			t.Fatalf("not killed: %d", code)
@@ -488,15 +580,16 @@ func TestG5AnotherInstallationOfTheProject(t *testing.T) {
 		code := w.run("")
 		if coolify && code == 75 {
 			refuses("--resume in the transfer", func() int { return w.run("", "--resume") })
-			if err := os.WriteFile(filepath.Join(w.stateDir, "web-stopped"), nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			w.domainToGo()
 			code = w.run("", "--resume")
 		}
 		if code != 0 {
 			t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
 		refuses("--rollback", func() int { return w.rollback("", "--rollback") })
+		if coolify {
+			w.routeBack()
+		}
 		if code := w.rollback("entered rollback-imported", "--rollback"); code != -1 {
 			t.Fatalf("not killed: %d", code)
 		}
@@ -504,6 +597,9 @@ func TestG5AnotherInstallationOfTheProject(t *testing.T) {
 		refuses("--abort of the reverse", func() int { return w.rollback("", "--abort") })
 		if code := w.rollback("", "--abort"); code != 0 {
 			t.Fatalf("--abort of the reverse: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if coolify {
+			w.routeAway()
 		}
 		w.expectReverse("undone", undoneState)
 		if res, err := http.Get(w.origin + "/v1/meta"); err == nil {

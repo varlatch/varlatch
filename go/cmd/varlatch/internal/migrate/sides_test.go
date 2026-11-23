@@ -65,7 +65,7 @@ func (s *scripted) unnamed(name string, args []string) []string {
 	s.argv = append(s.argv, slices.Clone(args))
 	rest, files := args[1:], 0
 	var project, dir string
-	for len(rest) > 1 {
+	for len(rest) > 1 || len(rest) == 1 && !strings.HasPrefix(rest[0], "-") {
 		switch rest[0] {
 		case "--project-name":
 			project = rest[1]
@@ -554,7 +554,8 @@ func TestComposeIngress(t *testing.T) {
 		kind Ingress
 		want []string
 	}{{Public, []string{"docker compose stop caddy", "docker compose ps -a -q caddy", "docker compose up -d --no-deps --force-recreate caddy"}},
-		{Proxy, []string{"docker compose stop varlatch-web", "docker compose ps -a -q varlatch-web", "docker compose up -d --no-deps --force-recreate varlatch-web"}}} {
+		{Proxy, []string{"docker compose stop varlatch-web", "docker compose ps -a -q varlatch-web", "docker compose up -d --no-deps --force-recreate varlatch-web"}},
+		{Coolify, []string{"docker compose stop varlatch-web", "docker compose ps -a -q varlatch-web", "docker compose up -d --no-deps --force-recreate varlatch-web"}}} {
 		run.ran = nil
 		if err := c.StopIngress(ctx, c2.kind); err != nil {
 			t.Fatal(err)
@@ -566,8 +567,8 @@ func TestComposeIngress(t *testing.T) {
 			t.Fatalf("%s: %q", c2.kind, run.ran)
 		}
 	}
-	if err := c.StopIngress(ctx, Coolify); err == nil {
-		t.Fatal("the Coolify shape has nothing here to stop")
+	if err := c.StopIngress(ctx, "another"); err == nil {
+		t.Fatal("another shape has nothing here to stop")
 	}
 	// A container that serves (a retry after it came up) is started again
 	// without being recreated, so a dashboard still starting is not killed

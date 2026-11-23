@@ -51,6 +51,8 @@ type Compose struct {
 	// kept is the project the migration's journal records (KeepProject);
 	// resolved the one in use, once resolved.
 	kept, resolved *ComposeProject
+	// reversed: a journal records a reverse of the installation.
+	reversed bool
 }
 
 // service is the source's varlatchd service in its Compose file.
@@ -325,6 +327,9 @@ func (c *Compose) Ingress(ctx context.Context) (IngressInfo, error) {
 // shape: Caddy for public ingress, the dashboard for an own proxy.
 func ingressService(kind Ingress) (string, error) {
 	switch kind {
+	case Coolify:
+		// Its container's labels are the proxy's router for the domain.
+		return dashboardService, nil
 	case Public:
 		return "caddy", nil
 	case Proxy:

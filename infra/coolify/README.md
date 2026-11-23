@@ -337,8 +337,8 @@ pins the published image by digest using Coolify environment variables.
    If you are preparing the target for `varlatch migrate --ingress coolify`,
    **leave the application in setup mode (do not click Deploy yet and do not
    assign the production domain yet)**: nothing should listen on the target
-   until `varlatch migrate` stops (exit `75`) and asks you to **Deploy** it and
-   move the domain over.
+   until `varlatch migrate` stops (exit `75`) and asks you to move the domain
+   over (first) and **Deploy** it (then).
 
    Ensure `/srv/varlatch/varlatchd.conf` (or `VARLATCH_CONFIG_FILE`) already
    exists on the host as a regular file before clicking **Deploy**: if a
