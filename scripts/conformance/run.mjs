@@ -46,7 +46,9 @@ import { redactTokens } from "../redact-tokens.mjs"; // public CI logs: mask Var
  *              With --walkthrough-commit the evidence is read from that
  *              commit, which may differ from the checkout's only under
  *              docs/evidence/ (lib/gate-evidence.mjs), and nothing of it is
- *              checked out. --candidate is the commit the run must be at:
+ *              checked out. The commits and the file are checked before the
+ *              target starts, what the file says after the suites
+ *              (gate-evidence.mjs judges it first, in CI before the build). --candidate is the commit the run must be at:
  *              the checkout's, or the run does not start
  *
  * The target's expected failures (expect/<target name>.json, lib/expect.mjs)

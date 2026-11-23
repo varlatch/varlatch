@@ -13,7 +13,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { judgeGate, walkthroughProblems } from "../lib/gate.mjs";
+import { createHash } from "node:crypto";
+import { evidenceText, judgeGate, readWalkthrough, walkthroughProblems } from "../lib/gate.mjs";
 import { evidenceDiffProblems, EvidenceRefused, evidencePathProblem, fetchEvidenceCommit, headCommit, readWalkthroughAt, refProblem } from "../lib/gate-evidence.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -212,6 +213,78 @@ test("a wrong Candidate commit, an unticked row and the other content rules are 
   const first = evidence(good);
   const { branch } = evidence((root) => write(root, PATH, signed(first.commit)));
   assert.match(preflight(branch).out, /does not match the run's commit/);
+});
+
+/** Text and raw bytes, joined. */
+const bytes = (...parts) => Buffer.concat(parts.map((p) => Buffer.from(p)));
+// The signed record with the bytes put into a Notes-like line before the sign-off.
+const withBytes = (...raw) => {
+  const [head, tail] = signed(candidate).split("## 7. Owner Sign-Off");
+  return bytes(head, "Notes: ", ...raw, "\n\n## 7. Owner Sign-Off", tail);
+};
+// Bytes a forgiving reader would replace, drop or read as another line.
+const NOT_TEXT = [
+  ["a byte no UTF-8 has", [[0xff]], /is not valid UTF-8/],
+  ["a truncated character", [[0xe2, 0x82]], /is not valid UTF-8/],
+  ["an overlong NUL", [[0xc0, 0x80]], /is not valid UTF-8/],
+  ["a surrogate", [[0xed, 0xa0, 0x80]], /is not valid UTF-8/],
+  ["a code point past the last", [[0xf4, 0x90, 0x80, 0x80]], /is not valid UTF-8/],
+  ["a NUL", ["a", [0x00], "b"], /has a NUL character/],
+  ["a byte order mark inside", [[0xef, 0xbb, 0xbf]], /has a byte order mark/],
+  ["a lone CR, a row of its own to a reader", ["x\r| 9 | [ ] | hidden |"], /has a control character/],
+  ["a vertical tab", [[0x0b]], /has a control character/],
+  ["an escape", [[0x1b], "[2K"], /has a control character/],
+  ["a C1 next line", [[0xc2, 0x85]], /has a control character/],
+  ["a line separator", [[0xe2, 0x80, 0xa8]], /has a control character/],
+  ["a paragraph separator", [[0xe2, 0x80, 0xa9]], /has a control character/],
+];
+
+test("malformed UTF-8, a byte order mark, NUL and other control characters are refused, not replaced", () => {
+  for (const [name, raw, pattern] of NOT_TEXT) {
+    const { branch, commit } = evidence((root) => write(root, PATH, withBytes(...raw)));
+    const r = preflight(branch);
+    assert.equal(r.status, 1, `${name}: ${r.out}`);
+    assert.match(r.out, pattern, name);
+    assert.equal(r.output, "", name);
+    refusedRead(commit, pattern);
+  }
+  // A byte order mark where one usually is, and UTF-16.
+  for (const [raw, pattern] of [[bytes([0xef, 0xbb, 0xbf], signed(candidate)), /has a byte order mark/], [Buffer.from(signed(candidate), "utf16le"), /NUL|UTF-8/]]) {
+    const { commit } = evidence((root) => write(root, PATH, raw));
+    refusedRead(commit, pattern);
+  }
+});
+
+test("LF, CRLF, tabs and UTF-8 are judged byte for byte: the recorded hash is of the committed file", () => {
+  for (const [name, raw] of [
+    ["LF", bytes(signed(candidate))],
+    ["CRLF", bytes(signed(candidate).replace(/\n/g, "\r\n"))],
+    ["tabs and other scripts", withBytes("a\tb: \u00e9, \u2713, \ud83d\ude80")],
+  ]) {
+    const { branch, commit } = evidence((root) => write(root, PATH, raw));
+    // As committed: no line-ending conversion on the way.
+    assert.deepEqual(Buffer.from(spawnSync("git", ["cat-file", "blob", `${commit}:${PATH}`], { cwd: author, env }).stdout), raw, name);
+    const r = preflight(branch);
+    assert.equal(r.status, 0, `${name}: ${r.out}`);
+    const w = readWalkthroughAt(checkout, { path: PATH, candidate, evidence: commit });
+    assert.equal(w.sha256, createHash("sha256").update(raw).digest("hex"), name);
+    assert.deepEqual(Buffer.from(w.content), raw, name);
+    assert.equal(w.size, raw.length, name);
+    assert.deepEqual(walkthroughProblems(w, { commit: candidate }), [], name);
+  }
+});
+
+test("a file of the checkout is read the same way: bytes that are not plain text fail the gate", () => {
+  const root = join(dir, "working-tree");
+  for (const [name, raw, pattern] of NOT_TEXT) {
+    write(root, PATH, withBytes(...raw));
+    const w = readWalkthrough(join(root, PATH), root);
+    assert.equal(w.content, null, name);
+    assert.match(judgeGate({ inventory, run: { ...run, commit: candidate }, walkthrough: w }).problems.join(), pattern, name);
+  }
+  write(root, PATH, signed(candidate).replace(/\n/g, "\r\n"));
+  assert.deepEqual(walkthroughProblems(readWalkthrough(join(root, PATH), root), { commit: candidate }), []);
+  assert.deepEqual(evidenceText(Buffer.from("a\r\nb\n\tc")), { text: "a\r\nb\n\tc" });
 });
 
 test("a missing ref, a ref that is not a plain name and a checkout elsewhere are refused", () => {

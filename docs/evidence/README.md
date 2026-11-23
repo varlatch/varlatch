@@ -27,29 +27,49 @@ The walkthrough names the candidate's commit, so it cannot be part of it: no
 file holds the hash of the commit it is in. The owner's signed file is
 committed on top of the candidate, in an **evidence commit**, and the gate
 keeps the two apart. It checks out, builds and runs the **candidate**, and
-reads one file, the walkthrough, from the evidence commit. Before anything is
-built, `scripts/conformance/gate-evidence.mjs` (and `run.mjs` again, before
-the target starts) requires all of this, and refuses the run otherwise:
+reads one file, the walkthrough, from the evidence commit. Three checks read
+it, at different times:
 
-- the checkout is at the candidate, and stays there;
-- `walkthrough_ref` is a plain branch, tag or full commit hash that origin
-  has, and the file and the ref are both named;
+- **The workflow's preflight** (`scripts/conformance/gate-evidence.mjs`, right
+  after the checkout, before anything is built) fetches `walkthrough_ref`,
+  checks the two commits and the file, and judges the file's content. A bad
+  file ends the CI run here.
+- **`run.mjs` at startup**, before the target starts, checks the commits and
+  the file again (with `--walkthrough-commit`), but not its content rules.
+- **`run.mjs` after the suites** judges the content (`judgeGate`).
+
+A direct, local `run.mjs` has no preflight: it fetches nothing, so the evidence
+commit must already be in the repository, and a content problem shows only
+after the suites. Run `gate-evidence.mjs` first to see it at once.
+
+The preflight and `run.mjs` at startup both require all of this, except where
+it says preflight, and refuse the run otherwise:
+
+- the checkout is at the candidate (preflight: and still is after the fetch);
+- preflight: `walkthrough_ref` is a plain branch, tag or full commit hash that
+  origin has, and the file and the ref are both named;
 - the evidence commit's tree is the candidate's, except for **regular files
   added or changed under `docs/evidence/`**. A change anywhere else, a
   deleted or renamed file, a symlink, an executable file or a submodule is
   refused;
 - the walkthrough is a regular file of the evidence commit under
-  `docs/evidence/`, at most 1 MiB, and its content meets the rules below.
+  `docs/evidence/`, at most 1 MiB, and plain text: valid UTF-8, with lines
+  ending in LF or CRLF, and no byte order mark, NUL or other control
+  character. It is judged byte for byte, so the recorded SHA-256 is of exactly
+  what was judged.
 
 The file is read as a blob from git's objects. Nothing of the evidence commit
 is checked out, so nothing of it can run or change what is built. Without
 `--walkthrough-commit`, `run.mjs` reads the file of the checkout (a local
-trial run); the CI gate always names the evidence commit.
+trial run): at startup it must exist and not be a symlink, and the rest,
+plain text included, is judged after the suites. The CI gate always names the
+evidence commit.
 
 #### The content rules
 
-After the run, `judgeGate`
-(`scripts/conformance/lib/gate.mjs`) enforces all of the following rules:
+The rules are `scripts/conformance/lib/gate.mjs`'s. The preflight applies them
+before the build, and `judgeGate` again after the suites; a direct `run.mjs`
+only after the suites:
 
 1. The `--walkthrough` path must resolve inside `docs/evidence/` of the
    checkout (no `..` path traversal).

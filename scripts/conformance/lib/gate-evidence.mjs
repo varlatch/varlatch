@@ -18,7 +18,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { EVIDENCE_DIR } from "./gate.mjs";
+import { EVIDENCE_DIR, evidenceText } from "./gate.mjs";
 
 const HEX_40 = /^[0-9a-f]{40}$/;
 const REGULAR = "100644";
@@ -124,13 +124,15 @@ export function readWalkthroughAt(repoRoot, { path, candidate, evidence }) {
   const size = Number(git(repoRoot, ["cat-file", "-s", entry[3]], `reading ${path}`).toString().trim());
   if (!(size <= MAX_SIZE)) throw new EvidenceRefused(`${path} is ${size} bytes, more than ${MAX_SIZE}`);
   const raw = git(repoRoot, ["cat-file", "blob", entry[3]], `reading ${path}`);
+  const { text, problem } = evidenceText(raw);
+  if (problem) throw new EvidenceRefused(`${path} ${problem}`);
   return {
     path,
     exists: true,
     isSymlink: false,
     size: raw.length,
     sha256: createHash("sha256").update(raw).digest("hex"),
-    content: raw.toString("utf8"),
+    content: text,
     evidenceCommit: evidence,
   };
 }

@@ -108,6 +108,32 @@ export function uncheckedRows(content) {
 }
 const HEX_40 = /^[0-9a-f]{40}$/i;
 
+/** Control characters but tab, LF and the CR of a CRLF; U+0085, U+2028 and U+2029 end a line for some readers. */
+const CONTROL = new RegExp("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]|\\r(?!\\n)|[" + String.fromCharCode(0x2028, 0x2029) + "]");
+const BOM = String.fromCharCode(0xfeff);
+
+/**
+ * The evidence's bytes as the text the rules judge, exactly: { text }, or
+ * { problem } for bytes that are not plain UTF-8 lines. Nothing is replaced
+ * or dropped, so the recorded hash is of what was judged: malformed UTF-8, a
+ * byte order mark and NUL are refused, as is any other control character (a
+ * lone CR among them), which could hide a line from the rules that a reader
+ * sees. Lines end in LF or CRLF.
+ */
+export function evidenceText(raw) {
+  let text;
+  try {
+    // ignoreBOM keeps a byte order mark in the text, to be refused here.
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(raw);
+  } catch {
+    return { problem: "is not valid UTF-8" };
+  }
+  if (text.includes(BOM)) return { problem: "has a byte order mark (U+FEFF)" };
+  if (text.includes(String.fromCharCode(0))) return { problem: "has a NUL character" };
+  if (CONTROL.test(text)) return { problem: "has a control character other than tab, LF and CRLF" };
+  return { text };
+}
+
 /**
  * Reads a browser-walkthrough evidence file for gate mode without following
  * symlinks (neither the file itself nor a symlinked parent escaping repoRoot).
@@ -125,13 +151,15 @@ export function readWalkthrough(file, repoRoot) {
     return { path, exists: true, isSymlink: true, size: 0, sha256: null, content: null };
   }
   const raw = readFileSync(absolute);
+  const { text = null, problem } = evidenceText(raw);
   return {
     path,
     exists: true,
     isSymlink: false,
     size: raw.length,
     sha256: createHash("sha256").update(raw).digest("hex"),
-    content: raw.toString("utf8"),
+    content: text,
+    ...(problem ? { unreadable: problem } : {}),
   };
 }
 
@@ -139,7 +167,7 @@ export function readWalkthrough(file, repoRoot) {
 function walkthroughContentProblems(walkthrough, run) {
   const problems = [];
   if (typeof walkthrough.content !== "string") {
-    problems.push(`the browser-walkthrough evidence ${walkthrough.path} has no readable content`);
+    problems.push(`the browser-walkthrough evidence ${walkthrough.path} ${walkthrough.unreadable ?? "has no readable content"}`);
     return problems;
   }
   const { content } = walkthrough;
