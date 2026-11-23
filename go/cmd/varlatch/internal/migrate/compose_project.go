@@ -39,14 +39,35 @@ const (
 	labelOneOff  = "com.docker.compose.oneoff"
 )
 
-// composeLabels is what migrate reads of a container: these labels only.
-type composeLabels struct {
+// composeContainer is what migrate reads of a Compose container of this
+// host: whose it is, whether it runs, and the volumes it mounts.
+type composeContainer struct {
 	project, service, files, dir, oneOff string
+	status                               string
+	mounts                               []containerMount
 }
 
-// labelsFormat prints them, each as a JSON string (or null).
-const labelsFormat = `{{json (index .Config.Labels "` + labelProject + `")}} {{json (index .Config.Labels "` + labelService + `")}} {{json (index .Config.Labels "` + labelFiles +
-	`")}} {{json (index .Config.Labels "` + labelDir + `")}} {{json (index .Config.Labels "` + labelOneOff + `")}}`
+type containerMount struct {
+	Type        string
+	Name        string
+	Destination string
+}
+
+func (l composeContainer) isOneOff() bool { return strings.EqualFold(l.oneOff, "true") }
+
+// volumeAt is the named volume mounted at target ("" for none).
+func (l composeContainer) volumeAt(target string) string {
+	for _, m := range l.mounts {
+		if m.Destination == target && m.Type == "volume" {
+			return m.Name
+		}
+	}
+	return ""
+}
+
+// containersFormat prints them, each as JSON.
+const containersFormat = `{{json (index .Config.Labels "` + labelProject + `")}} {{json (index .Config.Labels "` + labelService + `")}} {{json (index .Config.Labels "` + labelFiles +
+	`")}} {{json (index .Config.Labels "` + labelDir + `")}} {{json (index .Config.Labels "` + labelOneOff + `")}} {{json .State.Status}} {{json .Mounts}}`
 
 // composeNames and overrideNames are the files Compose reads by itself in
 // a directory, in its order.
@@ -55,54 +76,115 @@ var (
 	overrideNames = []string{"compose.override.yml", "compose.override.yaml", "docker-compose.override.yml", "docker-compose.override.yaml"}
 )
 
-// KeepProject is the project a migration's journal records: the commands
-// that go on with it use it, and refuse when the containers say another.
+// ProjectChangedError is an installation that is not, now, the Compose
+// project a migration started from, or whose project another directory's
+// containers own.
+type ProjectChangedError struct{ msg string }
+
+func (e *ProjectChangedError) Error() string { return e.msg }
+
+// KeepProject is the project a migration's journal records (nil: a new
+// migration takes what is there): the commands that go on with it use it,
+// and refuse when the containers say another.
 func (c *Compose) KeepProject(p *ComposeProject) { c.kept, c.resolved = p, nil }
 
-// CheckProject resolves the project now (and refuses), before anything
-// else of a command is done.
+// CheckProject reads the host's containers again and refuses a project
+// that is not the journal's, not the one this run began with, or not this
+// directory's alone. It comes before anything that changes a state.
 func (c *Compose) CheckProject(ctx context.Context) error {
-	_, err := c.project(ctx)
+	_, _, err := c.verified(ctx)
 	return err
 }
 
-// project is the installation's, resolved once.
+// verified is the project, read again, and the host's Compose containers.
+func (c *Compose) verified(ctx context.Context) (*ComposeProject, []composeContainer, error) {
+	all, err := c.containers(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err := c.resolve(ctx, all)
+	if err != nil {
+		return nil, nil, err
+	}
+	if c.resolved != nil && !sameProject(p, c.resolved) {
+		return nil, nil, &ProjectChangedError{fmt.Sprintf("the Compose project was %s when this began, and is %s now: nothing more was done", c.resolved, p)}
+	}
+	c.resolved = p
+	return p, all, nil
+}
+
+// project is the installation's, as last verified.
 func (c *Compose) project(ctx context.Context) (*ComposeProject, error) {
 	if c.resolved != nil {
 		return c.resolved, nil
 	}
-	p, err := c.resolve(ctx)
-	if err != nil {
-		return nil, err
-	}
-	c.resolved = p
-	return p, nil
+	p, _, err := c.verified(ctx)
+	return p, err
 }
 
-func (c *Compose) resolve(ctx context.Context) (*ComposeProject, error) {
-	live, err := c.liveProject(ctx)
+func (c *Compose) resolve(ctx context.Context, all []composeContainer) (*ComposeProject, error) {
+	live, err := c.liveProject(all)
 	if err != nil {
 		return nil, err
 	}
 	p := live
 	if c.kept != nil {
 		if live != nil && !sameProject(live, c.kept) {
-			return nil, fmt.Errorf("the migration's journal records the Compose project %s, and the containers of %s are now of %s: the installation was started another way since; "+
-				"put it back (docker compose up with the journal's project and files), then run this again; nothing was done", c.kept, c.Directory, live)
+			return nil, &ProjectChangedError{fmt.Sprintf("the migration's journal records the Compose project %s, and the containers of %s are now of %s: the installation was started another way since. "+
+				"Put it back as the journal has it, then run this again (before the barrier, varlatch migrate --abort ends this migration instead, and a new one takes the installation as it is); nothing was done",
+				c.kept, c.Directory, live)}
 		}
 		p = c.kept
+	}
+	if p == nil {
+		// Without containers (a down of this run's), what it began with.
+		p = c.resolved
 	}
 	if p == nil {
 		if p, err = c.projectFromFiles(ctx); err != nil {
 			return nil, err
 		}
 	}
+	// Whatever named it (containers, the journal, files): no other
+	// directory's containers are of that project.
+	for _, l := range all {
+		if l.project != p.Name {
+			continue
+		}
+		if l.dir == "" || realPath(l.dir) != realPath(c.Directory) {
+			return nil, &ProjectChangedError{fmt.Sprintf("the Compose project %s has a %s container made from %s (files %s), not from %s: it is another installation's project too, and migrate would act on it; nothing was done",
+				p.Name, orWord(l.service, "nameless"), orWord(l.dir, "a directory it does not name"), orWord(l.files, "it does not name"), c.Directory)}
+		}
+		// A container that did not change may name files since renamed or
+		// added to; one made from others that are still there is of another
+		// installation under the same name.
+		if files := withoutOverride(labelPaths(l)); len(files) > 0 && !slices.ContainsFunc(files, func(f string) bool { return isOf(p.Files, f) || !isFile(f) }) {
+			return nil, &ProjectChangedError{fmt.Sprintf("the Compose project %s has a %s container made from %s, none of which is among the project's files (%s): migrate would act on another installation's container; nothing was done",
+				p.Name, orWord(l.service, "nameless"), strings.Join(files, ", "), strings.Join(p.Files, ", "))}
+		}
+	}
 	for _, f := range p.Files {
-		if st, err := os.Stat(f); err != nil || !st.Mode().IsRegular() {
-			return nil, fmt.Errorf("the Compose project %s is made from %s, which is not there (or not a file): nothing was done", p.Name, f)
+		if !isFile(f) {
+			return nil, &ProjectChangedError{fmt.Sprintf("the Compose project %s is made from %s, which is not there (or not a file): nothing was done", p.Name, f)}
 		}
 	}
 	return p, nil
+}
+
+func isFile(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.Mode().IsRegular()
+}
+
+func isOf(files []string, f string) bool {
+	return slices.ContainsFunc(files, func(x string) bool { return realPath(x) == realPath(f) })
+}
+
+func orWord(s, word string) string {
+	if s == "" {
+		return word
+	}
+	return s
 }
 
 func (p *ComposeProject) String() string {
@@ -127,50 +209,31 @@ func sameFiles(a, b []string) bool {
 
 // liveProject is the project of the containers made from Directory, by
 // their labels: exactly one; nil when there are no containers. It is
-// refused when they are of two projects, when the project also runs from
-// another directory, when one was made from this directory's files as
-// another directory's project, or when their files, .env and the shell
-// name different ones: never a guess.
-func (c *Compose) liveProject(ctx context.Context) (*ComposeProject, error) {
-	all, err := c.containerLabels(ctx)
-	if err != nil {
-		return nil, err
-	}
+// refused when they are of two projects, when one was made from this
+// directory's files as another directory's project, or when their files,
+// .env and the shell name different ones: never a guess.
+func (c *Compose) liveProject(all []composeContainer) (*ComposeProject, error) {
 	dir := realPath(c.Directory)
-	var here, elsewhere []composeLabels
+	var here []composeContainer
 	for _, l := range all {
 		switch {
-		case strings.EqualFold(l.oneOff, "true") || l.project == "" || l.dir == "":
+		case l.isOneOff() || l.project == "" || l.dir == "":
 		case realPath(l.dir) == dir:
 			here = append(here, l)
-		default:
-			elsewhere = append(elsewhere, l)
-		}
-	}
-	for _, l := range elsewhere {
-		if l.service != service {
-			continue
-		}
-		for _, f := range labelPaths(l) {
-			if realPath(filepath.Dir(f)) == dir {
-				return nil, fmt.Errorf("a %s container of the Compose project %s is made from %s, but its project directory is %s, not %s: give that directory as --from", service, l.project, f, l.dir, c.Directory)
+		case l.service == service:
+			for _, f := range labelPaths(l) {
+				if realPath(filepath.Dir(f)) == dir {
+					return nil, fmt.Errorf("a %s container of the Compose project %s is made from %s, but its project directory is %s, not %s: give that directory as --from", service, l.project, f, l.dir, c.Directory)
+				}
 			}
 		}
 	}
 	if len(here) == 0 {
 		return nil, nil
 	}
-	names := distinct(here, func(l composeLabels) string { return l.project })
+	names := distinct(here, func(l composeContainer) string { return l.project })
 	if len(names) > 1 {
-		return nil, fmt.Errorf("%s holds the containers of %d Compose projects (%s): a migration takes an installation of one; remove the other's containers first", c.Directory, len(names), strings.Join(names, ", "))
-	}
-	for _, l := range elsewhere {
-		if l.project == names[0] {
-			return nil, fmt.Errorf("the Compose project %s runs from %s and from %s: a migration takes an installation of one directory", names[0], c.Directory, l.dir)
-		}
-	}
-	if dirs := distinct(here, func(l composeLabels) string { return realPath(l.dir) }); len(dirs) > 1 {
-		return nil, fmt.Errorf("the Compose project %s names two directories (%s)", names[0], strings.Join(dirs, ", "))
+		return nil, &ProjectChangedError{fmt.Sprintf("%s holds the containers of %d Compose projects (%s): a migration takes an installation of one; remove the other's containers first", c.Directory, len(names), strings.Join(names, ", "))}
 	}
 	p := &ComposeProject{Name: names[0], Dir: here[0].dir}
 	var lists [][]string
@@ -199,20 +262,28 @@ func (c *Compose) liveProject(ctx context.Context) (*ComposeProject, error) {
 			i = slices.IndexFunc(lists, func(x []string) bool { return sameFiles(x, own.files) })
 		}
 		if i < 0 {
-			return nil, fmt.Errorf("the containers of the Compose project %s were made from different files (%s), and %s does not say which are its own: run docker compose up -d with the installation's files, so that they agree", p.Name, listsText(lists), c.Directory)
+			return nil, fmt.Errorf("the containers of the Compose project %s were made from different files (%s), and %s does not say which are its own. %s", p.Name, listsText(lists), c.Directory, c.restoreText(lists[0]))
 		}
 		p.Files = lists[i]
 	}
 	// What the directory and the shell say must be the same.
 	if own != nil && !sameFiles(own.files, p.Files) {
-		return nil, fmt.Errorf("%s names the Compose files %s, but the containers of the project %s were made from %s: run docker compose up -d with the installation's files, so that they agree", own.from, strings.Join(own.files, ", "), p.Name, strings.Join(p.Files, ", "))
+		return nil, &ProjectChangedError{fmt.Sprintf("%s names the Compose files %s, but the containers of the project %s were made from %s. %s", own.from, strings.Join(own.files, ", "), p.Name, strings.Join(p.Files, ", "), c.restoreText(p.Files))}
 	}
 	if v, ok := c.shell("COMPOSE_FILE"); ok {
-		if given := withoutOverride(c.splitFiles(v)); !sameFiles(given, p.Files) {
+		given, err := c.splitFiles(v)
+		if err != nil {
+			return nil, err
+		}
+		if given = withoutOverride(given); !sameFiles(given, p.Files) {
 			return nil, fmt.Errorf("COMPOSE_FILE in the environment names %s, but the containers of the project %s were made from %s: unset it, or name those", strings.Join(given, ", "), p.Name, strings.Join(p.Files, ", "))
 		}
 	}
-	for _, n := range c.namedProjects() {
+	names2, err := c.namedProjects()
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range names2 {
 		if n.value != p.Name {
 			return nil, fmt.Errorf("COMPOSE_PROJECT_NAME in %s is %s, but the containers of %s are of the Compose project %s", n.from, n.value, c.Directory, p.Name)
 		}
@@ -225,9 +296,18 @@ func (c *Compose) liveProject(ctx context.Context) (*ComposeProject, error) {
 	return p, nil
 }
 
-// containerLabels are the labels of every Compose container of this host,
-// running or not.
-func (c *Compose) containerLabels(ctx context.Context) ([]composeLabels, error) {
+// restoreText says how to make .env name files again without a container
+// being made again, and what does make them again.
+func (c *Compose) restoreText(files []string) string {
+	value, err := c.fileList(files)
+	if err != nil {
+		value = strings.Join(files, ":")
+	}
+	return fmt.Sprintf("To keep the containers as they run, set COMPOSE_FILE=%s in %s: that makes none of them again. (docker compose up -d with other files instead makes the containers they change again.)", value, c.envPath())
+}
+
+// containers are the Compose containers of this host, running or not.
+func (c *Compose) containers(ctx context.Context) ([]composeContainer, error) {
 	for try := 0; ; try++ {
 		r, err := c.Run.Run(ctx, c.Directory, c.dockerName(), []string{"ps", "-a", "-q", "--no-trunc", "--filter", "label=" + labelProject}, nil)
 		if err != nil {
@@ -240,7 +320,7 @@ func (c *Compose) containerLabels(ctx context.Context) ([]composeLabels, error) 
 		if len(ids) == 0 {
 			return nil, nil
 		}
-		r, err = c.Run.Run(ctx, c.Directory, c.dockerName(), append([]string{"inspect", "--type", "container", "--format", labelsFormat}, ids...), nil)
+		r, err = c.Run.Run(ctx, c.Directory, c.dockerName(), append([]string{"inspect", "--type", "container", "--format", containersFormat}, ids...), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -251,11 +331,11 @@ func (c *Compose) containerLabels(ctx context.Context) ([]composeLabels, error) 
 			}
 			return nil, failure("docker inspect", r)
 		}
-		var out []composeLabels
+		var out []composeContainer
 		dec := json.NewDecoder(bytes.NewReader(r.Answer))
 		for {
-			var l composeLabels
-			for i, v := range []*string{&l.project, &l.service, &l.files, &l.dir, &l.oneOff} {
+			var l composeContainer
+			for i, v := range []any{&l.project, &l.service, &l.files, &l.dir, &l.oneOff, &l.status, &l.mounts} {
 				err := dec.Decode(v)
 				if i == 0 && errors.Is(err, io.EOF) {
 					if len(out) != len(ids) {
@@ -264,7 +344,7 @@ func (c *Compose) containerLabels(ctx context.Context) ([]composeLabels, error) 
 					return out, nil
 				}
 				if err != nil {
-					return nil, errors.New("docker inspect did not give the Compose containers' labels")
+					return nil, errors.New("docker inspect did not give the Compose containers' labels and mounts")
 				}
 			}
 			out = append(out, l)
@@ -277,7 +357,7 @@ func (c *Compose) containerLabels(ctx context.Context) ([]composeLabels, error) 
 // there: the first part that is a file by itself is one, else the shortest
 // run of parts that is; a part of none is left as it is (and refused later,
 // as a file that is not there).
-func labelPaths(l composeLabels) []string {
+func labelPaths(l composeContainer) []string {
 	abs := func(f string) string {
 		if !filepath.IsAbs(f) {
 			f = filepath.Join(l.dir, f)
@@ -293,7 +373,7 @@ func labelPaths(l composeLabels) []string {
 		f, next := abs(parts[i]), i
 		for k := i; k < len(parts); k++ {
 			whole := abs(strings.Join(parts[i:k+1], ","))
-			if st, err := os.Stat(whole); err == nil && st.Mode().IsRegular() {
+			if isFile(whole) {
 				f, next = whole, k
 				break
 			}
@@ -323,8 +403,12 @@ func (c *Compose) ownFiles() (*ownFiles, error) {
 		return nil, err
 	}
 	if ok && v != "" {
-		if files := withoutOverride(c.splitFiles(v)); len(files) > 0 {
-			return &ownFiles{files: files, from: filepath.Join(c.Directory, ".env") + "'s COMPOSE_FILE"}, nil
+		files, err := c.splitFiles(v)
+		if err != nil {
+			return nil, err
+		}
+		if files = withoutOverride(files); len(files) > 0 {
+			return &ownFiles{files: files, from: c.envPath() + "'s COMPOSE_FILE"}, nil
 		}
 	}
 	dir, err := filepath.Abs(c.Directory)
@@ -357,7 +441,10 @@ func (c *Compose) projectFromFiles(ctx context.Context) (*ComposeProject, error)
 	}
 	var files []string
 	if v, ok := c.shell("COMPOSE_FILE"); ok && v != "" {
-		files = withoutOverride(c.splitFiles(v))
+		if files, err = c.splitFiles(v); err != nil {
+			return nil, err
+		}
+		files = withoutOverride(files)
 	} else {
 		own, err := c.ownFiles()
 		if err != nil {
@@ -381,15 +468,19 @@ func (c *Compose) projectFromFiles(ctx context.Context) (*ComposeProject, error)
 // named is a COMPOSE_PROJECT_NAME, and what sets it.
 type named struct{ value, from string }
 
-func (c *Compose) namedProjects() []named {
+func (c *Compose) namedProjects() ([]named, error) {
 	var out []named
 	if v, ok := c.shell("COMPOSE_PROJECT_NAME"); ok && v != "" {
 		out = append(out, named{v, "the environment"})
 	}
-	if v, ok, err := c.envValue("COMPOSE_PROJECT_NAME"); err == nil && ok && v != "" {
-		out = append(out, named{v, filepath.Join(c.Directory, ".env")})
+	v, ok, err := c.envValue("COMPOSE_PROJECT_NAME")
+	if err != nil {
+		return nil, err
 	}
-	return out
+	if ok && v != "" {
+		out = append(out, named{v, c.envPath()})
+	}
+	return out, nil
 }
 
 // shell is a variable of the environment docker runs in.
@@ -403,20 +494,33 @@ func (c *Compose) shell(name string) (string, bool) {
 	return value, ok
 }
 
-// splitFiles is a COMPOSE_FILE's value as Compose splits it: at
-// COMPOSE_PATH_SEPARATOR (the shell's, else .env's), else at the system's
-// list separator; a relative path is Directory's.
-func (c *Compose) splitFiles(v string) []string {
-	sep := string(os.PathListSeparator)
-	if s, ok, err := c.envValue("COMPOSE_PATH_SEPARATOR"); err == nil && ok && s != "" {
-		sep = s
-	}
+// separator is what COMPOSE_FILE's paths are joined with, read and
+// written: COMPOSE_PATH_SEPARATOR (the shell's, else .env's), else the
+// system's list separator.
+func (c *Compose) separator() (string, error) {
 	if s, ok := c.shell("COMPOSE_PATH_SEPARATOR"); ok && s != "" {
-		sep = s
+		return s, nil
+	}
+	s, ok, err := c.envValue("COMPOSE_PATH_SEPARATOR")
+	if err != nil {
+		return "", err
+	}
+	if ok && s != "" {
+		return s, nil
+	}
+	return string(os.PathListSeparator), nil
+}
+
+// splitFiles is a COMPOSE_FILE's paths, absolute; a relative one is
+// Directory's.
+func (c *Compose) splitFiles(v string) ([]string, error) {
+	sep, err := c.separator()
+	if err != nil {
+		return nil, err
 	}
 	dir, err := filepath.Abs(c.Directory)
 	if err != nil {
-		dir = c.Directory
+		return nil, err
 	}
 	var out []string
 	for _, f := range strings.Split(v, sep) {
@@ -428,7 +532,27 @@ func (c *Compose) splitFiles(v string) []string {
 		}
 		out = append(out, filepath.Clean(f))
 	}
-	return out
+	return out, nil
+}
+
+// fileList is COMPOSE_FILE's value for files, by their names in Directory,
+// joined as splitFiles splits it.
+func (c *Compose) fileList(files []string) (string, error) {
+	sep, err := c.separator()
+	if err != nil {
+		return "", err
+	}
+	var out []string
+	for _, f := range files {
+		if filepath.Dir(realPath(f)) == realPath(c.Directory) {
+			f = filepath.Base(f)
+		}
+		if strings.Contains(f, sep) {
+			return "", fmt.Errorf("the Compose file %s has a %q in its path, which COMPOSE_FILE cannot name", f, sep)
+		}
+		out = append(out, f)
+	}
+	return strings.Join(out, sep), nil
 }
 
 // globalArgs are docker's arguments that name the project, before its
@@ -448,29 +572,63 @@ func (c *Compose) globalArgs(p *ComposeProject, files []string) []string {
 // files are the project's files now: its own, and migrate's OverrideFile
 // while .env's COMPOSE_FILE names it (a reverse's database).
 func (c *Compose) files(p *ComposeProject) ([]string, error) {
-	v, ok, err := c.envValue("COMPOSE_FILE")
+	files := slices.Clone(p.Files)
+	override, err := c.overrideNamed()
 	if err != nil {
 		return nil, err
 	}
-	files := slices.Clone(p.Files)
-	if ok {
-		for _, f := range c.splitFiles(v) {
-			if filepath.Base(f) == OverrideFile {
-				files = append(files, f)
-				break
-			}
-		}
+	if override != "" {
+		files = append(files, override)
 	}
 	return files, nil
 }
 
+// overrideNamed is migrate's file when .env's COMPOSE_FILE names it.
+func (c *Compose) overrideNamed() (string, error) {
+	v, ok, err := c.envValue("COMPOSE_FILE")
+	if err != nil || !ok {
+		return "", err
+	}
+	files, err := c.splitFiles(v)
+	if err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		if filepath.Base(f) == OverrideFile {
+			return f, nil
+		}
+	}
+	return "", nil
+}
+
+// readsOnly is a compose command that changes nothing.
+func readsOnly(args []string) bool {
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--profile" {
+			i++
+			continue
+		}
+		return args[i] == "config" || args[i] == "ps" || args[i] == "images"
+	}
+	return false
+}
+
 // argv is a docker command's arguments: a compose command's name the
-// project and its files.
+// project and its files. Every command that changes something is given
+// only once the project is verified again (verified): none acts on an
+// installation that is not the migration's, whatever happened since.
 func (c *Compose) argv(ctx context.Context, args []string) ([]string, error) {
 	if len(args) == 0 || args[0] != "compose" {
 		return args, nil
 	}
-	p, err := c.project(ctx)
+	resolve := c.project
+	if !readsOnly(args) {
+		resolve = func(ctx context.Context) (*ComposeProject, error) {
+			p, _, err := c.verified(ctx)
+			return p, err
+		}
+	}
+	p, err := resolve(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +642,7 @@ func (c *Compose) argv(ctx context.Context, args []string) ([]string, error) {
 // environment is what makes a program that runs docker compose itself in
 // Directory (the TypeScript CLI's backup) use the same project and files.
 func (c *Compose) environment(ctx context.Context) ([]string, error) {
-	p, err := c.project(ctx)
+	p, _, err := c.verified(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +698,7 @@ const stockProject = "varlatch"
 func present(dir string, names []string) []string {
 	var out []string
 	for _, n := range names {
-		if st, err := os.Stat(filepath.Join(dir, n)); err == nil && st.Mode().IsRegular() {
+		if isFile(filepath.Join(dir, n)) {
 			out = append(out, filepath.Join(dir, n))
 		}
 	}
@@ -559,7 +717,7 @@ func withoutOverride(files []string) []string {
 	return slices.DeleteFunc(slices.Clone(files), func(f string) bool { return filepath.Base(f) == OverrideFile })
 }
 
-func distinct(ls []composeLabels, of func(composeLabels) string) []string {
+func distinct(ls []composeContainer, of func(composeContainer) string) []string {
 	var out []string
 	for _, l := range ls {
 		if v := of(l); !slices.Contains(out, v) {

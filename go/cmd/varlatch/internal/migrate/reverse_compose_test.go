@@ -34,7 +34,7 @@ func TestTheReverseWritesEnvWhole(t *testing.T) {
 		t.Fatalf("read: %d values, %v", len(env), err)
 	}
 	files := "docker-compose.yml:" + OverrideFile
-	if err := c.setEnv("COMPOSE_FILE", &files); err != nil {
+	if err := c.setEnv("COMPOSE_FILE", &files, ""); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, ".env"))
@@ -44,7 +44,7 @@ func TestTheReverseWritesEnvWhole(t *testing.T) {
 	if st, _ := os.Stat(filepath.Join(dir, ".env")); st.Mode().Perm() != 0o640 {
 		t.Errorf("mode %o", st.Mode().Perm())
 	}
-	if err := c.setEnv("COMPOSE_FILE", nil); err != nil {
+	if err := c.setEnv("COMPOSE_FILE", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(filepath.Join(dir, ".env"))
@@ -53,7 +53,7 @@ func TestTheReverseWritesEnvWhole(t *testing.T) {
 	}
 	// A line replaced in place.
 	other := "docker-compose.yml:docker-compose.caddy.yml"
-	if err := c.setEnv("BIND_ADDRESS", &other); err != nil {
+	if err := c.setEnv("BIND_ADDRESS", &other, ""); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, ".env")); !strings.HasSuffix(string(b), "LONG="+long+"\nBIND_ADDRESS="+other+"\n") {
@@ -69,7 +69,7 @@ func TestTheReverseWritesEnvWhole(t *testing.T) {
 		t.Fatal(err)
 	}
 	lc := &Compose{Directory: linked}
-	if err := lc.setEnv("COMPOSE_FILE", &files); err != nil {
+	if err := lc.setEnv("COMPOSE_FILE", &files, ""); err != nil {
 		t.Fatal(err)
 	}
 	if fi, err := os.Lstat(filepath.Join(linked, ".env")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
@@ -84,7 +84,7 @@ func TestTheReverseWritesEnvWhole(t *testing.T) {
 		t.Fatal(err)
 	}
 	dc := &Compose{Directory: dangling}
-	if err := dc.setEnv("COMPOSE_FILE", &files); err == nil || !strings.Contains(err.Error(), "which is not there") {
+	if err := dc.setEnv("COMPOSE_FILE", &files, ""); err == nil || !strings.Contains(err.Error(), "which is not there") {
 		t.Errorf("a dangling link: %v", err)
 	}
 	if fi, err := os.Lstat(filepath.Join(dangling, ".env")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
@@ -201,7 +201,7 @@ func TestStartNetworkOwner(t *testing.T) {
 				"docker compose ps --status running --services":        {Answer: []byte(c.running)},
 				"docker compose start tailscale":                       {},
 			}}
-			cmp := &Compose{Directory: t.TempDir(), Run: run, resolved: testProject("/installation")}
+			cmp := stockCompose(t, run)
 			if err := cmp.StartNetworkOwner(t.Context()); err != nil {
 				t.Fatal(err)
 			}

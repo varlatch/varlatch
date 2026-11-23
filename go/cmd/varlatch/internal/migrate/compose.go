@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -96,14 +95,13 @@ func (c *Compose) admin(ctx context.Context, args []string, stdin []byte) (Ran, 
 	return c.docker(ctx, full, stdin)
 }
 
-// Discover finds the installation: its Compose project (compose_project.go,
-// resolved now whatever an earlier journal recorded), and its varlatchd
+// Discover finds the installation: its Compose project (compose_project.go;
+// the journal's, when a migration goes on), and its varlatchd
 // service's image, by its release (the image's version label, else its
 // tag) and its digest (the registry's, which a published release has).
 func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 	info := SourceInfo{Kind: "compose", Dir: c.Directory}
-	c.KeepProject(nil)
-	p, err := c.project(ctx)
+	p, _, err := c.verified(ctx)
 	if err != nil {
 		return info, err
 	}
@@ -204,35 +202,6 @@ func lastLine(b []byte) []byte {
 		return b[i+1:]
 	}
 	return b
-}
-
-// envFile is the installation's .env as Compose reads it: NAME=value
-// lines, the last of a name wins, quotes around a value taken off.
-func (c *Compose) envFile() (map[string]string, error) {
-	env, err := os.ReadFile(filepath.Join(c.Directory, ".env"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-	out := map[string]string{}
-	// Split on newlines, not scanned: a line of any length is read whole
-	// (a scanner's token limit would stop at a long one and read on as if
-	// the file ended there).
-	for _, raw := range bytes.Split(env, []byte("\n")) {
-		line := strings.TrimSpace(string(raw))
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		name, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		v = strings.TrimSpace(v)
-		if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
-			v = v[1 : len(v)-1]
-		}
-		out[strings.TrimSpace(name)] = v
-	}
-	return out, nil
 }
 
 // outboundEnv is the source's outbound allow list's variable.

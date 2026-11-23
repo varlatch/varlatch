@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -99,7 +98,8 @@ type FinishSource interface {
 	// removal claimed for nothing.
 	RemoveOld(ctx context.Context, kind Ingress, data bool, r Removals) error
 	// RemoveRetained removes the pre-migration volumes a reverse left
-	// unused (the installation runs on plan's fresh ones), as RemoveOld.
+	// unused, by the identities plan records: only while the installation
+	// runs on plan's fresh ones. It journals as RemoveOld does.
 	RemoveRetained(ctx context.Context, plan RebuildRecord, r Removals) error
 }
 
@@ -437,7 +437,17 @@ func (e *Engine) finishRemove(ctx context.Context, j *Journal) error {
 			return fmt.Errorf("removing the TypeScript installation: %w; varlatch migrate --resume finishes it", err)
 		}
 	} else if data {
-		e.say("Go's copy is discarded, and the TypeScript installation's pre-migration volumes removed.")
+		e.say("The TypeScript installation's pre-migration volumes are removed, then Go's copy discarded.")
+		if j.Rollback == nil || j.Rollback.Rebuild == nil {
+			return errors.New("the journal records no rebuild: the pre-migration volumes are not known; left as they are")
+		}
+		// The installation verified to run on its fresh volumes, and the
+		// retained ones removed, before Go's copy goes: while either fails,
+		// Go's copy is there.
+		if err := fs.RemoveRetained(ctx, *j.Rollback.Rebuild, log()); err != nil {
+			return fmt.Errorf("removing the pre-migration volumes: %w; Go's copy is kept; varlatch migrate --resume finishes it", err)
+		}
+		crashPoint("finish retained removed")
 		goCopy := "Go's copy (" + j.Target.DataDir + ")"
 		if !slices.Contains(f.Removed, goCopy) {
 			if err := e.Target.Discard(ctx, j.ID); err != nil {
@@ -448,12 +458,6 @@ func (e *Engine) finishRemove(ctx context.Context, j *Journal) error {
 			}
 		}
 		crashPoint("finish go discarded")
-		if j.Rollback == nil || j.Rollback.Rebuild == nil {
-			return errors.New("the journal records no rebuild: the pre-migration volumes are not known; left as they are")
-		}
-		if err := fs.RemoveRetained(ctx, *j.Rollback.Rebuild, log()); err != nil {
-			return fmt.Errorf("removing the pre-migration volumes: %w; varlatch migrate --resume finishes it", err)
-		}
 	}
 	f.DoneAt = e.now().UTC().Format(time.RFC3339Nano)
 	if err := writeJournal(e.Source.Dir(), j); err != nil {
@@ -544,52 +548,22 @@ func (h *Host) FinalArchive(ctx context.Context) (string, error) {
 // dataVolumes are the Postgres and Convex volumes the installation's
 // Compose files give it now: migrate's file's fresh ones when COMPOSE_FILE
 // names it (after a reverse), else the project's own.
-func (c *Compose) dataVolumes(project string) ([]string, bool, error) {
-	cf, ok, err := c.envValue("COMPOSE_FILE")
+func (c *Compose) dataVolumes(ctx context.Context) ([]string, error) {
+	cfg, err := c.config(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if ok {
-		for _, f := range strings.Split(cf, string(os.PathListSeparator)) {
-			if filepath.Base(strings.TrimSpace(f)) != OverrideFile {
-				continue
-			}
-			b, err := os.ReadFile(filepath.Join(c.Directory, OverrideFile))
-			if err != nil {
-				return nil, false, err
-			}
-			var vols []string
-			lines := strings.Split(string(b), "\n")
-			for i, l := range lines {
-				t := strings.TrimSpace(l)
-				if (strings.HasSuffix(t, postgresKey+":") || strings.HasSuffix(t, convexKey+":")) && i+1 < len(lines) {
-					if n, ok := strings.CutPrefix(strings.TrimSpace(lines[i+1]), "name: "); ok {
-						vols = append(vols, n)
-					}
-				}
-			}
-			if len(vols) != 2 {
-				return nil, false, fmt.Errorf("%s does not name the Postgres and Convex volumes", OverrideFile)
-			}
-			return vols, true, nil
-		}
+	keys, err := cfg.volumeKeys()
+	if err != nil {
+		return nil, err
 	}
-	return []string{project + "_postgres-data", project + "_convex-data"}, false, nil
+	return []string{cfg.volumeName(keys[0]), cfg.volumeName(keys[1])}, nil
 }
 
-// volumeThere is `docker volume inspect`: whether the volume exists.
+// volumeThere is whether the volume exists.
 func (c *Compose) volumeThere(ctx context.Context, name string) (bool, error) {
-	r, err := c.docker(ctx, []string{"volume", "inspect", "--format", "{{.Name}}", name}, nil)
-	if err != nil {
-		return false, err
-	}
-	if r.Code == 0 {
-		return strings.TrimSpace(string(r.Answer)) == name, nil
-	}
-	if bytes.Contains(bytes.ToLower(r.Said), []byte("no such volume")) {
-		return false, nil
-	}
-	return false, failure("docker volume inspect "+name, r)
+	v, err := c.volume(ctx, name)
+	return v != nil, err
 }
 
 // inspectVolumes are the volumes of expected and optional that are there
@@ -658,25 +632,94 @@ func (c *Compose) removeVolumes(ctx context.Context, expected, optional []string
 }
 
 // CheckData: the data volumes RemoveOld or RemoveRetained would remove,
-// inspected (Coolify's are the operator's: nothing is checked).
+// inspected. After a reverse, in every shape, the installation is also
+// held to run on its fresh volumes, and the retained ones to be those the
+// journal records, unused. Before a forward migration's finish, Coolify's
+// are the operator's: nothing is checked.
 func (c *Compose) CheckData(ctx context.Context, kind Ingress, plan *RebuildRecord, log Removals) error {
+	if plan != nil {
+		if err := c.CheckRebuilt(ctx, *plan, true); err != nil {
+			return err
+		}
+		names, err := c.checkRetained(ctx, *plan, log)
+		if err != nil {
+			return err
+		}
+		_, _, err = c.inspectVolumes(ctx, names, nil, log)
+		return err
+	}
 	if kind == Coolify {
 		return nil
 	}
-	project, err := c.projectName(ctx)
+	expected, err := c.dataVolumes(ctx)
 	if err != nil {
 		return err
 	}
-	var expected []string
-	if plan == nil {
-		if expected, _, err = c.dataVolumes(project); err != nil {
-			return err
-		}
-	} else {
-		expected = []string{project + "_postgres-data", project + "_convex-data"}
-	}
 	_, _, err = c.inspectVolumes(ctx, expected, nil, log)
 	return err
+}
+
+// checkRetained is the retained volumes' names, each (but one done, or
+// begun and gone) the very volume the journal recorded when the reverse
+// began, of this project, and mounted by no container, running or stopped.
+func (c *Compose) checkRetained(ctx context.Context, plan RebuildRecord, log Removals) ([]string, error) {
+	p, err := c.project(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(plan.Retained) != len(dataMounts) {
+		return nil, errors.New("the journal does not record which volumes the installation ran on before the reverse (an earlier version's reverse): none is removed by a name made up; " +
+			"remove them yourself once you know them (docker volume ls), and finish without --delete-old-data")
+	}
+	var names []string
+	for _, want := range plan.Retained {
+		names = append(names, want.Name)
+		if slices.Contains(log.Done, want.Name) {
+			continue
+		}
+		if slices.Contains(plan.Volumes, want.Name) {
+			return nil, fmt.Errorf("the journal names %s as a retained volume and as a fresh one: nothing is removed", want.Name)
+		}
+		v, err := c.volume(ctx, want.Name)
+		switch {
+		case err != nil:
+			return nil, err
+		case v == nil:
+			continue // inspectVolumes says what that means
+		case !sameTime(v.CreatedAt, want.CreatedAt):
+			return nil, fmt.Errorf("the volume %s was made %s, and the one the installation ran on before the reverse %s: it is another one, left as it is", v.Name, v.CreatedAt, orWord(want.CreatedAt, "was not there"))
+		case v.Project != p.Name || want.Project != p.Name:
+			return nil, fmt.Errorf("the volume %s is labelled of the Compose project %s, not of the installation's, %s: left as it is (remove it yourself if it is the installation's, and finish without --delete-old-data)", v.Name, orWord(v.Project, "none"), p.Name)
+		}
+		users, err := c.volumeUsers(ctx, v.Name)
+		if err != nil {
+			return nil, err
+		}
+		if len(users) > 0 {
+			return nil, fmt.Errorf("the retained volume %s is used by %s: left as it is", v.Name, strings.Join(users, ", "))
+		}
+	}
+	return names, nil
+}
+
+// sameTime is whether two of Docker's creation times are the same one (it
+// prints them in the host's time zone, which changes with the season).
+func sameTime(a, b string) bool {
+	x, xerr := time.Parse(time.RFC3339, a)
+	y, yerr := time.Parse(time.RFC3339, b)
+	return xerr == nil && yerr == nil && x.Equal(y)
+}
+
+// volumeUsers are the containers, running or not, that mount the volume.
+func (c *Compose) volumeUsers(ctx context.Context, name string) ([]string, error) {
+	r, err := c.docker(ctx, []string{"ps", "-a", "--filter", "volume=" + name, "--format", "{{.Names}}"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if r.Code != 0 {
+		return nil, failure("docker ps --filter volume="+name, r)
+	}
+	return strings.Fields(string(r.Answer)), nil
 }
 
 // ServeForArchive starts the TypeScript installation's Postgres, varlatchd
@@ -764,32 +807,40 @@ func (c *Compose) RemoveOld(ctx context.Context, kind Ingress, data bool, log Re
 	optional := []string{project + "_tailscale-state", project + "_tailscale-socket", project + "_caddy-data", project + "_caddy-config"}
 	var expected []string
 	if data {
-		vols, _, err := c.dataVolumes(project)
-		if err != nil {
+		if expected, err = c.dataVolumes(ctx); err != nil {
 			return err
 		}
-		expected = vols
 		optional = append(optional, project+"_varlatch-state")
 	}
 	return c.removeVolumes(ctx, expected, optional, log)
 }
 
-// RemoveRetained removes the project's own Postgres and Convex volumes,
-// which a reverse left unused: only while COMPOSE_FILE names migrate's
-// file and its fresh volumes are plan's, never a volume in use.
+// RemoveRetained removes the volumes the installation ran on before the
+// reverse, by the identities the journal recorded then: only while the
+// installation runs on plan's fresh ones (CheckRebuilt), and each verified
+// again right before its removal.
 func (c *Compose) RemoveRetained(ctx context.Context, plan RebuildRecord, log Removals) error {
-	project, err := c.projectName(ctx)
+	if err := c.CheckRebuilt(ctx, plan, true); err != nil {
+		return fmt.Errorf("the pre-migration volumes are left as they are: %w", err)
+	}
+	names, err := c.checkRetained(ctx, plan, log)
 	if err != nil {
 		return err
 	}
-	inUse, rebuilt, err := c.dataVolumes(project)
-	if err != nil {
+	if _, _, err := c.inspectVolumes(ctx, names, nil, log); err != nil {
 		return err
 	}
-	if !rebuilt || !slices.Equal(inUse, plan.Volumes) {
-		return fmt.Errorf("the installation does not run on the reverse's fresh volumes %v (its Compose files name %v): the pre-migration volumes are left as they are", plan.Volumes, inUse)
+	for _, v := range names {
+		if _, err := c.checkRetained(ctx, plan, log); err != nil {
+			return err
+		}
+		if err := c.removeVolumes(ctx, []string{v}, nil, log); err != nil {
+			return err
+		}
+		// What checkRetained does not look for again.
+		log.Done = append(slices.Clone(log.Done), v)
 	}
-	return c.removeVolumes(ctx, []string{project + "_postgres-data", project + "_convex-data"}, nil, log)
+	return nil
 }
 
 // configName is the Go configuration's path, as the operator edits it.

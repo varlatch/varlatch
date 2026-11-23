@@ -567,7 +567,8 @@ jobs:
       # varlatch migrate on a directory shaped as Coolify's (the
       # repository's docker-compose.yml beside the file that runs), with
       # the runner's own Docker: the project is the containers', not the
-      # one plain docker compose finds there. Created, never started.
+      # one plain docker compose finds there; and the reverse's volumes,
+      # on containers that only sleep.
       - name: varlatch migrate finds a Coolify-shaped Compose project
         working-directory: go
         env:

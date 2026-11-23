@@ -128,6 +128,12 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 	if j.Transfer == nil {
 		return e.undo(ctx, j, errors.New("the journal records no address to transfer"))
 	}
+	// Before the address moves, in every shape (Coolify's asks nothing of
+	// the source here): still the installation that was copied. --resume
+	// checked it (Resume).
+	if err := e.checkProject(ctx); err != nil {
+		return e.undo(ctx, j, err)
+	}
 	if j.Phase != Transfer {
 		if err := e.enter(ctx, j, Transfer); err != nil {
 			return e.undo(ctx, j, err)

@@ -62,9 +62,12 @@ type ReverseSource interface {
 	// file and names it in COMPOSE_FILE, and starts Postgres on its fresh
 	// volume.
 	Rebuild(ctx context.Context, plan RebuildRecord) error
-	// CheckRebuilt refuses a Postgres that does not run on the plan's
-	// fresh volume, before anything is imported into it.
-	CheckRebuilt(ctx context.Context, plan RebuildRecord) error
+	// CheckRebuilt refuses an installation whose Compose files or running
+	// Postgres (and, with convex, Convex) are not on the plan's fresh
+	// volumes: before anything is imported into it, before the address
+	// moves to it, before Go stops and before it is recorded rolled back,
+	// each time a run or a --resume comes there.
+	CheckRebuilt(ctx context.Context, plan RebuildRecord, convex bool) error
 	// ImportReverse runs `admin migration import` of the bundle.
 	ImportReverse(ctx context.Context, bundle string) (TSImportRecord, error)
 	// ResetConvex starts Convex on its fresh volume and deploys its
@@ -114,8 +117,11 @@ type composeConfig struct {
 	} `json:"volumes"`
 }
 
-// postgresTarget is where the Postgres service mounts its data.
-const postgresTarget = "/var/lib/postgresql/data"
+// Where the Postgres and Convex services mount their data.
+const (
+	postgresTarget = "/var/lib/postgresql/data"
+	convexTarget   = "/convex/data"
+)
 
 // composeVolume is a service's volume: its long form, or the short one
 // (source:target[:mode]).
@@ -169,7 +175,7 @@ const (
 // ones in use.
 func (m composeConfig) volumeKeys() ([]string, error) {
 	var out []string
-	for _, w := range []struct{ service, target string }{{"postgres", postgresTarget}, {"convex-backend", "/convex/data"}, {service, "/var/lib/varlatch"}} {
+	for _, w := range []struct{ service, target string }{{"postgres", postgresTarget}, {"convex-backend", convexTarget}, {service, "/var/lib/varlatch"}} {
 		key := ""
 		for _, v := range m.Services[w.service].Volumes {
 			if v.Type == "volume" && v.Target == w.target {
@@ -177,7 +183,7 @@ func (m composeConfig) volumeKeys() ([]string, error) {
 			}
 		}
 		if key == "" {
-			return nil, fmt.Errorf("the installation's %s service mounts no named volume at %s: the reverse cannot give it a fresh one", w.service, w.target)
+			return nil, fmt.Errorf("the installation's %s service mounts no named volume at %s: its data volume is not known", w.service, w.target)
 		}
 		out = append(out, key)
 	}
@@ -298,8 +304,77 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 	}
 	if ok {
 		plan.ComposeFile = &cf
+		if plan.ComposeFileLine, err = c.envRaw("COMPOSE_FILE"); err != nil {
+			return plan, err
+		}
 	}
-	return plan, nil
+	if isFile(filepath.Join(c.Directory, plan.Override)) {
+		// A second reverse's: the first's file is in use now.
+		plan.OverrideWas = plan.Override + ".before-" + short
+	}
+	plan.Retained, err = c.retained(ctx, cfg, keys)
+	return plan, err
+}
+
+// retained are the volumes the Postgres and Convex services are on now,
+// one for each: what their containers mount (which the Compose files must
+// give them too), else what the Compose files give them. One that is not
+// there, or that does not carry the project's label, is no obstacle to the
+// reverse: --finish then refuses to remove it.
+func (c *Compose) retained(ctx context.Context, cfg composeConfig, keys []string) ([]VolumeRecord, error) {
+	p, all, err := c.verified(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []VolumeRecord
+	for i, d := range dataMounts {
+		name := cfg.volumeName(keys[i])
+		for _, l := range all {
+			if l.project != p.Name || l.service != d.service || l.isOneOff() {
+				continue
+			}
+			if on := l.volumeAt(d.target); on != name {
+				return nil, fmt.Errorf("the installation's %s container is on %s, and its Compose files give it %s: which volume is the installation's is not known", d.service, orWord(on, "no named volume"), name)
+			}
+		}
+		v, err := c.volume(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if v == nil {
+			v = &VolumeRecord{Name: name}
+		}
+		out = append(out, *v)
+	}
+	return out, nil
+}
+
+// volumeFormat is what migrate reads of a volume.
+const volumeFormat = `{{json .Name}} {{json .CreatedAt}} {{json (index .Labels "` + labelProject + `")}}`
+
+// volume is a volume's identity (nil when it is not there).
+func (c *Compose) volume(ctx context.Context, name string) (*VolumeRecord, error) {
+	r, err := c.docker(ctx, []string{"volume", "inspect", "--format", volumeFormat, name}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if r.Code != 0 {
+		if bytes.Contains(bytes.ToLower(r.Said), []byte("no such volume")) {
+			return nil, nil
+		}
+		return nil, failure("docker volume inspect "+name, r)
+	}
+	var v VolumeRecord
+	dec := json.NewDecoder(bytes.NewReader(r.Answer))
+	for _, f := range []*string{&v.Name, &v.CreatedAt, &v.Project} {
+		if err := dec.Decode(f); err != nil {
+			return nil, fmt.Errorf("docker volume inspect %s did not give the volume's name, creation and labels", name)
+		}
+	}
+	if v.Name != name {
+		return nil, nil
+	}
+	return &v, nil
 }
 
 var stockKeys = []string{postgresKey, convexKey, stateKey}
@@ -349,97 +424,28 @@ services:
 `
 }
 
-// envValue is one of .env's values, and whether it is set.
-func (c *Compose) envValue(name string) (string, bool, error) {
-	env, err := c.envFile()
-	if err != nil {
-		return "", false, err
-	}
-	v, ok := env[name]
-	return v, ok, nil
-}
-
 // composeFiles is COMPOSE_FILE's value naming migrate's file after the
 // installation's own: its value now, else the project's files, by their
 // names in Directory (docker-compose.yml, and docker-compose.override.yml
-// when present, in the stock installation).
-func (c *Compose) composeFiles(ctx context.Context, plan RebuildRecord) (string, error) {
-	sep := string(os.PathListSeparator)
-	var files []string
-	if plan.ComposeFile != nil {
-		files = strings.Split(*plan.ComposeFile, sep)
-	} else {
-		p, err := c.project(ctx)
-		if err != nil {
-			return "", err
-		}
-		for _, f := range p.Files {
-			if filepath.Dir(realPath(f)) == realPath(c.Directory) {
-				f = filepath.Base(f)
-			}
-			if strings.Contains(f, sep) {
-				return "", fmt.Errorf("the Compose file %s has a %q in its path, which COMPOSE_FILE cannot name", f, sep)
-			}
-			files = append(files, f)
-		}
+// when present, in the stock installation). It is joined with what
+// splitFiles splits it with.
+func (c *Compose) composeFiles(p *ComposeProject, plan RebuildRecord) (string, error) {
+	sep, err := c.separator()
+	if err != nil {
+		return "", err
 	}
-	for _, f := range files {
+	files := ""
+	if plan.ComposeFile != nil && *plan.ComposeFile != "" {
+		files = *plan.ComposeFile
+	} else if files, err = c.fileList(p.Files); err != nil {
+		return "", err
+	}
+	for _, f := range strings.Split(files, sep) {
 		if filepath.Base(strings.TrimSpace(f)) == OverrideFile {
-			return strings.Join(files, sep), nil
+			return files, nil
 		}
 	}
-	return strings.Join(append(files, OverrideFile), sep), nil
-}
-
-// setEnv writes .env with name set to value (nil: the line removed), every
-// other byte as it was: the file is split on newlines, never scanned, so a
-// line of any length is kept whole (a scanner stopped by its token limit
-// would write a truncated .env over the operator's). A .env that is a
-// symbolic link is written at its target, which is replaced through a
-// temporary name beside it; the link stays. A link whose target is not
-// there is refused, never replaced by a file. Its mode is kept.
-func (c *Compose) setEnv(name string, value *string) error {
-	path := filepath.Join(c.Directory, ".env")
-	if target, err := filepath.EvalSymlinks(path); err == nil {
-		path = target
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
-	} else if st, lerr := os.Lstat(path); lerr == nil && st.Mode()&fs.ModeSymlink != 0 {
-		link, _ := os.Readlink(path)
-		return fmt.Errorf("%s is a symbolic link to %s, which is not there: the installation's .env is not replaced by a file; restore its target, then run varlatch migrate again", path, link)
-	}
-	b, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	mode := fs.FileMode(0o600)
-	if st, err := os.Stat(path); err == nil {
-		mode = st.Mode().Perm()
-	}
-	var out bytes.Buffer
-	done := false
-	for _, line := range bytes.SplitAfter(b, []byte("\n")) {
-		if len(line) == 0 {
-			continue
-		}
-		text := strings.TrimSpace(string(line))
-		key, _, ok := strings.Cut(text, "=")
-		if ok && strings.TrimSpace(key) == name && !strings.HasPrefix(text, "#") {
-			if value != nil && !done {
-				out.WriteString(name + "=" + *value + "\n")
-			}
-			done = true
-			continue
-		}
-		out.Write(line)
-	}
-	if value != nil && !done {
-		if out.Len() > 0 && !bytes.HasSuffix(out.Bytes(), []byte("\n")) {
-			out.WriteByte('\n')
-		}
-		out.WriteString(name + "=" + *value + "\n")
-	}
-	return writeFileDurably(path, out.Bytes(), mode)
+	return files + sep + OverrideFile, nil
 }
 
 // writeFileDurably replaces path's content through a temporary name.
@@ -485,23 +491,37 @@ func (c *Compose) compose(ctx context.Context, what string, args ...string) erro
 // started on its fresh volume (its init scripts make the roles and
 // databases). Each step is done again harmlessly.
 func (c *Compose) Rebuild(ctx context.Context, plan RebuildRecord) error {
-	if err := c.compose(ctx, "docker compose stop", "stop", "varlatchd", "convex-backend", "postgres"); err != nil {
-		return err
-	}
-	if err := writeFileDurably(filepath.Join(c.Directory, plan.Override), []byte(override(plan)), 0o600); err != nil {
-		return err
-	}
-	files, err := c.composeFiles(ctx, plan)
+	p, err := c.project(ctx)
 	if err != nil {
 		return err
 	}
-	if err := c.setEnv("COMPOSE_FILE", &files); err != nil {
+	if err := c.compose(ctx, "docker compose stop", "stop", "varlatchd", "convex-backend", "postgres"); err != nil {
+		return err
+	}
+	path := filepath.Join(c.Directory, plan.Override)
+	if plan.OverrideWas != "" && !isFile(filepath.Join(c.Directory, plan.OverrideWas)) {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := writeFileDurably(filepath.Join(c.Directory, plan.OverrideWas), b, 0o600); err != nil {
+			return err
+		}
+	}
+	if err := writeFileDurably(path, []byte(override(plan)), 0o600); err != nil {
+		return err
+	}
+	files, err := c.composeFiles(p, plan)
+	if err != nil {
+		return err
+	}
+	if err := c.setEnv("COMPOSE_FILE", &files, ""); err != nil {
 		return err
 	}
 	// Before Postgres starts: what Compose would give it and Convex are the
 	// fresh volumes.
 	if err := c.checkVolumes(ctx, plan); err != nil {
-		return err
+		return fmt.Errorf("%w: it was not started", err)
 	}
 	return c.compose(ctx, "docker compose up -d postgres", "up", "-d", "postgres")
 }
@@ -517,59 +537,79 @@ func (c *Compose) checkVolumes(ctx context.Context, plan RebuildRecord) error {
 	if err != nil {
 		return err
 	}
-	for i, svc := range []string{"postgres", "convex-backend"} {
-		name := cfg.Volumes[keys[i]].Name
-		if name == "" {
-			name = cfg.Name + "_" + keys[i]
-		}
-		if name != plan.Volumes[i] {
-			return fmt.Errorf("the Compose files give %s the volume %s, not the fresh %s the journal names: it was not started", svc, name, plan.Volumes[i])
+	for i, d := range dataMounts {
+		if name := cfg.volumeName(keys[i]); name != plan.Volumes[i] {
+			return fmt.Errorf("the Compose files give %s the volume %s, not the fresh %s the journal names", d.service, name, plan.Volumes[i])
 		}
 	}
 	return nil
 }
 
-// rebuiltFormat is what CheckRebuilt reads of a container: whether it
-// runs, and what is mounted at Postgres's data directory.
-const rebuiltFormat = `{{.State.Status}}{{range .Mounts}}{{if eq .Destination "` + postgresTarget + `"}} {{.Type}} {{json .Name}}{{end}}{{end}}`
+// volumeName is the volume cfg gives key.
+func (m composeConfig) volumeName(key string) string {
+	if n := m.Volumes[key].Name; n != "" {
+		return n
+	}
+	return m.Name + "_" + key
+}
 
-// CheckRebuilt reads the running Postgres container's mount: the fresh
-// volume the journal names, never the retained one. The configuration
-// (checkVolumes) says what Compose would do; this is what it did.
-func (c *Compose) CheckRebuilt(ctx context.Context, plan RebuildRecord) error {
-	r, err := c.docker(ctx, []string{"compose", "ps", "-a", "-q", "postgres"}, nil)
+// dataMounts are the services that hold the installation's data, in
+// RebuildRecord's order, and where each mounts it.
+var dataMounts = []struct{ service, target string }{{"postgres", postgresTarget}, {"convex-backend", convexTarget}}
+
+// CheckRebuilt reads what Compose would do (checkVolumes) and what it did:
+// the running Postgres container's mount (and, with convex, Convex's) is
+// the fresh volume the journal names, never the retained one. An
+// orchestrator that deploys the installation again makes its containers
+// from its own file, without migrate's: they then run on the retained
+// volumes, and answer as the same installation and release.
+func (c *Compose) CheckRebuilt(ctx context.Context, plan RebuildRecord, convex bool) error {
+	p, all, err := c.verified(ctx)
 	if err != nil {
 		return err
 	}
-	if r.Code != 0 {
-		return failure("docker compose ps", r)
+	if err := c.checkVolumes(ctx, plan); err != nil {
+		return fmt.Errorf("%w; %s", err, c.rebuiltHelp(p, plan))
 	}
-	ids := strings.Fields(string(r.Answer))
-	if len(ids) != 1 {
-		return fmt.Errorf("the installation has %d postgres containers, not one: the volume it runs on is not known (the journal names the fresh %s); nothing was imported", len(ids), plan.Volumes[0])
-	}
-	r, err = c.docker(ctx, []string{"inspect", "--type", "container", "--format", rebuiltFormat, ids[0]}, nil)
-	if err != nil {
-		return err
-	}
-	if r.Code != 0 {
-		return failure("docker inspect", r)
-	}
-	f := strings.Fields(string(r.Answer))
-	if len(f) == 0 || f[0] != "running" {
-		return fmt.Errorf("postgres does not run on the fresh volume %s (its container is %s); nothing was imported", plan.Volumes[0], strings.Join(f[:min(len(f), 1)], ""))
-	}
-	on := "no named volume"
-	if len(f) == 3 && f[1] == "volume" {
-		var name string
-		if json.Unmarshal([]byte(f[2]), &name) == nil && name != "" {
-			on = name
+	for i, d := range dataMounts {
+		if i > 0 && !convex {
+			break
+		}
+		var own []composeContainer
+		for _, l := range all {
+			if l.project == p.Name && l.service == d.service && !l.isOneOff() {
+				own = append(own, l)
+			}
+		}
+		why := ""
+		switch {
+		case len(own) != 1:
+			why = fmt.Sprintf("the installation has %d %s containers, not one: the volume it runs on is not known", len(own), d.service)
+		case own[0].status != "running":
+			why = fmt.Sprintf("%s does not run on the fresh volume %s (its container is %s)", d.service, plan.Volumes[i], own[0].status)
+		case own[0].volumeAt(d.target) != plan.Volumes[i]:
+			why = fmt.Sprintf("%s runs on %s, not on the fresh volume %s the journal names", d.service, orWord(own[0].volumeAt(d.target), "no named volume"), plan.Volumes[i])
+		}
+		if why != "" {
+			return errors.New(why + "; " + c.rebuiltHelp(p, plan))
 		}
 	}
-	if on != plan.Volumes[0] {
-		return fmt.Errorf("postgres runs on %s, not on the fresh volume %s the journal names; nothing was imported", on, plan.Volumes[0])
-	}
 	return nil
+}
+
+// rebuiltHelp is how the installation runs on the fresh volumes again.
+func (c *Compose) rebuiltHelp(p *ComposeProject, plan RebuildRecord) string {
+	path := filepath.Join(c.Directory, plan.Override)
+	if !isFile(path) {
+		return path + " (the Compose file that names them) is gone: put it back from a copy of that directory"
+	}
+	value, err := c.composeFiles(p, plan)
+	if err != nil {
+		return err.Error()
+	}
+	files := append(slices.Clone(p.Files), path)
+	return fmt.Sprintf("to run it on them again: 1. set COMPOSE_FILE=%s in %s; 2. in %s: docker %s up -d --no-deps postgres convex-backend %s (it makes those that are on another volume again; no volume is removed)",
+		value, c.envPath(), c.Directory, strings.Join(c.globalArgs(p, files), " "), service)
 }
 
 // importAnswerLimit bounds what the import's standard output keeps: its
@@ -660,10 +700,17 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 	if err := c.compose(ctx, "docker compose stop", "stop", service, "convex-backend", "postgres"); err != nil {
 		return err
 	}
-	if err := c.setEnv("COMPOSE_FILE", plan.ComposeFile); err != nil {
+	if err := c.setEnv("COMPOSE_FILE", plan.ComposeFile, plan.ComposeFileLine); err != nil {
 		return err
 	}
-	if err := os.Remove(filepath.Join(c.Directory, plan.Override)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if path := filepath.Join(c.Directory, plan.Override); plan.OverrideWas != "" {
+		// Not kept yet: the rebuild did not write over it.
+		if was := filepath.Join(c.Directory, plan.OverrideWas); isFile(was) {
+			if err := os.Rename(was, path); err != nil {
+				return err
+			}
+		}
+	} else if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if err := c.compose(ctx, "docker compose up -d postgres convex-backend", "up", "-d", "postgres", "convex-backend"); err != nil {
@@ -673,17 +720,14 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 		// Asked directly before its removal: no container, running or
 		// stopped, still uses the fresh volume (the services are back on
 		// their own ones).
-		r, err := c.docker(ctx, []string{"ps", "-a", "--filter", "volume=" + v, "--format", "{{.Names}}"}, nil)
+		users, err := c.volumeUsers(ctx, v)
 		if err != nil {
 			return err
 		}
-		if r.Code != 0 {
-			return failure("docker ps --filter volume="+v, r)
-		}
-		if users := strings.Fields(string(r.Answer)); len(users) > 0 {
+		if len(users) > 0 {
 			return fmt.Errorf("the reverse's fresh volume %s is still used by %s: left as it is", v, strings.Join(users, ", "))
 		}
-		r, err = c.docker(ctx, []string{"volume", "rm", "-f", v}, nil)
+		r, err := c.docker(ctx, []string{"volume", "rm", "-f", v}, nil)
 		if err != nil {
 			return err
 		}

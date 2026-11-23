@@ -225,6 +225,10 @@ func writeGate(g *gateDoc) error {
 // fakeDocker answers as Docker and the TypeScript CLI in its container.
 func fakeDocker(args []string) int {
 	fail := func(f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1 }
+	args, err := composeArgs(args)
+	if err != nil {
+		return fail("docker: %v", err)
+	}
 	if os.Getenv("G5_TAILNET") != "" {
 		if code, ok := fakeDockerTailnet(args); ok {
 			return code
@@ -265,7 +269,7 @@ func fakeDocker(args []string) int {
 			fmt.Println(string(out))
 			return 0
 		}
-		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{"varlatchd": map[string]any{"environment": map[string]string{"VARLATCH_OUTBOUND_ALLOW": allow}}}})
+		out, _ := json.Marshal(map[string]any{"name": shape().Project, "services": map[string]any{"varlatchd": map[string]any{"environment": map[string]string{"VARLATCH_OUTBOUND_ALLOW": allow}}}})
 		fmt.Println(string(out))
 		return 0
 	case len(args) == 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start") && args[2] == "varlatch-web":
@@ -928,6 +932,7 @@ func newWorld(t *testing.T, image bool) *world {
 			t.Fatal(err)
 		}
 	}
+	w.writeShape(composeShape{Project: "g5-installation", Dir: w.compose, Files: []string{"docker-compose.yml"}})
 	w.installationID = rowValue(shared.source.Rows["installation"][0], "id")
 	t.Cleanup(func() {
 		_ = os.Setenv("G5_STATE", w.stateDir)

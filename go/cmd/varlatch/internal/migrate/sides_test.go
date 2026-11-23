@@ -29,7 +29,7 @@ type scripted struct {
 	// nameless: a compose command may leave the project's name to Compose
 	// (the one that asks for it).
 	nameless bool
-	// host, when set, answers for the host's Compose containers.
+	// host answers for the host's Compose containers (nil: there are none).
 	host   *labelled
 	ran    []string
 	stdins map[string][]byte
@@ -39,9 +39,14 @@ type scripted struct {
 	envs map[string][]string
 }
 
-// testProject is a stock installation's project in dir.
+// testProject is a stock installation's project in dir, its Compose file
+// made there when it is not.
 func testProject(dir string) *ComposeProject {
-	return &ComposeProject{Name: "varlatch", Dir: dir, Files: []string{filepath.Join(dir, "docker-compose.yml")}}
+	f := filepath.Join(dir, "docker-compose.yml")
+	if !isFile(f) {
+		_ = os.WriteFile(f, []byte("services: {}\n"), 0o600)
+	}
+	return &ComposeProject{Name: "varlatch", Dir: dir, Files: []string{f}}
 }
 
 // stockCompose is a stock installation in a directory of its own.
@@ -90,8 +95,12 @@ func (s *scripted) RunEnv(ctx context.Context, dir, name string, args []string, 
 }
 
 func (s *scripted) Run(_ context.Context, dir, name string, args []string, stdin []byte) (Ran, error) {
-	if s.host != nil && name == "docker" {
-		if r, ok := s.host.answer(args); ok {
+	if name == "docker" {
+		host := s.host
+		if host == nil {
+			host = &labelled{}
+		}
+		if r, ok := host.answer(args); ok {
 			return r, nil
 		}
 	}
@@ -216,7 +225,7 @@ func TestComposeDiscover(t *testing.T) {
 	digest := "sha256:" + hexOf(randomBytes(32))
 	inspect, _ := json.Marshal(map[string]any{"RepoDigests": []string{"ghcr.io/varlatch/varlatchd@" + digest},
 		"Config": map[string]any{"Labels": map[string]string{"org.opencontainers.image.version": "0.23.0"}}})
-	host := &labelled{containers: []composeLabels{{"varlatch", "varlatchd", filepath.Join(dir, "docker-compose.yml"), dir, "False"}}}
+	host := &labelled{containers: []composeContainer{ctr("varlatch", "varlatchd", filepath.Join(dir, "docker-compose.yml"), dir, "False")}}
 	run := &scripted{t: t, host: host, answers: map[string]Ran{
 		"docker compose images --format json varlatchd":       {Answer: []byte(`[{"ContainerName":"x-varlatchd-1","Repository":"ghcr.io/varlatch/varlatchd","Tag":"0.23.0","ID":"sha256:abc"}]`)},
 		"docker image inspect --format {{json .}} sha256:abc": {Answer: inspect},

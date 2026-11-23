@@ -334,8 +334,9 @@ the project from the labels of the application's containers
 names it in every `docker compose` command, and keeps it in the journal. It
 refuses, naming both, when:
 
-- the directory holds the containers of two projects, or one project runs
-  from two directories;
+- the directory holds the containers of two projects, or another
+  directory's container, anywhere on the host, is of the same project (also
+  when `--from` has no containers of its own);
 - the containers were made from different files and the directory does not
   say which are the installation's;
 - a file the labels name is not there;
@@ -343,6 +344,15 @@ refuses, naming both, when:
   names another;
 - `--resume`, `--abort`, `--rollback` or `--finish` finds the installation
   started another way than the journal records.
+
+It reads the containers again before every command that changes something,
+so an installation that changed meanwhile is left as it is. Before the
+barrier, `--abort` ends such a migration, and a new one takes the
+installation as it is.
+
+If it says that `.env` names other files than the containers were made
+from, set `COMPOSE_FILE` in `.env` to the files it prints: that makes no
+container again. `docker compose up -d` does, with whatever files it reads.
 
 With no containers, it takes the directory's only Compose file (and its
 override), and refuses several unless `COMPOSE_FILE` names them.
@@ -565,15 +575,23 @@ until the address moves back:
    they are. Before PostgreSQL starts, its Compose configuration must name
    the new volumes, and before the import, the running container must be on
    its new one: otherwise the rollback refuses, naming both, and is undone.
+   The same is checked again before the address moves, before the new
+   server stops, before the rollback is recorded, and on every `--resume`.
 4. The rebuilt database is checked against the new server's copy.
 5. The address moves back: the new server stops serving it, and the
-   TypeScript release and its ingress start on it. On Coolify, move the
-   domain back to the TypeScript application when asked, then run
-   `--resume`. After a rollback, do not **Deploy** or **Redeploy** the
-   TypeScript application in Coolify: Coolify starts it from its own
-   Compose file, which names the volumes from before the migration, without
-   what was written since. Restarting its containers (`docker restart`) is
-   fine.
+   TypeScript release and its ingress start on it.
+
+   On Coolify, from here on, do not **Deploy** or **Redeploy** the
+   TypeScript application: Coolify starts it from its own Compose file,
+   which names the volumes from before the migration, without what was
+   written since. It would answer as the same installation and release.
+   Restarting its containers (`docker restart`) is fine.
+
+   Then move the domain back to the TypeScript application when asked, and
+   run `--resume`. If the application was deployed again before that,
+   `--resume` refuses, the new server goes on as it was, and it prints how
+   to run the application on the new volumes again: the `COMPOSE_FILE` to
+   set in `.env`, then one `docker compose up -d --no-deps` command.
 6. Rolled back: the new server never starts on that data directory again.
 
 Until the address moves, an interruption, a failed check or `--abort`
@@ -770,12 +788,18 @@ sudo varlatch migrate --finish --delete-old-data \
 **After a rollback**, the TypeScript release runs again, and `--finish`
 closes the window on the 0.50 side. Without `--delete-old-data`, the 0.50
 server's copy is kept as it is. With it, a final archive of that copy is
-made and verified (format 3, restorable with `setup --restore`), then the
-copy is discarded and the volumes from before the migration, unused since
-the rollback rebuilt the database, are removed.
+made and verified (format 3, restorable with `setup --restore`). Then the
+volumes from before the migration, unused since the rollback rebuilt the
+database, are removed, and after them the copy is discarded. Before the
+archive and again before the removal, the TypeScript release must run on
+the rebuilt volumes, and each volume removed must be the one the journal
+recorded when the rollback began, be the installation's project's, and be
+mounted by no container. Otherwise nothing is removed and the copy is kept.
 
-On Coolify, the removals are yours: `--finish` names each resource to
-delete in Coolify, and does not reach Coolify itself.
+On Coolify, the removals after a migration are yours: `--finish` names each
+resource to delete in Coolify, and does not reach Coolify itself. After a
+rollback it removes the two volumes from before the migration itself, there
+too.
 
 After a migration that moved the tailnet name, the old node stays in the
 control plane under its `<name>-vl-<op>-o` name: `--finish` removes its

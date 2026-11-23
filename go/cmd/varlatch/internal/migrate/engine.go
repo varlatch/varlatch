@@ -181,7 +181,8 @@ type projectKeeper interface {
 
 // keepProject gives the source the journal's project; with check, a
 // changed one is refused now, before anything of the command is done (it
-// always is before the source's first docker compose command).
+// always is before each of the source's docker compose commands that
+// changes something).
 func (e *Engine) keepProject(ctx context.Context, j *Journal, check bool) error {
 	k, ok := e.Source.(projectKeeper)
 	if !ok || j == nil {
@@ -189,6 +190,16 @@ func (e *Engine) keepProject(ctx context.Context, j *Journal, check bool) error 
 	}
 	k.KeepProject(j.Source.Project)
 	if !check {
+		return nil
+	}
+	return k.CheckProject(ctx)
+}
+
+// checkProject refuses, now, a source that is no longer the project this
+// run (and its journal) began with.
+func (e *Engine) checkProject(ctx context.Context) error {
+	k, ok := e.Source.(projectKeeper)
+	if !ok {
 		return nil
 	}
 	return k.CheckProject(ctx)
@@ -236,6 +247,15 @@ func (e *Engine) Run(ctx context.Context, dryRunOnly bool) (*Journal, error) {
 // start runs from the preflight: on j's id when reuse (a stopped dry run
 // or one interrupted before the barrier), else on a new one.
 func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly bool) (*Journal, error) {
+	// The same migration goes on only from its own installation: a stack
+	// that replaced it needs a new migration id.
+	kept := &Journal{}
+	if reuse {
+		kept = prev
+	}
+	if err := e.keepProject(ctx, kept, false); err != nil {
+		return prev, err
+	}
 	src, err := e.Source.Discover(ctx)
 	if err != nil {
 		return prev, err
@@ -957,7 +977,14 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	// ingress is not started.
 	released, open, closed := false, false, ""
 	g, err := e.Source.Gate(ctx)
+	var changed *ProjectChangedError
 	switch {
+	case slices.Contains(beforeBarrier, from) && errors.As(err, &changed):
+		// No barrier was asked for yet, so the source holds none of this
+		// migration's: an installation that is another now is left as it
+		// is, and the migration ends, so that a new one can start.
+		e.say("The source was not asked (%v): this migration had not asked it for a barrier.", err)
+		open = true
 	case err != nil:
 		problems = append(problems, fmt.Errorf("reading the source's gate: %w", err))
 		closed = "could not confirm the source's gate is lifted, so its %s is not started again"

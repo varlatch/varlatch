@@ -67,9 +67,16 @@ fixes.
   refuses what does not agree instead of guessing. `--rollback` gives a
   Coolify installation its fresh volumes by the names its rendered file
   uses, and reaches Postgres on its network; before, the fresh volumes were
-  not used there. It refuses, before the import, a Postgres that is not on
-  its fresh volume. An installation with one `docker-compose.yml` migrates as
-  before.
+  not used there. It refuses, before the import, before the address moves,
+  before Go stops and on every `--resume`, an installation that is not on
+  its fresh volumes (one deployed again from Coolify meanwhile is not), and
+  says how to put it back. After a rollback, `--finish --delete-old-data`
+  removes the volumes recorded when the rollback began, each checked to be
+  the same, the project's and unused, and discards Go's copy only after
+  them. A container of the same project from another directory on the host
+  is refused before every command that changes something. `.env` is read as
+  Compose reads it (quotes, comments, `export`). An installation with one
+  `docker-compose.yml` migrates as before.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own
   fresh install included, with "varlatch is installed with Homebrew; update

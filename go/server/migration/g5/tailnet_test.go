@@ -393,11 +393,10 @@ func fakeDockerTailnet(args []string) (int, bool) {
 			// The operator's override: the sidecar logs in to Headscale.
 			sidecarEnv = append(sidecarEnv, "TS_EXTRA_ARGS=--login-server="+u)
 		}
-		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{
-			"varlatchd": map[string]any{"network_mode": "service:tailscale"},
-			"tailscale": map[string]any{"environment": sidecarEnv},
-		}})
-		fmt.Println(string(out))
+		printConfig(map[string]map[string]any{
+			"varlatchd": {"network_mode": "service:tailscale"},
+			"tailscale": {"environment": sidecarEnv},
+		})
 		return 0, true
 	case j == "compose stop tailscale":
 		logCall(j)

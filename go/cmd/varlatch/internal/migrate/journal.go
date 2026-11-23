@@ -173,6 +173,24 @@ type RebuildRecord struct {
 	// installation's (Coolify's rendered file).
 	Keys     []string `json:"keys,omitempty"`
 	Networks []string `json:"networks,omitempty"`
+	// ComposeFileLine is .env's COMPOSE_FILE line as it was, put back by an
+	// undo.
+	ComposeFileLine string `json:"composeFileLine,omitempty"`
+	// OverrideWas is the file beside Override that keeps an earlier
+	// reverse's, which an undo puts back.
+	OverrideWas string `json:"overrideWas,omitempty"`
+	// Retained are the Postgres and the Convex volume the installation ran
+	// on before the reverse, as they were then: --finish --delete-old-data
+	// removes these, and nothing by a name it makes up.
+	Retained []VolumeRecord `json:"retained,omitempty"`
+}
+
+// VolumeRecord is a volume's identity: its name, when it was made, and
+// Compose's project label on it ("" for none).
+type VolumeRecord struct {
+	Name      string `json:"name"`
+	CreatedAt string `json:"createdAt"`
+	Project   string `json:"project"`
 }
 
 // TSImportRecord is the TypeScript release's `admin migration import`.

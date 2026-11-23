@@ -212,8 +212,8 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 	crashPoint("rollback rebuilt")
 	// Never an import into the retained volume: refused before it, and
 	// undone.
-	if err := rs.CheckRebuilt(ctx, plan); err != nil {
-		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w", err))
+	if err := rs.CheckRebuilt(ctx, plan, false); err != nil {
+		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w; nothing was imported", err))
 	}
 	imp, err := rs.ImportReverse(ctx, out)
 	if err != nil {
@@ -225,6 +225,9 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 	}
 	if err := rs.ResetConvex(ctx); err != nil {
 		return e.undoReverse(ctx, j, fmt.Errorf("the Convex reset: %w", err))
+	}
+	if err := rs.CheckRebuilt(ctx, plan, true); err != nil {
+		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w", err))
 	}
 	if err := e.enter(ctx, j, RollbackImported); err != nil {
 		return e.undoReverse(ctx, j, err)
@@ -271,6 +274,16 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 	if err != nil {
 		return err
 	}
+	// Before anything starts, stops or moves: the installation runs on the
+	// fresh volumes. Before the transfer, one that does not is undone;
+	// within it, nothing is done (what was written to the TypeScript
+	// release since is on the fresh volumes, which an undo removes).
+	if err := e.checkRebuilt(ctx, j); err != nil {
+		if j.Phase != RollbackTransfer {
+			return e.undoReverse(ctx, j, err)
+		}
+		return err
+	}
 	if j.Phase != RollbackTransfer {
 		if err := e.enter(ctx, j, RollbackTransfer); err != nil {
 			return e.undoReverse(ctx, j, err)
@@ -312,7 +325,8 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 		if err := e.save(ctx, j); err != nil {
 			return err
 		}
-		e.say("Address back, by hand: in Coolify, move the domain of %s from the Go application back to the TypeScript one (its domain setting), "+
+		e.say("Address back, by hand: do not Deploy or Redeploy the TypeScript application (Coolify would make its containers from its own Compose file, on the volumes from before the migration; migrate checks, and refuses that). "+
+			"In Coolify, move the domain of %s from the Go application back to the TypeScript one (its domain setting), "+
 			"and redeploy the proxy if Coolify asks. Then varlatch migrate --resume checks it answers from the TypeScript release; "+
 			"or varlatch migrate --abort undoes the reverse (move the domain back to Go first).", originOf(j))
 		return ErrAwaitingOperator
@@ -327,6 +341,12 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 	if err := e.save(ctx, j); err != nil {
 		return err
 	}
+	// What answers: an installation on the retained volumes has the same id
+	// and release, so the probe alone does not tell. Before Go stops
+	// (Coolify's shape), before the name moves, and before it is recorded.
+	if err := e.checkRebuilt(ctx, j); err != nil {
+		return err
+	}
 	if kind == Coolify {
 		if ok, err := stopGo("Then varlatch migrate --resume finishes the reverse."); !ok || err != nil {
 			return err
@@ -336,7 +356,37 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 	if err := e.rollbackTailnet(ctx, j); err != nil {
 		return err
 	}
+	if err := e.checkRebuilt(ctx, j); err != nil {
+		return err
+	}
 	return e.rolledBack(ctx, j)
+}
+
+// checkRebuilt refuses an installation that is not on the fresh volumes
+// the reverse rebuilt it on, saying how it is again.
+func (e *Engine) checkRebuilt(ctx context.Context, j *Journal) error {
+	rs, _, err := e.reverseSides()
+	if err != nil {
+		return err
+	}
+	if j.Rollback == nil || j.Rollback.Rebuild == nil {
+		return fmt.Errorf("the migration %s's journal records no rebuild: what the TypeScript installation runs on is not known; nothing was done", j.ID)
+	}
+	if err := rs.CheckRebuilt(ctx, *j.Rollback.Rebuild, true); err != nil {
+		if j.Phase == RollbackTransfer || j.Phase == RolledBack {
+			what := "Go was not stopped"
+			if j.Rollback.GoStopped {
+				what = "nothing more was done (Go is stopped already)"
+			}
+			then := "then varlatch migrate --resume."
+			if j.Phase == RollbackTransfer {
+				then += " (varlatch migrate --abort undoes the reverse instead: it gives the address back to Go and removes the fresh volumes, with what was written to the TypeScript release since the address moved.)"
+			}
+			return fmt.Errorf("the TypeScript installation is not on the fresh volumes the reverse rebuilt it on: %w; %s; %s", err, what, then)
+		}
+		return fmt.Errorf("the fresh database: %w", err)
+	}
+	return nil
 }
 
 // tailnetReturn is the reverse's tailnet handoff (nil for none).
@@ -592,6 +642,11 @@ func (e *Engine) finishRolledBack(ctx context.Context, j *Journal) error {
 		_ = e.Source.CleanLeftovers()
 		e.cleanReverseScratch()
 		return nil
+	}
+	// Go is not stopped, nor written rolled back, for an installation that
+	// is not on its fresh volumes (any more).
+	if err := e.checkRebuilt(ctx, j); err != nil {
+		return err
 	}
 	if st.Running {
 		if err := e.Target.Stop(ctx); err != nil {
