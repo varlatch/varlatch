@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleCheck, Mail, MoreHorizontal, RefreshCw, UserPlus } from "lucide-react";
+import { CircleCheck, Lock, Mail, MoreHorizontal, RefreshCw, ShieldAlert, UserPlus } from "lucide-react";
 import type { Grant } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
@@ -19,6 +19,7 @@ import {
   type MenuItem,
   SectionCard,
   Segmented,
+  Skeleton,
   StatusDot,
   table,
   cn,
@@ -60,7 +61,12 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
   });
   const reports = lifecycle && auditAccess.data === true;
   // Reading reports needs audit.read; listing people here needs identity.read.
-  const peopleDenied = identities.error instanceof VarlatchApiError && identities.error.status === 403;
+  const peopleDenied = isDenied(identities.error);
+  // Reading the invitations needs what inviting does (identity.manage), so a
+  // refusal there says this person may not invite. The server decides either
+  // way; a server without the list leaves it to whether people are readable.
+  const invitations = useInvitations(org);
+  const mayInvite = invitations.supported ? !invitations.isPending && !isDenied(invitations.error) : !identities.isPending && !peopleDenied;
   const [filter, setFilter] = useState("");
   const [inviting, setInviting] = useState(false);
   const [freshLink, setFreshLink] = useState<{ name: string; url: string } | null>(null);
@@ -125,21 +131,27 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <FilterInput
-          className="min-w-64 flex-1"
-          value={filter}
-          onChange={setFilter}
-          placeholder="Filter people…"
-          shown={shown.length}
-          total={people.length}
-          noun="person"
-          aria-label="Filter people"
-        />
-        <Button variant="primary" icon={<UserPlus size={15} />} data-testid="open-invite" onClick={() => setInviting(true)}>
-          Invite
-        </Button>
-      </div>
+      {(!peopleDenied || mayInvite) && (
+        <div className="flex flex-wrap items-center gap-3">
+          {!peopleDenied && (
+            <FilterInput
+              className="min-w-64 flex-1"
+              value={filter}
+              onChange={setFilter}
+              placeholder="Filter people…"
+              shown={shown.length}
+              total={people.length}
+              noun="person"
+              aria-label="Filter people"
+            />
+          )}
+          {mayInvite && (
+            <Button variant="primary" icon={<UserPlus size={15} />} data-testid="open-invite" onClick={() => setInviting(true)}>
+              Invite
+            </Button>
+          )}
+        </div>
+      )}
 
       {auditAccess.isError && (
         <Callout
@@ -163,10 +175,35 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
       )}
 
       <SectionCard title="Members" data-testid="people-section" bodyClassName={table.wrap}>
-        {people.length === 0 ? (
+        {peopleDenied ? (
+          <EmptyState
+            data-testid="people-denied"
+            icon={<Lock size={20} />}
+            title="You do not have access to see members"
+            description="Ask an admin of this organization if you need it."
+          />
+        ) : identities.isError && !identities.data ? (
+          <EmptyState
+            data-testid="people-error"
+            icon={<ShieldAlert size={20} />}
+            title="Members could not be loaded"
+            description={errorMessage(identities.error)}
+            actions={
+              <Button size="sm" variant="secondary" onClick={() => void identities.refetch()}>
+                Try again
+              </Button>
+            }
+          />
+        ) : identities.isPending ? (
+          <div className="space-y-3 p-5" data-testid="people-loading">
+            {Array.from({ length: 3 }, (_, i) => (
+              <Skeleton key={i} className="h-6 w-full" />
+            ))}
+          </div>
+        ) : people.length === 0 ? (
           <EmptyState
             title="No members yet"
-            description="Invite the first person: they open a one-time link on their own device and enroll a passkey."
+            description={mayInvite ? "Invite the first person: they open a one-time link on their own device and enroll a passkey." : undefined}
           />
         ) : (
           <table className={table.table}>
@@ -297,6 +334,20 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
       />
     </div>
   );
+}
+
+const isDenied = (err: unknown) => err instanceof VarlatchApiError && err.status === 403;
+
+/** The pending invitations, where the server lists them. One query for the tab and the section. */
+function useInvitations(org: string) {
+  const { api } = useSession();
+  const supported = useCapability("invitations.manage");
+  const query = useQuery({
+    queryKey: ["invitations", org],
+    queryFn: () => api.listInvitations(org, { status: "pending" }),
+    enabled: supported,
+  });
+  return { ...query, supported };
 }
 
 /** Built-in grants of the two organization roles, in words. */
@@ -434,15 +485,11 @@ function PendingInvitations({
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
-  const manage = useCapability("invitations.manage");
   const servesCli = useCapability(CLI_DOWNLOAD_CAPABILITY);
   const { nameOf } = useAccessNames(org);
   const now = useNow();
-  const invitations = useQuery({
-    queryKey: ["invitations", org],
-    queryFn: () => api.listInvitations(org, { status: "pending" }),
-    enabled: manage,
-  });
+  const invitations = useInvitations(org);
+  const manage = invitations.supported;
   const invalidate = () => qc.invalidateQueries({ queryKey: ["invitations", org] });
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeInvitation(org, id),

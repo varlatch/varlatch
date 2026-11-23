@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { lazy, Suspense, useEffect, useMemo } from "react";
-import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, type RouteObject } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { LiveUpdatesStatus, RealtimeUnavailable, SseLiveUpdatesStatus } from "./components/LiveUpdatesStatus";
@@ -12,6 +12,7 @@ import { showPreferredTheme } from "./lib/theme";
 import { DialogProvider } from "./components/Dialog";
 import { ToastProvider } from "./components/Toast";
 import { Shell, lastOrg } from "./shell/Shell";
+import { NotFoundPage, PageError, ScreenError } from "./shell/RouteScreens";
 import { ApprovalDialogProvider } from "./features/security-controls/approval";
 import {
   FullPageLoading,
@@ -145,74 +146,95 @@ function Lazy() {
   );
 }
 
-const router = createBrowserRouter([
-  { path: "/", element: <OrgIndexRedirect /> },
-  // Old locations of the account pages.
-  { path: "/credentials", element: <Navigate to="/account/sessions" replace /> },
-  { path: "/profile", element: <Navigate to="/account" replace /> },
-  // Device sign-in's verification page: a CLI's code is approved here (outside the shell).
-  { path: "/device", element: <Lazy />, children: [{ index: true, element: <DevicePage /> }] },
-  // A step-up approval's page (ADR-0054 Decision 3): the CLI prints its address (outside the shell).
-  { path: "/approve/:id", element: <Lazy />, children: [{ index: true, element: <ApprovalPage /> }] },
+/**
+ * Every page. A page that fails keeps the shell around it (PageError, on the
+ * shell's children); what fails outside the shell, or the shell itself, gets
+ * a screen of its own (ScreenError). No address is left without a page: an
+ * unknown one is NotFoundPage, in the shell.
+ */
+export const routes: RouteObject[] = [
   {
-    element: <Shell />,
+    errorElement: <ScreenError />,
     children: [
+      { path: "/", element: <OrgIndexRedirect /> },
+      // Old locations of the account pages.
+      { path: "/credentials", element: <Navigate to="/account/sessions" replace /> },
+      { path: "/profile", element: <Navigate to="/account" replace /> },
+      // Device sign-in's verification page: a CLI's code is approved here (outside the shell).
+      { path: "/device", element: <Lazy />, children: [{ index: true, element: <DevicePage /> }] },
+      // A step-up approval's page (ADR-0054 Decision 3): the CLI prints its address (outside the shell).
+      { path: "/approve/:id", element: <Lazy />, children: [{ index: true, element: <ApprovalPage /> }] },
       {
-        element: <Lazy />,
+        element: <Shell />,
         children: [
           {
-            path: "/account",
-            element: <AccountLayout />,
+            element: <Lazy />,
+            errorElement: <PageError />,
             children: [
-              { index: true, element: <ProfilePage /> },
-              { path: "security", element: <SecurityPage /> },
-              { path: "sessions", element: <SessionsPage /> },
+              {
+                path: "/account",
+                element: <AccountLayout />,
+                children: [
+                  { index: true, element: <ProfilePage /> },
+                  { path: "security", element: <SecurityPage /> },
+                  { path: "sessions", element: <SessionsPage /> },
+                ],
+              },
+              { path: "/installation/settings", element: <InstallationPage /> },
+              // Any other address outside an Organization.
+              { path: "*", element: <NotFoundPage /> },
             ],
           },
-          { path: "/installation/settings", element: <InstallationPage /> },
+        ],
+      },
+      {
+        path: "/o/:org",
+        element: <Shell />,
+        children: [
+          {
+            element: <Lazy />,
+            errorElement: <PageError />,
+            children: [
+              { index: true, element: <Navigate to="projects" replace /> },
+              { path: "projects", element: <ProjectsPage /> },
+              {
+                path: "p/:project",
+                element: <ProjectLayout />,
+                children: [
+                  { index: true, element: <ProjectValues /> },
+                  { path: "contract", element: <ContractPage /> },
+                  { path: "integrations", element: <ProjectIntegrations /> },
+                  { path: "activity", element: <ProjectActivity /> },
+                ],
+              },
+              {
+                path: "p/:project/e/:env",
+                element: <EnvironmentLayout />,
+                children: [
+                  { index: true, element: <EditorPage /> },
+                  { path: "integrations", element: <IntegrationsPage /> },
+                  { path: "activity", element: <EnvironmentActivity /> },
+                ],
+              },
+              { path: "access", element: <AccessPage /> },
+              { path: "connections", element: <ConnectionsPage /> },
+              { path: "connections/github-app", element: <GitHubAppCallbackPage /> },
+              { path: "audit", element: <AuditPage /> },
+              { path: "security", element: <OrgSecurityPage /> },
+              { path: "settings", element: <SettingsPage /> },
+              // Any other address in an Organization.
+              { path: "*", element: <NotFoundPage /> },
+            ],
+          },
         ],
       },
     ],
   },
-  {
-    path: "/o/:org",
-    element: <Shell />,
-    children: [
-      {
-        element: <Lazy />,
-        children: [
-          { index: true, element: <Navigate to="projects" replace /> },
-          { path: "projects", element: <ProjectsPage /> },
-          {
-            path: "p/:project",
-            element: <ProjectLayout />,
-            children: [
-              { index: true, element: <ProjectValues /> },
-              { path: "contract", element: <ContractPage /> },
-              { path: "integrations", element: <ProjectIntegrations /> },
-              { path: "activity", element: <ProjectActivity /> },
-            ],
-          },
-          {
-            path: "p/:project/e/:env",
-            element: <EnvironmentLayout />,
-            children: [
-              { index: true, element: <EditorPage /> },
-              { path: "integrations", element: <IntegrationsPage /> },
-              { path: "activity", element: <EnvironmentActivity /> },
-            ],
-          },
-          { path: "access", element: <AccessPage /> },
-          { path: "connections", element: <ConnectionsPage /> },
-          { path: "connections/github-app", element: <GitHubAppCallbackPage /> },
-          { path: "audit", element: <AuditPage /> },
-          { path: "security", element: <OrgSecurityPage /> },
-          { path: "settings", element: <SettingsPage /> },
-        ],
-      },
-    ],
-  },
-]);
+];
+
+// Made with the first render: the router reads the window's address.
+let router: ReturnType<typeof createBrowserRouter> | undefined;
+const appRouter = () => (router ??= createBrowserRouter(routes));
 
 export function App() {
   useEffect(() => showPreferredTheme(), []);
@@ -225,7 +247,7 @@ export function App() {
               <AuthGate>
                 <TailnetConnectionProvider>
                   <ConvexWithSession>
-                    <RouterProvider router={router} />
+                    <RouterProvider router={appRouter()} />
                   </ConvexWithSession>
                 </TailnetConnectionProvider>
               </AuthGate>

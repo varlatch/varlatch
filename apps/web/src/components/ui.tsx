@@ -620,7 +620,9 @@ export function InfoTip({ text, className }: { text: string; className?: string 
 
 /** Table styling helpers: consistent header, row and cell rhythm. */
 export const table = {
-  wrap: "overflow-x-auto",
+  // relative: what is absolutely placed inside (a sr-only header) scrolls with
+  // the table instead of widening the page.
+  wrap: "relative overflow-x-auto",
   table: "w-full border-collapse text-sm",
   th: "h-9 border-b border-bd px-4 text-left text-xs font-medium text-muted whitespace-nowrap",
   tr: "border-b border-bd last:border-b-0 transition-colors",
