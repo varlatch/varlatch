@@ -120,17 +120,41 @@ started; the go-assets artifact the later jobs download is kept as long.
 The workflow runs only on a tag push, so after those 30 days the run
 cannot be resumed or restarted at all.
 
-Within those 30 days, a version can also start over: check it has no
-GitHub release, check the run still offers "Re-run all jobs", then delete
-the package version that carries its tag in GHCR (the organization's
-packages, `varlatchd`, "Manage versions"; a package admin can) and re-run
-all jobs. go-image's guard then finds no tag and builds a new image.
+Publishing can leave a draft behind: `gh release create` uploads the
+assets to a draft and publishes it last, and a run killed in between, or
+one that could not delete its draft, leaves it. A draft is not a release:
+go-image's guard does not see it, and a later `gh release create` makes
+another one beside it. Its notes name the image's digest from the start
+(its assets may be incomplete). Before deleting an image, look for drafts
+of the tag or naming its digest, with an account that can push to the
+repository (others are shown no drafts, so an empty answer from them
+proves nothing):
+
+```sh
+REPO=varlatch/varlatch TAG=v0.50.0 DIGEST=sha256:...   # the digest the tag names in GHCR
+gh api "repos/$REPO" --jq '.permissions.push'          # must print true
+gh api --paginate "repos/$REPO/releases?per_page=100" --jq ".[] | select(.draft
+  and (.tag_name == \"$TAG\" or ((.body // \"\") | contains(\"$DIGEST\")))) | \"\(.id) \(.html_url)\""
+```
+
+If that lists a draft, or either command fails, do not delete the image or
+rebuild it: the draft's signed record names the old digest. Resume with
+"Re-run failed jobs", which publishes a new release of the same digest,
+or, when that cannot succeed, cut the next patch version as below. Either
+way leave the stranded draft unpublished: it may be incomplete.
+
+Within those 30 days, and with no such draft, a version can also start
+over: check it has no GitHub release, check the run still offers "Re-run
+all jobs", then delete the package version that carries its tag in GHCR
+(the organization's packages, `varlatchd`, "Manage versions"; a package
+admin can) and re-run all jobs. go-image's guard then finds no tag and
+builds a new image.
 
 After the 30 days, or whenever the run cannot be re-run: do not delete the
 image, and do not delete and re-push the tag. Cut the next patch version
 instead (0.50.1 after a stranded 0.50.0), the normal path with its guards.
-The stranded version keeps its image and has no GitHub release, so
-installers and `published-release.yml`, which go by releases, never offer
+The stranded version keeps its image and has no published GitHub release
+(a draft of it stays unpublished), so installers and `published-release.yml`, which go by releases, never offer
 it; its tag counts as a Go release for `release.json`'s `previous` (G6),
 so name it there as after any tag. This costs a version number, and
 nothing else: deleting the image without a run that can rebuild it would
