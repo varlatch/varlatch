@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,11 +26,76 @@ import (
 type scripted struct {
 	t       *testing.T
 	answers map[string]Ran
-	ran     []string
-	stdins  map[string][]byte
+	// nameless: a compose command may leave the project's name to Compose
+	// (the one that asks for it).
+	nameless bool
+	// host, when set, answers for the host's Compose containers.
+	host   *labelled
+	ran    []string
+	stdins map[string][]byte
+	// argv are the docker compose commands as run, whole; envs what RunEnv
+	// added, by key.
+	argv [][]string
+	envs map[string][]string
+}
+
+// testProject is a stock installation's project in dir.
+func testProject(dir string) *ComposeProject {
+	return &ComposeProject{Name: "varlatch", Dir: dir, Files: []string{filepath.Join(dir, "docker-compose.yml")}}
+}
+
+// stockCompose is a stock installation in a directory of its own.
+func stockCompose(t *testing.T, run Runner) *Compose {
+	t.Helper()
+	dir := installationDir(t, map[string]string{"docker-compose.yml": "services: {}\n"})
+	return &Compose{Directory: dir, Run: run, resolved: testProject(dir)}
+}
+
+// unnamed is a docker compose command without the arguments that name its
+// project; every one must have them (compose_project.go).
+func (s *scripted) unnamed(name string, args []string) []string {
+	if name != "docker" || len(args) == 0 || args[0] != "compose" {
+		return args
+	}
+	s.argv = append(s.argv, slices.Clone(args))
+	rest, files := args[1:], 0
+	var project, dir string
+	for len(rest) > 1 {
+		switch rest[0] {
+		case "--project-name":
+			project = rest[1]
+		case "--project-directory":
+			dir = rest[1]
+		case "-f":
+			files++
+		default:
+			if (project == "" && !s.nameless) || dir == "" || files == 0 {
+				s.t.Fatalf("a compose command that does not name its project, directory and files: %q", args)
+			}
+			return append([]string{"compose"}, rest...)
+		}
+		rest = rest[2:]
+	}
+	s.t.Fatalf("a compose command without a verb: %q", args)
+	return nil
+}
+
+// RunEnv is Run, the variables added recorded.
+func (s *scripted) RunEnv(ctx context.Context, dir, name string, args []string, stdin []byte, env []string) (Ran, error) {
+	if s.envs == nil {
+		s.envs = map[string][]string{}
+	}
+	s.envs[name+" "+strings.Join(args, " ")] = env
+	return s.Run(ctx, dir, name, args, stdin)
 }
 
 func (s *scripted) Run(_ context.Context, dir, name string, args []string, stdin []byte) (Ran, error) {
+	if s.host != nil && name == "docker" {
+		if r, ok := s.host.answer(args); ok {
+			return r, nil
+		}
+	}
+	args = s.unnamed(name, args)
 	key := name + " " + strings.Join(args, " ")
 	s.ran = append(s.ran, key)
 	if s.stdins == nil {
@@ -150,7 +216,8 @@ func TestComposeDiscover(t *testing.T) {
 	digest := "sha256:" + hexOf(randomBytes(32))
 	inspect, _ := json.Marshal(map[string]any{"RepoDigests": []string{"ghcr.io/varlatch/varlatchd@" + digest},
 		"Config": map[string]any{"Labels": map[string]string{"org.opencontainers.image.version": "0.23.0"}}})
-	run := &scripted{t: t, answers: map[string]Ran{
+	host := &labelled{containers: []composeLabels{{"varlatch", "varlatchd", filepath.Join(dir, "docker-compose.yml"), dir, "False"}}}
+	run := &scripted{t: t, host: host, answers: map[string]Ran{
 		"docker compose images --format json varlatchd":       {Answer: []byte(`[{"ContainerName":"x-varlatchd-1","Repository":"ghcr.io/varlatch/varlatchd","Tag":"0.23.0","ID":"sha256:abc"}]`)},
 		"docker image inspect --format {{json .}} sha256:abc": {Answer: inspect},
 	}}
@@ -159,7 +226,10 @@ func TestComposeDiscover(t *testing.T) {
 	if err != nil || info.Release != "0.23.0" || info.Digest != digest || info.DigestRepository != "ghcr.io/varlatch/varlatchd" || info.Image != "ghcr.io/varlatch/varlatchd:0.23.0" {
 		t.Fatalf("%+v %v", info, err)
 	}
-	if _, err := (&Compose{Directory: t.TempDir(), Run: run}).Discover(context.Background()); err == nil || !strings.Contains(err.Error(), "no docker-compose.yml") {
+	if info.Project == nil || info.Project.Name != "varlatch" || !slices.Equal(info.Project.Files, []string{filepath.Join(dir, "docker-compose.yml")}) {
+		t.Errorf("the project: %v", info.Project)
+	}
+	if _, err := (&Compose{Directory: t.TempDir(), Run: run}).Discover(context.Background()); err == nil || !strings.Contains(err.Error(), "no Compose file") {
 		t.Errorf("no Compose file: %v", err)
 	}
 }
@@ -233,7 +303,7 @@ func TestComposeCommands(t *testing.T) {
 		"varlatch-ts admin backup create":   {Answer: []byte("Archive created: " + dir + "/backups/" + archive + ".vltbak (" + archive + ")\nUpload completed to offsite; remote retrieval has not been verified.\n")},
 		"varlatch-ts admin backup verify":   {Answer: []byte(`{"archiveId":"` + archive + `","integrity":true,"compatibility":true,"keyMatch":true,"message":"checks passed"}` + "\n")},
 	}}
-	c := &Compose{Directory: dir, Run: run, BEKFile: "/keys/bek", Destination: "offsite", ReadCredentialsFile: "/keys/read.json"}
+	c := &Compose{Directory: dir, resolved: testProject(dir), Run: run, BEKFile: "/keys/bek", Destination: "offsite", ReadCredentialsFile: "/keys/read.json"}
 	ctx := context.Background()
 	g, err := c.Gate(ctx)
 	if err != nil || g == nil || g.Kind != "migration" || g.ID != "g1" {
@@ -305,7 +375,7 @@ func TestComposeExportLeavesNothingWhenItFails(t *testing.T) {
 	} {
 		dir := t.TempDir()
 		_ = os.MkdirAll(filepath.Join(dir, "backups"), 0o700)
-		c := &Compose{Directory: dir, Run: &scripted{t: t, answers: map[string]Ran{exec: r}}}
+		c := &Compose{Directory: dir, resolved: testProject(dir), Run: &scripted{t: t, answers: map[string]Ran{exec: r}}}
 		_, err := c.Export(context.Background(), randomBytes(32), false)
 		if err == nil {
 			t.Errorf("%s: no error", name)
@@ -332,7 +402,7 @@ func TestComposeImportReverseStreams(t *testing.T) {
 	}
 	cmd := "docker compose --profile varlatch-rollback run --rm -T varlatch-reverse-import admin migration import --in -"
 	run := &scripted{t: t, answers: map[string]Ran{cmd: {Answer: []byte(`{"installationId":"inst_x","auditPosition":"48","migratedOutGate":"lifted"}` + "\n")}}}
-	c := &Compose{Directory: dir, Run: run}
+	c := &Compose{Directory: dir, resolved: testProject(dir), Run: run}
 	rec, err := c.ImportReverse(context.Background(), bundle)
 	if err != nil || rec.InstallationID != "inst_x" || rec.AuditPosition != "48" {
 		t.Fatalf("import: %+v %v", rec, err)
@@ -360,7 +430,7 @@ func TestComposeRefusesWhatItCannotRead(t *testing.T) {
 		exec + "status":                   {Code: 1, Said: []byte("varlatchd: no database\n")},
 		exec + "export":                   {Answer: []byte("{}")},
 	}}
-	c := &Compose{Directory: dir, Run: run, BEKFile: "/b", Destination: "d", ReadCredentialsFile: "/r"}
+	c := &Compose{Directory: dir, resolved: testProject(dir), Run: run, BEKFile: "/b", Destination: "d", ReadCredentialsFile: "/r"}
 	ctx := context.Background()
 	if _, err := c.Barrier(ctx, time.Second); err == nil {
 		t.Error("a barrier answer without its frozen point")
@@ -454,7 +524,7 @@ func TestComposeIngress(t *testing.T) {
 			"docker inspect --format {{json .Config.Env}} c1": {Answer: []byte(env)},
 		}}
 	}
-	ing, err := (&Compose{Directory: dir, Run: running(`["PATH=/bin"]`)}).Ingress(context.Background())
+	ing, err := (&Compose{Directory: dir, resolved: testProject(dir), Run: running(`["PATH=/bin"]`)}).Ingress(context.Background())
 	if err != nil || ing.PublicURL != "" || ing.Caddy || ing.WebAddress != "127.0.0.1:8787" || ing.OutboundAllow != "" || ing.OutboundAllowFromConfig {
 		t.Fatalf("no .env: %+v %v", ing, err)
 	}
@@ -462,12 +532,14 @@ func TestComposeIngress(t *testing.T) {
 		"COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml\nVARLATCH_WEB_PORT=9000\nBIND_ADDRESS=0.0.0.0\n"+
 		"VARLATCH_OUTBOUND_ALLOW=not.what.compose.gave\n"), 0o600)
 	// The allow list is the container's, not .env's line.
-	ing, err = (&Compose{Directory: dir, Run: running(`["VARLATCH_OUTBOUND_ALLOW= coolify.lan, 10.0.0.0/8:8000 "]`)}).Ingress(context.Background())
+	caddy := testProject(dir)
+	caddy.Files = append(caddy.Files, filepath.Join(dir, "docker-compose.caddy.yml"))
+	ing, err = (&Compose{Directory: dir, resolved: caddy, Run: running(`["VARLATCH_OUTBOUND_ALLOW= coolify.lan, 10.0.0.0/8:8000 "]`)}).Ingress(context.Background())
 	if err != nil || ing.PublicURL != "https://vault.example.test" || !ing.Caddy || ing.WebAddress != "0.0.0.0:9000" || ing.OutboundAllow != "coolify.lan, 10.0.0.0/8:8000" {
 		t.Fatalf(".env: %+v %v", ing, err)
 	}
 	run := &scripted{t: t, answers: map[string]Ran{"docker compose": {}}}
-	c := &Compose{Directory: dir, Run: run}
+	c := &Compose{Directory: dir, resolved: testProject(dir), Run: run}
 	ctx := context.Background()
 	for _, c2 := range []struct {
 		kind Ingress
@@ -516,7 +588,7 @@ func TestComposeIngress(t *testing.T) {
 				"docker inspect --format " + containerFormat + " c1": {Answer: []byte(c2.info)},
 				"docker compose up -d --no-deps ":                    {},
 			}}
-			cu := &Compose{Directory: dir, Run: up}
+			cu := &Compose{Directory: dir, resolved: testProject(dir), Run: up}
 			if err := cu.StartIngress(ctx, k, c2.recreate); err != nil {
 				t.Fatal(err)
 			}
@@ -656,7 +728,7 @@ func TestComposeOutboundAllow(t *testing.T) {
 		{"stopped, the shell's value", stopped("outbound-process-env.json"), "from.shell.lan", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			v, fromConfig, err := (&Compose{Directory: t.TempDir(), Run: c.run}).outboundAllow(context.Background())
+			v, fromConfig, err := stockCompose(t, c.run).outboundAllow(context.Background())
 			if err != nil || v != c.want || fromConfig != c.fromConfig {
 				t.Fatalf("%q %v %v, want %q %v", v, fromConfig, err, c.want, c.fromConfig)
 			}
@@ -680,7 +752,7 @@ func TestComposeOutboundAllow(t *testing.T) {
 			"a variable the Compose files need is unset"},
 		"config not JSON": {&scripted{t: t, answers: map[string]Ran{ps: {}, config: {Answer: []byte(`{"name":"p","services":` + secret)}}}, "did not give the varlatchd service's environment"},
 	} {
-		_, _, err := (&Compose{Directory: t.TempDir(), Run: c.run}).outboundAllow(context.Background())
+		_, _, err := stockCompose(t, c.run).outboundAllow(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "VARLATCH_OUTBOUND_ALLOW cannot be read") || !strings.Contains(err.Error(), c.says) ||
 			strings.Contains(err.Error(), "vault.example.test") || strings.Contains(err.Error(), "missing a value") {
 			t.Errorf("%s: %v", name, err)
@@ -698,7 +770,7 @@ func TestComposeSharesTailnetNetwork(t *testing.T) {
 		`{"name":"p","services":{"varlatchd":{"network_mode":"host"},"tailscale":{}}}`:              false,
 	} {
 		run := &scripted{t: t, answers: map[string]Ran{config: {Answer: []byte(answer)}}}
-		if got, err := (&Compose{Directory: t.TempDir(), Run: run}).SharesTailnetNetwork(context.Background()); err != nil || got != want {
+		if got, err := (&Compose{Directory: t.TempDir(), Run: run, resolved: testProject("/installation")}).SharesTailnetNetwork(context.Background()); err != nil || got != want {
 			t.Errorf("%s: %v %v", answer, got, err)
 		}
 	}

@@ -324,6 +324,29 @@ If it does not, the address goes back and the migration is undone.
 `varlatch migrate` does not change anything in Coolify: you make each step
 it asks for, then run it again with `--resume`.
 
+`--from` is the directory Coolify deploys the TypeScript application from,
+`/data/coolify/applications/<uuid>`. It can hold several Compose files:
+Coolify's own `docker-compose.yaml`, and, with **Preserve Repository** on,
+the repository's `docker-compose.yml`, which names another project. Plain
+`docker compose` there can read the wrong one, so `varlatch migrate` takes
+the project from the labels of the application's containers
+(`com.docker.compose.project`, its `config_files` and its `working_dir`),
+names it in every `docker compose` command, and keeps it in the journal. It
+refuses, naming both, when:
+
+- the directory holds the containers of two projects, or one project runs
+  from two directories;
+- the containers were made from different files and the directory does not
+  say which are the installation's;
+- a file the labels name is not there;
+- `COMPOSE_FILE` or `COMPOSE_PROJECT_NAME`, in your shell or in `.env`,
+  names another;
+- `--resume`, `--abort`, `--rollback` or `--finish` finds the installation
+  started another way than the journal records.
+
+With no containers, it takes the directory's only Compose file (and its
+override), and refuses several unless `COMPOSE_FILE` names them.
+
 1. Create the 0.50 application in Coolify as a **Docker Compose** resource
    pointing at `infra/coolify/varlatchd.compose.yml` (see
    [its Coolify setup](../../infra/coolify/README.md#single-container-go-service-050)
@@ -544,7 +567,11 @@ until the address moves back:
 5. The address moves back: the new server stops serving it, and the
    TypeScript release and its ingress start on it. On Coolify, move the
    domain back to the TypeScript application when asked, then run
-   `--resume`.
+   `--resume`. After a rollback, do not **Deploy** or **Redeploy** the
+   TypeScript application in Coolify: Coolify starts it from its own
+   Compose file, which names the volumes from before the migration, without
+   what was written since. Restarting its containers (`docker restart`) is
+   fine.
 6. Rolled back: the new server never starts on that data directory again.
 
 Until the address moves, an interruption, a failed check or `--abort`

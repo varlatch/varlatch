@@ -1,0 +1,156 @@
+{
+  "name": "abcdefghijklmnopqrstuvwx",
+  "services": {
+    "convex-backend": {
+      "volumes": [
+        {
+          "source": "abcdefghijklmnopqrstuvwx_convex-data",
+          "target": "/convex/data",
+          "type": "volume",
+          "volume": {}
+        },
+        {
+          "source": "abcdefghijklmnopqrstuvwx_varlatch-state",
+          "target": "/var/lib/varlatch",
+          "type": "volume",
+          "volume": {}
+        },
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "read_only": true,
+          "source": "/data/coolify/applications/abcdefghijklmnopqrstuvwx/convex-supervisor.cjs",
+          "target": "/convex/varlatch-supervisor.cjs",
+          "type": "bind"
+        }
+      ],
+      "networks": {
+        "abcdefghijklmnopqrstuvwx": null,
+        "default": null
+      }
+    },
+    "convex-deploy": {
+      "networks": {
+        "abcdefghijklmnopqrstuvwx": null
+      }
+    },
+    "postgres": {
+      "volumes": [
+        {
+          "source": "abcdefghijklmnopqrstuvwx_postgres-data",
+          "target": "/var/lib/postgresql/data",
+          "type": "volume",
+          "volume": {}
+        },
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "read_only": true,
+          "source": "/data/coolify/applications/abcdefghijklmnopqrstuvwx/postgres-init",
+          "target": "/docker-entrypoint-initdb.d",
+          "type": "bind"
+        }
+      ],
+      "networks": {
+        "abcdefghijklmnopqrstuvwx": null
+      }
+    },
+    "tailscale": {
+      "volumes": [
+        {
+          "source": "abcdefghijklmnopqrstuvwx_tailscale-state",
+          "target": "/var/lib/tailscale",
+          "type": "volume",
+          "volume": {}
+        },
+        {
+          "source": "abcdefghijklmnopqrstuvwx_tailscale-socket",
+          "target": "/var/run/tailscale",
+          "type": "volume",
+          "volume": {}
+        }
+      ],
+      "networks": {
+        "abcdefghijklmnopqrstuvwx": null,
+        "default": {
+          "aliases": [
+            "varlatchd"
+          ]
+        }
+      }
+    },
+    "varlatch-migrate": {
+      "volumes": [
+        {
+          "source": "abcdefghijklmnopqrstuvwx_varlatch-state",
+          "target": "/var/lib/varlatch",
+          "type": "volume",
+          "volume": {}
+        }
+      ],
+      "networks": {
+        "abcdefghijklmnopqrstuvwx": null
+      }
+    },
+    "varlatch-web": {
+      "networks": {
+        "abcdefghijklmnopqrstuvwx": null,
+        "default": null
+      }
+    },
+    "varlatchd": {
+      "network_mode": "service:tailscale",
+      "volumes": [
+        {
+          "source": "abcdefghijklmnopqrstuvwx_varlatch-state",
+          "target": "/var/lib/varlatch",
+          "type": "volume",
+          "volume": {}
+        },
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "source": "/data/coolify/applications/abcdefghijklmnopqrstuvwx/backups",
+          "target": "/backups",
+          "type": "bind"
+        },
+        {
+          "read_only": true,
+          "source": "abcdefghijklmnopqrstuvwx_tailscale-socket",
+          "target": "/var/run/tailscale",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    }
+  },
+  "networks": {
+    "abcdefghijklmnopqrstuvwx": {
+      "external": true,
+      "name": "abcdefghijklmnopqrstuvwx"
+    },
+    "default": {
+      "name": "abcdefghijklmnopqrstuvwx_default"
+    }
+  },
+  "volumes": {
+    "abcdefghijklmnopqrstuvwx_convex-data": {
+      "name": "abcdefghijklmnopqrstuvwx_convex-data"
+    },
+    "abcdefghijklmnopqrstuvwx_postgres-data": {
+      "name": "abcdefghijklmnopqrstuvwx_postgres-data"
+    },
+    "abcdefghijklmnopqrstuvwx_tailscale-socket": {
+      "name": "abcdefghijklmnopqrstuvwx_tailscale-socket"
+    },
+    "abcdefghijklmnopqrstuvwx_tailscale-state": {
+      "name": "abcdefghijklmnopqrstuvwx_tailscale-state"
+    },
+    "abcdefghijklmnopqrstuvwx_varlatch-state": {
+      "name": "abcdefghijklmnopqrstuvwx_varlatch-state"
+    }
+  }
+}

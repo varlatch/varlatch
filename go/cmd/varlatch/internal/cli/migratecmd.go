@@ -315,7 +315,7 @@ func migrateCommand(r *Run) error {
 	}
 	run := migrate.ExecRunner{Env: environ(r)}
 	e := &migrate.Engine{
-		Source: &migrate.Compose{Directory: o.from, Run: run, TSCLI: o.tsCLI, KEKFile: o.kekFile, BEKFile: o.bekFile,
+		Source: &migrate.Compose{Directory: o.from, Run: run, Env: run.Env, TSCLI: o.tsCLI, KEKFile: o.kekFile, BEKFile: o.bekFile,
 			Destination: o.destination, DestinationsFile: o.destinationsFile, ReadCredentialsFile: o.readCredentials},
 		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: targetCredentials(varlatchdEnviron(r), o.config)}, Unit: o.unit},
 		Options: migrate.Options{MaxDowntime: o.maxDowntime, Drain: o.drain, TransferTimeout: o.transferTimeout, Ingress: migrate.Ingress(o.ingress),

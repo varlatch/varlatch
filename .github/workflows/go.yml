@@ -564,6 +564,21 @@ jobs:
       - name: The release's asset scripts and the nightly report pass shellcheck
         run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh scripts/ci-nightly-report.sh
 
+      # varlatch migrate on a directory shaped as Coolify's (the
+      # repository's docker-compose.yml beside the file that runs), with
+      # the runner's own Docker: the project is the containers', not the
+      # one plain docker compose finds there. Created, never started.
+      - name: varlatch migrate finds a Coolify-shaped Compose project
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          VARLATCH_MIGRATE_TEST_DOCKER: "1"
+          VARLATCH_MIGRATE_TEST_IMAGE: busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+        run: |
+          docker pull -q "$VARLATCH_MIGRATE_TEST_IMAGE" >/dev/null
+          go test -count=1 -v -run '^TestComposeProjectOnDocker$' ./cmd/varlatch/internal/migrate/ | tee "$RUNNER_TEMP/compose-project.log"
+          grep -q -- '--- PASS: TestComposeProjectOnDocker' "$RUNNER_TEMP/compose-project.log"
+
       # G13 (ADR-0059 step 4.14), and the Go replacement of
       # scripts/test-backup-s3.mjs: the S3 client against a local S3 server
       # (the pinned MinIO image): uploads in one request and multipart,

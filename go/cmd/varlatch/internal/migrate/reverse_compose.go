@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -86,10 +87,8 @@ type ReverseSource interface {
 	StartNetworkOwner(ctx context.Context) error
 }
 
-// projectName is the installation's Compose project, as Compose itself
-// resolves it (its -p, COMPOSE_PROJECT_NAME, the files' top-level name:,
-// the directory's name, in that order): `docker compose config` in the
-// installation's directory, whose .env names its files. Uninterpolated:
+// projectName is the installation's Compose project (compose_project.go),
+// as `docker compose config` answers for it. Uninterpolated:
 // the configuration interpolated would carry the installation's secrets
 // from .env, and only its name is read. Every volume name the reverse and
 // --finish derive starts with it.
@@ -102,9 +101,78 @@ func (c *Compose) projectName(ctx context.Context) (string, error) {
 type composeConfig struct {
 	Name     string `json:"name"`
 	Services map[string]struct {
-		NetworkMode string     `json:"network_mode"`
-		Environment composeEnv `json:"environment"`
+		NetworkMode string          `json:"network_mode"`
+		Environment composeEnv      `json:"environment"`
+		Volumes     []composeVolume `json:"volumes"`
+		Networks    composeNetworks `json:"networks"`
 	} `json:"services"`
+}
+
+// composeVolume is a service's volume: its long form, or the short one
+// (source:target[:mode]).
+type composeVolume struct {
+	Type   string `json:"type"`
+	Source string `json:"source"`
+	Target string `json:"target"`
+}
+
+func (v *composeVolume) UnmarshalJSON(b []byte) error {
+	var short string
+	if json.Unmarshal(b, &short) == nil {
+		f := strings.Split(short, ":")
+		if len(f) < 2 {
+			*v = composeVolume{Type: "volume", Target: short}
+			return nil
+		}
+		*v = composeVolume{Type: "volume", Source: f[0], Target: f[1]}
+		if strings.ContainsAny(f[0], "/.~$") {
+			v.Type = "bind"
+		}
+		return nil
+	}
+	type long composeVolume
+	return json.Unmarshal(b, (*long)(v))
+}
+
+// composeNetworks is a service's networks: a map's keys, or a list.
+type composeNetworks []string
+
+func (n *composeNetworks) UnmarshalJSON(b []byte) error {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(b, &m) == nil {
+		*n = slices.Sorted(maps.Keys(m))
+		return nil
+	}
+	return json.Unmarshal(b, (*[]string)(n))
+}
+
+// The stock Compose files' volumes, by their names there.
+const (
+	postgresKey = "postgres-data"
+	convexKey   = "convex-data"
+	stateKey    = "varlatch-state"
+)
+
+// volumeKeys are the names the installation's Compose files give its
+// Postgres, Convex and state volumes, by where its services mount them: an
+// orchestrator's rendered file can rename them (Coolify prefixes the
+// application's id), and a file that names others would leave the retained
+// ones in use.
+func (m composeConfig) volumeKeys() ([]string, error) {
+	var out []string
+	for _, w := range []struct{ service, target string }{{"postgres", "/var/lib/postgresql/data"}, {"convex-backend", "/convex/data"}, {service, "/var/lib/varlatch"}} {
+		key := ""
+		for _, v := range m.Services[w.service].Volumes {
+			if v.Type == "volume" && v.Target == w.target {
+				key = v.Source
+			}
+		}
+		if key == "" {
+			return nil, fmt.Errorf("the installation's %s service mounts no named volume at %s: the reverse cannot give it a fresh one", w.service, w.target)
+		}
+		out = append(out, key)
+	}
+	return out, nil
 }
 
 // composeEnv is a service's environment as `docker compose config --format
@@ -172,6 +240,10 @@ func (c *Compose) config(ctx context.Context) (composeConfig, error) {
 	if err != nil {
 		return composeConfig{}, err
 	}
+	return parseConfig(r)
+}
+
+func parseConfig(r Ran) (composeConfig, error) {
 	if r.Code != 0 {
 		return composeConfig{}, errors.New("docker compose config failed: the installation's Compose project could not be read")
 	}
@@ -188,7 +260,12 @@ func (c *Compose) config(ctx context.Context) (composeConfig, error) {
 // RebuildPlan: the fresh volumes, named by the project and the migration
 // (its id's last 8 letters), and COMPOSE_FILE as it is now.
 func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, error) {
-	project, err := c.projectName(ctx)
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return RebuildRecord{}, err
+	}
+	project := cfg.Name
+	keys, err := cfg.volumeKeys()
 	if err != nil {
 		return RebuildRecord{}, err
 	}
@@ -198,6 +275,14 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 	short := j.ID[len(j.ID)-8:]
 	plan := RebuildRecord{Override: OverrideFile, Image: j.Source.DigestRepository + "@" + j.Source.Digest,
 		Volumes: []string{project + "_postgres-data-" + short, project + "_convex-data-" + short}}
+	if !slices.Equal(keys, stockKeys) {
+		plan.Keys = keys
+	}
+	// The import reaches Postgres as the installation's own migrate job
+	// does.
+	if nets := cfg.Services["varlatch-migrate"].Networks; len(nets) > 0 && !slices.Equal(nets, []string{"default"}) {
+		plan.Networks = nets
+	}
 	cf, ok, err := c.envValue("COMPOSE_FILE")
 	if err != nil {
 		return plan, err
@@ -208,30 +293,43 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 	return plan, nil
 }
 
+var stockKeys = []string{postgresKey, convexKey, stateKey}
+
 // override is migrate's Compose file for plan.
 func override(plan RebuildRecord) string {
+	keys := plan.Keys
+	if len(keys) != 3 {
+		keys = stockKeys
+	}
+	networks := ""
+	if len(plan.Networks) > 0 {
+		networks = "    networks:\n"
+		for _, n := range plan.Networks {
+			networks += "      - " + n + "\n"
+		}
+	}
 	return `# Written by varlatch migrate --rollback (go-step7 decision 16): this
 # installation runs on a fresh database rebuilt from its Go installation.
 # The volumes it ran on before the migration are kept, unchanged, until
 # varlatch migrate --finish. Keep this file and COMPOSE_FILE as they are.
 volumes:
-  postgres-data:
+  ` + keys[0] + `:
     name: ` + plan.Volumes[0] + `
-  convex-data:
+  ` + keys[1] + `:
     name: ` + plan.Volumes[1] + `
 services:
   varlatch-reverse-import:
     image: ` + plan.Image + `
     profiles: [` + reverseProfile + `]
     restart: "no"
-    environment:
+` + networks + `    environment:
       VARLATCH_STATE_DIR: /var/lib/varlatch
       VARLATCH_DATABASE_URL: postgres://varlatchd_migrate:${VARLATCH_MIGRATE_PASSWORD:-}@postgres:5432/varlatch
       VARLATCH_DATABASE_PASSWORD_FILE: /run/secrets/varlatch-migrate-password
       VARLATCH_KEK_FILE: /run/secrets/varlatch-kek
       VARLATCH_PUBLIC_URL: ${VARLATCH_PUBLIC_URL:?set VARLATCH_PUBLIC_URL in .env}
     volumes:
-      - varlatch-state:/var/lib/varlatch
+      - ` + keys[2] + `:/var/lib/varlatch
       - ./backups:/backups
     secrets:
       - varlatch-kek
@@ -253,25 +351,35 @@ func (c *Compose) envValue(name string) (string, bool, error) {
 }
 
 // composeFiles is COMPOSE_FILE's value naming migrate's file after the
-// installation's own: its value now, else the files Compose reads without
-// it (docker-compose.yml, and docker-compose.override.yml when present).
-func (c *Compose) composeFiles(plan RebuildRecord) string {
+// installation's own: its value now, else the project's files, by their
+// names in Directory (docker-compose.yml, and docker-compose.override.yml
+// when present, in the stock installation).
+func (c *Compose) composeFiles(ctx context.Context, plan RebuildRecord) (string, error) {
 	sep := string(os.PathListSeparator)
 	var files []string
 	if plan.ComposeFile != nil {
 		files = strings.Split(*plan.ComposeFile, sep)
 	} else {
-		files = []string{"docker-compose.yml"}
-		if _, err := os.Stat(filepath.Join(c.Directory, "docker-compose.override.yml")); err == nil {
-			files = append(files, "docker-compose.override.yml")
+		p, err := c.project(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, f := range p.Files {
+			if filepath.Dir(realPath(f)) == realPath(c.Directory) {
+				f = filepath.Base(f)
+			}
+			if strings.Contains(f, sep) {
+				return "", fmt.Errorf("the Compose file %s has a %q in its path, which COMPOSE_FILE cannot name", f, sep)
+			}
+			files = append(files, f)
 		}
 	}
 	for _, f := range files {
 		if filepath.Base(strings.TrimSpace(f)) == OverrideFile {
-			return strings.Join(files, sep)
+			return strings.Join(files, sep), nil
 		}
 	}
-	return strings.Join(append(files, OverrideFile), sep)
+	return strings.Join(append(files, OverrideFile), sep), nil
 }
 
 // setEnv writes .env with name set to value (nil: the line removed), every
@@ -374,7 +482,10 @@ func (c *Compose) Rebuild(ctx context.Context, plan RebuildRecord) error {
 	if err := writeFileDurably(filepath.Join(c.Directory, plan.Override), []byte(override(plan)), 0o600); err != nil {
 		return err
 	}
-	files := c.composeFiles(plan)
+	files, err := c.composeFiles(ctx, plan)
+	if err != nil {
+		return err
+	}
 	if err := c.setEnv("COMPOSE_FILE", &files); err != nil {
 		return err
 	}
@@ -568,7 +679,7 @@ func (c *Compose) networkOwnerRunning(ctx context.Context, then string) error {
 		return nil
 	}
 	return fmt.Errorf("the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), which is not running, so neither it nor its one-off commands can start: "+
-		"start it by hand (docker compose up -d --no-deps %s, in %s; it brings the old Tailscale node back), then %s", owner, owner, owner, c.Directory, then)
+		"start it by hand (%s, in %s; it brings the old Tailscale node back), then %s", owner, owner, c.byHand("up -d --no-deps "+owner), c.Directory, then)
 }
 
 // ReverseReady: the reverse's one-off commands (the rebuilt database's

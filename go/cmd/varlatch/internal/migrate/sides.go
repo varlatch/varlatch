@@ -123,6 +123,9 @@ type SourceInfo struct {
 	// DigestRepository is the repository the digest is the registry's
 	// for (the image's own: Discover takes no other's).
 	DigestRepository string `json:"digestRepository"`
+	// Project is its Compose project, which every later command of the
+	// migration uses (none in a journal of an earlier build).
+	Project *ComposeProject `json:"project,omitempty"`
 }
 
 // Gate is a source's maintenance gate.

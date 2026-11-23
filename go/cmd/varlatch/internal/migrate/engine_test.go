@@ -35,6 +35,17 @@ type fakeSource struct {
 	ingressDown bool
 	// recreates are the ingress starts asked to recreate it.
 	recreates int
+	// kept is the project the engine gave it last; projectErr refuses it.
+	kept       *ComposeProject
+	checked    int
+	projectErr error
+}
+
+func (s *fakeSource) KeepProject(p *ComposeProject) { s.kept = p }
+
+func (s *fakeSource) CheckProject(context.Context) error {
+	s.checked++
+	return s.projectErr
 }
 
 func (s *fakeSource) call(name string) error {

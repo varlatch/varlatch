@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -17,6 +19,12 @@ import (
 // key, the journal), never an argument; nil gives it none.
 type Runner interface {
 	Run(ctx context.Context, dir, name string, args []string, stdin []byte) (Ran, error)
+}
+
+// EnvRunner is a Runner that also runs a program with variables added to
+// its environment (never a secret).
+type EnvRunner interface {
+	RunEnv(ctx context.Context, dir, name string, args []string, stdin []byte, env []string) (Ran, error)
 }
 
 // Streamer is a Runner that also runs a program on streams, for what is
@@ -82,6 +90,16 @@ type ExecRunner struct {
 // Owner is a uid and a gid.
 type Owner struct {
 	UID, GID uint32
+}
+
+// RunEnv is Run with env added to the programs' environment.
+func (x ExecRunner) RunEnv(ctx context.Context, dir, name string, args []string, stdin []byte, env []string) (Ran, error) {
+	base := x.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	x.Env = append(slices.Clone(base), env...)
+	return x.Run(ctx, dir, name, args, stdin)
 }
 
 // Run runs name with args in dir. A program that could not be started is

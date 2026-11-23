@@ -640,7 +640,8 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	s3.writeCredentials(t, readCreds)
 	pause(t, "source-app",
 		"In the lab Coolify (never production's), in a throwaway project, create a Docker Compose app from",
-		"the 0.23.0 candidate's checkout, Docker Compose Location /infra/compose/docker-compose.coolify.yml,",
+		"the 0.23.0 candidate's checkout, Base Directory /infra/compose, Docker Compose Location /docker-compose.coolify.yml,",
+		"Preserve Repository on (production's layout: Coolify's docker-compose.yaml beside the repository's docker-compose.yml),",
 		"its domain https://"+prof.publicName+" on varlatch-web port 80, and these variables (the run's images):",
 		strings.TrimSpace(string(digests)),
 		"the secrets as host files (paths only):",

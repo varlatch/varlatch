@@ -168,6 +168,11 @@ type RebuildRecord struct {
 	Volumes     []string `json:"volumes"`
 	ComposeFile *string  `json:"composeFile"`
 	Image       string   `json:"image"`
+	// Keys are the Compose files' names of the Postgres, Convex and state
+	// volumes, and Networks the import's, where they are not the stock
+	// installation's (Coolify's rendered file).
+	Keys     []string `json:"keys,omitempty"`
+	Networks []string `json:"networks,omitempty"`
 }
 
 // TSImportRecord is the TypeScript release's `admin migration import`.

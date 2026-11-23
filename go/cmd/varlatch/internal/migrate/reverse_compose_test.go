@@ -95,6 +95,12 @@ func TestTheReverseWritesEnvWhole(t *testing.T) {
 	}
 }
 
+// stockConfig is what migrate reads of the stock installation's
+// configuration.
+const stockConfig = `{"name":"varlatch","services":{"postgres":{"volumes":[{"type":"volume","source":"postgres-data","target":"/var/lib/postgresql/data"},{"type":"bind","source":"/x/postgres-init","target":"/docker-entrypoint-initdb.d"}],"networks":{"default":null}},` +
+	`"convex-backend":{"volumes":[{"type":"volume","source":"convex-data","target":"/convex/data"},{"type":"volume","source":"varlatch-state","target":"/var/lib/varlatch"}]},` +
+	`"varlatchd":{"volumes":[{"type":"volume","source":"varlatch-state","target":"/var/lib/varlatch"}]},"varlatch-migrate":{"networks":{"default":null}}}}`
+
 // The project is Compose's own (#371 review P2-2): its files' top-level
 // name:, read uninterpolated (the interpolated configuration would carry
 // .env's secrets), never the directory's name; the fresh volumes are named
@@ -104,8 +110,8 @@ func TestTheProjectIsCompose(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"varlatch","services":{}}`)}}}
-	c := &Compose{Directory: dir, Run: run}
+	run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(stockConfig)}}}
+	c := &Compose{Directory: dir, resolved: testProject(dir), Run: run}
 	j := &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}}
 	plan, err := c.RebuildPlan(t.Context(), j)
 	if err != nil {
@@ -142,6 +148,9 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("VARLATCH_PUBLIC_URL=https://vault.example.test\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
 			run := &scripted{t: t, answers: map[string]Ran{
 				"docker compose stop ":                                                  {},
 				"docker compose up -d postgres convex-backend":                          {},
@@ -152,7 +161,7 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 				"docker compose run --rm -T --no-deps varlatchd admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)},
 				"docker compose up -d --no-deps varlatchd":                              {},
 			}}
-			cmp := &Compose{Directory: dir, Run: run}
+			cmp := &Compose{Directory: dir, resolved: testProject(dir), Run: run}
 			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}})
 			started := slices.Contains(run.ran, "docker compose up -d --no-deps varlatchd")
 			for _, r := range run.ran {
@@ -192,7 +201,7 @@ func TestStartNetworkOwner(t *testing.T) {
 				"docker compose ps --status running --services":        {Answer: []byte(c.running)},
 				"docker compose start tailscale":                       {},
 			}}
-			cmp := &Compose{Directory: t.TempDir(), Run: run}
+			cmp := &Compose{Directory: t.TempDir(), Run: run, resolved: testProject("/installation")}
 			if err := cmp.StartNetworkOwner(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -252,7 +261,7 @@ func TestComposeEnvironmentForms(t *testing.T) {
 			t.Fatal(err)
 		}
 		run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: b}}}
-		cfg, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context())
+		cfg, err := (&Compose{Directory: t.TempDir(), Run: run, resolved: testProject("/installation")}).config(t.Context())
 		if err != nil || cfg.Name != "envprobe" {
 			t.Fatalf("%s: %+v %v", file, cfg, err)
 		}
@@ -272,7 +281,7 @@ func TestComposeEnvironmentForms(t *testing.T) {
 	// A name a list repeats: the last one holds, as in a container's
 	// environment.
 	run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"p","services":{"a":{"environment":["A=1","A=2","B=x","B"]}}}`)}}}
-	cfg, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context())
+	cfg, err := (&Compose{Directory: t.TempDir(), Run: run, resolved: testProject("/installation")}).config(t.Context())
 	if env := cfg.Services["a"].Environment; err != nil || env["A"] == nil || *env["A"] != "2" || env["B"] != nil || len(env) != 2 {
 		t.Fatalf("a repeated name: %v %v", env, err)
 	}
@@ -280,7 +289,7 @@ func TestComposeEnvironmentForms(t *testing.T) {
 	// without a name.
 	for _, bad := range []string{`42`, `{"A":{"x":1}}`, `{"A":["x"]}`, `[1]`} {
 		run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(`{"name":"p","services":{"a":{"environment":` + bad + `}}}`)}}}
-		if _, err := (&Compose{Directory: t.TempDir(), Run: run}).config(t.Context()); err == nil || !strings.Contains(err.Error(), "a configuration migrate cannot read") {
+		if _, err := (&Compose{Directory: t.TempDir(), Run: run, resolved: testProject("/installation")}).config(t.Context()); err == nil || !strings.Contains(err.Error(), "a configuration migrate cannot read") {
 			t.Errorf("the environment %s: %v", bad, err)
 		}
 	}

@@ -68,6 +68,9 @@ type archiveRunner struct {
 }
 
 func (a *archiveRunner) Run(_ context.Context, _, _ string, args []string, _ []byte) (Ran, error) {
+	for len(args) > 2 && args[0] == "compose" && (args[1] == "-f" || strings.HasPrefix(args[1], "--project-")) {
+		args = append([]string{"compose"}, args[3:]...)
+	}
 	switch j := strings.Join(args, " "); {
 	case j == "compose ps --status running --services":
 		return Ran{Answer: []byte(strings.Join(a.running, "\n") + "\n")}, nil
@@ -88,7 +91,7 @@ func (a *archiveRunner) Run(_ context.Context, _, _ string, args []string, _ []b
 // before is never named.
 func TestServeForArchiveAPartialStart(t *testing.T) {
 	run := &archiveRunner{running: []string{"postgres"}}
-	c := &Compose{Directory: t.TempDir(), Run: run}
+	c := &Compose{Directory: t.TempDir(), Run: run, resolved: testProject("/installation")}
 	started, err := c.ServeForArchive(context.Background())
 	if err == nil || !slices.Equal(started, []string{"varlatchd"}) {
 		t.Fatalf("a partial start: started %v, %v", started, err)
@@ -98,7 +101,7 @@ func TestServeForArchiveAPartialStart(t *testing.T) {
 	}
 	// Everything running already: nothing started, nothing to stop.
 	run = &archiveRunner{running: []string{"postgres", "varlatchd", "convex-backend"}}
-	if started, err := (&Compose{Directory: t.TempDir(), Run: run}).ServeForArchive(context.Background()); err != nil || len(started) != 0 {
+	if started, err := (&Compose{Directory: t.TempDir(), Run: run, resolved: testProject("/installation")}).ServeForArchive(context.Background()); err != nil || len(started) != 0 {
 		t.Fatalf("all running: %v %v", started, err)
 	}
 }

@@ -106,6 +106,9 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 	case j.Phase != Open:
 		return j, fmt.Errorf("the migration %s is in phase %s: --rollback reverses an open migration only", j.ID, j.Phase)
 	}
+	if err := e.keepProject(ctx, j, true); err != nil {
+		return j, err
+	}
 	rs, _, err := e.reverseSides()
 	if err != nil {
 		return j, err
@@ -425,6 +428,10 @@ func (e *Engine) rolledBack(ctx context.Context, j *Journal) error {
 	_ = e.Source.CleanLeftovers()
 	e.cleanReverseScratch()
 	e.say("Rolled back: the TypeScript release serves %s again, on a fresh database rebuilt from Go's. The volumes it ran on before the migration are kept until varlatch migrate --finish --delete-old-data.", originOf(j))
+	if j.Ingress == Coolify {
+		e.say("Do not Deploy or Redeploy the TypeScript application in Coolify now: Coolify starts it from its own Compose file, which names the volumes it ran on before the migration, without what was written since. " +
+			"Its containers may be restarted (docker restart), not made again.")
+	}
 	e.say("Go's copy stays in %s, stopped, behind the reverse's barrier (its paused gate, and its frozen copy %s): varlatch migrate --finish --delete-old-data archives it, lifts the barrier (removing the frozen copy) and discards it; a plain --finish keeps it.",
 		j.Target.DataDir, ".migration-frozen-"+j.ID+".db")
 	if n := len(j.Rollback.Archives); n > 0 {

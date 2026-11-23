@@ -171,6 +171,29 @@ func (e *Engine) enter(ctx context.Context, j *Journal, p Phase) error {
 	return nil
 }
 
+// projectKeeper is a Source whose project the journal records: the
+// commands that go on with a migration use that one only, and refuse when
+// the installation is now of another.
+type projectKeeper interface {
+	KeepProject(p *ComposeProject)
+	CheckProject(ctx context.Context) error
+}
+
+// keepProject gives the source the journal's project; with check, a
+// changed one is refused now, before anything of the command is done (it
+// always is before the source's first docker compose command).
+func (e *Engine) keepProject(ctx context.Context, j *Journal, check bool) error {
+	k, ok := e.Source.(projectKeeper)
+	if !ok || j == nil {
+		return nil
+	}
+	k.KeepProject(j.Source.Project)
+	if !check {
+		return nil
+	}
+	return k.CheckProject(ctx)
+}
+
 // Status is the source directory's journal (nil when none).
 func Status(dir string) (*Journal, error) { return readJournal(dir) }
 
@@ -1080,6 +1103,9 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 	if j == nil {
 		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to resume", e.Source.Dir())
 	}
+	if err := e.keepProject(ctx, j, slices.Contains(held, j.Phase) || slices.Contains(reverseHeld, j.Phase) || j.Phase == Transfer || j.Phase == Switched || j.Phase == RollbackTransfer); err != nil {
+		return j, err
+	}
 	if slices.Contains(reverseHeld, j.Phase) || j.Phase == RollbackTransfer || j.Phase == RolledBack {
 		return j, e.resumeReverse(ctx, j)
 	}
@@ -1228,6 +1254,13 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 	j, err := readJournal(e.Source.Dir())
 	if err != nil {
 		return nil, err
+	}
+	if j != nil && (slices.Contains(held, j.Phase) || slices.Contains(reverseHeld, j.Phase) || j.Phase == Transfer || j.Phase == RollbackTransfer) {
+		if err := e.keepProject(ctx, j, true); err != nil {
+			return j, err
+		}
+	} else if err := e.keepProject(ctx, j, false); err != nil {
+		return j, err
 	}
 	switch {
 	case j == nil:

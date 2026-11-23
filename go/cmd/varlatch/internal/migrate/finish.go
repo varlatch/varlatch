@@ -172,6 +172,9 @@ func (e *Engine) Finish(ctx context.Context, deleteOldData bool) (*Journal, erro
 	if err != nil {
 		return nil, err
 	}
+	if err := e.keepProject(ctx, j, false); err != nil {
+		return j, err
+	}
 	switch {
 	case j == nil:
 		return nil, fmt.Errorf("%s holds no migration journal: there is nothing to finish", e.Source.Dir())
@@ -559,7 +562,7 @@ func (c *Compose) dataVolumes(project string) ([]string, bool, error) {
 			lines := strings.Split(string(b), "\n")
 			for i, l := range lines {
 				t := strings.TrimSpace(l)
-				if (t == "postgres-data:" || t == "convex-data:") && i+1 < len(lines) {
+				if (strings.HasSuffix(t, postgresKey+":") || strings.HasSuffix(t, convexKey+":")) && i+1 < len(lines) {
 					if n, ok := strings.CutPrefix(strings.TrimSpace(lines[i+1]), "name: "); ok {
 						vols = append(vols, n)
 					}

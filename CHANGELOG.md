@@ -56,6 +56,19 @@ fixes.
 
 ### CLI
 
+- **`varlatch migrate` finds a Coolify installation's Compose project.** A
+  directory Coolify deploys from can hold the repository's
+  `docker-compose.yml` beside the file that runs, and plain `docker compose`
+  reads the wrong one there, possibly another installation's project on the
+  same host; a directory with Coolify's `docker-compose.yaml` only was
+  refused. `migrate` now takes the project, its directory and its files
+  from the containers' labels, names them in every `docker compose` command
+  (the TypeScript CLI's backup included), keeps them in the journal, and
+  refuses what does not agree instead of guessing. `--rollback` gives a
+  Coolify installation its fresh volumes by the names its rendered file
+  uses, and reaches Postgres on its network; before, the fresh volumes were
+  not used there. An installation with one `docker-compose.yml` migrates as
+  before.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own
   fresh install included, with "varlatch is installed with Homebrew; update
