@@ -701,9 +701,13 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 	}
 	base := srv.URL
 	path := os.Getenv("PATH")
+	cwd := ""
 	var extra []string
 	for _, e := range env {
 		switch {
+		case strings.HasPrefix(e, "CWD="):
+			// The directory the script runs in (a relative --dir is its).
+			cwd = strings.TrimPrefix(e, "CWD=")
 		case strings.HasPrefix(e, "PATH_FIRST="):
 			// A directory searched before the run's own PATH.
 			path = strings.TrimPrefix(e, "PATH_FIRST=") + string(os.PathListSeparator) + path
@@ -730,6 +734,7 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 	stubLog := filepath.Join(home, "stub.log")
 	tmpdir := t.TempDir()
 	cmd := exec.Command("sh", append([]string{file}, args...)...)
+	cmd.Dir = cwd
 	cmd.Env = append([]string{
 		"PATH=" + path, "HOME=" + home, "TMPDIR=" + tmpdir,
 		"CURL_CA_BUNDLE=" + ca, "STUB_LOG=" + stubLog,
@@ -959,6 +964,118 @@ func TestInstallRefusesHomebrew(t *testing.T) {
 			}
 			emptyTmp(t, res)
 		})
+	}
+}
+
+// A relative --dir is the working directory's, whatever CDPATH says: with
+// ./bin a link to a keg's bin and $CDPATH/bin an ordinary directory, the
+// keg's binary is refused, not overwritten (the resolver once followed
+// CDPATH while the install wrote through ./bin).
+func TestInstallRelativeDirIgnoresCDPATH(t *testing.T) {
+	stub := goStub(t)
+	prefix := t.TempDir()
+	keg := filepath.Join(prefix, "Cellar", "varlatch", version, "bin")
+	if err := os.MkdirAll(keg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keg, "varlatch"), []byte(stubCLI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	work, cdpath := t.TempDir(), t.TempDir()
+	if err := os.Symlink(keg, filepath.Join(work, "bin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(cdpath, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", "bin"}, "CWD="+work, "CDPATH="+cdpath)
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if !bytes.Equal(installed(t, filepath.Join(keg, "varlatch")), []byte(stubCLI)) {
+		t.Fatal("the keg's binary was overwritten")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cdpath, "bin")); len(entries) != 0 {
+		t.Fatal("something was written in CDPATH's directory")
+	}
+	emptyTmp(t, res)
+}
+
+// A link at the target into a keg that is gone (the link left behind) is
+// still Homebrew's: refused, the link kept.
+func TestInstallRefusesADanglingKegLink(t *testing.T) {
+	stub := goStub(t)
+	missing := filepath.Join(t.TempDir(), "Cellar", "varlatch", version, "bin", "varlatch")
+	dir := t.TempDir()
+	target := filepath.Join(dir, "varlatch")
+	if err := os.Symlink(missing, target); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if got, err := os.Readlink(target); err != nil || got != missing {
+		t.Fatalf("the link changed: %q, %v", got, err)
+	}
+	emptyTmp(t, res)
+}
+
+// A link whose resolution reaches a keg that is gone, through another link
+// on the way (bin/varlatch -> ../opt/varlatch/bin/varlatch, opt/varlatch a
+// link into a missing keg), is Homebrew's: refused, the link kept. The
+// resolver follows the links that exist before it keeps the rest as
+// written.
+func TestInstallRefusesALinkThroughALinkIntoAMissingKeg(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	for _, d := range []string{filepath.Join(root, "bin"), filepath.Join(root, "opt"), filepath.Join(root, "brew", "Cellar")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The keg's version directory does not exist.
+	if err := os.Symlink(filepath.Join(root, "brew", "Cellar", "varlatch", version), filepath.Join(root, "opt", "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "bin", "varlatch")
+	if err := os.Symlink("../opt/varlatch/bin/varlatch", target); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", filepath.Join(root, "bin")})
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if got, err := os.Readlink(target); err != nil || got != "../opt/varlatch/bin/varlatch" {
+		t.Fatalf("the link changed: %q, %v", got, err)
+	}
+	emptyTmp(t, res)
+}
+
+// A link through an existing Cellar's .. to a directory that does not
+// exist is no Homebrew copy: the .. is taken from the resolved Cellar, and
+// only the missing rest kept as written.
+func TestInstallThroughACellarToAMissingDirectory(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "Cellar"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(root+"/Cellar/../missing/varlatch", filepath.Join(dir, "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code != 0 || !strings.Contains(res.out, "Installed varlatch "+version) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
 	}
 }
 
