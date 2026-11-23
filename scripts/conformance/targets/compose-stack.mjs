@@ -25,6 +25,7 @@ import { reservePorts } from "../lib/ports.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { requestsFromNginxLog } from "./nginx-log.mjs";
 
 
@@ -511,6 +512,17 @@ export async function oidcIssuer(state, action, ...args) {
 export const OBJECT_STORE_ALIAS = "conformance-s3";
 export const OBJECT_STORE_IMAGE = "cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b";
 
+/**
+ * Pulls the object store's image before its container starts, trying again
+ * when the registry has a bad moment (scripts/ci-pull-image.sh); nothing
+ * when it is here already.
+ */
+export function pullObjectStore() {
+  const script = fileURLToPath(new URL("../../ci-pull-image.sh", import.meta.url));
+  const r = spawnSync("bash", [script, OBJECT_STORE_IMAGE], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`pulling the object store's image failed: ${(r.stderr || r.error?.message || "").trim().slice(-300)}`);
+}
+
 const objectStoreName = (state) => `${state.project}-object-store`;
 
 /** The object store's keys: derived from the installation, so every operation names the same ones. */
@@ -543,6 +555,7 @@ export async function objectStore(state, action) {
   const running = spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", name], { encoding: "utf8" });
   if (running.status !== 0 || running.stdout.trim() !== "true") {
     spawnSync("docker", ["rm", "-fv", name], { stdio: "ignore" });
+    pullObjectStore();
     const r = spawnSync("docker", ["run", "-d", "--name", name, "--network", `${state.project}_default`, "--network-alias", OBJECT_STORE_ALIAS,
       "-p", "127.0.0.1::9000", "-e", `MINIO_ROOT_USER=${keys.accessKeyId}`, "-e", `MINIO_ROOT_PASSWORD=${keys.secretAccessKey}`,
       OBJECT_STORE_IMAGE, "server", "/data"], { encoding: "utf8" });

@@ -87,7 +87,7 @@ import { fileURLToPath } from "node:url";
 import { fixtureStatus } from "../lib/fixture-status.mjs";
 import { NOT_IMPLEMENTED_YET } from "../lib/operations.mjs";
 import { reservePort } from "../lib/ports.mjs";
-import { issuerCertificate, ISSUER_SOURCE, OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady, PLATFORM_FAKE_HOSTS, platformFakesCertificate } from "./compose-stack.mjs";
+import { issuerCertificate, ISSUER_SOURCE, OBJECT_STORE_IMAGE, objectStoreKeys, objectStoreReady, PLATFORM_FAKE_HOSTS, platformFakesCertificate, pullObjectStore } from "./compose-stack.mjs";
 
 export const name = "go-binary";
 
@@ -787,6 +787,7 @@ export async function objectStore(state, action) {
   const running = spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", name], { encoding: "utf8" });
   if (running.status !== 0 || running.stdout.trim() !== "true") {
     spawnSync("docker", ["rm", "-fv", name], { stdio: "ignore" });
+    pullObjectStore();
     const r = spawnSync("docker", ["run", "-d", "--name", name, "-p", `127.0.0.1:${state.objectStorePort}:9000`,
       "-e", `MINIO_ROOT_USER=${keys.accessKeyId}`, "-e", `MINIO_ROOT_PASSWORD=${keys.secretAccessKey}`,
       OBJECT_STORE_IMAGE, "server", "/data"], { encoding: "utf8" });
