@@ -7,7 +7,9 @@
 // STUB_WANT_BUNDLE, STUB_WANT_FILE, under the name STUB_WANT_NAME), so the
 // test sees the installer pass the staged files intact; the real command is
 // tested in cmd/varlatch. Every call's arguments are appended to STUB_LOG
-// as a JSON array.
+// as a JSON array. Like the real binary, it carries self-update's refusal
+// for a Homebrew copy (homebrewRefusal), which install.sh must not take
+// for a sign of Homebrew; install.sh's tests run it too.
 package main
 
 import (
@@ -38,6 +40,8 @@ func main() {
 		}
 	}
 	switch os.Args[1] {
+	case "self-update":
+		fail(fmt.Sprintf(homebrewRefusal, "/the/stub"))
 	case "--version":
 		v := os.Getenv("STUB_REPORTS")
 		if v == "" {
@@ -57,7 +61,7 @@ func main() {
 				check(args[i+1], "STUB_WANT_BUNDLE")
 			case "--file":
 				path, name, _ := strings.Cut(args[i+1], "=")
-				if name != os.Getenv("STUB_WANT_NAME") {
+				if want := os.Getenv("STUB_WANT_NAME"); want != "" && name != want {
 					fail("--file names " + name)
 				}
 				check(path, "STUB_WANT_FILE")
@@ -68,6 +72,10 @@ func main() {
 		os.Exit(2)
 	}
 }
+
+// homebrewRefusal is cmd/varlatch/internal/selfupdate's message for a
+// Homebrew copy, which every Go varlatch binary carries.
+const homebrewRefusal = "varlatch is installed with Homebrew at %s; update it with: brew upgrade varlatch"
 
 func check(path, wantVar string) {
 	want := os.Getenv(wantVar)

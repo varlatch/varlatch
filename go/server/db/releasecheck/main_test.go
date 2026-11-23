@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,6 +27,26 @@ func runIt(t *testing.T, args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
 	code := run(args, &out, &errb)
 	return code, out.String(), errb.String()
+}
+
+// checkedIn is the checked-in declaration (go/release/release.json): what
+// this build declares, its previous release included. The tests about this
+// build take their expectations from it, so a new previous release after a
+// tag is release.json's change alone.
+func checkedIn(t *testing.T) release.Declaration {
+	t.Helper()
+	b, err := os.ReadFile(declaration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := release.ParseDeclaration(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Previous == nil || d.ReversibleTo == nil {
+		t.Fatalf("the checked-in declaration names no previous release or no reversibleTo: %+v", d)
+	}
+	return d
 }
 
 // schemaWith is schema.sql with a G6 fixture appended, as a file.
@@ -48,9 +69,12 @@ func schemaWith(t *testing.T, fixture string) string {
 
 // The checked-in declaration is this build's: G6 runs this first.
 func TestTheDeclarationMatchesThisBuild(t *testing.T) {
+	d := checkedIn(t)
+	want := fmt.Sprintf("holds: schema %d, compatible from %d, rollback-safe %v, previous %s (schema %d), reversible to %s",
+		db.SchemaVersion, db.CompatibleFrom, d.RollbackSafe, d.Previous.Version, d.Previous.SchemaVersion, *d.ReversibleTo)
 	code, out, errs := runIt(t, "declaration", "--declaration", declaration)
-	if code != exitOK || !strings.Contains(out, "holds: schema 2, compatible from 1, rollback-safe true, previous 0.50.0-rc.1 (schema 1), reversible to 0.23.0") {
-		t.Fatalf("%d %q %q", code, out, errs)
+	if code != exitOK || !strings.Contains(out, want) {
+		t.Fatalf("%d %q %q, want %q", code, out, errs, want)
 	}
 	// A declaration of another schema version does not match it.
 	code, _, errs = runIt(t, "declaration", "--declaration", filepath.Join(g6, "fixture.json"))
@@ -60,13 +84,19 @@ func TestTheDeclarationMatchesThisBuild(t *testing.T) {
 }
 
 func TestManifest(t *testing.T) {
-	code, out, errs := runIt(t, "manifest", "--version", "0.50.0-rc.2", "--declaration", declaration)
+	d := checkedIn(t)
+	// A version that is not the previous release's: the next one's stand-in.
+	next := "0.50.0"
+	if d.Previous.Version == next {
+		next = "0.50.1"
+	}
+	code, out, errs := runIt(t, "manifest", "--version", next, "--declaration", declaration)
 	if code != exitOK {
 		t.Fatalf("%d %q", code, errs)
 	}
 	m, err := release.ParseManifest([]byte(out))
-	if err != nil || m.Version != "0.50.0-rc.2" || m.SchemaVersion != db.SchemaVersion || m.CompatibleFrom != db.CompatibleFrom || !m.RollbackSafe ||
-		m.Previous == nil || m.Previous.Version != "0.50.0-rc.1" || m.Previous.SchemaVersion != 1 ||
+	if err != nil || m.Version != next || m.SchemaVersion != db.SchemaVersion || m.CompatibleFrom != db.CompatibleFrom || m.RollbackSafe != d.RollbackSafe ||
+		m.Previous == nil || *m.Previous != *d.Previous ||
 		m.ManifestVersion != release.ManifestVersion || m.ReversibleTo == nil || *m.ReversibleTo != release.LastTypeScriptRelease || m.EndsRollbackWindow() {
 		t.Fatalf("%+v, %v\n%s", m, err, out)
 	}
@@ -74,7 +104,7 @@ func TestManifest(t *testing.T) {
 		t.Fatalf("%d %q", code, errs)
 	}
 	// The previous release itself is not a manifest of this declaration.
-	if code, _, errs := runIt(t, "manifest", "--version", "0.50.0-rc.1", "--declaration", declaration); code != exitFailed || !strings.Contains(errs, "the previous release is this one") {
+	if code, _, errs := runIt(t, "manifest", "--version", d.Previous.Version, "--declaration", declaration); code != exitFailed || !strings.Contains(errs, "the previous release is this one") {
 		t.Fatalf("the previous release's version: %d %q", code, errs)
 	}
 }
@@ -138,23 +168,49 @@ func TestAChangedSchemaMustRaiseItsVersion(t *testing.T) {
 	}
 }
 
-// The checked-in declaration holds against 0.50.0-rc.1's schema (what
-// schema.sql held before version 2's section; CI's G6 job checks against
-// the tag's own file): an addition, declared rollback-safe.
-func TestTheDeclarationHoldsAgainstRC1(t *testing.T) {
-	current, err := os.ReadFile(schemaFile)
-	if err != nil {
+// The checked-in declaration holds against its previous release's schema.
+// While the schema's version is still the previous release's (as right after
+// a tag), that schema is this one's: no change, no problem. Once a change
+// raises the version, the previous schema is the release tag's file, which
+// CI's G6 step fetches; here it is read from the tag when this clone has
+// it, and the case is skipped when it has not.
+func TestTheDeclarationHoldsAgainstThePreviousRelease(t *testing.T) {
+	d := checkedIn(t)
+	previous := schemaFile
+	if d.Previous.SchemaVersion != db.SchemaVersion {
+		b, err := exec.Command("git", "show", "v"+d.Previous.Version+":go/server/db/schema.sql").Output()
+		if err != nil {
+			t.Skipf("the schema changed since %s, and this clone has not its tag (CI's G6 step checks against it): %v", d.Previous.Version, err)
+		}
+		previous = filepath.Join(t.TempDir(), "previous-schema.sql")
+		if err := os.WriteFile(previous, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out, errs := runIt(t, "schema", "--previous", previous, "--declaration", declaration, "--json")
+	var doc struct {
+		Previous string            `json:"previous"`
+		Changes  []json.RawMessage `json:"changes"`
+		Problems []string          `json:"problems"`
+	}
+	want := fmt.Sprintf("%s (schema %d)", d.Previous.Version, d.Previous.SchemaVersion)
+	if code != exitOK || json.Unmarshal([]byte(out), &doc) != nil || doc.Previous != want || len(doc.Problems) != 0 ||
+		d.Previous.SchemaVersion == db.SchemaVersion && len(doc.Changes) != 0 {
+		t.Fatalf("%d %q %q", code, out, errs)
+	}
+}
+
+// The additive change between two real releases, with a declaration of its
+// own: 0.50.0-rc.2's schema (version 2, the certificate issuances) against
+// 0.50.0-rc.1's (version 1), both as their tags have them (testdata),
+// declared rollback-safe. It does not depend on the checked-in declaration
+// or on today's schema.
+func TestAnAdditionBetweenTwoReleasesHolds(t *testing.T) {
+	decl := filepath.Join(t.TempDir(), "release.json")
+	if err := os.WriteFile(decl, []byte(`{"schemaVersion": 2, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0-rc.1", "schemaVersion": 1}, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	i := strings.Index(string(current), "\n-- Certificate issuances for the public HTTPS name")
-	if i < 0 {
-		t.Fatal("schema.sql has no certificate_issuances section")
-	}
-	rc1 := filepath.Join(t.TempDir(), "rc1-schema.sql")
-	if err := os.WriteFile(rc1, current[:i+1], 0o600); err != nil {
-		t.Fatal(err)
-	}
-	code, out, errs := runIt(t, "schema", "--previous", rc1, "--declaration", declaration, "--json")
+	code, out, errs := runIt(t, "schema", "--previous", filepath.Join("testdata", "schema-0.50.0-rc.1.sql"), "--current", filepath.Join("testdata", "schema-0.50.0-rc.2.sql"), "--declaration", decl, "--json")
 	var doc struct {
 		Previous string            `json:"previous"`
 		Changes  []json.RawMessage `json:"changes"`
@@ -162,6 +218,15 @@ func TestTheDeclarationHoldsAgainstRC1(t *testing.T) {
 	}
 	if code != exitOK || json.Unmarshal([]byte(out), &doc) != nil || doc.Previous != "0.50.0-rc.1 (schema 1)" || len(doc.Changes) != 2 || len(doc.Problems) != 0 {
 		t.Fatalf("%d %q %q", code, out, errs)
+	}
+	// The same change unbumped (version still 1) is refused.
+	unbumped := filepath.Join(t.TempDir(), "unbumped.json")
+	if err := os.WriteFile(unbumped, []byte(`{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0-rc.1", "schemaVersion": 1}, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runIt(t, "schema", "--previous", filepath.Join("testdata", "schema-0.50.0-rc.1.sql"), "--current", filepath.Join("testdata", "schema-0.50.0-rc.2.sql"), "--declaration", unbumped)
+	if code != exitFailed || !strings.Contains(out, "PROBLEM: the schema changed since 0.50.0-rc.1, but its version is still 1") {
+		t.Fatalf("unbumped: %d %q", code, out)
 	}
 }
 

@@ -700,9 +700,13 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 		src = edit(t, src, "'@VARLATCH_VERSION@'", "'"+version+"'")
 	}
 	base := srv.URL
+	path := os.Getenv("PATH")
 	var extra []string
 	for _, e := range env {
 		switch {
+		case strings.HasPrefix(e, "PATH_FIRST="):
+			// A directory searched before the run's own PATH.
+			path = strings.TrimPrefix(e, "PATH_FIRST=") + string(os.PathListSeparator) + path
 		case strings.HasPrefix(e, "BASE_URL="):
 			base = strings.TrimPrefix(e, "BASE_URL=")
 		case strings.HasPrefix(e, "ROOT="):
@@ -727,7 +731,7 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 	tmpdir := t.TempDir()
 	cmd := exec.Command("sh", append([]string{file}, args...)...)
 	cmd.Env = append([]string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + tmpdir,
+		"PATH=" + path, "HOME=" + home, "TMPDIR=" + tmpdir,
 		"CURL_CA_BUNDLE=" + ca, "STUB_LOG=" + stubLog,
 	}, extra...)
 	out, _ := cmd.CombinedOutput()
@@ -800,6 +804,190 @@ func TestInstallCLIRerun(t *testing.T) {
 	second := install(t, r, true, []string{"--dir", srvDir})
 	if first.code != 0 || second.code != 0 || !strings.Contains(second.out, "already installed") {
 		t.Fatalf("first: %s\nsecond: %s", first.out, second.out)
+	}
+}
+
+// goStub is testdata/stubcli built for this machine: a Go binary, which,
+// like every Go varlatch, carries self-update's refusal for a Homebrew
+// copy ("installed with Homebrew").
+func goStub(t *testing.T) []byte {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go")
+	}
+	out := filepath.Join(t.TempDir(), "stubcli")
+	if b, err := exec.Command("go", "build", "-o", out, "./testdata/stubcli").CombinedOutput(); err != nil {
+		t.Fatalf("building the stub: %v\n%s", err, b)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("installed with Homebrew")) {
+		t.Fatal("the stub does not carry self-update's Homebrew message")
+	}
+	return b
+}
+
+// install.sh run again over its own install of a Go binary, and over an
+// older one, updates it: a binary carrying self-update's Homebrew message
+// is not Homebrew's (v0.50.0-rc.2's published check: every rerun was
+// refused as "installed with Homebrew").
+func TestInstallCLIRerunOverAGoBinary(t *testing.T) {
+	stub := goStub(t)
+	cli := "varlatch-" + version + "-linux-" + goArch()
+	newGoRelease := func() *release {
+		r := newRelease()
+		r.files[cli] = stub
+		return r
+	}
+	dir := t.TempDir()
+	first := install(t, newGoRelease(), true, []string{"--dir", dir})
+	second := install(t, newGoRelease(), true, []string{"--dir", dir})
+	if first.code != 0 || second.code != 0 || !strings.Contains(second.out, "already installed") {
+		t.Fatalf("first: %d %s\nsecond: %d %s", first.code, first.out, second.code, second.out)
+	}
+	// An older Go binary there (another file, the same message in it).
+	older := append(append([]byte{}, stub...), 0)
+	if err := os.WriteFile(filepath.Join(dir, "varlatch"), older, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	third := install(t, newGoRelease(), true, []string{"--dir", dir})
+	if third.code != 0 || !strings.Contains(third.out, "Installed varlatch "+version) || !bytes.Equal(installed(t, filepath.Join(dir, "varlatch")), stub) {
+		t.Fatalf("over an older Go binary: %d %s", third.code, third.out)
+	}
+	// And a Go binary on PATH elsewhere is no Homebrew copy either.
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(other, "varlatch"), stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fourth := install(t, newGoRelease(), true, nil, "PATH_FIRST="+other)
+	if fourth.code != 0 {
+		t.Fatalf("with a Go binary on PATH: %d %s", fourth.code, fourth.out)
+	}
+}
+
+// A copy Homebrew installed is refused, nothing written: by where it is
+// (in a Cellar, through a link as Homebrew links it, a linked directory,
+// or a chain of links), at the target or on PATH; and the TypeScript
+// CLI's formula's wrapper script, by what it says. The located copies
+// carry no Homebrew message, so only their place can tell (rc.2's script
+// let the first two through).
+func TestInstallRefusesHomebrew(t *testing.T) {
+	stub := goStub(t)
+	// A binary in a Cellar, with no "installed with Homebrew" in it.
+	plain := []byte(stubCLI)
+	cellar := func(t *testing.T) (prefix, file string) {
+		prefix = t.TempDir()
+		file = filepath.Join(prefix, "Cellar", "varlatch", version, "bin", "varlatch")
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, plain, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return prefix, file
+	}
+	link := func(t *testing.T, target, at string) {
+		if err := os.MkdirAll(filepath.Dir(at), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const wrapper = "#!/bin/bash\nif [ \"$1\" = \"self-update\" ]; then\n  echo \"varlatch: installed with Homebrew; update with: brew upgrade varlatch\" >&2\n  exit 1\nfi\nexec node /x/varlatch.cjs \"$@\"\n"
+	for _, tc := range []struct {
+		name  string
+		place func(t *testing.T, dir string) (env []string)
+	}{
+		{"the target, Homebrew's relative link into its Cellar", func(t *testing.T, dir string) []string {
+			prefix, _ := cellar(t)
+			// As Homebrew links bin/varlatch: ../Cellar/varlatch/<version>/bin/varlatch.
+			link(t, filepath.Join("..", "Cellar", "varlatch", version, "bin", "varlatch"), filepath.Join(prefix, "bin", "varlatch"))
+			link(t, filepath.Join(prefix, "bin", "varlatch"), filepath.Join(dir, "varlatch"))
+			return nil
+		}},
+		{"on PATH, Homebrew's bin", func(t *testing.T, dir string) []string {
+			prefix, _ := cellar(t)
+			link(t, filepath.Join("..", "Cellar", "varlatch", version, "bin", "varlatch"), filepath.Join(prefix, "bin", "varlatch"))
+			return []string{"PATH_FIRST=" + filepath.Join(prefix, "bin")}
+		}},
+		{"on PATH, the Cellar itself", func(t *testing.T, dir string) []string {
+			_, file := cellar(t)
+			return []string{"PATH_FIRST=" + filepath.Dir(file)}
+		}},
+		{"the target's directory, a link to a keg's bin", func(t *testing.T, dir string) []string {
+			_, file := cellar(t)
+			// dir itself is the link: --dir names it, and its varlatch is
+			// the keg's binary.
+			if err := os.Remove(dir); err != nil {
+				t.Fatal(err)
+			}
+			link(t, filepath.Dir(file), dir)
+			return nil
+		}},
+		{"the target, an absolute link straight into a Cellar", func(t *testing.T, dir string) []string {
+			_, file := cellar(t)
+			link(t, file, filepath.Join(dir, "varlatch"))
+			return nil
+		}},
+		{"the TypeScript formula's wrapper script", func(t *testing.T, dir string) []string {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "varlatch"), []byte(wrapper), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			env := tc.place(t, dir)
+			before, _ := os.Lstat(filepath.Join(dir, "varlatch"))
+			beforeBytes := installed(t, filepath.Join(dir, "varlatch"))
+			r := newRelease()
+			r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+			res := install(t, r, true, []string{"--dir", dir}, env...)
+			if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") || !strings.Contains(res.out, "brew upgrade varlatch") {
+				t.Fatalf("exit %d: %s", res.code, res.out)
+			}
+			after, _ := os.Lstat(filepath.Join(dir, "varlatch"))
+			if (before == nil) != (after == nil) || before != nil && before.Mode() != after.Mode() || !bytes.Equal(beforeBytes, installed(t, filepath.Join(dir, "varlatch"))) {
+				t.Fatal("the target changed")
+			}
+			emptyTmp(t, res)
+		})
+	}
+}
+
+// A link whose path goes through a Cellar but resolves outside it is no
+// Homebrew copy: the place that counts is the resolved one (and the path
+// as given), as for self-update, never a link's raw text.
+func TestInstallThroughACellarToElsewhere(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	for _, d := range []string{filepath.Join(root, "Cellar"), filepath.Join(root, "plain")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elsewhere := filepath.Join(root, "plain", "varlatch")
+	if err := os.WriteFile(elsewhere, []byte(stubCLI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	// The link's text as written, not cleaned (filepath.Join would drop
+	// the Cellar from it).
+	if err := os.Symlink(root+"/Cellar/../plain/varlatch", filepath.Join(dir, "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code != 0 || !strings.Contains(res.out, "Installed varlatch "+version) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
 	}
 }
 
