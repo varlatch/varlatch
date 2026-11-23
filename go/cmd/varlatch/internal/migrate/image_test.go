@@ -111,6 +111,28 @@ func TestPrepareImage(t *testing.T) {
 	}
 }
 
+// --to-image's refusal names a reference by digest in its parts, never
+// whole (no at-sign for the CLI's fail-safe to take for a password's), and
+// does not show any other value (B3's run on the box read "varlatch
+// migrate:[redacted]@sha256:<digest>", the reason gone).
+func TestImageRefRefusal(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("0123456789abcdef", 4)
+	for _, c := range []struct{ ref, want, hidden string }{
+		{"127.0.0.1:32768/vl-rh/varlatchd@" + digest, "names image 127.0.0.1:32768/vl-rh/varlatchd, digest " + digest + ", and no tag", ""},
+		{"ghcr.io/varlatch/varlatchd:0.50.0", "is not pinned: give the repository", "0.50.0"},
+		{"https://user:s3cret@registry.example/r@" + digest, "the value given is not shown", "s3cret"},
+		{"user:s3cret@registry.example/r@" + digest, "the value given is not shown", "s3cret"},
+		{"registry.example/r@sha256:<digest>", "the value given is not shown", "registry.example"},
+	} {
+		err := refusedImageRef(c.ref)
+		var re *ImageRefError
+		if !errors.As(err, &re) || !strings.Contains(err.Error(), c.want) || strings.Contains(err.Error(), "@") ||
+			c.hidden != "" && strings.Contains(err.Error(), c.hidden) {
+			t.Errorf("%q: %v; want %q, no at-sign, %q not shown", c.ref, err, c.want, c.hidden)
+		}
+	}
+}
+
 // The image's service through the engine: one stop for the operator's
 // steps (start the service, move the domain), --resume until both are
 // done, then switched and opened live (no stop or start). An abort while

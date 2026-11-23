@@ -126,12 +126,16 @@ type exitError struct {
 	// binary, holding nothing the person gave, so the fail-safe that masks
 	// message (which echoes what they gave) leaves it as it is.
 	usage string
-	code  int
+	// constant is printed between message and usage, outside the fail-safe
+	// as usage is: a constant of this binary too, such as a form that holds
+	// an at-sign (migrate's --to-image form), never what the person gave.
+	constant string
+	code     int
 	// silent: the command printed what it had to say (process.exitCode).
 	silent bool
 }
 
-func (e *exitError) Error() string { return e.message + e.usage }
+func (e *exitError) Error() string { return e.message + e.constant + e.usage }
 
 // Fail is the error that prints message on stderr and exits with code
 // (apps/cli/src/main.ts fail()).
@@ -265,7 +269,7 @@ func (r *Run) finish(err error) int {
 	// Varlatch token reaches stderr (go/README.md, "Diagnostics never print
 	// credential values").
 	if !e.silent {
-		fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(e.message, r.inFlight...)+e.usage))
+		fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(e.message, r.inFlight...)+e.constant+e.usage))
 	}
 	// A failure of scan is 1 (main.ts's fail()); a status scan sets itself
 	// (process.exitCode: ExitWith, silent), such as --find-files' 2, is

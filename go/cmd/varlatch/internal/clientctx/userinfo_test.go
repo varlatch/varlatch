@@ -277,6 +277,32 @@ func TestFailSafeAtSignsInAPath(t *testing.T) {
 	}
 }
 
+// TestFailSafeImageDigestShapes: what an "image digest" exception to the
+// fail-safe exposed (#435, review): a port of 64 digits with leading zeros
+// (a valid port), a password with an apostrophe after "//", several
+// at-signs, and malformed authorities ending in "<digest>". The fail-safe
+// stays conservative: every one is masked. migrate names its image
+// references in parts instead (internal/migrate refusedImageRef).
+func TestFailSafeImageDigestShapes(t *testing.T) {
+	const hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, c := range []struct{ text, secret string }{
+		{"https:alice:s3cret@sha256:0000000000000000000000000000000000000000000000000000000000000080", "s3cret"},
+		{"https:alice:s3cret@sha256:0000000000000000000000000000000000000000000000000000000000000080/x", "s3cret"},
+		{"https://alice:s3c'ret@sha256:" + hex, "s3c"},
+		{"https://alice:s3c'ret@sha256:" + hex, "ret"},
+		{"https://alice:s3c@ret@sha256:" + hex, "s3c"},
+		{"https://alice:s3c@ret@sha256:" + hex, "ret@"},
+		{"https://alice:s3cret@sha256:<digest>", "s3cret"},
+		{"alice:s3cret@sha256:<digest>", "s3cret"},
+		{"https:/alice:s3cret@sha256:<digest>", "s3cret"},
+		{"varlatch migrate: --to-image \"https://alice:s3cret@r.example/x@sha256:" + hex + "\" is not pinned", "s3cret"},
+	} {
+		if got := MaskUserinfoInText(c.text); strings.Contains(got, c.secret) {
+			t.Errorf("MaskUserinfoInText(%q) = %q shows %q", c.text, got, c.secret)
+		}
+	}
+}
+
 // TestFailSafeMultiLinePasswords: a password broken over lines whose "@"
 // comes one to six lines later, with blank lines, lines without a colon and
 // lines with their own colons between, is masked whole.

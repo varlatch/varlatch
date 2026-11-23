@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -175,5 +176,28 @@ func TestMigrateStatusRemovalPending(t *testing.T) {
 	if code != 0 || !strings.Contains(out.String(), "removal pending: varlatch migrate --abort removes it") ||
 		!strings.Contains(out.String(), "  etc-dir: /etc/varlatch\n") || !strings.Contains(out.String(), "  config: /etc/varlatch/varlatchd.conf\n") {
 		t.Errorf("--status: %d %q %q", code, out.String(), errOut.String())
+	}
+}
+
+// --to-image's refusal on stderr: a reference by digest in its parts and
+// the form as this binary's constant, both unmasked (B3's run on the box
+// read "varlatch migrate:[redacted]@sha256:<digest>"); a value that is no
+// reference by digest, with a password in it, never shown.
+func TestImageRefRefusalOnStderr(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("0123456789abcdef", 4)
+	for _, c := range []struct{ ref, want, hidden string }{
+		{"127.0.0.1:32768/vl-rh/varlatchd@" + digest, "varlatch migrate: --to-image names image 127.0.0.1:32768/vl-rh/varlatchd, digest " + digest + ", and no tag", ""},
+		{"https://user:s3cret@registry.example/r@" + digest, "varlatch migrate: --to-image is not pinned", "s3cret"},
+	} {
+		_, err := migrate.PrepareImage(context.Background(), &migrate.Image{Ref: c.ref}, t.TempDir(), true)
+		r, stderr := testRun(MapEnv{})
+		if code := r.finish(imageFailure(err)); code != ExitFailure {
+			t.Fatalf("%q: exit %d", c.ref, code)
+		}
+		got := stderr.String()
+		if !strings.Contains(got, c.want) || !strings.Contains(got, "(the form: repository:tag@sha256:<digest>)") || strings.Contains(got, "[redacted]") ||
+			c.hidden != "" && strings.Contains(got, c.hidden) {
+			t.Errorf("%q: stderr %q; want %q and the form, nothing masked, %q not shown", c.ref, got, c.want, c.hidden)
+		}
 	}
 }
