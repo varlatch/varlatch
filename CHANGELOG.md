@@ -54,6 +54,18 @@ fixes.
   authority is a Grant scoped to a Project or an environment, and the
   Organization's own machines are not affected.
 
+### Dashboard
+
+- **An address without a page shows a not-found page** of the dashboard,
+  with its navigation and a way back, where the router's developer error
+  page ("Unexpected Application Error!") showed. A page that fails shows a
+  plain message with Reload and a way back, and never the error's text.
+- **Access, People: someone who may not read the members is told so**,
+  where the page said "No members yet". Invite shows only to someone who
+  may invite. The server refused both before too.
+- **The Audit page fits a phone's width.** It scrolled sideways at 390
+  pixels, and long words in an event were cut off.
+
 ### CLI
 
 - **`varlatch migrate` finds a Coolify installation's Compose project.** A
