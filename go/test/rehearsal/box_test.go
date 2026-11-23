@@ -55,6 +55,8 @@ type profileConfig struct {
 	// client's file, the nodes' reusable tagged auth key's, the tailnet's
 	// MagicDNS suffix.
 	tailscaleOAuth, tailscaleAuthKey, tailscaleTailnet string
+	// B5 against the owner's throwaway destinations (VL_RH_SYNC=real).
+	syncReal syncRealInputs
 	// B6: the archive VL_RH_SOURCE=restore:<archive> names, and its keys
 	// (VL_RH_RESTORE_BEK, VL_RH_RESTORE_KEK), all files the operator copied
 	// to this host; the harness never fetches one.
@@ -95,6 +97,11 @@ func readProfile(euid int) (profileConfig, error) {
 		restoreBEK: os.Getenv("VL_RH_RESTORE_BEK"), restoreKEK: os.Getenv("VL_RH_RESTORE_KEK"), bundleOut: os.Getenv("VL_RH_BUNDLE_OUT"),
 		tailscaleOAuth: os.Getenv("VL_RH_TAILSCALE_OAUTH_FILE"), tailscaleAuthKey: os.Getenv("VL_RH_TAILSCALE_AUTH_KEY_FILE"),
 		tailscaleTailnet: os.Getenv("VL_RH_TAILSCALE_TAILNET"),
+		syncReal: syncRealInputs{
+			githubTokenFile: os.Getenv("VL_RH_SYNC_GITHUB_TOKEN_FILE"), repo: os.Getenv("VL_RH_SYNC_GITHUB_REPO"),
+			coolifyURL: os.Getenv("VL_RH_SYNC_COOLIFY_URL"), coolifyTokenFile: os.Getenv("VL_RH_SYNC_COOLIFY_TOKEN_FILE"),
+			coolifyApp: os.Getenv("VL_RH_SYNC_COOLIFY_APP"), allowRepo: os.Getenv("VL_RH_SYNC_ALLOW_REPO"), allowApp: os.Getenv("VL_RH_SYNC_ALLOW_APP"),
+		},
 	}
 	only := os.Getenv("VL_RH_ONLY")
 	realTailscale := prof.tailscaleOAuth != "" || prof.tailscaleAuthKey != "" || prof.tailscaleTailnet != ""
@@ -120,8 +127,16 @@ func readProfile(euid int) (profileConfig, error) {
 		return prof, errors.New("the tailnet case on Tailscale needs VL_RH_TAILSCALE_OAUTH_FILE (the OAuth client, devices:core only), VL_RH_TAILSCALE_AUTH_KEY_FILE (a reusable auth key with tag:varlatch) and VL_RH_TAILSCALE_TAILNET (its MagicDNS suffix, e.g. tail1234.ts.net)")
 	case prof.ingress == "tailnet" && (prof.kill != "" || prof.sync != "" || prof.source != "seed"):
 		return prof, errors.New("VL_RH_INGRESS=tailnet runs its own cases (the handoff, a rollback, a kill mid-handoff and --abort) on seeded sources: leave VL_RH_KILL and VL_RH_SYNC unset, and VL_RH_SOURCE=seed")
-	case prof.sync != "" && prof.sync != "fakes":
-		return prof, fmt.Errorf("VL_RH_SYNC is fakes (the platform stand-ins), not %q: Sync Targets to real endpoints (B5's owner session) need the owner's destinations (internal#221, question 2); not built yet", prof.sync)
+	case prof.sync != "" && prof.sync != "fakes" && prof.sync != "real":
+		return prof, fmt.Errorf("VL_RH_SYNC is fakes (the platform stand-ins, a workstation) or real (the owner's throwaway GitHub repository and lab Coolify application, the box), not %q", prof.sync)
+	case prof.sync == "real" && !prof.box:
+		return prof, errors.New("VL_RH_SYNC=real is the owner's session on the box (VL_RH_PROFILE=box): a workstation runs VL_RH_SYNC=fakes")
+	case prof.sync == "real" && (prof.ingress != "proxy" || prof.target != "host" || prof.source != "seed"):
+		return prof, errors.New("VL_RH_SYNC=real runs on a seeded source with the own proxy and the host-install target (VL_RH_INGRESS=proxy, VL_RH_TARGET=host, VL_RH_SOURCE=seed)")
+	case prof.sync == "real":
+		if err := checkSyncReal(prof.syncReal); err != nil {
+			return prof, err
+		}
 	case prof.sync == "fakes" && prof.box:
 		return prof, errors.New("VL_RH_SYNC=fakes runs on a workstation only: it points the platforms' host names at the stand-ins in the runner container's /etc/hosts, which the box profile does not have")
 	case strings.HasPrefix(prof.source, "restore:"):
@@ -179,8 +194,8 @@ func readProfile(euid int) (profileConfig, error) {
 	case only == "kill" && prof.kill == "":
 		// Alone, it would run nothing between the guard and the report.
 		return prof, errors.New("VL_RH_ONLY=kill needs VL_RH_KILL (transfer or barrier): it runs the kill case alone")
-	case only == "sync" && prof.sync != "fakes":
-		return prof, errors.New("VL_RH_ONLY=sync needs VL_RH_SYNC=fakes: it runs the sync case alone")
+	case only == "sync" && prof.sync != "fakes" && prof.sync != "real":
+		return prof, errors.New("VL_RH_ONLY=sync needs VL_RH_SYNC=fakes or real: it runs the sync case alone")
 	case only == "bundle":
 		if prof.restore != "" || prof.kill != "" || prof.sync != "" || prof.ingress != "proxy" {
 			return prof, errors.New("VL_RH_ONLY=bundle makes the synthetic archive alone: on a seeded source (VL_RH_SOURCE=seed), with the own proxy, no VL_RH_KILL or VL_RH_SYNC")

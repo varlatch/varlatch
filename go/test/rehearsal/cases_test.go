@@ -85,6 +85,9 @@ func TestRehearsal(t *testing.T) {
 	if prof.sync == "fakes" && only != "kill" {
 		t.Run("sync", func(t *testing.T) { syncCase(t, rel, s3) })
 	}
+	if prof.sync == "real" && only != "kill" {
+		t.Run("sync-real", func(t *testing.T) { syncRealCase(t, rel, s3) })
+	}
 }
 
 func mainCases(t *testing.T, rel release, s3 *s3Server) {

@@ -43,7 +43,7 @@ func TestProfileRefusals(t *testing.T) {
 			{"bundle", "", "", "VL_RH_BUNDLE_OUT, an absolute path"},
 			{"kill", "transfer", "", ""},
 			{"setup", "", "", ""},
-			{"sync", "", "", "VL_RH_ONLY=sync needs VL_RH_SYNC=fakes"},
+			{"sync", "", "", "VL_RH_ONLY=sync needs VL_RH_SYNC=fakes or real"},
 			{"sync", "", "fakes", ""},
 		} {
 			t.Setenv("VL_RH_ONLY", c.only)
@@ -60,7 +60,7 @@ func TestProfileRefusals(t *testing.T) {
 		for _, c := range []struct{ profile, ingress, sync, want string }{
 			{"", "", "fakes", ""},
 			{"", "", "coolify", "VL_RH_SYNC is fakes"},
-			{"", "", "real", "owner's destinations"},
+			{"", "", "real", "owner's session on the box"},
 			{"box", "public", "fakes", "workstation only"},
 		} {
 			t.Setenv("VL_RH_PROFILE", c.profile)
