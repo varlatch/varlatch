@@ -166,31 +166,44 @@ put_cli() {
   fi
 }
 
-# resolved prints the file's path with every link on its way resolved, its
-# directories' links as well (cd -P, pwd -P) as its own (readlink, one
-# level at a time, up to 40). A relative directory is the working
-# directory's (./, CDPATH never searched), and pwd -P is the only output.
-# Where a directory on the way does not exist (a link into a missing
-# keg), what is left is printed as it is.
+# resolved prints the file's path with every link on its way resolved: it
+# walks the path one component at a time from / (a relative path from the
+# working directory, pwd -P), following each link where it exists
+# (readlink, up to 40) and taking .. from what is resolved so far. At the
+# first component that does not exist (a link into a missing keg), what is
+# left is appended as it is written. No cd, so no CDPATH.
 resolved() {
-  hb_p=$1 hb_hops=0
-  while :; do
-    hb_dir=$(dirname -- "$hb_p")
-    case "$hb_dir" in
-      /*) ;;
-      *) hb_dir=./$hb_dir ;;
+  hb_rest=$1 hb_cur=/ hb_hops=0
+  case "$hb_rest" in
+    /*) ;;
+    *) hb_rest=$(pwd -P)/$hb_rest ;;
+  esac
+  while [ -n "$hb_rest" ]; do
+    case "$hb_rest" in
+      */*) hb_c=${hb_rest%%/*} hb_rest=${hb_rest#*/} ;;
+      *) hb_c=$hb_rest hb_rest='' ;;
     esac
-    hb_d=$(CDPATH='' cd -P -- "$hb_dir" >/dev/null 2>&1 && pwd -P) || break
-    hb_p=$hb_d/$(basename -- "$hb_p")
-    [ -L "$hb_p" ] && [ "$hb_hops" -lt 40 ] || break
-    hb_link=$(readlink "$hb_p" 2>/dev/null) || break
-    case "$hb_link" in
-      /*) hb_p=$hb_link ;;
-      *) hb_p=$hb_d/$hb_link ;;
+    case "$hb_c" in
+      '' | .) continue ;;
+      ..) hb_cur=$(dirname -- "$hb_cur"); continue ;;
     esac
-    hb_hops=$((hb_hops + 1))
+    if [ "$hb_cur" = / ]; then hb_next=/$hb_c; else hb_next=$hb_cur/$hb_c; fi
+    if [ -L "$hb_next" ] && [ "$hb_hops" -lt 40 ]; then
+      hb_link=$(readlink "$hb_next" 2>/dev/null) || hb_link=''
+      if [ -n "$hb_link" ]; then
+        hb_hops=$((hb_hops + 1))
+        case "$hb_link" in /*) hb_cur=/ ;; esac
+        if [ -n "$hb_rest" ]; then hb_rest=$hb_link/$hb_rest; else hb_rest=$hb_link; fi
+        continue
+      fi
+    fi
+    hb_cur=$hb_next
+    if [ ! -e "$hb_next" ] && [ ! -L "$hb_next" ]; then
+      [ -z "$hb_rest" ] || hb_cur=$hb_cur/$hb_rest
+      break
+    fi
   done
-  printf '%s\n' "$hb_p"
+  printf '%s\n' "$hb_cur"
 }
 
 # A Homebrew copy is Homebrew's to update. It is told as varlatch

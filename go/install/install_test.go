@@ -1025,6 +1025,60 @@ func TestInstallRefusesADanglingKegLink(t *testing.T) {
 	emptyTmp(t, res)
 }
 
+// A link whose resolution reaches a keg that is gone, through another link
+// on the way (bin/varlatch -> ../opt/varlatch/bin/varlatch, opt/varlatch a
+// link into a missing keg), is Homebrew's: refused, the link kept. The
+// resolver follows the links that exist before it keeps the rest as
+// written.
+func TestInstallRefusesALinkThroughALinkIntoAMissingKeg(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	for _, d := range []string{filepath.Join(root, "bin"), filepath.Join(root, "opt"), filepath.Join(root, "brew", "Cellar")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The keg's version directory does not exist.
+	if err := os.Symlink(filepath.Join(root, "brew", "Cellar", "varlatch", version), filepath.Join(root, "opt", "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "bin", "varlatch")
+	if err := os.Symlink("../opt/varlatch/bin/varlatch", target); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", filepath.Join(root, "bin")})
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if got, err := os.Readlink(target); err != nil || got != "../opt/varlatch/bin/varlatch" {
+		t.Fatalf("the link changed: %q, %v", got, err)
+	}
+	emptyTmp(t, res)
+}
+
+// A link through an existing Cellar's .. to a directory that does not
+// exist is no Homebrew copy: the .. is taken from the resolved Cellar, and
+// only the missing rest kept as written.
+func TestInstallThroughACellarToAMissingDirectory(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "Cellar"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(root+"/Cellar/../missing/varlatch", filepath.Join(dir, "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code != 0 || !strings.Contains(res.out, "Installed varlatch "+version) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+}
+
 // A link whose path goes through a Cellar but resolves outside it is no
 // Homebrew copy: the place that counts is the resolved one (and the path
 // as given), as for self-update, never a link's raw text.
