@@ -198,6 +198,12 @@ func MaskUserinfoInText(text string) string {
 //   - the authority is not empty; slashes after "//" are skipped, as a
 //     special scheme's parser does (https:///u@h names the user u).
 //
+// An image reference's digest separator neither: in a run without "//",
+// an "@" followed by "sha256:" and 64 lowercase hex digits (or the
+// placeholder "<digest>") reads as it is, so a registry with a port
+// (127.0.0.1:5000/vl-rh/varlatchd:0.50.0@sha256:...) is not taken for a
+// user name and password; with "//" in the run it is masked as before.
+//
 // A backslash does not end the authority: it does only in some schemes.
 func failSafeSpans(text string) [][2]int {
 	kept, at := forAtSigns(text)
@@ -227,7 +233,10 @@ func failSafeSpans(text string) [][2]int {
 		if n := atSignAt(kept, i); n > 0 {
 			inPath := n == 1 && kept[i] == '@' && lastSlashes >= runStart && authEnd > hostStart &&
 				plainHost(kept[hostStart:authEnd]) && lastColon < authEnd && lastEncColon < authEnd
-			if !inPath {
+			// An image reference's digest separator (repo[:tag]@sha256:...),
+			// in a run without "//": what follows can be no host and port.
+			digest := n == 1 && kept[i] == '@' && lastSlashes < runStart && digestAfter(kept[i+1:])
+			if !inPath && !digest {
 				credentialAts = append(credentialAts, [2]int{i, n})
 				if lastSlashes >= runStart && authEnd < 0 {
 					hostStart = i + n
@@ -280,6 +289,33 @@ func failSafeSpans(text string) [][2]int {
 		}
 	}
 	return spans
+}
+
+// digestAfter is whether b starts with an image digest, "sha256:" and
+// then 64 lowercase hex digits or the placeholder "<digest>", ended by the
+// text's end or a byte that is no letter or digit. A host named sha256
+// takes a port of one to five digits: never 64 digits, nor "<digest>".
+func digestAfter(b []byte) bool {
+	const algo = "sha256:"
+	if !bytes.HasPrefix(b, []byte(algo)) {
+		return false
+	}
+	b = b[len(algo):]
+	end := func(k int) bool {
+		return k == len(b) || !(b[k] >= '0' && b[k] <= '9' || b[k] >= 'a' && b[k] <= 'z' || b[k] >= 'A' && b[k] <= 'Z')
+	}
+	if bytes.HasPrefix(b, []byte("<digest>")) {
+		return true
+	}
+	if len(b) < 64 {
+		return false
+	}
+	for _, c := range b[:64] {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return end(64)
 }
 
 // plainHost is whether an authority's host part, after its last at-sign,
