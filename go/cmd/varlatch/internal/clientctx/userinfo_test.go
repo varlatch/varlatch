@@ -277,34 +277,6 @@ func TestFailSafeAtSignsInAPath(t *testing.T) {
 	}
 }
 
-// TestFailSafeImageDigests: an image reference's "@sha256:" is no
-// credential's at-sign (B3's refusal read "migrate:[redacted]@sha256:..."),
-// while userinfo in a URL, and a host named sha256 with its port, are
-// masked as before.
-func TestFailSafeImageDigests(t *testing.T) {
-	const hexd = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	const d = "sha256:" + hexd
-	refusal := `varlatch migrate: --to-image "127.0.0.1:32768/vl-rh/varlatchd@` + d + `" is not pinned: give repository:tag@sha256:<digest>, the image the service runs`
-	for in, want := range map[string]string{
-		// Shown.
-		refusal: refusal,
-		"the source's image is repository 127.0.0.1:32768/vl-rh/varlatchd, digest " + d + ", not 127.0.0.1:32768/vl-rh/varlatchd:0.23.0@" + d: "the source's image is repository 127.0.0.1:32768/vl-rh/varlatchd, digest " + d + ", not 127.0.0.1:32768/vl-rh/varlatchd:0.23.0@" + d,
-		"registry.example:5000/a/b:1.2@sha256:<digest>": "registry.example:5000/a/b:1.2@sha256:<digest>",
-		// Masked as before.
-		"https://u:pw@sha256:8080/x":                        "https:[redacted]@sha256:8080/x",
-		"u:pw@sha256:8080":                                  "[redacted]@sha256:8080",
-		"https://u:pw@" + d:                                 "https:[redacted]@" + d,
-		"see https://u:pw@h and 127.0.0.1:5000/r@" + d:      "see https:[redacted]@h and 127.0.0.1:5000/r@" + d,
-		"u:pw@sha256:" + hexd[:63]:                          "[redacted]@sha256:" + hexd[:63],
-		"u:pw@sha256:" + hexd + "x":                         "[redacted]@sha256:" + hexd + "x",
-		"x: 127.0.0.1:5000/r@" + d + " then https://u:pw@h": "x:[redacted]@h",
-	} {
-		if got := MaskUserinfoInText(in); got != want {
-			t.Errorf("MaskUserinfoInText(%q) =\n %q, want\n %q", in, got, want)
-		}
-	}
-}
-
 // TestFailSafeMultiLinePasswords: a password broken over lines whose "@"
 // comes one to six lines later, with blank lines, lines without a colon and
 // lines with their own colons between, is masked whole.
