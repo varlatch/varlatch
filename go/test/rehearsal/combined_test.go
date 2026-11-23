@@ -597,6 +597,45 @@ func (c *combined) undone(step string) {
 	c.record(step+": Go runs", len(goContainers()) == 1, fmt.Sprint(goContainers()))
 }
 
+// gateLost: without the migration's gate in the state volume, --rollback
+// begins and starts nothing; the gate is then put back.
+func (c *combined) gateLost(step string) {
+	c.t.Helper()
+	image := ""
+	if l := serviceOf(c.source, "postgres"); l != nil {
+		image = l.Image
+	}
+	state := func(cmd string) ran {
+		return run("", nil, nil, "docker", "run", "--rm", "--pull", "never", "--network", "none", "-v", c.source+"_varlatch-state:/s", "--entrypoint", "sh", image, "-c", cmd)
+	}
+	if mv := state("mv /s/maintenance.json /s/maintenance.json.kept"); !c.record(step+": the source's gate is taken away", mv.code == 0, mv.String()) {
+		return
+	}
+	before := fmt.Sprint(containersOf(c.source))
+	r := c.migrate("--rollback without the source's gate ("+step+")", c.reverseArgs("--rollback"))
+	out := r.stdout + r.stderr
+	code, body := c.get()
+	c.record(step+": --rollback without the source's gate starts nothing, and Go serves", r.code == 1 && strings.Contains(out, "holds no gate") && strings.Contains(out, "nothing was started") && c.phase() == "open" &&
+		fmt.Sprint(containersOf(c.source)) == before && code == 200 && isGo(strings.Fields(body + " -")[0]), fmt.Sprintf("%s; phase %s; %d %s", r, c.phase(), code, body))
+	if mv := state("mv /s/maintenance.json.kept /s/maintenance.json"); mv.code != 0 {
+		c.t.Fatalf("putting the gate back: %s", mv)
+	}
+}
+
+// removeStopped removes the source's stopped containers: their images.
+func (c *combined) removeStopped() []string {
+	c.t.Helper()
+	var images []string
+	for _, l := range containersOf(c.source) {
+		if l.State != "running" {
+			must(c.t, run("", nil, nil, "docker", "rm", l.ID), "remove the source's stopped "+l.Service)
+			images = append(images, l.Image)
+		}
+	}
+	slices.Sort(images)
+	return slices.Compact(images)
+}
+
 // throughStop is a --rollback or --resume that stops for Go's stop (exit
 // 75), then finishes.
 func (c *combined) throughStop(step string, r ran) bool {
@@ -762,6 +801,7 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 	// The rollback, with the containers there: asked for the route, killed at
 	// the new steps, undone each time; then through.
 	c.takeAddress()
+	c.gateLost("rollback")
 	out, ok := c.ask("rollback")
 	if !ok {
 		return
@@ -781,6 +821,12 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 			return resp.StatusCode == 502 && resp.Header.Get("X-Varlatch-Rollback") != ""
 		})
 		c.record("rollback: the proxy answers 502 with the route's header, the dashboard stopped", routed, "")
+		if c.killed("rollback gated started", c.reverseArgs("--rollback")) {
+			c.record("the dashboard waits for the gate's second check", stateOf(c.source, "varlatchd") == "running" && stateOf(c.source, "varlatch-web") != "running", c.addresses())
+			r := c.migrate("--resume after a kill once the servers started", c.reverseArgs("--resume"))
+			c.record("--resume after a kill once the servers started undoes it", r.code == 1 && strings.Contains(r.stdout+r.stderr, "the reverse was undone"), r.String())
+			c.undone("resumed once the servers started")
+		}
 		if c.killed("rollback route checked", c.reverseArgs("--rollback")) {
 			c.record("the old sidecar and varlatchd ran for the check", stateOf(c.source, "tailscale") == "running" && stateOf(c.source, "varlatch-web") == "running", c.addresses())
 			r := c.migrate("--abort after a kill once the route is checked", c.reverseArgs("--abort"))
@@ -825,19 +871,13 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 	if !c.forward("migrate-again") {
 		return
 	}
-	var images []string
-	for _, l := range containersOf(c.source) {
-		if l.State != "running" {
-			must(t, run("", nil, nil, "docker", "rm", l.ID), "remove the source's stopped "+l.Service)
-			images = append(images, l.Image)
-		}
-	}
-	slices.Sort(images)
-	for _, img := range slices.Compact(images) {
+	images := c.removeStopped()
+	for _, img := range images {
 		run("", nil, nil, "docker", "rmi", img)
 	}
 	c.record("the old installation's stopped containers are gone", stateOf(c.source, "tailscale") == "gone" && stateOf(c.source, "varlatch-web") == "gone", c.addresses())
-	measure("item 15: images removed with them", fmt.Sprintf("%d", len(slices.Compact(images))))
+	measure("item 15: images removed with them", fmt.Sprintf("%d", len(images)))
+	c.gateLost("rollback-gone")
 	if out, ok = c.ask("rollback-gone"); !ok {
 		return
 	}
@@ -846,6 +886,14 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 			c.record("rollback-gone: migrate's route put in the proxy", false, err.Error())
 			ok = false
 			return
+		}
+		// What the check made again is stopped by its undo, and gone again for
+		// the rollback itself.
+		if c.killed("rollback gated started", c.reverseArgs("--rollback")) {
+			r := c.migrate("--abort after a kill once the servers were made again", c.reverseArgs("--abort"))
+			c.record("--abort after a kill once the servers were made again", r.code == 0 && stateOf(c.source, "varlatchd") != "running", r.String()+" "+c.addresses())
+			c.undone("aborted once the servers were made again")
+			c.removeStopped()
 		}
 		ok = c.throughStop("rollback-gone", c.migrate("--rollback with the containers and images gone", c.reverseArgs("--rollback")))
 	})
