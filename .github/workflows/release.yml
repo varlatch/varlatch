@@ -49,8 +49,20 @@ name: Release
 # the installers pin (release.yml at refs/tags/v<version>). The signature
 # is verified by the release's own varlatch before anything is published. A
 # version with a pre-release part (0.50.0-rc.1) is published as a
-# prerelease. The Go line pushes no image: the Go container image is slice
-# 6.10's.
+# prerelease.
+#
+# The Go line's container image (internal docs/design/go-step6.md,
+# decision 9; go/image): go-image builds ghcr.io/OWNER/varlatchd for
+# linux/amd64 and linux/arm64 from the very assets go-release publishes,
+# pushes it under the version's tag only (never latest, nor a floating
+# minor tag: an upgrade is the tag or digest the operator pins, and digests
+# are the canonical pin), with build-provenance and SBOM attestations as
+# the TypeScript images have them, and signs its index keyless into
+# ghcr.io/OWNER/varlatch-signatures. go-image-check and go-image-arm64 run
+# go/image/check-image.mjs on the pushed digest, one platform each. Only
+# then does go-release publish, with varlatchd-image.txt (the tag and its
+# index digest) listed in the signed SHA256SUMS and in the release notes:
+# no Go release without its image.
 on:
   push:
     tags: ["v*"]
@@ -564,14 +576,234 @@ jobs:
             exit 1
           fi
 
-  # Signs SHA256SUMS, verifies the signature with the release's own CLI as
-  # the installers will, and publishes the Go release.
-  go-release:
+  # The Go line's container image (decision 9): the release's own Linux
+  # binaries in go/image/Dockerfile, built by go/image/build.sh, pushed
+  # under the version's tag and signed. Nothing else is tagged: no latest
+  # and no floating 0.50, so a pull never moves under an operator, and a
+  # prerelease never becomes what a bare name gives. It runs after G5, so
+  # no tag is pushed for a release that cannot pass it.
+  go-image:
     needs: [hosted-runner, line, go-assets, go-g5]
     runs-on: ${{ vars.RELEASE_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
     timeout-minutes: 30
     permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless signing of the image
+    outputs:
+      hosted: ${{ steps.runner.outputs.hosted }}
+      # name:version@sha256:..., the index this release pins.
+      ref: ${{ steps.sign.outputs.ref }}
+    steps:
+      - name: Runner for the image
+        id: runner
+        env:
+          FORCED: ${{ vars.RELEASE_RUNNER }}
+          AVAILABLE: ${{ needs.hosted-runner.outputs.available }}
+        run: |
+          if [ -n "$FORCED" ]; then
+            hosted=false why="self-hosted ($FORCED), forced by the RELEASE_RUNNER variable"
+          elif [ "$AVAILABLE" = true ]; then
+            hosted=true why="GitHub-hosted: minutes available"
+          else
+            hosted=false why="self-hosted (varlatch-ci): GitHub-hosted runners refused the probe (minutes used up)"
+          fi
+          echo "hosted=$hosted" >> "$GITHUB_OUTPUT"
+          echo "The Go image is built $why." | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: go-assets
+          path: go-assets
+      # As go-release does, before anything is built from them (this job
+      # holds the registry's write token and the signing credential): the
+      # artifact must be exactly what go-assets built.
+      - name: The downloaded assets are the ones built
+        working-directory: go-assets
+        env:
+          SUMS: ${{ needs.go-assets.outputs.sums }}
+        run: |
+          [[ "$SUMS" =~ ^[0-9a-f]{64}$ ]] || { echo "go-assets reported no SHA256SUMS hash" >&2; exit 1; }
+          [ "$(sha256sum SHA256SUMS | cut -d' ' -f1)" = "$SUMS" ] || { echo "SHA256SUMS is not the one go-assets built" >&2; exit 1; }
+          sha256sum --check --strict --quiet SHA256SUMS
+          listed=$( (cut -d' ' -f3 SHA256SUMS; echo SHA256SUMS) | LC_ALL=C sort)
+          present=$(find . -mindepth 1 -printf '%P\n' | LC_ALL=C sort)
+          [ "$listed" = "$present" ] || { echo "the artifact holds other files than SHA256SUMS lists" >&2; exit 1; }
+      - name: Image name
+        id: names
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "varlatchd=ghcr.io/${OWNER}/varlatchd"
+            echo "signatures=ghcr.io/${OWNER}/varlatch-signatures"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The image only copies the binaries; the arm64 stage's few file
+      # steps run under emulation.
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      # BuildKit's SBOM scan cannot mount the image inside the self-hosted
+      # runner's sandbox, as for the TypeScript images: built there, the
+      # image carries provenance only, and go-release attaches its SBOMs as
+      # files.
+      - name: Build and push the image
+        env:
+          VERSION: ${{ needs.line.outputs.version }}
+          IMAGE: ${{ steps.names.outputs.varlatchd }}
+          HOSTED: ${{ steps.runner.outputs.hosted }}
+        run: |
+          sbom=()
+          [ "$HOSTED" != true ] || sbom=(--sbom)
+          go/image/build.sh --version "$VERSION" --assets go-assets --tag "$IMAGE:$VERSION" \
+            --platforms linux/amd64,linux/arm64 --push --metadata-file "$RUNNER_TEMP/image.json" "${sbom[@]}"
+      # The signature goes to its own package, as the TypeScript images'
+      # do (COSIGN_REPOSITORY), on the multi-platform index the release
+      # records. The Go line is always signed, as its SHA256SUMS is.
+      - name: Sign the image
+        id: sign
+        env:
+          COSIGN_REPOSITORY: ${{ steps.names.outputs.signatures }}
+          VERSION: ${{ needs.line.outputs.version }}
+          IMAGE: ${{ steps.names.outputs.varlatchd }}
+        run: |
+          set -euo pipefail
+          digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/image.json")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "the build reported no index digest: $digest" >&2; exit 1; }
+          # The tag pushed is that index, for both platforms.
+          [ "$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{println .Manifest.Digest}}' | head -1)" = "$digest" ] \
+            || { echo "$IMAGE:$VERSION is not the index just built" >&2; exit 1; }
+          platforms=$(docker buildx imagetools inspect "$IMAGE@$digest" --raw \
+            | jq -r '[.manifests[] | select(.platform.os == "linux") | .platform.architecture] | sort | join(",")')
+          [ "$platforms" = amd64,arm64 ] || { echo "the index holds $platforms, not amd64,arm64" >&2; exit 1; }
+          cosign sign --yes "$IMAGE@$digest"
+          echo "ref=$IMAGE:$VERSION@$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed and signed $IMAGE:$VERSION@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # go/image/check-image.mjs on the pushed image, by its digest, for
+  # linux/amd64: as an operator runs it (its user and volume, keys refused
+  # in the environment, the recovery gate, a backup restored). No write
+  # token and no signing credential here: it runs the release's binaries.
+  go-image-check:
+    needs: [hosted-runner, go-image]
+    runs-on: ${{ vars.RELEASE_RUNNER || (needs.go-image.outputs.hosted == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
+    timeout-minutes: 20
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Take the pushed image for linux/amd64
+        env:
+          REF: ${{ needs.go-image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          amd64=$(docker buildx imagetools inspect "$REF" --raw \
+            | jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest')
+          test -n "$amd64"
+          docker pull "${REF%@*}@${amd64}"
+          docker tag "${REF%@*}@${amd64}" varlatchd-release:check
+          test "$(docker image inspect varlatchd-release:check --format '{{.Architecture}}')" = amd64
+      - name: The image as an operator runs it, on linux/amd64
+        run: node go/image/check-image.mjs varlatchd-release:check
+
+  # The same check for linux/arm64: GitHub's hosted arm64 runner when the
+  # image was built hosted, or ARM64_RUNNER; otherwise the arm64 image
+  # under emulation on the self-hosted x64 runner, with every wait longer,
+  # and the release notes say so.
+  go-image-arm64:
+    needs: [hosted-runner, go-image]
+    runs-on: ${{ vars.ARM64_RUNNER || vars.RELEASE_RUNNER || (needs.go-image.outputs.hosted == 'true' && 'ubuntu-24.04-arm') || 'varlatch-ci' }}
+    timeout-minutes: ${{ (vars.ARM64_RUNNER || vars.RELEASE_RUNNER || needs.go-image.outputs.hosted != 'true') && 90 || 20 }}
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Hardware or emulation
+        id: mode
+        run: |
+          if [ "$(uname -m)" = aarch64 ]; then
+            echo "mode=hardware" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=emulated" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Take the pushed image for linux/arm64
+        env:
+          REF: ${{ needs.go-image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          arm64=$(docker buildx imagetools inspect "$REF" --raw \
+            | jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
+          test -n "$arm64"
+          docker pull "${REF%@*}@${arm64}"
+          docker tag "${REF%@*}@${arm64}" varlatchd-release:check
+          test "$(docker image inspect varlatchd-release:check --format '{{.Architecture}}')" = arm64
+      # As arm64-e2e: the host may already run arm64 binaries through QEMU
+      # handlers it registered; otherwise register them here.
+      - name: arm64 emulation already available
+        id: binfmt
+        if: steps.mode.outputs.mode == 'emulated'
+        run: |
+          if [ "$(docker run --rm --entrypoint /opt/varlatch/varlatchd varlatchd-release:check --version 2>/dev/null)" != "" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        if: steps.mode.outputs.mode == 'emulated' && steps.binfmt.outputs.ready != 'true'
+        with:
+          platforms: arm64
+      - name: The image as an operator runs it, on linux/arm64
+        env:
+          VARLATCH_TEST_SLOWDOWN: ${{ steps.mode.outputs.mode == 'emulated' && '6' || '' }}
+        run: node go/image/check-image.mjs varlatchd-release:check
+
+  # Signs SHA256SUMS, verifies the signature with the release's own CLI as
+  # the installers will, and publishes the Go release.
+  go-release:
+    needs: [hosted-runner, line, go-assets, go-g5, go-image, go-image-check, go-image-arm64]
+    runs-on: ${{ vars.RELEASE_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
+    timeout-minutes: 30
+    permissions:
       contents: write
+      packages: read # the image's signature and SBOMs read from the registry
       id-token: write # keyless signing of SHA256SUMS
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -597,12 +829,63 @@ jobs:
           present=$(find . -mindepth 1 -printf '%P\n' | LC_ALL=C sort)
           [ "$listed" = "$present" ] || { echo "the artifact holds other files than SHA256SUMS lists" >&2; exit 1; }
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
-      - name: Check the assets again
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The image this release ships: its signature from this workflow's
+      # identity for this tag, before anything names it.
+      - name: The image's signature verifies
+        env:
+          REF: ${{ needs.go-image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          export COSIGN_REPOSITORY="ghcr.io/${OWNER}/varlatch-signatures"
+          cosign verify "${REF%%:*}@${REF##*@}" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          echo "verified ${REF}"
+      # The image's record, listed in SHA256SUMS before it is signed, so the
+      # one signature covers it: the cutover and the docs pin the image by
+      # it. An image built on a self-hosted runner has no SBOM attestation:
+      # its SBOMs, per architecture, become release files, as the
+      # TypeScript images' do.
+      - name: The image's record
+        working-directory: go-assets
+        env:
+          REF: ${{ needs.go-image.outputs.ref }}
+          HOSTED: ${{ needs.go-image.outputs.hosted }}
+          VERSION: ${{ needs.line.outputs.version }}
+          SYFT_VERSION: 1.52.0
+          SYFT_SHA256: caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d # linux_amd64
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$REF" > varlatchd-image.txt
+          sha256sum varlatchd-image.txt >> SHA256SUMS
+          if [ "$HOSTED" != true ]; then
+            test "$(uname -m)" = x86_64
+            curl -fsSLo "$RUNNER_TEMP/syft.tar.gz" "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+            echo "${SYFT_SHA256}  $RUNNER_TEMP/syft.tar.gz" | sha256sum --check --strict -
+            tar -xzf "$RUNNER_TEMP/syft.tar.gz" -C "$RUNNER_TEMP" syft
+            for arch in amd64 arm64; do
+              file="sbom-varlatchd-${VERSION}-linux-${arch}.spdx.json"
+              "$RUNNER_TEMP/syft" scan "registry:${REF}" --platform "linux/${arch}" -o "spdx-json=${file}" -q
+              sha256sum "$file" >> SHA256SUMS
+            done
+            rm "$RUNNER_TEMP/syft"
+          fi
+      - name: Check the assets again, with the image
         env:
           VERSION: ${{ needs.line.outputs.version }}
+          REF: ${{ needs.go-image.outputs.ref }}
+          HOSTED: ${{ needs.go-image.outputs.hosted }}
         run: |
           chmod +x go-assets/varlatch-* go-assets/varlatchd-*
-          go/release/check-assets.sh go-assets "$VERSION"
+          sboms=()
+          [ "$HOSTED" = true ] || sboms=(--sboms)
+          go/release/check-assets.sh go-assets "$VERSION" --image "$REF" "${sboms[@]}"
 
       # The Go line is always signed: the installers refuse an unsigned
       # release, so SIGN does not apply to it.
@@ -627,15 +910,29 @@ jobs:
       - name: Release notes from the changelog
         env:
           VERSION: ${{ needs.line.outputs.version }}
+          REF: ${{ needs.go-image.outputs.ref }}
+          HOSTED: ${{ needs.go-image.outputs.hosted }}
+          ARM64_MODE: ${{ needs.go-image-arm64.outputs.mode }}
         run: |
           GUIDE="https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/operations/verify-release.md"
           awk -v v="$VERSION" 'index($0, "## " v " (") == 1 { f = 1; next } f && /^## / { exit } f' CHANGELOG.md > notes.md
           test -s notes.md || { echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+          if [ "$HOSTED" = true ]; then
+            ATTESTATIONS="build-provenance and SBOM attestations"
+          else
+            ATTESTATIONS="build-provenance attestations (built on a self-hosted runner, where BuildKit cannot generate SBOM attestations: its SBOMs are attached as release files instead, \`sbom-varlatchd-${VERSION}-linux-ARCH.spdx.json\`, listed in \`SHA256SUMS\`)"
+          fi
           {
             echo
             echo "---"
             echo
             echo "The Go binaries: \`varlatch\` for Linux, macOS and Windows and \`varlatchd\` for Linux, on amd64 and arm64, with \`install.sh\` and \`install.ps1\` for this version, the \`varlatchd\` systemd unit and its example configuration. Every asset is listed in \`SHA256SUMS\`, which is signed keyless by this workflow (\`SHA256SUMS.sigstore.json\`); the installers verify it before installing anything, and [verifying a release](${GUIDE}) shows how to check it with cosign."
+            echo
+            echo "The container image, for linux/amd64 and linux/arm64: \`${REF}\`. Pin it by that digest. It is signed keyless by this workflow (the signature is in \`ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/varlatch-signatures\`) and carries ${ATTESTATIONS}. \`varlatchd-image.txt\` records the same reference and is listed in \`SHA256SUMS\`."
+            if [ "$ARM64_MODE" = emulated ]; then
+              echo
+              echo "The arm64 image passed its checks under emulation for this release, not on arm64 hardware."
+            fi
           } >> notes.md
 
       - name: Create the GitHub release

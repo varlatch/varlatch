@@ -17,14 +17,32 @@
 #   last TypeScript release (0.23.0), or endsRollbackWindow, exactly one
 #   (internal docs/design/go-step7.md decision 17).
 #
-# Usage: check-assets.sh <directory> <version>
+# With --image <reference> (the release workflow's go-release, once the
+# container image is pushed and signed): varlatchd-image.txt too, holding
+# exactly that reference, which names this version's tag of a varlatchd
+# image and its index digest. With --sboms as well: the image's SBOMs as
+# release files, one per architecture (an image built on a self-hosted
+# runner has no SBOM attestation).
+#
+# Usage: check-assets.sh <directory> <version> [--image <reference> [--sboms]]
 set -euo pipefail
 
 fail=0
 bad() { printf 'check-assets: %s\n' "$*" >&2; fail=1; }
 
-[ $# -eq 2 ] || { echo "usage: check-assets.sh <directory> <version>" >&2; exit 64; }
+usage() { echo "usage: check-assets.sh <directory> <version> [--image <reference> [--sboms]]" >&2; exit 64; }
+[ $# -ge 2 ] || usage
 dir=$1 version=$2
+shift 2
+image='' sboms=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --image) [ $# -ge 2 ] || usage; image=$2; shift 2 ;;
+    --sboms) sboms=true; shift ;;
+    *) usage ;;
+  esac
+done
+[ "$sboms" = false ] || [ -n "$image" ] || usage
 cd "$dir"
 
 expected=()
@@ -37,6 +55,10 @@ for os in linux darwin windows; do
 done
 expected+=("varlatchd-$version-linux-amd64" "varlatchd-$version-linux-arm64"
   install.sh install.ps1 varlatchd.service varlatchd.conf.example release.json)
+if [ -n "$image" ]; then
+  expected+=(varlatchd-image.txt)
+  [ "$sboms" = false ] || expected+=("sbom-varlatchd-$version-linux-amd64.spdx.json" "sbom-varlatchd-$version-linux-arm64.spdx.json")
+fi
 
 # Exactly these files and SHA256SUMS.
 want=$(printf '%s\n' "${expected[@]}" SHA256SUMS | LC_ALL=C sort)
@@ -83,6 +105,26 @@ fi
 grep -q '@VARLATCH_VERSION@' install.sh install.ps1 && bad "an installer is not stamped"
 grep -qx "VARLATCH_RELEASE='$version'" install.sh || bad "install.sh is not stamped with $version"
 grep -q "^ *\$VarlatchRelease = '$version'\$" install.ps1 || bad "install.ps1 is not stamped with $version"
+
+# The image: its record is the reference given, a varlatchd image's tag of
+# this version with its index digest, on one line; its SBOM files are the
+# SPDX 2.3 documents the release workflow writes.
+if [ -n "$image" ]; then
+  case "$image" in
+    ghcr.io/*/varlatchd:"$version"@sha256:*) ;;
+    *) bad "$image is not a varlatchd image of $version on ghcr.io" ;;
+  esac
+  [[ "${image##*@sha256:}" =~ ^[0-9a-f]{64}$ ]] || bad "$image does not end in an index digest"
+  if ! [ "$(cat varlatchd-image.txt 2> /dev/null)" = "$image" ] || ! [ "$(wc -l < varlatchd-image.txt)" = 1 ]; then
+    bad "varlatchd-image.txt does not hold exactly $image"
+  fi
+  if [ "$sboms" = true ]; then
+    for arch in amd64 arm64; do
+      jq -e '.spdxVersion == "SPDX-2.3" and (.packages | type) == "array" and (.packages | length) > 0' "sbom-varlatchd-$version-linux-$arch.spdx.json" > /dev/null \
+        || bad "sbom-varlatchd-$version-linux-$arch.spdx.json is not an SPDX 2.3 document listing packages"
+    done
+  fi
+fi
 
 # The manifest names this version (go/lib/release's format 2; its rules are
 # releasecheck's, which wrote it), and says what the release does to a

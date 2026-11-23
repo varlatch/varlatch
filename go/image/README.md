@@ -64,7 +64,33 @@ node go/image/check-image.mjs <image>
 
 `<dir>` holds `varlatchd-<v>-linux-<arch>` and `varlatch-<v>-linux-<arch>`
 (`go/release/build-assets.sh` writes them). `--check` instead of `--load`
-builds every platform given and keeps nothing. Nothing here pushes or
-signs: the release workflow does. The check uses Docker only; every
-container and volume it makes is named `vl-image-test-<run>-*` and removed
-by that name.
+builds every platform given and keeps nothing. The check uses Docker only;
+every container and volume it makes is named `vl-image-test-<run>-*` and
+removed by that name. `VARLATCH_TEST_SLOWDOWN` multiplies its waits (the
+release runs it on an emulated arm64 image when no arm64 runner is
+available).
+
+## How a release publishes it
+
+Only the release workflow pushes (`.github/workflows/release.yml`, job
+`go-image`), with `build.sh --push`, from the very assets the release
+publishes, checked against their `SHA256SUMS` first:
+
+- **Tags:** `ghcr.io/varlatch/varlatchd:<version>` only, prereleases
+  included. No `latest` and no floating `0.50`: an upgrade is the tag or
+  digest you pin, and the digest is the pin that cannot move.
+- **Signed** keyless by the release workflow for its tag, on the
+  multi-platform index; the signature is in
+  `ghcr.io/varlatch/varlatch-signatures`, as the TypeScript images' are.
+- **Attested:** build provenance, and an SBOM per platform (or, built on a
+  self-hosted runner, SBOM files attached to the release).
+- **Checked** before the release is published: `check-image.mjs` runs on
+  the pushed digest for linux/amd64 and linux/arm64.
+- **Recorded:** `varlatchd-image.txt`, a release asset listed in the
+  signed `SHA256SUMS`, holds `ghcr.io/varlatch/varlatchd:<version>@sha256:<index digest>`,
+  and the release notes name it. Pin the image by that digest.
+
+The published-release workflow checks it again from outside: the record
+against `SHA256SUMS` and its signature, the tag still on the recorded
+digest, the image's signature, and provenance and an SBOM for both
+platforms.

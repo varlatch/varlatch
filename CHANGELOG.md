@@ -71,6 +71,18 @@ fixes.
   `--cpu-shares` in its custom run options is overridden, and that a
   Compose resource needs `cpu_shares` in its Compose file.
 
+### Releases
+
+- **The Go line's container image is published with each release.** A
+  release of 0.50.0 or later pushes `ghcr.io/varlatch/varlatchd:<version>`
+  for linux/amd64 and linux/arm64, built from the release's own binaries,
+  signed by the release workflow like the TypeScript images (the signature
+  is in `ghcr.io/varlatch/varlatch-signatures`), with build provenance and
+  an SBOM. Only the version's tag is pushed, never `latest`. The release is
+  published only once the image is checked on both platforms, and its
+  `varlatchd-image.txt`, listed in the signed `SHA256SUMS`, gives the
+  image's digest to pin ([verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)).
+
 ## 0.50.0-rc.2 (2026-11-23)
 
 The second prerelease of the Go line (ADR-0059), published to test more of

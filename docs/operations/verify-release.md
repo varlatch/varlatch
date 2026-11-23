@@ -83,6 +83,22 @@ that no signatures were found. 0.15.1's signatures are in both places.
 The third-party images (PostgreSQL, the Convex backend, Caddy, Tailscale)
 are pinned by digest in the same manifest, which `SHA256SUMS` covers.
 
+### The Go line's image (0.50.0 and later)
+
+A release of the Go line records its image in `varlatchd-image.txt`, which
+`SHA256SUMS` lists, so the signature check above covers it. The image is
+signed by the same identity, with its signature in the same package:
+
+```sh
+ref=$(cat varlatchd-image.txt)   # ghcr.io/varlatch/varlatchd:VERSION@sha256:...
+export COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures
+cosign verify "${ref%%:*}@${ref##*@}" --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null \
+  && echo "verified $ref"
+```
+
+Pull and run it by that digest. Its provenance and SBOM read as below,
+with `image=${ref%%:*}@${ref##*@}`.
+
 ## Provenance and SBOM
 
 ```sh

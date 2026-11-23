@@ -5,8 +5,12 @@
 # a bad signature, a cut-off asset and a wrong platform with the release's
 # real files (tampered copies served locally); and the release's own
 # binary refuses its signature as another version's
-# (go/install/published_test.go). Every check uses Sigstore's live trusted
-# root. Nothing is signed, uploaded or published here.
+# (go/install/published_test.go). Its container image (job image) is the
+# one varlatchd-image.txt records: the record listed in the signed
+# SHA256SUMS, the version's tag still on that index digest, the image's
+# signature from the release workflow for the tag, and provenance and an
+# SBOM for linux/amd64 and linux/arm64. Every check uses Sigstore's live
+# trusted root. Nothing is signed, uploaded or published here.
 #
 # It runs after the Release workflow publishes a release of the Go line
 # (0.50.0 and later: its prereleases and its final releases), and by hand
@@ -111,3 +115,74 @@ jobs:
           # The runner is thrown away: install.ps1 may change its user PATH.
           VARLATCH_TEST_DISPOSABLE: "1"
         run: go test -count=1 -v -timeout 25m -run '^TestPublished' ./install/
+
+  image:
+    needs: version
+    if: needs.version.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: The release's image, as its record names it
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          assets=$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name')
+          if ! grep -qx varlatchd-image.txt <<< "$assets"; then
+            # The prereleases from before the release published an image.
+            case "$VERSION" in
+              0.50.0-rc.1 | 0.50.0-rc.2)
+                echo "::notice::$tag was published before the Go line's image: nothing to check"
+                exit 0 ;;
+            esac
+            echo "::error::$tag has no varlatchd-image.txt: a Go release ships its image"
+            exit 1
+          fi
+          mkdir rel && cd rel
+          gh release download "$tag" --repo "$REPO" -p SHA256SUMS -p SHA256SUMS.sigstore.json -p varlatchd-image.txt
+          identity="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${tag}"
+          issuer=https://token.actions.githubusercontent.com
+          # SHA256SUMS is signed by the release workflow for this tag, and
+          # lists the record with its hash.
+          cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+            --certificate-identity "$identity" --certificate-oidc-issuer "$issuer"
+          grep -E '^[0-9a-f]{64}  varlatchd-image\.txt$' SHA256SUMS | sha256sum --check --strict -
+          ref=$(cat varlatchd-image.txt)
+          [ "$(wc -l < varlatchd-image.txt)" = 1 ] || { echo "::error::varlatchd-image.txt is not one line"; exit 1; }
+          owner=$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')
+          name="ghcr.io/${owner}/varlatchd"
+          [[ "$ref" =~ ^ghcr\.io/${owner}/varlatchd:${VERSION//./\\.}@sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::varlatchd-image.txt names $ref, not this version's varlatchd image"; exit 1; }
+          digest=${ref##*@}
+          # The version's tag still names that index: a tag is for people,
+          # the digest is the pin, but a moved tag is a finding.
+          now=$(docker buildx imagetools inspect "$name:$VERSION" --format '{{println .Manifest.Digest}}' | head -1)
+          [ "$now" = "$digest" ] || { echo "::error::$name:$VERSION now names $now, not the recorded $digest"; exit 1; }
+          # Signed by the release workflow for this tag; the signatures are
+          # in their own package.
+          COSIGN_REPOSITORY="ghcr.io/${owner}/varlatch-signatures" cosign verify "$name@$digest" \
+            --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" > /dev/null
+          # Both platforms, each with provenance, and an SBOM attested or
+          # attached as a release file (an image built self-hosted).
+          for arch in amd64 arm64; do
+            prov=$(docker buildx imagetools inspect "$name@$digest" --format "{{ json (index .Provenance \"linux/$arch\") }}")
+            if [ -z "$prov" ] || [ "$prov" = null ]; then echo "::error::no provenance for linux/$arch"; exit 1; fi
+            sbom=$(docker buildx imagetools inspect "$name@$digest" --format "{{ json (index .SBOM \"linux/$arch\") }}")
+            if [ -z "$sbom" ] || [ "$sbom" = null ]; then
+              grep -qx "sbom-varlatchd-${VERSION}-linux-${arch}.spdx.json" <<< "$assets" \
+                || { echo "::error::no SBOM for linux/$arch, attested or attached"; exit 1; }
+            fi
+          done
+          echo "$ref: signed, recorded and attested for linux/amd64 and linux/arm64" | tee -a "$GITHUB_STEP_SUMMARY"
