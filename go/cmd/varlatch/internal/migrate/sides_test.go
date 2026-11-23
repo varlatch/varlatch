@@ -30,9 +30,11 @@ type scripted struct {
 	// (the one that asks for it).
 	nameless bool
 	// host answers for the host's Compose containers (nil: there are none).
-	host   *labelled
-	ran    []string
-	stdins map[string][]byte
+	host *labelled
+	// version is docker compose version's answer (nil: 5.2.0).
+	version *Ran
+	ran     []string
+	stdins  map[string][]byte
 	// argv are the docker compose commands as run, whole; envs what RunEnv
 	// added, by key.
 	argv [][]string
@@ -95,6 +97,12 @@ func (s *scripted) RunEnv(ctx context.Context, dir, name string, args []string, 
 }
 
 func (s *scripted) Run(_ context.Context, dir, name string, args []string, stdin []byte) (Ran, error) {
+	if name == "docker" && strings.Join(args, " ") == "compose version --short" {
+		if s.version != nil {
+			return *s.version, nil
+		}
+		return Ran{Answer: []byte("5.2.0\n")}, nil
+	}
 	if name == "docker" {
 		host := s.host
 		if host == nil {
@@ -251,6 +259,11 @@ func TestComposeDiscover(t *testing.T) {
 		l := ctr("varlatch", dataMounts[i].service, filepath.Join(dir, "docker-compose.yml"), dir, "False")
 		l.mounts = []containerMount{{Type: "volume", Name: n.Name, Destination: dataMounts[i].target}}
 		host.containers = append(host.containers, l)
+	}
+	host.volumes[stateVol.Name] = stateVol
+	host.containers[0].mounts = []containerMount{{Type: "volume", Name: stateVol.Name, Destination: stateTarget}}
+	if info, err := c.Discover(context.Background()); err != nil || info.State == nil || *info.State != stateVol {
+		t.Errorf("the state volume: %+v %v", info.State, err)
 	}
 	if info, err := c.Discover(context.Background()); err != nil || len(info.Volumes) != 2 || info.Volumes[0] != host.volumes["varlatch_postgres-data"] || info.Volumes[1] != host.volumes["varlatch_convex-data"] {
 		t.Errorf("the data volumes: %+v %v", info.Volumes, err)

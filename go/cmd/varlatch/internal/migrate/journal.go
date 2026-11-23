@@ -111,6 +111,9 @@ type Journal struct {
 	Ingress Ingress `json:"ingress"`
 	// Transfer is the address transfer's record.
 	Transfer *TransferRecord `json:"transfer,omitempty"`
+	// SourceGate is the source's migrated-out gate now, when an undone
+	// reverse made another than Barrier's ("": Barrier's).
+	SourceGate string `json:"sourceGate,omitempty"`
 	// Rollback is the reverse migration's record (the last one begun).
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	// Finish is --finish's record.
@@ -155,9 +158,12 @@ type RollbackRecord struct {
 	// Archives are the Go (format 3) archives made since the switch,
 	// listed in the report and never deleted (decision 17).
 	Archives []ArchiveInfo `json:"archives,omitempty"`
-	Undoing  bool          `json:"undoing,omitempty"`
-	Undone   *UndoneRecord `json:"undone,omitempty"`
-	DoneAt   string        `json:"doneAt,omitempty"`
+	// Started are the services the route's check started, each recorded
+	// before it was: an undo before the rebuild stops them.
+	Started []string      `json:"started,omitempty"`
+	Undoing bool          `json:"undoing,omitempty"`
+	Undone  *UndoneRecord `json:"undone,omitempty"`
+	DoneAt  string        `json:"doneAt,omitempty"`
 }
 
 // RebuildRecord is the TypeScript side's fresh database: the Compose file

@@ -160,6 +160,11 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("%w; nothing was done", err)
 	}
 	if j.Ingress == Coolify {
+		// Its containers start again before Go's barrier (checkRoute), on the
+		// database they left: behind the migration's gate only.
+		if err := rs.CheckGate(ctx, sourceGate(j)); err != nil {
+			return j, gateLost(j, err)
+		}
 		if err := e.askRoute(ctx, j); err != nil {
 			return j, err
 		}
@@ -235,6 +240,13 @@ func (e *Engine) askRoute(ctx context.Context, j *Journal) error {
 	}
 }
 
+// gateLost is a way back refused, before anything of it: the TypeScript
+// installation is not behind the migration's gate.
+func gateLost(j *Journal, err error) error {
+	return fmt.Errorf("%w; nothing was done, and nothing was started. Go serves on. Do not start the TypeScript installation: without the migration's gate %s it takes requests, on the database it left. "+
+		"If that volume was replaced or restored, put back the very one the migration left", err, sourceGate(j).ID)
+}
+
 // askRouteWait is how long askRoute waits for any answer.
 const askRouteWait = 10 * time.Second
 
@@ -258,8 +270,20 @@ func (e *Engine) checkRoute(ctx context.Context, j *Journal, rs ReverseSource) e
 	if owned {
 		e.say("Tailnet: the TypeScript release's sidecar starts with it (its old node, under its temporary name; the name stays with Go's node until the transfer).")
 	}
-	if err := rs.ServeGated(ctx, owned); err != nil {
+	gate := sourceGate(j)
+	if err := rs.ServeGated(ctx, GatedStart{Gate: gate, Owned: owned, Starting: func(svc string) error {
+		if slices.Contains(j.Rollback.Started, svc) {
+			return nil
+		}
+		j.Rollback.Started = append(j.Rollback.Started, svc)
+		return e.save(ctx, j)
+	}}); err != nil {
 		return fmt.Errorf("starting the TypeScript installation behind its gate: %w", err)
+	}
+	crashPoint("rollback gated started")
+	// Again, now that its containers run: nothing reaches them before this.
+	if err := rs.CheckGate(ctx, gate); err != nil {
+		return fmt.Errorf("the TypeScript dashboard was not started: %w", err)
 	}
 	// Made again, not only started: it resolves varlatchd once.
 	if err := e.Source.StartIngress(ctx, Coolify, true); err != nil {
@@ -286,7 +310,7 @@ func (e *Engine) waitForGate(ctx context.Context, gp GateProber, j *Journal) err
 	for {
 		a, err := gp.ProbeGate(ctx, originOf(j))
 		switch {
-		case err == nil && a.Route == j.ID && a.State == "migrated-out":
+		case err == nil && a.Route == j.ID && a.migratedOut():
 			e.say("The name reaches the TypeScript installation, migrated out, by the operator's route: the way back works.")
 			return nil
 		case err == nil && a.Route != j.ID:
@@ -703,8 +727,17 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 				problems = append(problems, fmt.Errorf("starting the TypeScript release's tailnet sidecar: %w", err))
 			}
 		}
-		if err := rs.UndoRebuild(ctx, *j.Rollback.Rebuild); err != nil {
+		if err := rs.UndoRebuild(ctx, *j.Rollback.Rebuild, sourceGate(j), func(id string) error {
+			j.SourceGate = id
+			return e.save(ctx, j)
+		}); err != nil {
 			problems = append(problems, fmt.Errorf("putting the TypeScript installation back: %w", err))
+		}
+	} else if len(j.Rollback.Started) > 0 {
+		// What the route's check started, and nothing else: the forward
+		// migration left it stopped.
+		if err := rs.StopStarted(ctx, j.Rollback.Started); err != nil {
+			problems = append(problems, fmt.Errorf("stopping what the route's check started: %w", err))
 		}
 	}
 	// The TypeScript side as the forward migration left it: the reverse

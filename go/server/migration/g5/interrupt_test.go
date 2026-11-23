@@ -225,6 +225,14 @@ func writeGate(g *gateDoc) error {
 // fakeDocker answers as Docker and the TypeScript CLI in its container.
 func fakeDocker(args []string) int {
 	fail := func(f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1 }
+	if strings.Join(args, " ") == "compose version --short" {
+		v := "5.2.0"
+		if b, err := os.ReadFile(state("compose-version")); err == nil {
+			v = string(b)
+		}
+		fmt.Println(v)
+		return 0
+	}
 	args, err := composeArgs(args)
 	if err != nil {
 		return fail("docker: %v", err)
@@ -308,7 +316,7 @@ func tsMigration(verb string, rest []string) int {
 		if g == nil {
 			id := make([]byte, 8)
 			_, _ = rand.Read(id)
-			g = &gateDoc{Kind: "migration", ID: "gate-" + hex.EncodeToString(id), Phase: "frozen"}
+			g = &gateDoc{Kind: "migration", ID: "gate-" + hex.EncodeToString(id), Phase: "paused"}
 			if err := writeGate(g); err != nil {
 				return fail("%v", err)
 			}
@@ -330,7 +338,7 @@ func tsMigration(verb string, rest []string) int {
 			}
 			fmt.Println(`{"released":true}`)
 		} else {
-			g.Kind, g.Phase = "migrated-out", "final"
+			g.Kind, g.Phase = "migrated-out", "paused"
 			if err := writeGate(g); err != nil {
 				return fail("%v", err)
 			}

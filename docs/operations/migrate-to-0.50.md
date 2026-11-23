@@ -73,6 +73,11 @@ the Linux host of the installation it migrates`):
   programs: it opens neither database itself.
 - **The TypeScript CLI** of 0.23.0, as `varlatch-ts` on the `PATH` (or name
   it with `--ts-cli`). The preflight makes its backup with it.
+- **Docker Compose 2.32.0 or later** (`docker compose version`). An earlier
+  one does not make PostgreSQL's container again when a rollback gives it a
+  fresh volume, so `varlatch migrate` and `varlatch migrate --rollback`
+  refuse it before anything is done: `Docker Compose <version> is too old:
+  varlatch migrate needs 2.32.0 or later`.
 - **The Backup Encryption Key** (`--bek-file`) and, when the Root KEK is not
   where the installation's `.env` says, its file (`--kek-file`). The new
   server uses the same two keys, so every archive, old and new, opens with
@@ -644,14 +649,17 @@ application:
    open.
 2. Put the file there. From then on the domain does not lead to the new
    server. To change your mind, remove the file.
-3. Run `varlatch migrate --rollback` again. Before the new server's
-   barrier, it starts the TypeScript installation behind its migrated-out
-   gate (with the old Tailscale sidecar, when the migration stopped it: its
-   node comes up under its temporary name) and its dashboard, and checks
-   that the domain reaches it by the route (its `/readyz` names its
-   migrated-out state). If it does not, or the run is interrupted, the
-   rollback is undone (`--resume` or `--abort` does it after an
-   interruption): the dashboard and the sidecar are stopped again.
+3. Run `varlatch migrate --rollback` again. The rollback begins here: it is
+   recorded in the journal, and the TypeScript installation's services start
+   behind its migrated-out gate (with the old Tailscale sidecar, when the
+   migration stopped it: its node comes up under its temporary name), then
+   its dashboard. The new server goes on as it was: its barrier waits until
+   the domain reaches the TypeScript installation by the route. Its
+   `/readyz` must answer there itself (a redirect to another address is not
+   followed), with 503, not ready, in the state migrated-out. If it does
+   not, or the run is interrupted, the rollback is undone (`--resume` or
+   `--abort` does it after an interruption): the dashboard, the sidecar and
+   the services this run started are stopped again, and no others.
 4. The rollback runs to its end. With the image target it stops once (exit
    status 75) for you to stop the 0.50 service, when the domain already
    answers from the TypeScript release.
@@ -668,7 +676,19 @@ The old installation's containers and images may be gone by then (a prune).
 `--rollback` pulls the images it needs before anything else, and makes the
 containers again: the journal, the Compose files and the volumes the
 migration recorded are enough. It refuses, before anything is done, when a
-volume is not the recorded one. Coolify 4.7.6's own Docker cleanup leaves an
+volume is not the recorded one.
+
+The TypeScript installation's migrated-out gate is a file in its state
+volume (`<project>_varlatch-state`, `maintenance.json`). A TypeScript server
+that does not find it takes requests again, on the database from before the
+migration. So the rollback on Coolify, and `--finish --delete-old-data`,
+read it first, without starting anything: the volume must be the one the
+migration recorded, and the gate the migration's own, by its id. Otherwise
+they refuse, nothing is started, and the new server serves on. Do not start
+the TypeScript installation then. Keep that volume during the rollback
+window, as you keep its PostgreSQL and Convex volumes.
+
+Coolify 4.7.6's own Docker cleanup leaves an
 application's stopped containers, and the images they use; with **Delete
 Unused Volumes** on, it would remove volumes no container uses, so leave
 that off, and do not upgrade Coolify during the rollback window.
@@ -852,7 +872,8 @@ sudo varlatch migrate --finish --delete-old-data \
   to the destination, then downloaded back and verified. The backup
   options are this archive's. The TypeScript release takes a backup while
   it is marked migrated out (for this archive), never behind the
-  transfer's barrier.
+  transfer's barrier. Its stopped services are started for it only while
+  that gate is in its state volume.
 - Only once the journal records the verified archive are the old
   PostgreSQL and Convex volumes removed, with the TypeScript
   installation's `<project>_varlatch-state` volume. They are the volumes

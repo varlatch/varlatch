@@ -232,6 +232,8 @@ func fakeDockerReverse(args []string) (int, bool) {
 			return fail("%v", err)
 		}
 		return okOr(readdress(args[2])), true
+	case len(args) == 17 && args[0] == "run":
+		return readGateFile(args), true
 	case j == "compose --profile deploy config --images":
 		fmt.Println("postgres:17.6\nghcr.io/x/varlatch-web@sha256:bb\npostgres:17.6")
 		return 0, true
@@ -285,6 +287,12 @@ func fakeDockerReverse(args []string) (int, bool) {
 							return fail("%v", err)
 						}
 					}
+				}
+			}
+			if svc == "varlatchd" {
+				// As Compose: a volume that is not there is made, empty.
+				if err := makeVolume(ownVolume(svc), nil); err != nil {
+					return fail("%v", err)
 				}
 			}
 			// A container that runs, and did not change, is left as it is.

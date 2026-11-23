@@ -104,7 +104,16 @@ fixes.
 - **`varlatch migrate --rollback` with the old containers or images gone.**
   It pulls the images it needs before anything is done, and makes the
   containers again from the journal, the Compose files and the volumes the
-  migration now records when it begins; another volume is refused.
+  migration now records when it begins; another volume is refused. On
+  Coolify, where the TypeScript server starts before Go's barrier, it starts
+  only behind the migration's own gate, read from its state volume before
+  anything starts: without that gate (its volume or file lost) it would take
+  requests again. An undo stops the services the rollback started, and no
+  others. The route's check follows no redirect to another address.
+- **`varlatch migrate` needs Docker Compose 2.32.0 or later**, and refuses an
+  earlier one before anything is done. An earlier one left PostgreSQL on its
+  old volume when a rollback gave it a fresh one, which the rollback
+  noticed, and undid, only then.
 - **`varlatch migrate --rollback` makes the dashboard again** once the
   rebuilt server starts. Its nginx resolves the server's address once, and
   one that kept running could answer 502 when the address had changed.

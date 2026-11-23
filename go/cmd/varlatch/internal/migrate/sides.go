@@ -131,6 +131,9 @@ type SourceInfo struct {
 	// that could not be told): what it is recognised by once its containers
 	// are gone.
 	Volumes []VolumeRecord `json:"volumes,omitempty"`
+	// State is the volume that carries its gate, then (none when that could
+	// not be told).
+	State *VolumeRecord `json:"state,omitempty"`
 }
 
 // Gate is a source's maintenance gate.
