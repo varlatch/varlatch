@@ -183,6 +183,10 @@ type RestoreRecord struct {
 	// TailnetOperation is the tailnet handoff's (a restore with the
 	// tailnet's authority): its temporary names carry it.
 	TailnetOperation string `json:"tailnetOperation,omitempty"`
+	// TailnetEnrolled is that the handoff's `tailnet enroll` succeeded (its
+	// node held under the temporary name, its tags checked): only then is
+	// the enrolment not done again.
+	TailnetEnrolled bool `json:"tailnetEnrolled,omitempty"`
 }
 
 // ProbeRecord is what the fsync probe measured, and whether a slow disk
@@ -344,8 +348,19 @@ func (r *run) saveJournal() error {
 // missing ones are asked, or, without a terminal, refused.
 func (r *run) answers() error {
 	a := r.j.Answers
+	// Once answered, a tailnet installation's control server is answered
+	// too, Tailscale's written as no URL: a URL given on a rerun is another
+	// answer, refused before anything is saved.
+	if r.j.Done["answers"] != "" && a.Ingress == Tailnet && a.TailnetControlURL == "" && r.o.Given.TailnetControlURL != "" {
+		return &UsageError{"setup already answered --tailnet-control-url differently for this host (Tailscale's control server, " + Journal + "); setup does not change an installation: moving it is `varlatch move`"}
+	}
 	if differ := a.Merge(r.o.Given); len(differ) > 0 {
 		return &UsageError{fmt.Sprintf("setup already answered --%s differently for this host (%s); setup does not change an installation: moving it is `varlatch move`", strings.Join(differ, ", --"), Journal)}
+	}
+	// A self-hosted control server, for now a restore's only (setup's fresh
+	// installation on one is not built yet): refused before any question.
+	if a.TailnetControlURL != "" && r.j.Restore == nil {
+		return &UsageError{"setup: --tailnet-control-url goes with --restore for now: setup does not yet set up a fresh installation on a self-hosted control server"}
 	}
 	for {
 		missing := a.Missing()
@@ -363,12 +378,18 @@ func (r *run) answers() error {
 	if err := a.Check(); err != nil {
 		return &UsageError{err.Error()}
 	}
-	// A restore's OAuth client: varlatchd reads it at the takeover, after
-	// the node enrols, and refuses one open to group or others; so its file
-	// is checked now (never read by setup), before anything is made.
-	if f := a.TailscaleOAuthClientFile; f != "" {
-		if err := secretFileMode(r.path(f)); err != nil {
-			return &UsageError{"setup: --tailscale-oauth-client-file: " + err.Error() + "; nothing was changed"}
+	// The takeover's authority (Tailscale's OAuth client, or a Headscale
+	// API key): varlatchd reads its file at the takeover, after the node
+	// enrols, and refuses one open to group or others; so the file is
+	// checked now (never read by setup), before anything is made, and only
+	// while the takeover is still to do (a key expired and deleted after it
+	// blocks nothing).
+	for _, f := range []struct{ flag, path string }{{"tailscale-oauth-client-file", a.TailscaleOAuthClientFile}, {"headscale-api-key-file", a.HeadscaleAPIKeyFile}} {
+		if f.path == "" || r.j.Done["name"] != "" {
+			continue
+		}
+		if err := secretFileMode(r.path(f.path)); err != nil {
+			return &UsageError{"setup: --" + f.flag + ": " + err.Error() + "; nothing was changed"}
 		}
 	}
 	r.j.Answers = a
@@ -742,6 +763,7 @@ func RenderConfig(a Answers) []byte {
 		set("tailnet_tags", a.TailnetTags)
 		set("tailnet_port", a.TailnetPort)
 		set("tailnet_auth_key_file", a.TailnetAuthKeyFile)
+		set("tailnet_control_url", a.TailnetControlURL)
 	}
 	if a.Backups == "bucket" {
 		set("backup_destinations_file", a.BackupDestinationsFile)

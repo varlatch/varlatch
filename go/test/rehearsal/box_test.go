@@ -50,6 +50,11 @@ type profileConfig struct {
 	continueDir            string
 	goImage                string // the 0.50 image for the image target, name@sha256:...
 	coolifySourceDir       string // the source app's directory in the lab Coolify
+	// The tailnet case on Tailscale's control server (the owner's
+	// throwaway tailnet), instead of the run's Headscale: the OAuth
+	// client's file, the nodes' reusable tagged auth key's, the tailnet's
+	// MagicDNS suffix.
+	tailscaleOAuth, tailscaleAuthKey, tailscaleTailnet string
 	// B6: the archive VL_RH_SOURCE=restore:<archive> names, and its keys
 	// (VL_RH_RESTORE_BEK, VL_RH_RESTORE_KEK), all files the operator copied
 	// to this host; the harness never fetches one.
@@ -88,8 +93,11 @@ func readProfile(euid int) (profileConfig, error) {
 		continueDir: env("VL_RH_CONTINUE_DIR", filepath.Join(workDir, "continue")),
 		goImage:     os.Getenv("VL_RH_GO_IMAGE"), coolifySourceDir: os.Getenv("VL_RH_COOLIFY_SOURCE_DIR"),
 		restoreBEK: os.Getenv("VL_RH_RESTORE_BEK"), restoreKEK: os.Getenv("VL_RH_RESTORE_KEK"), bundleOut: os.Getenv("VL_RH_BUNDLE_OUT"),
+		tailscaleOAuth: os.Getenv("VL_RH_TAILSCALE_OAUTH_FILE"), tailscaleAuthKey: os.Getenv("VL_RH_TAILSCALE_AUTH_KEY_FILE"),
+		tailscaleTailnet: os.Getenv("VL_RH_TAILSCALE_TAILNET"),
 	}
 	only := os.Getenv("VL_RH_ONLY")
+	realTailscale := prof.tailscaleOAuth != "" || prof.tailscaleAuthKey != "" || prof.tailscaleTailnet != ""
 	if p := env("VL_RH_PROFILE", "workstation"); p != "workstation" && p != "box" {
 		return prof, fmt.Errorf("VL_RH_PROFILE is workstation or box, not %q", p)
 	}
@@ -100,10 +108,18 @@ func readProfile(euid int) (profileConfig, error) {
 		return prof, errors.New("the box profile runs as root (the owner's): sudo -i, then run.sh")
 	}
 	switch {
-	case !prof.box && prof.ingress != "proxy":
+	case !prof.box && prof.ingress != "proxy" && prof.ingress != "tailnet":
 		return prof, fmt.Errorf("VL_RH_INGRESS=%s runs on the box only (VL_RH_PROFILE=box)", prof.ingress)
-	case prof.ingress == "tailnet" || prof.ingress == "combined":
-		return prof, errors.New("the tailnet handoff (B4) needs varlatch migrate's tailnet options (step 7.5b2's wiring), which this stack does not have yet")
+	case prof.ingress == "combined":
+		return prof, errors.New("the combined case (Coolify plus the tailnet, internal#221 B4.3) needs the lab Coolify's steps, the owner's; not built yet: VL_RH_INGRESS=tailnet runs the handoff behind the own proxy")
+	case realTailscale && prof.ingress != "tailnet":
+		return prof, errors.New("VL_RH_TAILSCALE_* goes with VL_RH_INGRESS=tailnet")
+	case realTailscale && !prof.box:
+		return prof, errors.New("VL_RH_TAILSCALE_* is the owner's session on the box (VL_RH_PROFILE=box): a workstation runs the tailnet case on the run's own Headscale")
+	case realTailscale && (prof.tailscaleOAuth == "" || prof.tailscaleAuthKey == "" || prof.tailscaleTailnet == ""):
+		return prof, errors.New("the tailnet case on Tailscale needs VL_RH_TAILSCALE_OAUTH_FILE (the OAuth client, devices:core only), VL_RH_TAILSCALE_AUTH_KEY_FILE (a reusable auth key with tag:varlatch) and VL_RH_TAILSCALE_TAILNET (its MagicDNS suffix, e.g. tail1234.ts.net)")
+	case prof.ingress == "tailnet" && (prof.kill != "" || prof.sync != "" || prof.source != "seed"):
+		return prof, errors.New("VL_RH_INGRESS=tailnet runs its own cases (the handoff, a rollback, a kill mid-handoff and --abort) on seeded sources: leave VL_RH_KILL and VL_RH_SYNC unset, and VL_RH_SOURCE=seed")
 	case prof.sync != "" && prof.sync != "fakes":
 		return prof, fmt.Errorf("VL_RH_SYNC is fakes (the platform stand-ins), not %q: Sync Targets to real endpoints (B5's owner session) need the owner's destinations (internal#221, question 2); not built yet", prof.sync)
 	case prof.sync == "fakes" && prof.box:
@@ -140,6 +156,17 @@ func readProfile(euid int) (profileConfig, error) {
 		for _, f := range []string{filepath.Join(releaseDir, "coolify-image-digests.env"), filepath.Join(tsCheckout, "infra", "compose", "docker-compose.coolify.yml"), filepath.Join(tsCheckout, "infra", "coolify", "README.md")} {
 			if _, err := os.Stat(f); err != nil {
 				return prof, fmt.Errorf("the Coolify domain move (B3) needs %s: run images.sh again (it writes coolify-image-digests.env), from a checkout of the 0.23.0 candidate (#373's branch, which has the Coolify files); %v", f, err)
+			}
+		}
+	}
+	if realTailscale {
+		for _, f := range []string{prof.tailscaleOAuth, prof.tailscaleAuthKey} {
+			fi, err := os.Stat(f)
+			if err != nil {
+				return prof, fmt.Errorf("the tailnet case on Tailscale: %v", err)
+			}
+			if fi.Mode().Perm()&0o077 != 0 {
+				return prof, fmt.Errorf("the tailnet case on Tailscale: %s is mode %04o: the OAuth client and the auth key are the owner's, 0600", f, fi.Mode().Perm())
 			}
 		}
 	}
@@ -276,8 +303,10 @@ func (in *installation) unitName() string { return "varlatchd-rh-" + runID + "-"
 // installUnit writes the run's unit for the target and reloads systemd.
 func (in *installation) installUnit(t *testing.T) {
 	t.Helper()
-	unit := fmt.Sprintf("[Unit]\nDescription=varlatchd (rehearsal %s, %s)\n\n[Service]\nExecStart=%s serve --config %s\nRestart=no\n\n[Install]\nWantedBy=multi-user.target\n",
-		runID, in.name, filepath.Join(binDir, "varlatchd"), in.conf)
+	// The case's environment for the target (service.env: its trust
+	// roots), as the workstation's fake systemctl gives it.
+	unit := fmt.Sprintf("[Unit]\nDescription=varlatchd (rehearsal %s, %s)\n\n[Service]\nEnvironmentFile=-%s\nExecStart=%s serve --config %s\nRestart=no\n\n[Install]\nWantedBy=multi-user.target\n",
+		runID, in.name, filepath.Join(in.state, "service.env"), filepath.Join(binDir, "varlatchd"), in.conf)
 	path := filepath.Join("/etc/systemd/system", in.unitName()+".service")
 	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
 		t.Fatal(err)
