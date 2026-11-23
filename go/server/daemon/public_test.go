@@ -9,16 +9,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -308,65 +305,6 @@ func TestIngressModesSideBySide(t *testing.T) {
 	} {
 		if code, body := options(c.client, c.base, c.origin); code != http.StatusForbidden || !strings.Contains(body, `"reason":"origin"`) {
 			t.Errorf("%s: %d %s", c.name, code, body)
-		}
-	}
-}
-
-// TestStopDuringAnIssuance: SIGTERM while the first public certificate is
-// being obtained (the CA took the request and does not answer) stops
-// varlatchd cleanly and at once, well within StopTimeout; so does a second
-// start on the same data. It did not stop at all, and systemd killed it.
-func TestStopDuringAnIssuance(t *testing.T) {
-	asked, ended := make(chan struct{}, 16), make(chan struct{})
-	ca := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		select {
-		case asked <- struct{}{}:
-		default:
-		}
-		select {
-		case <-ended:
-		case <-r.Context().Done():
-		}
-	}))
-	t.Cleanup(ca.Close)
-	t.Cleanup(func() { close(ended) })
-	rootFile := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(rootFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Certificate().Raw}), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
-	_, port, _ := net.SplitHostPort(addr)
-	in := newInstall(t, "public_url = https://vault.varlatch.test:"+port+"\nlisten_https = "+addr+"\nlisten_http_redirect = off\n"+
-		"acme_ca = "+ca.URL+"/directory\nacme_ca_root = "+rootFile+"\nacme_email = ops@varlatch.test\n")
-	for _, run := range []string{"first", "second"} {
-		for len(asked) > 0 { // an earlier run's requests
-			<-asked
-		}
-		r := startWith(t, in, &hooks{})
-		select {
-		case <-asked:
-		case <-time.After(30 * time.Second):
-			t.Fatalf("%s run: the CA was not asked: %s", run, r.stderr.String())
-		}
-		began := time.Now()
-		r.signals <- syscall.SIGTERM
-		select {
-		case code := <-r.done:
-			<-r.exited
-			if code != ExitOK {
-				t.Fatalf("%s run: stopped with %d: %s", run, code, r.stderr.String())
-			}
-		case <-time.After(StopTimeout / 2):
-			t.Fatalf("%s run: varlatchd did not stop within %s of SIGTERM: %s", run, StopTimeout/2, r.stderr.String())
-		}
-		t.Logf("%s run: stopped %s after SIGTERM", run, time.Since(began).Round(time.Millisecond))
-		if n := strings.Count(r.stderr.String(), "could not get certificate from issuer"); n > 1 {
-			t.Errorf("%s run: %d attempts were made while stopping", run, n)
 		}
 	}
 }

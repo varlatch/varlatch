@@ -313,6 +313,8 @@ func benchServe(opts Options, p g9a.Plan, data, out string, profile time.Duratio
 		},
 		sync: t.startEngine,
 		stop: runner.Done(),
+		// The run ends with its own files, however long they take.
+		stopTimeout: -1,
 		stopped: func() {
 			stopProfile()
 			runner.Finish()

@@ -18,10 +18,10 @@ import (
 // installation starts for its name is recorded before the CA is asked, in
 // the installation's database, so the count survives a backup and a
 // restore. An attempt counts unless the CA answered with a problem (it
-// issued nothing): one that timed out, or that a crash cut short, counts as
-// issued. With Let's Encrypt, an attempt that would pass its five
-// certificates per exact name per week by this count is refused before it
-// asks.
+// issued nothing) or a stop cut it short before any order was asked for:
+// one that timed out, or that a crash cut short, counts as issued. With
+// Let's Encrypt, an attempt that would pass its five certificates per exact
+// name per week by this count is refused before it asks.
 
 // IssuanceWindow is the period the count covers (Let's Encrypt's week).
 const IssuanceWindow = 7 * 24 * time.Hour
@@ -43,7 +43,7 @@ const issuanceKeep = 30 * 24 * time.Hour
 // Outcomes of a recorded attempt.
 const (
 	OutcomeIssued  = "issued"
-	OutcomeRefused = "refused"
+	OutcomeRefused = "refused" // or stopped before any order
 )
 
 // Issuances is where the count is kept (StoreIssuances in varlatchd; tests

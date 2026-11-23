@@ -71,12 +71,13 @@ fixes.
 
 ### Server
 
-- **`varlatchd` stops at once while a public certificate is being
-  obtained.** Stopped, restarted or upgraded during the first issuance or a
-  renewal attempt (`listen_https`), the Go server did not exit: it tried
-  again without end, using more than a CPU, until systemd killed it after the
-  unit's 30 seconds. An installation without `listen_https` was not
-  affected.
+- **A stop during a certificate issuance ends `varlatchd`.** With
+  `listen_https`, a stop that cut an issuance or a renewal short left the
+  Go server trying again without end; it no longer does. Every stop now
+  ends within 20 seconds, of which requests in flight get 15 (they had
+  20), also when a writer or a disk does not answer. An attempt stopped
+  before the installation has an ACME account, and so before any order, is
+  not counted against the weekly limit.
 
 ### Documentation
 

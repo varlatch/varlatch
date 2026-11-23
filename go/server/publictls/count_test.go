@@ -105,13 +105,22 @@ func TestIssuanceCountRecordsAttempts(t *testing.T) {
 func TestIssuanceOutcomes(t *testing.T) {
 	f := &fakeIssuances{}
 	m := newCounted(t, f, 0, time.Now())
-	m.endIssuance(1, nil)
-	m.endIssuance(2, fmt.Errorf("obtaining: %w", acme.Problem{Type: "urn:ietf:params:acme:error:unauthorized", Status: 403}))
-	m.endIssuance(3, context.DeadlineExceeded)
-	m.endIssuance(4, fmt.Errorf("obtaining: %w", rateLimit("too many certificates (5) already issued for this exact set of identifiers in the last 168h0m0s, retry after 2026-11-21 08:37:05 UTC: see https://letsencrypt.org/docs/rate-limits/")))
-	m.endIssuance(-1, nil)
-	if f.ended[1] != OutcomeIssued || f.ended[2] != OutcomeRefused || len(f.ended) != 2 {
-		t.Errorf("ended %v (the rate-limited attempt stays counted)", f.ended)
+	m.endIssuance(context.Background(), 1, nil, true)
+	m.endIssuance(context.Background(), 2, fmt.Errorf("obtaining: %w", acme.Problem{Type: "urn:ietf:params:acme:error:unauthorized", Status: 403}), true)
+	m.endIssuance(context.Background(), 3, context.DeadlineExceeded, true)
+	m.endIssuance(context.Background(), 4, fmt.Errorf("obtaining: %w", rateLimit("too many certificates (5) already issued for this exact set of identifiers in the last 168h0m0s, retry after 2026-11-21 08:37:05 UTC: see https://letsencrypt.org/docs/rate-limits/")), true)
+	m.endIssuance(context.Background(), -1, nil, true)
+	// With no account before it and none after: only a stop's is known to
+	// have ended before any order.
+	m.endIssuance(context.Background(), 5, context.DeadlineExceeded, false)
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	m.endIssuance(stopped, 6, context.Canceled, false)
+	// An account there before the attempt, and gone after it, may have been
+	// used: certmagic removes one the CA no longer knows.
+	m.endIssuance(stopped, 7, context.Canceled, true)
+	if f.ended[1] != OutcomeIssued || f.ended[2] != OutcomeRefused || f.ended[6] != OutcomeRefused || len(f.ended) != 3 {
+		t.Errorf("ended %v (the rate-limited attempt stays counted, and one that may have asked for an order)", f.ended)
 	}
 }
 

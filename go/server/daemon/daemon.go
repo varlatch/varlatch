@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -76,9 +77,16 @@ const (
 	ExitConfig = 78
 )
 
-// StopTimeout is how long a stop waits for requests in flight, within the
-// unit's TimeoutStopSec (30 s), leaving time for the writer to commit.
+// StopTimeout is how long a stop takes at most, within the unit's
+// TimeoutStopSec (30 s). The first three quarters (stopDrain) are for the
+// requests in flight, the public certificate's attempt and the tailnet
+// node; the rest is for the background loops to end and the database to
+// close. A stop still not done then (a writer or a disk that does not
+// answer) ends the process as it is (serve).
 const StopTimeout = 20 * time.Second
+
+// stopDrain is the part of a stop's limit that waits for work in flight.
+func stopDrain(limit time.Duration) time.Duration { return limit / 4 * 3 }
 
 // How long a client may take, so a slow or stalled one cannot hold a
 // connection open: the request line and headers (10 s), the whole request
@@ -148,6 +156,20 @@ type hooks struct {
 	// (nil when that listener is off).
 	publicTLS   func(*publictls.Options)
 	publicReady func(https, http net.Addr)
+	// stopTimeout replaces StopTimeout (tests: a shorter one); negative is
+	// no limit (the g9a build, whose run ends with its own files).
+	stopTimeout time.Duration
+}
+
+// stopLimit is how long a stop takes at most; not bounded, false.
+func (h *hooks) stopLimit() (time.Duration, bool) {
+	switch {
+	case h.stopTimeout < 0:
+		return StopTimeout, false
+	case h.stopTimeout > 0:
+		return h.stopTimeout, true
+	}
+	return StopTimeout, true
 }
 
 // productionStorage is the storage engine's options for serving: the
@@ -175,10 +197,43 @@ func Bench(args []string, stderr io.Writer) int {
 // effective settings each time serving opens the database.
 var observeSettings func(storage.Settings)
 
+// serve serves until a stop, and ends within the stop's limit of it. What
+// still runs then is left, and the process exits: as safe as a crash, which
+// the database and the files in the data directory are made for. A
+// transaction not committed is rolled back when the database is opened
+// next (SQLite's WAL, synchronous = FULL, so one that was answered stays);
+// the files are replaced whole, by a rename (the certificate store's, the
+// journals, the gates); the lock on the data directory goes with the
+// process. A certificate attempt with no end recorded counts as issued.
 func serve(opts Options, h *hooks) int {
 	if h == nil {
 		h = &hooks{}
 	}
+	stopping, done := make(chan struct{}), make(chan int, 1)
+	go func() { done <- serveUntilStopped(opts, h, sync.OnceFunc(func() { close(stopping) })) }()
+	select {
+	case code := <-done:
+		return code
+	case <-stopping:
+	}
+	limit, bounded := h.stopLimit()
+	if !bounded {
+		return <-done
+	}
+	t := time.NewTimer(limit)
+	defer t.Stop()
+	select {
+	case code := <-done:
+		return code
+	case <-t.C:
+		slog.New(slog.NewTextHandler(opts.Stderr, nil)).Error("the stop did not end in time; varlatchd exits as it is: what was committed is kept, and the next start rolls back the rest", "limit", limit.String())
+		return ExitFailure
+	}
+}
+
+// serveUntilStopped is serve without its limit. It calls stopping when the
+// stop begins.
+func serveUntilStopped(opts Options, h *hooks, stopping func()) int {
 	if h.closed != nil {
 		defer h.closed() // after every other deferred call: the database is closed
 	}
@@ -690,13 +745,16 @@ func serve(opts Options, h *hooks) int {
 	}
 	select {
 	case err := <-served:
+		stopping()
 		return fail(ExitFailure, "the listener stopped", "error", err)
 	case sig := <-signals:
 		log.Info("stopping", "signal", sig.String())
 	case <-h.stop:
 		log.Info("stopping", "reason", "the run ended")
 	}
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), StopTimeout)
+	stopping()
+	limit, _ := h.stopLimit()
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), stopDrain(limit))
 	defer stopCancel()
 	for _, ps := range publicServers {
 		go func() { _ = ps.Shutdown(stopCtx) }()
@@ -714,7 +772,18 @@ func serve(opts Options, h *hooks) int {
 		h.stopped()
 	}
 	cancel()
-	<-publicDone
+	// The certificate's attempt ends with its context, but for a store or a
+	// database that does not answer: then it is left, and recorded as
+	// started, which counts.
+	select {
+	case <-publicDone:
+	case <-stopCtx.Done():
+		select {
+		case <-publicDone:
+		default:
+			log.Warn("the public certificate's attempt did not end at the stop deadline; it is left as it is")
+		}
+	}
 	if tn != nil {
 		tn.stop(stopCtx)
 		<-tn.done
