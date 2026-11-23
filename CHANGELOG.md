@@ -90,8 +90,8 @@ Changes since 0.50.0-rc.1, by pull request:
 
 <!-- rc.2 slots: fill from `git log --first-parent v0.50.0-rc.1..origin/main`
      once the queue has drained; remove the slots of PRs that did not merge.
-     Filled through main a4078086 (#406). Still queued: #380, #381, #385,
-     #405, #408 (slots below). -->
+     Filled through main 5d439f67 (#420); #422 and #423 written while queued
+     (check they merged). Still queued: #408, #411 (slots below). -->
 
 - **Organization administration in the Go CLI (#290).** `varlatch org`,
   `project`, `env-create`, `env-delete`, `identity`, `member`,
@@ -376,16 +376,99 @@ Changes since 0.50.0-rc.1, by pull request:
   flaky Go tests, an audit export test at an hour's boundary and the
   conformance runner's platform fakes fixed. No change to what is shipped.
 
-<!-- SLOT #380 (queued): G5's tailnet matrix; also the rollback after a
-     tailnet handoff (the reverse starts the sidecar the handoff stopped,
-     where #389 refused it). Operator wording: "--rollback after a tailnet
-     handoff starts the old node's sidecar itself". -->
-<!-- SLOT #381 (queued): a restore takes the dead installation's tailnet
-     name over (`setup --restore` with tailnet ingress). -->
-<!-- SLOT #385 (queued): the tailnet handoff on Headscale
-     (`--headscale-url` with `--headscale-api-key-file`, or
-     `--headscale-cli`). -->
-<!-- SLOT #405 (queued): the restore's handoff on Headscale (c4). -->
+- **`--rollback` after a tailnet handoff (#380).** Where the TypeScript
+  `varlatchd` runs in the Tailscale sidecar's network and the migration's
+  handoff stopped that sidecar, `--rollback` now starts it itself for the
+  reverse's commands (the old node under its temporary name: the name
+  stays with the Go node until the reverse hands it back), and an undo of
+  the reverse stops it again. A sidecar you stopped yourself is still
+  refused first, as in #389.
+- **A restore takes the tailnet name over (#381).** `varlatchd admin
+  tailnet take-name --oauth-client-file <file>` gives a restored
+  installation the dead installation's tailnet name, by renaming the dead
+  node and then the restored one, each read back, before `varlatchd`
+  first starts. It takes the name only from a node that is not connected
+  and was last seen more than 5 minutes ago, by the control plane's own
+  clock, checked again right before the first rename: a node seen since
+  may be the old installation still running, and there is no override.
+  Interrupted, it resumes from its journal (`tailnet-takeover.json`).
+  `varlatch setup --restore --tailscale-oauth-client-file <file>` runs it
+  for you.
+- **Headscale as the migration's tailnet authority (#385).** On a
+  self-hosted Headscale, `varlatch migrate` moves the tailnet name with
+  `--headscale-url https://<IP>[:port]` and `--headscale-api-key-file`, a
+  key from `headscale apikeys create --expiration 1h`, or with
+  `--headscale-cli <absolute path>` when migrate runs on the control
+  server. The API key must expire within the hour; it is expired when the
+  run ends, so each run takes a new one, and a run killed first names the
+  key's prefix to expire. Both nodes must be on the same control server as
+  the authority, and the tailnet HTTPS overlay is refused on Headscale,
+  which issues no certificates. A resume, abort or rollback with another
+  server or the other form is refused before anything is renamed.
+- **A restore on Headscale (#405).** `varlatchd admin tailnet take-name`
+  takes the name over on Headscale too, with `--headscale-url` and
+  `--headscale-api-key-file`; the URL must be `tailnet_control_url`. The
+  key file, and the OAuth client file too, must be a regular file of mode
+  0600 or tighter, holding one line. A Headscale on a private address that
+  the outbound policy refuses is named with the exact `outbound_allow`
+  line to add. `varlatch setup --restore` does not drive a Headscale
+  restore yet: run `take-name` by hand.
+- **Compose settings and the outbound allow list (#410).** `varlatch
+  migrate` reads a Compose service's `environment` in its list form (`- A=1`)
+  too, and unquoted numbers and booleans in its map form, so preflight no
+  longer fails saying the Compose project was not named. The source's
+  `VARLATCH_OUTBOUND_ALLOW`, as Compose gave it to the running container,
+  becomes the target's `outbound_allow`:
+  - a host target migrate makes gets the same list;
+  - a target you prepared without `outbound_allow` is refused before
+    anything is done, with the line to add;
+  - one that lacks some of the source's entries gets a warning, since a
+    wider entry may cover them.
+
+  `varlatchd admin outbound check` names `outbound_allow` in the
+  configuration file, suggests the line to set with the restart a host
+  install or the image takes, and lists the GitHub Sync Targets'
+  destination, `https://api.github.com`.
+- **The source marked migrated out with its sidecar's network (#413).** In
+  the stock Tailscale topology the migration's handoff stopped the
+  sidecar, which took the TypeScript `varlatchd`'s network away, so
+  marking the source migrated out failed and the migration stopped in
+  `switched`. The switch now starts the sidecar again for that step (its
+  node under its temporary name), then stops it. `varlatch migrate
+  --resume` finishes a migration stopped that way.
+- **The switch, more robust (#416, #420, #423).** The sidecar is started
+  for that step only when `varlatchd` shares its network; the restarted
+  `varlatchd` is waited for, at most a minute, before the source is
+  marked; and every stop of the sidecar runs even when the run is
+  interrupted, so the old node never stays on the tailnet until
+  `--resume`. `ps` or `docker compose config` failing is said as such,
+  without their output, and more than one `varlatchd` container is
+  refused.
+- **A migration after a rollback (#414).** After `--rollback` and
+  `--finish --delete-old-data`, a new migration into the same data
+  directory keeps Go's `backups/` and the earlier final archive in it.
+  Anything else in the data directory is refused at the preflight, before
+  the backup and the barrier, with what to move.
+- **Backup status after a new migration (#415).** The schedule and the
+  "no archive created within the last 48 hours" warning count only the
+  live database's archives (the same installation, made since the
+  database was), so an earlier database's archive no longer delays the
+  first backup or silences the warning. Every archive is still listed;
+  `varlatch doctor` judges the same way.
+- **`--rollback` against the published image (#412).** The reverse's
+  one-off commands named `node dist/cli.js` again after the image's own
+  entrypoint, which already runs it, so every rollback of a 0.23.0
+  installation failed at the import and was undone. Fixed.
+- **The migration's rehearsals (#409, #412).** The rehearsal harness runs
+  the sync case against platform stand-ins and the migration of an
+  installation restored from a backup archive, isolated from everything
+  outside it. No change to what is shipped.
+- **CI (#380, #422).** The go job's limit is 75 minutes and G5's tests get
+  25; G5's cleanup of abandoned runs no longer removes a live run it
+  cannot see, such as one in a container. No change to what is shipped.
+
+<!-- SLOT #411 (queued): the rehearsal harness's tailnet case (B4) on the
+     run's Headscale: fold into the rehearsals line above once it merges. -->
 <!-- SLOT #408 (queued): fill from its PR once it merges. -->
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
