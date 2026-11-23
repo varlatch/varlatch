@@ -24,6 +24,8 @@ func TestProfileRefusals(t *testing.T) {
 	releaseDir, tsCheckout = filepath.Join(dir, "release"), filepath.Join(dir, "ts")
 	defer func(r func() (string, error), b func() (string, error)) { hostRelease, runBinaryBlocked = r, b }(hostRelease, runBinaryBlocked)
 	hostRelease = func() (string, error) { return "0.50.0-dev", nil }
+	defer func(r func(string) ([]string, error)) { resolveHost = r }(resolveHost)
+	resolveHost = func(string) ([]string, error) { return []string{os.Getenv("VL_RH_PUBLIC_BIND")}, nil }
 	blocked := ""
 	runBinaryBlocked = func() (string, error) { return blocked, nil }
 	coolify := func(t *testing.T) {
@@ -174,6 +176,19 @@ func TestProfileRefusals(t *testing.T) {
 		write(t, filepath.Join(tsCheckout, "infra", "coolify", "README.md"))
 		if p, err := readProfile(0); err != nil || !p.box || p.ingress != "coolify" {
 			t.Fatalf("%+v, %v", p, err)
+		}
+	})
+	// B2: migrate checks the public URL by its name, so it must lead to
+	// the run's address on this host.
+	t.Run("public: the name leads elsewhere", func(t *testing.T) {
+		for k, v := range map[string]string{"VL_RH_PROFILE": "box", "VL_RH_INGRESS": "public", "VL_RH_TARGET": "host", "VL_RH_SYNC": "", "VL_RH_ONLY": "",
+			"VL_RH_PUBLIC_NAME": "rh.example", "VL_RH_PUBLIC_BIND": "192.0.2.7"} {
+			t.Setenv(k, v)
+		}
+		defer func(r func(string) ([]string, error)) { resolveHost = r }(resolveHost)
+		resolveHost = func(string) ([]string, error) { return []string{"198.51.100.9"}, nil }
+		if _, err := readProfile(0); err == nil || !strings.Contains(err.Error(), "resolves, on this host, to [198.51.100.9]") {
+			t.Fatal(err)
 		}
 	})
 	// The image target's preconditions, refused before the owner's first

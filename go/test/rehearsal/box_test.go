@@ -158,6 +158,12 @@ func readProfile(euid int) (profileConfig, error) {
 		if prof.publicName == "" || net.ParseIP(prof.publicBind) == nil || net.ParseIP(prof.publicBind).IsUnspecified() {
 			return prof, errors.New("public ingress (B2) needs VL_RH_PUBLIC_NAME and VL_RH_PUBLIC_BIND, the address 80 and 443 are free on (internal#221, question 1); never 0.0.0.0")
 		}
+		// migrate checks the public URL by its name, from this host: the
+		// name must lead here, as the run's DNS has it for Pebble.
+		addrs, err := resolveHost(prof.publicName)
+		if err != nil || !slices.Contains(addrs, prof.publicBind) {
+			return prof, fmt.Errorf("VL_RH_PUBLIC_NAME %s resolves, on this host, to %v (%v), not VL_RH_PUBLIC_BIND %s: migrate checks the public URL by its name, so give a name that leads here (a wildcard of the box, or an /etc/hosts line)", prof.publicName, addrs, err, prof.publicBind)
+		}
 		for _, port := range []string{"80", "443"} {
 			l, err := net.Listen("tcp", net.JoinHostPort(prof.publicBind, port))
 			if err != nil {
@@ -317,6 +323,10 @@ func pause(t *testing.T, step string, lines ...string) {
 	}
 	t.Fatalf("the owner's step %q was not continued within %s", step, limit)
 }
+
+// resolveHost is how this host resolves a name; a variable, for the unit
+// tests.
+var resolveHost = net.LookupHost
 
 // --- the image target's preconditions (B3) ---
 

@@ -31,6 +31,11 @@
 # stops, removes or rebinds anything that is not this run's; the run's
 # files are handed back to the user who ran sudo.
 #
+# VL_RH_INGRESS=public (B2): VL_RH_PUBLIC_NAME must resolve, on this host,
+# to VL_RH_PUBLIC_BIND (migrate checks the public URL by its name; the box's
+# wildcard does), refused otherwise; migrate trusts the CA the run's Pebble
+# issues from beside the host's roots (SSL_CERT_FILE, written by the case).
+#
 # VL_RH_TARGET=image (B3, with VL_RH_INGRESS=coolify): VL_RH_GO_IMAGE is
 # migrate's --to-image form, repository:<release>@sha256:<digest>, the
 # release being that of the varlatchd this script builds (its --version:
