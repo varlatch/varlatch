@@ -87,9 +87,11 @@ type Removals struct {
 // FinishSource is the TypeScript side's part of --finish.
 type FinishSource interface {
 	// MountedVolumes are what the installation's containers mount now: its
-	// Postgres and Convex volumes (which its Compose files must name too),
-	// and the old node's. Only what it gives is ever removed.
-	MountedVolumes(ctx context.Context) (data, others []VolumeRecord, err error)
+	// Postgres and Convex volumes (which its Compose files must name too,
+	// and which are those recorded when the migration began; without
+	// containers, those), and the old node's. Only what it gives is ever
+	// removed.
+	MountedVolumes(ctx context.Context, recorded []VolumeRecord) (data, others []VolumeRecord, err error)
 	// CheckData is RemoveOld's (plan nil: data) or RemoveRetained's (plan's)
 	// data volumes checked before anything is done: one that is not the
 	// very volume recorded, or not there (and neither done nor begun), is
@@ -345,7 +347,7 @@ func (e *Engine) recordVolumes(ctx context.Context, j *Journal, data bool) error
 	if !ok {
 		return errors.New("this source has nothing --finish removes")
 	}
-	vols, others, err := fs.MountedVolumes(ctx)
+	vols, others, err := fs.MountedVolumes(ctx, j.Source.Volumes)
 	if err != nil {
 		if data {
 			return fmt.Errorf("%w; nothing was done", err)
@@ -397,7 +399,7 @@ func (e *Engine) finalArchive(ctx context.Context, j *Journal) error {
 			}
 			return fmt.Errorf("%w; nothing was removed, and %s, started for the archive, are stopped again", err, strings.Join(started, ", "))
 		}
-		if fs != nil && j.Ingress != Coolify {
+		if fs != nil {
 			var err error
 			// A start that failed part way says what it did start.
 			if started, err = fs.ServeForArchive(ctx); err != nil {
@@ -609,7 +611,7 @@ func (h *Host) FinalArchive(ctx context.Context) (string, error) {
 
 // MountedVolumes: the inventory's, the Postgres and Convex ones as the
 // Compose files give them too.
-func (c *Compose) MountedVolumes(ctx context.Context) (data, others []VolumeRecord, err error) {
+func (c *Compose) MountedVolumes(ctx context.Context, recorded []VolumeRecord) (data, others []VolumeRecord, err error) {
 	p, all, err := c.verified(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -624,25 +626,16 @@ func (c *Compose) MountedVolumes(ctx context.Context) (data, others []VolumeReco
 	}
 	for i, d := range dataMounts {
 		name := cfg.volumeName(keys[i])
-		live, err := mountedAs(p, all, d.service, d.target, name)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !live {
-			return nil, nil, fmt.Errorf("the installation has no %s container, so which volume it ran on is not known (the Compose files name %s): "+
-				"make it again (%s), check the installation's data is on it, and run this again", d.service, name, c.byHand("up --no-start --no-deps "+d.service))
-		}
-		v, err := c.volume(ctx, name)
-		if err != nil {
-			return nil, nil, err
-		}
+		v, err := c.installed(ctx, p, all, d.service, d.target, name, i, recorded)
 		switch {
-		case v == nil:
+		case err != nil:
+			return nil, nil, err
+		case v.CreatedAt == "":
 			return nil, nil, fmt.Errorf("the volume %s is not there (docker volume inspect)", name)
 		case v.Project != p.Name:
 			return nil, nil, fmt.Errorf("the volume %s is labelled of the Compose project %s, not of the installation's, %s: migrate does not remove it (remove it yourself if it is the installation's, and finish without --delete-old-data)", v.Name, orWord(v.Project, "none"), p.Name)
 		}
-		data = append(data, *v)
+		data = append(data, v)
 	}
 	// The old node's and Caddy's, and varlatch-state, by their keys: each
 	// mounted by a container of the project, and of it.
@@ -718,7 +711,10 @@ func (c *Compose) checkAll(ctx context.Context, p *ComposeProject, vols []Volume
 
 // removeVolumes removes the recorded volumes, all checked first, and each
 // again once its removal is journalled begun, right before it: never by
-// the name alone. Each is journalled removed after it.
+// the name alone. Each is journalled removed after it. (Docker removes by
+// name: a volume made again under it in the moment between the check and
+// the removal, and used by nothing, would be the one removed. One a
+// container mounts by then is refused by Docker itself.)
 func (c *Compose) removeVolumes(ctx context.Context, vols []VolumeRecord, log Removals) error {
 	p, _, err := c.verified(ctx)
 	if err != nil {
@@ -865,9 +861,13 @@ func (c *Compose) ServeForArchive(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	if owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:"); ok {
+		names, err := c.dataNames(cfg)
+		if err != nil {
+			return nil, err
+		}
 		return nil, fmt.Errorf("--delete-old-data is refused here: the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), so starting it for the final archive "+
 			"would bring the old Tailscale node back beside Go's. Its data volumes are kept. By hand: 1. make a backup of them by your own means and test that it restores; "+
-			"2. remove them: docker volume rm %s_postgres-data %s_convex-data", owner, owner, cfg.Name, cfg.Name)
+			"2. remove them: docker volume rm %s (on Coolify instead: delete the TypeScript application, its volumes included)", owner, owner, strings.Join(names, " "))
 	}
 	if err := c.compose(ctx, "docker compose up -d --no-deps "+strings.Join(start, " "), append([]string{"up", "-d", "--no-deps", "--no-recreate"}, start...)...); err != nil {
 		// An up that failed part way may have started some: those it did,
@@ -879,6 +879,15 @@ func (c *Compose) ServeForArchive(ctx context.Context) ([]string, error) {
 		return slices.DeleteFunc(slices.Clone(start), func(s string) bool { return !slices.Contains(now, s) }), err
 	}
 	return start, nil
+}
+
+// dataNames are the Postgres and Convex volumes' names in the Compose files.
+func (c *Compose) dataNames(cfg composeConfig) ([]string, error) {
+	keys, err := cfg.volumeKeys()
+	if err != nil {
+		return nil, err
+	}
+	return []string{cfg.volumeName(keys[0]), cfg.volumeName(keys[1])}, nil
 }
 
 // running are the Compose services running now.

@@ -227,8 +227,9 @@ func TestComposeDiscover(t *testing.T) {
 		"Config": map[string]any{"Labels": map[string]string{"org.opencontainers.image.version": "0.23.0"}}})
 	host := &labelled{containers: []composeContainer{ctr("varlatch", "varlatchd", filepath.Join(dir, "docker-compose.yml"), dir, "False")}}
 	run := &scripted{t: t, host: host, answers: map[string]Ran{
-		"docker compose images --format json varlatchd":       {Answer: []byte(`[{"ContainerName":"x-varlatchd-1","Repository":"ghcr.io/varlatch/varlatchd","Tag":"0.23.0","ID":"sha256:abc"}]`)},
-		"docker image inspect --format {{json .}} sha256:abc": {Answer: inspect},
+		"docker compose images --format json varlatchd":        {Answer: []byte(`[{"ContainerName":"x-varlatchd-1","Repository":"ghcr.io/varlatch/varlatchd","Tag":"0.23.0","ID":"sha256:abc"}]`)},
+		"docker image inspect --format {{json .}} sha256:abc":  {Answer: inspect},
+		"docker compose config --no-interpolate --format json": {Answer: []byte(stockConfig)},
 	}}
 	c := &Compose{Directory: dir, Run: run}
 	info, err := c.Discover(context.Background())
@@ -237,6 +238,22 @@ func TestComposeDiscover(t *testing.T) {
 	}
 	if info.Project == nil || info.Project.Name != "varlatch" || !slices.Equal(info.Project.Files, []string{filepath.Join(dir, "docker-compose.yml")}) {
 		t.Errorf("the project: %v", info.Project)
+	}
+	// Its data volumes, as its containers mount them; none when they cannot
+	// be told, which refuses nothing here.
+	if info.Volumes != nil {
+		t.Errorf("volumes without containers on them: %+v", info.Volumes)
+	}
+	host.volumes = map[string]VolumeRecord{}
+	for i, n := range stockVolumes {
+		v := VolumeRecord{Name: n.Name, CreatedAt: "2026-01-01T00:00:00Z", Project: "varlatch"}
+		host.volumes[n.Name] = v
+		l := ctr("varlatch", dataMounts[i].service, filepath.Join(dir, "docker-compose.yml"), dir, "False")
+		l.mounts = []containerMount{{Type: "volume", Name: n.Name, Destination: dataMounts[i].target}}
+		host.containers = append(host.containers, l)
+	}
+	if info, err := c.Discover(context.Background()); err != nil || len(info.Volumes) != 2 || info.Volumes[0] != host.volumes["varlatch_postgres-data"] || info.Volumes[1] != host.volumes["varlatch_convex-data"] {
+		t.Errorf("the data volumes: %+v %v", info.Volumes, err)
 	}
 	if _, err := (&Compose{Directory: t.TempDir(), Run: run}).Discover(context.Background()); err == nil || !strings.Contains(err.Error(), "no Compose file") {
 		t.Errorf("no Compose file: %v", err)

@@ -638,15 +638,20 @@ application:
    put it, `/data/coolify/proxy/dynamic/varlatch-rollback.yaml` on the host
    (or in Coolify: the server, **Proxy**, **Dynamic Configurations**), and
    stops (exit status 75). It routes the domain to the TypeScript
-   dashboard's container, above the containers' own routers. The migration
-   is still open.
+   dashboard's container, above the containers' own routers, and puts the
+   migration's id on each answer (`X-Varlatch-Rollback`), so that
+   `varlatch migrate` knows which router answered. The migration is still
+   open.
 2. Put the file there. From then on the domain does not lead to the new
    server. To change your mind, remove the file.
-3. Run `varlatch migrate --rollback` again. It starts the TypeScript
-   dashboard and checks that the domain reaches the TypeScript installation
-   (its `/readyz` names its migrated-out state). Only then does the rollback
-   begin. If it does not, the dashboard is stopped again and nothing was
-   done.
+3. Run `varlatch migrate --rollback` again. Before the new server's
+   barrier, it starts the TypeScript installation behind its migrated-out
+   gate (with the old Tailscale sidecar, when the migration stopped it: its
+   node comes up under its temporary name) and its dashboard, and checks
+   that the domain reaches it by the route (its `/readyz` names its
+   migrated-out state). If it does not, or the run is interrupted, the
+   rollback is undone (`--resume` or `--abort` does it after an
+   interruption): the dashboard and the sidecar are stopped again.
 4. The rollback runs to its end. With the image target it stops once (exit
    status 75) for you to stop the 0.50 service, when the domain already
    answers from the TypeScript release.
@@ -656,7 +661,17 @@ application:
    new server's is stopped.
 
 An undone rollback stops the dashboard again. Remove the file then, and the
-new server serves the domain as before.
+new server serves the domain as before: check it yourself, `varlatch
+migrate` does not.
+
+The old installation's containers and images may be gone by then (a prune).
+`--rollback` pulls the images it needs before anything else, and makes the
+containers again: the journal, the Compose files and the volumes the
+migration recorded are enough. It refuses, before anything is done, when a
+volume is not the recorded one. Coolify 4.7.6's own Docker cleanup leaves an
+application's stopped containers, and the images they use; with **Delete
+Unused Volumes** on, it would remove volumes no container uses, so leave
+that off, and do not upgrade Coolify during the rollback window.
 
 On a Tailscale topology (`varlatchd` with `network_mode: service:tailscale`):
 
@@ -872,9 +887,11 @@ yourself, in the tailnet's admin console on Tailscale, or with
 
 In the tailnet shape (varlatchd with `network_mode: service:tailscale`),
 run `--finish --delete-old-data` straight away rather than a plain
-`--finish` first. After a plain `--finish`, `--delete-old-data` is
+`--finish` first. After a plain `--finish`, or after a migration that moved
+the tailnet name (which stopped the sidecar), `--delete-old-data` is
 refused, because its final archive would need the old Tailscale node
-running beside Go's; the data volumes are then removed by hand:
+running beside Go's; the data volumes are then removed by hand (on Coolify,
+delete the TypeScript application with its volumes instead of step 2):
 
 1. Back them up by your own means, and test that the backup restores,
    before you remove anything.

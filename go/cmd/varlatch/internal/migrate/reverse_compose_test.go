@@ -113,6 +113,7 @@ func TestTheProjectIsCompose(t *testing.T) {
 	run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: []byte(stockConfig)}}}
 	c := &Compose{Directory: dir, resolved: testProject(dir), Run: run}
 	j := &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}}
+	j.Source.Volumes = stockVolumes
 	plan, err := c.RebuildPlan(t.Context(), j)
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +203,7 @@ func TestStartNetworkOwner(t *testing.T) {
 				"docker compose start tailscale":                       {},
 			}}
 			cmp := stockCompose(t, run)
+			run.host = &labelled{containers: []composeContainer{ctr("varlatch", "tailscale", filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "False")}}
 			if err := cmp.StartNetworkOwner(t.Context()); err != nil {
 				t.Fatal(err)
 			}

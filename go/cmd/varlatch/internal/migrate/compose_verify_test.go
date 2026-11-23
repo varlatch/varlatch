@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 )
 
 // .env as Compose reads it (Compose 5.6.1's answers for the same lines).
@@ -161,10 +165,15 @@ func TestNothingChangesOnAnotherInstallation(t *testing.T) {
 		"check the data": func(ctx context.Context, c *Compose) error {
 			return c.CheckData(ctx, Public, nil, make([]VolumeRecord, 2), Removals{})
 		},
-		"mounted":      func(ctx context.Context, c *Compose) error { _, _, err := c.MountedVolumes(ctx); return err },
-		"make volumes": func(ctx context.Context, c *Compose) error { _, err := c.MakeVolumes(ctx, plan); return err },
+		"mounted": func(ctx context.Context, c *Compose) error {
+			_, _, err := c.MountedVolumes(ctx, nil)
+			return err
+		},
+		"serve gated":   func(ctx context.Context, c *Compose) error { return c.ServeGated(ctx, true) },
+		"network owner": func(ctx context.Context, c *Compose) error { return c.StartNetworkOwner(ctx) },
+		"make volumes":  func(ctx context.Context, c *Compose) error { _, err := c.MakeVolumes(ctx, plan); return err },
 		"route": func(ctx context.Context, c *Compose) error {
-			_, _, err := c.RouteFile(ctx, "https://vault.example.test")
+			_, _, err := c.RouteFile(ctx, "https://vault.example.test", "mig_x")
 			return err
 		},
 		"remove old": func(ctx context.Context, c *Compose) error {
@@ -190,7 +199,7 @@ func TestNothingChangesOnAnotherInstallation(t *testing.T) {
 			"another project here":              {[]composeContainer{ctr("varlatch", "varlatchd", file, dir, "False")}, "now of varlatch"},
 		} {
 			host := &labelled{containers: []composeContainer{own}, volumes: map[string]VolumeRecord{}}
-			run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config": {Answer: []byte(stockConfig)}, "docker compose ps ": {}}}
+			run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config": {Answer: []byte(sidecarConfig)}, "docker compose ps ": {}}}
 			cmp := &Compose{Directory: dir, Run: run, BEKFile: "/b", Destination: "d"}
 			cmp.KeepProject(kept, false)
 			if err := cmp.CheckProject(t.Context()); err != nil {
@@ -219,6 +228,9 @@ func TestNothingChangesOnAnotherInstallation(t *testing.T) {
 		}
 	}
 }
+
+// sidecarConfig is stockConfig with varlatchd in the sidecar's network.
+var sidecarConfig = strings.Replace(stockConfig, `"varlatchd":{`, `"varlatchd":{"network_mode":"service:tailscale",`, 1)
 
 // retainedPlan is a rebuilt Coolify installation: its plan, host and
 // Compose.
@@ -387,6 +399,48 @@ func TestTheReverseRecordsTheRetainedVolumes(t *testing.T) {
 	if want := []VolumeRecord{host.volumes[pg], host.volumes[convex]}; err != nil || !slices.Equal(plan.Retained, want) || plan.OverrideWas != "" || plan.ComposeFileLine != "" {
 		t.Errorf("%+v %v, want %v", plan, err, want)
 	}
+	// Without containers: the recorded ones, and only those; one the files
+	// name otherwise now, or that is another, or with nothing recorded,
+	// refused. With containers too, they are the recorded ones.
+	kept := host.containers
+	recorded := &Journal{ID: j.ID, Source: j.Source}
+	recorded.Source.Volumes = plan.Retained
+	for _, live := range []bool{true, false} {
+		host.containers = kept
+		if !live {
+			host.containers = nil
+		}
+		if plan, err := cmp.RebuildPlan(t.Context(), recorded); err != nil || !slices.Equal(plan.Retained, recorded.Source.Volumes) {
+			t.Errorf("recorded, containers %v: %+v %v", live, plan.Retained, err)
+		}
+		for name, change := range map[string]func(v []VolumeRecord){
+			"another name":  func(v []VolumeRecord) { v[0].Name = pg + "2" },
+			"made again":    func(v []VolumeRecord) { v[1].CreatedAt = "2020-01-01T00:00:00Z" },
+			"another place": func(v []VolumeRecord) { v[0].Mountpoint = "/elsewhere" },
+			"another label": func(v []VolumeRecord) { v[0].Project = "other" },
+		} {
+			other := *recorded
+			other.Source.Volumes = slices.Clone(recorded.Source.Volumes)
+			change(other.Source.Volumes)
+			if _, err := cmp.RebuildPlan(t.Context(), &other); err == nil || !strings.Contains(err.Error(), "which volume is the installation's is not known") {
+				t.Errorf("%s, containers %v: %v", name, live, err)
+			}
+		}
+	}
+	// Files that name a volume that is not there at all.
+	renamed := *recorded
+	renamed.Source.Volumes = slices.Clone(recorded.Source.Volumes)
+	renamed.Source.Volumes[0].Name = pg + "-before"
+	was := host.volumes[pg]
+	delete(host.volumes, pg)
+	if _, err := cmp.RebuildPlan(t.Context(), &renamed); err == nil || !strings.Contains(err.Error(), "and the migration read the installation on "+pg+"-before") {
+		t.Errorf("another name, not there: %v", err)
+	}
+	host.volumes[pg] = was
+	if _, err := cmp.RebuildPlan(t.Context(), j); err == nil || !strings.Contains(err.Error(), "does not record which volume it ran on") || !strings.Contains(err.Error(), "up --no-start --no-deps postgres") {
+		t.Errorf("neither containers nor a record: %v", err)
+	}
+	host.containers = kept
 	// Not there: the reverse goes on; --finish then refuses.
 	delete(host.volumes, convex)
 	if plan, err := cmp.RebuildPlan(t.Context(), j); err != nil || plan.Retained[1] != (VolumeRecord{Name: convex}) {
@@ -517,7 +571,7 @@ type finishFake struct {
 	removeErr error
 }
 
-func (f *finishFake) MountedVolumes(context.Context) (data, others []VolumeRecord, err error) {
+func (f *finishFake) MountedVolumes(context.Context, []VolumeRecord) (data, others []VolumeRecord, err error) {
 	return nil, nil, nil
 }
 func (f *finishFake) CheckData(context.Context, Ingress, *RebuildRecord, []VolumeRecord, Removals) error {
@@ -625,6 +679,7 @@ func TestBeforeTheBarrierTheProjectIsKept(t *testing.T) {
 // before it journalled them.
 func TestTheUndoRemovesOnlyVolumesOfTheMigration(t *testing.T) {
 	j := &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}}
+	j.Source.Volumes = stockVolumes
 	const fresh, freshConvex = "varlatch_postgres-data-abcdefgh", "varlatch_convex-data-abcdefgh"
 	newPlan := func(t *testing.T, have ...string) (*Compose, *labelled, RebuildRecord) {
 		host := &labelled{volumes: map[string]VolumeRecord{}}
@@ -767,7 +822,7 @@ func TestAForwardFinishRemovesWhatItArchived(t *testing.T) {
 	// Recorded, then removed: the data, and of the others what a container
 	// mounted (Caddy's volume is the project's, but no container's).
 	w := build(t)
-	data, others, err := w.c.MountedVolumes(t.Context())
+	data, others, err := w.c.MountedVolumes(t.Context(), nil)
 	if err != nil || len(data) != 2 || data[0] != w.h.volumes[pg] || data[1] != w.h.volumes[convex] || len(others) != 2 {
 		t.Fatalf("%+v %+v %v", data, others, err)
 	}
@@ -799,7 +854,7 @@ func TestAForwardFinishRemovesWhatItArchived(t *testing.T) {
 			v.Project = ""
 			w.h.volumes[pg] = v
 		}, refused: "labelled of the Compose project none"},
-		{name: "no containers to tell by", before: func(w *world) { w.down() }, refused: "has no postgres container"},
+		{name: "no containers to tell by, and no record", before: func(w *world) { w.down() }, refused: "has no postgres container"},
 		{name: "the files name another volume since", after: func(w *world) { w.run.answers["docker compose config "] = config(other) }, refused: "give postgres the volume " + other},
 		{name: "the files name another volume since, the containers gone", after: func(w *world) {
 			w.down()
@@ -816,7 +871,7 @@ func TestAForwardFinishRemovesWhatItArchived(t *testing.T) {
 		if c.before != nil {
 			c.before(w)
 		}
-		data, _, err := w.c.MountedVolumes(t.Context())
+		data, _, err := w.c.MountedVolumes(t.Context(), nil)
 		if (err != nil) != (c.before != nil) {
 			t.Errorf("%s: recorded: %v", c.name, err)
 		}
@@ -830,10 +885,29 @@ func TestAForwardFinishRemovesWhatItArchived(t *testing.T) {
 			t.Errorf("%s: %v, removed %v", c.name, err, w.h.removed)
 		}
 	}
+	// Without containers, what the migration recorded; another now, refused.
+	w = build(t)
+	want, _, err := w.c.MountedVolumes(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.down()
+	if data, _, err := w.c.MountedVolumes(t.Context(), want); err != nil || !slices.Equal(data, want) {
+		t.Errorf("without containers: %+v %v", data, err)
+	}
+	again := slices.Clone(want)
+	again[0].CreatedAt = "2020-01-01T00:00:00Z"
+	if _, _, err := w.c.MountedVolumes(t.Context(), again); err == nil || !strings.Contains(err.Error(), "is not the one the migration read") {
+		t.Errorf("without containers, another: %v", err)
+	}
+	delete(w.h.volumes, pg)
+	if _, _, err := w.c.MountedVolumes(t.Context(), want); err == nil || !strings.Contains(err.Error(), "is not there") {
+		t.Errorf("without containers or the volume: %v", err)
+	}
 	// Recorded before: what is removed is what was recorded, whatever the
 	// files name now.
 	w = build(t)
-	if data, others, err = w.c.MountedVolumes(t.Context()); err != nil {
+	if data, others, err = w.c.MountedVolumes(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	w.down()
@@ -855,11 +929,14 @@ type forwardFake struct {
 	vols           []VolumeRecord
 }
 
-func (f *forwardFake) MountedVolumes(context.Context) (data, others []VolumeRecord, err error) {
+func (f *forwardFake) MountedVolumes(context.Context, []VolumeRecord) (data, others []VolumeRecord, err error) {
 	f.do("mounted")
 	return f.vols, nil, nil
 }
 func (f *forwardFake) CheckData(_ context.Context, _ Ingress, _ *RebuildRecord, data []VolumeRecord, _ Removals) error {
+	if len(data) == 0 {
+		data = []VolumeRecord{{Name: "none"}}
+	}
 	f.do("check " + data[0].Name)
 	if f.checks++; f.checks == f.failAt {
 		return errors.New("on another volume")
@@ -872,8 +949,26 @@ func (f *forwardFake) ServeForArchive(context.Context) ([]string, error) {
 }
 func (f *forwardFake) StopStarted(context.Context, []string) error { f.do("stop"); return nil }
 func (f *forwardFake) RemoveOld(_ context.Context, _ Ingress, data, _ []VolumeRecord, _ Removals) error {
+	if len(data) == 0 {
+		return &HumanStep{Instruction: "Delete it."}
+	}
 	f.do("remove " + data[0].Name)
 	return nil
+}
+
+// On Coolify the removal is the operator's, the archive is not: what it
+// reads is started for it there too.
+func TestAFinishOnCoolifyStartsWhatItsArchiveReads(t *testing.T) {
+	w, src, j := rolledWorld(t, Open, Coolify)
+	j.Rollback = nil
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	fs := &forwardFake{finishFake: &finishFake{reverseFake: src}}
+	w.eng.Source = fs
+	if _, err := w.eng.Finish(t.Context(), true); err != nil || !slices.Equal(fs.did, []string{"check none", "serve", "check none"}) || !containsCall(w.src.calls, "backup") {
+		t.Errorf("%v: %v, %v", err, fs.did, w.src.calls)
+	}
 }
 
 func TestAForwardFinishChecksBeforeItsArchive(t *testing.T) {
@@ -900,38 +995,46 @@ func TestAForwardFinishChecksBeforeItsArchive(t *testing.T) {
 	}
 }
 
-// routeProber answers as the proxy would: route is where the name leads.
+// routeProber answers as the proxy would: route is where the name leads,
+// by the operator's route ("file: ...", of the migration id) or by a
+// container's own router.
 type routeProber struct {
 	w     *world
+	id    string
 	route func() string
 	gates int
 }
 
 func (p *routeProber) Probe(context.Context, string) (string, string, error) {
-	switch p.route() {
-	case "go":
+	if strings.HasSuffix(p.route(), "go") {
 		return "inst_fake", "0.50.0", nil
-	case "ts":
-		return "", "", errors.New("GET /v1/meta answered 503")
 	}
-	return "", "", errors.New("GET /v1/meta answered 502")
+	return "", "", errors.New("GET /v1/meta answered 503")
 }
-func (p *routeProber) ProbeGate(context.Context, string) (string, error) {
+func (p *routeProber) ProbeGate(context.Context, string) (GateAnswer, error) {
 	p.gates++
-	switch p.route() {
-	case "go":
-		return "", nil
-	case "ts":
-		return "migrated-out", nil
-	case "other":
-		return "migration", nil
+	to, ok := strings.CutPrefix(p.route(), "file: ")
+	a := GateAnswer{Server: true}
+	if ok {
+		a.Route = p.id
 	}
-	return "", errors.New("GET /readyz answered 502, not as a Varlatch server")
+	switch to {
+	case "go":
+	case "ts":
+		a.State = "migrated-out"
+	case "other":
+		a.State = "migration"
+	case "down":
+		return GateAnswer{}, errors.New("dial: connection refused")
+	default:
+		a.Server = false
+	}
+	return a, nil
 }
 
 type routedFake struct{ *reverseFake }
 
-func (routedFake) RouteFile(context.Context, string) (string, string, error) {
+func (routedFake) RouteFile(context.Context, string, string) (string, string, error) {
 	return "/proxy/route.yaml", "http: the route\n", nil
 }
 
@@ -940,56 +1043,237 @@ func (routedFake) RouteFile(context.Context, string) (string, string, error) {
 // said, exit 75, the migration open, Go untouched.
 func TestTheWayBackIsCheckedBeforeTheReverse(t *testing.T) {
 	for _, c := range []struct {
-		name    string
-		file    bool // the route is in the proxy
-		to      string
-		said    string
-		refused string
+		name  string
+		route []string // what answers, by ask; the last one from then on
+		up    string   // what answers once the dashboard runs
+		said  string
+		// refused: begun and undone; nothing: an error before anything.
+		refused, nothing string
 	}{
-		{"no route", false, "ts", "the address answers as the installation inst_fake, release 0.50.0", ""},
-		{"a route to the dashboard", true, "ts", "", ""},
-		{"a route to something else", true, "nothing", "", "did not reach the TypeScript installation"},
-		{"a route to another installation", true, "other", "in the state migration", ""},
-		{"a route to a dashboard of another", true, "other dashboard", "", "it answers in the state migration, not migrated-out"},
+		{name: "no route, Go answers", route: []string{"go"}, said: "answers by no route of this migration: a Varlatch server, ready or not saying"},
+		{name: "no route, the TypeScript installation answers by its own router", route: []string{"ts"}, said: "by no route of this migration: a Varlatch server in the state migrated-out"},
+		{name: "no route, the proxy's error", route: []string{"nothing"}, said: "by no route of this migration: not a Varlatch server"},
+		{name: "another migration's route", route: []string{"other id: nothing"}, said: "by another migration's route, mig_other"},
+		{name: "nothing answers", route: []string{"down"}, nothing: "does not answer"},
+		{name: "a route to the dashboard", route: []string{"file: nothing"}, up: "file: ts"},
+		{name: "a route to the dashboard, the address down at first", route: []string{"down", "down", "file: nothing"}, up: "file: ts"},
+		{name: "a route to something else", route: []string{"file: nothing"}, up: "file: nothing", refused: "the route answers: not a Varlatch server"},
+		{name: "a route to another installation", route: []string{"file: other"}, up: "file: other", refused: "the route answers: a Varlatch server in the state migration"},
+		{name: "the route to Go", route: []string{"file: go"}, up: "file: go", refused: "the route answers: a Varlatch server, ready"},
+		// The route gone by then: the dashboard's own router answers as the
+		// TypeScript installation, as it may at any reload.
+		{name: "the route removed, the dashboard's own router answers", route: []string{"file: nothing"}, up: "ts", refused: "it answers by another route: a Varlatch server in the state migrated-out"},
+		{name: "the address down once the dashboard runs", route: []string{"file: nothing"}, up: "down", refused: "connection refused"},
 	} {
 		w, src, j := rolledWorld(t, Open, Coolify)
 		w.eng.Options.TransferTimeout = 4 * time.Second
+		// As the forward transfer left it.
+		w.src.ingressDown = true
 		src.importErr = errors.New("the reverse began")
-		p := &routeProber{w: w}
+		p := &routeProber{w: w, id: j.ID}
 		p.route = func() string {
-			switch {
-			case !c.file && w.tgt.running:
-				return "go"
-			case c.to != "other" && w.src.ingressDown:
-				return "stopped"
-			case c.to == "other dashboard":
-				return "other"
+			if !w.src.ingressDown {
+				return c.up
 			}
-			return c.to
+			r := c.route[0]
+			if len(c.route) > 1 {
+				c.route = c.route[1:]
+			}
+			if to, ok := strings.CutPrefix(r, "other id: "); ok {
+				p.id, r = "mig_other", "file: "+to
+			}
+			return r
 		}
 		w.eng.Source, w.eng.Prober = routedFake{src}, p
 		_, err := w.eng.Rollback(t.Context())
 		after, _ := readJournal(w.src.dir)
-		if c.file && c.to == "ts" {
-			if !errors.Is(err, src.importErr) || !slices.Contains(src.did, "rebuild") || !w.src.ingressDown {
-				t.Errorf("%s: %v, %v, the dashboard down %v after the undo", c.name, err, src.did, w.src.ingressDown)
+		said := strings.Join(w.said, "\n")
+		did := 0
+		switch {
+		case c.nothing != "":
+			if err == nil || !strings.Contains(err.Error(), c.nothing) || !strings.Contains(err.Error(), "nothing was done") {
+				t.Errorf("%s: %v", c.name, err)
 			}
-			if !strings.Contains(strings.Join(w.said, "\n"), "remove the route put in the proxy") {
+		case c.said != "":
+			if !errors.Is(err, ErrAwaitingOperator) || !strings.Contains(said, c.said) || !strings.Contains(said, "/proxy/route.yaml") || !strings.Contains(said, "http: the route") ||
+				!strings.Contains(said, "do not Deploy, Restart or Stop the TypeScript application") || len(after.History) != 1 {
+				t.Errorf("%s: %v, %s", c.name, err, said)
+			}
+		case c.refused != "":
+			// Begun and undone: no barrier asked for, no volume made.
+			if did = 1; err == nil || !strings.Contains(err.Error(), c.refused) || !strings.Contains(err.Error(), "the address reaches it once the route is out of the proxy") || strings.Contains(err.Error(), "Go serves again") ||
+				after.Rollback == nil || after.Rollback.Undone == nil || !after.Rollback.Undone.Released || after.Rollback.Barrier != nil {
+				t.Errorf("%s: %v, %+v", c.name, err, after.Rollback)
+			}
+		default:
+			if !errors.Is(err, src.importErr) || !slices.Contains(src.did, "rebuild") || src.did[0] != "serve gated, the sidecar false" || w.src.recreates != 1 || !w.src.ingressDown {
+				t.Errorf("%s: %v, %v, made again %d, the dashboard down %v after the undo", c.name, err, src.did, w.src.recreates, w.src.ingressDown)
+			}
+			if !strings.Contains(said, "remove the route put in the proxy") {
 				t.Errorf("%s: the undo said %v", c.name, w.said)
 			}
 			continue
 		}
-		said := strings.Join(w.said, "\n")
-		if c.refused == "" && (!errors.Is(err, ErrAwaitingOperator) || !strings.Contains(said, c.said) || !strings.Contains(said, "/proxy/route.yaml") || !strings.Contains(said, "http: the route") ||
-			!strings.Contains(said, "do not Deploy, Restart or Stop the TypeScript application")) {
-			t.Errorf("%s: %v, %s", c.name, err, said)
-		}
-		if c.refused != "" && (err == nil || !strings.Contains(err.Error(), c.refused) || !strings.Contains(err.Error(), "nothing was done")) {
-			t.Errorf("%s: %v", c.name, err)
-		}
-		if after.Phase != Open || after.ID != j.ID || len(src.did) != 0 || !w.tgt.running || !w.src.ingressDown || w.tgt.gate {
+		if after.Phase != Open || after.ID != j.ID || len(src.did) != did || !w.tgt.running || !w.src.ingressDown || w.tgt.gate {
 			t.Errorf("%s: phase %s, %v, Go running %v, the dashboard down %v", c.name, after.Phase, src.did, w.tgt.running, w.src.ingressDown)
 		}
+	}
+}
+
+// The sidecar the forward handoff stopped is started for the check, before
+// Go's barrier, and stopped again when the way back does not work; the
+// images the reverse needs are had before the operator is asked for
+// anything.
+func TestTheWayBackStartsTheSidecar(t *testing.T) {
+	w, src, _ := rolledWorld(t, Open, Coolify)
+	w.eng.Options.TransferTimeout = 2 * time.Second
+	j, _ := readJournal(w.src.dir)
+	j.Tailnet = &TailnetRecord{Handoff: &tailhandoff.State{Phase: tailhandoff.Done}}
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	up := false
+	fs := &sidecarFake{routedFake: routedFake{src}, up: &up}
+	p := &routeProber{w: w, id: j.ID}
+	// varlatchd answers only in the sidecar's network.
+	p.route = func() string {
+		if up && !w.src.ingressDown {
+			return "file: ts"
+		}
+		return "file: nothing"
+	}
+	src.importErr = errors.New("the reverse began")
+	w.eng.Source, w.eng.Prober = fs, p
+	if _, err := w.eng.Rollback(t.Context()); !errors.Is(err, src.importErr) || src.did[0] != "serve gated, the sidecar true" || up {
+		t.Errorf("%v: %v, the sidecar %v after the undo", err, src.did, up)
+	}
+	// It does not answer: the sidecar stops again.
+	src.did, fs.deaf = nil, true
+	p.route = func() string { return "file: nothing" }
+	if _, err := w.eng.Rollback(t.Context()); err == nil || !slices.Equal(src.did, []string{"serve gated, the sidecar true"}) || up || !fs.stopped {
+		t.Errorf("%v: %v, the sidecar %v", err, src.did, up)
+	}
+	// A rebuild that could not be planned: told before anything.
+	src.did, src.planErr, w.said = nil, errors.New("which volume is the installation's is not known"), nil
+	if _, err := w.eng.Rollback(t.Context()); !errors.Is(err, src.planErr) || !strings.Contains(err.Error(), "nothing was done") || len(src.did) != 0 || len(w.said) != 0 {
+		t.Errorf("%v: %v, said %v", err, src.did, w.said)
+	}
+	src.planErr = nil
+	// Images that cannot be had: nothing asked, nothing begun.
+	src.did, src.imagesErr, w.said = nil, errors.New("the image is not on this host"), nil
+	probes := p.gates
+	if _, err := w.eng.Rollback(t.Context()); !errors.Is(err, src.imagesErr) || !strings.Contains(err.Error(), "nothing was done") || !slices.Equal(src.did, []string{"images"}) || len(w.said) != 0 || p.gates != probes {
+		t.Errorf("%v: %v, said %v", err, src.did, w.said)
+	}
+	if after, _ := readJournal(w.src.dir); after.Phase != Open {
+		t.Errorf("phase %s", after.Phase)
+	}
+}
+
+// sidecarFake is a routed source whose varlatchd runs in its sidecar's
+// network.
+type sidecarFake struct {
+	routedFake
+	up            *bool
+	deaf, stopped bool
+}
+
+func (s *sidecarFake) ServeGated(ctx context.Context, owned bool) error {
+	*s.up = owned
+	return s.routedFake.ServeGated(ctx, owned)
+}
+func (s *sidecarFake) StopTailnet(context.Context) error       { *s.up, s.stopped = false, true; return nil }
+func (s *sidecarFake) StartTailnet(context.Context) error      { *s.up = true; return nil }
+func (s *sidecarFake) StartNetworkOwner(context.Context) error { *s.up = true; return nil }
+func (s *sidecarFake) Tailnet(context.Context) (TailnetInfo, error) {
+	return TailnetInfo{}, errors.New("not reached")
+}
+func (s *sidecarFake) RenewTailnetCert(context.Context, string, time.Duration) error {
+	return errors.New("not reached")
+}
+func (s *sidecarFake) TailnetCertExpiry(context.Context, string) (time.Time, bool, error) {
+	return time.Time{}, false, errors.New("not reached")
+}
+
+// What starts varlatchd in its network owner's network again: the owner's
+// container, or, gone (Compose's start does nothing then, exit 0), a new
+// one, whose network a restart of varlatchd's old container cannot join.
+func TestServeGated(t *testing.T) {
+	const config, running = "docker compose config --no-interpolate --format json", "docker compose ps --status running --services"
+	for _, c := range []struct {
+		name    string
+		config  string
+		has     []string // services with a container
+		running string
+		owned   bool
+		want    []string
+	}{
+		{"its own network, running", stockConfig, []string{"postgres", "varlatchd"}, "postgres\nvarlatchd\n", false, nil},
+		{"its own network, varlatchd gone", stockConfig, []string{"postgres"}, "postgres\n", false, []string{"up -d --no-deps varlatchd"}},
+		{"its own network, all gone", stockConfig, nil, "", false, []string{"up -d --no-deps --no-recreate postgres", "up -d --no-deps varlatchd"}},
+		{"the sidecar stopped", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\n", true, []string{"start tailscale", "restart varlatchd"}},
+		{"the sidecar stopped, varlatchd restarting in its network", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\nvarlatchd\n", true, []string{"start tailscale", "restart varlatchd"}},
+		{"the sidecar gone", sidecarConfig, []string{"postgres", "varlatchd"}, "postgres\n", true, []string{"up -d --no-deps tailscale", "up -d --no-deps varlatchd"}},
+		{"the sidecar stopped, varlatchd gone", sidecarConfig, []string{"postgres", "tailscale"}, "postgres\n", true, []string{"start tailscale", "up -d --no-deps varlatchd"}},
+		{"both running", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\nvarlatchd\ntailscale\n", true, nil},
+		{"all gone", sidecarConfig, nil, "", true, []string{"up -d --no-deps --no-recreate postgres", "up -d --no-deps tailscale", "up -d --no-deps varlatchd"}},
+	} {
+		host := &labelled{}
+		run := &scripted{t: t, host: host, answers: map[string]Ran{config: {Answer: []byte(c.config)}, running: {Answer: []byte(c.running)}, "docker compose up ": {}, "docker compose start ": {}, "docker compose restart ": {}}}
+		cmp := stockCompose(t, run)
+		for _, svc := range c.has {
+			host.containers = append(host.containers, ctr("varlatch", svc, filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "False"))
+		}
+		if err := cmp.ServeGated(t.Context(), c.owned); err != nil {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		var did []string
+		for _, r := range run.ran {
+			if r != config && r != running {
+				did = append(did, strings.TrimPrefix(r, "docker compose "))
+			}
+		}
+		if !slices.Equal(did, c.want) {
+			t.Errorf("%s: %q, want %q", c.name, did, c.want)
+		}
+	}
+	// As the tailnet handoff's own steps.
+	for made, want := range map[bool][]string{false: {"start tailscale", "restart varlatchd", "ps --status running --services", "restart varlatch-web"}, true: {"up -d --no-deps tailscale", "up -d --no-deps varlatchd", "ps --status running --services", "restart varlatch-web"}} {
+		host := &labelled{}
+		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose up ": {}, "docker compose start ": {}, "docker compose restart ": {}, running: {Answer: []byte("postgres\nvarlatch-web\n")}}}
+		cmp := stockCompose(t, run)
+		if !made {
+			for _, svc := range []string{"tailscale", "varlatchd"} {
+				host.containers = append(host.containers, ctr("varlatch", svc, filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "False"))
+			}
+		}
+		if err := cmp.StartTailnet(t.Context()); err != nil || strings.Join(run.ran, "|") != "docker compose "+strings.Join(want, "|docker compose ") {
+			t.Errorf("gone %v: %q %v", made, run.ran, err)
+		}
+	}
+}
+
+// The images a reverse starts: those not on the host are pulled before it
+// begins; one that cannot be is refused, its name said, never a value the
+// files are interpolated with.
+func TestTheReversesImages(t *testing.T) {
+	j := &Journal{Ingress: Coolify, Source: SourceInfo{DigestRepository: "ghcr.io/varlatch/varlatchd", Digest: "sha256:" + strings.Repeat("a", 64)}}
+	release := j.Source.DigestRepository + "@" + j.Source.Digest
+	const images = "docker compose --profile deploy config --images"
+	run := &scripted{t: t, answers: map[string]Ran{images: {Answer: []byte("postgres:17.6\nghcr.io/x/web@sha256:bb\npostgres:17.6\n")},
+		"docker image inspect --format {{.Id}} postgres:17.6": {}, "docker image inspect --format {{.Id}} ghcr.io/x/web": {Code: 1}, "docker image inspect --format {{.Id}} " + release: {}, "docker pull -q ghcr.io/x/web@sha256:bb": {}}}
+	cmp := stockCompose(t, run)
+	if err := cmp.EnsureImages(t.Context(), j); err != nil || len(run.ran) != 5 || !slices.Contains(run.ran, "docker pull -q ghcr.io/x/web@sha256:bb") {
+		t.Errorf("%v: %q", err, run.ran)
+	}
+	run.answers["docker image inspect --format {{.Id}} "+release] = Ran{Code: 1}
+	run.answers["docker pull -q "+release] = Ran{Code: 1, Said: []byte("denied: a value")}
+	if err := cmp.EnsureImages(t.Context(), j); err == nil || !strings.Contains(err.Error(), j.Source.DigestRepository) || strings.Contains(err.Error(), "a value") || strings.Contains(err.Error(), "@") {
+		t.Errorf("one that cannot be pulled: %v", err)
+	}
+	run.answers[images] = Ran{Code: 1, Said: []byte("a value")}
+	if err := cmp.EnsureImages(t.Context(), j); err == nil || strings.Contains(err.Error(), "a value") {
+		t.Errorf("images that are not known: %v", err)
 	}
 }
 
@@ -1006,13 +1290,24 @@ func TestRouteFile(t *testing.T) {
 		refused      string
 	}{
 		{"https", "https://vault.example.test", []composeContainer{web, ctr(appID, "postgres", file, dir, "False")},
-			[]string{"rule: \"Host(`vault.example.test`)\"", "entryPoints: [https]", "priority: 100000", "certResolver: letsencrypt", "url: \"http://varlatch-web-" + appID + "-1:80\""}, ""},
+			[]string{"rule: \"Host(`vault.example.test`)\"", "entryPoints: [https]", "priority: 100000", "middlewares: [varlatch-rollback]", "X-Varlatch-Rollback: \"mig_x\"", "certResolver: letsencrypt", "url: \"http://varlatch-web-" + appID + "-1:80\""}, ""},
 		{"http", "http://127.0.0.1:1", []composeContainer{web}, []string{"Host(`127.0.0.1`)", "entryPoints: [http]"}, ""},
-		{"none", "https://vault.example.test", []composeContainer{ctr(appID, "postgres", file, dir, "False")}, nil, "0 varlatch-web containers"},
+		{"gone, its name in the files", "https://vault.example.test", []composeContainer{ctr(appID, "postgres", file, dir, "False")}, []string{"url: \"http://varlatch-web-named:80\""}, ""},
+		{"gone, Compose's name", "https://vault.example.test", nil, []string{"url: \"http://" + appID + "-varlatch-web-1:80\""}, ""},
+		{"gone, no such service", "https://vault.example.test", []composeContainer{ctr(appID, "x", file, dir, "False")}, nil, "0 varlatch-web containers"},
 		{"two", "https://vault.example.test", []composeContainer{web, web}, nil, "2 varlatch-web containers"},
 		{"no host", "x", []composeContainer{web}, nil, "has no host"},
 	} {
-		path, text, err := (&Compose{Directory: dir, Run: &scripted{t: t, host: &labelled{containers: c.containers}}}).RouteFile(t.Context(), c.origin)
+		answer := `{"name":"p","services":{}}`
+		switch {
+		case strings.Contains(c.name, "in the files"):
+			answer = `{"name":"p","services":{"varlatch-web":{"container_name":"varlatch-web-named"}}}`
+		case strings.Contains(c.name, "Compose's"):
+			answer = `{"name":"p","services":{"varlatch-web":{}}}`
+		}
+		cmp := &Compose{Directory: dir, Run: &scripted{t: t, host: &labelled{containers: c.containers}, answers: map[string]Ran{"docker compose config ": {Answer: []byte(answer)}}}}
+		cmp.KeepProject(&ComposeProject{Name: appID, Dir: dir, Files: []string{file}}, false)
+		path, text, err := cmp.RouteFile(t.Context(), c.origin, "mig_x")
 		if (err == nil) != (c.refused == "") || err != nil && !strings.Contains(err.Error(), c.refused) {
 			t.Errorf("%s: %v", c.name, err)
 		}
@@ -1071,5 +1366,130 @@ func TestCommandsByHandAreQuoted(t *testing.T) {
 	out, err := exec.Command("sh", "-c", "docker() { for a in \"$@\"; do printf '%s\\n' \"$a\"; done; }; "+said).Output()
 	if want := strings.Join([]string{"compose", "--project-name", "p", "--project-directory", dir, "-f", filepath.Join(dir, "a b.yml"), "up", "-d", "--no-deps", "x", ""}, "\n"); err != nil || string(out) != want {
 		t.Errorf("%s: %v\n%s\nwant\n%s", said, err, out, want)
+	}
+}
+
+// The dashboard resolves varlatchd once: whatever it resolved, a reverse
+// makes it again once the rebuilt varlatchd starts, in every shape, before
+// Caddy; a running one is restarted when varlatchd, or its sidecar, is
+// started elsewhere, a stopped one is not.
+func TestTheDashboardResolvesVarlatchdAgain(t *testing.T) {
+	const running = "docker compose ps --status running --services"
+	for kind, want := range map[Ingress][]string{
+		Coolify: {"up -d varlatchd", "up -d --no-deps --force-recreate varlatch-web"},
+		Proxy:   {"up -d varlatchd", "up -d --no-deps --force-recreate varlatch-web"},
+		Public:  {"up -d varlatchd", "up -d --no-deps --force-recreate varlatch-web", "ps -a -q caddy", "up -d --no-deps --force-recreate caddy"},
+	} {
+		run := &scripted{t: t, answers: map[string]Ran{"docker compose ": {}}}
+		if err := stockCompose(t, run).StartServing(t.Context(), kind); err != nil || strings.Join(run.ran, "|") != "docker compose "+strings.Join(want, "|docker compose ") {
+			t.Errorf("%s: %q %v", kind, run.ran, err)
+		}
+	}
+	for answer, want := range map[string]int{"postgres\nvarlatch-web\n": 1, "postgres\n": 0} {
+		run := &scripted{t: t, answers: map[string]Ran{running: {Answer: []byte(answer)}, "docker compose restart varlatch-web": {}}}
+		if err := stockCompose(t, run).refreshDashboard(t.Context()); err != nil || len(run.ran) != 1+want {
+			t.Errorf("%q: %q %v", answer, run.ran, err)
+		}
+	}
+}
+
+// The proof of the route, over HTTP: its header on an answer of the
+// installation, of another server, and of the proxy's own error.
+func TestProbeGate(t *testing.T) {
+	for _, c := range []struct {
+		status       int
+		header, body string
+		want         GateAnswer
+	}{
+		{503, "mig_x", `{"ready":false,"checks":{"maintenance":false},"state":"migrated-out"}`, GateAnswer{"mig_x", true, "migrated-out"}},
+		{503, "", `{"ready":false,"checks":{"maintenance":false},"state":"migrated-out"}`, GateAnswer{"", true, "migrated-out"}},
+		{502, "mig_x", `Bad Gateway`, GateAnswer{"mig_x", false, ""}},
+		{200, "", `{"ready":true}`, GateAnswer{"", true, ""}},
+		{200, "", `{"hello":1}`, GateAnswer{}},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/readyz" || r.Header.Get("Cache-Control") != "no-cache" {
+				t.Errorf("asked %s", r.URL.Path)
+			}
+			if c.header != "" {
+				w.Header().Set("X-Varlatch-Rollback", c.header)
+			}
+			w.WriteHeader(c.status)
+			_, _ = w.Write([]byte(c.body))
+		}))
+		if got, err := (HTTPProber{}).ProbeGate(t.Context(), srv.URL); err != nil || got != c.want {
+			t.Errorf("%d %q: %+v %v", c.status, c.body, got, err)
+		}
+		srv.Close()
+		if _, err := (HTTPProber{}).ProbeGate(t.Context(), srv.URL); err == nil {
+			t.Error("a server that is down answered")
+		}
+	}
+}
+
+// A container of other files: the message names it, and how it goes: a
+// one-off by its removal, another made again from the journal's files and
+// migrate's own.
+func TestAMismatchSaysHowItGoes(t *testing.T) {
+	dir := installationDir(t, map[string]string{"base.yml": "", "prod.yml": "", "other.yml": "", OverrideFile: "", ".env": "COMPOSE_FILE=base.yml:prod.yml:" + OverrideFile + "\n"})
+	at := func(name, svc, oneOff string, files ...string) composeContainer {
+		var abs []string
+		for _, f := range files {
+			abs = append(abs, filepath.Join(dir, f))
+		}
+		l := ctr("varlatch", svc, strings.Join(abs, ","), dir, oneOff)
+		l.name = name
+		return l
+	}
+	kept := &ComposeProject{Name: "varlatch", Dir: dir, Files: []string{filepath.Join(dir, "base.yml"), filepath.Join(dir, "prod.yml")}}
+	good := at("v-web-1", "varlatch-web", "False", "base.yml", "prod.yml")
+	again := "docker compose --project-name varlatch --project-directory " + dir + " -f " + dir + "/base.yml -f " + dir + "/prod.yml -f " + dir + "/" + OverrideFile + " up -d --no-deps --force-recreate postgres"
+	for _, c := range []struct {
+		name string
+		bad  composeContainer
+		want []string
+		not  string
+	}{
+		{"a one-off", at("v-postgres-run-1", "postgres", "True", "base.yml", "other.yml"), []string{"postgres (v-postgres-run-1)", "docker rm -f v-postgres-run-1"}, "--force-recreate"},
+		{"a service's", at("v-postgres-1", "postgres", "False", "base.yml", "other.yml"), []string{"postgres (v-postgres-1)", again}, "docker rm"},
+	} {
+		for _, order := range [][]composeContainer{{good, c.bad}, {c.bad, good}} {
+			// The journal's files, though .env names others now.
+			now := "base.yml:prod.yml:"
+			if !c.bad.isOneOff() {
+				now = "base.yml:other.yml:"
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("COMPOSE_FILE="+now+OverrideFile+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmp := &Compose{Directory: dir, Run: &scripted{t: t, host: &labelled{containers: order}}}
+			cmp.KeepProject(kept, true)
+			err := cmp.CheckProject(t.Context())
+			for _, w := range c.want {
+				if err == nil || !strings.Contains(err.Error(), w) {
+					t.Errorf("%s: %v, want %q", c.name, err, w)
+				}
+			}
+			if err != nil && strings.Contains(err.Error(), c.not) {
+				t.Errorf("%s: %v", c.name, err)
+			}
+		}
+	}
+}
+
+// What .env is said to name again, after a reverse, keeps migrate's own
+// file: without it the next up takes the containers off the fresh volumes.
+func TestTheFilesToRestoreKeepTheOverride(t *testing.T) {
+	for _, reversed := range []bool{false, true} {
+		dir := installationDir(t, map[string]string{"docker-compose.yml": "", "other.yml": "", OverrideFile: "", ".env": "COMPOSE_FILE=other.yml\n"})
+		files, want := filepath.Join(dir, "docker-compose.yml"), "set COMPOSE_FILE=docker-compose.yml in "
+		if reversed {
+			files, want = files+","+filepath.Join(dir, OverrideFile), "set COMPOSE_FILE=docker-compose.yml:"+OverrideFile+" in "
+		}
+		cmp := &Compose{Directory: dir, Run: &scripted{t: t, host: &labelled{containers: []composeContainer{ctr("varlatch", "postgres", files, dir, "False")}}}}
+		cmp.KeepProject(nil, true)
+		if err := cmp.CheckProject(t.Context()); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("reversed %v: %v", reversed, err)
+		}
 	}
 }

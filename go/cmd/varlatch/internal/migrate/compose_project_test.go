@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -91,6 +92,10 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 	}
 	return Ran{}, false
 }
+
+// stockVolumes are the stock installation's data volumes, as a journal
+// records them where the test has no containers to tell them by.
+var stockVolumes = []VolumeRecord{{Name: "varlatch_postgres-data"}, {Name: "varlatch_convex-data"}}
 
 func ctr(project, service, files, dir, oneOff string) composeContainer {
 	return composeContainer{project: project, service: service, files: files, dir: dir, oneOff: oneOff}
@@ -510,6 +515,15 @@ func TestReverseOverrideNames(t *testing.T) {
 	j := &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}}
 	plan := func(config []byte, dir string) RebuildRecord {
 		t.Helper()
+		cfg, err := parseConfig(Ran{Answer: config})
+		if err != nil {
+			t.Fatal(err)
+		}
+		names, err := (&Compose{}).dataNames(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		j.Source.Volumes = []VolumeRecord{{Name: names[0]}, {Name: names[1]}}
 		run := &scripted{t: t, answers: map[string]Ran{"docker compose config --no-interpolate --format json": {Answer: config}}}
 		p, err := (&Compose{Directory: dir, Run: run, resolved: testProject(dir)}).RebuildPlan(t.Context(), j)
 		if err != nil {
@@ -621,6 +635,26 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The same without a container to look at, by what was recorded; and,
+	// with nothing recorded, refused.
+	source := plan.Retained
+	docker(append(slices.Clone(named), "rm", "-sf")...)
+	bare := &Compose{Directory: dir, Run: x}
+	bare.KeepProject(&ComposeProject{Name: p.Name, Dir: p.Dir, Files: p.Files}, false)
+	again, err := bare.RebuildPlan(ctx, &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{Volumes: source, Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}})
+	if err != nil || !slices.Equal(again.Retained, source) {
+		t.Errorf("without containers: %+v %v, want %+v", again.Retained, err, source)
+	}
+	if _, err := bare.RebuildPlan(ctx, &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}}); err == nil || !strings.Contains(err.Error(), "does not record which volume") {
+		t.Errorf("without containers or a record: %v", err)
+	}
+	if data, _, err := bare.MountedVolumes(ctx, source); err != nil || !slices.Equal(data, source) {
+		t.Errorf("--finish without containers: %+v %v", data, err)
+	}
+	if _, text, err := bare.RouteFile(ctx, "https://vault.example.test", "mig_x"); err == nil || !strings.Contains(err.Error(), "varlatch-web") {
+		t.Errorf("a route to a dashboard the files do not have: %s %v", text, err)
+	}
+	docker(append(slices.Clone(named), "create", "--pull", "never")...)
 	for i, v := range []string{"postgres-data", "convex-data"} {
 		if r := plan.Retained[i]; r.Name != project+"_"+v || r.Project != project || r.CreatedAt == "" {
 			t.Errorf("retained: %+v", r)
@@ -653,6 +687,21 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	docker(append(slices.Clone(named), "-f", filepath.Join(dir, OverrideFile), "up", "-d", "--no-deps", "convex-backend")...)
 	if err := c.CheckRebuilt(ctx, plan, true); err != nil {
 		t.Errorf("rebuilt, Convex too: %v", err)
+	}
+	// The containers gone (a prune): known by the journal, the files and
+	// the volumes alone; made again where they were.
+	journalled := &Compose{Directory: dir, Run: x}
+	journalled.KeepProject(&ComposeProject{Name: p.Name, Dir: p.Dir, Files: p.Files}, true)
+	docker(append(slices.Clone(named), "-f", filepath.Join(dir, OverrideFile), "rm", "-sf")...)
+	if err := journalled.CheckProject(ctx); err != nil {
+		t.Errorf("the project without containers: %v", err)
+	}
+	if err := journalled.CheckRebuilt(ctx, plan, true); err == nil || !strings.Contains(err.Error(), "0 postgres containers") || !strings.Contains(err.Error(), "up -d --no-deps postgres convex-backend") {
+		t.Errorf("rebuilt, without containers: %v", err)
+	}
+	docker(append(slices.Clone(named), "-f", filepath.Join(dir, OverrideFile), "up", "-d", "--no-deps", "postgres", "convex-backend", service)...)
+	if err := journalled.CheckRebuilt(ctx, plan, true); err != nil {
+		t.Errorf("made again: %v", err)
 	}
 	// Deployed again from the orchestrator's own file, .env without
 	// COMPOSE_FILE: on the retained volumes, refused; refused too once .env
@@ -726,7 +775,7 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	// A forward --finish: what the containers mount, held against the
 	// files; another name in them since (the containers as they were) is
 	// refused, before and after they are down, and neither is removed.
-	data, others, err := c.MountedVolumes(ctx)
+	data, others, err := c.MountedVolumes(ctx, nil)
 	if err != nil || data[0].Name != plan.Volumes[0] || data[1].Name != plan.Volumes[1] || len(others) != 1 || others[0].Name != project+"_"+stateKey {
 		t.Fatalf("mounted: %+v %+v %v", data, others, err)
 	}
@@ -741,7 +790,7 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	if err := c.CheckData(ctx, Public, nil, data, none); err == nil || !strings.Contains(err.Error(), project+"_unrelated") {
 		t.Errorf("a name changed since: %v", err)
 	}
-	if _, _, err := c.MountedVolumes(ctx); err == nil || !strings.Contains(err.Error(), project+"_unrelated") {
+	if _, _, err := c.MountedVolumes(ctx, nil); err == nil || !strings.Contains(err.Error(), project+"_unrelated") {
 		t.Errorf("a name changed before: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, OverrideFile), text, 0o600); err != nil {
@@ -933,7 +982,8 @@ func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 type reverseFake struct {
 	*fakeSource
 	checkErr, importErr error
-	makeErr             error
+	makeErr, imagesErr  error
+	planErr             error
 	// check, when set, answers instead of checkErr.
 	check func() error
 	did   []string
@@ -942,6 +992,9 @@ type reverseFake struct {
 func (r *reverseFake) do(what string) { r.did = append(r.did, what) }
 
 func (r *reverseFake) RebuildPlan(context.Context, *Journal) (RebuildRecord, error) {
+	if r.planErr != nil {
+		return RebuildRecord{}, r.planErr
+	}
 	return RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, nil
 }
 func (r *reverseFake) MakeVolumes(_ context.Context, p RebuildRecord) ([]VolumeRecord, error) {
@@ -976,6 +1029,16 @@ func (r *reverseFake) StopServing(context.Context, Ingress) error  { r.do("stop 
 func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord) error {
 	r.do("undo " + p.Volumes[0])
 	return nil
+}
+func (r *reverseFake) ServeGated(_ context.Context, owned bool) error {
+	r.do(fmt.Sprintf("serve gated, the sidecar %v", owned))
+	return nil
+}
+func (r *reverseFake) EnsureImages(context.Context, *Journal) error {
+	if r.imagesErr != nil {
+		r.do("images")
+	}
+	return r.imagesErr
 }
 func (r *reverseFake) ReverseReady(context.Context) error      { return nil }
 func (r *reverseFake) StartNetworkOwner(context.Context) error { return nil }

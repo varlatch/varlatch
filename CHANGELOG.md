@@ -87,7 +87,15 @@ fixes.
   application both containers answered for it, at random. The migration now
   stops the TypeScript dashboard's container for the transfer, and starts it
   again when it is undone. `--rollback` begins only once a route you put in
-  Coolify's proxy, which it prints, reaches the TypeScript installation.
+  Coolify's proxy, which it prints, reaches the TypeScript installation, and
+  starts what answers behind it first, the old Tailscale sidecar included.
+- **`varlatch migrate --rollback` with the old containers or images gone.**
+  It pulls the images it needs before anything is done, and makes the
+  containers again from the journal, the Compose files and the volumes the
+  migration now records when it begins; another volume is refused.
+- **`varlatch migrate --rollback` makes the dashboard again** once the
+  rebuilt server starts. Its nginx resolves the server's address once, and
+  one that kept running could answer 502 when the address had changed.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own
   fresh install included, with "varlatch is installed with Homebrew; update

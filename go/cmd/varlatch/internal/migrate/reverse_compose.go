@@ -91,6 +91,14 @@ type ReverseSource interface {
 	// one-off commands could not start (varlatchd in a stopped sidecar's
 	// network), before anything of it is done.
 	ReverseReady(ctx context.Context) error
+	// ServeGated starts what answers for the source behind its migrated-out
+	// gate: the service varlatchd shares its network with when owned (a
+	// sidecar migrate itself stopped), Postgres and varlatchd, without
+	// their dependencies.
+	ServeGated(ctx context.Context, owned bool) error
+	// EnsureImages has the images the reverse starts on this host, pulling
+	// those that are not: before Go's barrier, never in the downtime.
+	EnsureImages(ctx context.Context, j *Journal) error
 	// StartNetworkOwner starts the service varlatchd shares its network
 	// with (network_mode: service:<it>) when it is not running; nothing
 	// otherwise. Only for a sidecar migrate itself stopped (sidecarOwned).
@@ -111,10 +119,12 @@ func (c *Compose) projectName(ctx context.Context) (string, error) {
 type composeConfig struct {
 	Name     string `json:"name"`
 	Services map[string]struct {
-		NetworkMode string          `json:"network_mode"`
-		Environment composeEnv      `json:"environment"`
-		Volumes     []composeVolume `json:"volumes"`
-		Networks    composeNetworks `json:"networks"`
+		// ContainerName is uninterpolated ("" for Compose's own name).
+		ContainerName string          `json:"container_name"`
+		NetworkMode   string          `json:"network_mode"`
+		Environment   composeEnv      `json:"environment"`
+		Volumes       []composeVolume `json:"volumes"`
+		Networks      composeNetworks `json:"networks"`
 	} `json:"services"`
 	Volumes map[string]struct {
 		Name string `json:"name"`
@@ -341,36 +351,61 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 		// A second reverse's: the first's file is in use now.
 		plan.OverrideWas = plan.Override + ".before-" + short
 	}
-	plan.Retained, err = c.retained(ctx, cfg, keys)
+	plan.Retained, err = c.retained(ctx, cfg, keys, j.Source.Volumes)
 	return plan, err
 }
 
 // retained are the volumes the Postgres and Convex services are on now,
-// one for each: what their containers mount (which the Compose files must
-// give them too), else what the Compose files give them. One that is not
-// there, or that does not carry the project's label, is no obstacle to the
-// reverse: --finish then refuses to remove it.
-func (c *Compose) retained(ctx context.Context, cfg composeConfig, keys []string) ([]VolumeRecord, error) {
+// one for each, as installed gives them: their containers', as the Compose
+// files name them, and the ones the migration read (recorded). Without
+// containers, the recorded ones. One that is not there, or that does not
+// carry the project's label, is no obstacle to the reverse: --finish then
+// refuses to remove it.
+func (c *Compose) retained(ctx context.Context, cfg composeConfig, keys []string, recorded []VolumeRecord) ([]VolumeRecord, error) {
 	p, all, err := c.verified(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var out []VolumeRecord
 	for i, d := range dataMounts {
-		name := cfg.volumeName(keys[i])
-		if _, err := mountedAs(p, all, d.service, d.target, name); err != nil {
-			return nil, err
-		}
-		v, err := c.volume(ctx, name)
+		v, err := c.installed(ctx, p, all, d.service, d.target, cfg.volumeName(keys[i]), i, recorded)
 		if err != nil {
 			return nil, err
 		}
-		if v == nil {
-			v = &VolumeRecord{Name: name}
-		}
-		out = append(out, *v)
+		out = append(out, v)
 	}
 	return out, nil
+}
+
+// installed is the volume a data service is on: the one the Compose files
+// name, which its container, when it has one, mounts, and which is the very
+// volume the migration's journal recorded, when it did. Neither a container
+// nor a record: which one it is is not known. One the files name that is
+// not there is given by its name only.
+func (c *Compose) installed(ctx context.Context, p *ComposeProject, all []composeContainer, svc, target, name string, i int, recorded []VolumeRecord) (VolumeRecord, error) {
+	live, err := mountedAs(p, all, svc, target, name)
+	if err != nil {
+		return VolumeRecord{}, err
+	}
+	v, err := c.volume(ctx, name)
+	if err != nil {
+		return VolumeRecord{}, err
+	}
+	if len(recorded) == len(dataMounts) {
+		switch {
+		case recorded[i].Name != name:
+			return VolumeRecord{}, fmt.Errorf("the Compose files give %s the volume %s, and the migration read the installation on %s: which volume is the installation's is not known", svc, name, recorded[i].Name)
+		case v != nil && v.differs(recorded[i]) != "":
+			return VolumeRecord{}, fmt.Errorf("the volume %s is not the one the migration read (%s): which volume is the installation's is not known", name, v.differs(recorded[i]))
+		}
+	} else if !live {
+		return VolumeRecord{}, fmt.Errorf("the installation has no %s container, and the journal does not record which volume it ran on (the Compose files name %s): "+
+			"make it again (%s), check the installation's data is on it, and run this again", svc, name, c.byHand("up --no-start --no-deps "+svc))
+	}
+	if v == nil {
+		return VolumeRecord{Name: name}, nil
+	}
+	return *v, nil
 }
 
 // mountedAs refuses a service whose containers are not on the volume its
@@ -562,8 +597,9 @@ const routePath = "/data/coolify/proxy/dynamic/varlatch-rollback.yaml"
 // RouteFile: a Traefik router for the origin's host, above those the
 // containers' labels give, to the dashboard's container by its name (which
 // it keeps while it is not deployed again), with the certificate the
-// proxy's resolver has for the host.
-func (c *Compose) RouteFile(ctx context.Context, origin string) (string, string, error) {
+// proxy's resolver has for the host, and routeHeader on each answer
+// (Traefik 3.6 puts it on its own 502 too, the container stopped or gone).
+func (c *Compose) RouteFile(ctx context.Context, origin, id string) (string, string, error) {
 	p, all, err := c.verified(ctx)
 	if err != nil {
 		return "", "", err
@@ -572,6 +608,18 @@ func (c *Compose) RouteFile(ctx context.Context, origin string) (string, string,
 	for _, l := range all {
 		if l.project == p.Name && l.service == dashboardService && !l.isOneOff() {
 			names = append(names, l.name)
+		}
+	}
+	if len(names) == 0 {
+		// Its container is gone: the name `up` makes it under.
+		cfg, err := c.config(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		if svc, ok := cfg.Services[dashboardService]; ok && svc.ContainerName != "" {
+			names = []string{svc.ContainerName}
+		} else if ok {
+			names = []string{p.Name + "-" + dashboardService + "-1"}
 		}
 	}
 	if len(names) != 1 || names[0] == "" {
@@ -585,7 +633,8 @@ func (c *Compose) RouteFile(ctx context.Context, origin string) (string, string,
 	if u.Scheme == "https" {
 		entry, tls = "https", "      tls:\n        certResolver: letsencrypt\n"
 	}
-	return routePath, "http:\n  routers:\n    varlatch-rollback:\n      rule: \"Host(`" + u.Hostname() + "`)\"\n      entryPoints: [" + entry + "]\n      priority: 100000\n      service: varlatch-rollback\n" + tls +
+	return routePath, "http:\n  routers:\n    varlatch-rollback:\n      rule: \"Host(`" + u.Hostname() + "`)\"\n      entryPoints: [" + entry + "]\n      priority: 100000\n      service: varlatch-rollback\n      middlewares: [varlatch-rollback]\n" + tls +
+		"  middlewares:\n    varlatch-rollback:\n      headers:\n        customResponseHeaders:\n          " + routeHeader + ": \"" + id + "\"\n" +
 		"  services:\n    varlatch-rollback:\n      loadBalancer:\n        servers:\n          - url: \"http://" + names[0] + ":80\"\n", nil
 }
 
@@ -844,13 +893,31 @@ func (c *Compose) ExportForCheck(ctx context.Context, runKey []byte) (string, er
 	return c.export(ctx, runKey, true, oneOff)
 }
 
-// StartServing: varlatchd up, then the shape's ingress (Caddy, or the
-// dashboard an own proxy or Coolify's targets).
+// StartServing: varlatchd up, the dashboard made again, then Caddy where it
+// serves the address. The dashboard's nginx resolves varlatchd once, at its
+// start, and the rebuild gave varlatchd's container (or its sidecar's) a
+// new address, or may have: always made again, whatever it resolved.
 func (c *Compose) StartServing(ctx context.Context, kind Ingress) error {
 	if err := c.compose(ctx, "docker compose up -d varlatchd", "up", "-d", service); err != nil {
 		return err
 	}
+	if err := c.compose(ctx, "docker compose up -d --no-deps --force-recreate "+dashboardService, "up", "-d", "--no-deps", "--force-recreate", dashboardService); err != nil {
+		return err
+	}
+	if kind != Public {
+		return nil
+	}
 	return c.StartIngress(ctx, kind, false)
+}
+
+// refreshDashboard restarts a running dashboard, so that it resolves
+// varlatchd again (StartServing).
+func (c *Compose) refreshDashboard(ctx context.Context) error {
+	running, err := c.running(ctx)
+	if err != nil || !slices.Contains(running, dashboardService) {
+		return err
+	}
+	return c.compose(ctx, "docker compose restart "+dashboardService, "restart", dashboardService)
 }
 
 // StopServing: the shape's ingress, then varlatchd.
@@ -958,7 +1025,10 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 	// behind the migrated-out marker, so varlatchd would not start. Its
 	// own volume's schema is current already, Postgres was started above,
 	// and varlatchd restarts (unless-stopped) until Postgres answers.
-	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
+	if err := c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service); err != nil {
+		return err
+	}
+	return c.refreshDashboard(ctx)
 }
 
 // networkOwnerRunning refuses, with the step to take, when varlatchd runs
@@ -995,29 +1065,100 @@ func (c *Compose) ReverseReady(ctx context.Context) error {
 	return c.networkOwnerRunning(ctx, "varlatch migrate --rollback again")
 }
 
-// StartNetworkOwner: `docker compose start <owner>` when varlatchd runs in
-// another service's network and that service is not running. The reverse
-// of a migration whose tailnet handoff stopped the sidecar at the switch
-// starts it so (the old node, under its temporary name: the name stays
-// with Go's node until the reverse's own handoff), as StartTailnet does,
-// without restarting varlatchd.
+// StartNetworkOwner starts the service varlatchd shares its network with,
+// when it is not running (startOwner). The reverse of a migration whose
+// tailnet handoff stopped the sidecar at the switch starts it so (the old
+// node, under its temporary name: the name stays with Go's node until the
+// reverse's own handoff), as StartTailnet does, without restarting
+// varlatchd.
 func (c *Compose) StartNetworkOwner(ctx context.Context) error {
+	_, _, err := c.startNetworkOwner(ctx)
+	return err
+}
+
+func (c *Compose) startNetworkOwner(ctx context.Context) (started, made bool, err error) {
 	cfg, err := c.config(ctx)
 	if err != nil {
-		return err
+		return false, false, err
 	}
 	owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:")
 	if !ok {
-		return nil
+		return false, false, nil
 	}
+	running, err := c.running(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	if slices.Contains(running, owner) {
+		return false, false, nil
+	}
+	made, err = c.startOwner(ctx, owner)
+	return true, made, err
+}
+
+// ServeGated: Postgres as it is (or made again), the network's owner, then
+// varlatchd in its network.
+func (c *Compose) ServeGated(ctx context.Context, owned bool) error {
 	running, err := c.running(ctx)
 	if err != nil {
 		return err
 	}
-	if slices.Contains(running, owner) {
+	if !slices.Contains(running, "postgres") {
+		if err := c.compose(ctx, "docker compose up -d --no-deps postgres", "up", "-d", "--no-deps", "--no-recreate", "postgres"); err != nil {
+			return err
+		}
+	}
+	if !owned {
+		// Its own network, or the operator's sidecar (ReverseReady).
+		if slices.Contains(running, service) {
+			return nil
+		}
+		return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
+	}
+	started, made, err := c.startNetworkOwner(ctx)
+	if err != nil {
+		return err
+	}
+	if !started && slices.Contains(running, service) {
 		return nil
 	}
-	return c.compose(ctx, "docker compose start "+owner, "start", owner)
+	return c.restartDaemon(ctx, made)
+}
+
+// EnsureImages: the images the Compose files give their services, and the
+// release's own for the import.
+func (c *Compose) EnsureImages(ctx context.Context, j *Journal) error {
+	// Every service's, convex-deploy's (a profile's in the stock files) too.
+	args := []string{"compose", "--profile", "deploy", "config", "--images"}
+	r, err := c.docker(ctx, args, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		// Its output is not said: the files are interpolated with .env.
+		return fmt.Errorf("docker compose config --images failed (exit %d): the images the reverse needs are not known", r.Code)
+	}
+	images := append(strings.Fields(string(r.Answer)), j.Source.DigestRepository+"@"+j.Source.Digest)
+	slices.Sort(images)
+	for _, img := range slices.Compact(images) {
+		r, err := c.docker(ctx, []string{"image", "inspect", "--format", "{{.Id}}", img}, nil)
+		if err != nil {
+			return err
+		}
+		if r.Code == 0 {
+			continue
+		}
+		if r, err = c.docker(ctx, []string{"pull", "-q", img}, nil); err != nil {
+			return err
+		}
+		if r.Code != 0 {
+			// Said in parts, as pinned does (the fail-safe reads what comes
+			// before an "@" as possible credentials).
+			repo, digest, _ := strings.Cut(img, "@")
+			return fmt.Errorf("the image %s %s is not on this host and could not be pulled (exit %d): pull it, then varlatch migrate --rollback again", repo, digest, r.Code)
+		}
+	}
+	return nil
 }
 
 // gateOffline is the installation's gate, read in a one-off container.

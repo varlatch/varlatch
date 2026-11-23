@@ -150,14 +150,30 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("removing what an interrupted run left: %w", err)
 	}
 	e.cleanReverseScratch()
+	// What the rebuild would stand on, told before Go's barrier (it is read
+	// again after it).
+	if _, err := rs.RebuildPlan(ctx, j); err != nil {
+		return j, fmt.Errorf("%w; nothing was done", err)
+	}
+	// Its images may be gone by now (a prune, over a window of weeks).
+	if err := rs.EnsureImages(ctx, j); err != nil {
+		return j, fmt.Errorf("%w; nothing was done", err)
+	}
 	if j.Ingress == Coolify {
-		if err := e.routeBack(ctx, j); err != nil {
+		if err := e.askRoute(ctx, j); err != nil {
 			return j, err
 		}
 	}
+	// Journalled before anything starts: a kill from here is undone.
 	j.Rollback = &RollbackRecord{StartedAt: e.now().UTC().Format(time.RFC3339Nano)}
 	if err := e.enter(ctx, j, Rollback); err != nil {
 		return j, err
+	}
+	if j.Ingress == Coolify {
+		if err := e.checkRoute(ctx, j, rs); err != nil {
+			return j, e.undoReverse(ctx, j, err)
+		}
+		crashPoint("rollback route checked")
 	}
 	return j, e.reverse(ctx, j)
 }
@@ -167,55 +183,90 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 type routedSource interface {
 	// RouteFile is the proxy's file that routes origin to the source's
 	// dashboard, whatever the containers' labels say: where it goes, and
-	// its text.
-	RouteFile(ctx context.Context, origin string) (path, text string, err error)
+	// its text. An answer through it bears routeHeader with id.
+	RouteFile(ctx context.Context, origin, id string) (path, text string, err error)
 }
 
-// routeBack is the Coolify shape's way back, held to work before anything
-// of a reverse is done. Coolify's domain setting changes no container until
+// askRoute and checkRoute are the Coolify shape's way back, held to work
+// before Go's barrier. Coolify's domain setting changes no container until
 // one is made again, and the TypeScript application's must not be: so the
 // operator puts a route of their own in the proxy, above the containers'
-// labels, to the TypeScript dashboard. Without it, migrate says it and
-// stops (exit 75), the migration still open. With it, the name must reach
-// the TypeScript installation, migrated out as the forward migration left
-// it, through its dashboard.
-func (e *Engine) routeBack(ctx context.Context, j *Journal) error {
-	rs, ok := e.Source.(routedSource)
-	gp, ok2 := e.Prober.(GateProber)
-	if !ok || !ok2 {
-		return errors.New("the address's way back to this source cannot be checked: nothing was done")
-	}
-	path, text, err := rs.RouteFile(ctx, originOf(j))
+// labels, to the TypeScript dashboard. Without it, askRoute says it and
+// stops (exit 75), the migration still open. With it, checkRoute starts
+// what answers behind the dashboard, and the name must reach the
+// TypeScript installation, migrated out as the forward migration left it.
+func (e *Engine) askRoute(ctx context.Context, j *Journal) error {
+	path, text, gp, err := e.route(ctx, j)
 	if err != nil {
 		return fmt.Errorf("%w; nothing was done", err)
 	}
 	ask := func(why string) error {
 		e.say("Address back, by hand, before the reverse begins (%s): do not Deploy, Restart or Stop the TypeScript application in Coolify (it would make its containers again, from its own Compose file, on the volumes from before the migration). "+
 			"Put this in the proxy, as %s on the host (or in Coolify: the server's Proxy, Dynamic Configurations). It routes the name to the TypeScript dashboard, above the containers' own routers, at once; the address does not answer from Go from then on:\n%s"+
-			"Then run varlatch migrate --rollback again: it starts the dashboard, and checks the name reaches the TypeScript installation, before anything is done. To leave it: remove the file, and Go serves the address as before.", why, path, text)
+			"Then run varlatch migrate --rollback again: it starts the dashboard, and checks the name reaches the TypeScript installation, before Go's barrier. To leave it: remove the file, and Go serves the address as before.", why, path, text)
 		return ErrAwaitingOperator
 	}
 	// With its dashboard stopped, whatever answers is not the TypeScript
-	// installation.
+	// installation, and the proxy's own error through the route bears its
+	// header too.
 	if err := e.Source.StopIngress(ctx, Coolify); err != nil {
 		return fmt.Errorf("stopping the source's dashboard: %w; nothing was done", err)
 	}
-	if id, version, err := e.Prober.Probe(ctx, originOf(j)); err == nil {
-		return ask(fmt.Sprintf("the address answers as the installation %s, release %s", orNone(id), orNone(version)))
+	sleep := e.sleep
+	if sleep == nil {
+		sleep = time.Sleep
 	}
-	if state, err := gp.ProbeGate(ctx, originOf(j)); err == nil {
-		return ask("the address answers from a Varlatch server in the state " + orWord(state, "ready"))
+	// An address that does not answer at all is asked again; one that
+	// answers without the route's header has no route, whoever answers.
+	deadline := e.now().Add(askRouteWait)
+	for {
+		a, err := gp.ProbeGate(ctx, originOf(j))
+		switch {
+		case err == nil && a.Route == j.ID:
+			return nil
+		case err == nil && a.Route != "":
+			return ask("the address answers by another migration's route, " + a.Route)
+		case err == nil:
+			return ask(fmt.Sprintf("the address answers by no route of this migration: %s", a))
+		case !e.now().Before(deadline):
+			return fmt.Errorf("%s does not answer (%v), so whether the name is routed back is not known; nothing was done", originOf(j), err)
+		}
+		sleep(time.Second)
+	}
+}
+
+// askRouteWait is how long askRoute waits for any answer.
+const askRouteWait = 10 * time.Second
+
+func (e *Engine) route(ctx context.Context, j *Journal) (path, text string, gp GateProber, err error) {
+	rs, ok := e.Source.(routedSource)
+	gp, ok2 := e.Prober.(GateProber)
+	if !ok || !ok2 {
+		return "", "", nil, errors.New("the address's way back to this source cannot be checked")
+	}
+	path, text, err = rs.RouteFile(ctx, originOf(j), j.ID)
+	return path, text, gp, err
+}
+
+func (e *Engine) checkRoute(ctx context.Context, j *Journal, rs ReverseSource) error {
+	path, text, gp, err := e.route(ctx, j)
+	if err != nil {
+		return err
 	}
 	e.say("The address is routed away from Go: the TypeScript dashboard starts, behind its migrated-out gate.")
-	err = e.Source.StartIngress(ctx, Coolify, false)
-	if err == nil {
-		err = e.waitForGate(ctx, gp, j)
+	owned := sidecarOwned(j)
+	if owned {
+		e.say("Tailnet: the TypeScript release's sidecar starts with it (its old node, under its temporary name; the name stays with Go's node until the transfer).")
 	}
-	if err != nil {
-		if serr := e.Source.StopIngress(ctx, Coolify); serr != nil {
-			err = fmt.Errorf("%w; stopping the dashboard again: %v", err, serr)
-		}
-		return fmt.Errorf("%w; nothing was done: check %s names the dashboard's container (its text is below), then varlatch migrate --rollback again; or remove it, and Go serves the address as before:\n%s", err, path, text)
+	if err := rs.ServeGated(ctx, owned); err != nil {
+		return fmt.Errorf("starting the TypeScript installation behind its gate: %w", err)
+	}
+	// Made again, not only started: it resolves varlatchd once.
+	if err := e.Source.StartIngress(ctx, Coolify, true); err != nil {
+		return fmt.Errorf("starting the TypeScript dashboard: %w", err)
+	}
+	if err := e.waitForGate(ctx, gp, j); err != nil {
+		return fmt.Errorf("%w; check %s names the dashboard's container (its text is below), then varlatch migrate --rollback again; or remove it, and Go serves the address as before:\n%s", err, path, text)
 	}
 	return nil
 }
@@ -233,13 +284,15 @@ func (e *Engine) waitForGate(ctx context.Context, gp GateProber, j *Journal) err
 	}
 	deadline := e.now().Add(timeout)
 	for {
-		state, err := gp.ProbeGate(ctx, originOf(j))
+		a, err := gp.ProbeGate(ctx, originOf(j))
 		switch {
-		case err == nil && state == "migrated-out":
-			e.say("The name reaches the TypeScript installation, migrated out: the way back works.")
+		case err == nil && a.Route == j.ID && a.State == "migrated-out":
+			e.say("The name reaches the TypeScript installation, migrated out, by the operator's route: the way back works.")
 			return nil
+		case err == nil && a.Route != j.ID:
+			err = fmt.Errorf("it answers by another route: %s", a)
 		case err == nil:
-			err = fmt.Errorf("it answers in the state %s, not migrated-out", orWord(state, "ready"))
+			err = fmt.Errorf("the route answers: %s", a)
 		}
 		if !e.now().Before(deadline) {
 			return fmt.Errorf("%s did not reach the TypeScript installation through its dashboard within %s: %v", originOf(j), timeout, err)
@@ -640,7 +693,7 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		if err := e.Source.StopIngress(ctx, Coolify); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release's dashboard: %w", err))
 		}
-		e.say("The address goes back by hand: remove the route put in the proxy before the reverse; Go's container routes %s itself.", originOf(j))
+		e.say("The address goes back by hand: remove the route put in the proxy before the reverse, then check that %s/v1/meta answers from Go (its container routes it itself; migrate does not check it here).", originOf(j))
 	}
 	if j.Rollback.Rebuild != nil {
 		// A sidecar the forward handoff stopped is started for the undo's
@@ -690,6 +743,9 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	j.Rollback.Undone.Released = true
 	if err := writeJournal(e.Source.Dir(), j); err != nil {
 		return fmt.Errorf("%w; the reverse was undone and Go's barrier lifted, but the journal could not record it: %v; varlatch migrate --resume records it", cause, err)
+	}
+	if j.Ingress == Coolify {
+		return fmt.Errorf("%w; the reverse was undone: Go runs and takes requests again, and the address reaches it once the route is out of the proxy; the TypeScript installation is as the migration left it", cause)
 	}
 	return fmt.Errorf("%w; the reverse was undone: Go serves again, the TypeScript installation is as the migration left it", cause)
 }

@@ -224,10 +224,41 @@ func fakeDockerReverse(args []string) (int, bool) {
 		// does not start (run r8 of the 7.8b rehearsal).
 		return fail("Migration refused during installation maintenance\nOperator command failed; check configuration and maintenance status.\n" +
 			"service \"varlatch-migrate\" didn't complete successfully: exit 1")
+	case len(args) == 3 && args[0] == "compose" && args[1] == "restart" && args[2] != "tailscale":
+		if containerGone(args[2]) {
+			return fail("no container to restart: %s", args[2])
+		}
+		if err := setStopped(args[2], false); err != nil {
+			return fail("%v", err)
+		}
+		return okOr(readdress(args[2])), true
+	case j == "compose --profile deploy config --images":
+		fmt.Println("postgres:17.6\nghcr.io/x/varlatch-web@sha256:bb\npostgres:17.6")
+		return 0, true
+	case len(args) == 5 && args[0] == "image" && args[1] == "inspect" && args[3] == "{{.Id}}":
+		if _, err := os.Stat(state("images-gone")); err == nil {
+			return fail("Error response from daemon: No such image: %s", args[4])
+		}
+		fmt.Println("sha256:x")
+		return 0, true
+	case len(args) == 3 && args[0] == "pull" && args[1] == "-q":
+		if _, err := os.Stat(state("pull-fails")); err == nil {
+			return fail("Error response from daemon: denied")
+		}
+		return 0, true
+	case len(args) == 3 && args[0] == "compose" && args[1] == "start" && containerGone(args[2]):
+		// As Compose: nothing to start, exit 0.
+		fmt.Fprintf(os.Stderr, "service %q has no container to start\n", args[2])
+		return 0, true
 	case len(args) >= 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start"):
 		for _, svc := range args[2:] {
 			if err := setStopped(svc, args[1] == "stop"); err != nil {
 				return fail("%v", err)
+			}
+			if args[1] == "start" {
+				if err := readdress(svc); err != nil {
+					return fail("%v", err)
+				}
 			}
 			// `start` reuses the stopped container: one a failed start
 			// left without a network (web-netless) stays so.
@@ -256,8 +287,15 @@ func fakeDockerReverse(args []string) (int, bool) {
 					}
 				}
 			}
+			// A container that runs, and did not change, is left as it is.
+			again := stopped(svc) || slices.Contains(args, "--force-recreate") || svc == "varlatchd"
 			if err := setStopped(svc, false); err != nil {
 				return fail("%v", err)
+			}
+			if again {
+				if err := readdress(svc); err != nil {
+					return fail("%v", err)
+				}
 			}
 			if slices.Contains(args, "--force-recreate") {
 				// A new container: its network attached again, its crash
@@ -1020,8 +1058,8 @@ func TestG5RollbackCoolify(t *testing.T) {
 		before := len(w.calls("docker-calls"))
 		code := w.rollback("", "--rollback")
 		out := string(w.outputs[len(w.outputs)-1])
-		if code != 75 || !strings.Contains(out, "the address answers as the installation "+w.installationID) || !strings.Contains(out, "/data/coolify/proxy/dynamic/varlatch-rollback.yaml") ||
-			!strings.Contains(out, "url: \"http://g5-varlatch-web-1:80\"") || !strings.Contains(out, "do not Deploy, Restart or Stop the TypeScript application") {
+		if code != 75 || !strings.Contains(out, "the address answers by no route of this migration") || !strings.Contains(out, "/data/coolify/proxy/dynamic/varlatch-rollback.yaml") ||
+			!strings.Contains(out, "url: \"http://g5-varlatch-web-1:80\"") || !strings.Contains(out, "X-Varlatch-Rollback: \"mig_") || !strings.Contains(out, "do not Deploy, Restart or Stop the TypeScript application") {
 			t.Fatalf("--rollback without a route: %d\n%s", code, out)
 		}
 		for _, c := range w.calls("docker-calls")[before:] {

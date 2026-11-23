@@ -170,8 +170,8 @@ func (c *Compose) resolve(ctx context.Context, all []composeContainer) (*Compose
 		// they were made from: each is made from exactly ours, in order.
 		if files := c.own(labelPaths(l)); !sameFiles(files, p.Files) {
 			return nil, &ProjectChangedError{fmt.Sprintf("the Compose project %s has a %s container made from %s, and its files are %s: a command on the project would act on both; nothing was done. "+
-				"If it is the installation's own, make it again from the project's files (docker compose up -d --force-recreate %s, with them), in a maintenance moment, then run this again",
-				p.Name, orWord(l.service, "nameless"), orWord(strings.Join(files, ", "), "no file it names"), strings.Join(p.Files, ", "), orWord(l.service, "<service>"))}
+				"If it is the installation's own: %s, then run this again",
+				p.Name, l.called(), orWord(strings.Join(files, ", "), "no file it names"), strings.Join(p.Files, ", "), c.remake(l, p))}
 		}
 	}
 	for _, f := range p.Files {
@@ -180,6 +180,49 @@ func (c *Compose) resolve(ctx context.Context, all []composeContainer) (*Compose
 		}
 	}
 	return p, nil
+}
+
+// called is the container as a message names it.
+func (l composeContainer) called() string {
+	s := orWord(l.service, "nameless")
+	if l.name != "" {
+		s += " (" + l.name + ")"
+	}
+	return s
+}
+
+// remake is how a container of p is made from p's files (and migrate's own,
+// while .env names it), without its dependencies. A one-off's is not made
+// again by `up`: it is removed.
+func (c *Compose) remake(l composeContainer, p *ComposeProject) string {
+	if l.isOneOff() {
+		return "it is a one-off (docker compose run), which up does not make again: once nothing needs it, remove it (docker rm -f " + shellArgs([]string{orWord(l.name, "<its name>")}) + ")"
+	}
+	files, err := c.files(p)
+	if err != nil {
+		files = p.Files
+	}
+	return "in a maintenance moment, make it again from the project's files (docker " + shellArgs(append(c.globalArgs(p, files), "up", "-d", "--no-deps", "--force-recreate", orWord(l.service, "<service>"))) + ")"
+}
+
+// remakeAll is remake for those of containers that are not of the
+// installation's files: the journal's, else what Directory names.
+func (c *Compose) remakeAll(p *ComposeProject, containers []composeContainer) string {
+	want := c.kept
+	if want == nil {
+		own, err := c.ownFiles()
+		if err != nil {
+			return "The journal records no files, and " + c.Directory + " does not say which are the installation's: make the others again from them (docker compose up -d --no-deps --force-recreate <service>, with a -f for each), in a maintenance moment"
+		}
+		want = &ComposeProject{Name: p.Name, Dir: p.Dir, Files: own.files}
+	}
+	var out []string
+	for _, l := range containers {
+		if !sameFiles(c.own(labelPaths(l)), want.Files) {
+			out = append(out, l.called()+": "+c.remake(l, want))
+		}
+	}
+	return strings.Join(out, "; ")
 }
 
 func isFile(path string) bool {
@@ -255,7 +298,7 @@ func (c *Compose) liveProject(all []composeContainer) (*ComposeProject, error) {
 		p.Reversed = p.Reversed || len(files) < len(all)
 		if !sameFiles(files, p.Files) {
 			return nil, &ProjectChangedError{fmt.Sprintf("the containers of the Compose project %s were made from different files: %s from %s, %s from %s. Compose acts on both by the project's name, so it is not known which are the installation's. "+
-				"Make them again from the installation's files (docker compose up -d --force-recreate, with them), in a maintenance moment, then run this again", p.Name, here[0].service, strings.Join(p.Files, ", "), l.service, strings.Join(files, ", "))}
+				"%s, then run this again", p.Name, here[0].called(), strings.Join(p.Files, ", "), l.called(), strings.Join(files, ", "), c.remakeAll(p, here))}
 		}
 	}
 	own, err := c.ownFiles()
@@ -264,7 +307,7 @@ func (c *Compose) liveProject(all []composeContainer) (*ComposeProject, error) {
 	}
 	// What the directory and the shell say must be the same.
 	if own != nil && !sameFiles(own.files, p.Files) {
-		return nil, &ProjectChangedError{fmt.Sprintf("%s names the Compose files %s, but the containers of the project %s were made from %s. %s", own.from, strings.Join(own.files, ", "), p.Name, strings.Join(p.Files, ", "), c.restoreText(p.Files))}
+		return nil, &ProjectChangedError{fmt.Sprintf("%s names the Compose files %s, but the containers of the project %s were made from %s. %s", own.from, strings.Join(own.files, ", "), p.Name, strings.Join(p.Files, ", "), c.restoreText(p))}
 	}
 	if v, ok := c.shell("COMPOSE_FILE"); ok {
 		given, err := c.splitFiles(v)
@@ -293,8 +336,15 @@ func (c *Compose) liveProject(all []composeContainer) (*ComposeProject, error) {
 }
 
 // restoreText says how to make .env name files again without a container
-// being made again, and what does make them again.
-func (c *Compose) restoreText(files []string) string {
+// being made again, and what does make them again. migrate's own is among
+// them while the containers are on a reverse's fresh volumes.
+func (c *Compose) restoreText(p *ComposeProject) string {
+	files := p.Files
+	if p.Reversed {
+		// Without it, the next `up` takes the containers off a reverse's
+		// fresh volumes.
+		files = append(slices.Clone(files), filepath.Join(c.Directory, OverrideFile))
+	}
 	value, err := c.fileList(files)
 	if err != nil {
 		value = strings.Join(files, ":")

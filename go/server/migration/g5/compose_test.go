@@ -238,6 +238,46 @@ func containers() []container {
 	return out
 }
 
+// The dashboard's nginx resolves varlatchd once, at its start, and Docker
+// gives a container that starts an address it may not have had: each start
+// of varlatchd (of its sidecar, whose network it shares) is another, and a
+// dashboard that resolved an earlier one answers 502.
+func readdress(svc string) error {
+	owner := "varlatchd"
+	if sharedNamespace() {
+		owner = "tailscale"
+	}
+	switch svc {
+	case owner:
+		f, err := os.OpenFile(state("varlatchd-address"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.WriteString("+")
+		return err
+	case "varlatch-web":
+		b, _ := os.ReadFile(state("varlatchd-address"))
+		return os.WriteFile(state("web-upstream"), b, 0o600)
+	}
+	return nil
+}
+
+// staleUpstream is whether the dashboard holds an earlier address.
+func (w *world) staleUpstream() bool {
+	now, _ := os.ReadFile(filepath.Join(w.stateDir, "varlatchd-address"))
+	held, err := os.ReadFile(filepath.Join(w.stateDir, "web-upstream"))
+	if err != nil {
+		held = nil
+	}
+	return string(now) != string(held)
+}
+
+// containerGone is whether svc's container was removed (and not made again).
+func containerGone(svc string) bool {
+	return !slices.ContainsFunc(containers(), func(c container) bool { return c.service == svc })
+}
+
 // volumeUsers are the containers on a volume, running or not.
 func volumeUsers(name string) []string {
 	var out []string
@@ -322,6 +362,7 @@ func printConfig(more map[string]map[string]any) {
 		}
 		volumes[key] = map[string]any{"name": name}
 	}
+	services["varlatch-web"] = map[string]any{"container_name": "g5-varlatch-web-1"}
 	if s.Prefix != "" {
 		services["varlatch-migrate"] = map[string]any{"networks": map[string]any{s.Project: nil}}
 	}
@@ -390,9 +431,21 @@ func (w *world) recover(said string) {
 // domainToGo is the domain set on the Go application and that deployed.
 func (w *world) domainToGo() { w.flag("go-domain") }
 
-// routeBack is the operator's route to the dashboard in the proxy;
+// routeBack is the operator's route to the dashboard in the proxy, as
+// migrate says it for the journal's migration (its id on every answer);
 // routeAway removes it.
-func (w *world) routeBack() { w.flag("route-ts") }
+func (w *world) routeBack() {
+	w.t.Helper()
+	var j struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(mustRead(w.t, filepath.Join(w.compose, "migration.json")), &j); err != nil || j.ID == "" {
+		w.t.Fatalf("no migration to route back: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(w.stateDir, "route-ts"), []byte(j.ID), 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+}
 
 func (w *world) routeAway() {
 	w.t.Helper()
@@ -606,5 +659,152 @@ func TestG5AnotherInstallationOfTheProject(t *testing.T) {
 			res.Body.Close()
 		}
 		w.noSecrets()
+	}
+}
+
+// removeContainers removes every container of the installation, as a prune
+// or an orchestrator's Stop does: its volumes and its directory stay.
+func (w *world) removeContainers() {
+	w.t.Helper()
+	w.useState()
+	for _, svc := range []string{"varlatchd", "varlatch-web", "postgres", "convex-backend", "caddy", "tailscale"} {
+		if svc == "tailscale" && sidecarPID() > 0 {
+			if err := stopSidecar(); err != nil {
+				w.t.Fatal(err)
+			}
+		}
+		if err := setStopped(svc, true); err != nil {
+			w.t.Fatal(err)
+		}
+	}
+	w.flag("down")
+}
+
+// The old installation's containers, and its images, gone during the
+// window: the journal, the Compose files and the volumes are what it is
+// known by. --rollback makes it again and goes through, --resume undoes an
+// interrupted one, --finish --delete-old-data archives and removes the
+// recorded volumes; a volume that is not the recorded one is refused, as is
+// an image that cannot be pulled, each before anything is done.
+func TestG5ContainersGone(t *testing.T) {
+	for _, coolify := range []bool{false, true} {
+		name := map[bool]string{false: "stock", true: "coolify"}[coolify]
+		project := map[bool]string{false: "g5-installation", true: coolifyApp}[coolify]
+		gone := func(t *testing.T) *world {
+			w := migratedWorld(t, false, coolify)
+			w.removeContainers()
+			if coolify {
+				w.routeBack()
+			}
+			return w
+		}
+		refused := func(t *testing.T, w *world, why string) {
+			t.Helper()
+			before := len(w.calls("docker-calls"))
+			code := w.rollback("", "--rollback")
+			out := string(w.outputs[len(w.outputs)-1])
+			if code != 1 || !strings.Contains(out, why) || !strings.Contains(out, "nothing was done") {
+				t.Fatalf("--rollback: %d\n%s", code, out)
+			}
+			for _, c := range w.calls("docker-calls")[before:] {
+				for _, p := range []string{"compose up", "compose start", "compose stop", "compose run", "volume create", "volume rm"} {
+					if strings.HasPrefix(c, p) {
+						t.Errorf("ran %q", c)
+					}
+				}
+			}
+			if s, d := w.phases(); s != "open" || d != "open" || !w.goRuns() {
+				t.Errorf("the journals %s / %s, Go runs %v", s, d, w.goRuns())
+			}
+		}
+		t.Run(name+" rollback", func(t *testing.T) {
+			w := gone(t)
+			old := w.oldDB()
+			w.flag("images-gone")
+			if code := w.rollback("", "--rollback"); code != 0 {
+				t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			w.expectReverse("rolled back", rolledBackState)
+			calls := w.calls("docker-calls")
+			barrier, pulled := len(calls), slices.Index(calls, "pull -q ghcr.io/x/varlatch-web@sha256:bb")
+			for i, c := range calls {
+				if strings.HasPrefix(c, "volume create") {
+					barrier = min(barrier, i)
+				}
+			}
+			if pulled < 0 || pulled > barrier {
+				t.Errorf("the images were pulled at %d, the rebuild began at %d", pulled, barrier)
+			}
+			if w.oldDB() != old {
+				t.Error("the retained pre-migration database changed")
+			}
+			w.noSecrets()
+			// The retained volumes are the migration's: --finish removes them.
+			w.withRemote()
+			if code := w.finish("", "--delete-old-data"); code != 0 {
+				t.Fatalf("--finish --delete-old-data: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			if vols, _ := w.removed(); !slices.Equal(vols, []string{project + "_postgres-data", project + "_convex-data"}) {
+				t.Errorf("removed %v", vols)
+			}
+		})
+		t.Run(name+" refused", func(t *testing.T) {
+			w := gone(t)
+			w.flag("images-gone")
+			w.flag("pull-fails")
+			refused(t, w, "is not on this host and could not be pulled")
+			for _, f := range []string{"images-gone", "pull-fails"} {
+				if err := os.Remove(filepath.Join(w.stateDir, f)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			another := filepath.Join(w.stateDir, "another-"+project+"_postgres-data")
+			w.flag(filepath.Base(another))
+			refused(t, w, "is not the one the migration read")
+			if err := os.Remove(another); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(w.stateDir, "renamed-postgres"), []byte(project+"_other"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			refused(t, w, "and the migration read the installation on "+project+"_postgres-data")
+		})
+		for _, point := range []string{"entered rollback", "rollback rebuilt", "entered rollback-checked"} {
+			t.Run(name+" killed at "+point, func(t *testing.T) {
+				w := migratedWorld(t, false, coolify)
+				if coolify {
+					w.routeBack()
+				}
+				if code := w.rollback(point, "--rollback"); code != -1 {
+					t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.removeContainers()
+				if code := w.rollback("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone") {
+					t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				if coolify {
+					w.routeAway()
+				}
+				w.expectReverse("undone", undoneState)
+				w.noSecrets()
+			})
+		}
+		t.Run(name+" finish", func(t *testing.T) {
+			w := migratedWorld(t, false, coolify)
+			w.removeContainers()
+			code := w.finish("", "--delete-old-data")
+			out := string(w.outputs[len(w.outputs)-1])
+			if code != 0 || !slices.ContainsFunc(w.calls("ts-calls"), func(c string) bool { return strings.HasPrefix(c, "admin backup create") }) {
+				t.Fatalf("--finish --delete-old-data: %d\n%s", code, out)
+			}
+			vols, _ := w.removed()
+			if coolify {
+				if len(vols) != 0 || !strings.Contains(out, "open the TypeScript application") {
+					t.Errorf("removed %v\n%s", vols, out)
+				}
+			} else if !slices.Contains(vols, project+"_postgres-data") || !slices.Contains(vols, project+"_convex-data") {
+				t.Errorf("removed %v", vols)
+			}
+		})
 	}
 }

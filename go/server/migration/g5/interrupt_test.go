@@ -955,10 +955,13 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 		// Coolify's proxy: the operator's route, else whichever container's
 		// router there is (the dashboard's, while it runs).
 		switch {
-		case w.has("route-ts") && w.has("web-stopped"):
-			rw.WriteHeader(http.StatusBadGateway)
-			return
 		case w.has("route-ts"):
+			id, _ := os.ReadFile(filepath.Join(w.stateDir, "route-ts"))
+			rw.Header().Set("X-Varlatch-Rollback", string(id))
+			if w.has("web-stopped") || w.has("route-elsewhere") {
+				rw.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			toGo = false
 		case w.has("web-stopped") && !w.has("go-domain"):
 			rw.WriteHeader(http.StatusServiceUnavailable)
@@ -978,6 +981,11 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 	// A container a failed start left without a network (web-netless): its
 	// nginx cannot resolve varlatchd, 502 until it is recreated.
 	if _, err := os.Stat(filepath.Join(w.stateDir, "web-netless")); err == nil {
+		rw.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	// It resolved varlatchd before that started again: 502.
+	if w.staleUpstream() {
 		rw.WriteHeader(http.StatusBadGateway)
 		return
 	}

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,12 +80,57 @@ func (c *Compose) StopTailnet(ctx context.Context) error {
 
 // StartTailnet starts the sidecar, then restarts varlatchd, which shares
 // its network (a restart keeps the migration's barrier, which a start
-// never clears).
+// never clears), and a running dashboard, which resolved them before.
 func (c *Compose) StartTailnet(ctx context.Context) error {
-	if err := c.compose(ctx, "docker compose start tailscale", "start", tailscaleService); err != nil {
+	made, err := c.startOwner(ctx, tailscaleService)
+	if err != nil {
 		return err
 	}
-	return c.compose(ctx, "docker compose restart varlatchd", "restart", "varlatchd")
+	if err := c.restartDaemon(ctx, made); err != nil {
+		return err
+	}
+	return c.refreshDashboard(ctx)
+}
+
+// startOwner starts the service varlatchd shares its network with, without
+// its dependencies: its container, or a new one when it is gone (`docker
+// compose start` then does nothing, and exits 0). made is the latter.
+func (c *Compose) startOwner(ctx context.Context, owner string) (made bool, err error) {
+	has, err := c.hasContainer(ctx, owner)
+	if err != nil {
+		return false, err
+	}
+	if has {
+		return false, c.compose(ctx, "docker compose start "+owner, "start", owner)
+	}
+	return true, c.compose(ctx, "docker compose up -d --no-deps "+owner, "up", "-d", "--no-deps", owner)
+}
+
+// restartDaemon puts varlatchd in its network owner's network again, once
+// that started: a restart, or, when its container is gone or of an owner
+// that is (which a restart cannot join), `up --no-deps`, which makes it
+// again. Without its dependencies: the one-off varlatch-migrate refuses
+// behind a gate.
+func (c *Compose) restartDaemon(ctx context.Context, made bool) error {
+	has, err := c.hasContainer(ctx, service)
+	if err != nil {
+		return err
+	}
+	if has && !made {
+		return c.compose(ctx, "docker compose restart varlatchd", "restart", service)
+	}
+	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
+}
+
+// hasContainer is whether the service has a container, running or not.
+func (c *Compose) hasContainer(ctx context.Context, svc string) (bool, error) {
+	p, all, err := c.verified(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(all, func(l composeContainer) bool {
+		return l.project == p.Name && l.service == svc && !l.isOneOff()
+	}), nil
 }
 
 // TailnetCertExpiry reads the sidecar's cached certificate for domain from

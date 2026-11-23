@@ -146,6 +146,11 @@ func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 		info.Release = strings.TrimPrefix(img.Tag, "v")
 	}
 	info.Digest, info.DigestRepository = repoDigest(inspect.RepoDigests, img.Repository, releasePin())
+	// One that cannot be told (a bind mount) is no obstacle to a migration;
+	// what needs it says so.
+	if vols, _, err := c.MountedVolumes(ctx, nil); err == nil {
+		info.Volumes = vols
+	}
 	return info, nil
 }
 

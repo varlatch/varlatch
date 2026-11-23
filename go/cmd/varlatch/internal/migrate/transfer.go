@@ -185,12 +185,12 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 			e.say("Address transfer, by hand, step %d: %s%s", n, human.Instruction, publish)
 		}
 		e.say("Then run varlatch migrate --resume, which checks %s/v1/meta answers from the target; or varlatch migrate --abort, which undoes the migration "+
-			"(the address back first).", j.Transfer.Origin)
+			"(the target stops first, then the source's %s starts again and is waited for).", j.Transfer.Origin, ingressPart(kind))
 		return ErrAwaitingOperator
 	}
 	if err := e.waitForTarget(ctx, j); err != nil {
 		if kind == Coolify {
-			return fmt.Errorf("%w; once the domain is moved, varlatch migrate --resume checks again; varlatch migrate --abort undoes (move the domain back first)", err)
+			return fmt.Errorf("%w; once the domain is moved, varlatch migrate --resume checks again; varlatch migrate --abort undoes the migration: stop the Go service first when it asks, then it starts the TypeScript dashboard, which routes the domain itself, and waits for it; set the domain back in Coolify after that", err)
 		}
 		return e.undo(ctx, j, err)
 	}
@@ -282,28 +282,52 @@ func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
 	return nil
 }
 
-// GateProber is a Prober that also asks which gate answers.
+// GateProber is a Prober that also asks which gate answers, and by which
+// route.
 type GateProber interface {
-	// ProbeGate is the state of the gate that answers at origin ("" for
-	// none, or one that does not say).
-	ProbeGate(ctx context.Context, origin string) (string, error)
+	ProbeGate(ctx context.Context, origin string) (GateAnswer, error)
 }
+
+// GateAnswer is an answer at an address: the route header its proxy put on
+// it ("" for none), and the state of the gate that answers ("" for none, or
+// when what answers is not a Varlatch server, as a proxy's own error).
+type GateAnswer struct {
+	Route  string
+	Server bool
+	State  string
+}
+
+func (a GateAnswer) String() string {
+	switch {
+	case !a.Server:
+		return "not a Varlatch server"
+	case a.State == "":
+		return "a Varlatch server, ready or not saying"
+	}
+	return "a Varlatch server in the state " + a.State
+}
+
+// routeHeader is what the operator's route (RouteFile) puts on each answer
+// through it, a proxy's own error among them: the migration's id. It is the
+// proof of which router answered: the containers' own name the same host.
+const routeHeader = "X-Varlatch-Rollback"
 
 // ProbeGate is GET <origin>/readyz: the TypeScript release names its gate
 // there (503, "state": "migrated-out").
-func (p HTTPProber) ProbeGate(ctx context.Context, origin string) (string, error) {
-	status, body, err := p.get(ctx, origin+"/readyz")
+func (p HTTPProber) ProbeGate(ctx context.Context, origin string) (GateAnswer, error) {
+	_, header, body, err := p.get(ctx, origin+"/readyz")
 	if err != nil {
-		return "", err
+		return GateAnswer{}, err
 	}
+	a := GateAnswer{Route: header.Get(routeHeader)}
 	var r struct {
 		Ready *bool  `json:"ready"`
 		State string `json:"state"`
 	}
-	if json.Unmarshal(body, &r) != nil || r.Ready == nil {
-		return "", fmt.Errorf("GET /readyz answered %d, not as a Varlatch server", status)
+	if json.Unmarshal(body, &r) == nil && r.Ready != nil {
+		a.Server, a.State = true, r.State
 	}
-	return r.State, nil
+	return a, nil
 }
 
 // HTTPProber asks over HTTP(S), certificates verified as any client
@@ -314,7 +338,7 @@ type HTTPProber struct {
 
 // Probe is GET <origin>/v1/meta.
 func (p HTTPProber) Probe(ctx context.Context, origin string) (string, string, error) {
-	status, body, err := p.get(ctx, origin+"/v1/meta")
+	status, _, body, err := p.get(ctx, origin+"/v1/meta")
 	if err != nil {
 		return "", "", err
 	}
@@ -331,14 +355,14 @@ func (p HTTPProber) Probe(ctx context.Context, origin string) (string, string, e
 	return meta.InstallationID, meta.ServerVersion, nil
 }
 
-func (p HTTPProber) get(ctx context.Context, url string) (int, []byte, error) {
+func (p HTTPProber) get(ctx context.Context, url string) (int, http.Header, []byte, error) {
 	c := p.Client
 	if c == nil {
 		c = &http.Client{Timeout: 10 * time.Second}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	// An operator's proxy or CDN must not answer from a cached one: the
 	// pre-migration answer has the same installation id.
@@ -346,9 +370,9 @@ func (p HTTPProber) get(ctx context.Context, url string) (int, []byte, error) {
 	req.Header.Set("Pragma", "no-cache")
 	res, err := c.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	return res.StatusCode, body, nil
+	return res.StatusCode, res.Header, body, nil
 }

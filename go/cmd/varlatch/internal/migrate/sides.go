@@ -126,6 +126,11 @@ type SourceInfo struct {
 	// Project is its Compose project, which every later command of the
 	// migration uses (none in a journal of an earlier build).
 	Project *ComposeProject `json:"project,omitempty"`
+	// Volumes are the Postgres and the Convex volume its containers are on,
+	// as its Compose files name them, when the migration began (none when
+	// that could not be told): what it is recognised by once its containers
+	// are gone.
+	Volumes []VolumeRecord `json:"volumes,omitempty"`
 }
 
 // Gate is a source's maintenance gate.
