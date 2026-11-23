@@ -33,7 +33,20 @@
 #
 # VL_RH_SYNC=fakes (a workstation): the sync case, Sync Targets to the
 # conformance suites' platform stand-ins, migrated and then pushed from Go
-# (VL_RH_ONLY=sync runs it alone).
+# (VL_RH_ONLY=sync runs it alone). VL_RH_SYNC=real (the owner, on the box):
+# the same case against a throwaway GitHub repository and a lab Coolify
+# application, VL_RH_SYNC_GITHUB_REPO (owner/vl-rh-...) and
+# VL_RH_SYNC_GITHUB_TOKEN_FILE (a fine-grained token for that repository
+# only, Secrets read and write), VL_RH_SYNC_COOLIFY_URL,
+# VL_RH_SYNC_COOLIFY_TOKEN_FILE and VL_RH_SYNC_COOLIFY_APP (the
+# application's UUID, its name vl-rh-...); the token files of mode 0600.
+# VL_RH_SYNC_ALLOW_REPO and VL_RH_SYNC_ALLOW_APP name a throwaway without
+# the vl-rh- prefix. The run writes and then deletes its own VLRH_<hex>_*
+# values only (the report names the prefix before the first write); after
+# an abnormal end (a kill, a power cut), delete VLRH_* by hand from the
+# throwaway repository and application. VL_RH_KEEP=1 keeps the source,
+# whose database holds both tokens sealed, beside its Root KEK: remove it
+# by hand when done.
 #
 # VL_RH_INGRESS=tailnet (a workstation or the box): the tailnet case, the
 # name handoff on a Headscale the run starts; with VL_RH_TAILSCALE_OAUTH_FILE,
