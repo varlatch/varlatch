@@ -297,7 +297,9 @@ func (p handoffEndpoints) CloseServing(ctx context.Context) error {
 		// stopping it closes its tailnet listener, as the undo does anyway.
 		return p.target.Stop(ctx)
 	}
-	return p.src.StopTailnet(ctx)
+	// On a context of its own (stopSidecar): a cancelled handoff still lets
+	// go of the tailnet.
+	return stopSidecar(ctx, p.src)
 }
 
 func (p handoffEndpoints) ReopenServing(ctx context.Context) error {
