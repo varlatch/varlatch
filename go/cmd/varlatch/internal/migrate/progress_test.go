@@ -236,12 +236,18 @@ func TestTheRouteWaitIsSaid(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait := "waiting for https://vault.example.test to answer from the TypeScript installation's gate, by the operator's route (at most 3m0s)."
-	for _, want := range []string{"Step: stopping the source's dashboard.", "Step: starting the TypeScript installation behind its migrated-out gate.",
+	for _, want := range []string{"Step: stopping the source's dashboard.", "Done in 0s: reading the TypeScript installation's gate.", "Step: starting the TypeScript installation behind its migrated-out gate.",
 		"Done in 0s: starting the TypeScript dashboard.", "Still going after 15s: " + wait, "Done in 18s: " + wait, "Step: stopping the TypeScript release's dashboard."} {
 		if !slices.Contains(c.all(), want) {
 			t.Errorf("no %q in:\n%s", want, strings.Join(c.all(), "\n"))
 		}
 	}
+	// What the undo of a route's check stops.
+	n := len(c.all())
+	if err := (steppedSource{src, w.eng}).StopStarted(t.Context(), []string{"postgres"}); err != nil {
+		t.Fatal(err)
+	}
+	sameLines(t, c.all()[n:], []string{"Step: stopping what the route's check started.", "Done in 0s: stopping what the route's check started."})
 }
 
 // The tailnet name's move forward and back, and the sidecar's stop: said,

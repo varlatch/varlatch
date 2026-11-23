@@ -139,9 +139,9 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 	for _, c := range []struct {
 		name, config, running, why string
 	}{
-		{"its own network", `{"name":"varlatch","services":{"varlatchd":{}}}`, "postgres\nconvex-backend\n", ""},
-		{"the sidecar's, running", `{"name":"varlatch","services":{"varlatchd":{"network_mode":"service:tailscale"}}}`, "postgres\ntailscale\n", ""},
-		{"the sidecar's, stopped", `{"name":"varlatch","services":{"varlatchd":{"network_mode":"service:tailscale"}}}`, "postgres\n",
+		{"its own network", stockConfig, "postgres\nconvex-backend\n", ""},
+		{"the sidecar's, running", sidecarConfig, "postgres\ntailscale\n", ""},
+		{"the sidecar's, stopped", sidecarConfig, "postgres\n",
 			"start it by hand (docker compose up -d --no-deps tailscale"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -162,8 +162,9 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 				"docker compose run --rm -T --no-deps varlatchd admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)},
 				"docker compose up -d --no-deps varlatchd":                              {},
 			}}
+			run.host = gatedHost()
 			cmp := &Compose{Directory: dir, resolved: testProject(dir), Run: run}
-			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}})
+			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}}, gate1, ungated)
 			started := slices.Contains(run.ran, "docker compose up -d --no-deps varlatchd")
 			for _, r := range run.ran {
 				if r == "docker compose up -d varlatchd" || strings.HasPrefix(r, "docker compose up -d --no-deps tailscale") || strings.HasPrefix(r, "docker compose start") {

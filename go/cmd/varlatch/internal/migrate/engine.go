@@ -803,6 +803,14 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 		if j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.ServingTemp != "" {
 			temp = j.Tailnet.Handoff.ServingTemp
 		}
+		// Started without its barrier, it would take requests again.
+		if gc, ok := e.Source.(gateChecker); ok {
+			g := sourceGate(j)
+			g.Barrier = true
+			if err := gc.CheckGate(ctx, g); err != nil {
+				return fmt.Errorf("the source is not behind the migration's barrier, so its sidecar and its varlatchd are not started to mark it migrated out: %w; varlatch migrate --resume goes on once it is", err)
+			}
+		}
 		e.say("Tailnet: the source's sidecar starts again (its node under %s), so that its varlatchd, which shares its network, is marked migrated out; then it stops.", temp)
 		if err := e.step("starting the source's tailnet sidecar", func() error { return ts.StartTailnet(ctx) }); err != nil {
 			// The sidecar may have started and varlatchd not: as the

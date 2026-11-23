@@ -192,12 +192,20 @@ func (s steppedSource) StopServing(ctx context.Context, kind Ingress) error {
 	return s.e.step("stopping the TypeScript release", func() error { return s.ReverseSource.StopServing(ctx, kind) })
 }
 
-func (s steppedSource) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
-	return s.e.step("putting the TypeScript installation back on its own volumes", func() error { return s.ReverseSource.UndoRebuild(ctx, plan) })
+func (s steppedSource) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, gated func(id string) error) error {
+	return s.e.step("putting the TypeScript installation back on its own volumes", func() error { return s.ReverseSource.UndoRebuild(ctx, plan, gate, gated) })
 }
 
-func (s steppedSource) ServeGated(ctx context.Context, owned bool) error {
-	return s.e.step("starting the TypeScript installation behind its migrated-out gate", func() error { return s.ReverseSource.ServeGated(ctx, owned) })
+func (s steppedSource) CheckGate(ctx context.Context, g GateRef) error {
+	return s.e.step("reading the TypeScript installation's gate", func() error { return s.ReverseSource.CheckGate(ctx, g) })
+}
+
+func (s steppedSource) ServeGated(ctx context.Context, start GatedStart) error {
+	return s.e.step("starting the TypeScript installation behind its migrated-out gate", func() error { return s.ReverseSource.ServeGated(ctx, start) })
+}
+
+func (s steppedSource) StopStarted(ctx context.Context, services []string) error {
+	return s.e.step("stopping what the route's check started", func() error { return s.ReverseSource.StopStarted(ctx, services) })
 }
 
 func (s steppedSource) EnsureImages(ctx context.Context, j *Journal) error {

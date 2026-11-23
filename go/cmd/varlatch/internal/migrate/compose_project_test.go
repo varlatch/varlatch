@@ -28,13 +28,46 @@ type labelled struct {
 	made      []string
 	// seen is called before each listing of the containers.
 	seen func()
+	// gates are the volumes' maintenance.json, each read counted.
+	gates map[string]string
+	reads int
 }
+
+// gateRun is the arguments that read a volume's gate.
+const gateRun = "run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --mount type=volume,source=%s,target=/state,readonly,volume-nocopy --entrypoint cat %s /state/maintenance.json"
+
+const gateText = `{"id":"gate-1","kind":"migrated-out","phase":"paused","expiresAt":null,"archiveId":null,"frozenPosition":"46"}`
+
+// stateVol is the stock installation's state volume.
+var stateVol = VolumeRecord{Name: "varlatch_varlatch-state", CreatedAt: "2026-01-01T00:00:00Z", Mountpoint: "/v/state", Project: "varlatch", Key: "varlatch-state"}
+
+// gatedHost is a host whose state volume carries the gate gate-1.
+func gatedHost() *labelled {
+	return &labelled{volumes: map[string]VolumeRecord{stateVol.Name: stateVol}, gates: map[string]string{stateVol.Name: gateText}}
+}
+
+var gate1 = GateRef{ID: "gate-1", State: &stateVol, Image: "x@sha256:y"}
+
+func ungated(string) error { return errors.New("no gate was to be made") }
 
 func (h *labelled) answer(args []string) (Ran, bool) {
 	if h.seen != nil && args[0] == "ps" && slices.Contains(args, "label="+labelProject) {
 		h.seen()
 	}
 	switch {
+	case args[0] == "image" && args[1] == "inspect" && h.gates != nil && len(args) == 5 && args[4] == gate1.Image:
+		return Ran{}, true
+	case args[0] == "run":
+		for name, text := range h.gates {
+			if strings.Join(args, " ") == fmt.Sprintf(gateRun, name, gate1.Image) {
+				h.reads++
+				if text == "" {
+					return Ran{Code: 1, Said: []byte("cat: /state/maintenance.json: No such file or directory")}, true
+				}
+				return Ran{Answer: []byte(text)}, true
+			}
+		}
+		return Ran{Code: 125, Said: []byte("unexpected " + strings.Join(args, " "))}, true
 	case len(args) == 5 && args[0] == "volume" && args[1] == "inspect" && args[3] == volumeFormat:
 		if h.inspected != nil {
 			h.inspected(args[4])
@@ -648,6 +681,40 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	if _, err := bare.RebuildPlan(ctx, &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd"}}); err == nil || !strings.Contains(err.Error(), "does not record which volume") {
 		t.Errorf("without containers or a record: %v", err)
 	}
+	// The gate, read from the state volume without a container of the
+	// installation's: there, its file gone, the volume gone (not made by
+	// the reading), another of its name.
+	gateVol := project + "_" + stateKey
+	state, err := bare.stateVolume(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := GateRef{ID: "gate-1", State: state, Image: image}
+	write := func(sh string) {
+		docker("run", "--rm", "--pull", "never", "--network", "none", "-v", gateVol+":/s", "--entrypoint", "sh", image, "-c", sh)
+	}
+	check := func(want string) {
+		t.Helper()
+		if err := bare.CheckGate(ctx, gate); (err == nil) != (want == "") || err != nil && !strings.Contains(err.Error(), want) {
+			t.Errorf("the gate: %v, want %q", err, want)
+		}
+	}
+	check("holds no gate")
+	write("printf '%s' '" + gateText + "' > /s/maintenance.json")
+	check("")
+	write("sed -i s/gate-1/gate-2/ /s/maintenance.json")
+	check("is migrated-out gate-2")
+	write("rm /s/maintenance.json")
+	check("holds no gate")
+	docker("volume", "rm", gateVol)
+	check("is not there")
+	if v, err := bare.volume(ctx, gateVol); v != nil || err != nil {
+		t.Errorf("the state volume after it was looked for: %+v %v", v, err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	docker("volume", "create", "--label", labelProject+"="+project, "--label", labelVolume+"="+gateVol, gateVol)
+	check("is not the one that carried the gate")
+	docker("volume", "rm", gateVol)
 	if data, _, err := bare.MountedVolumes(ctx, source); err != nil || !slices.Equal(data, source) {
 		t.Errorf("--finish without containers: %+v %v", data, err)
 	}
@@ -983,7 +1050,14 @@ type reverseFake struct {
 	*fakeSource
 	checkErr, importErr error
 	makeErr, imagesErr  error
-	planErr             error
+	// gateErr answers the n-th check of the gate; gates are the ones asked
+	// for; starts are the services ServeGated says it starts.
+	gateErr func(n int) error
+	gates   []GateRef
+	starts  []string
+	// remade is the gate an undo makes.
+	remade  string
+	planErr error
 	// check, when set, answers instead of checkErr.
 	check func() error
 	did   []string
@@ -1026,12 +1100,33 @@ func (r *reverseFake) ExportForCheck(context.Context, []byte) (string, error) {
 }
 func (r *reverseFake) StartServing(context.Context, Ingress) error { r.do("serve"); return nil }
 func (r *reverseFake) StopServing(context.Context, Ingress) error  { r.do("stop serving"); return nil }
-func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord) error {
+func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord, g GateRef, gated func(string) error) error {
 	r.do("undo " + p.Volumes[0])
+	r.gates = append(r.gates, g)
+	if r.remade != "" {
+		return gated(r.remade)
+	}
 	return nil
 }
-func (r *reverseFake) ServeGated(_ context.Context, owned bool) error {
-	r.do(fmt.Sprintf("serve gated, the sidecar %v", owned))
+func (r *reverseFake) CheckGate(_ context.Context, g GateRef) error {
+	r.gates = append(r.gates, g)
+	if r.gateErr != nil {
+		return r.gateErr(len(r.gates))
+	}
+	return nil
+}
+func (r *reverseFake) ServeGated(_ context.Context, s GatedStart) error {
+	r.do(fmt.Sprintf("serve gated, the sidecar %v", s.Owned))
+	r.gates = append(r.gates, s.Gate)
+	for _, svc := range r.starts {
+		if err := s.Starting(svc); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (r *reverseFake) StopStarted(_ context.Context, services []string) error {
+	r.do("stop started " + strings.Join(services, " "))
 	return nil
 }
 func (r *reverseFake) EnsureImages(context.Context, *Journal) error {

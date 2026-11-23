@@ -1097,6 +1097,51 @@ func TestG5CoolifyTailnet(t *testing.T) {
 		still(t, w, tn, sidecar, "undone")
 		w.expect("undone", "open", "open", "target-open", "migrated-out")
 	})
+	for _, gone := range []bool{false, true} {
+		for _, how := range gatesLost {
+			t.Run(fmt.Sprintf("the gate lost: %s, containers gone %v", how, gone), func(t *testing.T) {
+				w, tn, sidecar := migrated(t)
+				if gone {
+					w.removeContainers()
+				}
+				w.routeBack()
+				w.loseGate(how)
+				before := len(w.calls("docker-calls"))
+				if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "nothing was started") {
+					t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.startedNothing("refused", before)
+				w.routeAway()
+				still(t, w, tn, sidecar, "refused")
+			})
+		}
+	}
+	t.Run("the barrier lost before the mark", func(t *testing.T) {
+		w, _ := newTailnetWorld(t)
+		w.coolify = true
+		w.coolifyLayout()
+		if code := w.run(""); code != 75 {
+			t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.domainToGo()
+		if code := w.run("entered switched", "--resume"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.removeContainers()
+		back := w.loseGate("volume")
+		before := len(w.calls("docker-calls"))
+		if code := w.run("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "is not behind the migration's barrier") {
+			t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.startedNothing("refused", before)
+		if s, _ := w.phases(); s != "switched" || sidecarRunning() || !w.stopped("varlatchd") {
+			t.Errorf("phase %s, the sidecar runs %v", s, sidecarRunning())
+		}
+		back()
+		if code := w.run("", "--resume"); code != 0 {
+			t.Fatalf("--resume, the barrier back: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+	})
 	t.Run("finish", func(t *testing.T) {
 		w, tn, sidecar := migrated(t)
 		given := w.extraArgs

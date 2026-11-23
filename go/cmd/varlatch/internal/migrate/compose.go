@@ -108,6 +108,9 @@ func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 		return info, err
 	}
 	info.Project = p
+	if err := c.checkVersion(ctx); err != nil {
+		return info, err
+	}
 	r, err := c.docker(ctx, []string{"compose", "images", "--format", "json", service}, nil)
 	if err != nil {
 		return info, err
@@ -150,6 +153,9 @@ func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 	// what needs it says so.
 	if vols, _, err := c.MountedVolumes(ctx, nil); err == nil {
 		info.Volumes = vols
+	}
+	if v, err := c.stateVolume(ctx); err == nil {
+		info.State = v
 	}
 	return info, nil
 }

@@ -159,7 +159,8 @@ func TestNothingChangesOnAnotherInstallation(t *testing.T) {
 		"convex":        func(ctx context.Context, c *Compose) error { return c.ResetConvex(ctx) },
 		"serve":         func(ctx context.Context, c *Compose) error { return c.StartServing(ctx, Coolify) },
 		"stop serving":  func(ctx context.Context, c *Compose) error { return c.StopServing(ctx, Coolify) },
-		"undo":          func(ctx context.Context, c *Compose) error { return c.UndoRebuild(ctx, plan) },
+		"undo":          func(ctx context.Context, c *Compose) error { return c.UndoRebuild(ctx, plan, gate1, ungated) },
+		"check gate":    func(ctx context.Context, c *Compose) error { return c.CheckGate(ctx, gate1) },
 		"check rebuilt": func(ctx context.Context, c *Compose) error { return c.CheckRebuilt(ctx, plan, true) },
 		"check data":    func(ctx context.Context, c *Compose) error { return c.CheckData(ctx, Coolify, &plan, nil, Removals{}) },
 		"check the data": func(ctx context.Context, c *Compose) error {
@@ -169,7 +170,9 @@ func TestNothingChangesOnAnotherInstallation(t *testing.T) {
 			_, _, err := c.MountedVolumes(ctx, nil)
 			return err
 		},
-		"serve gated":   func(ctx context.Context, c *Compose) error { return c.ServeGated(ctx, true) },
+		"serve gated": func(ctx context.Context, c *Compose) error {
+			return c.ServeGated(ctx, GatedStart{Gate: gate1, Owned: true})
+		},
 		"network owner": func(ctx context.Context, c *Compose) error { return c.StartNetworkOwner(ctx) },
 		"make volumes":  func(ctx context.Context, c *Compose) error { _, err := c.MakeVolumes(ctx, plan); return err },
 		"route": func(ctx context.Context, c *Compose) error {
@@ -469,7 +472,7 @@ func TestTheReverseRecordsTheRetainedVolumes(t *testing.T) {
 				t.Errorf("rebuilt: %q", b)
 			}
 		}
-		_ = cmp.UndoRebuild(t.Context(), plan)
+		_ = cmp.UndoRebuild(t.Context(), plan, gate1, ungated)
 		b, _ = os.ReadFile(filepath.Join(cmp.Directory, OverrideFile))
 		if env, _ := os.ReadFile(cmp.envPath()); string(b) != "# the first\n" || string(env) != plan.ComposeFileLine || isFile(filepath.Join(cmp.Directory, plan.OverrideWas)) {
 			t.Errorf("rebuilt %v, put back: %q, %q", rebuild, b, env)
@@ -485,7 +488,9 @@ func rolledWorld(t *testing.T, phase Phase, kind Ingress) (*world, *reverseFake,
 	w.eng.Options.Ingress = kind
 	j := &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: phase, Source: w.src.info, Ingress: kind, Transfer: &TransferRecord{Origin: "https://vault.example.test"},
 		Rollback: &RollbackRecord{Rebuild: &RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, Export: &CopyRecord{InstallationID: "inst_fake"}},
-		History:  []Step{{Phase: Switched, At: w.eng.now().Format(time.RFC3339Nano)}}}
+		History:  []Step{{Phase: Switched, At: w.eng.now().Format(time.RFC3339Nano)}},
+		Barrier:  &BarrierRecord{GateID: "gate-1"}}
+	j.Source.State = &stateVol
 	if err := writeJournal(w.src.dir, j); err != nil {
 		t.Fatal(err)
 	}
@@ -577,8 +582,8 @@ func (f *finishFake) MountedVolumes(context.Context, []VolumeRecord) (data, othe
 func (f *finishFake) CheckData(context.Context, Ingress, *RebuildRecord, []VolumeRecord, Removals) error {
 	return nil
 }
-func (f *finishFake) ServeForArchive(context.Context) ([]string, error) { return nil, nil }
-func (f *finishFake) StopStarted(context.Context, []string) error       { return nil }
+func (f *finishFake) ServeForArchive(context.Context, GateRef) ([]string, error) { return nil, nil }
+func (f *finishFake) StopStarted(context.Context, []string) error                { return nil }
 func (f *finishFake) RemoveOld(context.Context, Ingress, []VolumeRecord, []VolumeRecord, Removals) error {
 	return nil
 }
@@ -682,7 +687,7 @@ func TestTheUndoRemovesOnlyVolumesOfTheMigration(t *testing.T) {
 	j.Source.Volumes = stockVolumes
 	const fresh, freshConvex = "varlatch_postgres-data-abcdefgh", "varlatch_convex-data-abcdefgh"
 	newPlan := func(t *testing.T, have ...string) (*Compose, *labelled, RebuildRecord) {
-		host := &labelled{volumes: map[string]VolumeRecord{}}
+		host := gatedHost()
 		for _, n := range have {
 			host.volumes[n] = VolumeRecord{Name: n, CreatedAt: "2026-01-01T00:00:00Z", Project: "varlatch"}
 		}
@@ -747,7 +752,7 @@ func TestTheUndoRemovesOnlyVolumesOfTheMigration(t *testing.T) {
 	} {
 		cmp, host, plan := newPlan(t)
 		c.do(t, cmp, host, &plan)
-		if err := cmp.UndoRebuild(t.Context(), plan); err != nil || !slices.Equal(host.removed, c.removed) {
+		if err := cmp.UndoRebuild(t.Context(), plan, gate1, ungated); err != nil || !slices.Equal(host.removed, c.removed) {
 			t.Errorf("%s: %v, removed %v, want %v", c.name, err, host.removed, c.removed)
 		}
 	}
@@ -943,7 +948,7 @@ func (f *forwardFake) CheckData(_ context.Context, _ Ingress, _ *RebuildRecord, 
 	}
 	return nil
 }
-func (f *forwardFake) ServeForArchive(context.Context) ([]string, error) {
+func (f *forwardFake) ServeForArchive(context.Context, GateRef) ([]string, error) {
 	f.do("serve")
 	return []string{"postgres"}, nil
 }
@@ -1014,12 +1019,17 @@ func (p *routeProber) Probe(context.Context, string) (string, string, error) {
 func (p *routeProber) ProbeGate(context.Context, string) (GateAnswer, error) {
 	p.gates++
 	to, ok := strings.CutPrefix(p.route(), "file: ")
-	a := GateAnswer{Server: true}
+	a := GateAnswer{Status: 503, Server: true}
 	if ok {
 		a.Route = p.id
 	}
 	switch to {
 	case "go":
+		a.Status, a.Ready = 200, true
+	case "ready":
+		a.Ready, a.State = true, "migrated-out"
+	case "200":
+		a.Status, a.State = 200, "migrated-out"
 	case "ts":
 		a.State = "migrated-out"
 	case "other":
@@ -1060,6 +1070,8 @@ func TestTheWayBackIsCheckedBeforeTheReverse(t *testing.T) {
 		{name: "a route to something else", route: []string{"file: nothing"}, up: "file: nothing", refused: "the route answers: not a Varlatch server"},
 		{name: "a route to another installation", route: []string{"file: other"}, up: "file: other", refused: "the route answers: a Varlatch server in the state migration"},
 		{name: "the route to Go", route: []string{"file: go"}, up: "file: go", refused: "the route answers: a Varlatch server, ready"},
+		{name: "a route to a server that is ready", route: []string{"file: nothing"}, up: "file: ready", refused: "in the state migrated-out (HTTP 503, ready true)"},
+		{name: "a route to a server that answers 200", route: []string{"file: nothing"}, up: "file: 200", refused: "in the state migrated-out (HTTP 200, ready false)"},
 		// The route gone by then: the dashboard's own router answers as the
 		// TypeScript installation, as it may at any reload.
 		{name: "the route removed, the dashboard's own router answers", route: []string{"file: nothing"}, up: "ts", refused: "it answers by another route: a Varlatch server in the state migrated-out"},
@@ -1178,9 +1190,9 @@ type sidecarFake struct {
 	deaf, stopped bool
 }
 
-func (s *sidecarFake) ServeGated(ctx context.Context, owned bool) error {
-	*s.up = owned
-	return s.routedFake.ServeGated(ctx, owned)
+func (s *sidecarFake) ServeGated(ctx context.Context, g GatedStart) error {
+	*s.up = g.Owned
+	return s.routedFake.ServeGated(ctx, g)
 }
 func (s *sidecarFake) StopTailnet(context.Context) error       { *s.up, s.stopped = false, true; return nil }
 func (s *sidecarFake) StartTailnet(context.Context) error      { *s.up = true; return nil }
@@ -1198,6 +1210,14 @@ func (s *sidecarFake) TailnetCertExpiry(context.Context, string) (time.Time, boo
 // What starts varlatchd in its network owner's network again: the owner's
 // container, or, gone (Compose's start does nothing then, exit 0), a new
 // one, whose network a restart of varlatchd's old container cannot join.
+func ownCtr(c *Compose, svc string) composeContainer {
+	l := ctr("varlatch", svc, filepath.Join(c.Directory, "docker-compose.yml"), c.Directory, "False")
+	if svc == "varlatchd" {
+		l.mounts = []containerMount{{Type: "volume", Name: stateVol.Name, Destination: stateTarget}}
+	}
+	return l
+}
+
 func TestServeGated(t *testing.T) {
 	const config, running = "docker compose config --no-interpolate --format json", "docker compose ps --status running --services"
 	for _, c := range []struct {
@@ -1218,23 +1238,44 @@ func TestServeGated(t *testing.T) {
 		{"both running", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\nvarlatchd\ntailscale\n", true, nil},
 		{"all gone", sidecarConfig, nil, "", true, []string{"up -d --no-deps --no-recreate postgres", "up -d --no-deps tailscale", "up -d --no-deps varlatchd"}},
 	} {
-		host := &labelled{}
-		run := &scripted{t: t, host: host, answers: map[string]Ran{config: {Answer: []byte(c.config)}, running: {Answer: []byte(c.running)}, "docker compose up ": {}, "docker compose start ": {}, "docker compose restart ": {}}}
+		gated := gatedHost()
+		run := &scripted{t: t, host: gated, answers: map[string]Ran{config: {Answer: []byte(c.config)}, running: {Answer: []byte(c.running)}, "docker compose up ": {}, "docker compose start ": {}, "docker compose restart ": {}}}
 		cmp := stockCompose(t, run)
 		for _, svc := range c.has {
-			host.containers = append(host.containers, ctr("varlatch", svc, filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "False"))
+			gated.containers = append(gated.containers, ownCtr(cmp, svc))
 		}
-		if err := cmp.ServeGated(t.Context(), c.owned); err != nil {
+		// Each service journalled before it is started, and only one that
+		// did not run.
+		did := func() []string {
+			var did []string
+			for _, r := range run.ran {
+				if r != config && r != running {
+					did = append(did, strings.TrimPrefix(r, "docker compose "))
+				}
+			}
+			return did
+		}
+		var started []string
+		if err := cmp.ServeGated(t.Context(), GatedStart{Gate: gate1, Owned: c.owned, Starting: func(svc string) error {
+			started = append(started, svc)
+			if slices.ContainsFunc(did(), func(d string) bool { return strings.HasSuffix(d, " "+svc) }) {
+				t.Errorf("%s: %s journalled after it was started", c.name, svc)
+			}
+			return nil
+		}}); err != nil {
 			t.Errorf("%s: %v", c.name, err)
 		}
-		var did []string
-		for _, r := range run.ran {
-			if r != config && r != running {
-				did = append(did, strings.TrimPrefix(r, "docker compose "))
+		if !slices.Equal(did(), c.want) {
+			t.Errorf("%s: %q, want %q", c.name, did(), c.want)
+		}
+		var want []string
+		for _, svc := range []string{"postgres", "varlatchd"} {
+			if !slices.Contains(strings.Fields(c.running), svc) {
+				want = append(want, svc)
 			}
 		}
-		if !slices.Equal(did, c.want) {
-			t.Errorf("%s: %q, want %q", c.name, did, c.want)
+		if !slices.Equal(started, want) || gated.reads == 0 {
+			t.Errorf("%s: journalled %q, want %q; the gate read %d times", c.name, started, want, gated.reads)
 		}
 	}
 	// As the tailnet handoff's own steps.
@@ -1401,11 +1442,12 @@ func TestProbeGate(t *testing.T) {
 		header, body string
 		want         GateAnswer
 	}{
-		{503, "mig_x", `{"ready":false,"checks":{"maintenance":false},"state":"migrated-out"}`, GateAnswer{"mig_x", true, "migrated-out"}},
-		{503, "", `{"ready":false,"checks":{"maintenance":false},"state":"migrated-out"}`, GateAnswer{"", true, "migrated-out"}},
-		{502, "mig_x", `Bad Gateway`, GateAnswer{"mig_x", false, ""}},
-		{200, "", `{"ready":true}`, GateAnswer{"", true, ""}},
-		{200, "", `{"hello":1}`, GateAnswer{}},
+		{503, "mig_x", `{"ready":false,"checks":{"maintenance":false},"state":"migrated-out"}`, GateAnswer{503, "mig_x", true, false, "migrated-out"}},
+		{503, "", `{"ready":false,"checks":{"maintenance":false},"state":"migrated-out"}`, GateAnswer{503, "", true, false, "migrated-out"}},
+		{502, "mig_x", `Bad Gateway`, GateAnswer{502, "mig_x", false, false, ""}},
+		{200, "", `{"ready":true}`, GateAnswer{200, "", true, true, ""}},
+		{200, "mig_x", `{"ready":true,"state":"migrated-out"}`, GateAnswer{200, "mig_x", true, true, "migrated-out"}},
+		{200, "", `{"hello":1}`, GateAnswer{Status: 200}},
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/readyz" || r.Header.Get("Cache-Control") != "no-cache" {
@@ -1417,7 +1459,7 @@ func TestProbeGate(t *testing.T) {
 			w.WriteHeader(c.status)
 			_, _ = w.Write([]byte(c.body))
 		}))
-		if got, err := (HTTPProber{}).ProbeGate(t.Context(), srv.URL); err != nil || got != c.want {
+		if got, err := (HTTPProber{}).ProbeGate(t.Context(), srv.URL); err != nil || got != c.want || got.migratedOut() != (c.status == 503 && c.want.Server) {
 			t.Errorf("%d %q: %+v %v", c.status, c.body, got, err)
 		}
 		srv.Close()

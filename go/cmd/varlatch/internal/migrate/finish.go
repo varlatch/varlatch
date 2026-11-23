@@ -100,8 +100,9 @@ type FinishSource interface {
 	CheckData(ctx context.Context, kind Ingress, plan *RebuildRecord, data []VolumeRecord, r Removals) error
 	// ServeForArchive starts what the TypeScript installation's backup
 	// needs (its varlatchd, Postgres and Convex, behind its migrated-out
-	// gate): the services it started (none when all ran already).
-	ServeForArchive(ctx context.Context) ([]string, error)
+	// gate g, exactly: CheckGate): the services it started (none when all
+	// ran already).
+	ServeForArchive(ctx context.Context, g GateRef) ([]string, error)
 	// StopStarted stops the services ServeForArchive started.
 	StopStarted(ctx context.Context, services []string) error
 	// RemoveOld removes the TypeScript installation's containers and its
@@ -402,7 +403,7 @@ func (e *Engine) finalArchive(ctx context.Context, j *Journal) error {
 		if fs != nil {
 			var err error
 			// A start that failed part way says what it did start.
-			if started, err = fs.ServeForArchive(ctx); err != nil {
+			if started, err = fs.ServeForArchive(ctx, sourceGate(j)); err != nil {
 				return failed(fmt.Errorf("starting the TypeScript installation for its final archive: %w", err))
 			}
 		}
@@ -842,11 +843,12 @@ func (c *Compose) volumeUsers(ctx context.Context, name string) ([]string, error
 // ServeForArchive starts the TypeScript installation's Postgres, varlatchd
 // and Convex (what its backup reads), without their dependencies: never
 // its Caddy or Tailscale, whose address is Go's now. Its varlatchd serves
-// nothing behind its migrated-out gate. Running already, nothing is done.
+// nothing behind its migrated-out gate, which is held to be there before
+// anything starts. Running already, nothing is done.
 // Where varlatchd shares the old Tailscale node's network (network_mode:
 // service:...), it does not start without that node: refused, its data
 // kept.
-func (c *Compose) ServeForArchive(ctx context.Context) ([]string, error) {
+func (c *Compose) ServeForArchive(ctx context.Context, g GateRef) ([]string, error) {
 	need := []string{"postgres", service, "convex-backend"}
 	running, err := c.running(ctx)
 	if err != nil {
@@ -868,6 +870,11 @@ func (c *Compose) ServeForArchive(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("--delete-old-data is refused here: the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), so starting it for the final archive "+
 			"would bring the old Tailscale node back beside Go's. Its data volumes are kept. By hand: 1. make a backup of them by your own means and test that it restores; "+
 			"2. remove them: docker volume rm %s (on Coolify instead: delete the TypeScript application, its volumes included)", owner, owner, strings.Join(names, " "))
+	}
+	if slices.Contains(start, service) {
+		if err := c.CheckGate(ctx, g); err != nil {
+			return nil, err
+		}
 	}
 	if err := c.compose(ctx, "docker compose up -d --no-deps "+strings.Join(start, " "), append([]string{"up", "-d", "--no-deps", "--no-recreate"}, start...)...); err != nil {
 		// An up that failed part way may have started some: those it did,
