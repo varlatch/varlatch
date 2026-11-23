@@ -103,6 +103,8 @@ func str(m map[string]any, k string) string {
 type seeded struct {
 	values, versions, rateLimited int
 	took                          time.Duration
+	client                        *apiClient // the bootstrap admin's, for more (makeBundle)
+	service                       string     // the api-svc identity's id
 }
 
 // adminClient bootstraps the installation's first admin with a CLI
@@ -159,5 +161,5 @@ func seed(t *testing.T, in *installation) seeded {
 	c.ok("POST", acme+"/teams/"+team+"/projects", map[string]any{"projectId": project})
 	c.ok("POST", acme+"/grants", map[string]any{"subjectIdentityId": service, "scope": map[string]any{"kind": "project", "projectId": project}, "actions": []string{"project.read"}})
 	c.ok("POST", acme+"/grants", map[string]any{"subjectIdentityId": ci, "scope": map[string]any{"kind": "organization"}, "actions": []string{"project.read"}})
-	return seeded{values: values, versions: versions, rateLimited: c.waited, took: time.Since(began)}
+	return seeded{values: values, versions: versions, rateLimited: c.waited, took: time.Since(began), client: c, service: service}
 }

@@ -628,15 +628,6 @@ func (in *installation) sidecarRunning() bool {
 	return r.code == 0 && strings.Contains(" "+strings.Join(strings.Fields(r.stdout), " ")+" ", " tailscale ")
 }
 
-// rollbackArgs are migrate --rollback's options for the installation.
-func (in *installation) rollbackArgs(extra ...string) []string {
-	args := []string{"migrate", "--rollback", "--from", in.dir, "--config", in.conf, "--drain", "20s", "--transfer-timeout", "90s"}
-	if prof.box {
-		args = append(args, "--unit", in.unitName())
-	}
-	return append(args, extra...)
-}
-
 // isSource is /v1/meta of the source's own installation, from the
 // TypeScript release.
 func isSource(in *installation, meta string) bool {

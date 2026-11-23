@@ -45,7 +45,7 @@ func destinationsDB(t *testing.T) *sql.DB {
 				('whk_8', 'org_g', 'https://private.test/g', '{}', 8, 0)`,
 			`INSERT INTO webhooks (id, organization_id, url, secret_envelope, created_at, cursor_occurred_at, revoked_at) VALUES ('whk_9', 'org_a', 'https://private.test/r', '{}', 9, 0, 10)`,
 			`INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope) VALUES ('pcn_1', 'org_a', 'coolify', 'https://private.test', 'Lab', '{}')`,
-			// GitHub Connections: RunCheck leaves them out, CheckGitHub lists the live ones.
+			// GitHub Connections: RunCheck leaves them out, RunAdminCheck lists the live ones.
 			`INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope) VALUES
 				('pcn_g1', 'org_a', 'github-actions', 'acme', 'Acme on GitHub', '{}'),
 				('pcn_g2', 'org_b', 'github-actions', 'beta', 'Beta on GitHub', '{}'),

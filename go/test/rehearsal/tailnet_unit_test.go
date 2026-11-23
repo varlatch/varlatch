@@ -128,6 +128,15 @@ func TestTailnetPieces(t *testing.T) {
 			t.Errorf("no holder: %q", got)
 		}
 	})
+	t.Run("the tailnet case runs on seeded sources only", func(t *testing.T) {
+		for k, v := range map[string]string{"VL_RH_PROFILE": "", "VL_RH_INGRESS": "tailnet", "VL_RH_SOURCE": "restore:/srv/vl-rh/b6/archive", "VL_RH_KILL": "", "VL_RH_SYNC": "", "VL_RH_ONLY": "",
+			"VL_RH_TAILSCALE_OAUTH_FILE": "", "VL_RH_TAILSCALE_AUTH_KEY_FILE": "", "VL_RH_TAILSCALE_TAILNET": ""} {
+			t.Setenv(k, v)
+		}
+		if _, err := readProfile(0); err == nil || !strings.Contains(err.Error(), "VL_RH_SOURCE=seed") {
+			t.Errorf("a restored source with the tailnet case: %v", err)
+		}
+	})
 	t.Run("the profile", func(t *testing.T) {
 		key := filepath.Join(dir, "key")
 		if err := os.WriteFile(key, []byte("x"), 0o600); err != nil {
