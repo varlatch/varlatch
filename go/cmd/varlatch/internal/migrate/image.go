@@ -83,6 +83,34 @@ func StageBase(source string) (string, error) {
 	return dir, os.Chmod(dir, 0o711)
 }
 
+// ImageRefForm is --to-image's form. A constant, printed by the CLI after
+// its fail-safe (whole, it has the shape of a URL with a user and a
+// password, which the fail-safe masks).
+const ImageRefForm = "repository:tag@sha256:<digest>"
+
+// ImageRefError is --to-image refused for its form (ImageRefForm). It
+// names the value only in its parts, a repository and a digest, when it is
+// an image reference by digest (digestRef: no user name and password can
+// be in it); any other value is not shown, since it may hold one.
+type ImageRefError struct{ msg string }
+
+func (e *ImageRefError) Error() string { return e.msg }
+
+// digestRef is an image reference by digest, tagged or not: a repository
+// (a registry host with an optional port, then a path; no "@"), an optional
+// tag, and sha256 with 64 lowercase hex digits.
+var digestRef = regexp.MustCompile(`^([a-z0-9][a-z0-9._/-]*(?::[0-9]+)?/[a-z0-9._/-]+)(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-f]{64})$`)
+
+// refusedImageRef is --to-image's refusal when it is not pinned to a
+// release by its tag and digest.
+func refusedImageRef(ref string) error {
+	const want = "give the repository, the tag of this host's varlatchd release and the digest, the image the service runs"
+	if m := digestRef.FindStringSubmatch(ref); m != nil {
+		return &ImageRefError{fmt.Sprintf("--to-image names image %s, digest %s, and no tag: it is not pinned to a release; %s", m[1], m[2], want)}
+	}
+	return &ImageRefError{"--to-image is not pinned: " + want + " (the value given is not shown: it is no image reference by digest, and may hold a user name and password)"}
+}
+
 // imageRef is a pinned image reference: repository:tag@sha256:<64 hex>.
 var imageRef = regexp.MustCompile(`^([a-z0-9][a-z0-9._/-]*(?::[0-9]+)?/[a-z0-9._/-]+):([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})@(sha256:[0-9a-f]{64})$`)
 
@@ -162,7 +190,7 @@ func PrepareImage(ctx context.Context, img *Image, tmp string, fresh bool) (clea
 	cleanup = func() {}
 	m := imageRef.FindStringSubmatch(img.Ref)
 	if m == nil {
-		return cleanup, fmt.Errorf("--to-image %q is not pinned: give repository:tag@sha256:<digest>, the image the service runs", img.Ref)
+		return cleanup, refusedImageRef(img.Ref)
 	}
 	if img.Service == "" {
 		return cleanup, errors.New("--to-service names the Go service, for the steps you take")

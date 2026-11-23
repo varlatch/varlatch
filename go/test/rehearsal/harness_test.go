@@ -142,6 +142,37 @@ func startService(bin, conf string) error {
 	return errors.New("varlatchd did not start within 30 s")
 }
 
+// systemRoots are where a Linux host keeps its CA bundle, as crypto/x509
+// looks for it.
+var systemRoots = []string{
+	"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem",
+	"/etc/pki/tls/cacert.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem",
+}
+
+// rootsWithPebble writes, under dir, this host's CA bundle with the CA
+// Pebble issues from appended, for SSL_CERT_FILE (which replaces the
+// system roots for a Go program): migrate's public URL check (B2's run b2
+// undid its transfer, "certificate signed by unknown authority").
+func rootsWithPebble(t *testing.T, dir string, a *acmeStack) string {
+	t.Helper()
+	var bundle []byte
+	for _, p := range systemRoots {
+		if b, err := os.ReadFile(p); err == nil {
+			bundle = append(b, '\n')
+			break
+		}
+	}
+	pebble, err := os.ReadFile(a.issuedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "migrate-roots.pem")
+	if err := os.WriteFile(path, append(bundle, pebble...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // serviceEnv is a service.env file's KEY=VALUE lines (none when it is
 // missing), blank lines and # comments left out.
 func serviceEnv(path string) []string {
@@ -438,6 +469,9 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 		in.acme = startACME(t, in.state)
 		in.publicURL = "https://" + prof.publicName
 		in.client = tlsClient(t, in.acme)
+		// migrate checks the public URL itself, forward and when it undoes:
+		// it trusts the CA Pebble issues from beside this host's own roots.
+		in.migrateExtraEnv = append(in.migrateExtraEnv, "SSL_CERT_FILE="+rootsWithPebble(t, in.state, in.acme))
 		if err := os.WriteFile(filepath.Join(in.dir, "docker-compose.rehearsal.yml"), []byte(composeOverride(in.acme)), 0o644); err != nil {
 			t.Fatal(err)
 		}

@@ -194,6 +194,16 @@ func parseMigrateOptions(args []string) (migrateOptions, error) {
 	return o, nil
 }
 
+// imageFailure is the image target's refusal; --to-image's form, which
+// the fail-safe would mask whole, follows as this binary's constant.
+func imageFailure(err error) error {
+	var re *migrate.ImageRefError
+	if errors.As(err, &re) {
+		return &exitError{message: "varlatch migrate: " + err.Error(), constant: " (the form: " + migrate.ImageRefForm + ")", code: ExitFailure}
+	}
+	return Fail("varlatch migrate: "+err.Error(), ExitFailure)
+}
+
 func migrateCommand(r *Run) error {
 	if fromArchive(r.Args) {
 		return migrateArchiveCommand(r)
@@ -330,7 +340,7 @@ func migrateCommand(r *Run) error {
 		cleanup, err := migrate.PrepareImage(context.Background(), img, base, !o.resume && !o.abort && !o.rollback && !o.finish)
 		defer cleanup()
 		if err != nil {
-			return Fail("varlatch migrate: "+err.Error(), ExitFailure)
+			return imageFailure(err)
 		}
 		img.Host.TailnetAuthKey = tailnetAuthKey
 		e.Target = img

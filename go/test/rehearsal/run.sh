@@ -31,6 +31,21 @@
 # stops, removes or rebinds anything that is not this run's; the run's
 # files are handed back to the user who ran sudo.
 #
+# VL_RH_INGRESS=public (B2): VL_RH_PUBLIC_NAME must resolve, on this host,
+# to VL_RH_PUBLIC_BIND (migrate checks the public URL by its name; the box's
+# wildcard does), refused otherwise; migrate trusts the CA the run's Pebble
+# issues from beside the host's roots (SSL_CERT_FILE, written by the case).
+#
+# VL_RH_TARGET=image (B3, with VL_RH_INGRESS=coolify): VL_RH_GO_IMAGE is
+# migrate's --to-image form, repository:<release>@sha256:<digest>, the
+# release being that of the varlatchd this script builds (its --version:
+# 0.50.0-dev from a checkout; go/image/build.sh --version <release> with the
+# run's bin/ as its assets makes such an image). migrate runs that varlatchd
+# as the image's user (uid 65532), so VL_RH_ROOT must be a path it can pass
+# through: outside a home of mode 0750, /srv/vl-rh-runs for example, never
+# /srv/vl-rh (the case's own, removed per run). Both are refused before the
+# owner's first step.
+#
 # VL_RH_SYNC=fakes (a workstation): the sync case, Sync Targets to the
 # conformance suites' platform stand-ins, migrated and then pushed from Go
 # (VL_RH_ONLY=sync runs it alone). VL_RH_SYNC=real (the owner, on the box):
@@ -195,7 +210,7 @@ cleanup() {
       cleanup_release
     fi
     if [ -d "$target_root/$run" ]; then
-      rm -rf "$target_root/$run" 2>/dev/null || true
+      rm -rf "${target_root:?}/$run" 2>/dev/null || true
     fi
     if [ "$profile" = box ] && [ -d "/srv/vl-rh/$run" ]; then
       rm -rf "/srv/vl-rh/$run" 2>/dev/null || true
@@ -222,12 +237,15 @@ else
   mkdir -p "$HOME/.cache/varlatch-go-nr"
   gocache=$HOME/.cache/varlatch-go-nr gomodcache=$HOME/.cache/varlatch-gomod:/gomod:ro
 fi
+# -buildvcs=false: the checkout may be a Git one owned by the user who
+# ran sudo, which Git refuses to read as root ("dubious ownership"), and a
+# rehearsal build needs no VCS stamp.
 docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e CGO_ENABLED=0 \
   -e GOCACHE=/gocache -e GOMODCACHE=/gomod -v "$gocache:/gocache" -v "$gomodcache" \
   -v "$gomod/..:/src" -v "$root/bin:/out" -w /src/go golang:1.27.4 sh -c '
-    go build -tags rehearsal,crashpoint -o /out/varlatch ./cmd/varlatch &&
-    go build -o /out/varlatchd ./cmd/varlatchd &&
-    go test -c -tags rehearsal -o /out/rehearsal.test ./test/rehearsal/'
+    go build -buildvcs=false -tags rehearsal,crashpoint -o /out/varlatch ./cmd/varlatch &&
+    go build -buildvcs=false -o /out/varlatchd ./cmd/varlatchd &&
+    go test -buildvcs=false -c -tags rehearsal -o /out/rehearsal.test ./test/rehearsal/'
 # The sync case's platform stand-ins (VL_RH_SYNC=fakes), beside the
 # binaries: the runner sees the run's directory, not this checkout.
 cp "$gomod/../scripts/conformance/lib/platform-fakes.cjs" "$root/bin/platform-fakes.cjs"
