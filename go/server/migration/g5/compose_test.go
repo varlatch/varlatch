@@ -289,6 +289,31 @@ func volumeUsers(name string) []string {
 	return out
 }
 
+// readGateFile is the one-off container that reads the state volume's gate,
+// asked for exactly so: never pulled, no network, the volume read only (as
+// Docker, one that is not there is made, empty).
+func readGateFile(args []string) int {
+	volume, ok := strings.CutPrefix(args[12], "type=volume,source=")
+	volume, ro := strings.CutSuffix(volume, ",target=/state,readonly,volume-nocopy")
+	want := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--mount", args[12], "--entrypoint", "cat", args[15], "/state/maintenance.json"}
+	if !ok || !ro || !slices.Equal(args, want) || args[15] != os.Getenv("VARLATCH_MIGRATE_PIN") {
+		fmt.Fprintf(os.Stderr, "docker: unexpected %q\n", args)
+		return 125
+	}
+	there := volumeThere(volume)
+	if !there {
+		_ = makeVolume(volume, nil)
+	}
+	g := readGate()
+	if !there || g == nil || volume != ownVolume("varlatchd") {
+		fmt.Fprintln(os.Stderr, "cat: /state/maintenance.json: No such file or directory")
+		return 1
+	}
+	b, _ := json.Marshal(map[string]any{"id": g.ID, "kind": g.Kind, "phase": g.Phase, "expiresAt": nil, "archiveId": nil, "frozenPosition": "46"})
+	fmt.Print(string(b))
+	return 0
+}
+
 // printVolume is `docker volume inspect`'s answer (a volume made again by
 // the test: another-<name>).
 func printVolume(name string) {
@@ -806,5 +831,232 @@ func TestG5ContainersGone(t *testing.T) {
 				t.Errorf("removed %v", vols)
 			}
 		})
+	}
+}
+
+// loseGate takes the TypeScript installation's gate away, its Postgres and
+// Convex volumes kept: the whole state volume, that volume made again
+// empty, or its file; or puts another gate there. The undo puts it back.
+func (w *world) loseGate(how string) (undo func()) {
+	w.t.Helper()
+	w.useState()
+	path := filepath.Join(w.stateDir, "gate.json")
+	gate := mustRead(w.t, path)
+	removed, another := filepath.Join(w.stateDir, "removed-volumes"), filepath.Join(w.stateDir, "another-"+ownVolume("varlatchd"))
+	was, _ := os.ReadFile(removed)
+	var err error
+	switch how {
+	case "volume", "volume made again":
+		if err = os.Remove(path); err == nil && how == "volume" {
+			err = os.WriteFile(removed, append(slices.Clone(was), []byte(ownVolume("varlatchd")+"\n")...), 0o600)
+		} else if err == nil {
+			err = os.WriteFile(another, nil, 0o600)
+		}
+	case "volume made again, the gate copied":
+		err = os.WriteFile(another, nil, 0o600)
+	case "file":
+		err = os.Remove(path)
+	case "another gate":
+		err = os.WriteFile(path, []byte(`{"kind":"migrated-out","id":"gate-of-another","phase":"paused"}`), 0o600)
+	case "the barrier":
+		err = os.WriteFile(path, []byte(strings.Replace(string(gate), "migrated-out", "migration", 1)), 0o600)
+	default:
+		w.t.Fatal(how)
+	}
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return func() {
+		for p, b := range map[string][]byte{path: gate, removed: was} {
+			if err := os.WriteFile(p, b, 0o600); err != nil {
+				w.t.Fatal(err)
+			}
+		}
+		_ = os.Remove(another)
+	}
+}
+
+var gatesLost = []string{"volume", "volume made again", "volume made again, the gate copied", "file", "another gate", "the barrier"}
+
+// startedNothing refuses calls since before that start, make or remove
+// anything.
+func (w *world) startedNothing(when string, before int) {
+	w.t.Helper()
+	for _, c := range w.calls("docker-calls")[before:] {
+		for _, p := range []string{"compose up", "compose start", "compose restart", "compose run", "compose exec", "volume create", "volume rm"} {
+			if strings.HasPrefix(c, p) {
+				w.t.Errorf("%s: ran %q", when, c)
+			}
+		}
+	}
+}
+
+// The TypeScript installation's gate lost in the window, Postgres and
+// Convex kept (a server that finds no gate takes requests): the way back on
+// Coolify, which starts that server before Go's barrier, refuses before it
+// starts anything, with its containers gone or only stopped; Go serves on.
+// With the gate back it goes through.
+func TestG5TheGateLost(t *testing.T) {
+	for _, how := range gatesLost {
+		for _, gone := range []bool{true, false} {
+			t.Run(how+map[bool]string{true: ", containers gone", false: ", containers there"}[gone], func(t *testing.T) {
+				w := migratedWorld(t, false, true)
+				if gone {
+					w.removeContainers()
+				} else {
+					w.useState()
+					for _, svc := range []string{"varlatchd", "postgres", "convex-backend"} {
+						if err := setStopped(svc, true); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				old := w.oldDB()
+				w.routeBack()
+				back := w.loseGate(how)
+				before := len(w.calls("docker-calls"))
+				code := w.rollback("", "--rollback")
+				out := string(w.outputs[len(w.outputs)-1])
+				if code != 1 || !strings.Contains(out, "nothing was started") || !strings.Contains(out, "Go serves on") {
+					t.Fatalf("--rollback: %d\n%s", code, out)
+				}
+				w.startedNothing("refused", before)
+				if s, d := w.phases(); s != "open" || d != "open" || !w.goRuns() || !w.stopped("varlatchd") || !w.stopped("postgres") || !w.has("web-stopped") || w.oldDB() != old {
+					t.Fatalf("refused: the journals %s / %s, Go runs %v, the TypeScript side stopped %v %v %v", s, d, w.goRuns(), w.stopped("varlatchd"), w.stopped("postgres"), w.has("web-stopped"))
+				}
+				if how == "volume" && gone {
+					w.useState()
+					if volumeThere(ownVolume("varlatchd")) {
+						t.Error("the state volume was made by looking for it")
+					}
+				}
+				back()
+				if code := w.rollback("", "--rollback"); code != 0 {
+					t.Fatalf("--rollback, the gate back: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.expectReverse("rolled back", rolledBackState)
+				w.noSecrets()
+			})
+		}
+	}
+	// Lost once its servers run, before the dashboard: not started, undone,
+	// and those stopped again, on this run's own and on --resume and --abort
+	// of one killed there.
+	for _, how := range []string{"--resume", "--abort"} {
+		for _, running := range []bool{false, true} {
+			t.Run(fmt.Sprintf("killed, its servers started, %s, running before %v", how, running), func(t *testing.T) {
+				w := migratedWorld(t, false, true)
+				if !running {
+					w.removeContainers()
+				}
+				w.routeBack()
+				if code := w.rollback("rollback gated started", "--rollback"); code != -1 {
+					t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				if w.stopped("varlatchd") || w.stopped("postgres") || !w.has("web-stopped") {
+					t.Fatalf("killed with varlatchd stopped %v, postgres %v, the dashboard %v", w.stopped("varlatchd"), w.stopped("postgres"), w.has("web-stopped"))
+				}
+				if code := w.rollback("", how); (how == "--abort") != (code == 0) {
+					t.Fatalf("%s: %d\n%s", how, code, w.outputs[len(w.outputs)-1])
+				}
+				w.routeAway()
+				if s, d := w.phases(); s != "open" || d != "open" || !w.goRuns() || !w.has("web-stopped") || w.stopped("varlatchd") == running || w.stopped("postgres") == running || w.stopped("convex-backend") == running {
+					t.Errorf("the journals %s / %s, Go runs %v, stopped: the dashboard %v, varlatchd %v, postgres %v, convex %v", s, d, w.goRuns(), w.has("web-stopped"), w.stopped("varlatchd"), w.stopped("postgres"), w.stopped("convex-backend"))
+				}
+				w.expect(how, "open", "open", "target-open", "migrated-out")
+			})
+		}
+	}
+	// The final archive's server.
+	for _, how := range gatesLost {
+		t.Run(how+", --finish", func(t *testing.T) {
+			w := migratedWorld(t, false, true)
+			w.removeContainers()
+			back := w.loseGate(how)
+			before := len(w.calls("docker-calls"))
+			if code := w.finish("", "--delete-old-data"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "nothing was removed") {
+				t.Fatalf("--finish --delete-old-data: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			w.startedNothing("refused", before)
+			if s, d := w.phases(); s != "open" || d != "open" || !w.stopped("varlatchd") || !w.stopped("postgres") {
+				t.Errorf("the journals %s / %s", s, d)
+			}
+			back()
+			if code := w.finish("", "--delete-old-data"); code != 0 {
+				t.Fatalf("the gate back: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+		})
+	}
+}
+
+// The gate an undone reverse made (its import had lifted the migration's)
+// is the one the next reverse asks for.
+func TestG5TheGateOfAnUndo(t *testing.T) {
+	w := migratedWorld(t, false, true)
+	w.useState()
+	first := readGate().ID
+	w.routeBack()
+	if code := w.rollback("entered rollback-checked", "--rollback"); code != -1 {
+		t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if code := w.rollback("", "--abort"); code != 0 {
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.useState()
+	if g := readGate(); g == nil || g.Kind != "migrated-out" || g.ID == first {
+		t.Fatalf("the gate after the undo: %+v, the migration's %s", g, first)
+	}
+	// Not the migration's own any more.
+	made := mustRead(t, filepath.Join(w.stateDir, "gate.json"))
+	if err := os.WriteFile(filepath.Join(w.stateDir, "gate.json"), []byte(strings.Replace(string(made), readGate().ID, first, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "nothing was started") {
+		t.Fatalf("the first gate: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if err := os.WriteFile(filepath.Join(w.stateDir, "gate.json"), made, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.rollback("", "--rollback"); code != 0 {
+		t.Fatalf("--rollback again: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	w.expectReverse("rolled back", rolledBackState)
+	w.noSecrets()
+}
+
+// A Docker Compose too old for the way back: a new migration and --rollback
+// say so before anything.
+func TestG5TheComposeVersion(t *testing.T) {
+	const said = "Docker Compose 2.31.0 is too old: varlatch migrate needs 2.32.0 or later"
+	for _, coolify := range []bool{false, true} {
+		w := newWorld(t, false)
+		w.coolify = coolify
+		if coolify {
+			w.coolifyLayout()
+		}
+		old := filepath.Join(w.stateDir, "compose-version")
+		if err := os.WriteFile(old, []byte("2.31.0"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		w.useState()
+		if code := w.run(""); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), said) {
+			t.Fatalf("a new migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.startedNothing("a new migration", 0)
+		if err := os.Remove(old); err != nil {
+			t.Fatal(err)
+		}
+		w = migratedWorld(t, false, coolify)
+		if err := os.WriteFile(filepath.Join(w.stateDir, "compose-version"), []byte("2.31.0"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := len(w.calls("docker-calls"))
+		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), said) || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "nothing was done") {
+			t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.startedNothing("--rollback", before)
+		if s, d := w.phases(); s != "open" || d != "open" || !w.goRuns() {
+			t.Errorf("the journals %s / %s", s, d)
+		}
 	}
 }

@@ -418,6 +418,18 @@ func TestAStuckSwitchIsResumed(t *testing.T) {
 	})
 }
 
+// gatedTnSource says whether it is behind its barrier.
+type gatedTnSource struct {
+	*tnSource
+	err   error
+	asked GateRef
+}
+
+func (s *gatedTnSource) CheckGate(_ context.Context, g GateRef) error {
+	s.asked = g
+	return s.err
+}
+
 // The switch's sidecar (#413's review): a start that runs the sidecar but
 // fails to restart varlatchd stops the sidecar again; a varlatchd with its
 // own network is marked without the sidecar; a varlatchd restarted with
@@ -433,6 +445,20 @@ func TestTheSwitchsSidecar(t *testing.T) {
 			t.Fatalf("%v %+v, sidecar running %v", err, j, w.src.running)
 		}
 		w.src.halfStart = nil
+		if j, err := w.eng.Resume(ctx); err != nil || j.Phase != Open || w.src.running || w.src.gate.Kind != "migrated-out" {
+			t.Fatalf("resume: %v %+v, sidecar running %v", err, j, w.src.running)
+		}
+	})
+	t.Run("the barrier is gone", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		src := &gatedTnSource{tnSource: w.src, err: errors.New("the volume holds no gate")}
+		w.eng.Source = src
+		j, err := w.eng.Run(ctx, false)
+		if err == nil || j.Phase != Switched || !errors.Is(err, src.err) || !strings.Contains(err.Error(), "--resume goes on") || w.src.running ||
+			len(afterSwitch(w.src.calls, j.Barrier.GateID)) != 0 || src.asked.ID != j.Barrier.GateID || !src.asked.Barrier {
+			t.Fatalf("%v %+v, sidecar running %v, asked %+v: %q", err, j.Phase, w.src.running, src.asked, w.src.calls)
+		}
+		src.err = nil
 		if j, err := w.eng.Resume(ctx); err != nil || j.Phase != Open || w.src.running || w.src.gate.Kind != "migrated-out" {
 			t.Fatalf("resume: %v %+v, sidecar running %v", err, j, w.src.running)
 		}

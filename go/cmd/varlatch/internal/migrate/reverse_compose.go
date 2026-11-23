@@ -84,18 +84,24 @@ type ReverseSource interface {
 	// shape's ingress); StopServing stops them.
 	StartServing(ctx context.Context, kind Ingress) error
 	StopServing(ctx context.Context, kind Ingress) error
-	// UndoRebuild puts the installation back as the forward migration
-	// left it.
-	UndoRebuild(ctx context.Context, plan RebuildRecord) error
+	// UndoRebuild puts the installation back as the forward migration left
+	// it: behind gate, or, when the import lifted it, behind another, whose
+	// id gated journals before it is the installation's.
+	UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, gated func(id string) error) error
 	// ReverseReady refuses, with the step to take, a reverse whose
 	// one-off commands could not start (varlatchd in a stopped sidecar's
 	// network), before anything of it is done.
 	ReverseReady(ctx context.Context) error
+	// CheckGate refuses a source that is not behind exactly the gate g, as
+	// its state volume carries it: nothing of it is started to read that.
+	CheckGate(ctx context.Context, g GateRef) error
 	// ServeGated starts what answers for the source behind its migrated-out
-	// gate: the service varlatchd shares its network with when owned (a
-	// sidecar migrate itself stopped), Postgres and varlatchd, without
-	// their dependencies.
-	ServeGated(ctx context.Context, owned bool) error
+	// gate (CheckGate, before anything and again before varlatchd): the
+	// service varlatchd shares its network with when owned, Postgres and
+	// varlatchd, without their dependencies.
+	ServeGated(ctx context.Context, s GatedStart) error
+	// StopStarted stops the services named.
+	StopStarted(ctx context.Context, services []string) error
 	// EnsureImages has the images the reverse starts on this host, pulling
 	// those that are not: before Go's barrier, never in the downtime.
 	EnsureImages(ctx context.Context, j *Journal) error
@@ -189,7 +195,7 @@ const (
 // ones in use.
 func (m composeConfig) volumeKeys() ([]string, error) {
 	var out []string
-	for _, w := range []struct{ service, target string }{{"postgres", postgresTarget}, {"convex-backend", convexTarget}, {service, "/var/lib/varlatch"}} {
+	for _, w := range []struct{ service, target string }{{"postgres", postgresTarget}, {"convex-backend", convexTarget}, {service, stateTarget}} {
 		key := ""
 		for _, v := range m.Services[w.service].Volumes {
 			if v.Type == "volume" && v.Target == w.target {
@@ -289,6 +295,9 @@ func parseConfig(r Ran) (composeConfig, error) {
 // RebuildPlan: the fresh volumes, named by the project and the migration
 // (its id's last 8 letters), and COMPOSE_FILE as it is now.
 func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, error) {
+	if err := c.checkVersion(ctx); err != nil {
+		return RebuildRecord{}, err
+	}
 	cfg, err := c.config(ctx)
 	if err != nil {
 		return RebuildRecord{}, err
@@ -300,6 +309,10 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 	}
 	if j.Source.Digest == "" || j.Source.DigestRepository == "" {
 		return RebuildRecord{}, errors.New("the journal records no image digest of the source: the rebuild runs the release's own image only")
+	}
+	// An undo reads its gate there.
+	if _, err := c.stateName(ctx, cfg); err != nil {
+		return RebuildRecord{}, err
 	}
 	// Names no volume has: one there already is another's, whatever it is.
 	var names []string
@@ -934,7 +947,7 @@ func (c *Compose) StopServing(ctx context.Context, kind Ingress) error {
 // fresh volumes), the fresh volumes removed by their names; the
 // migrated-out gate made again if the import lifted it; varlatchd started
 // behind it, as the forward migration left it.
-func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
+func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, gated func(id string) error) error {
 	c.reversed = true
 	if err := c.compose(ctx, "docker compose stop", "stop", service, "convex-backend", "postgres"); err != nil {
 		return err
@@ -992,6 +1005,14 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 	if err != nil {
 		return err
 	}
+	if g != nil && g.Kind == "migrated-out" && g.ID != gate.ID {
+		// An undo interrupted, or an earlier build's: a migrated-out gate all
+		// the same, known from here.
+		if err := gated(g.ID); err != nil {
+			return err
+		}
+		gate.ID = g.ID
+	}
 	if g == nil || g.Kind != "migrated-out" {
 		if g != nil && g.Kind != "migration" {
 			return fmt.Errorf("the TypeScript installation is behind a %s gate (%s), not the migration's: left as it is", g.Kind, g.ID)
@@ -1012,6 +1033,12 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 			}
 			g = &b.Gate
 		}
+		// Journalled before it is the installation's gate, so that a reverse
+		// begun again knows it.
+		if err := gated(g.ID); err != nil {
+			return err
+		}
+		gate.ID = g.ID
 		r, err := c.docker(ctx, oneOff("migration", "mark-migrated-out", "--id", g.ID), nil)
 		if err != nil {
 			return err
@@ -1019,6 +1046,13 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord) error {
 		if r.Code != 0 {
 			return failure("the TypeScript release's migration mark-migrated-out", r)
 		}
+	}
+	// The daemon starts behind that gate only, read where it will read it.
+	// The volume may be another than the migration began with (one that was
+	// lost, made again by the commands above): what counts here is the gate.
+	gate.State = nil
+	if err := c.CheckGate(ctx, gate); err != nil {
+		return fmt.Errorf("%w; varlatchd was not started", err)
 	}
 	// --no-deps: varlatchd's one-off dependency (varlatch-migrate,
 	// service_completed_successfully) would run again with it and refuse
@@ -1097,32 +1131,52 @@ func (c *Compose) startNetworkOwner(ctx context.Context) (started, made bool, er
 }
 
 // ServeGated: Postgres as it is (or made again), the network's owner, then
-// varlatchd in its network.
-func (c *Compose) ServeGated(ctx context.Context, owned bool) error {
+// varlatchd in its network. Each service that does not run is said to
+// s.Starting before it is started: an undo stops those, and no other.
+func (c *Compose) ServeGated(ctx context.Context, s GatedStart) error {
+	// Before anything starts: without its gate the TypeScript release takes
+	// requests, on the database it left.
+	if err := c.CheckGate(ctx, s.Gate); err != nil {
+		return err
+	}
 	running, err := c.running(ctx)
 	if err != nil {
 		return err
 	}
+	starting := func(svc string) error {
+		if slices.Contains(running, svc) || s.Starting == nil {
+			return nil
+		}
+		return s.Starting(svc)
+	}
 	if !slices.Contains(running, "postgres") {
+		if err := starting("postgres"); err != nil {
+			return err
+		}
 		if err := c.compose(ctx, "docker compose up -d --no-deps postgres", "up", "-d", "--no-deps", "--no-recreate", "postgres"); err != nil {
 			return err
 		}
 	}
-	if !owned {
-		// Its own network, or the operator's sidecar (ReverseReady).
-		if slices.Contains(running, service) {
-			return nil
+	started, made := false, false
+	if s.Owned {
+		if started, made, err = c.startNetworkOwner(ctx); err != nil {
+			return err
 		}
-		return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
 	}
-	started, made, err := c.startNetworkOwner(ctx)
-	if err != nil {
-		return err
-	}
+	// Otherwise its own network, or the operator's sidecar (ReverseReady).
 	if !started && slices.Contains(running, service) {
 		return nil
 	}
-	return c.restartDaemon(ctx, made)
+	if err := c.CheckGate(ctx, s.Gate); err != nil {
+		return err
+	}
+	if err := starting(service); err != nil {
+		return err
+	}
+	if s.Owned {
+		return c.restartDaemon(ctx, made)
+	}
+	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
 }
 
 // EnsureImages: the images the Compose files give their services, and the
@@ -1141,22 +1195,27 @@ func (c *Compose) EnsureImages(ctx context.Context, j *Journal) error {
 	images := append(strings.Fields(string(r.Answer)), j.Source.DigestRepository+"@"+j.Source.Digest)
 	slices.Sort(images)
 	for _, img := range slices.Compact(images) {
-		r, err := c.docker(ctx, []string{"image", "inspect", "--format", "{{.Id}}", img}, nil)
-		if err != nil {
+		if err := c.ensureImage(ctx, img); err != nil {
 			return err
 		}
-		if r.Code == 0 {
-			continue
-		}
-		if r, err = c.docker(ctx, []string{"pull", "-q", img}, nil); err != nil {
-			return err
-		}
-		if r.Code != 0 {
-			// Said in parts, as pinned does (the fail-safe reads what comes
-			// before an "@" as possible credentials).
-			repo, digest, _ := strings.Cut(img, "@")
-			return fmt.Errorf("the image %s %s is not on this host and could not be pulled (exit %d): pull it, then varlatch migrate --rollback again", repo, digest, r.Code)
-		}
+	}
+	return nil
+}
+
+// ensureImage has img on this host, pulling it when it is not.
+func (c *Compose) ensureImage(ctx context.Context, img string) error {
+	r, err := c.docker(ctx, []string{"image", "inspect", "--format", "{{.Id}}", img}, nil)
+	if err != nil || r.Code == 0 {
+		return err
+	}
+	if r, err = c.docker(ctx, []string{"pull", "-q", img}, nil); err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		// Said in parts, as pinned does (the fail-safe reads what comes
+		// before an "@" as possible credentials).
+		repo, digest, _ := strings.Cut(img, "@")
+		return fmt.Errorf("the image %s %s is not on this host and could not be pulled (exit %d): pull it, then run this again", repo, digest, r.Code)
 	}
 	return nil
 }

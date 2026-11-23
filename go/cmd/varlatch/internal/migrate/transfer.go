@@ -292,19 +292,27 @@ type GateProber interface {
 // it ("" for none), and the state of the gate that answers ("" for none, or
 // when what answers is not a Varlatch server, as a proxy's own error).
 type GateAnswer struct {
+	Status int
 	Route  string
 	Server bool
+	Ready  bool
 	State  string
+}
+
+// migratedOut is the TypeScript release's answer behind its migrated-out
+// gate.
+func (a GateAnswer) migratedOut() bool {
+	return a.Server && a.Status == http.StatusServiceUnavailable && !a.Ready && a.State == "migrated-out"
 }
 
 func (a GateAnswer) String() string {
 	switch {
 	case !a.Server:
-		return "not a Varlatch server"
+		return fmt.Sprintf("not a Varlatch server (HTTP %d)", a.Status)
 	case a.State == "":
-		return "a Varlatch server, ready or not saying"
+		return fmt.Sprintf("a Varlatch server, ready or not saying (HTTP %d, ready %t)", a.Status, a.Ready)
 	}
-	return "a Varlatch server in the state " + a.State
+	return fmt.Sprintf("a Varlatch server in the state %s (HTTP %d, ready %t)", a.State, a.Status, a.Ready)
 }
 
 // routeHeader is what the operator's route (RouteFile) puts on each answer
@@ -315,17 +323,17 @@ const routeHeader = "X-Varlatch-Rollback"
 // ProbeGate is GET <origin>/readyz: the TypeScript release names its gate
 // there (503, "state": "migrated-out").
 func (p HTTPProber) ProbeGate(ctx context.Context, origin string) (GateAnswer, error) {
-	_, header, body, err := p.get(ctx, origin+"/readyz")
+	status, header, body, err := p.get(ctx, origin+"/readyz")
 	if err != nil {
 		return GateAnswer{}, err
 	}
-	a := GateAnswer{Route: header.Get(routeHeader)}
+	a := GateAnswer{Status: status, Route: header.Get(routeHeader)}
 	var r struct {
 		Ready *bool  `json:"ready"`
 		State string `json:"state"`
 	}
 	if json.Unmarshal(body, &r) == nil && r.Ready != nil {
-		a.Server, a.State = true, r.State
+		a.Server, a.Ready, a.State = true, *r.Ready, r.State
 	}
 	return a, nil
 }
@@ -360,6 +368,22 @@ func (p HTTPProber) get(ctx context.Context, url string) (int, http.Header, []by
 	if c == nil {
 		c = &http.Client{Timeout: 10 * time.Second}
 	}
+	// What answers at the origin itself: a redirect away from it is its
+	// answer, never followed to another's.
+	own, followed := *c, c.CheckRedirect
+	own.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != via[0].URL.Scheme || next.URL.Host != via[0].URL.Host {
+			return http.ErrUseLastResponse
+		}
+		if followed != nil {
+			return followed(next, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	c = &own
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, nil, nil, err
