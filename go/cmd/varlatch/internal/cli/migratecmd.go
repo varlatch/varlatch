@@ -324,6 +324,9 @@ func migrateCommand(r *Run) error {
 		Prober:  migrate.HTTPProber{},
 		Tailnet: tailnetOptions,
 	}
+	if !o.asJSON {
+		e.Options.Progress = e.Options.Say
+	}
 	e.Target.(*migrate.Host).TailnetAuthKey = tailnetAuthKey
 	if o.config != "" {
 		if err := r.targetMaker(e, o, varlatchd); err != nil {

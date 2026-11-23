@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1324,6 +1325,66 @@ func TestG5Interruptions(t *testing.T) {
 					t.Errorf("a second --resume: %d", code)
 				}
 				finished("after a second --resume")
+				w.noSecrets()
+			})
+		}
+	}
+}
+
+// An undo of the transfer killed between its steps, then undone again by
+// --abort or --resume: the target never serves again, the source's ingress
+// starts only once its barrier is lifted, and the old installation ends
+// released, unchanged. The undo's steps are said as they come, and with
+// --json not at all.
+func TestG5TheUndoInterrupted(t *testing.T) {
+	for _, c := range []struct {
+		point, answers, gate string
+		// step is the last one the killed run said.
+		step string
+	}{
+		{"undo target stopped", "none", "migration", "stopping the target"},
+		{"undo released", "none", "", "lifting the source's barrier"},
+		{"undo address started", "source", "", "starting the source's dashboard again"},
+		{"undo discarded", "source", "", "discarding the target's database"},
+	} {
+		for _, again := range []string{"--abort", "--resume"} {
+			t.Run(c.point+", "+again, func(t *testing.T) {
+				w := newWorld(t, false)
+				w.useState()
+				before := w.sourceHash()
+				if code := w.run("transfer started"); code != -1 {
+					t.Fatalf("not killed: %d", code)
+				}
+				if code := w.run(c.point, "--abort"); code != -1 {
+					t.Fatalf("the undo was not killed: %d", code)
+				}
+				w.expect("killed at "+c.point, "transfer", "transfer", c.answers, c.gate)
+				if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "Step: "+c.step+".") || !regexp.MustCompile(`Done in \d+s: `+c.step+`\.`).MatchString(out) {
+					t.Errorf("no step %q in:\n%s", c.step, out)
+				}
+				code := w.run("", again, "--json")
+				out := string(w.outputs[len(w.outputs)-1])
+				// --resume of an undo answers with its cause, 1.
+				if want := map[string]int{"--abort": 0, "--resume": 1}[again]; code != want {
+					t.Fatalf("%s: %d\n%s", again, code, out)
+				}
+				if strings.Contains(out, "Step: ") || strings.Contains(out, "Done in ") {
+					t.Errorf("progress with --json:\n%s", out)
+				}
+				finished := func(when string) {
+					w.expect(when, "released", "released", "source", "")
+					if _, err := os.Stat(filepath.Join(w.data, "varlatch.db")); !os.IsNotExist(err) {
+						t.Errorf("%s: the target's database was not discarded: %v", when, err)
+					}
+				}
+				finished("undone")
+				if after := w.sourceHash(); after != before {
+					t.Error("the source's data changed")
+				}
+				if code := w.run("", "--resume"); code != 0 {
+					t.Errorf("--resume once undone: %d", code)
+				}
+				finished("after another --resume")
 				w.noSecrets()
 			})
 		}

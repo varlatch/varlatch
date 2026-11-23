@@ -25,6 +25,11 @@ import (
 //     once the sidecar the tailnet handoff stopped runs again for the
 //     source's mark, and "switch marked" once the source is marked
 //     migrated out, before the sidecar stops again;
+//   - the forward migration's undo: "undo target stopped" once the target
+//     of a transfer is stopped; "undo released" once the source's barrier
+//     is lifted; "undo address started" once the source's ingress was
+//     asked to start again; "undo discarded" once the target's database
+//     is, before either journal says released;
 //   - the reverse (--rollback): "rollback barrier held" once Go's barrier
 //     is up; "rollback rebuilt" once the TypeScript side runs on its fresh
 //     volumes; "rollback go stopped" and "rollback transfer started" in

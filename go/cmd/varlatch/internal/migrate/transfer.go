@@ -188,7 +188,7 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 			"(the target stops first, then the source's %s starts again and is waited for).", j.Transfer.Origin, ingressPart(kind))
 		return ErrAwaitingOperator
 	}
-	if err := e.waitForTarget(ctx, j); err != nil {
+	if err := e.step(e.awaiting(j, "the target"), func() error { return e.waitForTarget(ctx, j) }); err != nil {
 		if kind == Coolify {
 			return fmt.Errorf("%w; once the domain is moved, varlatch migrate --resume checks again; varlatch migrate --abort undoes the migration: stop the Go service first when it asks, then it starts the TypeScript dashboard, which routes the domain itself, and waits for it; set the domain back in Coolify after that", err)
 		}
