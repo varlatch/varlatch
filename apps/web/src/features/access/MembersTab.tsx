@@ -31,7 +31,7 @@ import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { useCapability } from "../projects/hooks";
 import { CLI_DOWNLOAD_CAPABILITY, installLine } from "../../lib/installCli";
-import { useIdentities } from "./shared";
+import { useIdentities, useOrganizationPermission } from "./shared";
 import { permissionPhrase, scopeParts, type Names } from "./model";
 import { useAccessNames } from "./useAccessNames";
 import { DemoteDialog, RemoveMemberDialog, type MemberRef } from "./MemberDialogs";
@@ -62,11 +62,10 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
   const reports = lifecycle && auditAccess.data === true;
   // Reading reports needs audit.read; listing people here needs identity.read.
   const peopleDenied = isDenied(identities.error);
-  // Reading the invitations needs what inviting does (identity.manage), so a
-  // refusal there says this person may not invite. The server decides either
-  // way; a server without the list leaves it to whether people are readable.
-  const invitations = useInvitations(org);
-  const mayInvite = invitations.supported ? !invitations.isPending && !isDenied(invitations.error) : !identities.isPending && !peopleDenied;
+  // Inviting needs identity.manage. Invite shows only once the server has
+  // said this person has it: not while that is on its way, not when the
+  // question failed, not on a server that cannot be asked.
+  const mayInvite = useOrganizationPermission(org, "identity.manage") === "allowed";
   const [filter, setFilter] = useState("");
   const [inviting, setInviting] = useState(false);
   const [freshLink, setFreshLink] = useState<{ name: string; url: string } | null>(null);
@@ -164,7 +163,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
             </Button>
           }
         >
-          {errorMessage(auditAccess.error)}
+          The server did not answer as expected.
         </Callout>
       )}
       {reports && peopleDenied && (
@@ -187,7 +186,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
             data-testid="people-error"
             icon={<ShieldAlert size={20} />}
             title="Members could not be loaded"
-            description={errorMessage(identities.error)}
+            description="The server did not answer as expected. Try again in a moment."
             actions={
               <Button size="sm" variant="secondary" onClick={() => void identities.refetch()}>
                 Try again
@@ -338,18 +337,6 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
 
 const isDenied = (err: unknown) => err instanceof VarlatchApiError && err.status === 403;
 
-/** The pending invitations, where the server lists them. One query for the tab and the section. */
-function useInvitations(org: string) {
-  const { api } = useSession();
-  const supported = useCapability("invitations.manage");
-  const query = useQuery({
-    queryKey: ["invitations", org],
-    queryFn: () => api.listInvitations(org, { status: "pending" }),
-    enabled: supported,
-  });
-  return { ...query, supported };
-}
-
 /** Built-in grants of the two organization roles, in words. */
 export const ROLE_ACCESS = {
   admin: { short: "Everything in the organization", long: "Admins can do every organization action, but network requirements still apply." },
@@ -485,11 +472,15 @@ function PendingInvitations({
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
+  const manage = useCapability("invitations.manage");
   const servesCli = useCapability(CLI_DOWNLOAD_CAPABILITY);
   const { nameOf } = useAccessNames(org);
   const now = useNow();
-  const invitations = useInvitations(org);
-  const manage = invitations.supported;
+  const invitations = useQuery({
+    queryKey: ["invitations", org],
+    queryFn: () => api.listInvitations(org, { status: "pending" }),
+    enabled: manage,
+  });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["invitations", org] });
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeInvitation(org, id),

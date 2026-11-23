@@ -13,6 +13,7 @@ import { DialogProvider } from "./components/Dialog";
 import { ToastProvider } from "./components/Toast";
 import { Shell, lastOrg } from "./shell/Shell";
 import { NotFoundPage, PageError, ScreenError } from "./shell/RouteScreens";
+import { NOT_FOUND } from "./shell/notFound";
 import { ApprovalDialogProvider } from "./features/security-controls/approval";
 import {
   FullPageLoading,
@@ -182,7 +183,7 @@ export const routes: RouteObject[] = [
               },
               { path: "/installation/settings", element: <InstallationPage /> },
               // Any other address outside an Organization.
-              { path: "*", element: <NotFoundPage /> },
+              { path: "*", element: <NotFoundPage />, handle: NOT_FOUND },
             ],
           },
         ],
@@ -223,7 +224,7 @@ export const routes: RouteObject[] = [
               { path: "security", element: <OrgSecurityPage /> },
               { path: "settings", element: <SettingsPage /> },
               // Any other address in an Organization.
-              { path: "*", element: <NotFoundPage /> },
+              { path: "*", element: <NotFoundPage />, handle: NOT_FOUND },
             ],
           },
         ],

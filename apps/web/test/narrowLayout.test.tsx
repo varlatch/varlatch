@@ -35,6 +35,17 @@ describe("a table that scrolls sideways", () => {
   });
 });
 
+describe("the Audit page's fields", () => {
+  it("may shrink to the width there is: no smallest width of their own", () => {
+    const src = join(__dirname, "../src/features/audit");
+    const webhooks = readFileSync(join(src, "WebhooksSection.tsx"), "utf8");
+    // The registration and the edit form: an endpoint and its event types each.
+    expect(webhooks.match(/<Field label="Endpoint URL" className="min-w-0 flex-\[2_1_16rem\]">/g)).toHaveLength(2);
+    expect(webhooks.match(/<Field label="Event types" className="min-w-0 flex-\[1_1_13rem\]">/g)).toHaveLength(2);
+    for (const file of ["WebhooksSection.tsx", "AuditTimeline.tsx"]) expect(readFileSync(join(src, file), "utf8"), file).not.toMatch(/\bmin-w-(?!0\b)\d/);
+  });
+});
+
 describe("an event's sentence", () => {
   it("breaks a long word, and keeps a place on one line only where there is room", async () => {
     let root!: ReturnType<typeof create>;

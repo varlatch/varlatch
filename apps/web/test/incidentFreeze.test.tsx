@@ -142,6 +142,15 @@ describe("the banner", () => {
     expect(all("page")).toEqual([]);
   });
 
+  it("shows above an address without a page, which still says so", async () => {
+    open = FREEZE;
+    await mount(<FreezeGate org="acme" notFound><Page /></FreezeGate>, "/o/acme/nope");
+    const banner = text(all("incident-freeze-banner")[0]!);
+    expect(banner).toContain("This organization is frozen for an incident");
+    expect(banner).not.toContain("This page is not available");
+    expect(all("page")).toHaveLength(1);
+  });
+
   it("knows which pages work while frozen", () => {
     for (const p of ["/o/acme/security", "/o/acme/access", "/o/acme/audit", "/o/acme/settings", "/o/acme/connections"]) {
       expect(pageWorksWhileFrozen(p, "acme"), p).toBe(true);
