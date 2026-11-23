@@ -71,7 +71,7 @@ fixes.
   `--cpu-shares` in its custom run options is overridden, and that a
   Compose resource needs `cpu_shares` in its Compose file.
 
-## 0.50.0-rc.2 (2026-11-20)
+## 0.50.0-rc.2 (2026-11-23)
 
 The second prerelease of the Go line (ADR-0059), published to test more of
 the Go CLI and server against real installations. **It is not for
