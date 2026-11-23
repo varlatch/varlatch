@@ -165,7 +165,7 @@ Changes since 0.50.0-rc.2, by pull request:
   reference was masked. The refusal now names the repository and the digest
   when the value is an image reference by digest, does not show any other
   value, and gives the form to use, `repository:tag@sha256:<digest>`.
-<!-- SLOT #436 (open, draft, head 5d8e7edb; recheck the text against the merged PR) -->
+<!-- SLOT #436 (open, under review, head 040f2266, newer than this text: the gate check, Compose 2.32.0, the proxy route; recheck the text against the merged PR) -->
 - **`varlatch migrate` from a Coolify installation (#436).** A directory
   Coolify deploys from can hold the repository's `docker-compose.yml`
   beside the file that runs, and plain `docker compose` read the wrong one
@@ -184,25 +184,44 @@ Changes since 0.50.0-rc.2, by pull request:
   before the migration. The rollback and the
   [migration guide](docs/operations/migrate-to-0.50.md) say so.
 <!-- END SLOT #436 -->
-<!-- SLOT #439 (open, armed, head 2c062983; recheck the text against the merged PR) -->
+<!-- SLOT PROGRESS (no pull request yet, local ed73f077 on #436; give its number, recheck, or drop) -->
+- **`varlatch migrate` says what an undo, a rollback and a wait are doing
+  (#PROGRESS).** Each step says when it starts, every 15 seconds while it
+  lasts (how long so far, and what it waits for) and when it ends. Not with
+  `--json`. rc.2's entry on #423 is corrected: Ctrl-C or a kill ends
+  `varlatch migrate` at once, and the old node can stay on the tailnet until
+  `--resume`.
+<!-- END SLOT PROGRESS -->
+<!-- SLOT #440 (open, in the merge queue, head 07dac055; recheck against the merged PR) -->
+- **A stop during a certificate issuance ends `varlatchd` (#440).** With
+  `listen_https`, the server kept trying again without end after a stop
+  interrupted an issuance or a renewal, until it was killed (after the 30
+  seconds of the shipped systemd unit). `infra/coolify/varlatchd.compose.yml`
+  gives the service 30 seconds to stop, as the unit does; for `docker run`,
+  give `--stop-timeout 30`.
+<!-- END SLOT #440 -->
 - **Not-found and error pages in the dashboard (#439).** An address
   without a page shows a not-found page of the dashboard, with its
   navigation and a way back, where the router's developer error page
   showed. A page that fails shows a plain message with Reload and a way
-  back, and never the error's text.
+  back, and never the error's text. In an Organization frozen for an
+  incident the banner stays above the not-found page.
 - **Access and Audit in the dashboard (#439).** Under Access, People,
   someone who may not read the members is told so, where the page said "No
   members yet", and Invite shows only to someone who may invite; the server
-  refused both before too. The Audit page fits a phone's width.
-<!-- END SLOT #439 -->
+  refused both before too. A members list that cannot be read says so, with
+  Try again. The Audit page fits a phone's width.
 - **The migration's rehearsals (#435).** Fixes to the rehearsal harness for
   the image target and for a public address with its own certificate
   authority. No change to what is shipped.
-<!-- SLOT #438 (open, armed, head 5c2458a0; recheck the text against the merged PR) -->
 - **The release process (#438).** The G1 gate reads its walkthrough record
-  from a commit of its own (`walkthrough_ref`), beside the candidate it
-  judges. No change to what is shipped.
-<!-- END SLOT #438 -->
+  from a commit of its own (`walkthrough_ref`), which differs from the
+  candidate it judges only in regular files added or changed under
+  `docs/evidence/`. No change to what is shipped.
+<!-- SLOT #441 (open, armed, head e2dac419; recheck against the merged PR) -->
+- **CI (#441).** CI pulls MinIO's pinned image with retries before it starts
+  it.
+<!-- END SLOT #441 -->
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release. What follows the latest release (`varlatch
