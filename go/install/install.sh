@@ -35,6 +35,8 @@
 
 {
 set -eu
+# cd is for this script's own paths: never a directory found through CDPATH.
+unset CDPATH
 
 # The release stamps its version here; a copy that was not stamped needs
 # --version.
@@ -166,13 +168,20 @@ put_cli() {
 
 # resolved prints the file's path with every link on its way resolved, its
 # directories' links as well (cd -P, pwd -P) as its own (readlink, one
-# level at a time, up to 40). A path whose directory does not exist is
-# printed as it is.
+# level at a time, up to 40). A relative directory is the working
+# directory's (./, CDPATH never searched), and pwd -P is the only output.
+# Where a directory on the way does not exist (a link into a missing
+# keg), what is left is printed as it is.
 resolved() {
   hb_p=$1 hb_hops=0
   while :; do
-    hb_d=$(cd -P "$(dirname "$hb_p")" 2>/dev/null && pwd -P) || break
-    hb_p=$hb_d/$(basename "$hb_p")
+    hb_dir=$(dirname -- "$hb_p")
+    case "$hb_dir" in
+      /*) ;;
+      *) hb_dir=./$hb_dir ;;
+    esac
+    hb_d=$(CDPATH='' cd -P -- "$hb_dir" >/dev/null 2>&1 && pwd -P) || break
+    hb_p=$hb_d/$(basename -- "$hb_p")
     [ -L "$hb_p" ] && [ "$hb_hops" -lt 40 ] || break
     hb_link=$(readlink "$hb_p" 2>/dev/null) || break
     case "$hb_link" in
@@ -191,7 +200,9 @@ resolved() {
 # CLI's formula installed a script wrapper, which says so. Never by the
 # message in a binary: every Go varlatch carries self-update's refusal.
 homebrew() {
-  [ -e "$1" ] || return 0
+  # A link counts even when what it names is missing: one into a keg that
+  # is gone is still Homebrew's.
+  [ -e "$1" ] || [ -L "$1" ] || return 0
   for hb_path in "$1" "$(resolved "$1")"; do
     case "$(printf '%s' "$hb_path" | tr '[:upper:]' '[:lower:]')" in
       */cellar/* | /opt/homebrew/* | /home/linuxbrew/.linuxbrew/*)

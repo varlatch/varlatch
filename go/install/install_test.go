@@ -701,9 +701,13 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 	}
 	base := srv.URL
 	path := os.Getenv("PATH")
+	cwd := ""
 	var extra []string
 	for _, e := range env {
 		switch {
+		case strings.HasPrefix(e, "CWD="):
+			// The directory the script runs in (a relative --dir is its).
+			cwd = strings.TrimPrefix(e, "CWD=")
 		case strings.HasPrefix(e, "PATH_FIRST="):
 			// A directory searched before the run's own PATH.
 			path = strings.TrimPrefix(e, "PATH_FIRST=") + string(os.PathListSeparator) + path
@@ -730,6 +734,7 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 	stubLog := filepath.Join(home, "stub.log")
 	tmpdir := t.TempDir()
 	cmd := exec.Command("sh", append([]string{file}, args...)...)
+	cmd.Dir = cwd
 	cmd.Env = append([]string{
 		"PATH=" + path, "HOME=" + home, "TMPDIR=" + tmpdir,
 		"CURL_CA_BUNDLE=" + ca, "STUB_LOG=" + stubLog,
@@ -960,6 +965,64 @@ func TestInstallRefusesHomebrew(t *testing.T) {
 			emptyTmp(t, res)
 		})
 	}
+}
+
+// A relative --dir is the working directory's, whatever CDPATH says: with
+// ./bin a link to a keg's bin and $CDPATH/bin an ordinary directory, the
+// keg's binary is refused, not overwritten (the resolver once followed
+// CDPATH while the install wrote through ./bin).
+func TestInstallRelativeDirIgnoresCDPATH(t *testing.T) {
+	stub := goStub(t)
+	prefix := t.TempDir()
+	keg := filepath.Join(prefix, "Cellar", "varlatch", version, "bin")
+	if err := os.MkdirAll(keg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keg, "varlatch"), []byte(stubCLI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	work, cdpath := t.TempDir(), t.TempDir()
+	if err := os.Symlink(keg, filepath.Join(work, "bin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(cdpath, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", "bin"}, "CWD="+work, "CDPATH="+cdpath)
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if !bytes.Equal(installed(t, filepath.Join(keg, "varlatch")), []byte(stubCLI)) {
+		t.Fatal("the keg's binary was overwritten")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cdpath, "bin")); len(entries) != 0 {
+		t.Fatal("something was written in CDPATH's directory")
+	}
+	emptyTmp(t, res)
+}
+
+// A link at the target into a keg that is gone (the link left behind) is
+// still Homebrew's: refused, the link kept.
+func TestInstallRefusesADanglingKegLink(t *testing.T) {
+	stub := goStub(t)
+	missing := filepath.Join(t.TempDir(), "Cellar", "varlatch", version, "bin", "varlatch")
+	dir := t.TempDir()
+	target := filepath.Join(dir, "varlatch")
+	if err := os.Symlink(missing, target); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if got, err := os.Readlink(target); err != nil || got != missing {
+		t.Fatalf("the link changed: %q, %v", got, err)
+	}
+	emptyTmp(t, res)
 }
 
 // A link whose path goes through a Cellar but resolves outside it is no
