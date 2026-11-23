@@ -5,7 +5,9 @@
 package rehearsal_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,21 +112,55 @@ func TestSyncReal(t *testing.T) {
 		}
 	})
 
-	// A platform stand-in: GitHub's secrets and Coolify's variables, each
-	// error echoing the request's Authorization header (as a careless
-	// proxy might), and every DELETE recorded.
+	// A platform stand-in: GitHub's secrets (two pages, linked) and
+	// Coolify's variables (a preview copy of each, real_value and
+	// updated_at), decoys of other runs' names among them, each error
+	// echoing the request's Authorization header (as a careless proxy
+	// might), every write and DELETE recorded, and one DELETE answered
+	// 404 (gone already).
 	var mu sync.Mutex
-	var deleted []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var deleted, written []string
+	pub := make([]byte, 32)
+	pub[0] = 9
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+		secrets := "/repos/acme/vl-rh-sync/actions/secrets"
 		switch {
 		case r.URL.Path == "/fail":
 			http.Error(w, "refused for "+r.Header.Get("Authorization"), http.StatusUnauthorized)
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/vl-rh-sync/actions/secrets":
-			_ = json.NewEncoder(w).Encode(map[string]any{"secrets": []map[string]string{{"name": "VLRH_AB_PORT", "updated_at": "t1"}, {"name": "OTHER", "updated_at": "t2"}}})
+		case r.Method == http.MethodGet && r.URL.Path == secrets && r.URL.Query().Get("page") == "":
+			w.Header().Set("Link", "<"+srv.URL+secrets+"?per_page=100&page=2>; rel=\"next\", <"+srv.URL+secrets+"?per_page=100&page=2>; rel=\"last\"")
+			_ = json.NewEncoder(w).Encode(map[string]any{"secrets": []map[string]string{{"name": "VLRH_AB_PORT", "updated_at": "t1"}, {"name": "VLRH_CD_PORT", "updated_at": "t2"}}})
+		case r.Method == http.MethodGet && r.URL.Path == secrets:
+			_ = json.NewEncoder(w).Encode(map[string]any{"secrets": []map[string]string{{"name": "VLRH_AB_DEBUG", "updated_at": "t3"}, {"name": "VLRH_AB_PORT_X", "updated_at": "t4"}}})
+		case r.Method == http.MethodGet && r.URL.Path == secrets+"/public-key":
+			_ = json.NewEncoder(w).Encode(map[string]string{"key_id": "k1", "key": base64.StdEncoding.EncodeToString(pub)})
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, secrets+"/"):
+			var b map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			sealed, _ := base64.StdEncoding.DecodeString(b["encrypted_value"])
+			written = append(written, fmt.Sprintf("PUT %s key %s sealed %d", r.URL.Path, b["key_id"], len(sealed)))
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/applications/k8s0abc123":
+			_ = json.NewEncoder(w).Encode(map[string]string{"uuid": "k8s0abc123", "name": "vl-rh-sync-app"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/applications/k8s0abc123/envs":
-			_ = json.NewEncoder(w).Encode([]map[string]string{{"uuid": "e1", "key": "VLRH_AB_PORT", "value": "8080"}, {"uuid": "e2", "key": "OTHER", "value": "x"}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"uuid": "p1", "key": "VLRH_AB_PORT", "value": "stale", "is_preview": true, "updated_at": "u0"},
+				{"uuid": "e1", "key": "VLRH_AB_PORT", "value": "masked", "real_value": "8080", "is_preview": false, "updated_at": "u1"},
+				{"uuid": "e3", "key": "VLRH_AB_PORT_X", "value": "x", "is_preview": false},
+				{"uuid": "e4", "key": "VLRH_CD_PORT", "value": "y", "is_preview": false},
+				{"uuid": "e2", "key": "OTHER", "value": "x", "is_preview": false},
+			})
+		case r.Method == http.MethodPatch && r.URL.Path == "/api/v1/applications/k8s0abc123/envs":
+			var b map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			written = append(written, fmt.Sprintf("PATCH %v=%v preview %v", b["key"], b["value"], b["is_preview"]))
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodDelete && r.URL.Path == secrets+"/VLRH_AB_DEBUG":
+			deleted = append(deleted, r.URL.Path)
+			http.NotFound(w, r)
 		case r.Method == http.MethodDelete:
 			deleted = append(deleted, r.URL.Path)
 			w.WriteHeader(http.StatusNoContent)
@@ -145,19 +181,62 @@ func TestSyncReal(t *testing.T) {
 			t.Errorf("the report keeps the token: %s", got)
 		}
 	})
-	t.Run("the cleanup removes the run's names only", func(t *testing.T) {
-		removed, failed := p.cleanup([]string{"VLRH_AB_PORT", "VLRH_AB_DEBUG"})
+	t.Run("the reads", func(t *testing.T) {
+		if name, err := p.appName(); err != nil || name != "vl-rh-sync-app" {
+			t.Errorf("appName: %q, %v", name, err)
+		}
+		m, err := p.secretsUpdated()
+		if err != nil || len(m) != 4 || m["VLRH_AB_DEBUG"] != "t3" {
+			t.Errorf("both pages of secrets: %v, %v", m, err)
+		}
+		e, ok, err := p.env("VLRH_AB_PORT")
+		if err != nil || !ok || e.UUID != "e1" || e.value() != "8080" || e.UpdatedAt != "u1" {
+			t.Errorf("the non-preview row, its real value: %+v %v %v", e, ok, err)
+		}
+		if _, ok, _ := p.env("VLRH_AB_NONE"); ok {
+			t.Error("a variable that is not there")
+		}
+	})
+	t.Run("the calibration's writes", func(t *testing.T) {
+		if err := p.putSecret("VLRH_AB_DEBUG", "false"); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.patchEnv("VLRH_AB_PORT", "8081"); err != nil {
+			t.Fatal(err)
+		}
 		mu.Lock()
 		defer mu.Unlock()
-		// VLRH_AB_DEBUG is on neither platform: nothing is sent for it.
-		want := []string{"/repos/acme/vl-rh-sync/actions/secrets/VLRH_AB_PORT", "/api/v1/applications/k8s0abc123/envs/e1"}
+		// A sealed box: the ephemeral key (32), the box (16 + the value's 5).
+		want := []string{"PUT /repos/acme/vl-rh-sync/actions/secrets/VLRH_AB_DEBUG key k1 sealed 53", "PATCH VLRH_AB_PORT=8081 preview false"}
+		if !slices.Equal(written, want) {
+			t.Errorf("written %v, want %v", written, want)
+		}
+	})
+	t.Run("the cleanup removes the run's names only", func(t *testing.T) {
+		removed, gone, failed := p.cleanup([]string{"VLRH_AB_PORT", "VLRH_AB_DEBUG", "VLRH_AB_API_KEY"})
+		mu.Lock()
+		defer mu.Unlock()
+		// Not another run's VLRH_CD_PORT, not VLRH_AB_PORT_X, not OTHER;
+		// the preview copy too; VLRH_AB_API_KEY is on neither platform.
+		want := []string{"/repos/acme/vl-rh-sync/actions/secrets/VLRH_AB_PORT", "/repos/acme/vl-rh-sync/actions/secrets/VLRH_AB_DEBUG",
+			"/api/v1/applications/k8s0abc123/envs/p1", "/api/v1/applications/k8s0abc123/envs/e1"}
 		slices.Sort(want)
 		slices.Sort(deleted)
 		if !slices.Equal(deleted, want) || len(failed) != 0 {
 			t.Errorf("deleted %v (want %v), failed %v", deleted, want, failed)
 		}
-		if strings.Join(removed, ",") != "GitHub VLRH_AB_PORT,Coolify VLRH_AB_PORT" {
-			t.Errorf("removed %v", removed)
+		if strings.Join(removed, ",") != "GitHub VLRH_AB_PORT,Coolify VLRH_AB_PORT (preview),Coolify VLRH_AB_PORT" || strings.Join(gone, ",") != "GitHub VLRH_AB_DEBUG" {
+			t.Errorf("removed %v, gone %v", removed, gone)
+		}
+	})
+	t.Run("a listing's next page", func(t *testing.T) {
+		h := http.Header{}
+		h.Set("Link", `<https://api.github.com/x?page=2>; rel="next", <https://api.github.com/x?page=5>; rel="last"`)
+		if got := nextLink(h); got != "https://api.github.com/x?page=2" {
+			t.Errorf("next %q", got)
+		}
+		if got := nextLink(http.Header{}); got != "" {
+			t.Errorf("no Link: %q", got)
 		}
 	})
 }

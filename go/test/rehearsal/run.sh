@@ -42,7 +42,11 @@
 # application's UUID, its name vl-rh-...); the token files of mode 0600.
 # VL_RH_SYNC_ALLOW_REPO and VL_RH_SYNC_ALLOW_APP name a throwaway without
 # the vl-rh- prefix. The run writes and then deletes its own VLRH_<hex>_*
-# values only.
+# values only (the report names the prefix before the first write); after
+# an abnormal end (a kill, a power cut), delete VLRH_* by hand from the
+# throwaway repository and application. VL_RH_KEEP=1 keeps the source,
+# whose database holds both tokens sealed, beside its Root KEK: remove it
+# by hand when done.
 #
 # VL_RH_INGRESS=tailnet (a workstation or the box): the tailnet case, the
 # name handoff on a Headscale the run starts; with VL_RH_TAILSCALE_OAUTH_FILE,

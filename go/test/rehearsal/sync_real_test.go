@@ -5,6 +5,8 @@
 package rehearsal_test
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	vlsync "github.com/varlatch/varlatch/go/lib/sync"
 )
 
 // The sync case against real destinations (VL_RH_SYNC=real; B5 of
@@ -187,13 +191,31 @@ func (p *realPlatforms) scrub(s string) string {
 }
 
 func (p *realPlatforms) call(method, rawURL, token string, out any) error {
+	_, err := p.request(method, rawURL, token, nil, out)
+	return err
+}
+
+// request is call with a JSON body (nil for none), answering the
+// response's headers (a GitHub listing's Link).
+func (p *realPlatforms) request(method, rawURL, token string, in, out any) (http.Header, error) {
 	path := rawURL
 	if u, err := url.Parse(rawURL); err == nil {
 		path = u.Path
 	}
-	req, err := http.NewRequest(method, rawURL, nil)
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, rawURL, body)
 	if err != nil {
-		return fmt.Errorf("%s %s: %v", method, path, p.scrub(err.Error()))
+		return nil, fmt.Errorf("%s %s: %v", method, path, p.scrub(err.Error()))
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
@@ -203,23 +225,35 @@ func (p *realPlatforms) call(method, rawURL, token string, out any) error {
 	}
 	resp, err := p.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %v", method, path, p.scrub(err.Error()))
+		return nil, fmt.Errorf("%s %s: %v", method, path, p.scrub(err.Error()))
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		body := p.scrub(strings.TrimSpace(string(b)))
-		if len(body) > 200 {
-			body = body[:200]
+		answer := p.scrub(strings.TrimSpace(string(b)))
+		if len(answer) > 200 {
+			answer = answer[:200]
 		}
-		return &platformError{method: method, path: path, status: resp.StatusCode, body: body}
+		return resp.Header, &platformError{method: method, path: path, status: resp.StatusCode, body: answer}
 	}
 	if out != nil {
 		if err := json.Unmarshal(b, out); err != nil {
-			return fmt.Errorf("%s %s: the answer is not the JSON expected: %v", method, path, err)
+			return resp.Header, fmt.Errorf("%s %s: the answer is not the JSON expected: %v", method, path, err)
 		}
 	}
-	return nil
+	return resp.Header, nil
+}
+
+// nextLink is a GitHub listing's next page (its Link header's rel="next"),
+// "" for the last.
+func nextLink(h http.Header) string {
+	for _, part := range strings.Split(h.Get("Link"), ",") {
+		target, params, ok := strings.Cut(strings.TrimSpace(part), ";")
+		if ok && strings.Contains(params, `rel="next"`) {
+			return strings.Trim(strings.TrimSpace(target), "<>")
+		}
+	}
+	return ""
 }
 
 // notFound is whether err is the platform's 404.
@@ -231,28 +265,60 @@ func notFound(err error) bool {
 // secretsUpdated are the repository's Actions secrets: name to
 // updated_at.
 func (p *realPlatforms) secretsUpdated() (map[string]string, error) {
-	var page struct {
-		Secrets []struct {
-			Name      string `json:"name"`
-			UpdatedAt string `json:"updated_at"`
-		} `json:"secrets"`
-	}
-	if err := p.call(http.MethodGet, p.githubBase+"/repos/"+p.owner+"/"+p.repo+"/actions/secrets?per_page=100", p.ghToken, &page); err != nil {
-		return nil, err
-	}
 	out := map[string]string{}
-	for _, s := range page.Secrets {
-		out[s.Name] = s.UpdatedAt
+	next := p.githubBase + "/repos/" + p.owner + "/" + p.repo + "/actions/secrets?per_page=100"
+	for pages := 0; next != ""; pages++ {
+		if pages == 100 {
+			return nil, errors.New("GitHub's listing of the repository's secrets did not end within 100 pages")
+		}
+		var page struct {
+			Secrets []struct {
+				Name      string `json:"name"`
+				UpdatedAt string `json:"updated_at"`
+			} `json:"secrets"`
+		}
+		h, err := p.request(http.MethodGet, next, p.ghToken, nil, &page)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range page.Secrets {
+			out[s.Name] = s.UpdatedAt
+		}
+		next = nextLink(h)
+		if next != "" && !strings.HasPrefix(next, p.githubBase+"/") {
+			return nil, fmt.Errorf("GitHub's next page is not on %s", p.githubBase)
+		}
 	}
 	return out, nil
 }
 
-func (p *realPlatforms) deleteSecret(name string) error {
-	err := p.call(http.MethodDelete, p.githubBase+"/repos/"+p.owner+"/"+p.repo+"/actions/secrets/"+url.PathEscape(name), p.ghToken, nil)
-	if notFound(err) {
-		return nil
+// putSecret writes one of the run's secrets as an Actions secret is
+// written: sealed for the repository's public key (the calibration's
+// write; the run's other writes are Varlatch's).
+func (p *realPlatforms) putSecret(name, value string) error {
+	var key struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
 	}
+	base := p.githubBase + "/repos/" + p.owner + "/" + p.repo + "/actions/secrets/"
+	if err := p.call(http.MethodGet, base+"public-key", p.ghToken, &key); err != nil {
+		return err
+	}
+	pub, err := base64.StdEncoding.DecodeString(key.Key)
+	if err != nil {
+		return fmt.Errorf("GitHub's public key: %v", err)
+	}
+	sealed, err := vlsync.SealedBox([]byte(value), pub)
+	if err != nil {
+		return err
+	}
+	_, err = p.request(http.MethodPut, base+url.PathEscape(name), p.ghToken,
+		map[string]string{"encrypted_value": base64.StdEncoding.EncodeToString(sealed), "key_id": key.KeyID}, nil)
 	return err
+}
+
+func (p *realPlatforms) deleteSecret(name string) error {
+	return p.call(http.MethodDelete, p.githubBase+"/repos/"+p.owner+"/"+p.repo+"/actions/secrets/"+url.PathEscape(name), p.ghToken, nil)
 }
 
 // coolifyEnv is one of the application's variables.
@@ -262,6 +328,9 @@ type coolifyEnv struct {
 	Value     string `json:"value"`
 	RealValue string `json:"real_value"`
 	UpdatedAt string `json:"updated_at"`
+	// IsPreview is a preview deployment's copy, which Varlatch never
+	// writes (lib/sync's Coolify adapter skips it).
+	IsPreview bool `json:"is_preview"`
 }
 
 func (e coolifyEnv) value() string {
@@ -277,19 +346,27 @@ func (p *realPlatforms) envs() ([]coolifyEnv, error) {
 	return out, err
 }
 
-// env is the application's variable key (its first, Coolify may keep a
-// preview copy too).
-func (p *realPlatforms) env(key string) (coolifyEnv, bool) {
+// env is the application's variable key, its preview copy left out; ok
+// is false when it has none.
+func (p *realPlatforms) env(key string) (e coolifyEnv, ok bool, err error) {
 	all, err := p.envs()
 	if err != nil {
-		return coolifyEnv{}, false
+		return coolifyEnv{}, false, err
 	}
 	for _, e := range all {
-		if e.Key == key {
-			return e, true
+		if e.Key == key && !e.IsPreview {
+			return e, true, nil
 		}
 	}
-	return coolifyEnv{}, false
+	return coolifyEnv{}, false, nil
+}
+
+// patchEnv writes one of the run's variables as Varlatch's adapter does
+// (the calibration's write).
+func (p *realPlatforms) patchEnv(key, value string) error {
+	_, err := p.request(http.MethodPatch, p.coolURL+"/api/v1/applications/"+p.app+"/envs", p.coolToken,
+		map[string]any{"key": key, "value": value, "is_preview": false}, nil)
+	return err
 }
 
 func (p *realPlatforms) appName() (string, error) {
@@ -301,21 +378,30 @@ func (p *realPlatforms) appName() (string, error) {
 }
 
 // cleanup deletes the run's values from both platforms, by their exact
-// names, and answers what it removed and what it could not.
-func (p *realPlatforms) cleanup(names []string) (removed []string, failed []string) {
+// names (on Coolify every row of the name, its preview copy included),
+// and answers what it removed, what was gone already (a 404), and what it
+// could not remove.
+func (p *realPlatforms) cleanup(names []string) (removed, gone, failed []string) {
+	del := func(what string, err error) {
+		switch {
+		case err == nil:
+			removed = append(removed, what)
+		case notFound(err):
+			gone = append(gone, what)
+		default:
+			failed = append(failed, what+": "+err.Error())
+		}
+	}
 	have, err := p.secretsUpdated()
 	if err != nil {
 		failed = append(failed, "GitHub: "+err.Error())
 	}
 	for _, n := range names {
+		// A listing that could not be read: every name is tried.
 		if _, ok := have[n]; !ok && err == nil {
 			continue
 		}
-		if err := p.deleteSecret(n); err != nil {
-			failed = append(failed, "GitHub "+n+": "+err.Error())
-		} else if _, ok := have[n]; ok {
-			removed = append(removed, "GitHub "+n)
-		}
+		del("GitHub "+n, p.deleteSecret(n))
 	}
 	envs, err := p.envs()
 	if err != nil {
@@ -326,14 +412,14 @@ func (p *realPlatforms) cleanup(names []string) (removed []string, failed []stri
 			if e.Key != n || e.UUID == "" {
 				continue
 			}
-			if err := p.call(http.MethodDelete, p.coolURL+"/api/v1/applications/"+p.app+"/envs/"+url.PathEscape(e.UUID), p.coolToken, nil); err != nil && !notFound(err) {
-				failed = append(failed, "Coolify "+n+": "+err.Error())
-			} else {
-				removed = append(removed, "Coolify "+n)
+			what := "Coolify " + n
+			if e.IsPreview {
+				what += " (preview)"
 			}
+			del(what, p.call(http.MethodDelete, p.coolURL+"/api/v1/applications/"+p.app+"/envs/"+url.PathEscape(e.UUID), p.coolToken, nil))
 		}
 	}
-	return removed, failed
+	return removed, gone, failed
 }
 
 // loadRealPlatforms reads the inputs (checked by readProfile) and
@@ -383,10 +469,14 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 	prefix := "VLRH_" + hex + "_"
 	apiKeyName, debugName, portName := prefix+"API_KEY", prefix+"DEBUG", prefix+"PORT"
 	names := []string{apiKeyName, debugName, portName}
+	// Named before the first write, so a run that ends abnormally still
+	// says what to delete by hand.
+	measure("item 13 (real): the run's names", prefix+"* ("+strings.Join(names, ", ")+")")
 	// Registered before anything is written, so it runs whatever happens.
 	t.Cleanup(func() {
-		removed, failed := p.cleanup(names)
+		removed, gone, failed := p.cleanup(names)
 		measure("item 13 (real): the run's values removed", strings.Join(removed, ", "))
+		measure("item 13 (real): the run's values gone already", strings.Join(gone, ", "))
 		record(t, item, "(real) the run's values are deleted from both platforms", len(failed) == 0, strings.Join(failed, "; "))
 	})
 	in := newInstallation(t, rel, s3, "sync-real", installExtra{
@@ -437,13 +527,36 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 		}
 		return v
 	}
+	// The evidence reads: a read that fails fails the check, with its
+	// error, never an empty answer read as a value.
+	var readErr error
 	coolValue := func(key string) string {
-		e, _ := p.env(key)
+		e, _, err := p.env(key)
+		if err != nil {
+			readErr = err
+		}
 		return e.value()
 	}
+	coolUpdated := func(key string) (string, error) {
+		e, ok, err := p.env(key)
+		if err == nil && !ok {
+			err = fmt.Errorf("Coolify has no variable %s", key)
+		}
+		return e.UpdatedAt, err
+	}
 	ghUpdated := func() map[string]string {
-		m, _ := p.secretsUpdated()
+		m, err := p.secretsUpdated()
+		if err != nil {
+			readErr = err
+			return map[string]string{}
+		}
 		return m
+	}
+	readFailed := func() string {
+		if readErr == nil {
+			return ""
+		}
+		return "; the last read failed: " + readErr.Error()
 	}
 	ours := func(m map[string]string) string {
 		var out []string
@@ -456,11 +569,12 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 	// 1. The source delivers.
 	var gs map[string]string
 	delivered := pollUntil(180*time.Second, 5*time.Second, func() bool {
+		readErr = nil
 		gs = ghUpdated()
 		return gs[apiKeyName] != "" && gs[debugName] != "" && gs[portName] != "" && coolValue(portName) == "8080" && coolValue(apiKeyName) == apiKey && target(tGh).ok() && target(tApp).ok()
 	})
 	record(t, item, "(real) the source delivers to GitHub and the Coolify application", delivered,
-		fmt.Sprintf("GitHub %s; GitHub Target %s; Coolify Target %s", ours(gs), target(tGh), target(tApp)))
+		fmt.Sprintf("GitHub %s; GitHub Target %s; Coolify Target %s%s", ours(gs), target(tGh), target(tApp), readFailed()))
 	if !delivered {
 		return
 	}
@@ -468,6 +582,9 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 	// 2. The barrier with a change due, then its release; the change is
 	// delivered across it.
 	before := gs[portName]
+	// updated_at has 1 s granularity: a write in the same second as the
+	// last would not move it.
+	time.Sleep(2 * time.Second)
 	put(portName, "8081")
 	r := in.admin(nil, "migration", "barrier", "--drain-seconds", "20")
 	var b barrierAnswer
@@ -480,19 +597,55 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 		record(t, item, "(real) release lifts the barrier", rl.code == 0 && code == 200, fmt.Sprintf("%s; /v1/meta %d", rl.String(), code))
 	}
 	across := pollUntil(180*time.Second, 5*time.Second, func() bool {
+		readErr = nil
 		gs = ghUpdated()
 		return coolValue(portName) == "8081" && gs[portName] != "" && gs[portName] != before && target(tGh).ok() && target(tApp).ok()
 	})
 	record(t, item, "(real) the change made at the barrier is delivered across it", across,
-		fmt.Sprintf("Coolify %s=%s; GitHub %s updated %s (was %s)", portName, coolValue(portName), portName, gs[portName], before))
+		fmt.Sprintf("Coolify %s=%s; GitHub %s updated %s (was %s)%s", portName, coolValue(portName), portName, gs[portName], before, readFailed()))
 
 	// 3. The migration, both Targets settled on the source.
 	pollUntil(90*time.Second, 5*time.Second, func() bool { return target(tGh).settled() && target(tApp).settled() })
-	ghBefore := ghUpdated()
+	// The calibration: does a write of an identical value move each
+	// platform's updated_at? The harness writes its own value once, the
+	// same as the source delivered: if it does not move, step 4 cannot
+	// prove "nothing resent" on that platform, and says so.
+	calibrate := func(what string, read func() (string, error), write func() error) bool {
+		at0, err := read()
+		if err != nil {
+			measure("item 13 (real): the "+what+" calibration", "not read: "+err.Error())
+			return false
+		}
+		time.Sleep(2 * time.Second)
+		if err := write(); err != nil {
+			measure("item 13 (real): the "+what+" calibration", "the write failed: "+err.Error())
+			return false
+		}
+		at1, err := read()
+		moved := err == nil && at1 != at0
+		measure("item 13 (real): the "+what+" calibration", fmt.Sprintf("an identical write moved updated_at %v (%s then %s)", moved, at0, at1))
+		return moved
+	}
+	ghProves := calibrate("GitHub", func() (string, error) {
+		m, err := p.secretsUpdated()
+		if err == nil && m[debugName] == "" {
+			err = fmt.Errorf("GitHub has no secret %s", debugName)
+		}
+		return m[debugName], err
+	}, func() error { return p.putSecret(debugName, "false") })
+	coolProves := calibrate("Coolify", func() (string, error) { return coolUpdated(portName) },
+		func() error { return p.patchEnv(portName, "8081") })
+	var ghBefore map[string]string
+	ghBefore, err = p.secretsUpdated()
 	coolBefore := map[string]string{}
 	for _, n := range []string{portName, apiKeyName} {
-		e, _ := p.env(n)
-		coolBefore[n] = e.UpdatedAt
+		if err == nil {
+			coolBefore[n], err = coolUpdated(n)
+		}
+	}
+	if err != nil {
+		record(t, item, "(real) the platforms read before the migration", false, err.Error())
+		return
 	}
 	r = in.migrateEnv(rel, true, rel.pin())
 	record(t, item, "(real) the migration opens on the target", r.code == 0, r.String()+" "+lastLines(r.stdout, 4))
@@ -519,24 +672,55 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 	}
 	both := pollUntil(180*time.Second, 5*time.Second, func() bool { return ranOnGo(tGh) && ranOnGo(tApp) })
 	time.Sleep(10 * time.Second)
-	ghAfter := ghUpdated()
-	same := ours(ghAfter) == ours(ghBefore)
-	for n, at := range coolBefore {
-		e, _ := p.env(n)
-		same = same && e.UpdatedAt == at
+	ghAfter, err := p.secretsUpdated()
+	coolAfter := map[string]string{}
+	for n := range coolBefore {
+		if err == nil {
+			coolAfter[n], err = coolUpdated(n)
+		}
 	}
-	record(t, item, "(real) after the migration, Go sends nothing the source delivered", pushOK && both && same && target(tGh).ok() && target(tApp).ok(),
-		fmt.Sprintf("push answered %v; ran on Go and settled %v; GitHub %s then %s; Coolify %v; GitHub Target %s; Coolify Target %s",
-			codes, both, ours(ghBefore), ours(ghAfter), coolBefore, target(tGh), target(tApp)))
+	if err != nil {
+		record(t, item, "(real) the platforms read after Go's runs", false, err.Error())
+		return
+	}
+	ghSame := ours(ghAfter) == ours(ghBefore)
+	coolSame := true
+	for n, at := range coolBefore {
+		coolSame = coolSame && coolAfter[n] == at
+	}
+	// Only what the calibration says the platform shows is claimed.
+	var proven []string
+	same := true
+	if ghProves {
+		proven = append(proven, "GitHub")
+		same = same && ghSame
+	}
+	if coolProves {
+		proven = append(proven, "Coolify")
+		same = same && coolSame
+	}
+	detail := fmt.Sprintf("push answered %v; ran on Go and settled %v; GitHub %s then %s; Coolify %v then %v; GitHub Target %s; Coolify Target %s",
+		codes, both, ours(ghBefore), ours(ghAfter), coolBefore, coolAfter, target(tGh), target(tApp))
+	settledOK := pushOK && both && target(tGh).ok() && target(tApp).ok()
+	if len(proven) == 0 {
+		measure("item 13 (real): nothing resent", "not provable on these platforms: an identical write moved neither GitHub's nor Coolify's updated_at")
+		record(t, item, "(real) after the migration, Go's runs of both Targets end settled (a resend is not visible on these platforms)", settledOK, detail)
+	} else {
+		if len(proven) == 1 {
+			measure("item 13 (real): nothing resent", "proven on "+proven[0]+" only: an identical write does not move the other's updated_at")
+		}
+		record(t, item, "(real) after the migration, Go sends nothing the source delivered ("+strings.Join(proven, " and ")+")", settledOK && same, detail)
+	}
 
 	// 5. A change made on Go is pushed from Go, and only it.
 	put(portName, "9090")
 	pushed := pollUntil(180*time.Second, 5*time.Second, func() bool {
+		readErr = nil
 		gs = ghUpdated()
 		return coolValue(portName) == "9090" && gs[portName] != ghAfter[portName] && gs[apiKeyName] == ghAfter[apiKeyName] && gs[debugName] == ghAfter[debugName]
 	})
 	record(t, item, "(real) a change on Go is pushed from Go, and only it", pushed,
-		fmt.Sprintf("Coolify %s=%s; GitHub %s then %s", portName, coolValue(portName), ours(ghAfter), ours(gs)))
+		fmt.Sprintf("Coolify %s=%s; GitHub %s then %s%s", portName, coolValue(portName), ours(ghAfter), ours(gs), readFailed()))
 
 	// 6. A failing Target (#369): one to a repository the token cannot
 	// reach; varlatchd keeps serving and the Coolify Target converges.
@@ -559,9 +743,12 @@ func syncRealCase(t *testing.T, rel release, s3 *s3Server) {
 	}
 	apiKey2 := secret("key-" + hexBytes(8))
 	put(apiKeyName, apiKey2)
-	converged := pollUntil(180*time.Second, 5*time.Second, func() bool { return coolValue(apiKeyName) == apiKey2 && target(tApp).ok() })
+	converged := pollUntil(180*time.Second, 5*time.Second, func() bool {
+		readErr = nil
+		return coolValue(apiKeyName) == apiKey2 && target(tApp).ok()
+	})
 	code, ready := in.get("/readyz")
 	active := run("", nil, nil, "systemctl", "is-active", "--quiet", in.unitName()).code == 0
 	record(t, item, "(real) varlatchd keeps serving and the Coolify Target converges", converged && code == 200 && active,
-		fmt.Sprintf("Coolify %s updated %v; /readyz %d %s; unit active %v; Coolify Target %s", apiKeyName, converged, code, trim(ready), active, target(tApp)))
+		fmt.Sprintf("Coolify %s updated %v; /readyz %d %s; unit active %v; Coolify Target %s%s", apiKeyName, converged, code, trim(ready), active, target(tApp), readFailed()))
 }
