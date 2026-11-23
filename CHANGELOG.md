@@ -98,6 +98,108 @@ fixes.
   `varlatchd-image.txt`, listed in the signed `SHA256SUMS`, gives the
   image's digest to pin ([verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)).
 
+## 0.50.0-rc.3 (DATE AT TAG)
+
+The third prerelease of the Go line (ADR-0059), and the first to publish
+the server's container image, to test that image and more of the Go CLI
+against real installations. **It is a prerelease and not for
+production.** The TypeScript line (0.23.x) is unaffected: its images,
+Compose set and CLI do not change.
+
+- **What it contains.** As in 0.50.0-rc.2: `varlatch`, the CLI, for Linux,
+  macOS and Windows on amd64 and arm64; `varlatchd`, the server, for Linux
+  on amd64 and arm64; `install.sh` and `install.ps1` for this version; the
+  `varlatchd` systemd unit and its example configuration; `release.json`,
+  the release's manifest, checked against 0.50.0-rc.2 (#431). New: the
+  server's container image, and `varlatchd-image.txt`, which records it.
+  `SHA256SUMS` lists every asset and is signed keyless by the release
+  workflow; the installers check the signature before they install
+  anything.
+
+Changes since 0.50.0-rc.2, by pull request:
+
+- **The container image (#433, #434, #437).** The release pushes
+  `ghcr.io/varlatch/varlatchd:0.50.0-rc.3` for linux/amd64 and
+  linux/arm64, built from the release's own binaries. It is signed keyless
+  by the release workflow (the signature is in
+  `ghcr.io/varlatch/varlatch-signatures`) and carries build provenance and
+  an SBOM for each platform; an image built on a self-hosted runner has its
+  SBOMs as release files instead, listed in `SHA256SUMS`. Only the
+  version's tag is pushed, never `latest` or a minor version's. The release
+  is published only once the image has passed its checks on both
+  platforms.
+- **`varlatchd-image.txt` (#433).** One line, the image's tag and the
+  digest to pin, listed in the signed `SHA256SUMS`; the release notes name
+  the same reference. [Verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)
+  has a script that checks the record, the image's signature and its
+  attestations by digest, and stops at the first failure. It is the
+  reference `varlatch migrate --to-image` takes.
+- **A version's image is pushed once (#434, #437).** The release workflow
+  runs one release of a tag at a time and builds the image only when it
+  knows that the version has no GitHub release and no image yet; any
+  answer that does not say so stops it. A run that fails after the push
+  resumes with the failed jobs, and pushes nothing again.
+- **`install.sh` updates an existing Go install again (#429, #430).** In
+  0.50.0-rc.2 it took every installed Go `varlatch` for a Homebrew copy and
+  refused to replace it, a run over its own fresh install included. It now
+  tells a Homebrew copy by where the file is, as `varlatch self-update`
+  does, with every link on the way resolved. A link into a Homebrew
+  directory that no longer exists is refused too, and `CDPATH` has no
+  effect. `install.ps1` was not affected. To update 0.50.0-rc.2, run
+  `varlatch self-update`, or this release's `install.sh`: 0.50.0-rc.2's own
+  copy still refuses.
+- **`varlatch migrate --to-image`, refused clearly (#435).** A reference
+  without a tag, or otherwise not pinned, was refused with a message whose
+  reference was masked. The refusal now names the repository and the digest
+  when the value is an image reference by digest, does not show any other
+  value, and gives the form to use, `repository:tag@sha256:<digest>`.
+<!-- SLOT #436 (open, draft, head 5d8e7edb; recheck the text against the merged PR) -->
+- **`varlatch migrate` from a Coolify installation (#436).** A directory
+  Coolify deploys from can hold the repository's `docker-compose.yml`
+  beside the file that runs, and plain `docker compose` read the wrong one
+  there, possibly another installation's project on the same host; a
+  directory with Coolify's `docker-compose.yaml` only was refused.
+  `migrate` now takes the project, its directory and its files from the
+  containers' labels, names them in every `docker compose` command (the
+  TypeScript CLI's backup included), keeps them in the journal, and refuses
+  what does not agree instead of guessing. An installation with one
+  `docker-compose.yml` migrates as before.
+- **`--rollback` on Coolify (#436).** The rollback gives a Coolify
+  installation its fresh volumes by the names its rendered file uses, and
+  reaches Postgres on its network; before, the fresh volumes were not used
+  there. After a rollback, do not Deploy or Redeploy the TypeScript
+  application in Coolify: Coolify's own file still names the volumes from
+  before the migration. The rollback and the
+  [migration guide](docs/operations/migrate-to-0.50.md) say so.
+<!-- END SLOT #436 -->
+<!-- SLOT #439 (open, armed, head 2c062983; recheck the text against the merged PR) -->
+- **Not-found and error pages in the dashboard (#439).** An address
+  without a page shows a not-found page of the dashboard, with its
+  navigation and a way back, where the router's developer error page
+  showed. A page that fails shows a plain message with Reload and a way
+  back, and never the error's text.
+- **Access and Audit in the dashboard (#439).** Under Access, People,
+  someone who may not read the members is told so, where the page said "No
+  members yet", and Invite shows only to someone who may invite; the server
+  refused both before too. The Audit page fits a phone's width.
+<!-- END SLOT #439 -->
+- **The migration's rehearsals (#435).** Fixes to the rehearsal harness for
+  the image target and for a public address with its own certificate
+  authority. No change to what is shipped.
+<!-- SLOT #438 (open, armed, head 5c2458a0; recheck the text against the merged PR) -->
+- **The release process (#438).** The G1 gate reads its walkthrough record
+  from a commit of its own (`walkthrough_ref`), beside the candidate it
+  judges. No change to what is shipped.
+<!-- END SLOT #438 -->
+
+- **Prerelease only.** It is published as a GitHub prerelease and never
+  becomes the latest release. What follows the latest release (`varlatch
+  upgrade` and the release notice of a final release, `varlatch
+  self-update` without `--prerelease`, the Homebrew formula) does not offer
+  it; a Go CLI or host that runs a prerelease is offered it by `varlatch
+  self-update` and `varlatch upgrade`. `varlatch migrate` migrates from the
+  last TypeScript release's published image (0.23.0) only.
+
 ## 0.50.0-rc.2 (2026-11-23)
 
 The second prerelease of the Go line (ADR-0059), published to test more of
