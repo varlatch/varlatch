@@ -203,14 +203,12 @@ Changes since 0.50.0-rc.2, by pull request:
   `varlatch migrate` at once, and the old node can stay on the tailnet until
   `--resume`.
 <!-- END SLOT PROGRESS -->
-<!-- SLOT #440 (open, in the merge queue, head 07dac055; recheck against the merged PR) -->
 - **A stop during a certificate issuance ends `varlatchd` (#440).** With
   `listen_https`, the server kept trying again without end after a stop
   interrupted an issuance or a renewal, until it was killed (after the 30
   seconds of the shipped systemd unit). `infra/coolify/varlatchd.compose.yml`
   gives the service 30 seconds to stop, as the unit does; for `docker run`,
   give `--stop-timeout 30`.
-<!-- END SLOT #440 -->
 - **Not-found and error pages in the dashboard (#439).** An address
   without a page shows a not-found page of the dashboard, with its
   navigation and a way back, where the router's developer error page
@@ -229,10 +227,10 @@ Changes since 0.50.0-rc.2, by pull request:
   from a commit of its own (`walkthrough_ref`), which differs from the
   candidate it judges only in regular files added or changed under
   `docs/evidence/`. No change to what is shipped.
-<!-- SLOT #441 (open, armed, head e2dac419; recheck against the merged PR) -->
-- **CI (#441).** CI pulls MinIO's pinned image with retries before it starts
-  it.
-<!-- END SLOT #441 -->
+<!-- SLOT #441 #442 (both open, armed, heads e2dac419 and 7eff8b36; recheck against the merged PRs) -->
+- **CI (#441, #442).** CI takes MinIO's pinned image from its own cache, and
+  pulls it with retries when the cache has none.
+<!-- END SLOT #441 #442 -->
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release. What follows the latest release (`varlatch
