@@ -124,6 +124,8 @@ const (
 	// DefaultTailnetHTTPSPort is the browser endpoint's, when it is asked for.
 	DefaultTailnetHTTPSPort = "8688"
 	DefaultDestination      = "offsite"
+	// Off answers a question with no.
+	Off = "off"
 )
 
 // Merge fills what a is missing from b, and says which answers of b differ
@@ -170,6 +172,15 @@ func (a *Answers) missing(answered bool) string {
 	return ""
 }
 
+// optional is the first question without an answer that has a default, and
+// is asked where there is someone to ask.
+func (a *Answers) optional() string {
+	if a.Ingress == Tailnet && a.TailnetControlURL == "" && a.TailnetHTTPSPort == "" {
+		return "tailnet-https-port"
+	}
+	return ""
+}
+
 // Defaults fills the answers that have a default.
 func (a *Answers) Defaults() {
 	if a.Listen == "" {
@@ -202,6 +213,9 @@ func (a *Answers) Defaults() {
 		}
 		if a.TailnetPort == "" {
 			a.TailnetPort = DefaultTailnetPort
+		}
+		if a.TailnetHTTPSPort == "" {
+			a.TailnetHTTPSPort = Off
 		}
 	}
 	if a.Backups == "bucket" && a.BackupDestination == "" {
@@ -272,25 +286,28 @@ func (a *Answers) Check() error {
 			return bad("listen-http-redirect", "must be host:port or off")
 		}
 	}
+	tailnetPort := 0 // compared as varlatchd does, by value
 	if a.Ingress == Tailnet {
 		if !hostName.MatchString(a.TailnetHostname) {
 			return bad("tailnet-hostname", "must be a host name (lower-case letters, digits and -)")
 		}
-		if n, err := strconv.Atoi(a.TailnetPort); err != nil || n < 1 || n > 65535 {
+		n, err := strconv.Atoi(a.TailnetPort)
+		if err != nil || n < 1 || n > 65535 {
 			return bad("tailnet-port", "must be a port from 1 to 65535")
 		}
+		tailnetPort = n
 		if !strings.HasPrefix(a.TailnetAuthKeyFile, "/") {
 			return bad("tailnet-auth-key-file", "must be an absolute path")
 		}
 	}
-	if p := a.TailnetHTTPSPort; p != "" {
+	if p := a.TailnetHTTPSPort; p != "" && p != Off {
 		n, err := strconv.Atoi(p)
 		switch {
 		case a.Ingress != Tailnet:
 			return bad("tailnet-https-port", "goes with ingress tailnet only")
 		case err != nil || n < 1 || n > 65535:
-			return bad("tailnet-https-port", "must be a port from 1 to 65535")
-		case p == a.TailnetPort:
+			return bad("tailnet-https-port", "must be a port from 1 to 65535, or off")
+		case n == tailnetPort:
 			return bad("tailnet-https-port", "must differ from --tailnet-port ("+a.TailnetPort+")")
 		case a.TailnetControlURL != "":
 			return bad("tailnet-https-port", "serves a Tailscale certificate, which a self-hosted control server (--tailnet-control-url) does not issue")

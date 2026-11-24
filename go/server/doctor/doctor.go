@@ -303,6 +303,10 @@ func latestRelease(in Inputs) Check {
 		return c
 	} else if order > 0 {
 		c.Status, c.Remedy = Fail, upgradeBy
+		if os.Getenv(keyenv.ImageMarker) == "" && release.Prerelease(s.Latest.Version) && !release.Prerelease(buildinfo.Version) {
+			// Found by `upgrade --check --prerelease`: a plain upgrade skips it.
+			c.Remedy += " --prerelease"
+		}
 		c.Detail = s.Latest.Version + " is available, " + buildinfo.Version + " is running (checked " + s.CheckedAt + failed + ")"
 		return c
 	}

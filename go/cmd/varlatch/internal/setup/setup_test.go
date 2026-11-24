@@ -121,6 +121,7 @@ func (h *fakeHost) Chown(path string, uid, gid int) error {
 	h.chowns["/"+rel] = [2]int{uid, gid}
 	return nil
 }
+func (h *fakeHost) ChownFile(f *os.File, uid, gid int) error { return h.Chown(f.Name(), uid, gid) }
 
 func (h *fakeHost) SystemctlStdout(args ...string) (string, error) { return h.Systemctl(args...) }
 
@@ -940,6 +941,8 @@ func TestTailnetSetup(t *testing.T) {
 		{func() { _ = os.Chmod(key, 0o604) }, "open to everyone"},
 		{func() { _ = os.Chmod(key, 0o600); _ = os.Rename(key, key+"2") }, "does not exist"},
 		{func() { _ = os.Symlink(key+"2", key) }, "not a symbolic link"},
+		{func() { _ = os.Remove(key); _ = os.WriteFile(key, []byte("\n"), 0o600) }, "is empty"},
+		{func() { _ = os.WriteFile(key, bytes.Repeat([]byte("k"), maxAuthKey+1), 0o600) }, "larger than"},
 	} {
 		c.change()
 		if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -990,6 +993,93 @@ func TestTailnetSetup(t *testing.T) {
 	if err := Run(context.Background(), o2); err == nil || !strings.Contains(err.Error(), "holds another key") {
 		t.Errorf("another key: %v", err)
 	}
+	if _, err := os.Stat(h2.Path(RootKEK)); err == nil {
+		t.Error("keys were made beside another key")
+	}
+	// varlatchd's own file, named by the operator or there already: a
+	// symbolic link is refused (what it names keeps its mode), an empty file
+	// too, before anything is made; a whole one is taken as it is.
+	for _, given := range []string{TailnetAuthKey, "/srv/ts-key"} {
+		h := newFakeHost(t)
+		if err := os.MkdirAll(h.Path(EtcDir), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		target := h.Path("/srv/elsewhere")
+		if err := os.WriteFile(target, []byte("an auth key\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, h.Path(TailnetAuthKey)); err != nil {
+			t.Fatal(err)
+		}
+		o3 := options(h, &recorder{}, t.TempDir())
+		o3.Given = o.Given
+		o3.Given.TailnetAuthKeyFile = given
+		if err := Run(context.Background(), o3); err == nil || !strings.Contains(err.Error(), "not a symbolic link") {
+			t.Errorf("%s, a link: %v", given, err)
+		}
+		if st, err := os.Stat(target); err != nil || st.Mode().Perm() != 0o600 {
+			t.Errorf("%s: the link's target: %v %v", given, st, err)
+		}
+		if err := os.Remove(h.Path(TailnetAuthKey)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(h.Path(TailnetAuthKey), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := Run(context.Background(), o3); err == nil || !strings.Contains(err.Error(), "is empty") {
+			t.Errorf("%s, empty: %v", given, err)
+		}
+		if _, err := os.Stat(h.Path(RootKEK)); err == nil {
+			t.Errorf("%s: keys were made", given)
+		}
+		if err := os.WriteFile(h.Path(TailnetAuthKey), []byte("an auth key\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := Run(context.Background(), o3); err != nil {
+			t.Errorf("%s, whole: %v", given, err)
+		}
+		if st, err := os.Stat(h.Path(TailnetAuthKey)); err != nil || st.Mode().Perm() != 0o640 || h.chowns[TailnetAuthKey] != [2]int{0, 990} {
+			t.Errorf("%s: %v %v, owner %v", given, st, err, h.chowns[TailnetAuthKey])
+		}
+	}
+	// The browser endpoint's answer is recorded when it is off, too: a port
+	// given on a rerun is another answer, also after a journal that left it
+	// empty.
+	h4 := newFakeHost(t)
+	o4 := options(h4, &recorder{}, t.TempDir())
+	o4.Given = Answers{Ingress: Tailnet, PublicURL: "https://vault.example.com", TailnetAuthKeyFile: "/srv/ts-key", Backups: "host"}
+	if err := Run(context.Background(), o4); err != nil {
+		t.Fatal(err)
+	}
+	if conf, _ := os.ReadFile(h4.Path(ConfigFile)); strings.Contains(string(conf), "tailnet_https_port") {
+		t.Errorf("off is in the configuration:\n%s", conf)
+	}
+	journal, _ := os.ReadFile(h4.Path(Journal))
+	for _, b := range [][]byte{journal, bytes.Replace(journal, []byte(`"tailnetHttpsPort": "off"`), []byte(`"tailnetHttpsPort": ""`), 1)} {
+		if err := os.WriteFile(h4.Path(Journal), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		o5 := o4
+		o5.Given.TailnetHTTPSPort = "8688"
+		if err := Run(context.Background(), o5); err == nil || !strings.Contains(err.Error(), "already answered --tailnet-https-port differently") {
+			t.Errorf("a port on a rerun: %v", err)
+		}
+		if err := Run(context.Background(), o4); err != nil {
+			t.Errorf("a plain rerun: %v", err)
+		}
+	}
+	// Asked on a terminal whenever it was not answered, also when the key's
+	// file was given by flag.
+	h6 := newFakeHost(t)
+	ask := &fakeAsker{confirm: true}
+	o6 := options(h6, &recorder{}, t.TempDir())
+	o6.Given, o6.Ask = o4.Given, ask
+	if err := Run(context.Background(), o6); err != nil {
+		t.Fatal(err)
+	}
+	if conf, _ := os.ReadFile(h6.Path(ConfigFile)); !strings.Contains(string(conf), "tailnet_https_port = 8688\n") {
+		t.Errorf("asked %q:\n%s", ask.asked, conf)
+	}
 	// A journal of a release that asked no address is complete without it.
 	old := Answers{Ingress: Tailnet, TailnetAuthKeyFile: "/k", Backups: "host"}
 	if old.missing(true) != "" || old.missing(false) != "public-url" {
@@ -998,6 +1088,7 @@ func TestTailnetSetup(t *testing.T) {
 	for want, a := range map[string]Answers{
 		"goes with ingress tailnet": {Ingress: Proxy, PublicURL: "https://v.example.com", TailnetHTTPSPort: "8688", Backups: "host"},
 		"must differ":               {Ingress: Tailnet, PublicURL: "https://v.example.com", TailnetAuthKeyFile: "/k", TailnetHTTPSPort: "8687", Backups: "host"},
+		"must differ from":          {Ingress: Tailnet, PublicURL: "https://v.example.com", TailnetAuthKeyFile: "/k", TailnetPort: "08687", TailnetHTTPSPort: "8687", Backups: "host"},
 		"must be a port":            {Ingress: Tailnet, PublicURL: "https://v.example.com", TailnetAuthKeyFile: "/k", TailnetHTTPSPort: "x", Backups: "host"},
 		"does not issue":            {Ingress: Tailnet, PublicURL: "https://v.example.com", TailnetAuthKeyFile: "/k", TailnetHTTPSPort: "8688", TailnetControlURL: "https://192.0.2.10", Backups: "host"},
 		"must be https":             {Ingress: Tailnet, PublicURL: "http://v.example.com", TailnetAuthKeyFile: "/k", Backups: "host"},

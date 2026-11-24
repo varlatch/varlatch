@@ -173,6 +173,19 @@ func TestLatestRelease(t *testing.T) {
 			t.Errorf("%s: doctor failed", c.name)
 		}
 	}
+	// A prerelease, seen from a release, needs --prerelease; from a
+	// prerelease it does not.
+	running := buildinfo.Version
+	defer func() { buildinfo.Version = running }()
+	for version, want := range map[string]bool{"0.50.0": true, "0.50.0-rc.3": false} {
+		buildinfo.Version = version
+		f := newFixture(t, "")
+		record(f, found("99.0.0-rc.1"), f.now)
+		if got := checkOf(t, f.run(t), "release.latest"); got.Status != Fail || strings.HasSuffix(got.Remedy, "sudo varlatch upgrade --prerelease") != want {
+			t.Errorf("a prerelease from %s: %+v", version, got)
+		}
+	}
+	buildinfo.Version = running
 	// In the image, an upgrade is a deployment.
 	t.Setenv("VARLATCH_IMAGE", "varlatchd")
 	f := newFixture(t, "")

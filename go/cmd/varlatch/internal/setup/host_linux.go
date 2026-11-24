@@ -204,6 +204,8 @@ func (SystemHost) SysUIDMax() int {
 
 func (SystemHost) Chown(path string, uid, gid int) error { return os.Lchown(path, uid, gid) }
 
+func (SystemHost) ChownFile(f *os.File, uid, gid int) error { return f.Chown(uid, gid) }
+
 func (h SystemHost) Systemctl(args ...string) (string, error) {
 	cmd := exec.Command("systemctl", args...)
 	cmd.Env = h.Env

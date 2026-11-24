@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -75,6 +76,8 @@ type Host interface {
 	// SYS_UID_MAX, 999 when it says none).
 	SysUIDMax() int
 	Chown(path string, uid, gid int) error
+	// ChownFile is Chown of an open file.
+	ChownFile(f *os.File, uid, gid int) error
 	// Owner is path's owner and group.
 	Owner(path string) (uid, gid int, err error)
 	// Systemctl runs systemctl with args.
@@ -356,6 +359,14 @@ func (r *run) answers() error {
 	if r.j.Done["answers"] != "" && a.Ingress == Tailnet && a.TailnetControlURL == "" && r.o.Given.TailnetControlURL != "" {
 		return &UsageError{"setup already answered --tailnet-control-url differently for this host (Tailscale's control server, " + Journal + "); setup does not change an installation: moving it is `varlatch move`"}
 	}
+	// The browser endpoint likewise: a journal of a release that did not
+	// record it as off answered it so.
+	if r.j.Done["answers"] != "" && a.Ingress == Tailnet && a.TailnetHTTPSPort == "" {
+		a.TailnetHTTPSPort = Off
+	}
+	if was, given := a.TailnetHTTPSPort, r.o.Given.TailnetHTTPSPort; a.Ingress == Tailnet && was != "" && given != "" && given != was {
+		return &UsageError{"setup already answered --tailnet-https-port differently for this host (" + was + ", " + Journal + "); setup does not change an installation: set tailnet_https_port in " + ConfigFile + " and restart varlatchd"}
+	}
 	if differ := a.Merge(r.o.Given); len(differ) > 0 {
 		return &UsageError{fmt.Sprintf("setup already answered --%s differently for this host (%s); setup does not change an installation: moving it is `varlatch move`", strings.Join(differ, ", --"), Journal)}
 	}
@@ -366,6 +377,9 @@ func (r *run) answers() error {
 	}
 	for {
 		missing := a.missing(r.j.Done["answers"] != "")
+		if missing == "" && r.o.Ask != nil {
+			missing = a.optional()
+		}
 		if missing == "" {
 			break
 		}
@@ -395,72 +409,142 @@ func (r *run) answers() error {
 		}
 	}
 	if a.Ingress == Tailnet && r.j.Done["config"] == "" {
-		if _, err := os.Lstat(r.path(TailnetAuthKey)); errors.Is(err, fs.ErrNotExist) {
-			if err := authKeyFileMode(r.path(a.TailnetAuthKeyFile)); err != nil {
-				return &UsageError{"setup: --tailnet-auth-key-file: " + err.Error() + "; nothing was changed"}
-			}
+		own, copied, err := r.tailnetKeys(a)
+		clear(own)
+		clear(copied)
+		if err != nil {
+			return &UsageError{"setup: --tailnet-auth-key-file: " + err.Error() + "; nothing was changed"}
 		}
 	}
 	r.j.Answers = a
 	return nil
 }
 
-// authKeyFileMode checks the operator's tailnet auth key file: a regular
-// file and no symbolic link, not open to everyone.
-func authKeyFileMode(p string) error {
+// maxAuthKey bounds a tailnet auth key's file.
+const maxAuthKey = 4096
+
+// openAuthKey opens a tailnet auth key's file, and judges what it opened: a
+// regular file, never through a symbolic link, not open to everyone.
+func openAuthKey(p string) (*os.File, error) {
+	// Said first, in words, as the open's own error would not.
 	st, err := os.Lstat(p)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return fmt.Errorf("%s does not exist", p)
+		return nil, fmt.Errorf("%s: %w", p, fs.ErrNotExist)
 	case err != nil:
-		return err
+		return nil, err
 	case !st.Mode().IsRegular():
-		return fmt.Errorf("%s is not a regular file (give the file itself, not a symbolic link)", p)
-	case st.Mode().Perm()&0o007 != 0:
-		return fmt.Errorf("%s has mode %04o (open to everyone): chmod 600 it", p, st.Mode().Perm())
+		return nil, fmt.Errorf("%s is not a regular file (give the file itself, not a symbolic link)", p)
 	}
-	return nil
+	f, err := os.OpenFile(p, os.O_RDONLY|noFollow|nonBlock, 0)
+	if err != nil {
+		return nil, err
+	}
+	st, err = f.Stat()
+	switch {
+	case err != nil:
+	case !st.Mode().IsRegular():
+		err = fmt.Errorf("%s is not a regular file", p)
+	case st.Mode().Perm()&0o007 != 0:
+		err = fmt.Errorf("%s has mode %04o (open to everyone): chmod 600 it", p, st.Mode().Perm())
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// readAuthKey is an auth key file's key, never empty.
+func readAuthKey(p string) ([]byte, error) {
+	f, err := openAuthKey(p)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxAuthKey+1))
+	switch {
+	case err != nil:
+	case len(b) > maxAuthKey:
+		err = fmt.Errorf("%s is larger than a tailnet auth key", p)
+	case len(bytes.TrimSpace(b)) == 0:
+		err = fmt.Errorf("%s is empty", p)
+	}
+	if err != nil {
+		clear(b)
+		return nil, err
+	}
+	return b, nil
+}
+
+// tailnetKeys are the operator's tailnet auth key and varlatchd's copy of
+// it, each nil when it is not there (the operator's may be gone once it was
+// copied, and is the copy itself when that is the file they named). Both are
+// judged as openAuthKey does, and two that differ are refused. The caller
+// clears them.
+func (r *run) tailnetKeys(a Answers) (own, copied []byte, err error) {
+	copied, err = readAuthKey(r.path(TailnetAuthKey))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		copied, err = nil, nil
+	case err != nil:
+		return nil, nil, err
+	}
+	if filepath.Clean(a.TailnetAuthKeyFile) == TailnetAuthKey {
+		if copied == nil {
+			err = fmt.Errorf("%s does not exist", TailnetAuthKey)
+		}
+		return nil, copied, err
+	}
+	own, err = readAuthKey(r.path(a.TailnetAuthKeyFile))
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && copied != nil:
+		return nil, copied, nil
+	case err == nil && copied != nil && !bytes.Equal(bytes.TrimSpace(own), bytes.TrimSpace(copied)):
+		err = fmt.Errorf("%s holds another key than %s: remove the one that is not this node's, then run setup again", TailnetAuthKey, a.TailnetAuthKeyFile)
+	}
+	if err != nil {
+		clear(own)
+		clear(copied)
+		return nil, nil, err
+	}
+	return own, copied, nil
 }
 
 // tailnetKey gives varlatchd its copy of the tailnet auth key, in
 // /etc/varlatch (root:varlatch, 0640): the operator's own file is wherever
 // they keep it, often where the service's user cannot look, and that user
 // and its group did not exist when it was written. A copy is made once, and
-// never over another key.
+// never over another key. Its owner and mode are set on the file opened and
+// judged, never by its name.
 func (r *run) tailnetKey(gid int) error {
 	a, dest := r.j.Answers, r.path(TailnetAuthKey)
 	if a.Ingress != Tailnet || r.j.Done["config"] != "" {
 		return nil
 	}
-	if filepath.Clean(a.TailnetAuthKeyFile) != TailnetAuthKey {
-		key, err := os.ReadFile(r.path(a.TailnetAuthKeyFile))
-		defer clear(key)
-		have, herr := os.ReadFile(dest)
-		defer clear(have)
-		switch {
-		case herr == nil && errors.Is(err, fs.ErrNotExist):
-			// Copied by an earlier run, and the operator's removed since.
-		case err != nil:
-			return fmt.Errorf("setup: the tailnet auth key: %w", err)
-		case len(bytes.TrimSpace(key)) == 0:
-			return &UsageError{"setup: --tailnet-auth-key-file: " + a.TailnetAuthKeyFile + " is empty"}
-		case herr == nil && !bytes.Equal(bytes.TrimSpace(have), bytes.TrimSpace(key)):
-			return &UsageError{"setup: " + TailnetAuthKey + " holds another key than " + a.TailnetAuthKeyFile + ": remove the one that is not this node's, then run setup again"}
-		case herr != nil && !errors.Is(herr, fs.ErrNotExist):
-			return herr
-		case herr != nil:
-			if err := createPrivate(dest, key); err != nil {
-				return fmt.Errorf("setup: writing %s: %w", TailnetAuthKey, err)
-			}
-			if err := r.o.Say("Copied the tailnet auth key to " + TailnetAuthKey + " (root:" + User + ", 0640); your own file is no longer needed."); err != nil {
-				return err
-			}
+	own, copied, err := r.tailnetKeys(a)
+	defer clear(own)
+	defer clear(copied)
+	if err != nil {
+		return &UsageError{"setup: --tailnet-auth-key-file: " + err.Error()}
+	}
+	if copied == nil {
+		if err := createPrivate(dest, own); err != nil {
+			return fmt.Errorf("setup: writing %s: %w", TailnetAuthKey, err)
+		}
+		if err := r.o.Say("Copied the tailnet auth key to " + TailnetAuthKey + " (root:" + User + ", 0640); your own file is no longer needed."); err != nil {
+			return err
 		}
 	}
-	if err := r.h.Chown(dest, 0, gid); err != nil {
+	f, err := openAuthKey(dest)
+	if err != nil {
+		return fmt.Errorf("setup: the tailnet auth key: %w", err)
+	}
+	defer f.Close()
+	if err := r.h.ChownFile(f, 0, gid); err != nil {
 		return err
 	}
-	return os.Chmod(dest, 0o640)
+	return f.Chmod(0o640)
 }
 
 // secretFileMode checks a credential file as varlatchd reads one, without
@@ -533,14 +617,14 @@ func (r *run) ask(a *Answers, question string) error {
 			return err
 		}
 		a.TailnetAuthKeyFile = v
-		if a.TailnetControlURL == "" && a.TailnetHTTPSPort == "" {
-			on, err := r.o.Ask.Confirm("Let the dashboard read tailnet-protected values, over HTTPS on the tailnet (port "+DefaultTailnetHTTPSPort+")?", false)
-			if err != nil {
-				return err
-			}
-			if on {
-				a.TailnetHTTPSPort = DefaultTailnetHTTPSPort
-			}
+	case "tailnet-https-port":
+		on, err := r.o.Ask.Confirm("Let the dashboard read tailnet-protected values, over HTTPS on the tailnet (port "+DefaultTailnetHTTPSPort+")?", false)
+		if err != nil {
+			return err
+		}
+		a.TailnetHTTPSPort = Off
+		if on {
+			a.TailnetHTTPSPort = DefaultTailnetHTTPSPort
 		}
 	case "backups":
 		if err := r.o.Say("Varlatch's hosted backups are not available yet."); err != nil {
@@ -847,7 +931,9 @@ func RenderConfig(a Answers) []byte {
 		set("tailnet_port", a.TailnetPort)
 		set("tailnet_auth_key_file", a.TailnetAuthKeyFile)
 		set("tailnet_control_url", a.TailnetControlURL)
-		set("tailnet_https_port", a.TailnetHTTPSPort)
+		if a.TailnetHTTPSPort != Off {
+			set("tailnet_https_port", a.TailnetHTTPSPort)
+		}
 	}
 	if a.Backups == "bucket" {
 		set("backup_destinations_file", a.BackupDestinationsFile)

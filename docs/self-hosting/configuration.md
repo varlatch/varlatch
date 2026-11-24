@@ -388,7 +388,8 @@ Certificate Transparency logs.
 The endpoint's port, different from `tailnet_port`. Unset, the endpoint is
 off. Your tailnet policy must let people's devices connect to it. It cannot
 be used with a self-hosted control server.
-`varlatch setup --tailnet-https-port 8688` sets it on a new host.
+`varlatch setup --tailnet-https-port 8688` sets it on a new host; on a host
+set up without it, set it here and restart `varlatchd`.
 
 ### `tailnet_browser_origins`
 
