@@ -239,20 +239,20 @@ func TestUpgradeBelowTheDatabasesSchema(t *testing.T) {
 	if testing.Short() || runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		t.Skip("builds varlatchd and runs as root on Linux (go.yml's Go container)")
 	}
-	from, newer := cliBuild(t, "0.50.0-rc.1", ""), cliBuild(t, "0.50.0-rc.2", "g6fixture")
+	from, newer := cliBuild(t, "0.50.0-rc.4", ""), cliBuild(t, "0.50.0-rc.5", "g6fixture")
 	srv := fakerelease.New()
 	defer srv.Close()
 	defer func(f func(*Run) selfupdate.Source) { selfUpdateSource = f }(selfUpdateSource)
 	selfUpdateSource = func(*Run) selfupdate.Source { return srv.Source() }
 	fromSchema := checkoutSchema(t)
-	m, err := release.NewManifest("0.50.0-rc.4", release.Declaration{SchemaVersion: fromSchema, CompatibleFrom: 1, RollbackSafe: true,
-		Previous: &release.Previous{Version: "0.50.0-rc.1", SchemaVersion: fromSchema}, EndsRollbackWindow: true})
+	m, err := release.NewManifest("0.50.0-rc.6", release.Declaration{SchemaVersion: fromSchema, CompatibleFrom: 1, RollbackSafe: true,
+		Previous: &release.Previous{Version: "0.50.0-rc.4", SchemaVersion: fromSchema}, EndsRollbackWindow: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	manifest, _ := m.Bytes()
-	cli, server, name := upgrade.Assets("0.50.0-rc.4", runtime.GOARCH)
-	srv.Publish("0.50.0-rc.4", &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\n"), server: from, name: manifest}})
+	cli, server, name := upgrade.Assets("0.50.0-rc.6", runtime.GOARCH)
+	srv.Publish("0.50.0-rc.6", &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\n"), server: from, name: manifest}})
 
 	h := newCLIHost(t, from)
 	if err := h.svc.Stop(context.Background()); err != nil {
@@ -276,7 +276,7 @@ func TestUpgradeBelowTheDatabasesSchema(t *testing.T) {
 	if j := h.journal(t); j.WindowEnded != nil {
 		t.Fatalf("the window was ended: %+v", j.WindowEnded)
 	}
-	h.serves(t, "0.50.0-rc.1")
+	h.serves(t, "0.50.0-rc.4")
 }
 
 // migrated gives the host's data directory a migration's journal, open
