@@ -50,10 +50,10 @@ each release added.
   sensitive, and what type each is, then validate every environment against
   that contract. Edit a contract in the dashboard or keep it as a schema file
   in your repository.
-- **Encryption with a real boundary.** Secret values live in a dedicated
-  daemon, `varlatchd`, with envelope encryption: an installation root key
-  wraps a key per organization, which wraps a key per value version. Neither
-  the database nor the dashboard backend alone yields plaintext.
+- **Encryption with a real boundary.** Secret values live in the server,
+  `varlatchd`, with envelope encryption: an installation root key wraps a key
+  per organization, which wraps a key per value version. The database alone,
+  or a backup alone, yields no plaintext.
 - **Passkey sign-in.** People sign in with passkeys, so there are no passwords
   to store or leak. Machines use scoped service credentials, or OIDC from CI
   such as GitHub Actions, with no stored secret at all.
@@ -77,11 +77,12 @@ each release added.
   credential is revoked.
 - **Sync to other platforms.** Push an environment's configuration to GitHub
   Actions, Coolify, or Convex. Every push is authorized and audited.
-- **Operations built in.** `varlatch setup` creates an installation with public
-  HTTPS or access over your tailnet only. Backups are encrypted and verified,
-  never pause the service, and restore onto a fresh host. `varlatch doctor`
-  checks an installation's health, and `varlatch upgrade` takes a verified
-  backup before changing anything.
+- **Operations built in.** One program, with its own database and dashboard.
+  `varlatch setup` installs it as a service, with its own HTTPS certificate,
+  behind your proxy, or over your tailnet only. Backups are encrypted and
+  verified, never pause the service, and restore onto a fresh host. `varlatch
+  doctor` checks an installation's health, and `varlatch upgrade` takes an
+  encrypted snapshot before changing anything.
 - **No artificial limits.** Unlimited projects, environments, users, and
   machines.
 
@@ -115,26 +116,31 @@ to `api.stripe.com` only, and `DATABASE_URL` never reaches the agent at all.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/architecture-dark.webp">
-    <img src="docs/assets/readme/architecture-light.webp" width="820" alt="Architecture: untrusted clients (browser, CLI, CI, workloads, AI agents) authenticate end to end with varlatchd, the Secret Plane and security authority, which sends one-way mirrors to Convex, the Application Plane">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/architecture-dark.svg">
+    <img src="docs/assets/readme/architecture-light.svg" width="820" alt="Architecture: untrusted clients (browser, CLI, CI, workloads, AI agents) authenticate end to end, over the public address or your tailnet, with varlatchd, the one program that is the Secret Plane and security authority. It alone writes its SQLite file, which holds values and their keys only as ciphertext, and reads the Root KEK and the backup key from files kept apart">
   </picture>
 </p>
 
 - **`varlatchd` is the security authority.** It owns everything that feeds an
-  authorization decision. A self-hosted [Convex](https://convex.dev) backend
-  powers the live dashboard but cannot mint credentials, change security
-  state, or reach plaintext, so compromising it gives no path into the secret
-  store.
+  authorization decision, and it is all there is to run: the API, the
+  dashboard's files, HTTPS certificates, its tailnet node, and backups are one
+  program. Every principal authenticates to it end to end.
+- **The dashboard has no authority of its own.** It acts as the signed-in
+  person, through the same API. Its live updates say that something changed,
+  never what, and it reads the rest from the API.
 - **One public API.** `varlatchd` serves `/v1`: OpenAPI-first, bearer tokens
   only, with capability discovery so clients and servers of different
   versions work together.
 - **Authorization is simple on purpose.** Grants only ever add access, and
   requirements only restrict it. There are no deny rules and no policy
   language to get wrong.
-- **One PostgreSQL server, strictly separated.** The secret store and the
-  dashboard backend use separate databases and roles. The runtime role
-  cannot rewrite audit history, and migration credentials exist only in a
-  one-shot job.
+- **One SQLite file, one writer.** Every write goes through one queue and is
+  durable before it is answered, with its audit event in the same
+  transaction. The database refuses to change or remove an audit event.
+
+This is Varlatch from 0.50, a prerelease now. 0.23.0 runs the same API on
+PostgreSQL and a self-hosted Convex backend:
+[its README](https://github.com/varlatch/varlatch/tree/v0.23.0#how-it-works).
 
 ## Getting started
 
@@ -270,13 +276,14 @@ and your backups tested: without them, encrypted values cannot be recovered.
 Copyright © 2026 Robotsson. Varlatch is open source, licensed by directory
 (see [`LICENSE`](LICENSE)):
 
-- **AGPL-3.0-or-later:** the secret store daemon (`services/varlatchd`), the
-  dashboard (`apps/web`), and the dashboard backend functions (`convex/`).
+- **AGPL-3.0-or-later:** the server (`go/server`, `go/cmd/varlatchd`, and
+  0.23.0's, `services/varlatchd`), the dashboard (`apps/web`), and 0.23.0's
+  dashboard backend functions (`convex/`).
 - **Apache-2.0:** everything else, including the CLI, the SDK and other
   packages, and the deployment files.
 
-The Convex backend that Varlatch runs by default is source-available, not open
-source. Its license, FSL-1.1-Apache-2.0, permits internal use but not offering
+The Convex backend that 0.23.0 and earlier run by default is source-available,
+not open source; from 0.50, Varlatch runs none. Its license, FSL-1.1-Apache-2.0, permits internal use but not offering
 it to others as a competing commercial service, and each version becomes
 Apache-2.0 two years after its release. Running Varlatch for your own
 organization is internal use. [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
