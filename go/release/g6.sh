@@ -24,7 +24,8 @@
 #    steps write a row of every new kind they bring.
 # 3. Declared rollback-safe: the previous release opens the upgraded
 #    database (`admin schema status`), and the conformance suites pass
-#    against it there; what that run wrote is kept. Not rollback-safe: the
+#    against it there; what that run wrote is kept, and the previous
+#    release archives it and restores that archive. Not rollback-safe: the
 #    previous release must refuse it, and steps 3 and 4 end there.
 # 4. The new release upgrades again (nothing to do: the previous release
 #    leaves the schema as it found it), takes an archive (reading every
@@ -144,9 +145,16 @@ else
     node scripts/conformance/run.mjs --target "go-binary:$previous" --cli source $suites --report "$out/previous-report.json" \
     || fail "the conformance suites fail with the previous release on the upgraded database"
 
-  step "the new release on what the previous release wrote"
   [ -d "$out/after-previous/data" ] || fail "the previous release's run kept no data"
   conf "$out/after-previous"
+
+  step "the previous release archives and restores the upgraded database"
+  "$previous" admin backup run --json --config "$out/after-previous/varlatchd.conf" > "$out/previous-backup.json" \
+    || fail "the previous release cannot archive the upgraded database"
+  "$previous" admin backup restore --in "$(jq -er '.path' "$out/previous-backup.json")" --config "$out/after-previous/varlatchd.conf" \
+    || fail "the previous release cannot restore its archive of the upgraded database"
+
+  step "the new release on what the previous release wrote"
   "$new" admin schema upgrade --json --config "$out/after-previous/varlatchd.conf" > "$out/upgrade-again.json" \
     || fail "the new release's second upgrade failed (its message is above)"
   cat "$out/upgrade-again.json"

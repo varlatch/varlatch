@@ -626,11 +626,29 @@ func (s *Service) manifest(ctx context.Context, id, createdAt string, meta metad
 }
 
 // Compatible is whether this release restores an archive: a Go archive
-// of this API major whose schema this release opens. The TypeScript
-// server's archives are converted by step 7, not restored.
-func Compatible(m backup.Manifest) bool {
+// of this API major whose schema this release opens, with database its
+// database. A newer schema is one only when the database says so
+// (compatible_from): a rollback-safe release wrote it, and this one serves
+// it after the rollback. The TypeScript server's archives are converted by
+// step 7, not restored.
+func Compatible(ctx context.Context, m backup.Manifest, database string) bool {
 	r, err := m.GoRelease()
-	return err == nil && r.APIMajor == APIMajor && r.DatabaseSchema == db.SchemaVersion
+	if err != nil || r.APIMajor != APIMajor || r.DatabaseSchema < db.SchemaVersion {
+		return false
+	}
+	if r.DatabaseSchema == db.SchemaVersion {
+		return true
+	}
+	conn, err := sql.Open("sqlite", fileURI(database)+"?mode=ro&immutable=1")
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	var version, compatibleFrom int
+	if err := conn.QueryRowContext(ctx, "SELECT version, compatible_from FROM schema_version").Scan(&version, &compatibleFrom); err != nil {
+		return false
+	}
+	return version == r.DatabaseSchema && compatibleFrom <= db.SchemaVersion
 }
 
 // verify opens the archive again (its integrity), and checks this release
@@ -647,7 +665,7 @@ func (s *Service) verify(ctx context.Context, archive string, bek backup.BEK, sc
 		s.o.Log.Warn("backup: the archive does not open", "archive", archive, "error", err)
 	} else {
 		v.Integrity = true
-		v.Compatibility = Compatible(o.Manifest)
+		v.Compatibility = Compatible(ctx, o.Manifest, o.Path(backup.ComponentDatabase))
 		candidates := map[int][]byte{}
 		for _, version := range o.Manifest.RequiredKeyVersions {
 			candidates[version] = s.o.RootKEK
