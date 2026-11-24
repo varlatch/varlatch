@@ -99,9 +99,13 @@ func standStatus(version string, schema int) string {
 
 func newStandHost(t *testing.T, from string, badTo, wal bool) *standHost {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "vl-upgrade-")
+	// In memory where there is one: thousands of syncs.
+	base := "/dev/shm"
+	dir, err := os.MkdirTemp(base, "vl-upgrade-")
 	if err != nil {
-		t.Fatal(err)
+		if dir, err = os.MkdirTemp("", "vl-upgrade-"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	h := &standHost{t: t, dir: dir, bin: filepath.Join(dir, "usr", "bin"), data: filepath.Join(dir, "data"), conf: filepath.Join(dir, "etc", "varlatchd.conf"), from: from, badTo: badTo, boots: 1}

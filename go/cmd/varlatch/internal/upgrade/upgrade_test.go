@@ -360,17 +360,28 @@ func previousServes(t *testing.T, h *host, j *journal.Journal) {
 // Killed at each point, the next run finishes the upgrade (after its
 // checks) or undoes it (before them), and the host ends in that state.
 func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
-	points := []string{"verified", "snapshot", "stopping", "stop:done", "stopped", "prepared", "swap:original-aside", "swap:database-in",
-		"install:" + toVersion + ":varlatchd", "install:" + toVersion + ":varlatch", "swapped", "started", "checked"}
+	points := []string{"verified", "snapshot", "stopping", "stop:done", "stopped", "data:copy-database:create:varlatch.db", "prepared",
+		"data:keep-original:rename:original", "kept", "install:" + toVersion + ":varlatchd", "install:" + toVersion + ":varlatch", "installed",
+		"data:swap:rename:varlatch.db", "swapped", "start:" + toVersion, "started", "checked", "done"}
 	for _, point := range points {
 		t.Run(point, func(t *testing.T) {
 			h := newHost(t)
 			inst := h.inspect(t)
 			j, err := h.upgrader(func(p string) bool { return p == point }).Run(context.Background(), inst, h.release(t, "to", safe))
-			if !errors.Is(err, errKilled) || !j.Pending() {
+			if !errors.Is(err, errKilled) || j.Pending() != (point != "done") {
 				t.Fatalf("killed at %s: %+v, %v", point, j, err)
 			}
 			// A new run first finishes or undoes it.
+			if point == "done" {
+				if j, err := h.upgrader(nil).Recover(context.Background()); j != nil || err != nil {
+					t.Fatalf("recover: %+v, %v", j, err)
+				}
+				h.upgrader(nil).mustServe(t, toVersion, toSchema)
+				if left, _ := filepath.Glob(filepath.Join(h.data, "upgrades", "*", "original")); len(left) > 0 {
+					t.Fatalf("%s is left", left)
+				}
+				return
+			}
 			if _, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe)); err == nil || !strings.Contains(err.Error(), "is not over") {
 				t.Fatalf("a run over a pending upgrade: %v", err)
 			}
@@ -395,7 +406,7 @@ func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
 
 // An undo that is itself killed is undone again by the next run.
 func TestAKilledUndoIsUndoneAgain(t *testing.T) {
-	for _, point := range []string{"undo:stopped", "undo:restored", "install:" + fromVersion + ":varlatchd"} {
+	for _, point := range []string{"undo:stopped", "data:put-back:rename:varlatch.db", "undo:files-back", "install:" + fromVersion + ":varlatchd", "undo:binaries-back", "start:" + fromVersion, "undo:checked"} {
 		t.Run(point, func(t *testing.T) {
 			h := newHost(t)
 			inst := h.inspect(t)
@@ -420,7 +431,7 @@ func TestAKilledUndoIsUndoneAgain(t *testing.T) {
 func TestAFullDiskIsUndone(t *testing.T) {
 	for _, c := range []struct{ name, suffix string }{
 		{"staging", filepath.Join(toVersion, "varlatchd")},
-		{"the database copy", filepath.Join("db", "varlatch.db")},
+		{"the database copy", filepath.Join("db"+makingDir, "varlatch.db")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHost(t)
