@@ -271,6 +271,11 @@ limits:
 - **`fresh` is this installation's memory**, per stored seed: it survives a
   restart, not a restored backup (codes given since it, at most two periods'
   worth, can be given once more), nor writing the seed again.
+- **On an earlier server** (after a rollback or reverse migration), a seed's
+  row reads as deleted: it yields no value or code, and deleting that item
+  returns 404 rather than erasing the seed. The seed returns live when a
+  newer server comes back unless a new value was written under that name
+  meanwhile.
 - **Response scrubbing does not cover codes**: they are shorter than the 8
   bytes it needs.
 

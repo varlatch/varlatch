@@ -65,7 +65,8 @@ fixes.
     adds, replaces and reveals seeds.
   - The database schema is version 5 (one new table). On an earlier
     release, as after a reverse migration to 0.23, an item that holds a seed
-    has no value.
+    has no value and cannot be deleted there (it returns live once a server
+    that knows seeds is back, unless a value was written under that name).
 
 ### Server
 

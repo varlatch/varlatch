@@ -179,9 +179,10 @@ recorded when asked for. Refusals are `capability.denied`. Writing a seed is
 
 An earlier release, and the TypeScript server after a reverse migration, has
 no one-time codes and reads such an item as deleted: it has no value there,
-in any path, and an exercise that names it gives nothing (`withheld`). The
-seed stays in the database, and is an item again once a server that knows it
-is back, unless a value was set under its name meanwhile.
+in any path, an exercise that names it gives nothing (`withheld`), and
+deleting the item there returns 404 (a seed cannot be deleted on an earlier
+server). The seed stays in the database and returns live once a server that
+knows it is back, unless a plain value was written under its name meanwhile.
 
 The [threat model](../THREAT-MODEL.md#6-agent-safety-the-credential-broker-shipped)
 says what a stolen code, a broker's machine or a backup gives away.
