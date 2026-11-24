@@ -24,7 +24,8 @@ import (
 //   - in an allow-listed writing function, a write whose arguments do not
 //     go through cli.RedactDiagnostic or cli.RedactOutput;
 //   - any fmt.Print, Printf or Println (stdout, unredacted);
-//   - any import of the log package, and any json.NewEncoder;
+//   - any import of the log package, and any json.NewEncoder outside
+//     encoderSites;
 //   - outJSON, which writes a document printJSON redacted, called by
 //     anything but printJSON, and a redactedJSON made anywhere but
 //     redactJSON;
@@ -68,6 +69,18 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 		// Broker relayed it, already scrubbed: the destination's bytes,
 		// never the CLI's text (5.5b).
 		"internal/cli/request.go:relayResponse": false,
+		// The upgrade's child in the data directory (__upgrade-data): its
+		// Stdout and Stderr are set to two buffers, never to a stream. What
+		// it said becomes a result or an error of the engine's, which reach
+		// the terminal through println (RedactOutput) and finish
+		// (RedactDiagnostic) only.
+		"internal/upgrade/datadir.go:data": false,
+	}
+	// encoderSites may call json.NewEncoder.
+	encoderSites := map[string]bool{
+		// That child's answer, into the buffer above: a path, a checksum
+		// and a size, in a document of its own type.
+		"internal/upgrade/datadir.go:Child": true,
 	}
 	// newFileSites may call os.NewFile: each wraps a handle it opened
 	// itself for reading, never a stream.
@@ -122,7 +135,7 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 							if pkg.Name == "fmt" && strings.HasPrefix(sel.Sel.Name, "Print") {
 								t.Errorf("%s: fmt.%s writes stdout unredacted", fset.Position(x.Pos()), sel.Sel.Name)
 							}
-							if pkg.Name == "json" && sel.Sel.Name == "NewEncoder" {
+							if pkg.Name == "json" && sel.Sel.Name == "NewEncoder" && !encoderSites[site] {
 								t.Errorf("%s: json.NewEncoder", fset.Position(x.Pos()))
 							}
 						}
