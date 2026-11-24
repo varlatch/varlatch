@@ -64,6 +64,15 @@ export default defineConfig({
             { label: "Passkeys and sessions", slug: "reference/passkeys-and-sessions" },
             { label: "CI and other machines", slug: "reference/ci-and-machines" },
             { label: "One-time codes", slug: "reference/one-time-codes" },
+            {
+              label: "OAuth connections",
+              items: [
+                { label: "OAuth connections", slug: "reference/oauth-connections" },
+                { label: "Google", slug: "reference/oauth-google" },
+                { label: "Microsoft", slug: "reference/oauth-microsoft" },
+                { label: "Another provider", slug: "reference/oauth-generic" },
+              ],
+            },
             { label: "Integrations (GitHub, Coolify, Convex)", slug: "reference/integrations" },
             { label: "Checking sync drift", slug: "reference/sync-check" },
             { label: "Scripting the CLI", slug: "reference/scripting" },

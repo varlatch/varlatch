@@ -67,6 +67,34 @@ fixes.
     release, as after a reverse migration to 0.23, an item that holds a seed
     has no value and cannot be deleted there (it returns live once a server
     that knows seeds is back, unless a value was written under that name).
+- **OAuth connections with token write-back (#418, the Go server only).** An
+  item can be an OAuth connection: Varlatch keeps the client secret and the
+  refresh token, refreshes in one place, and an exercise gives the access
+  token and when it expires. Existing calls are unchanged; `/v1/meta` lists
+  `oauth.connections`. [OAuth connections](docs/reference/oauth-connections.md)
+  shows the calls, and what to register at
+  [Google](docs/reference/oauth-google.md),
+  [Microsoft](docs/reference/oauth-microsoft.md) and
+  [another provider](docs/reference/oauth-generic.md).
+  - New operations under `…/environments/{environment}/oauth-connections`:
+    list, make, look up, change, discover a provider, connect (a person, in
+    their session: authorization code with PKCE), refresh, disconnect. An
+    earlier server answers 404.
+  - An exercise's items gain `kind: oauth`; `minValiditySeconds` refreshes
+    first; 429 with `Retry-After` when there is no token now, reason
+    `connection-unavailable`, and 403 when a person has to act.
+  - A connection can name the hosts its token may go to: issuing a Capability
+    for another destination is refused (`connection-host`), and so is an
+    exercise (`destination-mismatch`).
+  - No path delivers a refresh token or a client secret, `secret.reveal`
+    included. Items are listed with `oauth` (preset, grant, status, account).
+  - `callerView.withheld` gains the reason `oauth-connection` (strict
+    retrieval), a closed enum: a client generated from the earlier document
+    that rejects unknown values needs regenerating.
+  - The dashboard makes, connects, pauses, changes and disconnects them.
+  - The database schema is version 6 (two new tables). On an earlier
+    release, as after a reverse migration to 0.23, a connection has no value
+    and nothing refreshes it; a reverse migration carries no tokens.
 
 ### Server
 

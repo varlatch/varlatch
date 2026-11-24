@@ -1915,7 +1915,7 @@ may use; it never adds to the Agent's Grants.
     associated data, that envelope sealed as a value is, a member `oauth` in
     `payload`, and an `env_values` row that reads as deleted to a server that
     does not know connections.
-  - Its tokens are in `oauth_connections` (schema version 3), each sealed
+  - Its tokens are in `oauth_connections` (schema version 6), each sealed
     under the Organization's KEK with the version, its parameters, the
     account, the generation and (the access token) its expiry. Changed
     parameters open neither the secret nor a token. A migration carries no

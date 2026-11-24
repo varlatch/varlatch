@@ -84,6 +84,10 @@ _Avoid_: calling every configuration value a secret
 The short code (TOTP, RFC 6238) an item gives when its Value is a *Seed*: the secret an issuer shares once, as an `otpauth://` URI, from which codes are made. Such an item is always a Secret and is used like one, but use yields the code of the moment, never the Seed: exercising a Capability gives it, every path that delivers Values leaves the item out, and only a Reveal that asks for Seeds discloses one. The issuer and account in the URI are metadata. A code is a bearer secret until its period ends; a *fresh* one is one this Installation has not given before.
 _Avoid_: 2FA token (ambiguous with credentials), OTP secret (say Seed)
 
+**OAuth Connection**:
+An item whose use yields an access token for somebody else's API: the provider's endpoints (pinned when it is made), the client, its scopes, the account that consented, and the tokens. Always a Secret. Varlatch holds the client secret and the refresh token and delivers neither on any path, a Reveal included; exercising a Capability gives the access token, refreshed first when needed. A person *connects* it (consent in the browser), or the client has access of its own. It *needs reconnecting* when the provider refuses its refresh token; it is *disconnected* here (revoked at the provider where that is possible, and forgotten). Its *hosts* bound where its token may go, which a Capability can only narrow.
+_Avoid_: Platform Connection (the opposite direction: Varlatch delivering Secrets to a platform), integration, OAuth token (say access token or refresh token)
+
 **Value Reference**:
 A `${NAME}` token inside a Value that reuses another Config Item's Value from the same Effective Configuration. Expanded strictly server-side and never authority-expanding: read paths leave what the caller may not read literal, while capability exercise resolves every reference or denies. `$${NAME}` escapes to literal text.
 _Avoid_: interpolation, templating (suggests a general expression language; it is name substitution only)

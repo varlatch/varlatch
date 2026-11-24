@@ -108,6 +108,12 @@ replay or a suite named here does not exist.
 | A seed of one-time codes (Go server) is delivered by no path but an explicit disclosure that names its item and asks for seeds (`secret.reveal`, audited): retrievals, runs, effective configuration, bulk and named disclosures, exports, scans, sync targets, references, search, events, audit and logs leave it out, and a version marked as a seed is refused by the code that opens values | **SHIPPED GUARANTEE** | `server/capabilities.TestNoOtherPathDeliversASeed`, `server/capabilities.TestNoOperationAnswersWithASeed` (every GET and POST), `server/capabilities.TestASeedAndTheContract`, `server/capabilities.TestTamperedSeedsFailClosed`; `server/syncs.TestSeedsAreNeverPushed`; `cmd/varlatch/internal/cli.TestASeedIsListedAndNotDelivered`, `cmd/varlatch/internal/cli.TestValuesSetTOTP`; `apps/web` `oneTimeCodes.test.tsx` |
 | A code asked for as `fresh` is of a period for which this server gave none under the stored seed, across restarts and concurrent requests, until the seed is written again or a backup restored | **SHIPPED GUARANTEE** | `server/capabilities.TestFresh`, `server/capabilities.TestFreshUnderConcurrency` |
 | On a server that does not know seeds (an earlier release after a rollback, the TypeScript server after a reverse migration) an item that holds one has no value, and a write meant as a seed is refused, never stored as a value | **SHIPPED GUARANTEE** | `server/capabilities.TestAnOlderServerReadsNoSeed`; `server/migration/check.TestTheReverseChecksWithSeeds` |
+| An OAuth connection's refresh token and client secret (Go server) are delivered by no path, `secret.reveal` included, and its access token by the exercise of a Capability alone: retrievals, runs, disclosures, exports, scans, sync targets, references, search, the connection's own operations, events, audit, logs and errors hold none of them, nor text the provider wrote | **SHIPPED GUARANTEE** | `server/capabilities.TestNoOtherPathDeliversAToken`, `server/capabilities.TestNoOperationAnswersWithAToken` (every GET and POST), `server/capabilities.TestAnEchoingProvider`, `server/capabilities.TestConnectAndExercise` (every row and the log); `server/syncs.TestConnectionsAreNeverPushed`; `cmd/varlatch/internal/cli.TestAConnectionIsListedAndNotDelivered`; `apps/web` `oauthConnections.test.tsx` |
+| A connection's client secret, codes and tokens go to the endpoints pinned when it was made and to no other host: metadata read again is not believed, redirects are not followed, plain http is refused, every connection is decided by the outbound policy when it opens, and parameters changed in the database open neither the secret nor a token | **SHIPPED GUARANTEE** | `server/capabilities.TestEndpointsArePinned`, `server/capabilities.TestProvidersInside`, `server/capabilities.TestMixUp`, `server/capabilities.TestARefreshThatFails`; `go/server/oauth/oauthparams` |
+| Connecting needs the person and the browser session that began it: the state and the code are good once, PKCE is always S256, and the redirect URI, the issuer (RFC 9207), the ID token and the account are checked before anything is kept; another account than before is refused unless confirmed | **SHIPPED GUARANTEE** | `server/capabilities.TestTheStateIsOneSessionsAndOnce`, `server/capabilities.TestWhatIsWrongWithAnAnswer`, `server/capabilities.TestMixUp`, `server/capabilities.TestAnotherAccount` |
+| A connection is refreshed by one request at a time, in this process and across processes on one database; the answer's refresh token is stored in the same job as its access token, before anyone gets that, and the one that was used stays stored until then, through a crash at any point | **SHIPPED GUARANTEE** | `server/capabilities.TestOneRefreshServesAll`, `server/capabilities.TestTwoProcessesRefreshOnce`, `server/capabilities.TestAProcessThatEndsDuringARefresh`, `server/capabilities.TestALostAnswer`, `server/capabilities.TestRacesWithARefresh` |
+| A connection's hosts bound where its access token may go, at issuing and again at each exercise; nothing is refreshed while the Organization is frozen or the connection is paused, disconnected or deleted | **SHIPPED GUARANTEE** | `server/capabilities.TestHosts`, `server/capabilities.TestAnInheritedConnection`, `server/capabilities.TestFrozenPausedAndDeleted`, `server/capabilities.TestRacesWithARefresh` |
+| On a server that does not know OAuth connections such an item has no value, and nothing of it is refreshed; a reverse migration carries no tokens | **SHIPPED GUARANTEE** | `server/capabilities.TestAnOlderServerReadsNoConnection`; `server/migration/check.TestTheReverseChecksWithConnections` |
 | These limits fail closed on a server that does not know them (an earlier release after a rollback, the TypeScript server after a reverse migration): it accepts neither the credential, nor an exchange under the binding, nor the Capability | **SHIPPED GUARANTEE** | `server/capabilities.TestLimitsFailClosedOnAnOlderServer`; `server/migration/check.TestTheReverseChecksWithLimits` |
 | Reference expansion at exercise is strict and capability-bound: referenced Secrets must be named in the Capability, non-sensitive pull-ins require the Agent's `config.value.read` and are audited before use, and any unresolvable reference denies the exercise rather than sending literal `${NAME}` upstream | **SHIPPED GUARANTEE** | replay `capabilities`; `server/values.TestExpandReferences`; suite `broker` |
 | Destination constraints are canonical host+port; wildcards never match the apex; every hop is independently checked and successful exercise is audited (host+port + `item@versionId`) before decryption | **SHIPPED GUARANTEE** | `server/authz.TestDestinationVectors`; replay `capabilities`; suite `broker` |
@@ -232,6 +238,63 @@ And the honest limits, stated with the same discipline:
   Agent. Start agent-safe runs from a clean environment.
 - **Plain `varlatch run` (without `--agent-safe`) still injects plaintext**
   into the child environment (§5); agent safety is opt-in per run.
+
+**OAuth connections** (the Go server) put somebody's account behind that
+boundary. The limits:
+
+- **An access token is a bearer secret** until it ends, commonly an hour.
+  Whoever got it can use it wherever the provider accepts it: Varlatch checks
+  the destination the Broker reports, and cannot take a token back. Pausing,
+  revoking the Capability or the Agent's Grant stops the next one; only the
+  provider ends this one (disconnecting asks it to, and some keep access
+  tokens good all the same).
+- **A compromised broker machine** can get an access token for every live
+  Capability it was given the secret of. It gets neither the refresh token
+  nor the client secret, so nothing once its tokens have ended and the
+  Capability is gone. By asking for long `minValiditySeconds` it can make
+  Varlatch refresh, once a minute at most for one the provider cannot meet.
+  Narrow scopes, hosts and single-use Capabilities keep it small.
+- **A compromised orchestrator** can issue Capabilities for connections as
+  for any item, for their hosts only. It can start no connection.
+- **Whoever holds `config.value.write`** in the environment can disconnect,
+  pause or delete a connection, replace its client secret (which breaks it,
+  until it is replaced again), and make new ones; it cannot read one, nor
+  send one's tokens elsewhere. Only a person changes a connection's provider,
+  client, scopes or hosts, and the first two only while it holds no tokens
+  and with the client secret given anew.
+- **A person who connects** decides whose account is used, and consents to
+  it at the provider: Varlatch records who and which. Somebody else's
+  connection can be connected again by any person with the right, to the same
+  account, or, confirmed and recorded, to another. When the provider never
+  says whose account it is, a swap cannot be told.
+- **A malicious or compromised provider** has its own client's secret and
+  tokens. It can hand out tokens that are useless or somebody else's, name
+  any account, and refuse. It gets nothing of another connection, reaches no
+  address the outbound policy does not allow, and cannot put what it was sent
+  into what is shown, recorded or handed out: errors are a fixed list of
+  words, and an answer that repeats a secret as a token, a scope or a name is
+  not kept.
+- **Discovery** asks the host a person or machine with `config.value.write`
+  named, within the outbound policy, and says only whether its metadata was
+  usable and why not.
+- **The browser's way back** carries the code in the address. The dashboard
+  takes it out at once and Varlatch logs no query; a proxy in front of it may.
+  The code is good once, for this client, with a verifier only the server
+  has.
+- **A lost answer** to a refresh may cost the connection, at a provider that
+  takes the second use of a replaced refresh token for a theft: it then needs
+  a person. So does **a restored backup**, and **a second server** on a copy
+  of the database ends the first one's grants.
+- **A stolen database** holds tokens and client secrets encrypted under the
+  installation's Root KEK, and the endpoints, client IDs, scopes, hosts and
+  accounts in plaintext. With the Root KEK, or a stolen backup archive with
+  its key and the Root KEK, every refresh token in it can be used: disconnect
+  the connections (or withdraw the consent at the providers) and replace the
+  client secrets there. A changed row opens nothing. Whoever can write the
+  database can put back an older token set of the same version, which the
+  provider decides about, or delete one.
+- **The provider's account** is outside Varlatch: consent withdrawn there, a
+  changed password or an administrator's policy ends a connection.
 
 **One-time codes** (TOTP seeds; the Go server) put a second factor behind the
 same boundary as the first, and change what it proves: a sign-in whose

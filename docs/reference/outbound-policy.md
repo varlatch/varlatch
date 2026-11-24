@@ -2,8 +2,8 @@
 
 Some of what an Organization configures makes varlatchd send requests: audit
 webhooks, Coolify and Convex Connections and their Sync Targets, GitHub
-Actions Sync Targets and the GitHub App, and OIDC issuers for machine
-sign-in. The outbound policy decides where those requests may go.
+Actions Sync Targets and the GitHub App, OIDC issuers for machine sign-in,
+and [OAuth connections](oauth-connections.md). The outbound policy decides where those requests may go.
 
 By default, an Organization reaches what the internet reaches, over https:
 
@@ -147,8 +147,8 @@ sudo varlatch admin outbound check       # on the host
 varlatchd admin outbound check           # inside the container image
 ```
 
-It lists every configured webhook, Coolify and Convex Connection and OIDC
-issuer: the Organization, the kind, its id and name, host and port, the
+It lists every configured webhook, Coolify and Convex Connection, OIDC
+issuer and OAuth connection: the Organization, the kind, its id and name, host and port, the
 addresses the name resolves to, and the verdict (public, allowed by an
 entry, or refused with the reason). It ends with a suggested value. Literal addresses and names that resolve to
 loopback, link-local or metadata addresses are listed apart and never
@@ -207,6 +207,10 @@ A refusal never loses anything:
   waiting. After a restart with the destination allowed, it is retried at
   once.
 - **OIDC sign-in** fails like any other rejected token.
+- **OAuth connections** to a refused endpoint are refused when they are made.
+  One that is refused later is `failing` (`outbound-refused`); its tokens stay
+  and are refreshed once the destination is allowed. `outbound_allow` opens
+  private addresses for them; plain http never is.
 - **GitHub** is refused only if `api.github.com` resolves to a non-public
   address on the host.
 
