@@ -27,14 +27,14 @@ import (
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
-// Two prereleases of the Go line, built from this checkout: 0.50.0-rc.1, on
-// this checkout's schema (fromSchema), and 0.50.0-rc.2 with G6's fixture
-// schema step (toSchema, compatible from 1: rollback-safe). "wrong" is rc.2's build saying rc.3 (a release whose
+// Two prereleases of the Go line, built from this checkout: 0.50.0-rc.4, on
+// this checkout's schema (fromSchema), and 0.50.0-rc.5 with G6's fixture
+// schema step (toSchema, compatible from 1: rollback-safe). "wrong" is rc.5's build saying rc.6 (a release whose
 // varlatchd is not the one its manifest names: its health checks fail);
 // "unsafe" the same step declared not rollback-safe.
 const (
-	fromVersion = "0.50.0-rc.1"
-	toVersion   = "0.50.0-rc.2"
+	fromVersion = "0.50.0-rc.4"
+	toVersion   = "0.50.0-rc.5"
 )
 
 // fromSchema is this checkout's schema version, as go/release/release.json
@@ -79,7 +79,7 @@ func build(t *testing.T, name string) []byte {
 		}
 		defer os.RemoveAll(dir)
 		for _, b := range []struct{ name, version, tags string }{
-			{"from", fromVersion, ""}, {"to", toVersion, "g6fixture"}, {"wrong", "0.50.0-rc.3", "g6fixture"}, {"unsafe", toVersion, "g6fixture,g6unsafe"},
+			{"from", fromVersion, ""}, {"to", toVersion, "g6fixture"}, {"wrong", "0.50.0-rc.6", "g6fixture"}, {"unsafe", toVersion, "g6fixture,g6unsafe"},
 		} {
 			out := filepath.Join(dir, b.name)
 			cmd := exec.Command("go", "build", "-tags", b.tags, "-trimpath",
@@ -451,7 +451,7 @@ func TestAFailedHealthCheckIsUndone(t *testing.T) {
 	u := h.upgrader(nil)
 	u.HealthTimeout = 3 * time.Second
 	j, err := u.Run(context.Background(), inst, h.release(t, "wrong", safe))
-	if err == nil || !strings.Contains(err.Error(), "it runs 0.50.0-rc.3, not "+toVersion) {
+	if err == nil || !strings.Contains(err.Error(), "it runs 0.50.0-rc.6, not "+toVersion) {
 		t.Fatalf("%v", err)
 	}
 	previousServes(t, h, j)
@@ -508,7 +508,7 @@ func TestFetch(t *testing.T) {
 		{"a wrong identity", &fakerelease.Release{Files: files, Identity: release.Identity("0.50.0-rc.9")}, "does NOT verify"},
 		{"no signature", &fakerelease.Release{Files: files, NoSignature: true}, "has no signature"},
 		{"a changed download", &fakerelease.Release{Files: files, Served: map[string][]byte{server: []byte("other")}}, "does not match SHA256SUMS"},
-		{"another release's manifest", &fakerelease.Release{Files: map[string][]byte{cli: []byte("cli"), server: []byte("server"), name: mustManifest(t, "0.50.0-rc.1")}}, "is for 0.50.0-rc.1"},
+		{"another release's manifest", &fakerelease.Release{Files: map[string][]byte{cli: []byte("cli"), server: []byte("server"), name: mustManifest(t, "0.50.0-rc.4")}}, "is for 0.50.0-rc.4"},
 	} {
 		srv.Publish(toVersion, c.r)
 		if _, err := Fetch(context.Background(), srv.Source(), toVersion, "amd64"); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "nothing was changed") {
@@ -579,7 +579,7 @@ func TestNotEnoughSpaceChangesNothing(t *testing.T) {
 
 	// Two paths on one filesystem are counted once, against its free space.
 	FreeSpace = func(path string) (uint64, uint64, error) { return 1 << 40, 7, nil }
-	if err := h.upgrader(nil).enoughSpace(inst, h.release(t, "to", safe)); err != nil {
+	if err := h.upgrader(nil).enoughSpace(context.Background(), inst, h.release(t, "to", safe)); err != nil {
 		t.Fatal(err)
 	}
 }
