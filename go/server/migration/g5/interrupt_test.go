@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -592,6 +593,10 @@ type world struct {
 	// extraEnv is the CLI's added environment (a target made under a test
 	// root, maketarget_test.go).
 	extraEnv []string
+	// errOut, when set, is the CLI's stderr, and outToo its stdout as well (a
+	// pipe of the test's).
+	errOut *os.File
+	outToo bool
 	// client asks the public URL (http.DefaultClient when nil; a TLS
 	// origin's own client in maketarget_test.go).
 	client *http.Client
@@ -1066,6 +1071,12 @@ func (w *world) runArgs(pause string, args []string) int {
 	cmd.Env = append(cmd.Env, w.extraEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
+	if w.errOut != nil {
+		cmd.Stderr = w.errOut
+		if w.outToo {
+			cmd.Stdout = w.errOut
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -1328,6 +1339,119 @@ func TestG5Interruptions(t *testing.T) {
 					t.Errorf("a second --resume: %d", code)
 				}
 				finished("after a second --resume")
+				w.noSecrets()
+			})
+		}
+	}
+}
+
+// Migrations whose stderr (and stdout) is a pipe nobody reads, nearly full,
+// or a closed one, do all they do, with the result's own status: a whole one,
+// a run refused over an interrupted one, and an --abort in the transfer.
+func TestG5NobodyReads(t *testing.T) {
+	for _, c := range []struct {
+		name           string
+		closed, stdout bool
+	}{{"a pipe nobody reads", false, false}, {"the same for stdout", false, true}, {"a closed pipe", true, true}} {
+		t.Run(c.name, func(t *testing.T) {
+			r, out, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			defer out.Close()
+			if c.closed {
+				r.Close()
+			} else {
+				// One page, nearly full.
+				if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, out.Fd(), 1031 /* F_SETPIPE_SZ */, 4096); errno != 0 {
+					t.Fatal(errno)
+				}
+				if _, err := out.Write(make([]byte, 3900)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w := newWorld(t, false)
+			w.useState()
+			before := w.sourceHash()
+			if code := w.run("transfer started"); code != -1 {
+				t.Fatalf("not killed: %d", code)
+			}
+			w.errOut, w.outToo = out, c.stdout
+			if code := w.run(""); code != 1 {
+				t.Errorf("a run over the interrupted migration: %d", code)
+			}
+			if code := w.run("", "--abort"); code != 0 {
+				t.Errorf("--abort: %d", code)
+			}
+			w.expect("aborted", "released", "released", "source", "")
+			if code := w.run(""); code != 0 {
+				t.Errorf("a whole migration: %d", code)
+			}
+			w.errOut, w.outToo = nil, false
+			w.expect("migrated", "open", "open", "target-open", "migrated-out")
+			if after := w.sourceHash(); after != before {
+				t.Error("the source's data changed")
+			}
+			w.noSecrets()
+		})
+	}
+}
+
+// An undo of the transfer killed between its steps, then undone again by
+// --abort or --resume: the target never serves again, the source's ingress
+// starts only once its barrier is lifted, and the old installation ends
+// released, unchanged. The undo's steps are said as they come, and with
+// --json not at all.
+func TestG5TheUndoInterrupted(t *testing.T) {
+	for _, c := range []struct {
+		point, answers, gate string
+		// step is the last one the killed run said.
+		step string
+	}{
+		{"undo target stopped", "none", "migration", "stopping the target"},
+		{"undo released", "none", "", "lifting the source's barrier"},
+		{"undo address started", "source", "", "starting the source's dashboard again"},
+		{"undo discarded", "source", "", "discarding the target's database"},
+	} {
+		for _, again := range []string{"--abort", "--resume"} {
+			t.Run(c.point+", "+again, func(t *testing.T) {
+				w := newWorld(t, false)
+				w.useState()
+				before := w.sourceHash()
+				if code := w.run("transfer started"); code != -1 {
+					t.Fatalf("not killed: %d", code)
+				}
+				if code := w.run(c.point, "--abort"); code != -1 {
+					t.Fatalf("the undo was not killed: %d", code)
+				}
+				w.expect("killed at "+c.point, "transfer", "transfer", c.answers, c.gate)
+				if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "Step: "+c.step+".") || !regexp.MustCompile(`Done in [0-9hms]+: `+c.step+`\.`).MatchString(out) {
+					t.Errorf("no step %q in:\n%s", c.step, out)
+				}
+				code := w.run("", again, "--json")
+				out := string(w.outputs[len(w.outputs)-1])
+				// --resume of an undo answers with its cause, 1.
+				if want := map[string]int{"--abort": 0, "--resume": 1}[again]; code != want {
+					t.Fatalf("%s: %d\n%s", again, code, out)
+				}
+				if strings.Contains(out, "Step: ") || strings.Contains(out, "Done in ") {
+					t.Errorf("progress with --json:\n%s", out)
+				}
+				finished := func(when string) {
+					w.expect(when, "released", "released", "source", "")
+					if _, err := os.Stat(filepath.Join(w.data, "varlatch.db")); !os.IsNotExist(err) {
+						t.Errorf("%s: the target's database was not discarded: %v", when, err)
+					}
+				}
+				finished("undone")
+				if after := w.sourceHash(); after != before {
+					t.Error("the source's data changed")
+				}
+				if code := w.run("", "--resume"); code != 0 {
+					t.Errorf("--resume once undone: %d", code)
+				}
+				finished("after another --resume")
 				w.noSecrets()
 			})
 		}

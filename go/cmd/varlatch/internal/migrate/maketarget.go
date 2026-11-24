@@ -255,7 +255,7 @@ func (e *Engine) undoMade(j *Journal) error {
 		return err
 	}
 	e.say("Removing what migrate made of the target: %v.", rec.Made)
-	if err := e.Maker.Undo(rec.Made); err != nil {
+	if err := e.step("removing what migrate made of the target", func() error { return e.Maker.Undo(rec.Made) }); err != nil {
 		return err
 	}
 	rec.Undone = e.now().UTC().Format(time.RFC3339Nano)
