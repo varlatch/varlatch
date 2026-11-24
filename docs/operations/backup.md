@@ -78,7 +78,8 @@ settings**, for Installation Admins) show the same warnings:
 - no archive within 48 hours;
 - the newest archive was not delivered to a destination, or did not pass
   its checks;
-- a remote copy failed its check, or none passed within 30 days;
+- a remote copy failed its check, or, once one was checked, none passed
+  within 30 days;
 - a Root KEK version that archives need had no successful check within 30
   days.
 
@@ -185,8 +186,11 @@ expires incomplete multipart uploads, and never one that could remove the
 newest archive. A bucket on the same disk is no second place.
 
 `sudo varlatchd admin backup run --json --verify-remote` makes a backup,
-then downloads its uploaded copy and checks it. Run it at least every 30
-days, with a key that may read.
+then downloads its uploaded copy and checks that it is that archive, whole,
+and opens with the Root KEK. It needs a key that may read: run it at least
+every 30 days with one. A key that only uploads cannot check the copy, so
+until a first check was made there is no warning about it, and `varlatch
+doctor` says that none was made.
 
 A bucket behind a private certificate authority needs that authority among
 the [certificates the server trusts](../reference/outbound-policy.md#a-private-certificate-authority).
