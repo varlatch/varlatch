@@ -222,6 +222,10 @@ func (s *Service) CompletePublicURLChange(ctx context.Context, fromURL, toURL st
 				return err
 			}
 		}
+		// A withdrawal of all sessions, so of the links made in them (ADR-0063).
+		if err := q.EndEntryLinksOfBrowsers(ctx, now); err != nil {
+			return err
+		}
 		ended, err := q.DeleteAllAuthSessions(ctx)
 		if err != nil {
 			return err

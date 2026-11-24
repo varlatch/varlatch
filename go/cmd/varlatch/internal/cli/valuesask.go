@@ -205,8 +205,11 @@ func (r *Run) valuesAsked() error {
 		if !ok {
 			said = Printable(status)
 		}
-		if reason, _ := stringField(l, "reason"); reason == "value-changed" {
+		switch reason, _ := stringField(l, "reason"); reason {
+		case "value-changed":
 			said += ": the value changed first"
+		case "credential-ended":
+			said = "ended with the credential that made it"
 		}
 		if err := r.println(strings.Join([]string{Printable(item), said, Printable(id)}, "  ")); err != nil {
 			return err

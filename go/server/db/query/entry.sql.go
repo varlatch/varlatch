@@ -13,9 +13,10 @@ import (
 )
 
 const countEntryLinks = `-- name: CountEntryLinks :one
-SELECT CAST(coalesce(sum(status = 'pending' AND expires_at > ?1), 0) AS INTEGER) AS pending,
-  CAST(coalesce(sum(created_at > ?2), 0) AS INTEGER) AS recent
-FROM entry_links WHERE requested_by = ?3
+SELECT CAST(coalesce(sum(l.status = 'pending' AND l.expires_at > ?1 AND (i.kind = 'human' OR c.revoked_at IS NULL)), 0) AS INTEGER) AS pending,
+  CAST(coalesce(sum(l.created_at > ?2), 0) AS INTEGER) AS recent
+FROM entry_links l JOIN identities i ON i.id = l.requested_by JOIN credentials c ON c.id = l.credential_id
+WHERE l.requested_by = ?3
 `
 
 type CountEntryLinksParams struct {
@@ -29,7 +30,9 @@ type CountEntryLinksRow struct {
 	Recent  int64
 }
 
-// A requester's links: pending now, and made since.
+// A requester's links: pending now, and made since. A machine's that ended
+// with a revoked credential are none of the first (a person's are ended when
+// that happens).
 func (q *Queries) CountEntryLinks(ctx context.Context, arg CountEntryLinksParams) (CountEntryLinksRow, error) {
 	row := q.db.QueryRowContext(ctx, countEntryLinks, arg.Now, arg.Since, arg.RequestedBy)
 	var i CountEntryLinksRow
@@ -63,8 +66,148 @@ func (q *Queries) EndEntryLink(ctx context.Context, arg EndEntryLinkParams) (int
 	return result.RowsAffected()
 }
 
+const endEntryLinksOfBrowsers = `-- name: EndEntryLinksOfBrowsers :exec
+UPDATE entry_links SET status = 'cancelled', reason = 'credential-ended', ended_at = CAST(?1 AS INTEGER)
+WHERE status = 'pending' AND expires_at > CAST(?1 AS INTEGER)
+  AND credential_id IN (SELECT c.id FROM credentials c WHERE c.kind = 'browser')
+`
+
+// Every browser session was ended by an operator (a move).
+func (q *Queries) EndEntryLinksOfBrowsers(ctx context.Context, now int64) error {
+	_, err := q.db.ExecContext(ctx, endEntryLinksOfBrowsers, now)
+	return err
+}
+
+const endEntryLinksOfMember = `-- name: EndEntryLinksOfMember :many
+UPDATE entry_links SET status = 'cancelled', reason = 'credential-ended', ended_at = CAST(?1 AS INTEGER)
+WHERE requested_by = ?2 AND organization_id = ?3
+  AND status = 'pending' AND expires_at > CAST(?1 AS INTEGER)
+RETURNING id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id, restricted_to, identity_id, description, requested_by, credential_id, status, reason, refusals, created_at, expires_at, ended_at
+`
+
+type EndEntryLinksOfMemberParams struct {
+	Now            int64
+	RequestedBy    string
+	OrganizationID string
+}
+
+// A membership ended: the pending links the person made there end.
+func (q *Queries) EndEntryLinksOfMember(ctx context.Context, arg EndEntryLinksOfMemberParams) ([]EntryLink, error) {
+	rows, err := q.db.QueryContext(ctx, endEntryLinksOfMember, arg.Now, arg.RequestedBy, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EntryLink
+	for rows.Next() {
+		var i EntryLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.TokenHash,
+			&i.OrganizationID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ItemName,
+			&i.Accepts,
+			&i.Replaces,
+			&i.BoundVersionID,
+			&i.RestrictedTo,
+			&i.IdentityID,
+			&i.Description,
+			&i.RequestedBy,
+			&i.CredentialID,
+			&i.Status,
+			&i.Reason,
+			&i.Refusals,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.EndedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const endEntryLinksOfPerson = `-- name: EndEntryLinksOfPerson :many
+UPDATE entry_links SET status = 'cancelled', reason = 'credential-ended', ended_at = CAST(?1 AS INTEGER)
+WHERE requested_by = ?2 AND status = 'pending' AND expires_at > CAST(?1 AS INTEGER) AND credential_id IN (
+  SELECT c.id FROM credentials c, credentials x, credentials r
+  WHERE x.id = ?3 AND r.id = ?4 AND c.identity_id = x.identity_id
+    AND (c.id = x.id OR c.kind = 'browser' AND x.kind = 'browser')
+    AND c.id <> r.id AND NOT (c.kind = 'browser' AND r.kind = 'browser' AND coalesce(c.auth_session_id = r.auth_session_id, 0)))
+RETURNING id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id, restricted_to, identity_id, description, requested_by, credential_id, status, reason, refusals, created_at, expires_at, ended_at
+`
+
+type EndEntryLinksOfPersonParams struct {
+	Now         int64
+	RequestedBy string
+	Revoked     string
+	RevokedWith string
+}
+
+// A person revoked one of their credentials, with another one: the pending
+// links made with it end, and with a browser's those of all their browser
+// sessions, which nobody can tell apart by their short bearers. Not those of
+// the credential, or the browser session, they revoked it with.
+func (q *Queries) EndEntryLinksOfPerson(ctx context.Context, arg EndEntryLinksOfPersonParams) ([]EntryLink, error) {
+	rows, err := q.db.QueryContext(ctx, endEntryLinksOfPerson,
+		arg.Now,
+		arg.RequestedBy,
+		arg.Revoked,
+		arg.RevokedWith,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EntryLink
+	for rows.Next() {
+		var i EntryLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.TokenHash,
+			&i.OrganizationID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.ItemName,
+			&i.Accepts,
+			&i.Replaces,
+			&i.BoundVersionID,
+			&i.RestrictedTo,
+			&i.IdentityID,
+			&i.Description,
+			&i.RequestedBy,
+			&i.CredentialID,
+			&i.Status,
+			&i.Reason,
+			&i.Refusals,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.EndedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const entryLinkByToken = `-- name: EntryLinkByToken :one
-SELECT id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id, restricted_to, identity_id, description, requested_by, status, reason, refusals, created_at, expires_at, ended_at FROM entry_links WHERE token_hash = ?
+SELECT id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id, restricted_to, identity_id, description, requested_by, credential_id, status, reason, refusals, created_at, expires_at, ended_at FROM entry_links WHERE token_hash = ?
 `
 
 func (q *Queries) EntryLinkByToken(ctx context.Context, tokenHash string) (EntryLink, error) {
@@ -84,6 +227,7 @@ func (q *Queries) EntryLinkByToken(ctx context.Context, tokenHash string) (Entry
 		&i.IdentityID,
 		&i.Description,
 		&i.RequestedBy,
+		&i.CredentialID,
 		&i.Status,
 		&i.Reason,
 		&i.Refusals,
@@ -94,8 +238,43 @@ func (q *Queries) EntryLinkByToken(ctx context.Context, tokenHash string) (Entry
 	return i, err
 }
 
+const entryLinkCredential = `-- name: EntryLinkCredential :one
+SELECT c.kind, c.revoked_at, c.expires_at, i.kind AS identity_kind, i.disabled, i.suspended_by_deletion,
+  CAST(coalesce((SELECT min(b.revoked_at) FROM oidc_bindings b WHERE b.identity_id = c.identity_id AND b.revoked_at >= c.created_at), 0) AS INTEGER) AS binding_revoked_at
+FROM credentials c JOIN identities i ON i.id = c.identity_id WHERE c.id = ?
+`
+
+type EntryLinkCredentialRow struct {
+	Kind                string
+	RevokedAt           sql.NullInt64
+	ExpiresAt           sql.NullInt64
+	IdentityKind        string
+	Disabled            bool
+	SuspendedByDeletion sql.NullString
+	BindingRevokedAt    int64
+}
+
+// What became of the credential a link was made with, and of its identity.
+// binding_revoked_at is when one of the identity's OIDC bindings was revoked
+// after the credential was issued: which one an exchanged credential came
+// from is not kept.
+func (q *Queries) EntryLinkCredential(ctx context.Context, id string) (EntryLinkCredentialRow, error) {
+	row := q.db.QueryRowContext(ctx, entryLinkCredential, id)
+	var i EntryLinkCredentialRow
+	err := row.Scan(
+		&i.Kind,
+		&i.RevokedAt,
+		&i.ExpiresAt,
+		&i.IdentityKind,
+		&i.Disabled,
+		&i.SuspendedByDeletion,
+		&i.BindingRevokedAt,
+	)
+	return i, err
+}
+
 const entryLinkOf = `-- name: EntryLinkOf :one
-SELECT id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id, restricted_to, identity_id, description, requested_by, status, reason, refusals, created_at, expires_at, ended_at FROM entry_links
+SELECT id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id, restricted_to, identity_id, description, requested_by, credential_id, status, reason, refusals, created_at, expires_at, ended_at FROM entry_links
 WHERE id = ?1 AND environment_id = ?2
   AND (CAST(?3 AS TEXT) IS NULL OR requested_by = ?3)
 `
@@ -124,6 +303,7 @@ func (q *Queries) EntryLinkOf(ctx context.Context, arg EntryLinkOfParams) (Entry
 		&i.IdentityID,
 		&i.Description,
 		&i.RequestedBy,
+		&i.CredentialID,
 		&i.Status,
 		&i.Reason,
 		&i.Refusals,
@@ -211,8 +391,8 @@ const insertEntryLink = `-- name: InsertEntryLink :exec
 
 
 INSERT INTO entry_links (id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id,
-  restricted_to, identity_id, description, requested_by, created_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  restricted_to, identity_id, description, requested_by, credential_id, created_at, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEntryLinkParams struct {
@@ -229,6 +409,7 @@ type InsertEntryLinkParams struct {
 	IdentityID     sql.NullString
 	Description    sql.NullString
 	RequestedBy    string
+	CredentialID   string
 	CreatedAt      int64
 	ExpiresAt      int64
 }
@@ -250,6 +431,7 @@ func (q *Queries) InsertEntryLink(ctx context.Context, arg InsertEntryLinkParams
 		arg.IdentityID,
 		arg.Description,
 		arg.RequestedBy,
+		arg.CredentialID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
@@ -257,7 +439,7 @@ func (q *Queries) InsertEntryLink(ctx context.Context, arg InsertEntryLinkParams
 }
 
 const listEntryLinks = `-- name: ListEntryLinks :many
-SELECT id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id, restricted_to, identity_id, description, requested_by, status, reason, refusals, created_at, expires_at, ended_at FROM entry_links
+SELECT id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id, restricted_to, identity_id, description, requested_by, credential_id, status, reason, refusals, created_at, expires_at, ended_at FROM entry_links
 WHERE environment_id = ?1
   AND (CAST(?2 AS TEXT) IS NULL OR requested_by = ?2)
 ORDER BY created_at DESC, id DESC LIMIT 200
@@ -291,6 +473,7 @@ func (q *Queries) ListEntryLinks(ctx context.Context, arg ListEntryLinksParams) 
 			&i.IdentityID,
 			&i.Description,
 			&i.RequestedBy,
+			&i.CredentialID,
 			&i.Status,
 			&i.Reason,
 			&i.Refusals,

@@ -276,6 +276,7 @@ type EntryLink struct {
 	IdentityID     sql.NullString
 	Description    sql.NullString
 	RequestedBy    string
+	CredentialID   string
 	Status         string
 	Reason         sql.NullString
 	Refusals       int64

@@ -175,7 +175,9 @@ are revoked.
 
 An application that needs a person's API key does not have to handle it: it
 makes an [entry link](entry-links.md), the person enters the key in Varlatch,
-and a Capability uses it.
+and a Capability uses it. A pending link ends when the credential that made it
+is revoked, so replace a credential an hour after the last link was made with
+it.
 
 A machine that uses an API behind OAuth gets the access token the same way:
 the Capability names an [OAuth connection](oauth-connections.md), and the

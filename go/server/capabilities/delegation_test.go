@@ -78,6 +78,8 @@ type world struct {
 	names  map[string]string
 	oauth  *oauth.Service
 	policy *outbound.Policy
+	// approvals is authentication, as the operator's commands use it.
+	approvals *auth.Service
 	// public is the public URL, when it is not the loopback one ("": none).
 	public *string
 }
@@ -144,7 +146,7 @@ func (w *world) start() {
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	w.store, w.handler, w.values, w.wr = store, h, vs, wr
+	w.store, w.handler, w.values, w.wr, w.approvals = store, h, vs, wr, approvals
 }
 
 func (w *world) stop() {

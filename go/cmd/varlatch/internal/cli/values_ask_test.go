@@ -39,7 +39,7 @@ func newAskServer(t *testing.T) *askServer {
 		case "DELETE":
 			w.WriteHeader(204)
 		case "GET":
-			_, _ = io.WriteString(w, `{"items":[{"id":"enl_1aaaaaaaaaa","item":"A_KEY","status":"entered","restrictedTo":"member"},{"id":"enl_2aaaaaaaaaa","item":"B_KEY","status":"cancelled","reason":"value-changed"},{"id":"enl_3\u001b[31m","item":"C_KEY","status":"pending"}]}`)
+			_, _ = io.WriteString(w, `{"items":[{"id":"enl_1aaaaaaaaaa","item":"A_KEY","status":"entered","restrictedTo":"member"},{"id":"enl_2aaaaaaaaaa","item":"B_KEY","status":"cancelled","reason":"value-changed"},{"id":"enl_4aaaaaaaaaa","item":"D_KEY","status":"cancelled","reason":"credential-ended"},{"id":"enl_3\u001b[31m","item":"C_KEY","status":"pending"}]}`)
 		default:
 			w.WriteHeader(201)
 			_, _ = io.WriteString(w, s.answer)
@@ -127,7 +127,7 @@ func TestValuesAskPrintsNoCredential(t *testing.T) {
 func TestValuesAskedAndCancel(t *testing.T) {
 	s := newAskServer(t)
 	code, stdout, _ := runIn(t, s.valuesServer, "", nil, nil, "values", "asked")
-	if code != 0 || !strings.Contains(stdout, "A_KEY  entered  enl_1aaaaaaaaaa\nB_KEY  cancelled: the value changed first  enl_2aaaaaaaaaa\nC_KEY  waiting") || strings.Contains(stdout, "\x1b") {
+	if code != 0 || !strings.Contains(stdout, "A_KEY  entered  enl_1aaaaaaaaaa\nB_KEY  cancelled: the value changed first  enl_2aaaaaaaaaa\nD_KEY  ended with the credential that made it  enl_4aaaaaaaaaa\nC_KEY  waiting") || strings.Contains(stdout, "\x1b") {
 		t.Errorf("%d %q", code, stdout)
 	}
 	code, stdout, _ = runIn(t, s.valuesServer, "", nil, nil, "values", "asked", "--json")

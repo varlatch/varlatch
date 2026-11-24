@@ -89,7 +89,7 @@ An item whose use yields an access token for somebody else's API: the provider's
 _Avoid_: Platform Connection (the opposite direction: Varlatch delivering Secrets to a platform), integration, OAuth token (say access token or refresh token)
 
 **Entry Link**:
-A short-lived link with which a person *enters* one Secret's value on Varlatch's own page, once. Whoever *makes* it (a machine identity holding `entry-link.create`, or a person holding `config.value.write`) gets no value by it, only its status: pending, entered, expired or cancelled. It is bound to the item's value when it was made, and is for a member, for one person, or *open to anyone* who has it. It is write-only: nothing is read through one.
+A short-lived link with which a person *enters* one Secret's value on Varlatch's own page, once. Whoever *makes* it (a machine identity holding `entry-link.create`, or a person holding `config.value.write`) gets no value by it, only its status: pending, entered, expired or cancelled. It is bound to the item's value when it was made, and is for a member, for one person, or *open to anyone* who has it. It *ends with* the credential that made it: with its withdrawal, not its ordinary expiry. It is write-only: nothing is read through one.
 _Avoid_: Capability (the opposite: using a value), invitation, magic link, upload link
 
 **Value Reference**:

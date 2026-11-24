@@ -1917,6 +1917,13 @@ may use; it never adds to the Agent's Grants.
     link: who it is for, the Organization, Project and environment live, the
     maker's right, the version. A refusal is recorded in that job too, the
     first 20 of a link.
+  - `credential_id` is what a link ends with. `entry.ofCredential` looks at a
+    machine's in that job, so any revocation counts, an older server's too. A
+    person's credentials end in the ordinary way all the time, so theirs are
+    ended by what takes a session away, in its own job (`auth/entrylinks.go`):
+    `RevokeOwnCredential` of another credential, `endMembership`,
+    `CompletePublicURLChange`. `Create` looks again in its job, so no link is
+    made that a revocation did not see.
   - `/v1/entry-links/lookup` and `/submit` read a bearer credential when there
     is one (`optionalBearer`) and need none. They are the only operations
     beside device sign-in's, the OIDC exchange and `/v1/meta` that do

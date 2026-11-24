@@ -808,14 +808,17 @@ func (e EntryLinkAccepts) Valid() bool {
 
 // Defines values for EntryLinkReason.
 const (
-	EntryLinkReasonCancelled    EntryLinkReason = "cancelled"
-	EntryLinkReasonValueChanged EntryLinkReason = "value-changed"
+	EntryLinkReasonCancelled       EntryLinkReason = "cancelled"
+	EntryLinkReasonCredentialEnded EntryLinkReason = "credential-ended"
+	EntryLinkReasonValueChanged    EntryLinkReason = "value-changed"
 )
 
 // Valid indicates whether the value is a known member of the EntryLinkReason enum.
 func (e EntryLinkReason) Valid() bool {
 	switch e {
 	case EntryLinkReasonCancelled:
+		return true
+	case EntryLinkReasonCredentialEnded:
 		return true
 	case EntryLinkReasonValueChanged:
 		return true
@@ -4434,7 +4437,7 @@ type EntryLink struct {
 	CreatedAt   time.Time                 `json:"createdAt"`
 	Description nullable.Nullable[string] `json:"description"`
 
-	// EndedAt When the value was entered, or the link cancelled.
+	// EndedAt When the value was entered, or the link cancelled. Null also for a link that ended with its credential at a time not known.
 	EndedAt       nullable.Nullable[time.Time] `json:"endedAt"`
 	EnvironmentId string                       `json:"environmentId"`
 	ExpiresAt     time.Time                    `json:"expiresAt"`
@@ -4444,7 +4447,7 @@ type EntryLink struct {
 	IdentityId *string `json:"identityId,omitempty"`
 	Item       string  `json:"item"`
 
-	// Reason Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+	// Reason Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
 	Reason *EntryLinkReason `json:"reason,omitempty"`
 
 	// Replace It replaces the value there was when it was made.
@@ -4454,14 +4457,14 @@ type EntryLink struct {
 	// RestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
 	RestrictedTo EntryLinkRestrictedTo `json:"restrictedTo"`
 
-	// Status pending until the value is entered, the link expires, or it is cancelled.
+	// Status pending until the value is entered, the link expires, or it is cancelled (reason says by what).
 	Status EntryLinkStatus `json:"status"`
 }
 
 // EntryLinkAccepts A value, or the seed of a one-time code (capability values.totp).
 type EntryLinkAccepts string
 
-// EntryLinkReason Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+// EntryLinkReason Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
 type EntryLinkReason string
 
 // EntryLinkRestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
@@ -4495,7 +4498,7 @@ type EntryLinkInputAccepts string
 // EntryLinkInputRestrictedTo member when absent.
 type EntryLinkInputRestrictedTo string
 
-// EntryLinkStatus pending until the value is entered, the link expires, or it is cancelled.
+// EntryLinkStatus pending until the value is entered, the link expires, or it is cancelled (reason says by what).
 type EntryLinkStatus string
 
 // EntryLinkView defines model for EntryLinkView.

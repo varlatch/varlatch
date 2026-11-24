@@ -816,14 +816,17 @@ func (e EntryLinkAccepts) Valid() bool {
 
 // Defines values for EntryLinkReason.
 const (
-	EntryLinkReasonCancelled    EntryLinkReason = "cancelled"
-	EntryLinkReasonValueChanged EntryLinkReason = "value-changed"
+	EntryLinkReasonCancelled       EntryLinkReason = "cancelled"
+	EntryLinkReasonCredentialEnded EntryLinkReason = "credential-ended"
+	EntryLinkReasonValueChanged    EntryLinkReason = "value-changed"
 )
 
 // Valid indicates whether the value is a known member of the EntryLinkReason enum.
 func (e EntryLinkReason) Valid() bool {
 	switch e {
 	case EntryLinkReasonCancelled:
+		return true
+	case EntryLinkReasonCredentialEnded:
 		return true
 	case EntryLinkReasonValueChanged:
 		return true
@@ -4442,7 +4445,7 @@ type EntryLink struct {
 	CreatedAt   time.Time                 `json:"createdAt"`
 	Description nullable.Nullable[string] `json:"description"`
 
-	// EndedAt When the value was entered, or the link cancelled.
+	// EndedAt When the value was entered, or the link cancelled. Null also for a link that ended with its credential at a time not known.
 	EndedAt       nullable.Nullable[time.Time] `json:"endedAt"`
 	EnvironmentId string                       `json:"environmentId"`
 	ExpiresAt     time.Time                    `json:"expiresAt"`
@@ -4452,7 +4455,7 @@ type EntryLink struct {
 	IdentityId *string `json:"identityId,omitempty"`
 	Item       string  `json:"item"`
 
-	// Reason Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+	// Reason Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
 	Reason *EntryLinkReason `json:"reason,omitempty"`
 
 	// Replace It replaces the value there was when it was made.
@@ -4462,14 +4465,14 @@ type EntryLink struct {
 	// RestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
 	RestrictedTo EntryLinkRestrictedTo `json:"restrictedTo"`
 
-	// Status pending until the value is entered, the link expires, or it is cancelled.
+	// Status pending until the value is entered, the link expires, or it is cancelled (reason says by what).
 	Status EntryLinkStatus `json:"status"`
 }
 
 // EntryLinkAccepts A value, or the seed of a one-time code (capability values.totp).
 type EntryLinkAccepts string
 
-// EntryLinkReason Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+// EntryLinkReason Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
 type EntryLinkReason string
 
 // EntryLinkRestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
@@ -4503,7 +4506,7 @@ type EntryLinkInputAccepts string
 // EntryLinkInputRestrictedTo member when absent.
 type EntryLinkInputRestrictedTo string
 
-// EntryLinkStatus pending until the value is entered, the link expires, or it is cancelled.
+// EntryLinkStatus pending until the value is entered, the link expires, or it is cancelled (reason says by what).
 type EntryLinkStatus string
 
 // EntryLinkView defines model for EntryLinkView.
@@ -8868,10 +8871,10 @@ type ServerInterface interface {
 	// ExportDeletedOrganizationAuditEvents Stream a deleted Organization's audit log as NDJSON, oldest first, for the same readers as the listing (ADR-0051 Decision 8). Anyone else gets RESOURCE_NOT_FOUND.
 	// (GET /deleted-organizations/{organization}/audit-events/export)
 	ExportDeletedOrganizationAuditEvents(w http.ResponseWriter, r *http.Request, organization string)
-	// LookupEntryLink What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status); PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED after 20 unknown tokens from one address in ten minutes. Never cacheable.
+	// LookupEntryLink What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status), with no word on whether it was cancelled or ended with its credential; PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED after 20 unknown tokens from one address in ten minutes. Never cacheable.
 	// (POST /entry-links/lookup)
 	LookupEntryLink(w http.ResponseWriter, r *http.Request)
-	// SubmitEntryLink Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable.
+	// SubmitEntryLink Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. The credential that made the link is looked at in the job that writes the value. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable.
 	// (POST /entry-links/submit)
 	SubmitEntryLink(w http.ResponseWriter, r *http.Request)
 	// GetInstallationBackups Installation Admin only, per-archive backup checks and delivery status
@@ -9212,7 +9215,7 @@ type ServerInterface interface {
 	// ListEntryLinks The environment's entry links (capability values.entry-links, ADR-0063), newest first, at most 200, kept until a day after they expire. A machine identity sees what it asked for; a person needs config.value.write and sees all of them. Never a link's address, and nothing of a value.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
 	ListEntryLinks(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
-	// CreateEntryLink Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read.
+	// CreateEntryLink Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The link ends with the credential of this request: when a machine's is revoked or its identity retired, or a service credential expires (the link's expiresAt is never later), or an OIDC binding of the identity is revoked after an exchanged one was issued (its own expiry ends no link); when a person revokes it, or another browser session, from elsewhere, or is no member any more (signing out ends no link). PERMISSION_DENIED, reason credential-ended, for an exchanged credential whose identity's binding was revoked already. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
 	CreateEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
 	// CancelEntryLink Cancel a pending entry link: who asked for it, with or without its right still, or a person holding config.value.write. Works while the Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND.
@@ -28607,10 +28610,10 @@ type StrictServerInterface interface {
 	// ExportDeletedOrganizationAuditEvents Stream a deleted Organization's audit log as NDJSON, oldest first, for the same readers as the listing (ADR-0051 Decision 8). Anyone else gets RESOURCE_NOT_FOUND.
 	// (GET /deleted-organizations/{organization}/audit-events/export)
 	ExportDeletedOrganizationAuditEvents(ctx context.Context, request ExportDeletedOrganizationAuditEventsRequestObject) (ExportDeletedOrganizationAuditEventsResponseObject, error)
-	// LookupEntryLink What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status); PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED after 20 unknown tokens from one address in ten minutes. Never cacheable.
+	// LookupEntryLink What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status), with no word on whether it was cancelled or ended with its credential; PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED after 20 unknown tokens from one address in ten minutes. Never cacheable.
 	// (POST /entry-links/lookup)
 	LookupEntryLink(ctx context.Context, request LookupEntryLinkRequestObject) (LookupEntryLinkResponseObject, error)
-	// SubmitEntryLink Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable.
+	// SubmitEntryLink Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. The credential that made the link is looked at in the job that writes the value. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable.
 	// (POST /entry-links/submit)
 	SubmitEntryLink(ctx context.Context, request SubmitEntryLinkRequestObject) (SubmitEntryLinkResponseObject, error)
 	// GetInstallationBackups Installation Admin only, per-archive backup checks and delivery status
@@ -28951,7 +28954,7 @@ type StrictServerInterface interface {
 	// ListEntryLinks The environment's entry links (capability values.entry-links, ADR-0063), newest first, at most 200, kept until a day after they expire. A machine identity sees what it asked for; a person needs config.value.write and sees all of them. Never a link's address, and nothing of a value.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
 	ListEntryLinks(ctx context.Context, request ListEntryLinksRequestObject) (ListEntryLinksResponseObject, error)
-	// CreateEntryLink Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read.
+	// CreateEntryLink Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The link ends with the credential of this request: when a machine's is revoked or its identity retired, or a service credential expires (the link's expiresAt is never later), or an OIDC binding of the identity is revoked after an exchanged one was issued (its own expiry ends no link); when a person revokes it, or another browser session, from elsewhere, or is no member any more (signing out ends no link). PERMISSION_DENIED, reason credential-ended, for an exchanged credential whose identity's binding was revoked already. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
 	CreateEntryLink(ctx context.Context, request CreateEntryLinkRequestObject) (CreateEntryLinkResponseObject, error)
 	// CancelEntryLink Cancel a pending entry link: who asked for it, with or without its right still, or a person holding config.value.write. Works while the Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND.

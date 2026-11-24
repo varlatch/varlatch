@@ -1450,7 +1450,15 @@ paths:
         (not-in-contract). Under
         passkey-verification's enforce a link open to anyone is refused
         (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond
-        100 pending links, or 300 an hour, of one identity. The address is in
+        100 pending links, or 300 an hour, of one identity. The link ends with
+        the credential of this request: when a machine's is revoked or its
+        identity retired, or a service credential expires (the link's
+        expiresAt is never later), or an OIDC binding of the identity is
+        revoked after an exchanged one was issued (its own expiry ends no
+        link); when a person revokes it, or another browser session, from
+        elsewhere, or is no member any more (signing out ends no link).
+        PERMISSION_DENIED, reason credential-ended, for an exchanged
+        credential whose identity's binding was revoked already. The address is in
         this answer only; it is never cacheable, and an Idempotency-Key is
         not read.
       parameters:
@@ -1519,7 +1527,8 @@ paths:
         answers signInRequired and no names. Nothing is used up and nothing
         recorded, however often it is asked. RESOURCE_NOT_FOUND for a token
         there is no link of; CONSUMED (410) after the value was entered,
-        EXPIRED (410) once expired or cancelled (details.status);
+        EXPIRED (410) once expired or cancelled (details.status), with no
+        word on whether it was cancelled or ended with its credential;
         PERMISSION_DENIED for another person (reason not-for-you), or when
         whoever made the link may no longer (requester-not-allowed).
         RATE_LIMITED after 20 unknown tokens from one address in ten minutes.
@@ -1554,8 +1563,9 @@ paths:
         lookupEntryLink, with the same refusals, and the passkey-verification
         checkpoint of a value write for a signed-in person. One request of
         several at once enters it. Refused (STATE_CHANGED), and the link
-        cancelled, when the item's value changed since the link was made. A
-        refusal does not use the link up otherwise: a value that holds a
+        cancelled, when the item's value changed since the link was made. The
+        credential that made the link is looked at in the job that writes the
+        value. A refusal does not use the link up otherwise: a value that holds a
         ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing
         of the value. Never cacheable.
       security:
@@ -8022,7 +8032,7 @@ components:
       type: string
       description: >
         pending until the value is entered, the link expires, or it is
-        cancelled.
+        cancelled (reason says by what).
       enum: [pending, entered, expired, cancelled]
 
     EntryLink:
@@ -8049,16 +8059,19 @@ components:
         status: { $ref: "#/components/schemas/EntryLinkStatus" }
         reason:
           type: string
-          enum: [cancelled, value-changed]
+          enum: [cancelled, value-changed, credential-ended]
           description: >
-            Present when the status is cancelled: somebody cancelled it, or
-            the item's value changed before a value was entered.
+            Present when the status is cancelled: somebody cancelled it, the
+            item's value changed before a value was entered, or the link ended
+            with the credential that made it (createEntryLink).
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time }
         endedAt:
           type: [string, "null"]
           format: date-time
-          description: When the value was entered, or the link cancelled.
+          description: >
+            When the value was entered, or the link cancelled. Null also for a
+            link that ended with its credential at a time not known.
 
     EntryLinkInput:
       type: object

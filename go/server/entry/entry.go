@@ -8,7 +8,8 @@
 // environment, while that item is still what it was when the link was made.
 // It reads nothing. Whose right it uses is its maker's, decided when it is
 // made and again in the job that writes the value; who may use it is said
-// when it is made (whoever holds it, a signed-in member, one person).
+// when it is made (whoever holds it, a signed-in member, one person). It ends
+// with the credential that made it (credentialEnded).
 //
 // The secret follows the # of the page's address, so no server, proxy or log
 // on the way sees it; the page sends it in the body of a POST, and it is
@@ -201,6 +202,22 @@ func (s *Service) Create(ctx context.Context, req Request, in Input, base *url.U
 		if err := write.CheckLive(ctx, tx, req.scope("")); err != nil {
 			return err
 		}
+		// What the link will end with, as it is in this job: it may have been
+		// revoked since the request authenticated.
+		made, err := q.EntryLinkCredential(ctx, req.Principal.Credential.ID)
+		if err != nil {
+			return err
+		}
+		if made.RevokedAt.Valid || made.Disabled || made.ExpiresAt.Valid && made.ExpiresAt.Int64 <= at {
+			return domainerr.New("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
+		}
+		if how, _ := ofCredential(made, at); how != "" {
+			return refuse("PERMISSION_DENIED", auth.EntryLinkCredentialEnded, "What this credential was exchanged under was revoked: exchange a token again")
+		}
+		expires := now.Add(time.Duration(in.TTLSeconds) * time.Second).UnixMicro()
+		if endsWithExpiry(made) {
+			expires = min(expires, made.ExpiresAt.Int64)
+		}
 		if reports, err = write.Checkpoint(ctx, tx, req.Principal, req.Target.OrganizationID); err != nil {
 			return err
 		}
@@ -250,8 +267,8 @@ func (s *Service) Create(ctx context.Context, req Request, in Input, base *url.U
 		row = query.EntryLink{
 			ID: id, TokenHash: hash(token), OrganizationID: req.Target.OrganizationID, ProjectID: req.Target.Project.ID, EnvironmentID: req.Target.Env.ID,
 			ItemName: in.Item, Accepts: in.Accepts, RestrictedTo: in.RestrictedTo, IdentityID: sql.NullString{String: in.IdentityID, Valid: in.IdentityID != ""},
-			Description: description, RequestedBy: req.Principal.Identity.ID, Status: "pending", CreatedAt: at,
-			ExpiresAt: now.Add(time.Duration(in.TTLSeconds) * time.Second).UnixMicro(),
+			Description: description, RequestedBy: req.Principal.Identity.ID, CredentialID: req.Principal.Credential.ID,
+			Status: "pending", CreatedAt: at, ExpiresAt: expires,
 		}
 		if in.Replace {
 			row.Replaces, row.BoundVersionID = 1, sql.NullString{String: current.VersionID, Valid: current.VersionID != ""}
@@ -259,7 +276,8 @@ func (s *Service) Create(ctx context.Context, req Request, in Input, base *url.U
 		if err := q.InsertEntryLink(ctx, query.InsertEntryLinkParams{
 			ID: row.ID, TokenHash: row.TokenHash, OrganizationID: row.OrganizationID, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID,
 			ItemName: row.ItemName, Accepts: row.Accepts, Replaces: row.Replaces, BoundVersionID: row.BoundVersionID, RestrictedTo: row.RestrictedTo,
-			IdentityID: row.IdentityID, Description: row.Description, RequestedBy: row.RequestedBy, CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt,
+			IdentityID: row.IdentityID, Description: row.Description, RequestedBy: row.RequestedBy, CredentialID: row.CredentialID,
+			CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt,
 		}); err != nil {
 			return err
 		}
@@ -273,8 +291,8 @@ func (s *Service) Create(ctx context.Context, req Request, in Input, base *url.U
 		}
 		actor, action := req.Principal.Identity.ID, authz.EntryLinkAction(req.Principal.Identity.Kind, in.RestrictedTo == Anyone)
 		_, err = audit.Record(ctx, tx, audit.Event{
-			Type: "capability.issued", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &row.OrganizationID, Action: &action,
-			Resource: resource(row), Authz: authz.AuditAuthz(d.Evaluation), RequestID: &req.RequestID, Metadata: md,
+			Type: "capability.issued", Decision: audit.Info, ActorIdentityID: &actor, CredentialID: audit.Value(row.CredentialID), OrganizationID: &row.OrganizationID, Action: &action,
+			Resource: auth.EntryLinkResource(row), Authz: authz.AuditAuthz(d.Evaluation), RequestID: &req.RequestID, Metadata: md,
 		})
 		return err
 	})
@@ -285,7 +303,7 @@ func (s *Service) Create(ctx context.Context, req Request, in Input, base *url.U
 	page := *base
 	page.Path, page.RawPath = strings.TrimRight(base.Path, "/")+"/entry", ""
 	page.RawQuery, page.Fragment = "", ""
-	return jsvalue.Object{{Key: "link", Value: s.js(row)}, {Key: "url", Value: page.String() + "#" + token}}, reports, nil
+	return jsvalue.Object{{Key: "link", Value: js(row, row.CreatedAt)}, {Key: "url", Value: page.String() + "#" + token}}, reports, nil
 }
 
 // denial is a denied decision's error, its event recorded after the job.
@@ -296,11 +314,63 @@ func denial(d authz.Decision) error {
 	return d.Err
 }
 
-// resource is a link in the audit log. Its secret, and what that is hashed
-// to, are in no event.
-func resource(l query.EntryLink) jsvalue.Object {
-	return jsvalue.Object{{Key: "entryLinkId", Value: l.ID}, {Key: "projectId", Value: l.ProjectID}, {Key: "environmentId", Value: l.EnvironmentID},
-		{Key: "itemName", Value: l.ItemName}}
+// How the credential a link was made with ended, for the audit log.
+const (
+	credentialRevoked = "revoked"
+	credentialExpired = "expired"
+	bindingRevoked    = "binding-revoked"
+	identityRetired   = "identity-retired"
+)
+
+// endsWithExpiry is whether a link ends when the credential that made it
+// expires: a service credential's expiry is the end somebody set to a
+// machine's access. Every other expiry is how a credential of its kind ends
+// in the ordinary way, and withdraws nothing: an exchanged OIDC credential
+// lives minutes and the next one is as good, a browser's bearer is replaced
+// every 15 minutes, a CLI login lasts some hours.
+func endsWithExpiry(c query.EntryLinkCredentialRow) bool {
+	return c.Kind == auth.KindService && c.IdentityKind != "human" && c.ExpiresAt.Valid
+}
+
+// ofCredential says how the credential a link was made with ended, "" while
+// the link may go on, and when if that is known: revoked, however it was;
+// expired, where that ends links; its identity retired; and for an exchanged
+// credential one of the identity's OIDC bindings revoked since, as that is
+// what stands behind it, and it may have expired before anyone could revoke
+// it. A use limit used up is no withdrawal. A person's credentials end in
+// the ordinary way all the time, so their links are ended by what takes a
+// session away, in its own job (auth/entrylinks.go).
+func ofCredential(c query.EntryLinkCredentialRow, now int64) (string, sql.NullInt64) {
+	switch {
+	case c.Disabled && c.IdentityKind == "human":
+		return identityRetired, sql.NullInt64{}
+	case c.IdentityKind == "human":
+		return "", sql.NullInt64{}
+	// Machines a deletion of their Organization suspended come back when it
+	// is cancelled: until then it is the Organization that takes nothing.
+	case c.Disabled && !c.SuspendedByDeletion.Valid:
+		return identityRetired, c.RevokedAt
+	case c.RevokedAt.Valid:
+		return credentialRevoked, c.RevokedAt
+	case endsWithExpiry(c) && c.ExpiresAt.Int64 <= now:
+		return credentialExpired, c.ExpiresAt
+	case c.Kind == auth.KindOIDC && c.BindingRevokedAt != 0:
+		return bindingRevoked, sql.NullInt64{Int64: c.BindingRevokedAt, Valid: true}
+	}
+	return "", sql.NullInt64{}
+}
+
+// credentialEnded is ofCredential of a pending link, in db and at now.
+func credentialEnded(ctx context.Context, db query.DBTX, l query.EntryLink, now int64) (string, sql.NullInt64, error) {
+	if statusOf(l, now) != "pending" {
+		return "", sql.NullInt64{}, nil
+	}
+	c, err := query.New(db).EntryLinkCredential(ctx, l.CredentialID)
+	if err != nil {
+		return "", sql.NullInt64{}, err
+	}
+	how, at := ofCredential(c, now)
+	return how, at, nil
 }
 
 // statusOf is a link's status now.
@@ -318,15 +388,28 @@ func text(s sql.NullString) any {
 	return nil
 }
 
-// js is a link as its maker sees it.
-func (s *Service) js(l query.EntryLink) jsvalue.Object {
+// shown is a link as its maker sees it, in db: one whose credential ended is
+// ended, whether or not anybody has tried to use it since.
+func (s *Service) shown(ctx context.Context, db query.DBTX, l query.EntryLink) (jsvalue.Object, error) {
+	now := s.Now().UnixMicro()
+	how, at, err := credentialEnded(ctx, db, l, now)
+	if err != nil {
+		return nil, err
+	}
+	if how != "" {
+		l.Status, l.Reason, l.EndedAt = "cancelled", sql.NullString{String: auth.EntryLinkCredentialEnded, Valid: true}, at
+	}
+	return js(l, now), nil
+}
+
+func js(l query.EntryLink, now int64) jsvalue.Object {
 	o := jsvalue.Object{{Key: "id", Value: l.ID}, {Key: "environmentId", Value: l.EnvironmentID}, {Key: "item", Value: l.ItemName},
 		{Key: "accepts", Value: l.Accepts}, {Key: "replace", Value: l.Replaces == 1}, {Key: "restrictedTo", Value: l.RestrictedTo}}
 	if l.IdentityID.Valid {
 		o = append(o, jsvalue.Member{Key: "identityId", Value: l.IdentityID.String})
 	}
 	o = append(o, jsvalue.Member{Key: "description", Value: text(l.Description)}, jsvalue.Member{Key: "requestedByIdentityId", Value: l.RequestedBy},
-		jsvalue.Member{Key: "status", Value: statusOf(l, s.Now().UnixMicro())})
+		jsvalue.Member{Key: "status", Value: statusOf(l, now)})
 	if l.Reason.Valid {
 		o = append(o, jsvalue.Member{Key: "reason", Value: l.Reason.String})
 	}
@@ -349,7 +432,9 @@ func (s *Service) List(ctx context.Context, db query.DBTX, environmentID, owner 
 	}
 	items := make([]any, len(rows))
 	for i, r := range rows {
-		items[i] = s.js(r)
+		if items[i], err = s.shown(ctx, db, r); err != nil {
+			return nil, err
+		}
 	}
 	return jsvalue.Object{{Key: "items", Value: items}, {Key: "nextCursor", Value: nil}}, nil
 }
@@ -371,7 +456,7 @@ func (s *Service) Get(ctx context.Context, db query.DBTX, environmentID, id, own
 	if err != nil {
 		return nil, err
 	}
-	return s.js(l), nil
+	return s.shown(ctx, db, l)
 }
 
 // Cancel ends a pending link: recovery while frozen.
@@ -398,7 +483,7 @@ func (s *Service) Cancel(ctx context.Context, req Request, id, owner string) ([]
 		actor, action := req.Principal.Identity.ID, authz.EntryLinkAction(req.Principal.Identity.Kind, l.RestrictedTo == Anyone)
 		_, err = audit.Record(ctx, tx, audit.Event{
 			Type: "capability.revoked", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &l.OrganizationID, Action: &action,
-			Resource: append(resource(l), jsvalue.Member{Key: "issuedByIdentityId", Value: l.RequestedBy}), RequestID: &req.RequestID,
+			Resource: append(auth.EntryLinkResource(l), jsvalue.Member{Key: "issuedByIdentityId", Value: l.RequestedBy}), RequestID: &req.RequestID,
 			Metadata: jsvalue.Object{{Key: "entryLink", Value: l.RestrictedTo}},
 		})
 		return err
@@ -411,10 +496,12 @@ func (s *Service) Cancel(ctx context.Context, req Request, id, owner string) ([]
 type refusal struct {
 	reason string
 	err    error
+	// credential is how the link's credential ended, when that is why.
+	credential string
 }
 
 func no(code, reason, message string) *refusal {
-	return &refusal{reason, refuse(code, reason, message)}
+	return &refusal{reason: reason, err: refuse(code, reason, message)}
 }
 
 var errNoLink = domainerr.New("RESOURCE_NOT_FOUND", "There is no such entry link: it may be old, or not copied whole")
@@ -438,23 +525,38 @@ func (s *Service) byToken(ctx context.Context, db query.DBTX, token, client stri
 	return l, err
 }
 
-// ended is the refusal of a link that has ended, nil for a pending one.
-func ended(l query.EntryLink, now int64) *refusal {
+// ended is the refusal, in db and at now, of a link that has ended, its
+// credential included; nil for a pending one. Its holder is not told whether
+// it was cancelled or ended with its credential, nor how.
+func ended(ctx context.Context, db query.DBTX, l query.EntryLink, now int64) (*refusal, error) {
 	status := statusOf(l, now)
 	if status == "pending" {
-		return nil
+		how, _, err := credentialEnded(ctx, db, l, now)
+		if err != nil || how == "" {
+			return nil, err
+		}
+		return &refusal{reason: auth.EntryLinkCredentialEnded, credential: how, err: hasEnded("EXPIRED", "cancelled", linkEnded)}, nil
 	}
 	code, reason, message := "EXPIRED", status, "This link has expired: ask for another one"
 	switch status {
 	case "entered":
 		code, reason, message = "CONSUMED", "already-entered", "A value was entered with this link already: it works once"
 	case "cancelled":
-		message = "This link was cancelled: ask for another one"
-		if l.Reason.String == "value-changed" {
+		message = linkEnded
+		switch l.Reason.String {
+		case "value-changed":
 			message = "The value changed after this link was made: ask for another one"
+		case auth.EntryLinkCredentialEnded:
+			reason = auth.EntryLinkCredentialEnded
 		}
 	}
-	return &refusal{reason, &domainerr.Error{Code: code, Message: message, Details: jsvalue.Object{{Key: "status", Value: status}}}}
+	return &refusal{reason: reason, err: hasEnded(code, status, message)}, nil
+}
+
+const linkEnded = "This link has ended: ask for another one"
+
+func hasEnded(code, status, message string) error {
+	return &domainerr.Error{Code: code, Message: message, Details: jsvalue.Object{{Key: "status", Value: status}}}
 }
 
 var (
@@ -537,8 +639,8 @@ func (s *Service) usable(ctx context.Context, db query.DBTX, l query.EntryLink, 
 }
 
 // maker reports whether whoever made the link is live and may still make it,
-// and whether they may write values there, as of now: a retired machine, a
-// removed member and a removed Grant end its links.
+// and whether they may write values there, as of now: a removed Grant takes
+// its links away. Their credential is ended's (a retired machine is too).
 func (s *Service) maker(ctx context.Context, db query.DBTX, l query.EntryLink, t values.Target) (may, writes bool, err error) {
 	id, err := query.New(db).GetIdentity(ctx, l.RequestedBy)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -564,7 +666,9 @@ func (s *Service) Lookup(ctx context.Context, p *auth.Principal, token, client s
 		return nil, err
 	}
 	now := s.Now().UnixMicro()
-	if r := ended(l, now); r != nil {
+	if r, err := ended(ctx, db, l, now); err != nil {
+		return nil, err
+	} else if r != nil {
 		return nil, r.err
 	}
 	if l.RestrictedTo != Anyone && p == nil {
@@ -668,8 +772,8 @@ func (s *Service) Submit(ctx context.Context, p *auth.Principal, token, client, 
 
 // take decides, in the job, whether the link is taken.
 func (s *Service) take(ctx context.Context, tx *storage.Tx, l query.EntryLink, p *auth.Principal, at int64, reports *[]auth.PendingReport) (link, *refusal, error) {
-	if r := ended(l, at); r != nil {
-		return link{}, r, nil
+	if r, err := ended(ctx, tx, l, at); err != nil || r != nil {
+		return link{}, r, err
 	}
 	t, r, err := s.usable(ctx, tx, l, p, at)
 	if err != nil || r != nil {
@@ -678,7 +782,7 @@ func (s *Service) take(ctx context.Context, tx *storage.Tx, l query.EntryLink, p
 	if p != nil {
 		var refused *auth.VerificationRefusal
 		if *reports, err = write.Checkpoint(ctx, tx, p, l.OrganizationID); errors.As(err, &refused) {
-			return t, &refusal{"passkey-verification", err}, nil
+			return t, &refusal{reason: "passkey-verification", err: err}, nil
 		} else if err != nil {
 			return t, nil, err
 		}
@@ -700,11 +804,11 @@ func (s *Service) take(ctx context.Context, tx *storage.Tx, l query.EntryLink, p
 }
 
 // refuse records a refusal, the first ones of a link, and ends a link whose
-// item is not what it was.
+// item is not what it was, or whose credential ended.
 func (s *Service) refuse(ctx context.Context, tx *storage.Tx, l query.EntryLink, p *auth.Principal, requestID string, why *refusal, at int64) error {
 	q := query.New(tx)
-	if why == changed {
-		if _, err := q.EndEntryLink(ctx, query.EndEntryLinkParams{Status: "cancelled", Reason: sql.NullString{String: "value-changed", Valid: true}, Now: at, ID: l.ID}); err != nil {
+	if why == changed || why.credential != "" {
+		if _, err := q.EndEntryLink(ctx, query.EndEntryLinkParams{Status: "cancelled", Reason: sql.NullString{String: why.reason, Valid: true}, Now: at, ID: l.ID}); err != nil {
 			return err
 		}
 	}
@@ -713,10 +817,14 @@ func (s *Service) refuse(ctx context.Context, tx *storage.Tx, l query.EntryLink,
 		return err
 	}
 	action := "config.value.write"
+	md := jsvalue.Object{{Key: "reason", Value: why.reason}, {Key: "entryLink", Value: l.RestrictedTo}}
+	if why.credential != "" {
+		md = append(md, jsvalue.Member{Key: "credential", Value: why.credential})
+	}
 	event := audit.Event{
 		Type: "capability.denied", Decision: audit.Deny, OrganizationID: &l.OrganizationID, Action: &action, RequestID: &requestID,
-		Resource: append(resource(l), jsvalue.Member{Key: "issuedByIdentityId", Value: l.RequestedBy}),
-		Metadata: jsvalue.Object{{Key: "reason", Value: why.reason}, {Key: "entryLink", Value: l.RestrictedTo}},
+		Resource: append(auth.EntryLinkResource(l), jsvalue.Member{Key: "issuedByIdentityId", Value: l.RequestedBy}),
+		Metadata: md,
 	}
 	if p != nil {
 		id := p.Identity.ID

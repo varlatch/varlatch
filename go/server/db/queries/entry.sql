@@ -4,8 +4,8 @@
 
 -- name: InsertEntryLink :exec
 INSERT INTO entry_links (id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, bound_version_id,
-  restricted_to, identity_id, description, requested_by, created_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  restricted_to, identity_id, description, requested_by, credential_id, created_at, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: EntryLinkByToken :one
 SELECT * FROM entry_links WHERE token_hash = ?;
@@ -32,10 +32,48 @@ WHERE id = sqlc.arg(id) AND status = 'pending' AND expires_at > CAST(sqlc.arg(no
 UPDATE entry_links SET refusals = refusals + 1 WHERE id = ? RETURNING refusals;
 
 -- name: CountEntryLinks :one
--- A requester's links: pending now, and made since.
-SELECT CAST(coalesce(sum(status = 'pending' AND expires_at > sqlc.arg(now)), 0) AS INTEGER) AS pending,
-  CAST(coalesce(sum(created_at > sqlc.arg(since)), 0) AS INTEGER) AS recent
-FROM entry_links WHERE requested_by = sqlc.arg(requested_by);
+-- A requester's links: pending now, and made since. A machine's that ended
+-- with a revoked credential are none of the first (a person's are ended when
+-- that happens).
+SELECT CAST(coalesce(sum(l.status = 'pending' AND l.expires_at > sqlc.arg(now) AND (i.kind = 'human' OR c.revoked_at IS NULL)), 0) AS INTEGER) AS pending,
+  CAST(coalesce(sum(l.created_at > sqlc.arg(since)), 0) AS INTEGER) AS recent
+FROM entry_links l JOIN identities i ON i.id = l.requested_by JOIN credentials c ON c.id = l.credential_id
+WHERE l.requested_by = sqlc.arg(requested_by);
+
+-- name: EntryLinkCredential :one
+-- What became of the credential a link was made with, and of its identity.
+-- binding_revoked_at is when one of the identity's OIDC bindings was revoked
+-- after the credential was issued: which one an exchanged credential came
+-- from is not kept.
+SELECT c.kind, c.revoked_at, c.expires_at, i.kind AS identity_kind, i.disabled, i.suspended_by_deletion,
+  CAST(coalesce((SELECT min(b.revoked_at) FROM oidc_bindings b WHERE b.identity_id = c.identity_id AND b.revoked_at >= c.created_at), 0) AS INTEGER) AS binding_revoked_at
+FROM credentials c JOIN identities i ON i.id = c.identity_id WHERE c.id = ?;
+
+-- name: EndEntryLinksOfPerson :many
+-- A person revoked one of their credentials, with another one: the pending
+-- links made with it end, and with a browser's those of all their browser
+-- sessions, which nobody can tell apart by their short bearers. Not those of
+-- the credential, or the browser session, they revoked it with.
+UPDATE entry_links SET status = 'cancelled', reason = 'credential-ended', ended_at = CAST(sqlc.arg(now) AS INTEGER)
+WHERE requested_by = sqlc.arg(requested_by) AND status = 'pending' AND expires_at > CAST(sqlc.arg(now) AS INTEGER) AND credential_id IN (
+  SELECT c.id FROM credentials c, credentials x, credentials r
+  WHERE x.id = sqlc.arg(revoked) AND r.id = sqlc.arg(revoked_with) AND c.identity_id = x.identity_id
+    AND (c.id = x.id OR c.kind = 'browser' AND x.kind = 'browser')
+    AND c.id <> r.id AND NOT (c.kind = 'browser' AND r.kind = 'browser' AND coalesce(c.auth_session_id = r.auth_session_id, 0)))
+RETURNING *;
+
+-- name: EndEntryLinksOfMember :many
+-- A membership ended: the pending links the person made there end.
+UPDATE entry_links SET status = 'cancelled', reason = 'credential-ended', ended_at = CAST(sqlc.arg(now) AS INTEGER)
+WHERE requested_by = sqlc.arg(requested_by) AND organization_id = sqlc.arg(organization_id)
+  AND status = 'pending' AND expires_at > CAST(sqlc.arg(now) AS INTEGER)
+RETURNING *;
+
+-- name: EndEntryLinksOfBrowsers :exec
+-- Every browser session was ended by an operator (a move).
+UPDATE entry_links SET status = 'cancelled', reason = 'credential-ended', ended_at = CAST(sqlc.arg(now) AS INTEGER)
+WHERE status = 'pending' AND expires_at > CAST(sqlc.arg(now) AS INTEGER)
+  AND credential_id IN (SELECT c.id FROM credentials c WHERE c.kind = 'browser');
 
 -- name: PruneEntryLinks :exec
 DELETE FROM entry_links WHERE id IN (SELECT e.id FROM entry_links e WHERE e.expires_at < sqlc.arg(before) ORDER BY e.expires_at LIMIT 500);

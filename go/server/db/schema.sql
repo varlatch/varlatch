@@ -1555,8 +1555,9 @@ CREATE INDEX oauth_authorizations_expires ON oauth_authorizations (expires_at);
 -- one item's value with, once. token_hash is the SHA-256 of the link's
 -- secret, which is kept nowhere. bound_version_id is the item's value when
 -- the link was made, its own or its parent's (NULL: it had none): entering
--- needs the same one still. Kept until a day after they expire. The value
--- itself is a value version, as any write's.
+-- needs the same one still. credential_id is what it was made with, which it
+-- ends with. Kept until a day after they expire. The value itself is a value
+-- version, as any write's.
 CREATE TABLE entry_links (
   id TEXT NOT NULL PRIMARY KEY,
   token_hash TEXT NOT NULL CONSTRAINT entry_links_token_hash_unique UNIQUE CONSTRAINT entry_links_token_hash_check CHECK (length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'),
@@ -1571,6 +1572,7 @@ CREATE TABLE entry_links (
   identity_id TEXT REFERENCES identities (id),
   description TEXT,
   requested_by TEXT NOT NULL REFERENCES identities (id),
+  credential_id TEXT NOT NULL REFERENCES credentials (id),
   status TEXT NOT NULL DEFAULT 'pending' CONSTRAINT entry_links_status_check CHECK (status IN ('pending', 'entered', 'cancelled')),
   reason TEXT,
   refusals INTEGER NOT NULL DEFAULT 0,

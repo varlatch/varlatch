@@ -148,7 +148,7 @@ func TestEveryEarlierVersionUpgrades(t *testing.T) {
 			"INSERT INTO exercise_credentials (credential_id, oidc_binding_id) VALUES ('crd_none', 'oib_none')",
 			"INSERT INTO one_time_codes_given (version_id, step) VALUES ('ver_none', 1)",
 			"INSERT INTO oauth_connections (value_id, version_id, status) VALUES ('val_none', 'ver_none', 'connected')",
-			"INSERT INTO entry_links (id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, restricted_to, requested_by, created_at, expires_at) VALUES ('enl', '" + key + "', 'org_none', 'prj_none', 'env_none', 'A', 'value', 0, 'anyone', 'idn_none', 1, 2)",
+			"INSERT INTO entry_links (id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, restricted_to, requested_by, credential_id, created_at, expires_at) VALUES ('enl', '" + key + "', 'org_none', 'prj_none', 'env_none', 'A', 'value', 0, 'anyone', 'idn_none', 'crd_none', 1, 2)",
 		} {
 			if err := tryExec(older, bad); err == nil {
 				t.Errorf("from %d: accepted: %s", from, bad)

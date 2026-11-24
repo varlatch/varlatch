@@ -286,6 +286,9 @@ describe("the audit log", () => {
     expect(sentence(event({ resource: link, metadata: { entryLink: "anyone", replace: true } }))).toContain("asked anyone with a link to replace PROVIDER_KEY");
     expect(sentence(event({ eventType: "capability.denied", resource: link }))).toContain("was refused to enter PROVIDER_KEY with a link");
     expect(sentence(event({ eventType: "capability.revoked", resource: link }))).toContain("cancelled the link to enter PROVIDER_KEY");
+    expect(sentence(event({ eventType: "capability.revoked", resource: link, metadata: { reason: "credential-ended" } }))).toContain(
+      "ended, by revoking what made it, the link to enter PROVIDER_KEY",
+    );
     expect(sentence(event({ eventType: "value.written", resource: { itemName: "PROVIDER_KEY" }, metadata: { entryLinkId: "enl_1" } }))).toContain("set PROVIDER_KEY with a link");
   });
   it("does not say Varlatch did what somebody unknown did", () => {

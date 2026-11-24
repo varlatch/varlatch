@@ -410,7 +410,11 @@ func (s *Service) RevokeOwnCredential(ctx context.Context, p *Principal, credent
 		} else if err != nil {
 			return err
 		}
-		if err := RevokeCredential(ctx, tx, s.micros(), credentialID, p.Identity.ID, nil); err != nil {
+		now := s.micros()
+		if err := RevokeCredential(ctx, tx, now, credentialID, p.Identity.ID, nil); err != nil {
+			return err
+		}
+		if err := endEntryLinksOfPerson(ctx, tx, now, p, credentialID); err != nil {
 			return err
 		}
 		if !endsSession(p, credentialID, row.Kind, row.AuthSessionID) {

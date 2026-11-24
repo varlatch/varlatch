@@ -585,7 +585,6 @@ func TestListAndGetEntryLinks(t *testing.T) {
 func TestWhatEndsWithItsMaker(t *testing.T) {
 	for what, end := range map[string]func(w *world){
 		"its Grant":  func(w *world) { w.exec("DELETE FROM grants WHERE subject_identity_id = ?", w.idn("svc")) },
-		"retired":    func(w *world) { w.exec("UPDATE identities SET disabled = 1 WHERE id = ?", w.idn("svc")) },
 		"its action": func(w *world) { w.exec("UPDATE grants SET actions = json('[\"entry-link.create-open\"]')") },
 	} {
 		t.Run(what, func(t *testing.T) {

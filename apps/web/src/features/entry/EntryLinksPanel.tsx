@@ -175,7 +175,9 @@ export function EntryLinkDialog({
     >
       {url ? (
         <div className="space-y-3">
-          <p className="text-[13px] text-muted">Send it to whoever has the value. It is shown here once, and works once.</p>
+          <p className="text-[13px] text-muted">
+            Send it to whoever has the value. It is shown here once, and works once. Signing out does not end it; revoking this browser's sessions from another one does.
+          </p>
           <div className="flex items-stretch gap-2">
             <code className="min-w-0 flex-1 break-all rounded-lg border border-bd bg-inset px-3 py-2 text-[12.5px]" data-testid="entry-url">
               {url}

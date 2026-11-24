@@ -41,7 +41,40 @@ nothing about it lets whoever made it read, reveal or overwrite anything.
 
 No built-in role holds the two actions, so an admin grants each on purpose, as
 any grant. The right is decided again when the value is entered: remove the
-grant or retire the identity, and its links no longer work.
+grant, and its links no longer work.
+
+## When a link ends
+
+After `ttlSeconds`, when a value was entered, when somebody cancels it, when
+the item's value changes, and **with the credential that made it**:
+
+| Made with | Ends when | Does not end when |
+| --- | --- | --- |
+| a service credential | it is revoked (by the identity itself too), or its identity retired; it expires: the link's `expiresAt` is never later | its use limit is used up |
+| a credential [exchanged for an OIDC token](ci-and-machines.md) | it is revoked, also after it expired, or its identity retired; an OIDC binding of the identity is revoked after the exchange | it expires |
+| a person's dashboard | the person is disabled; their membership ends, also if they are added again; they revoke one of their other browser sessions from another one, or a browser session from the CLI; an operator moves the installation to another address | the 15 minutes of a bearer pass, the session expires, they sign out, reload the page or go on in the CLI |
+| a person's CLI login | the person is disabled or their membership ends; they revoke that login from elsewhere | it expires, or `varlatch logout` gives it up |
+
+It is looked at in the job that writes the value. A link that ended this way is
+refused as a cancelled one is, with the same answer: whoever holds it is not
+told why. Its maker reads `cancelled`, reason `credential-ended`, and the audit
+log says how.
+
+- **What counts is that something was taken away.** An exchanged credential
+  lives minutes and a bearer 15 of them; ending their links then would end
+  nearly all of them, and say nothing about trust. What stands behind an
+  exchanged credential is its binding. Which of an identity's bindings a
+  credential came from is not kept, so revoking any of them ends the links of
+  what was exchanged before; links made after the next exchange are new.
+- **A person's dashboard session** plays the credential's part, and its ends
+  are ordinary too: a link sent a minute ago outlives a closed browser. The
+  bearers of a person's other browser sessions look alike, so revoking one
+  from another session ends the links of all of them but the one it is done
+  in. **Sign out everywhere else** does that. A session that has no live bearer
+  has nothing to revoke: cancel its links, or they end within the hour.
+- **Removing a passkey** ends no session, and no link.
+- **Replacing a service credential** ends the links made with the old one: wait
+  an hour before you revoke it, or make them again.
 
 ## Who may enter the value
 
@@ -84,7 +117,7 @@ follows the `#`. Give it to the person as it is.
 
 | Call | What it does |
 | --- | --- |
-| `GET …/entry-links/{id}` | the link: `status` is `pending`, `entered`, `expired` or `cancelled` (with `reason` `cancelled` or `value-changed`) |
+| `GET …/entry-links/{id}` | the link: `status` is `pending`, `entered`, `expired` or `cancelled` (with `reason` `cancelled`, `value-changed` or `credential-ended`) |
 | `GET …/entry-links` | the environment's, newest first: a machine sees its own, a person with `config.value.write` all |
 | `DELETE …/entry-links/{id}` | cancels it, also while the organization is frozen |
 
@@ -94,7 +127,9 @@ listen: the `value.written` event of a webhook has
 
 Refusals at making: 409 `VERSION_CONFLICT`, reason `value-exists`; 409
 `ROTATION_IN_PROGRESS`; 422 `VALIDATION_FAILED`, reason `not-sensitive`,
-`not-in-contract`, `oauth-connection`, `one-time-code` or `no-public-url`; 429 `RATE_LIMITED`
+`not-in-contract`, `oauth-connection`, `one-time-code` or `no-public-url`; 403
+`PERMISSION_DENIED`, reason `credential-ended`, for an exchanged credential
+whose binding was revoked; 429 `RATE_LIMITED`
 beyond 100 pending links, or 300 an hour, of one identity.
 
 From the command line: `varlatch values ask PROVIDER_KEY`, `values asked` and
@@ -128,6 +163,10 @@ the person, or nobody for a link open to anyone, with `entryLinkId` and
 `requestedByIdentityId`. Making and cancelling a link are `capability.issued`
 and `capability.revoked` events whose resource has an `entryLinkId`, and a
 refused entry is `capability.denied` with a reason (the first 20 of a link).
+For a link that ended with its credential the reason is `credential-ended`,
+with how in `credential`: `revoked`, `expired`, `binding-revoked` or
+`identity-retired`. A person's revocation that ends links is a
+`capability.revoked` event for each, with that reason.
 
 ## Limits
 
@@ -140,6 +179,8 @@ refused entry is `capability.denied` with a reason (the first 20 of a link).
   belongs elsewhere. The name of the maker and of the item, and the warning on
   the page, are what there is against it.
 - Making a link tells its maker whether the item has a value there.
+- A revocation made by an earlier release's server, while it ran on the
+  database, ends a machine's links and not a person's.
 - After a rollback to an earlier release, or a reverse migration, there are no
   links and no page. A restored backup brings links back as they were then: one
   that was used since can be used again until it expires, if its item has no

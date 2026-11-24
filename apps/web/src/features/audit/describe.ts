@@ -395,7 +395,13 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return { icon: "shield", title: "Capability refused", segments: ["was refused a capability use", ...inPlace(r, names)] };
     case "capability.revoked":
       if (str(r.entryLinkId)) {
-        return { icon: "trash", title: "Entry link cancelled", segments: ["cancelled the link to enter ", { kind: "mono", text: item ?? "a secret" }, ...inPlace(r, names)] };
+        // It ended with the credential that made it, which was revoked.
+        const ended = str(m.reason) === "credential-ended";
+        return {
+          icon: "trash",
+          title: ended ? "Entry link ended" : "Entry link cancelled",
+          segments: [ended ? "ended, by revoking what made it, the link to enter " : "cancelled the link to enter ", { kind: "mono", text: item ?? "a secret" }, ...inPlace(r, names)],
+        };
       }
       return { icon: "trash", title: "Capability revoked", segments: ["revoked a capability", ...inPlace(r, names)] };
     case "credential.issued": {

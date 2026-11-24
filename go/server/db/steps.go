@@ -125,6 +125,7 @@ CREATE TABLE entry_links (
   identity_id TEXT REFERENCES identities (id),
   description TEXT,
   requested_by TEXT NOT NULL REFERENCES identities (id),
+  credential_id TEXT NOT NULL REFERENCES credentials (id),
   status TEXT NOT NULL DEFAULT 'pending' CONSTRAINT entry_links_status_check CHECK (status IN ('pending', 'entered', 'cancelled')),
   reason TEXT,
   refusals INTEGER NOT NULL DEFAULT 0,

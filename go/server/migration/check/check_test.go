@@ -824,8 +824,8 @@ func TestTheReverseChecksWithEntryLinks(t *testing.T) {
 	}
 	db.Close()
 	damage(t, path,
-		"INSERT INTO entry_links (id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, restricted_to, description, requested_by, created_at, expires_at) VALUES ('enl_kept', '"+
-			strings.Repeat("0f", 32)+"', '"+org+"', '"+project+"', '"+env+"', 'A_KEY', 'value', 0, 'anyone', 'words of its maker', '"+identity+"', 1, 2)",
+		"INSERT INTO entry_links (id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, restricted_to, description, requested_by, credential_id, created_at, expires_at) VALUES ('enl_kept', '"+
+			strings.Repeat("0f", 32)+"', '"+org+"', '"+project+"', '"+env+"', 'A_KEY', 'value', 0, 'anyone', 'words of its maker', '"+identity+"', (SELECT min(id) FROM credentials), 1, 2)",
 		"UPDATE value_versions SET created_by = NULL WHERE id = '"+version+"'",
 		"INSERT INTO grants (id, organization_id, subject_identity_id, scope, actions, created_at) VALUES ('grt_entry', '"+org+"', '"+identity+
 			"', '{\"kind\": \"organization\"}', '[\"entry-link.create\",\"entry-link.create-open\"]', 1000)")

@@ -122,6 +122,10 @@ fixes.
   - A link lives an hour at most, works once, and only while the item is what
     it was when the link was made. `accepts: otpauth` takes the seed of
     one-time codes. OAuth connections are not entered through a link.
+  - A link ends with the credential that made it: revoked, its identity
+    retired, a service credential expired, an OIDC binding revoked, a person's
+    session revoked from elsewhere, or their membership ended. An exchanged
+    credential's or a bearer's expiry and a sign-out end none.
   - Under `passkey-verification`'s enforce, a link open to anyone is refused.
   - `value.written` gains `entryLinkId`; an event without an actor can be what
     somebody did with a link open to anyone, which `actor=varlatch` leaves out.
