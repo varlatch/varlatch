@@ -487,30 +487,47 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	}
 
 	runID := nullable(row.RunID)
-	entries := make([]string, 0, len(placed))
 	var versions []string
-	for _, it := range append(slices.Clone(selected), selectedCodes...) {
-		entry := it.Name + "@" + it.VersionID
-		if it.RetiringVersionID != "" {
-			entry += "+" + it.RetiringVersionID
-		}
-		entries = append(entries, entry)
-	}
 	for _, it := range selected {
 		versions = append(versions, it.VersionID)
 		if it.RetiringVersionID != "" {
 			versions = append(versions, it.RetiringVersionID)
 		}
 	}
-	placements := make([]string, len(in.Placements))
-	for i, p := range in.Placements {
-		placements[i] = p.Item + "=" + p.Target
+	// exercised is capability.exercised of these items, with the placements
+	// and the withheld names that are theirs.
+	exercised := func(items []Item, theirs func(name string) bool, withheld int) audit.Event {
+		entries := make([]string, len(items))
+		for i, it := range items {
+			entries[i] = it.Name + "@" + it.VersionID
+			if it.RetiringVersionID != "" {
+				entries[i] += "+" + it.RetiringVersionID
+			}
+		}
+		placements := make([]string, 0, len(in.Placements))
+		for _, p := range in.Placements {
+			if theirs(p.Item) {
+				placements = append(placements, p.Item+"="+p.Target)
+			}
+		}
+		return audit.Event{
+			Type: "capability.exercised", Decision: audit.Allow, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
+			Action: ptr("secret.use"), Resource: resource(), Authz: authz.AuditAuthz(use), RequestID: ptr(req.RequestID),
+			Metadata: append(jsvalue.Object{
+				{Key: "destination", Value: destination}, {Key: "items", Value: strings.Join(entries, ",")},
+				{Key: "placements", Value: strings.Join(placements, ";")}, {Key: "withheld", Value: withheld}, {Key: "runId", Value: runID},
+			}, issuer()...),
+		}
 	}
-	exercised := jsvalue.Object{
-		{Key: "destination", Value: destination}, {Key: "items", Value: strings.Join(entries, ",")},
-		{Key: "placements", Value: strings.Join(placements, ";")}, {Key: "withheld", Value: len(withheld)}, {Key: "runId", Value: runID},
+	isCode := func(name string) bool { _, ok := codes[name]; return ok }
+	// Codes beside Secrets are given last, with an event of their own: a
+	// Secret's references may still refuse the exercise, which then gave no
+	// code, used none up and says of none that it did.
+	codesLast := len(selected) > 0 && len(wanted) > 0
+	event := exercised(append(slices.Clone(selected), selectedCodes...), func(string) bool { return true }, len(withheld))
+	if codesLast {
+		event = exercised(selected, func(name string) bool { return !isCode(name) }, len(withheld))
 	}
-	exercised = append(exercised, issuer()...)
 	var spend beforeAudit
 	ended := "already-used"
 	// A single-use Capability spends its use only when at least one item is
@@ -518,7 +535,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	// unused.
 	shouldSpend := singleUse && len(selected)+len(selectedCodes) > 0
 	if shouldSpend {
-		exercised = append(exercised, jsvalue.Member{Key: "singleUse", Value: true})
+		event.Metadata = append(event.Metadata, jsvalue.Member{Key: "singleUse", Value: true})
 		// The use is spent in capability.exercised's own job: two exercises
 		// at once, and only one of them has it. From here on it stays
 		// spent, whatever becomes of the answer, unless deny takes it back.
@@ -542,52 +559,46 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			return nil, errCapabilityEnded
 		}
 	}
-	before, steps := spend, map[string]int64(nil)
-	if len(wanted) > 0 {
-		// Which code each seed gives is decided and recorded in the same
-		// job: two exercises that ask for a fresh one never get the same.
-		// Refused (notFresh), nothing of the job stays, a single use neither.
-		before = func(ctx context.Context, tx *storage.Tx) (md jsvalue.Object, err error) {
-			if spend != nil {
-				if _, err := spend(ctx, tx); err != nil {
-					return nil, err
-				}
-			}
-			steps, md, err = giveCodes(ctx, tx, wanted, time.Duration(in.MinValiditySeconds)*time.Second, in.Fresh, s.now())
-			return md, err
-		}
+	var steps map[string]int64
+	// Which code each seed gives is decided and recorded in the same job:
+	// two exercises that ask for a fresh one never get the same. Refused
+	// (notFresh), nothing of the job stays, a single use neither.
+	give := func(ctx context.Context, tx *storage.Tx, record bool) (md jsvalue.Object, err error) {
+		steps, md, err = giveCodes(ctx, tx, wanted, time.Duration(in.MinValiditySeconds)*time.Second, in.Fresh, s.now(), record)
+		return md, err
 	}
-	plaintext, err := s.auditThenDecrypt(ctx, &st, []audit.Event{{
-		Type: "capability.exercised", Decision: audit.Allow, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
-		Action: ptr("secret.use"), Resource: resource(), Authz: authz.AuditAuthz(use), RequestID: ptr(req.RequestID),
-		Metadata: exercised,
-	}}, versions, before)
+	refused := func(err error) error {
+		if late := (*notFresh)(nil); errors.As(err, &late) {
+			return deny("no-fresh-code", jsvalue.Member{Key: "item", Value: late.item},
+				jsvalue.Member{Key: "retryAfterSeconds", Value: max(1, int64((late.after+time.Second-1)/time.Second))})
+		}
+		return err
+	}
+	plaintext, err := s.auditThenDecrypt(ctx, &st, []audit.Event{event}, versions, func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error) {
+		if spend != nil {
+			if _, err := spend(ctx, tx); err != nil {
+				return nil, err
+			}
+		}
+		switch {
+		case len(wanted) == 0:
+			return nil, nil
+		case codesLast:
+			// Not given yet: only whether there is one, before any Secret
+			// is opened.
+			_, err := give(ctx, tx, false)
+			return nil, err
+		default:
+			return give(ctx, tx, true)
+		}
+	})
 	if errors.Is(err, errCapabilityEnded) {
 		return nil, deny(ended)
 	}
-	if late := (*notFresh)(nil); errors.As(err, &late) {
-		return nil, deny("no-fresh-code", jsvalue.Member{Key: "item", Value: late.item},
-			jsvalue.Member{Key: "retryAfterSeconds", Value: max(1, int64((late.after+time.Second-1)/time.Second))})
-	}
 	if err != nil {
-		return nil, err
+		return nil, refused(err)
 	}
 	spent = shouldSpend
-	var codeVersions []string
-	for _, w := range wanted {
-		codeVersions = append(codeVersions, w.versionID)
-	}
-	var seeds map[string]totp.Seed
-	if len(wanted) > 0 {
-		if seeds, err = s.openSeeds(&st, codeVersions); err != nil {
-			return nil, err
-		}
-		defer func() {
-			for _, seed := range seeds {
-				seed.Clear()
-			}
-		}()
-	}
 
 	type out struct {
 		item     Item
@@ -707,6 +718,28 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			o = append(o, jsvalue.Member{Key: "retiring", Value: jsvalue.Object{{Key: "versionId", Value: r.item.RetiringVersionID}, {Key: "value", Value: *r.retiring}}})
 		}
 		items = append(items, o)
+	}
+	if codesLast {
+		if _, err := s.auditThenDecrypt(ctx, &st, []audit.Event{exercised(selectedCodes, isCode, 0)}, nil, func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error) {
+			return give(ctx, tx, true)
+		}); err != nil {
+			return nil, refused(err)
+		}
+	}
+	var codeVersions []string
+	for _, w := range wanted {
+		codeVersions = append(codeVersions, w.versionID)
+	}
+	var seeds map[string]totp.Seed
+	if len(wanted) > 0 {
+		if seeds, err = s.openSeeds(&st, codeVersions); err != nil {
+			return nil, err
+		}
+		defer func() {
+			for _, seed := range seeds {
+				seed.Clear()
+			}
+		}()
 	}
 	// The codes last, so what they have left is counted from the answer.
 	now := s.now()

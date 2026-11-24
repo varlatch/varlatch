@@ -234,8 +234,9 @@ const MaxMinValiditySeconds = 86_400
 // these two are ever given, since a code is a secret for as long as it can
 // still be used. The newest step given is kept as long as its seed's
 // version (one row each): the clock may move back, however far, and a step
-// recorded that this clock has not reached yet counts as given.
-func giveCodes(ctx context.Context, tx *storage.Tx, wanted []codeWanted, minValidity time.Duration, fresh bool, now time.Time) (map[string]int64, jsvalue.Object, error) {
+// recorded that this clock has not reached yet counts as given. Without
+// record it only tells whether there is a code to give now.
+func giveCodes(ctx context.Context, tx *storage.Tx, wanted []codeWanted, minValidity time.Duration, fresh bool, now time.Time, record bool) (map[string]int64, jsvalue.Object, error) {
 	q := query.New(tx)
 	steps := make(map[string]int64, len(wanted))
 	given := make([]string, 0, len(wanted))
@@ -260,8 +261,10 @@ func giveCodes(ctx context.Context, tx *storage.Tx, wanted []codeWanted, minVali
 			}
 		}
 		start, _ := w.params.Window(step)
-		if err := q.GiveOneTimeCode(ctx, query.GiveOneTimeCodeParams{VersionID: w.versionID, Step: step}); err != nil {
-			return nil, nil, err
+		if record {
+			if err := q.GiveOneTimeCode(ctx, query.GiveOneTimeCodeParams{VersionID: w.versionID, Step: step}); err != nil {
+				return nil, nil, err
+			}
 		}
 		steps[w.versionID] = step
 		given = append(given, w.item.Name+"@"+w.versionID+"="+audit.ISOTime(start.UnixMicro()))

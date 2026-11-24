@@ -157,6 +157,15 @@ func TestAnExerciseGivesTheCode(t *testing.T) {
 	if len(items) != 2 || items[0].(map[string]any)["value"] != "a-secret" || items[0].(map[string]any)["kind"] != nil || items[1].(map[string]any)["value"] != codeA(w.now()) {
 		t.Errorf("%s", both.raw)
 	}
+	// The code has an event of its own, after the Secret's.
+	version := set.body["versionId"].(string)
+	exercised := paritytest.Rows(t, w.store, "SELECT * FROM audit_events WHERE event_type = 'capability.exercised' ORDER BY event_order DESC LIMIT 2")
+	for i, want := range []string{`"items":"` + otpItem + "@" + version + `","placements":"` + otpItem + "=" + otpPlace + `","withheld":0,"runId":null,"oneTimeCodes":"` + otpItem + "@" + version,
+		`,"placements":"SECRET_A=header:authorization","withheld":0,"runId":null}`} {
+		if got := fmt.Sprint(exercised[i]["metadata"]); !strings.Contains(got, want) {
+			t.Errorf("%s, want %s", got, want)
+		}
+	}
 	// Neither a code nor a seed is in the audit log.
 	for _, r := range paritytest.Rows(t, w.store, "SELECT * FROM audit_events WHERE event_type LIKE 'capability.%' OR event_type LIKE 'value.%'") {
 		text := fmt.Sprint(r)
@@ -290,6 +299,104 @@ func TestFresh(t *testing.T) {
 	w.code("two hours later", w.exerciseOTP("broker", c, nil))
 	if n := w.text("SELECT count(*) FROM one_time_codes_given"); n != "2" {
 		t.Errorf("%s rows kept, want 2 (one per seed version)", n)
+	}
+}
+
+// A Secret whose reference does not resolve refuses the exercise, the code
+// beside it included: no code is used up, whoever else got it meanwhile, and
+// no event says one was given. Nor does an exercise without a fresh code
+// open the Secret beside it.
+func TestARefusalGivesNoCode(t *testing.T) {
+	w := newWorld(t)
+	w.want("set", w.setSeed(otpItem, uriA), 200, "")
+	mixed := w.issue("broker", with{"singleUse": true, "items": []string{otpItem, "SECRET_MISS", "SECRET_A"},
+		"targets": map[string]any{otpItem: []string{otpPlace}, "SECRET_MISS": []string{"header:x-miss"}, "SECRET_A": []string{"header:authorization"}}})
+	plain := w.otpCapability("broker", nil)
+	place := func(secret, target string) with {
+		return with{"fresh": true, "placements": []any{map[string]any{"item": otpItem, "target": otpPlace}, map[string]any{"item": secret, "target": target}}}
+	}
+	given := func() string {
+		return w.text("SELECT count(*) || ':' || coalesce(max(step), 0) FROM one_time_codes_given")
+	}
+	claims := func() string {
+		return w.text("SELECT count(*) FROM audit_events WHERE event_type = 'capability.exercised' AND metadata LIKE '%" + otpItem + "%'")
+	}
+	refuse := func(what string) {
+		t.Helper()
+		g, c := given(), claims()
+		if a := w.want(what, w.exercise("broker", mixed, place("SECRET_MISS", "header:x-miss")), 403, "PERMISSION_DENIED"); !strings.Contains(a.raw, `"reason":"unresolved-reference"`) {
+			t.Fatalf("%s: %s", what, a.raw)
+		}
+		if given() != g || claims() != c {
+			t.Errorf("%s: codes given %s, then %s; events that name one %s, then %s", what, g, given(), c, claims())
+		}
+	}
+	w.into(3 * time.Second)
+	refuse("before any code")
+	// The current code goes to another exercise, not asked for as fresh: what
+	// is refused afterwards does not give it back.
+	first := w.code("not fresh", w.exerciseOTP("broker", plain, nil))
+	refuse("after it was given")
+	next := w.code("fresh", w.exerciseOTP("broker", plain, with{"fresh": true}))
+	if next["value"] == first["value"] || next["notBefore"] == nil {
+		t.Errorf("fresh gave %v after %v", next, first)
+	}
+	// Both given: refused before the Secret is opened, the use not spent.
+	exercised := w.events("capability.exercised")
+	w.want("none left", w.exercise("broker", mixed, place("SECRET_A", "header:authorization")), 429, "RATE_LIMITED")
+	if n := w.events("capability.exercised"); n != exercised {
+		t.Errorf("%s capability.exercised, then %s", exercised, n)
+	}
+	// The single use was never spent; granted, it is, once.
+	w.ahead.Add(int64(time.Minute))
+	if items := w.want("granted", w.exercise("broker", mixed, place("SECRET_A", "header:authorization")), 200, "").body["items"].([]any); len(items) != 2 {
+		t.Errorf("%v", items)
+	}
+	w.want("spent", w.exercise("broker", mixed, place("SECRET_A", "header:authorization")), 403, "PERMISSION_DENIED")
+	// And its code counts as given.
+	if c := w.code("after it", w.exerciseOTP("broker", plain, with{"fresh": true})); c["notBefore"] == nil {
+		t.Errorf("fresh gave the current code again: %v", c)
+	}
+}
+
+// Codes beside a Secret, asked for as fresh at once: two are given, not the
+// same, and the others refused (some after the Secret was opened) without
+// their single use being spent.
+func TestFreshBesideASecretUnderConcurrency(t *testing.T) {
+	w := newWorld(t)
+	w.want("set", w.setSeed(otpItem, uriA), 200, "")
+	body := with{"fresh": true, "placements": []any{map[string]any{"item": "SECRET_A", "target": "header:authorization"}, map[string]any{"item": otpItem, "target": otpPlace}}}
+	for round := range 5 {
+		w.into(2 * time.Second)
+		caps := make([]capability, 8)
+		for i := range caps {
+			caps[i] = w.otpCapability("broker", with{"singleUse": true})
+		}
+		answers := make([]answer, len(caps))
+		var wg sync.WaitGroup
+		for i := range caps {
+			wg.Go(func() { answers[i] = w.exercise("broker", caps[i], body) })
+		}
+		wg.Wait()
+		got := map[any]bool{}
+		var refused []capability
+		for i, a := range answers {
+			switch a.status {
+			case 200:
+				got[a.body["items"].([]any)[1].(map[string]any)["value"]] = true
+			case 429:
+				refused = append(refused, caps[i])
+			default:
+				t.Errorf("round %d: %d %s", round, a.status, a.raw)
+			}
+		}
+		if len(got) != 2 || len(refused) != len(caps)-2 {
+			t.Fatalf("round %d: %d codes, %d refused", round, len(got), len(refused))
+		}
+		w.ahead.Add(int64(time.Minute))
+		for _, c := range refused {
+			w.want("not spent", w.exercise("broker", c, with{"placements": body["placements"]}), 200, "")
+		}
 	}
 }
 

@@ -1930,10 +1930,13 @@ may use; it never adds to the Agent's Grants.
     rotation between the two.
   - Which step's code is given is decided in `capability.exercised`'s own job
     (`giveCodes`) and recorded in `one_time_codes_given` (schema version 5),
-    so two exercises that ask for a fresh code never get the same. The
-    current step or the next one, never later; nothing waits. One row per seed
-    version, kept as long as it: a clock that ran ahead and is set back
-    forgets nothing.
+    so two exercises that ask for a fresh code never get the same. Beside
+    Secrets that job is a second one, after their references resolved (the
+    first only looks whether there is a code to give): a refusal before it
+    gives no code and records none. The code
+    is the current step's or the next one's, never later; nothing waits. There
+    is one row per seed version, kept as long as it: a clock that ran ahead
+    and is set back forgets nothing.
   - `server/capabilities` `totp_test.go` covers every path over HTTP.
 - **Parity.** `capabilities-v0.22.0.json`
   (go-capabilities-fixture.test.ts) replays 154 requests: issuance in

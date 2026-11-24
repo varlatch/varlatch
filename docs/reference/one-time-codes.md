@@ -99,7 +99,9 @@ code made elsewhere from the same seed (a phone that also has it, the same
 seed stored under another item), and it forgets what it gave when the seed is
 written again.
 
-A refusal uses up nothing: not the single use of a single-use Capability.
+A refusal uses up nothing: neither a code nor the single use of a single-use
+Capability. Beside Secrets in one exercise, the code is given last, after
+their references resolved.
 Capabilities [issued for another broker](ci-and-machines.md#brokers-on-many-machines),
 exercise-only credentials and `singleUse` work as for any Secret. An
 [agent-safe run](agent-safe-runs.md) works too: `--target
@@ -165,8 +167,10 @@ Each exercise that gives a code is a `capability.exercised` event like any
 other use: the broker, the agent, the issuer when that is another identity,
 the destination, the item and its version. Its `oneTimeCodes` says which
 period's code was given (`PORTAL_OTP@ver_…=<start of the period>`), so two
-uses of one code show. `fresh` and `minValiditySeconds` are recorded when
-asked for. Refusals are `capability.denied`. Writing a seed is
+uses of one code show. Beside Secrets in one exercise, the codes have an event
+of their own with the same request id, after the Secrets'; a refusal in
+between gave no code and has none. `fresh` and `minValiditySeconds` are
+recorded when asked for. Refusals are `capability.denied`. Writing a seed is
 `value.written` with `totp`. No event holds a code or a seed.
 
 ## Going back to an earlier release
