@@ -226,13 +226,15 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   - **Format 3 is compressed, then sealed the same way:** `VLTBAK02`, a salt,
     a nonce and the compression's number (1, zstd), all of it additional
     data; in the message, the manifest's length, the manifest (as it is) and
-    one zstd frame of the components, which states their size. The
+    one zstd frame of the components, which states their size (from 256
+    bytes on; a shorter one is held to the manifest's as it is read). The
     manifest's sizes and SHA-256 are the components' before compression.
     Another magic or compression is refused before any key work. Opening
     authenticates the whole archive first, then holds the frame to what
     `Seal` writes without decompressing it (`checkFrame`: one frame, no
     dictionary, a window of at most 8 MiB, the manifest's size, nothing
-    after it), and never writes more than the manifest declares. Format 3
+    after it), and never writes more than the manifest declares. A
+    configuration past 1 MiB is neither sealed nor opened. Format 3
     under `VLTBAK01`, not compressed (0.50.0-rc.1 to rc.3, and what their
     converter wrote), still opens; those releases answer a compressed one
     "Unsupported archive format", as the TypeScript CLI does.

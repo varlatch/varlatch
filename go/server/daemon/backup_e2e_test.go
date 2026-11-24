@@ -85,9 +85,12 @@ func stalledIn(phase string) func(*backups.Options) {
 	}
 }
 
-// damaged is the archive at good with the same identity, whose database
-// has no installation: it opens and passes every check before the
-// database is replaced, and fails after.
+// refuseRestored makes a database that passes every check before a restore
+// puts it in place, and refuses the event the restore records in it.
+const refuseRestored = "CREATE TRIGGER refuse BEFORE INSERT ON audit_events WHEN NEW.event_type = 'installation.restored' BEGIN SELECT RAISE(ABORT, 'refused by the test'); END"
+
+// damaged is the archive at good with the same identity, whose database is
+// refuseRestored's.
 func damaged(t *testing.T, good, bekFile string) string {
 	t.Helper()
 	raw, _ := os.ReadFile(bekFile)
@@ -106,7 +109,7 @@ func damaged(t *testing.T, good, bekFile string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.Exec("DELETE FROM installation"); err != nil {
+	if _, err := conn.Exec(refuseRestored); err != nil {
 		t.Fatal(err)
 	}
 	conn.Close()
@@ -216,7 +219,7 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 	// A restore that fails after the database was replaced: isolated, and
 	// still isolated after a restart.
 	bad := damaged(t, archive, bek)
-	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", bad, "--config", target.conf); code != ExitFailure || !strings.Contains(errOut, "no installation") {
+	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", bad, "--config", target.conf); code != ExitFailure || !strings.Contains(errOut, "refused by the test") {
 		t.Fatalf("the damaged restore: %d %q", code, errOut)
 	}
 	for i := 0; i < 2; i++ {
@@ -232,7 +235,7 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 
 	// --check: whether a restore would take the archive, changing nothing.
 	if code, _, errOut := runAdmin(t, "backup", "restore", "--check", "--in", bad, "--config", target.conf); code != ExitOK {
-		t.Errorf("--check reads the archive, not the database in it: %d %q", code, errOut)
+		t.Errorf("--check cannot tell what the database refuses when it is written: %d %q", code, errOut)
 	}
 	// Running it again with the archive completes it.
 	code, out, errOut = runAdmin(t, "backup", "restore", "--in", filepath.Join(host, "archive.vltbak"), "--config", target.conf)

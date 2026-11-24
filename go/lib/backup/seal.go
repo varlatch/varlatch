@@ -26,7 +26,8 @@
 //	tag       the GCM tag (16 bytes)
 //
 // The manifest's sizes and SHA-256 are the components' own, before
-// compression. A format-3 archive under "VLTBAK01", not compressed, is
+// compression. The frame states the sum of the sizes from 256 bytes on; a
+// shorter one may state none, and is held to the manifest's as it is read. A format-3 archive under "VLTBAK01", not compressed, is
 // still opened: 0.50.0-rc.1 to rc.3 made them. The key is scrypt(BEK, salt, N=32768, r=8, p=1, 32 bytes), for a key
 // file (32 bytes) and a passphrase (at least 12 bytes) alike. An archive is
 // at most 60 GiB, below one GCM message's limit.
@@ -335,6 +336,9 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 		return err
 	}
 	enc := &encrypter{s: s, w: out}
+	if testHooks.out != nil {
+		enc.w = testHooks.out(out)
+	}
 	head := make([]byte, 4, 4+len(manifest))
 	binary.BigEndian.PutUint32(head, uint32(len(manifest)))
 	head = append(head, manifest...)
@@ -393,6 +397,11 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 		return &LinkedError{Path: output, Err: err}
 	}
 	return nil
+}
+
+// testHooks are set by tests only: out is put before the archive's file.
+var testHooks struct {
+	out func(io.Writer) io.Writer
 }
 
 // encrypter encrypts what is written to it onto w, and hashes the
@@ -598,7 +607,11 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 	}
 	var unpacked io.Reader = packed
 	if compressed {
-		if err := checkFrame(packed, packed.Size(), sum); err != nil {
+		// The beat counts nothing: it only lets a stop end the scan.
+		if err := checkFrame(packed, packed.Size(), sum, func() error { return pace(0) }); err != nil {
+			return nil, err
+		}
+		if _, err := packed.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
 		z, err := newDecompressor(packed)

@@ -46,6 +46,9 @@ const (
 	ComponentDatabase = "varlatch.db"
 	// ComponentConfiguration is a Go archive's non-key configuration.
 	ComponentConfiguration = "configuration.json"
+	// MaxConfigurationBytes bounds it, when an archive is sealed and when
+	// one is opened: it is settings, read whole.
+	MaxConfigurationBytes = 1 << 20
 )
 
 // Manifest is an archive's manifest. Release is the release record as the
@@ -185,6 +188,9 @@ func ParseManifest(raw []byte) (Manifest, error) {
 		component, ok := parseComponent(c, m.FormatVersion)
 		if !ok {
 			return Manifest{}, ErrManifest
+		}
+		if component.Name == ComponentConfiguration && component.Bytes > MaxConfigurationBytes {
+			return Manifest{}, &Error{"The archive's configuration is larger than 1 MiB"}
 		}
 		m.Components = append(m.Components, component)
 	}

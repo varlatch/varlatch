@@ -68,15 +68,12 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 		return RestoreResult{}, err
 	}
 	defer opened.Close()
-	if err := restores(ctx, opened); err != nil {
+	settings, err := restores(ctx, opened, rootKEK)
+	if err != nil {
 		return RestoreResult{}, err
 	}
 	m := opened.Manifest
 	snapshot := opened.Path(backup.ComponentDatabase)
-	var settings Configuration
-	if raw, err := os.ReadFile(opened.Path(backup.ComponentConfiguration)); err != nil || json.Unmarshal(raw, &settings) != nil {
-		return RestoreResult{}, errors.New("the archive's configuration.json cannot be read")
-	}
 
 	dbPath := cfg.DatabasePath()
 	// A restore of this archive that stopped left the database it put in
@@ -161,7 +158,7 @@ func CheckRestore(ctx context.Context, cfg *config.Config, archive string, bek b
 	defer opened.Close()
 	m := opened.Manifest
 	c := Checked{ArchiveID: m.ArchiveID, Installation: m.InstallationID, CreatedAt: m.CreatedAt}
-	if err := restores(ctx, opened); err == nil {
+	if _, err := restores(ctx, opened, rootKEK); err == nil {
 		c.Restores = true
 	} else if !opens {
 		return Checked{}, err
@@ -183,14 +180,44 @@ func CheckRestore(ctx context.Context, cfg *config.Config, archive string, bek b
 	return c, nil
 }
 
-// restores is whether this release restores an opened archive: why not.
-func restores(ctx context.Context, opened *backup.Opened) error {
+// restores is whether this release restores an opened archive, why not, and
+// its settings.
+func restores(ctx context.Context, opened *backup.Opened, rootKEK []byte) (Configuration, error) {
 	m := opened.Manifest
 	if !Compatible(ctx, m, opened.Path(backup.ComponentDatabase)) {
 		r, _ := m.GoRelease()
-		return fmt.Errorf("this release (%s, database schema %d) cannot restore an archive of %s with database schema %d", buildinfo.Version, db.SchemaVersion, r.Version, r.DatabaseSchema)
+		return Configuration{}, fmt.Errorf("this release (%s, database schema %d) cannot restore an archive of %s with database schema %d", buildinfo.Version, db.SchemaVersion, r.Version, r.DatabaseSchema)
 	}
-	return nil
+	return contents(ctx, opened, rootKEK)
+}
+
+// contents is what a restore needs of an opened archive's components, as a
+// backup's own check, a restore's and Restore itself ask it: the settings
+// can be read, and the database holds the manifest's installation, whose
+// canary the Root KEK opens. What only a restore can tell is what happens
+// in the data directory: the database opened to be written, and
+// installation.restored recorded in it.
+func contents(ctx context.Context, opened *backup.Opened, rootKEK []byte) (Configuration, error) {
+	var c Configuration
+	// At most backup.MaxConfigurationBytes (the manifest's check).
+	raw, err := os.ReadFile(opened.Path(backup.ComponentConfiguration))
+	if err != nil || json.Unmarshal(raw, &c) != nil || c.FormatVersion < 1 || c.Settings == nil {
+		return Configuration{}, errors.New("the archive's configuration.json cannot be read")
+	}
+	conn, err := sql.Open("sqlite", fileURI(opened.Path(backup.ComponentDatabase))+"?mode=ro&immutable=1")
+	if err != nil {
+		return Configuration{}, err
+	}
+	defer conn.Close()
+	var id, stored string
+	if err := conn.QueryRowContext(ctx, "SELECT id, kek_canary FROM installation").Scan(&id, &stored); err != nil {
+		return Configuration{}, fmt.Errorf("the archive's database has no installation: %w", err)
+	}
+	var canary envelope.Envelope
+	if id != opened.Manifest.InstallationID || json.Unmarshal([]byte(stored), &canary) != nil || !envelope.VerifyCanary(rootKEK, canary, id) {
+		return Configuration{}, errors.New("the archive's database is not its installation's, or its canary did not verify")
+	}
+	return c, nil
 }
 
 // openArchive opens a Go archive into scratch, made anew, when the Root KEK

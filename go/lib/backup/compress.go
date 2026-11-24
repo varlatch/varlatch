@@ -3,7 +3,7 @@
 package backup
 
 import (
-	"encoding/binary"
+	"bufio"
 	"fmt"
 	"io"
 
@@ -26,8 +26,8 @@ const (
 	// maxWindow is the largest window read: what decompressing costs in
 	// memory.
 	maxWindow = 8 << 20
-	// minContentSize is the smallest size a frame's header states: zstd has
-	// no field for a smaller one.
+	// minContentSize is the size from which a frame always states its own
+	// (zstd's field for a smaller one exists in some frames only).
 	minContentSize = 256
 )
 
@@ -69,14 +69,20 @@ func (d decompressor) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// beatBytes is how far checkFrame reads between two beats.
+const beatBytes = 16 << 20
+
 // checkFrame holds the size bytes of r to what newCompressor writes for
 // content bytes, without decompressing them: one frame, with no dictionary
-// and a window of at most maxWindow, that states content as its size, and
-// ends where r does. Decompressing it then gives no other number of bytes
-// (zstd holds a frame to the size it states).
-func checkFrame(r io.ReaderAt, size, content int64) error {
-	head := make([]byte, min(size, zstd.HeaderMaxSize))
-	if _, err := r.ReadAt(head, 0); err != nil && err != io.EOF {
+// and a window of at most maxWindow, that states content as its size (a
+// frame of fewer than minContentSize bytes may state none), and ends where
+// r does. Decompressing it then gives no other number of bytes (zstd holds
+// a frame to the size it states; the reader, to the manifest's). beat is
+// called now and then; an error from it ends the check.
+func checkFrame(r io.Reader, size, content int64, beat func() error) error {
+	in := bufio.NewReaderSize(io.LimitReader(r, size), 1<<16)
+	head, err := in.Peek(int(min(size, zstd.HeaderMaxSize)))
+	if err != nil && err != io.EOF {
 		return err
 	}
 	var h zstd.Header
@@ -87,25 +93,54 @@ func checkFrame(r io.ReaderAt, size, content int64) error {
 	if h.HasFCS && h.FrameContentSize != uint64(content) || !h.HasFCS && content >= minContentSize {
 		return errCompressed
 	}
-	// The blocks: three bytes of header each, of the block's length.
-	const checksum = 4
-	at := int64(h.HeaderSize)
+	// skip is n bytes of the frame, which must be there.
+	var at, beaten int64
+	skip := func(n int) error {
+		k, err := in.Discard(n)
+		if at += int64(k); err == io.EOF || err == nil && at > size {
+			return errCompressed
+		}
+		return err
+	}
+	if err := skip(h.HeaderSize); err != nil {
+		return err
+	}
+	// The blocks: three bytes of header each, then what the header says.
 	for last := false; !last; {
-		var b [4]byte
-		if n, _ := r.ReadAt(b[:3], at); n < 3 || at+3 > size {
+		b, err := in.Peek(3)
+		if err == io.EOF {
 			return errCompressed
 		}
-		v := binary.LittleEndian.Uint32(b[:])
+		if err != nil {
+			return err
+		}
+		v := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16
 		last = v&1 != 0
-		length := int64(v >> 3)
-		if v>>1&3 == 1 { // one byte, repeated
+		length := int(v >> 3)
+		switch v >> 1 & 3 {
+		case 1: // one byte, repeated
 			length = 1
-		}
-		if at += 3 + length; at > size {
+		case 3: // reserved
 			return errCompressed
+		}
+		if length == 0 && !last {
+			return errCompressed
+		}
+		if err := skip(3 + length); err != nil {
+			return err
+		}
+		if at-beaten >= beatBytes {
+			beaten = at
+			if err := beat(); err != nil {
+				return err
+			}
 		}
 	}
-	if at+checksum != size {
+	const checksum = 4
+	if err := skip(checksum); err != nil {
+		return err
+	}
+	if at != size {
 		return errCompressed
 	}
 	return nil

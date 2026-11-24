@@ -205,6 +205,11 @@ fixes.
   values little less. `varlatchd` reads the archives 0.50.0-rc.1 to rc.3 and
   their converter made; those prereleases do not read the new ones ("Unsupported
   archive format"). `admin backup run` prints both sizes.
+- **An archive's check asks what a restore asks.** A backup's own check,
+  `--verify-remote` and `admin backup restore --check` also read the archive's
+  settings and its database's installation, as a restore does: an archive
+  whose settings could not be read passed them and was then refused. A
+  restore reads both before it changes anything.
 - **An offline backup does not take its time.** `admin backup run` with
   `varlatchd` stopped, `varlatch migrate --finish`'s final archive, the
   converter's, and the copy `varlatch migrate --rollback` is made from were

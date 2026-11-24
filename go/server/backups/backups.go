@@ -683,8 +683,9 @@ func schemaOf(ctx context.Context, path string) (version, compatibleFrom int64, 
 
 // verify opens the archive again (its integrity: it opens, and is the
 // archive id and not another one sealed under the same key, such as an
-// older copy at its key in the bucket), and checks this release restores it
-// and the Root KEK opens its canaries.
+// older copy at its key in the bucket, and holds what a restore reads of
+// it: contents), and checks this release restores it and the Root KEK opens
+// its canaries.
 func (s *Service) verify(ctx context.Context, id, archive string, bek backup.BEK, scratch string, keys *backup.KeyCache) (backup.Verification, error) {
 	v := backup.Verification{TargetRelease: buildinfo.Version}
 	// Every check of an unpaced Open, paced like the sealing, with the key
@@ -699,7 +700,13 @@ func (s *Service) verify(ctx context.Context, id, archive string, bek backup.BEK
 		s.o.Log.Warn("backup: the archive is another one", "archive", archive, "archiveId", id, "found", o.Manifest.ArchiveID)
 		_ = o.Close()
 	} else {
-		v.Integrity = true
+		// The archive, and what a restore of it reads: the settings, and
+		// the database's installation.
+		if _, err := contents(ctx, o, s.o.RootKEK); err != nil {
+			s.o.Log.Warn("backup: the archive opens, but a restore would refuse it", "archive", archive, "error", err)
+		} else {
+			v.Integrity = true
+		}
 		v.Compatibility = Compatible(ctx, o.Manifest, o.Path(backup.ComponentDatabase))
 		candidates := map[int][]byte{}
 		for _, version := range o.Manifest.RequiredKeyVersions {

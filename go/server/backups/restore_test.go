@@ -113,6 +113,106 @@ func TestRestore(t *testing.T) {
 	}
 }
 
+// An archive whose components a restore cannot use, its manifest and its
+// seal right: a backup's own check fails it, restore --check and Restore
+// refuse it, and Restore has changed nothing.
+func TestRestoreContents(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	s := f.service(nil)
+	res, err := s.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bek := f.bekOf(t)
+	settings := func(text string) func(t *testing.T, o *backup.Opened) {
+		return func(t *testing.T, o *backup.Opened) {
+			if err := os.WriteFile(o.Path(backup.ComponentConfiguration), []byte(text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	database := func(stmt string) func(t *testing.T, o *backup.Opened) {
+		return func(t *testing.T, o *backup.Opened) {
+			conn, err := sql.Open("sqlite", fileURI(o.Path(backup.ComponentDatabase)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if _, err := conn.Exec(stmt); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	other, err := envelope.NewCanary(envelope.GenerateKey(), f.inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canary, _ := json.Marshal(other)
+	const unreadable = "configuration.json cannot be read"
+	for name, tc := range map[string]struct {
+		damage func(t *testing.T, o *backup.Opened)
+		why    string
+	}{
+		"no settings file":         {settings(""), unreadable},
+		"settings cut short":       {settings(`{"formatVersion":1,"sett`), unreadable},
+		"not an object":            {settings("[]"), unreadable},
+		"null":                     {settings("null"), unreadable},
+		"no format":                {settings(`{"settings":{}}`), unreadable},
+		"no settings":              {settings(`{"formatVersion":1}`), unreadable},
+		"a setting that is not":    {settings(`{"formatVersion":1,"settings":{"listen":1}}`), unreadable},
+		"no installation":          {database("DELETE FROM installation"), "has no installation"},
+		"another installation":     {database("UPDATE installation SET id = 'inst_another'"), "not its installation's"},
+		"a canary of another key":  {database("UPDATE installation SET kek_canary = '" + string(canary) + "'"), "its canary did not verify"},
+		"a canary that is none":    {database("UPDATE installation SET kek_canary = '{}'"), "its canary did not verify"},
+		"the control, none of it":  {func(*testing.T, *backup.Opened) {}, ""},
+		"later settings, the same": {settings(`{"formatVersion":2,"settings":{"later":"x"},"more":[1]}`), ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o, err := backup.Open(res.Path, bek, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer o.Close()
+			tc.damage(t, o)
+			m := o.Manifest
+			var paths []string
+			for i, c := range m.Components {
+				if m.Components[i], err = backup.Describe(c.Name, o.Path(c.Name)); err != nil {
+					t.Fatal(err)
+				}
+				paths = append(paths, o.Path(c.Name))
+			}
+			manifest, _ := json.Marshal(m)
+			archive := filepath.Join(t.TempDir(), "a.vltbak")
+			if err := backup.Seal(archive, manifest, paths, bek, backup.SealOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			v, err := s.verify(ctx, res.ArchiveID, archive, bek, t.TempDir(), nil)
+			if err != nil || v.Integrity != (tc.why == "") || !v.Compatibility || !v.KeyMatch {
+				t.Errorf("its own check: %+v %v", v, err)
+			}
+			cfg := f.target(t)
+			refused := func(what string, err error) {
+				t.Helper()
+				if tc.why == "" && err != nil || tc.why != "" && (err == nil || !strings.Contains(err.Error(), tc.why)) {
+					t.Errorf("%s: %v, want %q", what, err, tc.why)
+				}
+			}
+			_, err = CheckRestore(ctx, cfg, archive, bek, f.rootKEK, false)
+			refused("--check", err)
+			if c, err := CheckRestore(ctx, cfg, archive, bek, f.rootKEK, true); tc.why != "" && err == nil && c.Restores {
+				t.Error("--check --opens says this release restores it")
+			}
+			_, err = Restore(ctx, cfg, archive, bek, f.rootKEK, nil)
+			refused("Restore", err)
+			if l := listing(t, cfg.DataDir); tc.why != "" && l != "" {
+				t.Errorf("a refused restore left %q", l)
+			}
+		})
+	}
+}
+
 // An archive as 0.50.0-rc.1 to rc.3 sealed it, not compressed, is verified,
 // checked and restored.
 func TestRestoreUncompressed(t *testing.T) {
@@ -274,8 +374,8 @@ func TestFailedRestoreStaysIsolatedAndResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The same archive, its database without the installation: it opens
-	// and passes the checks before the swap, and fails after it.
+	// The same archive, its database one that refuses the restore's event:
+	// it passes the checks before the swap, and fails after it.
 	bek := f.bekOf(t)
 	o, err := backup.Open(res.Path, bek, t.TempDir())
 	if err != nil {
@@ -286,7 +386,7 @@ func TestFailedRestoreStaysIsolatedAndResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := conn.Exec("DELETE FROM installation"); err != nil {
+	if _, err := conn.Exec("CREATE TRIGGER refuse BEFORE INSERT ON audit_events WHEN NEW.event_type = 'installation.restored' BEGIN SELECT RAISE(ABORT, 'refused by the test'); END"); err != nil {
 		t.Fatal(err)
 	}
 	conn.Close()
@@ -306,7 +406,7 @@ func TestFailedRestoreStaysIsolatedAndResumes(t *testing.T) {
 	o.Close()
 
 	cfg := f.target(t)
-	if _, err := Restore(ctx, cfg, damaged, bek, f.rootKEK, nil); err == nil || !strings.Contains(err.Error(), "no installation") {
+	if _, err := Restore(ctx, cfg, damaged, bek, f.rootKEK, nil); err == nil || !strings.Contains(err.Error(), "refused by the test") {
 		t.Fatalf("the damaged restore: %v", err)
 	}
 	g, err := backup.ReadGate(cfg.DataDir)

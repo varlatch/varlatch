@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +112,125 @@ func TestCompressed(t *testing.T) {
 				t.Errorf("left %v", left)
 			}
 		})
+	}
+}
+
+// What a frame's header states of its size: nothing below 256 bytes, the
+// size from there on (the format's contract; nothing smaller than a
+// database is ever sealed). Reading holds either to the manifest's size.
+func TestFrameSize(t *testing.T) {
+	for size, states := range map[int]bool{0: false, 1: false, 255: false, 256: true, 257: true, 1 << 10: true, 1<<16 - 1: true, 1 << 16: true, 1<<16 + 255: true, 1<<16 + 256: true, 3 << 20: true} {
+		var b bytes.Buffer
+		z, err := newCompressor(&b, int64(size))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data := make([]byte, size)
+		rand.Read(data)
+		if _, err := z.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if err := z.Close(); err != nil {
+			t.Fatal(err)
+		}
+		var h zstd.Header
+		if err := h.Decode(b.Bytes()); err != nil || !h.HasCheckSum || h.HasFCS != states || states && h.FrameContentSize != uint64(size) {
+			t.Errorf("%d bytes: %+v %v", size, h, err)
+		}
+		no := func() error { return nil }
+		if err := checkFrame(bytes.NewReader(b.Bytes()), int64(b.Len()), int64(size), no); err != nil {
+			t.Errorf("%d bytes: %v", size, err)
+		}
+		// Told another size, the frame is refused where it states its own;
+		// below, the read refuses it (the small archives after this).
+		if err := checkFrame(bytes.NewReader(b.Bytes()), int64(b.Len()), int64(size)+1, no); (err == nil) != (size < 255) {
+			t.Errorf("%d bytes, told one more: %v", size, err)
+		}
+	}
+	// Small archives, whose frame states nothing: more or less than the
+	// manifest declares is refused as it is read.
+	files, _ := writeComponents(t, []byte("a database"), []byte("{}"))
+	manifest := goManifest(t, envelope.GenerateKey(), files)
+	for data, ok := range map[string]bool{"a database{}": true, "a database{}!": false, "a database{": false, "": false, "a databasE{}": false} {
+		_, err := openRaw(t, sealRaw(t, header2(1), plaintext(manifest, frame(t, []byte(data), int64(len(data))))), &rawKeys)
+		if (err == nil) != ok {
+			t.Errorf("%q: %v", data, err)
+		}
+	}
+}
+
+// The scan of a frame's blocks can be stopped, and counts nothing.
+func TestFrameScanStops(t *testing.T) {
+	random := make([]byte, 40<<20)
+	rand.Read(random)
+	packed := frame(t, random, int64(len(random)))
+	beats := 0
+	if err := checkFrame(bytes.NewReader(packed), int64(len(packed)), int64(len(random)), func() error { beats++; return nil }); err != nil || beats != 2 {
+		t.Fatalf("%d beats, %v", beats, err)
+	}
+	stop := errors.New("stopped")
+	if err := checkFrame(bytes.NewReader(packed), int64(len(packed)), int64(len(random)), func() error { return stop }); err != stop {
+		t.Fatal(err)
+	}
+}
+
+// A configuration past the limit is neither sealed nor opened: not a byte
+// of it is written.
+func TestConfigurationBound(t *testing.T) {
+	for size, ok := range map[int]bool{MaxConfigurationBytes: true, MaxConfigurationBytes + 1: false} {
+		configuration := bytes.Repeat([]byte(" "), size)
+		files, paths := writeComponents(t, []byte("a database"), configuration)
+		manifest := goManifest(t, envelope.GenerateKey(), files)
+		out := filepath.Join(t.TempDir(), "a.vlt")
+		err := Seal(out, manifest, paths, passphrase(t), SealOptions{})
+		if _, serr := os.Stat(out); (err == nil) != ok || (serr == nil) != ok {
+			t.Errorf("%d bytes sealed: %v", size, err)
+		}
+		all := append([]byte("a database"), configuration...)
+		_, err = openRaw(t, sealRaw(t, header2(1), plaintext(manifest, frame(t, all, int64(len(all))))), &rawKeys)
+		if (err == nil) != ok || !ok && !strings.Contains(err.Error(), "larger than 1 MiB") {
+			t.Errorf("%d bytes opened: %v", size, err)
+		}
+	}
+}
+
+// failAfter fails every write past n bytes.
+type failAfter struct {
+	w io.Writer
+	n int
+}
+
+func (f *failAfter) Write(p []byte) (int, error) {
+	if f.n -= len(p); f.n < 0 {
+		return 0, errors.New("the disk is full")
+	}
+	return f.w.Write(p)
+}
+
+// A write that fails, the last block's while the compressor closes
+// included, leaves neither an archive nor a partial file.
+func TestSealWriteFails(t *testing.T) {
+	random := make([]byte, 300_000)
+	rand.Read(random)
+	files, paths := writeComponents(t, random, []byte("{}"))
+	manifest := goManifest(t, envelope.GenerateKey(), files)
+	defer func() { testHooks.out = nil }()
+	whole := &failAfter{n: 1 << 30}
+	testHooks.out = func(w io.Writer) io.Writer { whole.w = w; return whole }
+	dir := t.TempDir()
+	if err := Seal(filepath.Join(dir, "whole"), manifest, paths, passphrase(t), SealOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	written := 1<<30 - whole.n
+	for name, n := range map[string]int{"the manifest": 10, "a block": written / 2, "the last block, as the compressor closes": written - 1, "the frame's end": written - 4} {
+		testHooks.out = func(w io.Writer) io.Writer { return &failAfter{w, n} }
+		d := t.TempDir()
+		if err := Seal(filepath.Join(d, "a"), manifest, paths, passphrase(t), SealOptions{}); err == nil || !strings.Contains(err.Error(), "the disk is full") {
+			t.Errorf("%s: %v", name, err)
+		}
+		if left, _ := os.ReadDir(d); len(left) != 0 {
+			t.Errorf("%s: left %v", name, left)
+		}
 	}
 }
 
@@ -250,6 +370,8 @@ func TestCompressedRefuses(t *testing.T) {
 		"a dictionary":                {manifest, append(dictionary, blocks...), errCompressed},
 		"a window past the limit":     {wide, frame(t, random, int64(len(random)), zstd.WithWindowSize(16<<20)), errCompressed},
 		"a byte after the frame":      {manifest, append(bytes.Clone(good), 0), errCompressed},
+		"an empty block":              {manifest, append(append(bytes.Clone(good[:h.HeaderSize]), 0, 0, 0), blocks...), errCompressed},
+		"a reserved block":            {manifest, append(append(bytes.Clone(good[:h.HeaderSize]), 7|1<<3, 0, 0, 0), good[len(good)-4:]...), errCompressed},
 		"a skippable frame after":     {manifest, append(bytes.Clone(good), 0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0), errCompressed},
 		"a skippable frame first":     {manifest, append([]byte{0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0}, good...), errCompressed},
 		"a second frame":              {manifest, append(bytes.Clone(good), frame(t, nil, 0)...), errCompressed},
@@ -287,8 +409,9 @@ func TestCompressedRefuses(t *testing.T) {
 	}
 }
 
-// openRaw opens an archive's bytes, and checks a refusal leaves scratch
-// empty.
+// openRaw opens an archive's bytes. While it does, scratch never holds more
+// than the archive and what its manifest declares (a bomb), seen at each
+// step of the pace; a refusal leaves scratch empty.
 func openRaw(t *testing.T, raw []byte, keys *KeyCache) (*Opened, error) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "a.vlt")
@@ -296,7 +419,20 @@ func openRaw(t *testing.T, raw []byte, keys *KeyCache) (*Opened, error) {
 		t.Fatal(err)
 	}
 	scratch := t.TempDir()
-	o, err := OpenWith(p, passphrase(t), scratch, OpenOptions{Keys: keys})
+	most := int64(len(raw)) + 1<<20 + 100 // the cases' database and configuration
+	o, err := OpenWith(p, passphrase(t), scratch, OpenOptions{Keys: keys, Pace: func(int64) error {
+		var held int64
+		_ = filepath.WalkDir(scratch, func(p string, d fs.DirEntry, err error) error {
+			if info, ierr := d.Info(); err == nil && ierr == nil && info.Mode().IsRegular() {
+				held += info.Size()
+			}
+			return nil
+		})
+		if held > most {
+			t.Errorf("scratch held %d bytes of an archive of %d", held, len(raw))
+		}
+		return nil
+	}})
 	if left, _ := os.ReadDir(scratch); err != nil && len(left) != 0 {
 		t.Errorf("a refusal left %d entries in scratch", len(left))
 	}

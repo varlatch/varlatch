@@ -45,7 +45,8 @@ sudo varlatch admin backup status   # every archive, and the warnings
 database snapshot was held, and the size of the database and of its archive. Every archive, scheduled or not, is checked
 before it counts:
 
-- **integrity:** the archive opens with the backup key, whole;
+- **integrity:** the archive opens with the backup key, whole, and its
+  settings and its installation are what a restore reads;
 - **compatibility:** this release can restore it;
 - **Root KEK match:** the installed Root KEK opens what the archive holds.
 
