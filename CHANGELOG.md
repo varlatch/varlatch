@@ -182,8 +182,8 @@ fixes.
   itself wherever it finds no writable temporary directory. It refuses to
   start, and says what to set, when the data directory is not writable
   either. The tailnet reach check keeps its state in the data directory
-  too. None of these files stays there: SQLite's have no name in the
-  directory, and the reach check removes its own.
+  too when it has no other place. None of these files stays there: SQLite's
+  have no name in the directory, and the reach check removes its own.
 - **A stop during a certificate issuance ends `varlatchd`.** With
   `listen_https`, the Go server kept trying again without end after a stop
   interrupted an issuance or a renewal, until it was killed (after the 30

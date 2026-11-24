@@ -819,7 +819,7 @@ func (r probeResolver) Reaches(ctx context.Context, name, nodeID string) (bool, 
 			wait = max(left, 0)
 		}
 	}
-	dir, err := os.MkdirTemp(r.cfg.DataDir, reachDirPrefix)
+	dir, err := makeReachDir(r.cfg)
 	if err != nil {
 		return false, err
 	}
