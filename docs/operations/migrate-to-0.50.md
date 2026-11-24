@@ -239,7 +239,7 @@ Its report:
 
 ```text
 Dry run: 41 tables, 182340 rows; checks passed true.
-Projected downtime 3m0s fits the budget of 10m0s: drain up to 1m0s, export 25s, import 20s, checks 15s, address transfer 1m0s (estimated for public ingress, the target's restart included; included in the projection).
+Projected downtime 3m30s fits the budget of 10m0s, with headroom 30s: drain up to 1m0s, export 25s, import 20s, checks 15s, address transfer 1m0s (estimated for public ingress, the target's restart included; included in the projection).
 ```
 
 A dry run does not move the address, so its transfer time is the
@@ -251,10 +251,12 @@ migration that measured its transfer reports the time alone.
   under a key made for the run and then discarded), every access decision
   the old server makes, and the audit log. A failed check names its class.
 - **Projected downtime** is the drain, the final copy and checks (measured
-  on the same data) and the address transfer (estimated by the ingress:
-  about a minute for a certificate or a Coolify domain move, seconds for
-  your own proxy). The migration refuses to start its barrier when the
-  projection exceeds `--max-downtime` (10 minutes by default).
+  on the same data), headroom on that copy work (a quarter of export, import
+  and checks, at least 30 seconds, for run-to-run variance) and the address
+  transfer (estimated by the ingress: about a minute for a certificate or a
+  Coolify domain move, seconds for your own proxy). The migration refuses to
+  start its barrier when the projection exceeds `--max-downtime` (10 minutes
+  by default).
 - **Drain** is bounded by `--drain` (60 seconds by default): in-flight
   requests (an upload still arriving included), Sync Target pushes,
   webhook deliveries and audit export batches finish within it, and
