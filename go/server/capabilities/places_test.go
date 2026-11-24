@@ -3,6 +3,7 @@
 package capabilities_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/authz"
+	"github.com/varlatch/varlatch/go/server/paritytest"
 )
 
 // Pages and applications as destinations, pipe and field targets (ADR-0064),
@@ -81,11 +83,89 @@ func TestTypedIntoAPage(t *testing.T) {
 	w.wantReason("no field", w.exercise("broker", c, with{"destination": map[string]any{"url": "https://portal.example.com/login"}}), 403, "PERMISSION_DENIED", "placement-not-targeted")
 }
 
+// What a Broker reports beside where it types is nowhere afterwards: not in
+// an event of a use or a refusal, which is what webhooks and exports carry,
+// not in a table, an answer or the log. A window's title is no part of a
+// report, and one that is sent all the same is dropped.
+func TestNothingElseOfAReportIsKept(t *testing.T) {
+	w := newWorld(t)
+	w.stop()
+	var log bytes.Buffer
+	w.log = &log
+	w.start()
+	// A window is no member of the document's, so these calls are not held
+	// against it.
+	w.check = false
+	c := w.issue("broker", typed(loginPage, w.app("CRM", "broker")))
+	const mark = "made-up-mark"
+	see := func(a answer, status int) {
+		t.Helper()
+		if a.status != status || strings.Contains(a.raw, mark) {
+			t.Errorf("%d %s", a.status, a.raw)
+		}
+	}
+	for path, status := range map[string]int{
+		"/login":       200,
+		"/login/step2": 200,
+		"/elsewhere":   403,
+	} {
+		for _, tail := range []string{"", "?" + mark, "?a=" + mark + "#" + mark, "#" + mark, "/a;sid=" + mark, "/a%3Bsid=" + mark, "/a%3F" + mark, "/a%23" + mark, "/a?%3F" + mark} {
+			see(w.exercise("broker", c, page("https://portal.example.com"+path+tail)), status)
+			see(w.exercise("broker", c, with{"destination": map[string]any{"url": "https://portal.example.com/login", "topUrl": "https://portal.example.com" + path + tail}, "placements": field("SECRET_A", "Password")}), status)
+		}
+	}
+	for _, url := range []string{"https://" + mark + "@portal.example.com/login", "https://u:" + mark + "@portal.example.com/login", "https://portal.example.com/login%253F" + mark,
+		"data:text/plain," + mark, mark, "https://portal.example.com\\" + mark + "/login", "https://portal.example.com/../" + mark} {
+		see(w.exercise("broker", c, page(url)), 403)
+	}
+	for name, status := range map[string]int{"CRM": 200, "Notepad": 403} {
+		see(w.exercise("broker", c, with{"destination": map[string]any{"app": name, "window": mark, "title": mark, "windowTitle": mark}, "placements": field("SECRET_A", "Password")}), status)
+	}
+	see(w.exercise("broker", c, with{"destination": map[string]any{"url": "https://portal.example.com/login", "title": mark, "window": mark}, "placements": field("SECRET_A", "Password")}), 200)
+	see(w.exercise("broker", c, with{"destination": map[string]any{"url": "https://portal.example.com/?" + mark, "app": "CRM"}}), 422)
+	see(w.exercise("broker", c, with{"destination": map[string]any{"url": "https://portal.example.com/?" + mark + strings.Repeat("x", authz.MaxReported)}}), 422)
+	// Nor is a selector that was refused repeated.
+	for _, s := range []string{"web:https://u:" + mark + "@x.example/", "web:https://x.example/?" + mark, "WEB:https://x.example/#" + mark, " web:ftp://" + mark} {
+		see(w.call("POST", capsPath, "broker", w.issueBody(typed(s))), 422)
+	}
+	for _, r := range paritytest.Rows(t, w.store, "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'") {
+		for _, row := range paritytest.Rows(t, w.store, "SELECT * FROM "+r["name"].(string)) {
+			if s := fmt.Sprint(row); strings.Contains(s, mark) {
+				t.Errorf("the table %v holds %v", r["name"], row)
+			}
+		}
+	}
+	for _, r := range paritytest.Rows(t, w.store, "SELECT metadata FROM audit_events WHERE event_type IN ('capability.exercised', 'capability.denied')") {
+		if s := fmt.Sprint(r["metadata"]); strings.Contains(strings.ToLower(s), "window") || strings.Contains(strings.ToLower(s), "title") {
+			t.Errorf("%s", s)
+		}
+	}
+	w.stop()
+	if strings.Contains(log.String(), mark) {
+		t.Errorf("the log holds it: %s", log.String())
+	}
+	w.start()
+}
+
+// A page without TLS is allowed where it is written out, and nowhere else.
+func TestAPageWithoutTLS(t *testing.T) {
+	w := newWorld(t)
+	a := w.want("issue", w.call("POST", capsPath, "broker", w.issueBody(typed("web:http://intra.example/login"))), 201, "")
+	c := capability{a.body["id"].(string), a.body["secret"].(string)}
+	w.wantValue("as it is written", w.exercise("broker", c, page("http://intra.example/login")))
+	w.wantEvent("capability.exercised", "broker", nil, map[string]any{"destination": "web:http://intra.example:80/login", "selector": "web:http://intra.example:80/login"})
+	w.wantReason("with TLS", w.exercise("broker", c, page("https://intra.example/login")), 403, "PERMISSION_DENIED", "destination-mismatch")
+	// No scheme is none of the two.
+	for _, s := range []string{"web:intra.example/login", "web://intra.example/login", "web:*://intra.example/login"} {
+		w.want(s, w.call("POST", capsPath, "broker", w.issueBody(typed(s))), 422, "VALIDATION_FAILED")
+	}
+}
+
 func TestTypedIntoAnApplication(t *testing.T) {
 	w := newWorld(t)
 	c := w.issue("broker", typed(w.app("CRM Client", "broker"), w.app("Café", "broker")))
-	w.wantValue("its application", w.exercise("broker", c, with{"destination": map[string]any{"app": "CRM Client", "window": "Sign in\n\x1b[31m to CRM"}, "placements": field("SECRET_A", "Password")}))
-	w.wantEvent("capability.exercised", "broker", nil, map[string]any{"destination": w.app("CRM Client", "broker"), "destinationKind": "app", "selector": w.app("CRM Client", "broker"), "window": "Sign in  [31m to CRM"})
+	w.wantValue("its application", w.exercise("broker", c, with{"destination": map[string]any{"app": "CRM Client"}, "placements": field("SECRET_A", "Password")}))
+	w.wantEvent("capability.exercised", "broker", nil, map[string]any{"destination": w.app("CRM Client", "broker"), "destinationKind": "app", "selector": w.app("CRM Client", "broker"), "window": nil})
 	w.wantValue("another spelling of one name", w.exercise("broker", c, application("Café")))
 	for _, name := range []string{"crm client", "CRM", "Notepad", "CRM Client@" + w.idn("broker"), "CRM Client ", "*"} {
 		w.wantReason(name, w.exercise("broker", c, application(name)), 403, "PERMISSION_DENIED", "destination-mismatch")
@@ -180,7 +260,7 @@ func TestWhatIsReported(t *testing.T) {
 		"a page and a host":            map[string]any{"url": "https://portal.example.com/login", "host": "api.example.com", "port": 443},
 		"a page and a port":            map[string]any{"url": "https://portal.example.com/login", "port": 443},
 		"a page and an application":    map[string]any{"url": "https://portal.example.com/login", "app": "x"},
-		"a host and a window":          map[string]any{"host": "api.example.com", "port": 443, "window": "x"},
+		"an application and a host":    map[string]any{"host": "api.example.com", "port": 443, "app": "x"},
 		"the page around, and no page": map[string]any{"topUrl": "https://portal.example.com/login"},
 		"a window, and no application": map[string]any{"window": "x"},
 		"nothing":                      map[string]any{},

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/lib/targets"
 )
@@ -223,9 +224,51 @@ func TestApplicationsMatch(t *testing.T) {
 			t.Errorf("%+v", r)
 		}
 	}
-	for raw, want := range map[string]string{"Sign in": "Sign in", "a\nb\x1b[31m": "a b [31m", "": "", "\xff": "", strings.Repeat("x", 300): strings.Repeat("x", 200) + "\u2026", "a\u202eb": "a b"} {
-		if got := Window(raw); got != want {
-			t.Errorf("Window(%q) = %q", raw, got)
+}
+
+// What the audit log says of a page: its path, and nothing that came with a
+// query, a fragment, credentials or a path parameter, encoded or not.
+func TestWhatIsRecordedOfAPage(t *testing.T) {
+	const at = "web:https://portal.example.com:443"
+	for raw, want := range map[string]string{
+		"https://portal.example.com":                                         at + "/",
+		"https://portal.example.com/a/b":                                     at + "/a/b",
+		"https://portal.example.com/a/b?made=up":                             at + "/a/b",
+		"https://portal.example.com?made=up":                                 at + "/",
+		"https://portal.example.com/a#made-up":                               at + "/a",
+		"https://portal.example.com#made-up?made=up":                         at + "/",
+		"https://portal.example.com/a;jsessionid=madeup":                     at + "/a;\u2026",
+		"https://portal.example.com/a;jsessionid=madeup/b;x=madeup":          at + "/a;\u2026/b;\u2026",
+		"https://portal.example.com/a%3bsid=madeup/b":                        at + "/a;\u2026/b",
+		"https://portal.example.com/a%3Fmade=up/b":                           at + "/a\u2026",
+		"https://portal.example.com/a%23made=up":                             at + "/a\u2026",
+		"https://portal.example.com/a;x=madeup%3Fy=madeup":                   at + "/a;\u2026",
+		"https://u:madeup@portal.example.com/a":                              "web:unreadable",
+		"https://madeup@portal.example.com/a":                                "web:unreadable",
+		"https://u%3Amadeup%40portal.example.com/a":                          "web:unreadable",
+		"https://portal.example.com\\madeup/a":                               "web:unreadable",
+		"https://portal.example.com/a%253Fmadeup":                            "web:unreadable",
+		"https://portal.example.com;madeup/a":                                "web:unreadable",
+		"https://portal.example.com&x=madeup":                                "web:unreadable",
+		"data:text/html,madeup":                                              "web:unreadable",
+		"madeup":                                                             "web:unreadable",
+		"https://portal.example.com/" + strings.Repeat("x", 300):             at + "/" + strings.Repeat("x", 199) + "\u2026",
+		"https://portal.example.com/" + strings.Repeat("x", 197) + "%C3%A9":  at + "/" + strings.Repeat("x", 197) + "\u2026",
+		"https://portal.example.com/" + strings.Repeat("x", 196) + ";madeup": at + "/" + strings.Repeat("x", 196) + ";\u2026",
+	} {
+		for what, got := range map[string]string{
+			"url": Reported{Kind: PlaceWeb, URL: raw}.Read(machine).Text,
+			"top": Reported{Kind: PlaceWeb, URL: "https://x.example/", Top: raw}.Read(machine).Top,
+		} {
+			if what == "top" && raw == "" {
+				continue
+			}
+			if got != want {
+				t.Errorf("%s %q is recorded as %q, want %q", what, raw, got, want)
+			}
+			if strings.Contains(got, "madeup") || strings.Contains(got, "made=up") || !utf8.ValidString(got) {
+				t.Errorf("%s %q is recorded as %q", what, raw, got)
+			}
 		}
 	}
 }
@@ -291,7 +334,8 @@ func FuzzPageMatch(f *testing.F) {
 		if again, ok := ParsePage(full); len(full) <= MaxReported && (!ok || again != g) {
 			t.Fatalf("%q read again: %+v, then %+v, %v", raw, g, again, ok)
 		}
-		if strings.Contains(g.Host, "@") || strings.ContainsAny(g.String(), "?# \t\r\n\\") {
+		if said := g.String(); strings.Contains(g.Host, "@") || strings.ContainsAny(said, "?# \t\r\n\\") || !utf8.ValidString(said) ||
+			strings.Contains(said, "%3F") || strings.Contains(said, "%23") || strings.Contains(strings.ReplaceAll(said, ";\u2026", ""), ";") {
 			t.Fatalf("%q is recorded as %q", raw, g.String())
 		}
 		if !p.holds(g) {

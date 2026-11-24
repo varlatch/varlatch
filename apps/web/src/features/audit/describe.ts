@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { placeLabel } from "../access/places";
+import { placeLabel, withoutTLS } from "../access/places";
 
 /**
  * Plain-English audit lines. Each event becomes an icon, a short title and a
@@ -183,7 +183,12 @@ function who(id: unknown, names: NameResolver, fallback = "an identity"): Segmen
 function typedInto(metadata: Rec, names: NameResolver): Segment[] {
   const destination = str(metadata.destination);
   if (!destination || (metadata.destinationKind !== "web" && metadata.destinationKind !== "app")) return [];
-  return [metadata.destinationKind === "web" ? " at " : " in ", { kind: "mono", text: placeLabel(destination, (id) => names.identity(id) ?? "its machine") }];
+  const insecure = withoutTLS(destination) || withoutTLS(str(metadata.topDestination) ?? "");
+  return [
+    metadata.destinationKind === "web" ? " at " : " in ",
+    { kind: "mono", text: placeLabel(destination, (id) => names.identity(id) ?? "its machine") },
+    ...(insecure ? [" (http: not encrypted)"] : []),
+  ];
 }
 
 function actionText(action: string | null | undefined): Segment {

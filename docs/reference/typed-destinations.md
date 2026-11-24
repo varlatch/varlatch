@@ -35,9 +35,12 @@ and would let a value for a field go there. Issue one for each.
 `web:` then `http` or `https`, `://`, a host, an optional port, and an optional
 path. Compared with the page's address:
 
-- **Scheme and port** exactly. No port is the scheme's own.
+- **Scheme and port** exactly. No port is the scheme's own. `http:` is allowed
+  when it is written out, and is a page **without encryption**: see the warning
+  below.
 - **Host** exactly, or `*.suffix`: subdomains only, never the suffix itself,
-  never an IP address, and never all of a top-level domain. Lower-cased,
+  never an IP address, and never all of a top-level domain. Letters, digits,
+  `.`, `-` and `_` alone. Lower-cased,
   internationalized names in their ASCII form, one trailing dot dropped, so
   `Portal.Example.com.` is `portal.example.com`.
 - **Path**: a prefix of whole segments, case-sensitive. `/login` names
@@ -52,6 +55,15 @@ character anywhere before the query, a dot segment (`..`, `%2e%2e`, `..;x`), an
 encoded slash, backslash or control character, a percent sign encoded again
 (`%252e`), an invalid percent-encoding, another scheme (`blob:`, `data:`,
 `javascript:`, `about:`, `file:`).
+
+> **Warning: an `http:` page is not encrypted.** Whoever is on the network
+> between the machine and the page reads what is typed there, or shows another
+> page in its place, and no destination can tell. Write `web:http://…` only for
+> a page that has no HTTPS, on a network you trust for that value, with a
+> Capability that names it alone. A Capability that names a page over `https:`
+> never matches it over `http:`. The dashboard marks such a destination, and
+> its uses in the audit log, "http: not encrypted". The API takes it as any
+> other, without a warning in its answer.
 
 **A frame**: report the frame's own address as `url` and the page's as
 `topUrl`. Each has to be named by a destination of the Capability.
@@ -103,9 +115,9 @@ POST …/capabilities/{id}/exercises
 ```
 
 `destination` is one of `{ "host", "port" }`, `{ "url", "topUrl"? }` and
-`{ "app", "window"? }`; members of two are refused (422). `window` is the
-window's title: recorded, shortened to 200 characters, and not compared. Leave
-it out when titles hold what should not be in a log.
+`{ "app" }`; members of two are refused (422). A window's title is no part of
+it: titles hold what people are looking at (a customer, a document, a message),
+so Varlatch takes and records none. Do not put one in `app`.
 
 Everything else about a Capability is as for a host: the agent's `secret.use`
 decides at each exercise, [delegated](ci-and-machines.md#brokers-on-many-machines),
@@ -132,13 +144,27 @@ for one of them alone.
 
 ## What the audit log says
 
-`capability.exercised` has `destination` (`web:https://portal.example.com:443/login`,
-the path shortened to 200 characters, or `app:CRM Client@idn_…`),
-`destinationKind` (`web` or `app`), the `selector` that named it,
-`topDestination` and `window` when reported, and `placements`. A refused one is
-`capability.denied` with the same and its reason (`destination-mismatch`,
-`placement-not-targeted`, `placement-not-for-destination`), `web:unreadable`
-for an address that could not be read. A host's events are as they were.
+`capability.exercised` has `destination` (`web:https://portal.example.com:443/login`
+or `app:CRM Client@idn_…`), `destinationKind` (`web` or `app`), the `selector`
+that named it, `topDestination` when reported, and `placements`. A refused one is
+`capability.denied` with what was reported and its reason (`destination-mismatch`,
+`placement-not-targeted`, `placement-not-for-destination`). Webhooks and exports
+carry the same events. A host's are as they were.
+
+**A page's path is recorded**, of a refused page too, shortened to 200
+characters. A path can say something about a person (`/patients/4711`): report
+the address all the same, and give the log to those who may read that.
+
+Never recorded, in no event and no log of the server:
+
+- the query and the fragment, also when their mark is encoded in the path
+  (`%3F`, `%23`): the rest of the path goes with it (`/a…`);
+- path parameters (`/a;jsessionid=…` is `/a;…`);
+- credentials in an address: it is `web:unreadable`, as any address that
+  could not be read, and nothing of it is kept;
+- a window's title.
+
+A refused application's name is recorded as it was reported.
 
 ## What a broker can still do
 

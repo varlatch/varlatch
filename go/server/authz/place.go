@@ -41,9 +41,8 @@ const (
 const (
 	MaxSelector = 512
 	MaxReported = 4096
-	// MaxAppName and MaxWindow are in code points.
+	// MaxAppName is in code points.
 	MaxAppName = 100
-	MaxWindow  = 200
 )
 
 // Place is a Capability's destination selector, of any kind.
@@ -60,9 +59,17 @@ type Place struct {
 
 var (
 	identityID = regexp.MustCompile(`^idn_[a-z2-7]{26}$`)
+	// pageHost is a name there is, or an IPv4 address: a "*", and what a host
+	// could carry in a query's place (";x=y"), is none.
+	pageHost = regexp.MustCompile(`^[a-z0-9._-]+$`)
 	// encodedTwice is a percent sign, encoded, before what it would encode: for
 	// a server that decodes twice.
 	encodedTwice = regexp.MustCompile(`%25[0-9A-Fa-f]{2}`)
+	// What String leaves out: path parameters, and what follows an encoded
+	// "?" or "#"; and half a percent-encoding at the end.
+	pathParameter = regexp.MustCompile(`(?:;|%3B)[^/]*`)
+	encodedMark   = regexp.MustCompile(`%3F|%23`)
+	halfEncoded   = regexp.MustCompile(`%[0-9A-F]?$`)
 	// schemes' ports.
 	schemePort = map[string]int{"https": 443, "http": 80}
 )
@@ -170,7 +177,7 @@ func splitAuthority(authority, scheme string) (string, int, bool) {
 		return "", 0, false
 	}
 	host, ok := CanonicalizeHost(host)
-	if !ok || strings.Contains(host, "*") {
+	if !ok || !pageHost.MatchString(host) {
 		return "", 0, false
 	}
 	return host, port, true
@@ -293,11 +300,23 @@ func asciiLower(s string) string {
 // Net is where the page is.
 func (p Page) Net() Destination { return Destination{Host: p.Host, Port: p.Port} }
 
-// String is the page as the audit log has it: its path shortened.
+// String is the page as the audit log has it: its path shortened, and
+// without what a path can carry in a query's place. A path parameter
+// (";jsessionid=…") goes, and so does all that follows a query's or a
+// fragment's mark that was encoded.
 func (p Page) String() string {
 	path := p.Path
+	if i := encodedMark.FindStringIndex(path); i != nil {
+		path = path[:i[0]] + "…"
+	}
+	path = pathParameter.ReplaceAllString(path, ";…")
 	if len(path) > 200 {
-		path = path[:200] + "…"
+		path = path[:200]
+		// Not half of a character, nor of an encoded one.
+		for !utf8.ValidString(path) {
+			path = path[:len(path)-1]
+		}
+		path = halfEncoded.ReplaceAllString(path, "") + "…"
 	}
 	return p.Scheme + "://" + DestinationSelector{Host: p.Host, Port: p.Port}.String() + path
 }
@@ -335,26 +354,6 @@ func AppName(raw string) (string, bool) {
 	return name, true
 }
 
-// Window is a window's title as it is recorded: one line of printable text,
-// shortened; "" for what is none.
-func Window(raw string) string {
-	if !utf8.ValidString(raw) {
-		return ""
-	}
-	var b strings.Builder
-	n := 0
-	for _, r := range norm.NFC.String(raw) {
-		if !unicode.IsPrint(r) {
-			r = ' '
-		}
-		if n++; n > MaxWindow {
-			return b.String() + "…"
-		}
-		b.WriteRune(r)
-	}
-	return strings.TrimSpace(b.String())
-}
-
 func plainText(s string) bool {
 	for _, r := range s {
 		if !unicode.IsPrint(r) || unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Variation_Selector, r) {
@@ -386,9 +385,9 @@ type Reported struct {
 	// URL is the address of the page that holds the field, and Top of the
 	// page around it, when that is another one ("": none).
 	URL, Top string
-	// App is the application's name, and Window its window's title, which is
-	// recorded and not compared.
-	App, Window string
+	// App is the application's name. The title of its window is no part of a
+	// report: titles hold what people look at, and are recorded nowhere.
+	App string
 }
 
 // Reading is a reported destination, read: what is compared, and what the

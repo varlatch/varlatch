@@ -1175,7 +1175,7 @@ export class VarlatchClient {
        * it is, as the browser has its address, or an application on this machine. Report what is there, not what
        * should be. An older server refuses the last two.
        */
-      destination: { host: string; port: number } | { url: string; topUrl?: string } | { app: string; window?: string };
+      destination: { host: string; port: number } | { url: string; topUrl?: string } | { app: string };
       /** Each substitution the Broker will make: an item and one of its recorded targets. */
       placements: { item: string; target: string }[];
       /**

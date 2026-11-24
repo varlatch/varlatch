@@ -1915,7 +1915,9 @@ may use; it never adds to the Agent's Grants.
     ("web:443" is the host named web). Neither the TypeScript server nor an
     earlier varlatchd reads a new one, so such a row matches nothing there.
   - `authz.Reported` is what a Broker says, and `Reading` what is compared and
-    recorded. A host's events keep their bytes.
+    recorded. A host's events keep their bytes. `Page.String` is what the audit
+    log has of a page: the path, without path parameters and what follows an
+    encoded query's mark. No report has room for a window's title.
   - `capabilities.checkPlaces` refuses what does not go together at issuing:
     hosts beside the other kinds (an older server would match the host alone,
     for targets that are not a host's), another machine's application, a target

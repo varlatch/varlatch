@@ -387,16 +387,12 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 	broker := req.Principal.Identity.ID
 	reading := in.Destination.Read(broker)
 	// where is the destination in the audit log: of a host as it always was,
-	// of a page or an application its kind too, the page around it, and the
-	// window's title.
+	// of a page or an application its kind too, and the page around it.
 	where := jsvalue.Object{{Key: "destination", Value: reading.Text}}
 	if reading.Kind != authz.PlaceHost {
 		where = append(where, jsvalue.Member{Key: "destinationKind", Value: reading.Kind})
 		if reading.Top != "" {
 			where = append(where, jsvalue.Member{Key: "topDestination", Value: reading.Top})
-		}
-		if w := authz.Window(in.Destination.Window); w != "" {
-			where = append(where, jsvalue.Member{Key: "window", Value: w})
 		}
 	}
 	resource := func() jsvalue.Object {

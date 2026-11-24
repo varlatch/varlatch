@@ -99,6 +99,10 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 	for i, raw := range in.Destinations {
 		sel, ok := authz.ParsePlace(raw)
 		if !ok {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(raw)), "web:") {
+				// Not repeated: what makes it none may be credentials or a query.
+				return nil, nil, invalid("Invalid destination selector: destinations[" + strconv.Itoa(i) + "]: a page is web:<http or https>://<host or *.suffix>[:port][/path], without credentials, query or fragment")
+			}
 			return nil, nil, invalid("Invalid destination selector: " + raw)
 		}
 		selectors[i], parsed[i] = sel.String(), sel

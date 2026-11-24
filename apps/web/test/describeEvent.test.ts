@@ -9,7 +9,7 @@ import {
   type AuditEventLike,
   type NameResolver,
 } from "../src/features/audit/describe";
-import { placeLabel } from "../src/features/access/places";
+import { placeLabel, withoutTLS } from "../src/features/access/places";
 
 const names: NameResolver = {
   ...emptyResolver,
@@ -219,6 +219,13 @@ describe("values typed into pages and applications (ADR-0064)", () => {
     expect(used({ destination: "web:https://portal.example.com:443/login", destinationKind: "web" })).toBe("used API_KEY for claude-code-agent at https://portal.example.com/login in api / production");
     expect(used({ destination: "app:CRM Client@idn_abc2", destinationKind: "app" })).toBe("used API_KEY for claude-code-agent in CRM Client on its machine in api / production");
     expect(used({ reason: "destination-mismatch", destination: "web:unreadable", destinationKind: "web" }, "capability.denied")).toBe("was refused a capability use at web:unreadable in api / production");
+  });
+  it("warns of a page without TLS, its own or the one around it", () => {
+    const http = "web:http://intra.example:80/login";
+    expect(used({ destination: http, destinationKind: "web" })).toBe("used API_KEY for claude-code-agent at http://intra.example/login (http: not encrypted) in api / production");
+    expect(used({ reason: "destination-mismatch", destination: http, destinationKind: "web" }, "capability.denied")).toContain("at http://intra.example/login (http: not encrypted)");
+    expect(used({ destination: "web:https://a.example:443/f", topDestination: http, destinationKind: "web" })).toContain("https://a.example/f (http: not encrypted)");
+    expect(["web:https://a.example:443/http://", "web:80", "http.example.com:80", "app:web:http://x@idn_abc2"].filter(withoutTLS)).toEqual([]);
   });
   it("labels a destination", () => {
     const name = (id: string) => (id === "idn_abc2" ? "desk-7" : id);

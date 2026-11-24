@@ -7438,7 +7438,7 @@ type IssueCapabilityJSONBody struct {
 	// BrokerIdentityId The Broker the Capability is issued for (capability capabilities.delegate): a broker identity of the Organization that is not retired. Naming any but the caller itself needs capability.issue. Required when the caller is not a Broker. While the Capability lives, every exercise also needs its issuer to be live and to hold capability.issue here.
 	BrokerIdentityId *string `json:"brokerIdentityId,omitempty"`
 
-	// Destinations Hosts: host, host:port, *.suffix, an IP address; no port is 443. Or, for a Broker that types (capability capabilities.destination-kinds, ADR-0064), pages, web:<http or https>://<host or *.suffix>[:port][/path], the path a prefix of whole segments, and desktop applications on the Broker's machine, app:<name>@<the Broker's identity ID>. Not hosts and the others in one Capability (VALIDATION_FAILED, reason mixed-destinations), nor an application of another machine (app-machine). A server without the capability refuses the last two kinds.
+	// Destinations Hosts: host, host:port, *.suffix, an IP address; no port is 443. Or, for a Broker that types (capability capabilities.destination-kinds, ADR-0064), pages, web:<http or https>://<host or *.suffix>[:port][/path], the path a prefix of whole segments (an http page is allowed when it is written out, and not encrypted: whoever is on the network reads what is typed there), and desktop applications on the Broker's machine, app:<name>@<the Broker's identity ID>. Not hosts and the others in one Capability (VALIDATION_FAILED, reason mixed-destinations), nor an application of another machine (app-machine). A server without the capability refuses the last two kinds.
 	Destinations []string `json:"destinations"`
 	Items        []string `json:"items"`
 
@@ -7467,9 +7467,9 @@ type IssueCapabilityJSONBody struct {
 type ExerciseCapabilityJSONBody struct {
 	CapabilitySecret string `json:"capabilitySecret"`
 
-	// Destination Where the values go, as the Broker says: host and port; or (capability capabilities.destination-kinds, ADR-0064) the page, url with topUrl, or the application, app with window, on the Broker's own machine. One of the three; a server without the capability refuses the last two for want of host and port. None of the Capability's destinations: PERMISSION_DENIED, reason destination-mismatch, recorded with what was reported.
+	// Destination Where the values go, as the Broker says: host and port; or (capability capabilities.destination-kinds, ADR-0064) the page, url with topUrl, or the application, app, on the Broker's own machine. The audit log has the page's path, without query, fragment, credentials and path parameters, and the application's name; never a window's title, which is no part of a report. One of the three; a server without the capability refuses the last two for want of host and port. None of the Capability's destinations: PERMISSION_DENIED, reason destination-mismatch, recorded with what was reported.
 	Destination struct {
-		// App The application's name, compared exactly.
+		// App The application's name, compared exactly, and recorded. Never its window's title.
 		App  *string `json:"app,omitempty"`
 		Host *string `json:"host,omitempty"`
 		Port *int    `json:"port,omitempty"`
@@ -7479,9 +7479,6 @@ type ExerciseCapabilityJSONBody struct {
 
 		// Url The address of the page whose field it is, as the browser has it (a frame's own). Compared by scheme, host, port and path; its query and fragment are not compared nor recorded. One that cannot be read, or could be read two ways, is none of any.
 		Url *string `json:"url,omitempty"`
-
-		// Window Its window's title: recorded, shortened, and not compared.
-		Window *string `json:"window,omitempty"`
 	} `json:"destination"`
 
 	// Fresh Only codes of a later period than any this server has given (capability values.totp): the current period's, else the next one's. Once one of the next period or a later one was given (minValiditySeconds may have skipped the current one), the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected.

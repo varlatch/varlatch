@@ -146,15 +146,18 @@ fixes.
   how they are compared, and what a broker can still do: Varlatch compares what
   the broker reports.
   - An exercise's `destination` is `{ host, port }`, `{ url, topUrl? }` or
-    `{ app, window? }`. An address that could be read two ways matches nothing;
-    queries and fragments are neither compared nor recorded.
+    `{ app }`. An address that could be read two ways matches nothing; queries
+    and fragments are neither compared nor recorded. Audit events have the
+    page's path and the application's name, never a window's title.
+  - Pages over `http:` are allowed when they are written out. The dashboard
+    marks them: they are not encrypted.
   - Issuing refuses hosts beside pages or applications (`mixed-destinations`),
     an application on another machine than the broker's (`app-machine`), and a
     target no destination takes (`target-without-destination`). An exercise
     refuses a placement its destination does not take
     (`placement-not-for-destination`).
-  - Audit events gain `destinationKind`, `selector`, `topDestination` and
-    `window` for these kinds.
+  - Audit events gain `destinationKind`, `selector` and `topDestination` for
+    these kinds.
   - An OAuth connection's hosts bind pages too, and a connection that names
     hosts goes to no application.
   - No schema change. On an earlier release, as after a reverse migration to

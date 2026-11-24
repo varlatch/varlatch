@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Filter, Monitor, MoreHorizontal, Plus, Sparkles, Tag, User, Wifi } from "lucide-react";
 import type { Requirement, Tier } from "@varlatch/protocol";
-import { placeLabel } from "./places";
+import { Destinations } from "./Destinations";
 import { useSession } from "../../lib/session";
 import { countdown, timeAgo, useNow } from "../../lib/time";
 import {
@@ -327,7 +327,7 @@ function CapabilitiesSection({ org }: { org: string }) {
                     </Badge>
                   ))}
                 </span>
-                <span className="font-mono text-[12.5px] text-muted">→ {c.destinations.map((d) => placeLabel(d, nameOf)).join(", ")}</span>
+                <Destinations destinations={c.destinations} nameOf={nameOf} />
                 <span className="flex-1" />
                 {live ? (
                   <>

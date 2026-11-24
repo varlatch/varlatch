@@ -933,7 +933,9 @@ paths:
                     is 443. Or, for a Broker that types (capability
                     capabilities.destination-kinds, ADR-0064), pages,
                     web:<http or https>://<host or *.suffix>[:port][/path],
-                    the path a prefix of whole segments, and desktop
+                    the path a prefix of whole segments (an http page is
+                    allowed when it is written out, and not encrypted: whoever
+                    is on the network reads what is typed there), and desktop
                     applications on the Broker's machine,
                     app:<name>@<the Broker's identity ID>. Not hosts and the
                     others in one Capability (VALIDATION_FAILED, reason
@@ -1105,8 +1107,11 @@ paths:
                   description: >
                     Where the values go, as the Broker says: host and port; or
                     (capability capabilities.destination-kinds, ADR-0064) the
-                    page, url with topUrl, or the application, app with
-                    window, on the Broker's own machine. One of the three; a
+                    page, url with topUrl, or the application, app, on the
+                    Broker's own machine. The audit log has the page's path,
+                    without query, fragment, credentials and path parameters,
+                    and the application's name; never a window's title, which
+                    is no part of a report. One of the three; a
                     server without the capability refuses the last two for
                     want of host and port. None of the Capability's
                     destinations: PERMISSION_DENIED, reason
@@ -1131,8 +1136,7 @@ paths:
                       description: >
                         The address of the page around it, when that is
                         another one: a destination has to name it too.
-                    app: { type: string, minLength: 1, maxLength: 200, description: "The application's name, compared exactly." }
-                    window: { type: string, maxLength: 1000, description: "Its window's title: recorded, shortened, and not compared." }
+                    app: { type: string, minLength: 1, maxLength: 200, description: "The application's name, compared exactly, and recorded. Never its window's title." }
                 placements:
                   type: array
                   description: >

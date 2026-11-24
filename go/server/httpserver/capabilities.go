@@ -97,7 +97,6 @@ var (
 	}
 	exerciseApp = zObject{
 		{name: "app", schema: zString{min: 1, max: 200}},
-		{name: "window", schema: zString{max: 1000}, optional: true},
 	}
 )
 
@@ -114,7 +113,7 @@ func reportedDestination(body any) (zObject, error) {
 		name    string
 		members []string
 		schema  zObject
-	}{{"a host", []string{"host", "port"}, exerciseHost}, {"a page", []string{"url", "topUrl"}, exercisePage}, {"an application", []string{"app", "window"}, exerciseApp}} {
+	}{{"a host", []string{"host", "port"}, exerciseHost}, {"a page", []string{"url", "topUrl"}, exercisePage}, {"an application", []string{"app"}, exerciseApp}} {
 		if slices.ContainsFunc(k.members, func(m string) bool { return has(d, m) }) {
 			kinds, schema = append(kinds, k.name), k.schema
 		}
@@ -384,7 +383,7 @@ func (o *operations) ExerciseCapability(ctx context.Context, _ api.ExerciseCapab
 		case has(dest, "url"):
 			in.Destination = authz.Reported{Kind: authz.PlaceWeb, URL: str(dest, "url"), Top: str(dest, "topUrl")}
 		case has(dest, "app"):
-			in.Destination = authz.Reported{Kind: authz.PlaceApp, App: str(dest, "app"), Window: str(dest, "window")}
+			in.Destination = authz.Reported{Kind: authz.PlaceApp, App: str(dest, "app")}
 		default:
 			in.Destination = authz.Reported{Kind: authz.PlaceHost, Host: authz.Destination{Host: str(dest, "host"), Port: int(number(dest, "port"))}}
 		}
