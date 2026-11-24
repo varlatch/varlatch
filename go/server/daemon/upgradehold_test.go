@@ -189,8 +189,25 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 			}
 			time.Sleep(3 * upgradeHoldEvery)
 			closed("gone")
+			// Over, but not readable yet: looked at again though the file does
+			// not change.
 			next.Step, next.Start = upgradejournal.Checked, nil
-			writeUpgrade(t, in.dir, &next)
+			other := t.TempDir()
+			writeUpgrade(t, other, &next)
+			path := filepath.Join(in.dir, upgradejournal.File)
+			if err := os.Chmod(filepath.Join(other, upgradejournal.File), 0); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(filepath.Join(other, upgradejournal.File), path); err != nil {
+				t.Fatal(err)
+			}
+			if os.Getuid() != 0 {
+				time.Sleep(3 * upgradeHoldEvery)
+				closed("not readable")
+			}
+			if err := os.Chmod(path, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			open := false
 			for deadline := time.Now().Add(10 * time.Second); !open && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
 				open = getJSON(t, "http://"+r.addr+"/readyz", nil) == http.StatusOK
