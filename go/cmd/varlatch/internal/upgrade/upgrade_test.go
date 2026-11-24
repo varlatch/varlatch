@@ -47,6 +47,9 @@ var (
 )
 
 func checkoutSchema() int64 {
+	if len(os.Args) > 1 && os.Args[1] == ChildCommand {
+		return 0 // this binary as the data directory's owner, elsewhere
+	}
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "release", "release.json"))
 	if err != nil {
 		panic(err)
