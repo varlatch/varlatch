@@ -224,13 +224,42 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
   const target = names.target(str(r.targetId));
   const dest: Segment = target ? { kind: "name", text: target } : "an integration";
 
+  // An OAuth connection's events (ADR-0062), under the types Platform Connections have.
+  const oauthEvent = (icon: EventIcon, title: string, verb: string, after = "") => ({
+    icon,
+    title,
+    segments: [
+      verb,
+      { kind: "mono" as const, text: item ?? "an item" },
+      ...(str(m.account) ? [" of ", { kind: "name" as const, text: str(m.account)! }] : []),
+      ...inPlace(r, names),
+      ...(after ? [after] : []),
+    ],
+  });
+  const oauthChecked = () => {
+    const why = str(m.reason) ? `: ${str(m.reason)!.replace(/[-_]/g, " ")}` : "";
+    switch (str(m.outcome)) {
+      case "paused":
+        return oauthEvent("pause", "OAuth connection paused", "paused ");
+      case "resumed":
+        return oauthEvent("play", "OAuth connection resumed", "resumed ");
+      case "not-connected":
+        return oauthEvent("alert", "OAuth connection not connected", "tried to connect ", why);
+      case "needs-reconnect":
+        return oauthEvent("alert", "OAuth connection needs a person", "could not refresh ", `${why}; it has to be connected again`);
+      default:
+        return oauthEvent("alert", "OAuth refresh failing", "could not refresh ", why);
+    }
+  };
+
   switch (t) {
     // ---- values and secrets
     case "value.written":
       return {
         icon: "pencil",
-        title: m.totp === true ? "One-time code seed set" : r.previousVersionId ? "Value changed" : "Value set",
-        segments: [m.totp === true ? "set the seed of " : r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names)],
+        // ADR-0061, ADR-0062: a seed of one-time codes, an OAuth connection.
+        title: m.oauth === true ? (r.previousVersionId ? "OAuth connection changed" : "OAuth connection added") : m.totp === true ? "One-time code seed set" : r.previousVersionId ? "Value changed" : "Value set",
+        segments: [m.oauth === true ? (r.previousVersionId ? "changed the OAuth connection " : "added the OAuth connection ") : m.totp === true ? "set the seed of " : r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names)],
       };
     case "value.deleted":
       return { icon: "trash", title: "Value removed", segments: ["removed ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names, "from")] };
@@ -339,7 +368,7 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return {
         icon: "key",
         title: "Capability used",
-        segments: [typeof m.oneTimeCodes === "string" ? "got a one-time code, using " : "used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...inPlace(r, names)],
+        segments: [typeof m.oauthTokens === "string" ? "got an access token, using " : typeof m.oneTimeCodes === "string" ? "got a one-time code, using " : "used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...inPlace(r, names)],
       };
     case "capability.denied":
       return { icon: "shield", title: "Capability refused", segments: ["was refused a capability use", ...inPlace(r, names)] };
@@ -521,12 +550,14 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
 
     // ---- integrations
     case "sync.connection_created":
+      if (m.connection === "oauth") return oauthEvent("plug", "OAuth connection connected", "connected ");
       return {
         icon: "plug",
         title: "Connection created",
         segments: ["connected ", PLATFORM_LABELS[str(m.platform) ?? ""] ?? "a platform", ...(str(m.baseIdentity) ? [" ", { kind: "mono" as const, text: str(m.baseIdentity)! }] : [])],
       };
     case "sync.connection_checked": {
+      if (m.connection === "oauth") return oauthChecked();
       const status = str(m.status);
       const where = str(m.destination) ?? str(m.baseIdentity);
       return {
@@ -560,8 +591,13 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       };
     }
     case "sync.connection_credential_replaced":
+      if (m.connection === "oauth")
+        return str(m.outcome) === "refreshed"
+          ? oauthEvent("rotate", "OAuth access token refreshed", "refreshed ")
+          : oauthEvent("plug", "OAuth connection connected again", "connected ", m.accountChanged === true ? " to another account" : " again");
       return { icon: "key", title: "Credential replaced", segments: ["replaced the credential of ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.connection_revoked":
+      if (m.connection === "oauth") return oauthEvent("trash", "OAuth connection disconnected", "disconnected ", str(m.atProvider) === "revoked" ? ", and revoked its tokens" : "");
       return { icon: "trash", title: "Connection revoked", segments: ["revoked connection ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.github_app_registered": {
       const imported = str(m.via) === "import";

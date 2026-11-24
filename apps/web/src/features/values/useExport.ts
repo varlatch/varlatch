@@ -64,8 +64,8 @@ export function useExport(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, org, project, key, ready, opts.exportPurpose]);
 
-  // A one-time code's seed is never exported, and never asked for.
-  const secrets = (items ?? []).filter((i) => i.sensitive && !i.totp);
+  // A one-time code's seed and an OAuth connection are never exported, and never asked for.
+  const secrets = (items ?? []).filter((i) => i.sensitive && !i.totp && !i.oauth);
   const plain = (items ?? []).filter((i) => !i.sensitive && !withheld.has(i.name) && i.value != null);
   // Values no `.env` line carries safely to every loader; never written.
   const unwritable = plain.filter((i) => dotenvLine(i.name, i.value as string) === null).map((i) => i.name);
@@ -88,7 +88,9 @@ export function useExport(
       lines.push(line ?? `# ${name}: not written, tools would load its value differently`);
     };
     for (const item of [...items].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (item.totp) {
+      if (item.oauth) {
+        lines.push(`# ${item.name}: OAuth connection, never exported`);
+      } else if (item.totp) {
         lines.push(`# ${item.name}: one-time code, never exported`);
       } else if (item.sensitive) {
         const value = disclosed.get(item.name);

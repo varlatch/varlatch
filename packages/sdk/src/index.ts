@@ -29,6 +29,17 @@ import type {
   ApiError,
   CapabilityExercise,
   OneTimeCode,
+  OAuthAuthorization,
+  OAuthAuthorizationAnswer,
+  OAuthAuthorizationOutcome,
+  OAuthConnection,
+  OAuthConnectionChange,
+  OAuthConnectionInput,
+  OAuthDisconnection,
+  OAuthDiscovery,
+  OAuthGrant,
+  OAuthProviderInput,
+  OAuthRefresh,
   CapabilitySummary,
   ConfigItemSearchResult,
   ContractRevision,
@@ -663,6 +674,79 @@ export class VarlatchClient {
     );
   }
 
+  /** The environment's own OAuth connections (capability oauth.connections, ADR-0062): no secret and no token of them. */
+  listOAuthConnections(
+    org: string,
+    project: string,
+    environment: string,
+  ): Promise<Page<OAuthConnection> & { redirectBase?: string | null }> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections`);
+  }
+
+  createOAuthConnection(org: string, project: string, environment: string, input: OAuthConnectionInput): Promise<OAuthConnection> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections`, input);
+  }
+
+  /** What a connection to this provider would pin, and the redirect URI to register there. */
+  discoverOAuthProvider(
+    org: string,
+    project: string,
+    environment: string,
+    input: { provider: OAuthProviderInput; grant?: OAuthGrant },
+  ): Promise<OAuthDiscovery> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/discovery`, input);
+  }
+
+  getOAuthConnection(org: string, project: string, environment: string, item: string): Promise<OAuthConnection> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}`);
+  }
+
+  updateOAuthConnection(
+    org: string,
+    project: string,
+    environment: string,
+    item: string,
+    change: OAuthConnectionChange,
+  ): Promise<OAuthConnection> {
+    return this.request("PATCH", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}`, change);
+  }
+
+  /** Begin connecting: where to send the browser. A person in their dashboard session only. */
+  startOAuthAuthorization(
+    org: string,
+    project: string,
+    environment: string,
+    item: string,
+    input: { confirmAccountChange?: boolean } = {},
+  ): Promise<OAuthAuthorization> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/authorizations`, input);
+  }
+
+  completeOAuthAuthorization(
+    org: string,
+    project: string,
+    environment: string,
+    item: string,
+    answer: OAuthAuthorizationAnswer,
+  ): Promise<OAuthAuthorizationOutcome> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/authorizations/complete`, answer);
+  }
+
+  refreshOAuthConnection(org: string, project: string, environment: string, item: string): Promise<OAuthRefresh> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/refresh`);
+  }
+
+  /** Revokes its tokens at the provider, unless told not to, and forgets them here in every case. */
+  disconnectOAuthConnection(
+    org: string,
+    project: string,
+    environment: string,
+    item: string,
+    input: { revokeAtProvider?: boolean } = {},
+  ): Promise<OAuthDisconnection> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/disconnect`, input);
+  }
+
   setValue(
     org: string,
     project: string,
@@ -1062,7 +1146,10 @@ export class VarlatchClient {
       destination: { host: string; port: number };
       /** Each substitution the Broker will make: an item and one of its recorded targets. */
       placements: { item: string; target: string }[];
-      /** One-time codes among the items: still valid for this long, else the next one (capability values.totp). */
+      /**
+       * Still valid for this long: one-time codes among the items, else the next one (capability values.totp), and
+       * access tokens of OAuth connections, else refreshed first (capability oauth.connections).
+       */
       minValiditySeconds?: number;
       /** One-time codes among the items: none given before, else RATE_LIMITED (capability values.totp). */
       fresh?: boolean;

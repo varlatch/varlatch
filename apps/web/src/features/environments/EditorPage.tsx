@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, KeyRound, Lock, Pencil, TriangleAlert } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Link2, Lock, Pencil, TriangleAlert } from "lucide-react";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { useToast } from "../../components/Toast";
@@ -42,8 +42,10 @@ import { ReviewDialog } from "../values/ReviewDialog";
 import { RotateDialog } from "../values/RotateDialog";
 import { ImportDialog, PASTE_SAVED_CHECKLIST, savedPastedValue } from "../values/TransferDialogs";
 import { AddItemForm } from "../values/AddItemForm";
+import { OAuthDialog } from "../oauth/OAuthDialog";
+import { CAPABILITY as OAUTH, connectionLabel } from "../oauth/model";
 import { SeedDialog } from "../values/SeedDialog";
-import { CodeValue, DisclosureNotice, DraftMarker, RefHint, RotatingMarker, SaveBar, SecretMask, TypeBadge } from "../values/bits";
+import { CodeValue, ConnectionValue, DisclosureNotice, DraftMarker, RefHint, RotatingMarker, SaveBar, SecretMask, TypeBadge } from "../values/bits";
 import { ValueEditor, type CommitHow } from "../values/ValueEditor";
 import { targetCoversItem, targetLabel } from "../sync/syncStatus";
 import { ItemPanelBody, panelHeading, type PanelActions } from "./ItemPanel";
@@ -128,6 +130,8 @@ export function EditorPage() {
   // The item whose seed is replaced, "" to add one.
   const [seedItem, setSeedItem] = useState<string | null>(null);
   const codesSupported = useCapability("values.totp");
+  const oauthSupported = useCapability(OAUTH);
+  const [addingOAuth, setAddingOAuth] = useState(false);
   const [deadlines, setDeadlines] = useState<Map<string, string>>(() => new Map());
   const [importRows, setImportRows] = useState<{ name: string; value: string }[] | null>(null);
   // Values pasted into this environment's drafts, by name, for the checklist after saving.
@@ -168,7 +172,7 @@ export function EditorPage() {
       matchesFilter(filter, r.name) &&
       (segment === "all" || (segment === "missing" ? r.state === "missing_required" : r.sensitive)),
   );
-  const authorizedSecrets = rows.filter((r) => r.sensitive && r.server && !r.server.totp).map((r) => r.name);
+  const authorizedSecrets = rows.filter((r) => r.sensitive && r.server && !r.server.totp && !r.server.oauth).map((r) => r.name);
 
   const envTargets = useMemo(() => targets.data?.items ?? [], [targets.data]);
   const targetsFor = useCallback(
@@ -308,6 +312,8 @@ export function EditorPage() {
         setSeedItem(row.name);
         return;
       }
+      // What an OAuth connection is, is changed in its panel.
+      if (row.server?.oauth) return;
       // On narrow screens the panel is a modal drawer: close it to edit in the list.
       if (!wide) select(null);
       setActive(row.name);
@@ -316,6 +322,7 @@ export function EditorPage() {
     revert: () => drafts.setDraft(envName, row.name, null),
     remove: () => drafts.setDraft(envName, row.name, { op: "delete" }),
     rotate: () => setRotateItem(row.name),
+    changed: () => void refresh(),
     finishRotation: () => {
       setBusy((b) => ({ ...b, finish: true }));
       void api
@@ -352,7 +359,8 @@ export function EditorPage() {
       select(name);
     } else if (e.key === "e" || e.key === "E") {
       e.preventDefault();
-      if (serverByName?.get(name)?.totp) setSeedItem(name);
+      if (serverByName?.get(name)?.oauth) select(name);
+      else if (serverByName?.get(name)?.totp) setSeedItem(name);
       else if (draftKind(drafts.get(envName, name), serverByName?.get(name)) !== "deleted") setEditing(name);
     } else if (e.key === "Escape" && selected) {
       e.preventDefault();
@@ -540,7 +548,8 @@ export function EditorPage() {
                 onSelect={() => select(row.name)}
                 onEdit={() => {
                   setActive(row.name);
-                  if (row.server?.totp) setSeedItem(row.name);
+                  if (row.server?.oauth) select(row.name);
+                  else if (row.server?.totp) setSeedItem(row.name);
                   else setEditing(row.name);
                 }}
                 onCommit={(value, how) => commit(row, value, how)}
@@ -574,6 +583,11 @@ export function EditorPage() {
                 Add a one-time code…
               </Button>
             )}
+            {oauthSupported && (
+              <Button size="sm" variant="ghost" className="mt-2" icon={<Link2 size={13} />} data-testid="add-oauth" onClick={() => setAddingOAuth(true)}>
+                Add an OAuth connection…
+              </Button>
+            )}
           </div>
         </div>
         {panel}
@@ -603,6 +617,22 @@ export function EditorPage() {
           setImportRows(null);
         }}
       />
+      {addingOAuth && (
+        <OAuthDialog
+          open
+          org={org}
+          project={slug}
+          env={envName}
+          exists={(name) => existsIn(envName, name)}
+          onClose={() => setAddingOAuth(false)}
+          onSaved={async (name) => {
+            toast.success(`Added ${name}`, { description: "Connect it next." });
+            setAddingOAuth(false);
+            await refresh();
+            select(name);
+          }}
+        />
+      )}
       {seedItem !== null && (
         <SeedDialog
           open
@@ -735,6 +765,8 @@ function ValueRow({
     value = <span className="font-mono text-[13px] italic text-muted">default {contract?.defaultValue}</span>;
   } else if (!server) {
     value = <span className="text-muted">—</span>;
+  } else if (server.oauth) {
+    value = <ConnectionValue label={connectionLabel(server.oauth) ?? ""} />;
   } else if (server.totp) {
     value = disclosed ? (
       <span className="min-w-0 truncate font-mono text-[13px]">{disclosed.value}</span>
@@ -819,7 +851,7 @@ function ValueRow({
       )}
       {!editing && (
         <span className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md border border-bd bg-raised p-0.5 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100">
-          {sensitive && server && !draft && !tailnetOnly && (!server.totp || disclosed) && (
+          {sensitive && server && !draft && !tailnetOnly && !server.oauth && (!server.totp || disclosed) && (
             <IconButton
               size="sm"
               label={disclosed ? "Hide" : isDisclosed ? "Show again" : "Reveal (audited)"}
