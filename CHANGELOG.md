@@ -7,67 +7,6 @@ fixes.
 
 ## Unreleased
 
-### What 0.50.0 is
-
-0.50.0 is a new Varlatch server and a new CLI (ADR-0059). The server is one
-program, `varlatchd`: the API, the dashboard, the live views, the sync to
-platforms, the audit export and the backups, with its database (SQLite) in
-one directory of its own. It runs as a systemd service on Linux (amd64 and
-arm64), or as the container image `ghcr.io/varlatch/varlatchd`. The CLI is
-one program too, for Linux, macOS and Windows. The `/v1` API, the encryption
-and the semantics of values, Contracts, grants and audit are those of 0.23.0;
-the differences are listed below.
-
-What left:
-
-- **Docker Compose, PostgreSQL and Convex**, for the server. Nothing of
-  Varlatch's but `varlatchd` runs on the host. (Convex stays a platform
-  values can be synced to.)
-- **Node.js.** The CLI is a native program; `varlatch-cli-<version>.cjs` is
-  not published any more.
-- **The server's `VARLATCH_*` settings** and `.env`. The server reads one
-  file, `/etc/varlatch/varlatchd.conf`. The variables the CLI and
-  applications read (`VARLATCH_TOKEN`, `VARLATCH_SERVER` and the like) stay.
-- **`NODE_EXTRA_CA_CERTS`**, for the server: it trusts the system's
-  certificate authorities, or the file `SSL_CERT_FILE` names.
-- **`varlatch adopt`, and the Compose forms of `setup`, `doctor`, `move`,
-  `upgrade` and `admin`** (`--dir`, `admin backup create` and `verify`). The
-  Go CLI's forms of those commands are a Go installation's: see `varlatch
-  --help`. For a Compose installation keep the 0.23.0 CLI, as `varlatch-ts`.
-- **The backup timer of `infra/host-backup`.** `varlatchd` makes its backups
-  itself (`backup_interval`), to the same kind of destination, under the same
-  Backup Encryption Key.
-
-### Upgrading to 0.50.0
-
-A Compose installation is not upgraded in place: `varlatch migrate` moves it,
-with a dry run, a short downtime and 30 days to go back. Follow
-[Migrating an installation to Varlatch 0.50](docs/operations/migrate-to-0.50.md).
-
-1. **Upgrade to 0.23.0 first**, with its published images, and let it run.
-   `varlatch migrate` starts from that release only.
-2. **Before:** Docker Compose 2.32.0 or later; a backup destination with read
-   credentials; the Backup Encryption Key and the Root KEK. Look for settings
-   without a counterpart: `varlatch migrate` carries the outbound allow list
-   over and warns of `NODE_EXTRA_CA_CERTS`.
-3. **The dry run** (`varlatch migrate --dry-run`) copies and checks everything
-   with no downtime, and says how long the migration will take.
-4. **The migration.** People sign in again, with the same passkey. CLIs,
-   machine credentials, OIDC and applications keep working at the same
-   address, released CLIs included.
-5. **After, check:** `sudo varlatch doctor`; `sudo varlatch admin backup run`
-   and `sudo varlatch admin backup test-bucket`; `sudo varlatch admin outbound
-   check`; the Sync Targets, the webhooks and the audit export in the
-   dashboard; a sign-in and a `varlatch run` from a client. Do not start,
-   recreate or redeploy the old installation.
-6. **To go back** within 30 days: `varlatch migrate --rollback`, which keeps
-   what changed since. **When you are sure:** `varlatch migrate --finish`,
-   which cannot be undone.
-
-An archive made by a release before 0.50 is turned into one 0.50 restores with
-`varlatch migrate --from-archive`. An installation of a 0.50 prerelease is upgraded
-in place, with `sudo varlatch upgrade`.
-
 ### API
 
 - **`GET /v1/installation/listeners` has a new node check reason,
@@ -224,12 +163,19 @@ in place, with `sudo varlatch upgrade`.
 ### Documentation
 
 - **Sharing the host with other workloads.** [Host requirements](docs/self-hosting/requirements.md#sharing-the-host-with-other-workloads)
-  explains how a host's other containers can take CPU from Varlatch, with a
-  measurement on a small host shared with Coolify, whose scheduler does its
-  periodic work at the start of every minute. Its settings for a Compose
-  installation, and those of
-  [Deploying on Coolify](infra/coolify/README.md#sharing-the-host), are for
-  0.23.x.
+  explains how a host's other containers can take CPU from Varlatch, with
+  a measurement on a small host shared with Coolify, whose scheduler does
+  its periodic work at the start of every minute. It also explains how to
+  give varlatchd and PostgreSQL a higher CPU weight in
+  `docker-compose.override.yml` (`cpu_shares: 4096`, the value that raises
+  the weight under every runtime's conversion), and why the shipped Compose
+  files set none. It now gives one measurement of the weight's effect.
+  [Deploying on Coolify](infra/coolify/README.md#sharing-the-host) explains
+  that Coolify sets the CPU weight of an application it builds itself from
+  the application's CPU shares setting (1024 by default, which gives weight
+  39 on runtimes with the older conversion; set 4096), that a
+  `--cpu-shares` in its custom run options is overridden, and that a
+  Compose resource needs `cpu_shares` in its Compose file.
 
 ### Releases
 
@@ -300,17 +246,6 @@ Changes since 0.50.0-rc.2, by pull request:
   binary in its place during the waits; before, it failed at once. When the
   old binary cannot be put back, the message says where it is.
 <!-- END SLOT #448 -->
-<!-- SLOT #332 (to be restacked by 5.3a; text from 5.3a 2026-11-24; recheck against the merged PR, then remove both markers; or drop) -->
-- **`varlatch upgrade --rollback` (#332)** returns to the release the last
-  upgrade came from (0.50.0-rc.3 or later). When that upgrade's release
-  declared itself rollback-safe for it, and it opens the database as it is,
-  only the binaries go back and every change stays. Otherwise the pre-upgrade
-  snapshot is restored, after listing what is lost, and only with
-  `--accept-data-loss` or a yes. It refuses while a migration is under way,
-  and for an upgrade made before the migration. `varlatch doctor` now fails
-  on an upgrade or rollback left pending. An undone upgrade no longer gives
-  the previous database the write-ahead log of a server that was killed.
-<!-- END SLOT #332 -->
 - **`varlatch migrate --to-image`, refused clearly (#435).** A reference
   without a tag, or otherwise not pinned, was refused with a message whose
   reference was masked. The refusal now names the repository and the digest
@@ -348,6 +283,8 @@ Changes since 0.50.0-rc.2, by pull request:
   lifted last, only while that gate is there.
 - **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
   refuses an earlier one before anything is done.
+<!-- SLOT SETUP-LINK (5.1e's setup enrollment-link fix, number and text to come; fill or drop) -->
+<!-- END SLOT SETUP-LINK -->
 <!-- SLOT #446 (armed, head d6a9d52d; recheck against the merged PR, then remove both markers; or drop) -->
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing
   (#446).** Each step says when it starts, every 15 seconds while it
