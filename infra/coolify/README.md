@@ -424,12 +424,15 @@ root on the host.
 
    ```sh
    docker run -d --name varlatchd --network <the proxy's network> \
-     --restart unless-stopped --read-only --tmpfs /tmp --cap-drop ALL \
+     --restart unless-stopped --read-only --cap-drop ALL \
      --security-opt no-new-privileges --stop-timeout 30 \
      -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
      -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro \
      ghcr.io/varlatch/varlatchd@sha256:<the release's digest>
    ```
+
+   The root filesystem is read-only, and no tmpfs is needed: Varlatch writes
+   only to `/srv/varlatch/data`, SQLite's temporary files included.
 
    The proxy serves HTTPS and forwards to `varlatchd:8686`.
    [Verifying a release](../../docs/operations/verify-release.md#the-go-lines-image-0500-and-later)
@@ -490,7 +493,8 @@ Coolify, stop the resource and do not deploy it until you are done.
    `tailnet` line of `varlatchd.conf`, and restore:
 
    ```sh
-   docker run --rm -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
+   docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+     -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
      -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image> \
      admin backup restore --in /var/lib/varlatch/backups/ARCHIVE-ID.vltbak
    ```
@@ -500,7 +504,7 @@ Coolify, stop the resource and do not deploy it until you are done.
    ```sh
    docker network create varlatch-restore
    docker run -d --name varlatch-restore --network varlatch-restore -p 127.0.0.1:8686:8686 \
-     --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --stop-timeout 30 \
+     --read-only --cap-drop ALL --security-opt no-new-privileges --stop-timeout 30 \
      -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
      -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image>
    ```
