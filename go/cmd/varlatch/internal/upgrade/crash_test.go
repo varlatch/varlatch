@@ -1083,6 +1083,9 @@ func TestARollbackInterruptedAnywhere(t *testing.T) {
 					})
 					if at == "" {
 						h.ends(how.name + ", not interrupted")
+						if undone := h.journal().Kind == journal.Upgrade; undone != c.badFrom {
+							t.Fatalf("%s: %+v", how.name, h.journal())
+						}
 						break
 					}
 					points++
@@ -1156,4 +1159,28 @@ func TestARollbacksRecoveryInterruptedAnywhere(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A rollback whose stop cannot be recorded stops nothing, and leaves the
+// upgrade's record.
+func TestARollbackThatCannotRecordTheStopChangesNothing(t *testing.T) {
+	h := newUpgradedHost(t, false, false, false)
+	plan, err := h.upgrader(nil).PlanRollback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := h.upgrader(nil)
+	u.Fault = func(path string) error {
+		if filepath.Base(path) == journal.File {
+			return &os.PathError{Op: "write", Path: path, Err: syscall.ENOSPC}
+		}
+		return nil
+	}
+	if _, err := u.Rollback(context.Background(), plan, nil); err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatal(err)
+	}
+	if h.svc.running != standTo || h.journal().ID != plan.Last.ID || h.journal().LastRollback != nil {
+		t.Fatalf("%s runs, %+v", h.svc.running, h.journal())
+	}
+	h.ends("a stop that cannot be recorded")
 }
