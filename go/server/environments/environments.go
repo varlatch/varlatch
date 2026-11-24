@@ -361,6 +361,10 @@ func remove(ctx context.Context, tx query.DBTX, p *auth.Principal, organizationI
 	if err := q.DeleteValuesOfEnvironment(ctx, query.DeleteValuesOfEnvironmentParams{DeletedAt: sql.NullInt64{Int64: at, Valid: true}, EnvironmentID: env.ID}); err != nil {
 		return nil, err
 	}
+	// The tokens of its OAuth connections go with it (ADR-0062).
+	if err := q.ForgetOAuthConnectionsOfEnvironment(ctx, env.ID); err != nil {
+		return nil, err
+	}
 	revoked, err := q.RevokeCapabilitiesOfEnvironment(ctx, query.RevokeCapabilitiesOfEnvironmentParams{RevokedAt: sql.NullInt64{Int64: at, Valid: true}, EnvironmentID: env.ID})
 	if err != nil {
 		return nil, err

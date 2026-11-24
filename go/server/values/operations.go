@@ -281,7 +281,8 @@ func (s *Service) Disclose(ctx context.Context, req Request, body []byte) (jsval
 		return nil, err
 	}
 
-	// selectDisclosure.
+	// selectDisclosure. An OAuth connection is withheld however it is named:
+	// it has nothing that is revealed (ADR-0062).
 	var selected, seeds []Item
 	withheld := []any{}
 	secrets := map[string]Item{}

@@ -132,6 +132,10 @@ func Delete(ctx context.Context, w *write.Writer, r DeleteRequest, organizationI
 		if out.Values, err = q.DeleteValuesOfProject(ctx, query.DeleteValuesOfProjectParams{DeletedAt: at, ProjectID: projectID}); err != nil {
 			return err
 		}
+		// The tokens of its OAuth connections go with it (ADR-0062).
+		if err := q.ForgetOAuthConnectionsOfProject(ctx, projectID); err != nil {
+			return err
+		}
 		if out.VersionsErased, err = q.EraseVersionsOfProject(ctx, query.EraseVersionsOfProjectParams{ErasedAt: at, ProjectID: projectID}); err != nil {
 			return err
 		}

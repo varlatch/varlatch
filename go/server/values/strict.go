@@ -265,10 +265,15 @@ func (s *Service) strict(ctx context.Context, req Request, st *State, mode, plai
 		if it.RetiringVersionID != "" {
 			entry = append(entry, jsvalue.Member{Key: "rotating", Value: true})
 		}
-		if it.Code != nil {
-			// A seed of one-time codes is delivered to nobody here (ADR-0061).
+		if it.special() {
+			// A seed of one-time codes is delivered to nobody here (ADR-0061),
+			// nor an OAuth connection's client secret or tokens (ADR-0062).
 			if !preflight {
-				withheld = append(withheld, jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "reason", Value: "one-time-code"}, {Key: "requires", Value: "secret.use"}})
+				reason := "one-time-code"
+				if it.Connection != nil {
+					reason = "oauth-connection"
+				}
+				withheld = append(withheld, jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "reason", Value: reason}, {Key: "requires", Value: "secret.use"}})
 			}
 			items = append(items, withCode(entry, it))
 			continue
@@ -346,8 +351,8 @@ func (s *Service) strict(ctx context.Context, req Request, st *State, mode, plai
 				}
 				continue
 			}
-			if stored[it.Name].Code != nil {
-				if problem := codeProblem(it); problem != "" {
+			if stored[it.Name].special() {
+				if problem := specialProblem(stored[it.Name], it); problem != "" {
 					result.invalid = append(result.invalid, named(it.Name, problem))
 				}
 				continue

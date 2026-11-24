@@ -232,10 +232,10 @@ func (s *Service) validateEnvironment(ctx context.Context, req Request, st *Stat
 			}
 			continue
 		}
-		if resolved.Code != nil {
+		if resolved.special() {
 			// Its verdict is the item's type alone: nothing is opened for it,
 			// so the right to see that it exists is enough.
-			if problem := codeProblem(it); problem != "" {
+			if problem := specialProblem(resolved, it); problem != "" {
 				result.invalid = append(result.invalid, named(it.Name, problem))
 			}
 			continue
@@ -312,7 +312,7 @@ func (s *Service) validateEnvironment(ctx context.Context, req Request, st *Stat
 	// values.
 	inDomain := func(origin, name string) (bool, error) {
 		it, ok := present[name]
-		if !ok || it.Code != nil {
+		if !ok || it.special() {
 			return false, nil
 		}
 		if origin == "plain" {

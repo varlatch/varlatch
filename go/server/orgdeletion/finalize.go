@@ -258,6 +258,10 @@ func (s *Service) finalizeIn(ctx context.Context, tx *storage.Tx, deletionID, or
 	if err := q.DeleteOrganizationValues(ctx, query.DeleteOrganizationValuesParams{Now: now, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}
+	// The tokens of its OAuth connections go with it (ADR-0062).
+	if err := q.ForgetOAuthConnectionsOfOrganization(ctx, organizationID); err != nil {
+		return nil, err
+	}
 	if o.VersionsErased, err = q.EraseOrganizationVersions(ctx, query.EraseOrganizationVersionsParams{Now: now, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}

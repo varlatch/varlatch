@@ -70,6 +70,7 @@ type Service struct {
 	approvals *auth.Service
 	gates     *write.Gates
 	admit     func() (func(), bool)
+	tokens    Tokens
 }
 
 // Options configures New.
@@ -87,6 +88,9 @@ type Options struct {
 	// runs after its response, so it enters on its own: it is dropped
 	// while a gate is open, and counted until its write ends.
 	Admit func() (leave func(), ok bool)
+	// Tokens refreshes OAuth connections (ADR-0062); without it an exercise
+	// gives the access tokens there are.
+	Tokens Tokens
 }
 
 // maxQueuedCounts is ACCESS_COUNTS.maxQueued: counts beyond it are dropped.
@@ -101,7 +105,7 @@ func New(store *storage.DB, rootKEK []byte, opts Options) *Service {
 		opts.Now = time.Now
 	}
 	return &Service{store: store, rootKEK: rootKEK, log: opts.Log, now: opts.Now, pending: make(chan struct{}, maxQueuedCounts),
-		approvals: opts.Approvals, gates: opts.Gates, admit: opts.Admit}
+		approvals: opts.Approvals, gates: opts.Gates, admit: opts.Admit, tokens: opts.Tokens}
 }
 
 // Settled waits until every queued report count has run (tests, and a stop).
@@ -144,7 +148,14 @@ type Item struct {
 	// read of it. Such an item is in State.Codes, never in State.Items, and
 	// is always Sensitive.
 	Code *totp.Params
+	// Connection is set for an OAuth connection (ADR-0062). Such an item is
+	// in State.Connections, never in State.Items, and is always Sensitive.
+	Connection *Connection
 }
+
+// special is whether the item is used without its value: a seed of one-time
+// codes, an OAuth connection.
+func (it Item) special() bool { return it.Code != nil || it.Connection != nil }
 
 type ciphertext struct {
 	valueRowID string
@@ -155,6 +166,9 @@ type ciphertext struct {
 	// says of it.
 	seed   bool
 	params totp.Params
+	// other is whether it says it is something else that is no value
+	// (decrypt refuses it).
+	other bool
 }
 
 type contractDoc struct {
@@ -179,19 +193,26 @@ type State struct {
 	Items []Item
 	// Codes are the seeds of one-time codes (ADR-0061, seeds.go).
 	Codes []Item
+	// Connections are the OAuth connections (ADR-0062, connections.go).
+	Connections []Item
+	// wantsToken selects the connections whose access token is captured
+	// (none when nil), set by the exercise alone.
+	wantsToken func(Item) bool
+	tokens     map[string]sealedToken
 	// wantsCode selects the seeds whose ciphertext is captured (none when
 	// nil), set by the two paths that open one before they capture.
 	wantsCode  func(Item) bool
 	ciphertext map[string]ciphertext
 }
 
-// all is the values and the seeds, by name: what exists, for listings and
-// the state manifest.
+// all is the values, the seeds and the connections, by name: what exists,
+// for listings and the state manifest.
 func (s *State) all() []Item {
-	if len(s.Codes) == 0 {
+	if len(s.Codes) == 0 && len(s.Connections) == 0 {
 		return s.Items
 	}
 	out := append(slices.Clone(s.Items), s.Codes...)
+	out = append(out, s.Connections...)
 	sort.SliceStable(out, func(i, j int) bool { return utf16Less(out[i].Name, out[j].Name) })
 	return out
 }
@@ -370,14 +391,25 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 		}
 		st.revision, st.contract = &rev, &c
 	}
-	if st.Items, st.Codes, err = resolveItems(ctx, q, st, now); err != nil {
+	r, err := resolve(ctx, q, st, now)
+	if err != nil {
 		return err
+	}
+	st.Items, st.Codes, st.Connections = r.items, r.codes, r.connections
+	st.tokens = map[string]sealedToken{}
+	for _, it := range st.Connections {
+		if st.wantsToken != nil && st.wantsToken(it) {
+			if st.tokens[it.Name], err = captureToken(ctx, q, it); err != nil {
+				return err
+			}
+		}
 	}
 
 	rowOf := map[string]string{}
 	var ids []string
 	for _, it := range st.all() {
-		if it.Code != nil && (st.wantsCode == nil || !st.wantsCode(it)) || it.Code == nil && !wants(it) {
+		// Of a connection nothing is captured here: not the client secret.
+		if it.Connection != nil || it.Code != nil && (st.wantsCode == nil || !st.wantsCode(it)) || it.Code == nil && !wants(it) {
 			continue
 		}
 		for _, v := range []string{it.VersionID, it.RetiringVersionID} {
@@ -404,6 +436,7 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 			return fmt.Errorf("values: the payload of %s is not an envelope: %w", r.ID, err)
 		}
 		c.params, c.seed = seedParams(r.Payload.String)
+		c.other = !c.seed && marked(r.Payload.String)
 		if err := json.Unmarshal([]byte(r.WrappedDek.String), &c.wrappedDEK); err != nil {
 			return fmt.Errorf("values: the wrapped DEK of %s is not an envelope: %w", r.ID, err)
 		}
@@ -413,21 +446,26 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 	return nil
 }
 
-// resolveItems is resolveItems: the environment's own current values,
-// then its parent's for names it does not set, each with the version a
-// rotation retires while its window is open at now, sorted by name as
-// JavaScript sorts strings. codes are the seeds of one-time codes, resolved
-// the same way: a name is one or the other, the environment's own first.
-func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) (items, codes []Item, err error) {
+// resolved are an environment's items, by what their use gives.
+type resolved struct{ items, codes, connections []Item }
+
+// resolve is resolveItems: the environment's own current values, then its
+// parent's for names it does not set, each with the version a rotation
+// retires while its window is open at now, sorted by name as JavaScript
+// sorts strings. codes are the seeds of one-time codes and connections the
+// OAuth connections, resolved the same way: a name is one of them, the
+// environment's own first.
+func resolve(ctx context.Context, q *query.Queries, st *State, now int64) (resolved, error) {
+	var out resolved
 	byName := map[string]int{}
-	codeNames := map[string]bool{}
+	special := map[string]bool{}
 	load := func(environmentID, source string) error {
 		rows, err := q.CurrentValuesOfEnvironment(ctx, environmentID)
 		if err != nil {
 			return err
 		}
 		for _, r := range rows {
-			if _, seen := byName[r.ItemName]; source == "parent" && (seen || codeNames[r.ItemName]) {
+			if _, seen := byName[r.ItemName]; source == "parent" && (seen || special[r.ItemName]) {
 				continue
 			}
 			it := Item{
@@ -438,10 +476,10 @@ func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) (
 				it.RetiringVersionID = r.RetiringVersionID.String
 			}
 			if i, seen := byName[r.ItemName]; seen {
-				items[i] = it
+				out.items[i] = it
 			} else {
-				byName[r.ItemName] = len(items)
-				items = append(items, it)
+				byName[r.ItemName] = len(out.items)
+				out.items = append(out.items, it)
 			}
 		}
 		seeds, err := q.SeedsOfEnvironment(ctx, environmentID)
@@ -449,28 +487,42 @@ func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) (
 			return err
 		}
 		for _, r := range seeds {
-			if _, seen := byName[r.ItemName]; seen || codeNames[r.ItemName] {
+			if _, seen := byName[r.ItemName]; seen || special[r.ItemName] {
 				continue
 			}
-			codeNames[r.ItemName] = true
+			special[r.ItemName] = true
 			if it, ok := seedItem(r, source, now); ok {
-				codes = append(codes, it)
+				out.codes = append(out.codes, it)
+			}
+		}
+		connections, err := q.ConnectionsOfEnvironment(ctx, environmentID)
+		if err != nil {
+			return err
+		}
+		for _, r := range connections {
+			if _, seen := byName[r.ItemName]; seen || special[r.ItemName] {
+				continue
+			}
+			special[r.ItemName] = true
+			if it, ok := connectionItem(r, source, now); ok {
+				out.connections = append(out.connections, it)
 			}
 		}
 		return nil
 	}
 	if err := load(st.Env.ID, "self"); err != nil {
-		return nil, nil, err
+		return resolved{}, err
 	}
 	readHook(ctx, "between the environment's values and its parent's")
 	if st.Env.ParentEnvironmentID.Valid {
 		if err := load(st.Env.ParentEnvironmentID.String, "parent"); err != nil {
-			return nil, nil, err
+			return resolved{}, err
 		}
 	}
-	sort.SliceStable(items, func(i, j int) bool { return utf16Less(items[i].Name, items[j].Name) })
-	sort.SliceStable(codes, func(i, j int) bool { return utf16Less(codes[i].Name, codes[j].Name) })
-	return items, codes, nil
+	for _, list := range [][]Item{out.items, out.codes, out.connections} {
+		sort.SliceStable(list, func(i, j int) bool { return utf16Less(list[i].Name, list[j].Name) })
+	}
+	return out, nil
 }
 
 // expired is assertNotExpired.
@@ -615,7 +667,7 @@ func (s *Service) decrypt(st *State, versionIDs []string) (map[string]string, er
 		if !ok {
 			return nil, domainerr.New("INTERNAL", "A value version was not captured in the retrieval snapshot")
 		}
-		if c.seed {
+		if c.seed || c.other {
 			return nil, errSeed
 		}
 		plain, err := envelope.DecryptValue(kek, st.Org.ID, c.valueRowID, v, envelope.EncryptedValue{Payload: c.payload, WrappedDEK: c.wrappedDEK})

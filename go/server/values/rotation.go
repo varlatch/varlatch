@@ -149,13 +149,13 @@ func BeginRotation(ctx context.Context, w *write.Writer, rootKEK []byte, p *auth
 				Details: jsvalue.Object{{Key: "currentVersionId", Value: row.CurrentVersionID.String}},
 			}
 		}
-		if in.Seed != nil && row.Seed == 0 {
+		if in.Seed != nil && row.Seed == kindValue {
 			// Both versions are delivered until the rotation ends, and only
 			// one kind of them at a time can be.
 			return &domainerr.Error{Code: "VALIDATION_FAILED", Details: jsvalue.Object{{Key: "reason", Value: "one-time-code"}},
 				Message: item + " holds a value: a rotation to the seed of a one-time code needs a seed to rotate from. Set the seed instead"}
 		}
-		if err := checkKind(item, row.Seed != 0, in.Seed, sensitive); err != nil {
+		if err := checkKind(item, row.Seed, in.Seed, sensitive); err != nil {
 			return err
 		}
 		versionID := ids.New("ver")

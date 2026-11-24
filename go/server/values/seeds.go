@@ -46,9 +46,9 @@ import (
 // seed, whatever row led to it. Only an exercise (its code) and a disclosure
 // that asks for seeds (the seed) open one.
 
-// errSeed is a seed where a value was to be opened: never reached, and
+// errSeed is a seed, or an OAuth connection, where a value was to be opened: never reached, and
 // nothing is delivered if it is.
-var errSeed = errors.New("values: a seed of one-time codes is not opened as a value")
+var errSeed = errors.New("values: a seed of one-time codes or an OAuth connection is not opened as a value")
 
 // seedParams is the payload's member totp; ok is false for a value. The
 // text is looked at first: an envelope's base64 holds no quote, so only a
@@ -92,8 +92,12 @@ func ParamsJS(p totp.Params) jsvalue.Object {
 		{Key: "digits", Value: p.Digits}, {Key: "periodSeconds", Value: p.Period}}
 }
 
-// withCode adds a seed's readable part to an item of a listing.
+// withCode adds a seed's readable part, or a connection's, to an item of a
+// listing.
 func withCode(o jsvalue.Object, it Item) jsvalue.Object {
+	if it.Connection != nil {
+		o = append(o, jsvalue.Member{Key: "oauth", Value: it.Connection.JS()})
+	}
 	if it.Code != nil {
 		o = append(o, jsvalue.Member{Key: "totp", Value: ParamsJS(*it.Code)})
 	}

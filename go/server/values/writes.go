@@ -130,15 +130,27 @@ func nodeUTF8(s string) []byte {
 // valueRow is a row of env_values as lockValueRows reads it.
 type valueRow = query.ValueRowsOfItemsRow
 
+// What a live value row holds (ValueRowsOfItems' seed).
+const (
+	kindValue      = 0
+	kindSeed       = 1
+	kindConnection = 2
+)
+
 // deleted is whether a value row holds nothing: a seed of one-time codes
-// has a deleted_at and is live (ADR-0061).
+// and an OAuth connection have a deleted_at and are live (ADR-0061,
+// ADR-0062).
 func deleted(at sql.NullInt64, seed int64) bool { return at.Valid && seed == 0 }
 
-// checkKind refuses, for a live value row, a value where a seed is, and a
-// seed for an item that is no Secret.
-func checkKind(item string, holdsSeed bool, seed *totp.Seed, sensitive bool) error {
+// checkKind refuses, for a live value row, a value where a seed is, a value or
+// a seed where an OAuth connection is, and a seed for an item that is no
+// Secret.
+func checkKind(item string, holds int64, seed *totp.Seed, sensitive bool) error {
 	switch {
-	case seed == nil && holdsSeed:
+	case holds == kindConnection:
+		return &domainerr.Error{Code: "VALIDATION_FAILED", Details: jsvalue.Object{{Key: "reason", Value: "oauth-connection"}},
+			Message: item + " is an OAuth connection: delete it before setting a value"}
+	case seed == nil && holds == kindSeed:
 		return &domainerr.Error{Code: "VALIDATION_FAILED", Details: jsvalue.Object{{Key: "reason", Value: "one-time-code"}},
 			Message: item + " holds the seed of a one-time code: give another seed (otpauth), or delete it before setting a value"}
 	case seed != nil && !sensitive:
@@ -265,7 +277,7 @@ func SetValue(ctx context.Context, w *write.Writer, rootKEK []byte, p *auth.Prin
 				Details: jsvalue.Object{{Key: "currentVersionId", Value: nullable(row.CurrentVersionID)}},
 			}
 		}
-		if err := checkKind(item, row.Seed != 0, in.Seed, sensitive(item)); err != nil {
+		if err := checkKind(item, row.Seed, in.Seed, sensitive(item)); err != nil {
 			return write.Response{}, err
 		}
 		versionID := ids.New("ver")
@@ -344,6 +356,10 @@ func DeleteValue(ctx context.Context, w *write.Writer, p *auth.Principal, t Targ
 		if _, err := q.DeleteLiveValue(ctx, query.DeleteLiveValueParams{
 			DeletedAt: sql.NullInt64{Int64: now().UnixMicro(), Valid: true}, EnvironmentID: t.Env.ID, ItemName: item,
 		}); err != nil {
+			return err
+		}
+		// A connection's tokens go with it (ADR-0062).
+		if err := q.ForgetDeadOAuthConnectionsOf(ctx, query.ForgetDeadOAuthConnectionsOfParams{EnvironmentID: t.Env.ID, ItemName: item}); err != nil {
 			return err
 		}
 		actor, action := p.Identity.ID, "config.value.write"
@@ -452,7 +468,7 @@ func ApplyChangeSet(ctx context.Context, w *write.Writer, rootKEK []byte, p *aut
 		}
 		for _, c := range changes {
 			if c.Op == "set" {
-				if err := checkKind(c.Item, rows[c.Item].Seed != 0, c.Seed, sensitive(c.Item)); err != nil {
+				if err := checkKind(c.Item, rows[c.Item].Seed, c.Seed, sensitive(c.Item)); err != nil {
 					return write.Response{}, err
 				}
 			}
@@ -489,6 +505,9 @@ func ApplyChangeSet(ctx context.Context, w *write.Writer, rootKEK []byte, p *aut
 				continue
 			}
 			if err := q.DeleteValueRow(ctx, query.DeleteValueRowParams{DeletedAt: sql.NullInt64{Int64: at, Valid: true}, ID: row.ID}); err != nil {
+				return write.Response{}, err
+			}
+			if err := q.ForgetOAuthConnection(ctx, row.ID); err != nil {
 				return write.Response{}, err
 			}
 			events = append(events, audit.Event{

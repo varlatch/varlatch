@@ -94,13 +94,13 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 	if len(in.Destinations) == 0 {
 		return nil, nil, invalid("A Capability names explicit destinations")
 	}
-	selectors := make([]string, len(in.Destinations))
+	selectors, parsed := make([]string, len(in.Destinations)), make([]authz.DestinationSelector, len(in.Destinations))
 	for i, raw := range in.Destinations {
 		sel, ok := authz.ParseDestinationSelector(raw)
 		if !ok {
 			return nil, nil, invalid("Invalid destination selector: " + raw)
 		}
-		selectors[i] = sel.String()
+		selectors[i], parsed[i] = sel.String(), sel
 	}
 	// Targets are required and validated here (ADR-0039 Decision 6).
 	if in.Targets == nil {
@@ -202,6 +202,15 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 			return err
 		}
 		if reports, err = write.Checkpoint(ctx, tx, p, s.OrganizationID); err != nil {
+			return err
+		}
+		// Where an OAuth connection's token may go is the connection's to say
+		// (ADR-0062): an issuance narrows it, and an exercise checks it again.
+		connections, err := values.ConnectionsIn(ctx, tx, s.EnvironmentID, s.Environment.RootID, at.UnixMicro())
+		if err != nil {
+			return err
+		}
+		if err := values.CheckConnectionDestinations(connections, in.Items, parsed); err != nil {
 			return err
 		}
 		var run sql.NullString
