@@ -310,7 +310,7 @@ func TestARollbackAsksAgainForWhatWasMadeMeanwhile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := u.admin(context.Background(), filepath.Join(h.bin, "varlatchd"), "admin", "recover", "--new-admin", "--cli-credential"); err != nil {
+		if _, err := u.admin(context.Background(), filepath.Join(h.bin, "varlatchd"), "admin", "custody", "attest", "--key", "backup-key", "--method", "copy"); err != nil {
 			t.Fatal(err)
 		}
 		return plan
