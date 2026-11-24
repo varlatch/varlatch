@@ -600,6 +600,9 @@ func TestAnUpgradeInterruptedAnywhere(t *testing.T) {
 					if at == "" {
 						// No such point: the run ended by itself.
 						h.ends(how.name + ", not interrupted")
+						if want := "varlatch " + map[bool]string{true: c.from, false: h.to}[c.badTo]; h.read(filepath.Join(h.bin, "varlatch")) != want {
+							t.Fatalf("%s: not %s\n%s", how.name, want, h.tree())
+						}
 						break
 					}
 					points++
@@ -933,6 +936,12 @@ func TestARecordThatIsNotDurableEndsTheRun(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "could not be made durable") || !strings.Contains(err.Error(), "run sudo varlatch upgrade") || j.Reached(step) {
 			t.Fatalf("%s: %+v, %v", step, j, err)
 		}
+		// Nothing of an undo either: what is in place is what the run had put
+		// there, and the record is the one it made.
+		schema := map[bool]string{true: "schema 2\n", false: "schema 1\n"}[step == journal.Swapped || step == journal.Started]
+		if !strings.Contains(h.read(filepath.Join(h.data, databaseFile)), schema) || h.journal().Step != step || h.journal().Undo != journal.UndoNone {
+			t.Fatalf("%s: %+v\n%s", step, h.journal(), h.tree())
+		}
 		database = h.read(filepath.Join(h.data, databaseFile)) + h.read(filepath.Join(h.data, databaseFile+walSuffix))
 		// Nor does a recovery, until it can make it durable.
 		u = h.upgrader(nil)
@@ -1094,6 +1103,12 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 		}, false},
 		{"the database aside, its log not", journal.Prepared, func(h *standHost, work string) { aside(h, work, databaseFile) }, false},
 		{"both aside", journal.Prepared, func(h *standHost, work string) { aside(h, work, databaseFile, databaseFile+walSuffix) }, false},
+		{"a move left with both names", journal.Prepared, func(h *standHost, work string) {
+			aside(h, work, databaseFile, databaseFile+walSuffix)
+			for _, n := range []string{databaseFile, databaseFile + walSuffix} {
+				_ = os.Link(filepath.Join(work, "original", n), filepath.Join(h.data, n))
+			}
+		}, false},
 		{"an undo stopped after the database", journal.Started, func(h *standHost, work string) {
 			aside(h, work, databaseFile+walSuffix)
 			installed(h)
