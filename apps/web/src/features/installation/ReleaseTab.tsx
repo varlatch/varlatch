@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import React from "react";
+import React, { useState } from "react";
 import { ArrowUpRight, Info, TriangleAlert } from "lucide-react";
 import type { InstallationRelease } from "@varlatch/protocol";
 import { formatDateTime, timeAgo, useNow } from "../../lib/time";
@@ -10,13 +10,14 @@ import { useInstallationRelease } from "./releaseNotice";
 import {
   DEFAULT_RELEASE_REPO,
   DOCS_CHECK_URL,
-  DOCS_COOLIFY_UPGRADE_URL,
+  DOCS_IMAGE_UPGRADE_URL,
   DOCS_UPGRADE_URL,
   checkLines,
   lastFailure,
   releaseSummary,
   upgradeLines,
 } from "./releaseStatus";
+import { DeploymentChoice, type Deployment } from "./deployment";
 
 /**
  * Releases, for Installation Admins (ADR-0049): the host's last look for a
@@ -48,6 +49,7 @@ export function ReleaseReport({ release, now }: { release: InstallationRelease; 
   const summary = releaseSummary(release, now);
   const failure = lastFailure(release, now);
   const { latest } = release;
+  const [deployment, setDeployment] = useState<Deployment>("host");
   const repo = latest?.repo ?? release.lastAttempt?.repo ?? DEFAULT_RELEASE_REPO;
   return (
     <div className="space-y-6">
@@ -95,27 +97,27 @@ export function ReleaseReport({ release, now }: { release: InstallationRelease; 
         )}
       </SectionCard>
 
+      <DeploymentChoice value={deployment} onChange={setDeployment} />
+
       {latest && release.newer && (
         <SectionCard
           title="Upgrade on the host"
-          description="Upgrading replaces the containers and needs the backup keys, so it runs on the host, never from the dashboard."
+          description="Upgrading replaces varlatchd itself, so it runs on the host, never from the dashboard."
           data-testid="release-upgrade"
         >
           <div className="space-y-3 px-5 py-4 text-[13px]">
-            {upgradeLines(latest) ? (
+            {upgradeLines(deployment) ? (
               <>
-                <p className="text-muted">Where the installation's Compose project lives:</p>
-                <CodeBlock lines={upgradeLines(latest)!} data-testid="release-upgrade-command" />
+                <CodeBlock lines={upgradeLines(deployment)!} data-testid="release-upgrade-command" />
                 <p className="text-muted">
-                  It creates and verifies an encrypted archive first, and is complete only when the new release's checks pass.{" "}
+                  It verifies the release, takes an encrypted snapshot first, and keeps the new release only when its checks pass.{" "}
                   <DocsLink href={DOCS_UPGRADE_URL}>Upgrading</DocsLink>
                 </p>
               </>
             ) : (
-              <p className="text-muted" data-testid="release-upgrade-elsewhere">
-                The checked directory has no <code className="font-mono">varlatch-release.json</code>, so{" "}
-                <code className="font-mono">varlatch upgrade</code> does not apply there. Upgrade as your deployment describes:{" "}
-                <DocsLink href={DOCS_COOLIFY_UPGRADE_URL}>Coolify upgrades</DocsLink>
+              <p className="text-muted" data-testid="release-upgrade-image">
+                Deploy the new release&apos;s image, pinned by the digest its release notes name.{" "}
+                <DocsLink href={DOCS_IMAGE_UPGRADE_URL}>Upgrading the image</DocsLink>
               </p>
             )}
           </div>
@@ -124,8 +126,8 @@ export function ReleaseReport({ release, now }: { release: InstallationRelease; 
 
       <SectionCard title="Checking for releases" description="The host checks GitHub; this server and your browser never do." data-testid="release-check-how">
         <div className="space-y-3 px-5 py-4 text-[13px]">
-          <p className="text-muted">Run the check on the host, so this page stays current. Schedule it with the nightly backup, as its own step after it:</p>
-          <CodeBlock lines={checkLines(repo)} data-testid="release-check-command" />
+          <p className="text-muted">Run the check on the host, so this page stays current, and schedule it there:</p>
+          <CodeBlock lines={checkLines(deployment)} data-testid="release-check-command" />
           <p className="text-muted">
             <DocsLink href={DOCS_CHECK_URL}>Newer releases in the dashboard</DocsLink>
           </p>

@@ -62,6 +62,11 @@ fixes.
   and to people whose sign-in `passkey-verification` refuses. 0.23.0 sent
   them none. A stream that loses an Organization this way closes
   (`scope-changed`), and the dashboard reconnects and refreshes.
+- **The Installation pages give a Go installation's commands and settings.**
+  Release, Archives, Tailnet and Outbound gave a Compose installation's
+  (`--dir`, `.env` variables, the Tailscale sidecar), which the Go CLI
+  refuses. They name `varlatchd.conf`'s settings now, and the commands for a
+  service or for the container image.
 - **An address without a page shows a not-found page** of the dashboard,
   with its navigation and a way back, where the router's developer error
   page ("Unexpected Application Error!") showed. A page that fails shows a

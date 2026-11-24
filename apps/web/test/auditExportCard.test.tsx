@@ -185,7 +185,7 @@ describe("a live export", () => {
 
   it("stopped by the host operator: said, changes disabled, removal still possible", async () => {
     await mount({ enabled: false, export: exportOf() });
-    expect(text(one("audit-export-off"))).toContain("VARLATCH_AUDIT_EXPORT=off");
+    expect(text(one("audit-export-off"))).toContain("audit_export = off in varlatchd.conf");
     expect(text(one("audit-export-health"))).toBe("Stopped by the host operator");
     for (const id of ["audit-export-check", "audit-export-change", "audit-export-key"]) expect(one(id).props.disabled, id).toBe(true);
     expect(one("audit-export-remove").props.disabled).not.toBe(true);
