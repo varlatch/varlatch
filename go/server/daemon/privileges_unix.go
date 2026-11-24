@@ -239,6 +239,19 @@ func rootsOnlyName(info os.FileInfo) bool {
 	return ok && st.Uid == 0 && st.Nlink == 1
 }
 
+// fileAndDirectory is whether the descriptor f is a regular file's and dir a
+// directory's. Neither is taken over unless both are; then no program this
+// one starts gets them.
+func fileAndDirectory(f, dir int) bool {
+	var fi, di unix.Stat_t
+	if unix.Fstat(f, &fi) != nil || unix.Fstat(dir, &di) != nil || fi.Mode&unix.S_IFMT != unix.S_IFREG || di.Mode&unix.S_IFMT != unix.S_IFDIR {
+		return false
+	}
+	unix.CloseOnExec(f)
+	unix.CloseOnExec(dir)
+	return true
+}
+
 // createAlone makes a file that must not be there.
 func createAlone(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)

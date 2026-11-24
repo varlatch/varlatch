@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sync"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/preread"
@@ -81,14 +82,27 @@ func databaseIsRoots(cfg *config.Config, database string) bool {
 // and 4 are its output file and that file's directory.
 const outputEnv = "VARLATCHD_ADMIN_OUTPUT"
 
+// handedOutput are the output file and its directory that withRootsOutput
+// handed this command, descriptors 3 and 4: nil for any other, and when they
+// are not a regular file and a directory, whatever the environment says.
+var handedOutput = sync.OnceValues(func() (f, dir *os.File) {
+	if os.Getenv(outputEnv) == "" || !fileAndDirectory(3, 4) {
+		return nil, nil
+	}
+	return os.NewFile(3, "output"), os.NewFile(4, "output's directory")
+})
+
 // withRootsOutput runs `admin migrate export --out <file>` as root over a
 // directory of another user's, into a directory that is root's alone, where
 // that user may make nothing: this process makes the file, and, when the
 // command fails, removes it; the command, this program again, becomes the
 // owner with the file open. started is false for anything else.
 func withRootsOutput(cfg *config.Config, sub string, rest []string, stdout, stderr io.Writer) (status int, started bool) {
-	if sub != "migrate" || rest[0] != "export" || os.Getenv(outputEnv) != "" || !rootOverOwner(cfg.DataDir) {
+	if sub != "migrate" || rest[0] != "export" || !rootOverOwner(cfg.DataDir) {
 		return 0, false
+	}
+	if f, _ := handedOutput(); f != nil {
+		return 0, false // this is the command it runs
 	}
 	a, _ := parseMigrate(rest)
 	abs, err := filepath.Abs(a.out)
@@ -135,11 +149,9 @@ func withRootsOutput(cfg *config.Config, sub string, rest []string, stdout, stde
 // made now. done ends it: durable, with its name, or, when the
 // command failed, gone.
 func output(out string) (f *os.File, done func(error) error, err error) {
-	kept := false
-	var dir *os.File
-	if os.Getenv(outputEnv) != "" {
-		f, dir, kept = os.NewFile(3, out), os.NewFile(4, filepath.Dir(out)), true
-	} else {
+	f, dir := handedOutput()
+	kept := f != nil
+	if !kept {
 		if f, err = createAlone(out); err != nil {
 			return nil, nil, err
 		}
