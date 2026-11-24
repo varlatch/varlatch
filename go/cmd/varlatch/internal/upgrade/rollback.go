@@ -142,7 +142,7 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 		// back further is by hand.
 		return RollbackPlan{}, fmt.Errorf("the last change was a rollback from %s to %s: there is no upgrade to roll back. To go back further, restore an archive (varlatchd admin backup restore)", last.From, last.To)
 	case last.State == journal.Undone:
-		return RollbackPlan{}, fmt.Errorf("the last upgrade, to %s, was undone and %s serves: there is nothing to roll back", last.To, last.From)
+		return RollbackPlan{}, fmt.Errorf("the last upgrade, to %s, was undone and %s serves: there is nothing to roll back. (The upgrade to %s itself is not recorded any more: the attempt after it took its place. To go back further, restore an archive: varlatchd admin backup restore)", last.To, last.From, last.From)
 	case !ReturnsTo(last.From):
 		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("%s's varlatch cannot read a rollback's journal (%s is the first that can), so it could neither finish an interrupted rollback nor upgrade after one", last.From, RollbackSince), How: u.byHandText(last)}
 	case last.Format == journal.FormatOne || last.Binaries == nil:
