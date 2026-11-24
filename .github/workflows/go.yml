@@ -563,8 +563,8 @@ jobs:
 
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
-      - name: install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck
-        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh go/install/test-setup.sh
+      - name: install.sh, the G9a runner, the restore drill, G6, the setup and the upgrade test pass shellcheck
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh go/install/test-setup.sh go/install/build-upgrade.sh go/install/test-upgrade.sh
 
       - name: The release's asset scripts, the nightly report and the image pull pass shellcheck
         run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh scripts/ci-nightly-report.sh scripts/ci-pull-image.sh

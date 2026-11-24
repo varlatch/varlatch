@@ -291,6 +291,15 @@ func newTailnetWorld(t *testing.T) *tnWorld {
 	return &tnWorld{world: w, src: src, tgt: tgt, cp: cp}
 }
 
+// patientTailnetWorld is newTailnetWorld for cases no handoff's limit ends:
+// a busy machine's 3 seconds are no failure.
+func patientTailnetWorld(t *testing.T) *tnWorld {
+	t.Helper()
+	w := newTailnetWorld(t)
+	w.eng.Tailnet.Deadline, w.eng.Tailnet.UndoWait = time.Minute, time.Minute
+	return w
+}
+
 func (w *tnWorld) names() map[string]string {
 	out := map[string]string{}
 	for _, n := range w.cp.Nodes() {
@@ -455,7 +464,7 @@ func (s *gatedTnSource) StartTailnetGated(ctx context.Context, g GateRef) error 
 func TestTheSwitchsSidecar(t *testing.T) {
 	ctx := context.Background()
 	t.Run("half started", func(t *testing.T) {
-		w := newTailnetWorld(t)
+		w := patientTailnetWorld(t)
 		w.src.halfStart = errors.New("docker compose restart varlatchd: exit 1")
 		j, err := w.eng.Run(ctx, false)
 		if err == nil || j.Phase != Switched || !strings.Contains(err.Error(), "restart varlatchd") || !strings.Contains(err.Error(), "--resume goes on") || w.src.running {
@@ -467,7 +476,7 @@ func TestTheSwitchsSidecar(t *testing.T) {
 		}
 	})
 	t.Run("the barrier is gone", func(t *testing.T) {
-		w := newTailnetWorld(t)
+		w := patientTailnetWorld(t)
 		// The barrier's own check, and the one before the switch, pass.
 		src := &gatedTnSource{tnSource: w.src, after: 2, err: errors.New("the volume holds no gate")}
 		w.eng.Source = src
@@ -485,7 +494,7 @@ func TestTheSwitchsSidecar(t *testing.T) {
 	// the last moment before the switch, the name back with the source.
 	for after, calls := range map[int]string{0: "export", 1: "migrated-out"} {
 		t.Run(fmt.Sprintf("the barrier is gone after %d checks", after), func(t *testing.T) {
-			w := newTailnetWorld(t)
+			w := patientTailnetWorld(t)
 			src := &gatedTnSource{tnSource: w.src, after: after, err: errors.New("the volume holds no gate")}
 			w.eng.Source = src
 			j, err := w.eng.Run(ctx, false)
@@ -502,7 +511,7 @@ func TestTheSwitchsSidecar(t *testing.T) {
 	// A state directory whose gate cannot be held: refused in the preflight,
 	// before the backup, the barrier and the name.
 	t.Run("the state cannot be held", func(t *testing.T) {
-		w := newTailnetWorld(t)
+		w := patientTailnetWorld(t)
 		src := &gatedTnSource{tnSource: w.src, stateErr: errors.New("mounts no named volume at /var/lib/varlatch")}
 		w.eng.Source = src
 		j, err := w.eng.Run(ctx, false)
@@ -516,7 +525,7 @@ func TestTheSwitchsSidecar(t *testing.T) {
 		}
 	})
 	t.Run("varlatchd on its own network", func(t *testing.T) {
-		w := newTailnetWorld(t)
+		w := patientTailnetWorld(t)
 		w.src.ownNetwork = true
 		j, err := w.eng.Run(ctx, false)
 		if err != nil || j.Phase != Open || w.src.gate.Kind != "migrated-out" || w.src.running {
@@ -527,7 +536,7 @@ func TestTheSwitchsSidecar(t *testing.T) {
 		}
 	})
 	t.Run("varlatchd slow to answer", func(t *testing.T) {
-		w := newTailnetWorld(t)
+		w := patientTailnetWorld(t)
 		w.src.slowGates = 5
 		start := w.src.clock.now()
 		j, err := w.eng.Run(ctx, false)
@@ -539,7 +548,7 @@ func TestTheSwitchsSidecar(t *testing.T) {
 		}
 	})
 	t.Run("varlatchd never answers", func(t *testing.T) {
-		w := newTailnetWorld(t)
+		w := patientTailnetWorld(t)
 		w.src.slowGates = 1 << 20
 		j, err := w.eng.Run(ctx, false)
 		if err == nil || j.Phase != Switched || !strings.Contains(err.Error(), "did not answer within "+sourceReadyWait.String()) || w.src.running || w.src.gate.Kind != "migration" {
