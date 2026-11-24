@@ -13,9 +13,6 @@ import (
 	"time"
 
 	"tailscale.com/client/local"
-	"tailscale.com/envknob"
-	"tailscale.com/logtail"
-	"tailscale.com/net/netns"
 )
 
 // The restore's probe (internal docs/design/go-step6.md decision 16): before
@@ -151,9 +148,7 @@ func probeJoin(ctx context.Context, c ProbeConfig, look func(context.Context, *l
 	}
 	// Ephemeral: logged out, the control plane deletes it.
 	srv.Ephemeral = true
-	netns.SetEnabled(false)
-	envknob.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
-	logtail.Disable()
+	prepareTsnet()
 	defer srv.Close()
 	if srv.Ephemeral {
 		observe("join " + name + " ephemeral")

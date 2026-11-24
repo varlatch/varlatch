@@ -2134,6 +2134,14 @@ serves the tailnet listener on the node's own addresses
   binding is off (a userspace node has no TUN device). The node joins in
   the background: the ordinary listener serves at once, the tailnet
   listener once the node runs.
+- **No cached network map.** tsnet caches the node's own map in its state
+  directory and, by default, is Running on it at the next start before it
+  has spoken to the control plane (`TS_USE_CACHED_NETMAP`). varlatchd turns
+  that off for every node it starts, whatever its environment says, and
+  removes a cache an earlier version left (`profile-data/*/netmap-cache`):
+  the node's name, tags and tailnet, and so the pin's and the tags' checks,
+  are what the control plane answers this start. While it does not answer,
+  the node is not up and the tailnet listener does not open.
 - **Coordination server.** Tailscale's by default (`tailnet_control_url`
   unset, or Tailscale's own URL), and the node is always given its control
   URL explicitly (an empty one would let tsnet read `TS_CONTROL_URL`).
@@ -2297,6 +2305,12 @@ serves the tailnet listener on the node's own addresses
     already names, enrolled or not. Run again for the same name, it
     reports the same node; an enrolled node no handoff holds is held again
     only while the control plane names it exactly the temporary name.
+
+    The node's name, and on a self-hosted control server its tags, are what
+    the control plane sends this start (never a cached network map), and
+    waited for up to 30 seconds, since a rename just made reaches the node
+    a moment after the control plane records it. What is expected is never
+    relaxed: past that it is refused, naming both.
   - **A varlatchd started under the hold** joins under the hold's
     temporary name, never announcing the configured one, which another
     node holds, and reads its name back as the hold's (open sets the
@@ -2311,7 +2325,9 @@ serves the tailnet listener on the node's own addresses
   - `varlatchd admin tailnet certificate obtain|expiry --name <name>
     [--json]` works on `<name>.<pinned suffix>`:
     - `obtain` is one attempt, through the running varlatchd's node or
-      offline through the enrolled node, started for it. A refusal for the
+      offline through the enrolled node, started for it, once the node's
+      own map names it that (up to 30 seconds: before, the node itself
+      refuses the name). A refusal for the
       authority's rate limit is answered as `refusal: "rate-limited"`.
     - `expiry` reads the node's cached certificate (`tailnet/certs/`,
       tsnet's ACME store) and never issues one.

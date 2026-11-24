@@ -81,6 +81,28 @@ fixes.
   TypeScript CLI's formula's wrapper script, which says it is Homebrew's.
   `install.ps1` was not affected.
 
+### Tailnet
+
+- **varlatchd's tailnet node no longer starts on a cached network map.**
+  Tailscale's embedded client keeps the node's own map on disk and, at the
+  next start, was up on it before it had spoken to the control plane. A node
+  renamed, retagged or moved since could read back as it was: `varlatchd
+  admin tailnet enroll` refused (or held) a node by a name of an earlier
+  start, which failed a handoff resumed after an undo, and varlatchd judged
+  its pin, tags and name by that map until the new one came. The map is
+  never cached now, what an earlier version cached is removed at the next
+  start, and the tailnet listener opens only once the control plane has
+  answered. A restart while the control plane is unreachable keeps the
+  tailnet listener closed until it answers.
+- **The handoff's host commands wait for the control plane's change to reach
+  the node**, for 30 seconds at most, and refuse as before, naming what the
+  node is and what it must be, when it does not: `admin tailnet enroll` for
+  the node's name (and, on a self-hosted control server, its tags), and
+  `admin tailnet certificate obtain` and `take-name` for the name a
+  certificate is asked for. Right after a rename, a certificate asked for at
+  once was refused by the node itself, and the handoff's three attempts were
+  spent before the name had reached it.
+
 ### Documentation
 
 - **Sharing the host with other workloads.** [Host requirements](docs/self-hosting/requirements.md#sharing-the-host-with-other-workloads)

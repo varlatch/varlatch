@@ -6,15 +6,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"tailscale.com/client/local"
 	"tailscale.com/envknob"
 	"tailscale.com/ipn"
+	"tailscale.com/ipn/ipnlocal"
 	"tailscale.com/logtail"
 	"tailscale.com/net/netns"
 	"tailscale.com/tsnet"
@@ -108,11 +112,53 @@ func newServer(cfg NodeConfig) (*tsnet.Server, error) {
 	}, nil
 }
 
+// netmapCacheEnv is tsnet's switch for its network map cache. With it on
+// (its default), tsnet writes the node's own map to its state directory
+// (at every change of its home DERP region, whatever the control plane
+// allows) and, at the next start, is Running on that map before it has
+// spoken to the control plane: a node renamed, retagged or moved since
+// reads back as it was, and trust would rest on it.
+const netmapCacheEnv = "TS_USE_CACHED_NETMAP"
+
+// prepareTsnet sets what every tsnet node in this process starts with:
+// network-namespace binding off (userspace tsnet has no TUN device, and the
+// binding makes every control connection hang on a host without a default
+// route), nothing to Tailscale's log service, and no cached network map:
+// what a node says of itself is the control plane's answer to this start.
+func prepareTsnet() {
+	netns.SetEnabled(false)
+	envknob.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
+	envknob.Setenv(netmapCacheEnv, "false")
+	logtail.Disable()
+}
+
+// dropNetmapCache removes a network map an earlier start cached in the
+// node's state directory (a varlatchd before this one): it is never read
+// again, and nothing of it is left at rest. Only below dir, never through a
+// link out of it; what cannot be removed is not read either.
+func dropNetmapCache(dir string) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	profiles, err := fs.ReadDir(root.FS(), ipnlocal.ProfileDataDir)
+	if err != nil {
+		return
+	}
+	for _, p := range profiles {
+		if p.IsDir() {
+			_ = root.RemoveAll(filepath.Join(ipnlocal.ProfileDataDir, p.Name(), netmapCacheDir))
+		}
+	}
+}
+
+// netmapCacheDir is the cache's directory in a tsnet profile's data.
+const netmapCacheDir = "netmap-cache"
+
 // StartNode starts the node: tagged, never ephemeral, its control server
-// explicit, network-namespace binding off (userspace tsnet has no TUN
-// device, and the binding makes every control connection hang on a host
-// without a default route), and tsnet's log uploads off. It returns at
-// once; Up waits for the tailnet.
+// explicit, and tsnet as prepareTsnet sets it. It returns at once; Up waits
+// for the tailnet.
 func StartNode(cfg NodeConfig) (*TSNode, error) {
 	srv, err := newServer(cfg)
 	if err != nil {
@@ -124,10 +170,8 @@ func StartNode(cfg NodeConfig) (*TSNode, error) {
 	if err := os.Chmod(cfg.Dir, 0o700); err != nil {
 		return nil, err
 	}
-	netns.SetEnabled(false)
-	// Nothing about this node goes to Tailscale's log service.
-	envknob.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
-	logtail.Disable()
+	prepareTsnet()
+	dropNetmapCache(cfg.Dir)
 	if err := srv.Start(); err != nil {
 		return nil, fmt.Errorf("tailnet: starting the node: %w", err)
 	}
@@ -139,7 +183,10 @@ func StartNode(cfg NodeConfig) (*TSNode, error) {
 	return &TSNode{srv: srv, lc: lc}, nil
 }
 
-// Up waits until the node is on the tailnet.
+// Up waits until the node is on the tailnet: Running, on a network map the
+// control plane sent since the node started. That map may still lag the
+// control plane's own records (a rename just made through its API): where
+// the node must be as expected, AwaitStatus waits for it.
 func (n *TSNode) Up(ctx context.Context) error {
 	_, err := n.srv.Up(ctx)
 	return err
@@ -233,6 +280,55 @@ func (n *TSNode) Status(ctx context.Context) (Status, error) {
 		out.Suffix = strings.ToLower(strings.TrimSuffix(st.MagicDNSSuffix, "."))
 	}
 	return out, nil
+}
+
+// Label is the first label of the node's MagicDNS name.
+func (s Status) Label() string {
+	label, _, _ := strings.Cut(s.DNSName, ".")
+	return label
+}
+
+// awaitEvery is how often AwaitStatus reads the node.
+const awaitEvery = 200 * time.Millisecond
+
+// AwaitStatus reads the node's status until it is as expected, for wait at
+// most, or until ctx ends. It answers the last status read, and whether it
+// was as expected: what is expected is never relaxed, only waited for, so a
+// caller refuses when it was not. An error is a node whose status could not
+// be read at all.
+func (n *TSNode) AwaitStatus(ctx context.Context, wait time.Duration, expected func(Status) bool) (Status, bool, error) {
+	return awaitStatus(ctx, wait, n.Status, expected)
+}
+
+func awaitStatus(ctx context.Context, wait time.Duration, read func(context.Context) (Status, error), expected func(Status) bool) (Status, bool, error) {
+	wctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	tick := time.NewTicker(awaitEvery)
+	defer tick.Stop()
+	var last Status
+	var known bool
+	for {
+		// The read keeps ctx, so that the last one is not cut short by the
+		// wait's own end.
+		st, err := read(ctx)
+		if err == nil {
+			last, known = st, true
+			if expected(st) {
+				return st, true, nil
+			}
+		}
+		select {
+		case <-wctx.Done():
+			if !known {
+				if err == nil {
+					err = wctx.Err()
+				}
+				return Status{}, false, err
+			}
+			return last, false, nil
+		case <-tick.C:
+		}
+	}
 }
 
 // family is 4 or 6, for ordering IPv4 first.

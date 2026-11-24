@@ -98,6 +98,8 @@ func TestTheHandoffNode(t *testing.T) {
 	var obtained []string
 	prevControl, prevObtain := nodeControlURL, obtainNodeCert
 	nodeControlURL = control.BaseURL()
+	// The refusals below wait for the name the control plane never gives.
+	shortNodeWait(t, 2*time.Second)
 	// The test CA stands in for Let's Encrypt, and writes the node's cache
 	// as tsnet's ACME store does.
 	obtainNodeCert = func(ctx context.Context, _ *tailnet.TSNode, dataDir, domain string) ([]byte, error) {
@@ -196,29 +198,14 @@ func TestTheHandoffNode(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte("hermetic\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The control plane's new name reaches the node with its next map.
-	var suffixed string
-	for i := 0; i < 20; i++ {
-		var code int
-		if code, _, suffixed = runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--config", in.conf); code == ExitFailure {
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	if !strings.Contains(suffixed, "joined as "+temp+"-1.corp.ts.net") {
-		t.Fatalf("a suffixed temporary name: %q", suffixed)
+	if code, _, suffixed := runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--config", in.conf); code != ExitFailure || !strings.Contains(suffixed, "joined as "+temp+"-1.corp.ts.net, not "+temp) {
+		t.Fatalf("a suffixed temporary name: %d %q", code, suffixed)
 	}
 	if pin, err := tailnet.LoadPin(filepath.Join(in.data, tailnet.PinFile)); err != nil || pin == nil || pin.Closed != nil {
 		t.Fatalf("a suffixed temporary name latched the pin: %+v %v", pin, err)
 	}
 	rename(temp)
-	// The control plane's new name reaches the node with its next map.
-	for i := 0; i < 20; i++ {
-		if code, out, errOut = runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--json", "--config", in.conf); code == ExitOK {
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
+	code, out, errOut = runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--json", "--config", in.conf)
 	if code != ExitOK || json.Unmarshal([]byte(out), &again) != nil || !again.Open {
 		t.Fatalf("enroll once the collision is cleared: %d %q %q", code, out, errOut)
 	}
