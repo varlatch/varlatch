@@ -436,6 +436,8 @@ func (c *combined) journal() map[string]any {
 	return j
 }
 
+func (c *combined) migration() string { s, _ := c.journal()["id"].(string); return s }
+
 func (c *combined) phase() string { s, _ := c.journal()["phase"].(string); return s }
 
 // down is whether what the forward handoff stopped is stopped.
@@ -601,7 +603,7 @@ func (c *combined) undone(step string) {
 	down, states := c.down()
 	c.record(step+": the sidecar and the dashboard are stopped again", down, states)
 	c.record(step+": the journal says open", c.phase() == "open", c.phase())
-	r := run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "label=varlatch.migrate.id", "--filter", "label=com.docker.compose.project="+c.source)
+	r := run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "label=varlatch.migrate.id="+c.migration(), "--filter", "label=com.docker.compose.project="+c.source)
 	c.record(step+": no fresh volume of the reverse is left", len(strings.Fields(r.stdout)) == 0, r.stdout)
 	c.record(step+": Go runs", len(goContainers()) == 1, fmt.Sprint(goContainers()))
 }
@@ -620,12 +622,24 @@ func (c *combined) gateLost(step string) {
 	if mv := state("mv /s/maintenance.json /s/maintenance.json.kept"); !c.record(step+": the source's gate is taken away", mv.code == 0, mv.String()) {
 		return
 	}
-	before := fmt.Sprint(containersOf(c.source))
+	// varlatchd exits by itself, and is restarted, once its sidecar stopped
+	// (its watchdog): its container is compared, not its moments.
+	now := func() string {
+		out := ""
+		for _, l := range containersOf(c.source) {
+			if l.Service == "varlatchd" {
+				l.State, l.Started = "", ""
+			}
+			out += fmt.Sprintf("%+v\n", l)
+		}
+		return out
+	}
+	before := now()
 	r := c.migrate("--rollback without the source's gate ("+step+")", c.reverseArgs("--rollback"))
 	out := r.stdout + r.stderr
 	code, body := c.get()
 	c.record(step+": --rollback without the source's gate starts nothing, and Go serves", r.code == 1 && strings.Contains(out, "holds no gate") && strings.Contains(out, "nothing was started") && c.phase() == "open" &&
-		fmt.Sprint(containersOf(c.source)) == before && code == 200 && isGo(strings.Fields(body + " -")[0]), fmt.Sprintf("%s; phase %s; %d %s", r, c.phase(), code, body))
+		now() == before && code == 200 && isGo(strings.Fields(body + " -")[0]), fmt.Sprintf("%s; phase %s; %d %s", r, c.phase(), code, body))
 	if mv := state("mv /s/maintenance.json.kept /s/maintenance.json"); mv.code != 0 {
 		c.t.Fatalf("putting the gate back: %s", mv)
 	}
