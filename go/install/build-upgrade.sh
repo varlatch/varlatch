@@ -3,29 +3,33 @@
 #
 # What go/install/test-upgrade.sh runs, built from this checkout:
 #
-#   go/install/build-upgrade.sh <new directory>
+#   go/install/build-upgrade.sh <new directory> [<published prerelease>]
 #
 #   bin/       fakegithub, enrollpasskey, setupterminal
+#   from/      the published prerelease's own varlatch, from its tag (release.json's
+#              previous, by default): its engine is the one that upgrades from it
 #   releases/  four releases, each a directory of its published files: the
 #              candidate, then the next one (declared rollback-safe for the
 #              candidate), one that is not declared so, and one whose
 #              varlatchd never serves
 #   versions   their versions, as shell variables
 #
-# Their varlatch is built with -tags selfupdatetest, so it can be pointed at
-# fakegithub: none of it is a release. It needs Go and jq, and no root.
+# Each varlatch is built with -tags selfupdatetest, so it can be pointed at
+# fakegithub: none of it is a release. It needs Go, jq, the prerelease's tag in
+# this clone, and no root.
 set -eu
 out=${1:-}
-[ -n "$out" ] && [ ! -e "$out" ] || { echo "usage: build-upgrade.sh <new directory>" >&2; exit 64; }
+[ -n "$out" ] && [ ! -e "$out" ] || { echo "usage: build-upgrade.sh <new directory> [<published prerelease>]" >&2; exit 64; }
 go=$(cd "$(dirname "$0")/.." && pwd)
-mkdir -p "$out/bin" "$out/releases"
+from=${2:-$(jq -r .previous.version "$go/release/release.json")}
+git -C "$go" rev-parse -q --verify "refs/tags/v$from^{commit}" >/dev/null || { echo "build-upgrade.sh: no tag v$from here: git fetch origin tag v$from" >&2; exit 1; }
+mkdir -p "$out/bin" "$out/releases" "$out/from"
 out=$(cd "$out" && pwd)
 arch=$(cd "$go" && go env GOARCH)
 
 # Above every prerelease there will be of 0.50.0, and before 0.50.0.
 CANDIDATE=0.50.0-rc.9000 NEXT=0.50.0-rc.9001 UNSAFE=0.50.0-rc.9002 BROKEN=0.50.0-rc.9003
 schema=$(jq -r .schemaVersion "$go/release/release.json")
-from=$(jq -r .previous.version "$go/release/release.json")
 
 # manifest <version> <previous>: its release.json, as the release makes it.
 manifest() {
@@ -42,6 +46,10 @@ done
 for v in "$CANDIDATE" "$NEXT" "$UNSAFE"; do
   build "$v" ./cmd/varlatchd "varlatchd-$v-linux-$arch"
 done
+mkdir "$out/from/source"
+git -C "$go" archive "v$from" go | tar -x -C "$out/from/source"
+(cd "$out/from/source/go" && CGO_ENABLED=0 go build -trimpath -tags selfupdatetest -ldflags "-X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$from" -o "$out/from/varlatch" ./cmd/varlatch)
+rm -r "$out/from/source"
 manifest "$CANDIDATE" "$from"
 manifest "$NEXT" "$CANDIDATE"
 manifest "$UNSAFE" "$from" # declares nothing about the candidate
@@ -59,5 +67,5 @@ END
 for tool in cmd/varlatch/internal/selfupdate/fakerelease/fakegithub server/auth/authtest/enrollpasskey install/setupterminal; do
   (cd "$go" && CGO_ENABLED=0 go build -trimpath -o "$out/bin/${tool##*/}" "./$tool")
 done
-printf 'CANDIDATE=%s\nNEXT=%s\nUNSAFE=%s\nBROKEN=%s\n' "$CANDIDATE" "$NEXT" "$UNSAFE" "$BROKEN" >"$out/versions"
+printf 'FROM=%s\nCANDIDATE=%s\nNEXT=%s\nUNSAFE=%s\nBROKEN=%s\n' "$from" "$CANDIDATE" "$NEXT" "$UNSAFE" "$BROKEN" >"$out/versions"
 echo "built in $out"

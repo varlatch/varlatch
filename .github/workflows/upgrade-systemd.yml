@@ -29,7 +29,9 @@ jobs:
           go-version: 1.27.4
           cache: false
       - name: The releases to upgrade through
-        run: go/install/build-upgrade.sh "$RUNNER_TEMP/upgrade"
+        run: |
+          git fetch -q --depth 1 origin tag "v$(jq -r .previous.version go/release/release.json)"
+          go/install/build-upgrade.sh "$RUNNER_TEMP/upgrade"
       - name: varlatch upgrade, on this runner's systemd
         if: runner.environment == 'github-hosted'
         run: sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 go/install/test-upgrade.sh "$RUNNER_TEMP/upgrade"

@@ -9,9 +9,11 @@
 #
 # 1. The last published prerelease, installed by its own install.sh, its
 #    release checked as install.sh checks it; set up, with data.
-# 2. It is upgraded to the candidate (this checkout). Where the candidate has
-#    upgrade --rollback, a rollback to a release that cannot read one's
-#    journal is refused with the steps by hand, which are then taken.
+# 2. It is upgraded to the candidate (this checkout) by its own varlatch, as
+#    people do it: that release's engine, its journal and its health checks.
+#    Where the candidate has upgrade --rollback, a rollback to a release that
+#    cannot read one's journal is refused with the steps by hand, which are
+#    then taken, and it is upgraded again, by the candidate's varlatch.
 # 3. The candidate to a release that never serves: undone.
 # 4. The candidate to the next release, killed at each step, then a restart
 #    as a reboot makes it, then upgrade run again: the previous release
@@ -44,20 +46,22 @@ set -eu
 }
 [ "$(id -u)" = 0 ] || { echo "refusing: needs root" >&2; exit 2; }
 built=${1:-}
-for f in bin/fakegithub bin/enrollpasskey bin/setupterminal versions; do
+for f in bin/fakegithub bin/enrollpasskey bin/setupterminal from/varlatch versions; do
   [ -f "$built/$f" ] || { echo "refusing: no $f in '$built' (build-upgrade.sh makes it)" >&2; exit 2; }
 done
 built=$(cd "$built" && pwd)
 unit=$(cd "$(dirname "$0")" && pwd)/varlatchd.service
 [ -f "$unit" ] || { echo "refusing: no $unit" >&2; exit 2; }
-CANDIDATE='' NEXT='' UNSAFE='' BROKEN=''
+FROM='' CANDIDATE='' NEXT='' UNSAFE='' BROKEN=''
 # shellcheck source=/dev/null
 . "$built/versions"
 
-# The published prerelease to start from, and its install.sh's hash, which is
-# in its signed SHA256SUMS. install.sh checks the rest itself.
-FROM=0.50.0-rc.2
-FROM_INSTALL=82ca234af771ada287d7074077afc759d3204180665edb6765ed087dd6068ed7
+# The published prerelease to start from: its install.sh's hash, which is in
+# its signed SHA256SUMS. install.sh checks the rest itself.
+case "$FROM" in
+  0.50.0-rc.2) FROM_INSTALL=82ca234af771ada287d7074077afc759d3204180665edb6765ed087dd6068ed7 ;;
+  *) echo "refusing: this script has no hash of $FROM's install.sh" >&2; exit 2 ;;
+esac
 # Whether the candidate's varlatchd refuses to serve while an upgrade is not
 # over (its journal says it may be half done). 0 until it does.
 GATE=${VARLATCH_TEST_UPGRADE_GATE:-0}
@@ -247,16 +251,18 @@ must "$FROM: the data is read back" has FIRST
 
 # --- 2. to the candidate ---
 
-# Beside the installed varlatchd, as the one a person would download.
+# Beside the installed varlatchd. $FROM's own engine, and not the candidate's.
 tool=/usr/local/bin/varlatch-upgrade-test
 trap 'rm -f "$tool"; cleanup' EXIT
-install -m 755 "$client_bin" "$tool"
-upgrade to-candidate "$tool" "$CANDIDATE" --yes
+install -m 755 "$built/from/varlatch" "$tool"
+must "to-candidate: upgraded by $FROM's varlatch" [ "$("$tool" --version)" = "varlatch $FROM" ]
+upgrade to-candidate "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
 upgraded to-candidate "$CANDIDATE"
 must "to-candidate: the data is there" has FIRST
 put SECOND
 check "to-candidate: the snapshot is kept" test -n "$(find /var/lib/varlatch/upgrades -name 'snapshot*' -print -quit)"
 
+install -m 755 "$client_bin" "$tool"
 if has_rollback; then
   before=$(sha256sum /etc/varlatch/upgrade.json "$VARLATCH" "$VARLATCHD")
   upgrade by-hand "$tool" --rollback --yes --accept-data-loss
