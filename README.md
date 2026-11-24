@@ -64,8 +64,9 @@ each release added.
 - **Safe for AI agents.** Using a secret and revealing it are separate
   permissions. `varlatch run --agent-safe` gives an agent placeholders instead
   of secrets, and a local broker substitutes the real values only in requests
-  to destinations you allow, at the headers or fields you name, and replaces
-  a secret the destination echoes back in its response. Every use is
+  to destinations you allow, at the headers or fields you name. As a second
+  line of defense it also masks a secret the destination echoes back, in the
+  [forms it recognizes](docs/reference/agent-safe-runs.md). Every use is
   authorized and audited. An MCP
   server, `varlatch mcp`, lets MCP hosts inspect configuration metadata; it
   never returns or writes a Secret's value.
@@ -117,7 +118,7 @@ to `api.stripe.com` only, and `DATABASE_URL` never reaches the agent at all.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/architecture-dark.svg">
-    <img src="docs/assets/readme/architecture-light.svg" width="820" alt="Architecture: untrusted clients (browser, CLI, CI, workloads, AI agents) authenticate end to end, over the public address or your tailnet, with varlatchd, the one program that is the Secret Plane and security authority. It alone writes its SQLite file, which holds values and their keys only as ciphertext, and reads the Root KEK and the backup key from files kept apart">
+    <img src="docs/assets/readme/architecture-light.svg" width="820" alt="Architecture: untrusted clients (browser, CLI, CI, workloads, AI agents) authenticate end to end, over the public address or your tailnet, with varlatchd, the one program that is the Secret Plane and security authority. It alone writes its SQLite file, in which secret values and their keys are only ciphertext, and reads the Root KEK and the backup key from files kept apart">
   </picture>
 </p>
 
@@ -135,8 +136,8 @@ to `api.stripe.com` only, and `DATABASE_URL` never reaches the agent at all.
   requirements only restrict it. There are no deny rules and no policy
   language to get wrong.
 - **One SQLite file, one writer.** Every write goes through one queue and is
-  durable before it is answered, with its audit event in the same
-  transaction. The database refuses to change or remove an audit event.
+  durable before it is answered. Every change of a value, a
+  contract or a grant commits with its audit event, in the same transaction. The database refuses to change or remove an audit event.
 
 This is Varlatch from 0.50, a prerelease now. 0.23.0 runs the same API on
 PostgreSQL and a self-hosted Convex backend:
@@ -183,24 +184,35 @@ twice: from the terminal and forwarded.
 
 ### Develop Varlatch
 
-```sh
-pnpm install
-pnpm build
-pnpm test
-pnpm typecheck
-```
-
-To run the whole stack from a checkout, with synthetic data (Docker needed):
+The server and the CLI are in [`go/`](go/README.md), and need Go 1.27. The
+dashboard, which `varlatchd` embeds, needs Node.js 26 and pnpm:
 
 ```sh
-pnpm dev:up       # build, start, and seed once; prints a sign-in link
-pnpm dev:link     # print a new one-time sign-in link
-pnpm dev:down     # stop, keeping the data
-pnpm dev:reset    # delete everything
+pnpm install && pnpm build
+cd go
+go generate ./server/web    # build the dashboard into varlatchd
+go vet ./... && go test ./...
+go build -o ../.dev/ ./cmd/varlatchd ./cmd/varlatch
 ```
 
-It seeds the organization `acme` with the projects `api` and `web`, using
-placeholder values only. State lives in `.dev/`.
+To run that `varlatchd` on Linux, from the root of the checkout (`.dev/` is
+not committed; `varlatchd` refuses a data directory below one its group or
+others can write to):
+
+```sh
+install -d -m 700 .dev .dev/data
+(umask 077; head -c 32 /dev/urandom | base64 > .dev/root-kek)
+printf '%s\n' 'public_url = http://localhost:8686' \
+  "data_dir = $PWD/.dev/data" "root_kek_file = $PWD/.dev/root-kek" > .dev/varlatchd.conf
+.dev/varlatchd serve --config .dev/varlatchd.conf
+```
+
+In another terminal, `.dev/varlatchd admin bootstrap --config .dev/varlatchd.conf`
+prints a one-time link that creates the first administrator's passkey.
+
+`pnpm test` and `pnpm typecheck` check the TypeScript packages. `pnpm dev:up`
+(Docker needed) runs the stack of 0.23.0, with PostgreSQL and Convex and
+synthetic data; `pnpm dev:down` stops it and `pnpm dev:reset` deletes it.
 
 ## Documentation
 

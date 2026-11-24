@@ -25,7 +25,7 @@
 <rect x="32" y="738" width="812" height="206" rx="28" fill="#ffffff" stroke="#d0d7de" stroke-width="2"/>
 <text x="78" y="798" font-size="24" letter-spacing="2.4" fill="#57606a">DATA DIRECTORY</text>
 <text x="78" y="846" font-size="40" font-weight="700" fill="#1f2328">SQLite, one file</text>
-<text x="78" y="894" font-size="28" fill="#57606a">Values and their keys, only as ciphertext.</text>
+<text x="78" y="894" font-size="28" fill="#57606a">Secret values and their keys: ciphertext only.</text>
 <rect x="860" y="738" width="812" height="206" rx="28" fill="#ffffff" stroke="#d0d7de" stroke-width="2"/>
 <text x="906" y="798" font-size="24" letter-spacing="2.4" fill="#57606a">KEPT APART</text>
 <text x="906" y="846" font-size="40" font-weight="700" fill="#1f2328">Root KEK, backup key</text>
