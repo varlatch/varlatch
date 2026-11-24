@@ -94,6 +94,10 @@ func valuesCommand(r *Run) error {
 	if len(r.Args) > 0 && sub == "delete" {
 		return r.valuesDelete()
 	}
+	// Entry links (ADR-0063), which the TypeScript CLI does not have.
+	if run, ok := map[string]func() error{"ask": r.valuesAsk, "asked": r.valuesAsked, "ask-cancel": r.valuesAskCancel}[sub]; ok {
+		return run()
+	}
 	cwd, err := Cwd()
 	if err != nil {
 		return err

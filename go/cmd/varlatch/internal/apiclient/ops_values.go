@@ -109,3 +109,19 @@ func (c *Client) PushContractRevision(ctx context.Context, org, project string, 
 func (c *Client) ActivateContractRevision(ctx context.Context, org, project, revisionID string) (any, error) {
 	return c.Request(ctx, "POST", projectPath(org, project)+"/contract/revisions/"+EncodeURIComponent(revisionID)+"/activate", jsjson.Object{}, nil)
 }
+
+// CreateEntryLink is POST .../entry-links (capability values.entry-links,
+// ADR-0063).
+func (c *Client) CreateEntryLink(ctx context.Context, org, project, environment string, body jsjson.Object) (any, error) {
+	return c.Request(ctx, "POST", environmentPath(org, project, environment)+"/entry-links", body, nil)
+}
+
+// ListEntryLinks is GET .../entry-links.
+func (c *Client) ListEntryLinks(ctx context.Context, org, project, environment string) (any, error) {
+	return c.Request(ctx, "GET", environmentPath(org, project, environment)+"/entry-links", NoBody, nil)
+}
+
+// CancelEntryLink is DELETE .../entry-links/<id>.
+func (c *Client) CancelEntryLink(ctx context.Context, org, project, environment, id string) (any, error) {
+	return c.Request(ctx, "DELETE", environmentPath(org, project, environment)+"/entry-links/"+EncodeURIComponent(id), NoBody, nil)
+}
