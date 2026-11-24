@@ -209,6 +209,16 @@ Changes since 0.50.0-rc.2, by pull request:
   seconds of the shipped systemd unit). `infra/coolify/varlatchd.compose.yml`
   gives the service 30 seconds to stop, as the unit does; for `docker run`,
   give `--stop-timeout 30`.
+<!-- SLOT #444 (draft, head fba95e4a; recheck against the merged PR) -->
+- **varlatchd's tailnet node starts on no cached network map (#444).** After
+  a rename, a node that started again could read its old name and tags from
+  a map on its disk: `varlatchd admin tailnet enroll` then refused a node
+  that was right, or accepted one by a name only the cache gave it. The node
+  now starts on the map the control plane sends at that start, and the
+  commands of the handoff wait, at most 30 seconds, for the name and tags
+  they expect. A varlatchd restarted while its control plane cannot be
+  reached keeps the tailnet listener closed until it answers.
+<!-- END SLOT #444 -->
 - **Not-found and error pages in the dashboard (#439).** An address
   without a page shows a not-found page of the dashboard, with its
   navigation and a way back, where the router's developer error page
