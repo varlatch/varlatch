@@ -240,7 +240,10 @@ limits each party, and no further than this:
   can use up a single-use Capability. It cannot list, read, issue, revoke or
   sign in as anything else with its credential, which lasts an hour at most;
   revoking the Capability, the credential or the broker stops it at its next
-  request.
+  request. Revoking an OIDC binding stops new token exchanges immediately,
+  but credentials already exchanged from it (exercise-only or ordinary) keep
+  working until they expire (at most an hour) unless you also revoke the
+  credential or retire the identity.
 - **A compromised orchestrator** can issue, in the Environments of its Grant,
   Capabilities naming any item, any Agent of the Organization and any live
   broker, and hand their secrets out. It cannot exercise one itself. What
@@ -275,6 +278,9 @@ limits each party, and no further than this:
 - **A granted exercise of a single-use Capability uses it up** even when the
   broker never receives the answer. A refused exercise, or one that delivers
   no item (none of the placed items has a value), does not.
+  Restoring a backup restores single-use Capabilities to their state when the
+  backup was taken: one exercised since then, and not yet expired, can be
+  exercised once more.
 
 ## 7. Reviewing a claim
 

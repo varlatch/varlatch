@@ -148,9 +148,12 @@ Then, for each job:
    `GET …/capabilities`. Expiry is the fallback.
 
 Removing the orchestrator's grant, or retiring it, refuses every Capability
-it issued from the next exercise on. If the orchestrator also signs the
-machines' tokens, it can act as their broker too: keep the signing key
-apart from the credential that issues. The
+it issued from the next exercise on. Revoking an OIDC binding stops new token
+exchanges immediately, while credentials already exchanged from it stay valid
+until they expire (at most an hour) unless you revoke the credential or
+retire the identity. If the orchestrator also signs the machines' tokens, it
+can act as their broker too: keep the signing key apart from the credential
+that issues. The
 [threat model](../THREAT-MODEL.md#6-agent-safety-the-credential-broker-shipped)
 says what each party can still do when compromised.
 
