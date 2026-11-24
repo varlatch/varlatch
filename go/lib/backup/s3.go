@@ -25,6 +25,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+
+	"github.com/varlatch/varlatch/go/lib/preread"
 )
 
 // An S3 or B2 destination (packages/backup s3.ts): the destinations file
@@ -53,7 +55,7 @@ type Credentials struct {
 // ReadDestination reads one destination from a destinations file, with
 // the schema's defaults (prefix "varlatch/", path-style addressing).
 func ReadDestination(path, name string) (Destination, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := preread.ReadFile(path)
 	if err != nil {
 		return Destination{}, err
 	}
@@ -108,7 +110,7 @@ func ReadDestination(path, name string) (Destination, error) {
 
 // ReadCredentials reads a credentials file.
 func ReadCredentials(path string) (Credentials, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := preread.ReadFile(path)
 	if err != nil {
 		return Credentials{}, err
 	}

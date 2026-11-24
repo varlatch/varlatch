@@ -1147,6 +1147,16 @@ memory (`server/write`):
   the schema and the installation on a fresh data directory, as `serve`
   would); if a daemon holds the lock but its socket does not answer, it
   refuses and writes nothing.
+- Run as root, `varlatchd admin` works in the data directory as its owner
+  (`privileges.go`): it opens what only root may read (the two keys, a
+  backup's destination and credentials, a restore's archive, the tailnet's
+  key and authority files; `lib/preread`), then becomes the owner and the
+  directory's group for good, on every thread, with no other group and not
+  dumpable. So a link in that directory, which its owner may write, leads
+  root nowhere, and nothing a command makes there is root's. `kek`, `config
+  check`, `doctor`, `outbound check`, `tailnet reaches` and `migrate` stay
+  root's: they do not write there, or (migrate) are started as the owner.
+  A data directory of root's keeps root.
 
 ### Backups and maintenance (step 4.14)
 

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/tailnet"
@@ -251,7 +252,7 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	if tailnet.SuffixedName(c.hostname, t.Hostname) {
 		return fail("%s reads as the control plane's suffix of the configured name %s: a handoff's temporary name is <name>-vl-<operation>-n", c.hostname, t.Hostname)
 	}
-	owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
+	_, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
 		return fail("%v; nothing was written", err)
 	}
@@ -268,7 +269,6 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 		return fail("cannot lock the data directory %s: %v", cfg.DataDir, err)
 	}
 	defer unlock()
-	defer giveToOwner(cfg.DataDir, owner)
 	dir := filepath.Join(cfg.DataDir, tailnet.StateDir)
 	hold, err := tailnet.LoadHold(cfg.DataDir)
 	if err != nil {
@@ -292,7 +292,7 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 		if t.AuthKeyFile == "" {
 			return fail("no auth key (tailnet_auth_key_file): the node joins with it")
 		}
-		raw, err := os.ReadFile(t.AuthKeyFile)
+		raw, err := preread.ReadFile(t.AuthKeyFile)
 		if err != nil {
 			return fail("cannot read the auth key file: %v", err)
 		}
@@ -437,11 +437,10 @@ func runTailnetNode(ctx context.Context, env *hostEnv, rest []string, stdout, st
 		return fail("the tailnet listener is off (tailnet = off)")
 	}
 	if env.node == nil {
-		owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
+		_, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 		if err != nil {
 			return fail("%v", err)
 		}
-		defer giveToOwner(cfg.DataDir, owner)
 	}
 	hold, err := tailnet.LoadHold(cfg.DataDir)
 	if err != nil {
@@ -609,7 +608,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	if t.AuthKeyFile == "" {
 		return config("no auth key (tailnet_auth_key_file): the probe joins with the node's key, which must be reusable")
 	}
-	raw, err := os.ReadFile(t.AuthKeyFile)
+	raw, err := preread.ReadFile(t.AuthKeyFile)
 	if err != nil {
 		return config("cannot read the auth key file: %v", err)
 	}

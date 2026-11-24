@@ -34,6 +34,3 @@ func openSecretFile(path string) (*os.File, error) {
 
 // ownedByMe: no owner to tell; nothing is swept.
 func ownedByMe(fs.FileInfo) bool { return false }
-
-// giveToOwner: no owner to give files to.
-func giveToOwner(string, int) {}

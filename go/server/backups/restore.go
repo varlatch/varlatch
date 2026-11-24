@@ -109,6 +109,11 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 	// The snapshot replaces the database. The old WAL goes first: SQLite
 	// would apply it to the restored file.
 	staged := dbPath + ".restore"
+	// A stopped restore's; the copy is a file of its own, never one that is
+	// there.
+	if err := os.Remove(staged); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return RestoreResult{}, err
+	}
 	if err := copyFile(snapshot, staged); err != nil {
 		return RestoreResult{}, err
 	}
@@ -246,7 +251,7 @@ func copyFile(from, to string) (err error) {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

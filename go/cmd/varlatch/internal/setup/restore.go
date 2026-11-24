@@ -163,19 +163,6 @@ func (r *run) restore(ctx context.Context) error {
 		return &UsageError{fmt.Sprintf("setup: the archive's installation is reached at %s, not %s: its passkeys belong to that address. Remove %s and %s (this run's answers; the keys and the restored data stay), then run setup --restore again with --public-url %s; to change the address, restore first and move it with varlatch move",
 			was, r.j.Answers.PublicURL, Journal, ConfigFile, was)}
 	}
-	uid, gid, _, err := r.h.LookupUser(User)
-	if err != nil {
-		return err
-	}
-	// The restore ran as root: what it wrote becomes the unit's.
-	if err := filepath.WalkDir(r.path(DataDir), func(p string, _ fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		return r.h.Chown(p, uid, gid)
-	}); err != nil {
-		return err
-	}
 	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").")
 }
 

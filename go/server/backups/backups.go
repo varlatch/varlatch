@@ -58,6 +58,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
@@ -409,7 +410,7 @@ func (s *Service) bek() (backup.BEK, error) {
 	if s.o.Config.BackupKeyFile == "" {
 		return backup.BEK{}, ErrNoKey
 	}
-	raw, err := os.ReadFile(s.o.Config.BackupKeyFile)
+	raw, err := preread.ReadFile(s.o.Config.BackupKeyFile)
 	if err != nil {
 		return backup.BEK{}, fmt.Errorf("cannot read the Backup Encryption Key file: %w", err)
 	}

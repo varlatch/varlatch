@@ -16,6 +16,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 )
@@ -280,7 +281,7 @@ func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer)
 	if bekFile == "" {
 		return fail(ExitConfig, "no Backup Encryption Key: give --backup-key-file, or set backup_key_file")
 	}
-	raw, err := os.ReadFile(bekFile)
+	raw, err := preread.ReadFile(bekFile)
 	if err != nil {
 		return fail(ExitFailure, "cannot read the Backup Encryption Key file: %v", err)
 	}
@@ -295,7 +296,7 @@ func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer)
 		return fail(ExitConfig, "%v", err)
 	}
 	defer bek.Clear()
-	raw, err = os.ReadFile(cfg.RootKEKFile)
+	raw, err = preread.ReadFile(cfg.RootKEKFile)
 	if err != nil {
 		return fail(ExitFailure, "cannot read the Root KEK file: %v", err)
 	}
