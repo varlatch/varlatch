@@ -343,7 +343,7 @@ func serve(opts Options, h *hooks) int {
 	}
 	if upgrading {
 		admission.HoldForUpgrade()
-		log.Warn("an upgrade is checking this varlatchd: it answers 503 MAINTENANCE and does nothing else until the checks have passed")
+		log.Warn("an upgrade is checking this varlatchd: it answers 503 MAINTENANCE and does nothing else until the upgrade is over; when none runs any more, sudo varlatch upgrade finishes or undoes it")
 		go endUpgradeHold(ctx, configDir, admission, log)
 	}
 	// Public HTTPS (step 6's decision 4), when listen_https is set: the
