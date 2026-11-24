@@ -16,7 +16,7 @@ import (
 const liveItemNamesOf = `-- name: LiveItemNamesOf :many
 SELECT environment_id, item_name FROM env_values
 WHERE environment_id IN (/*SLICE:environment_ids*/?) AND current_version_id IS NOT NULL AND (deleted_at IS NULL OR
-  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND json_type(s.payload, '$.totp') = 'object'))
+  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND (json_type(s.payload, '$.totp') = 'object' OR json_type(s.payload, '$.oauth') = 'object')))
 ORDER BY rowid
 `
 
@@ -26,7 +26,7 @@ type LiveItemNamesOfRow struct {
 }
 
 // The live, current item names of these environments, seeds of one-time
-// codes (ADR-0061) included.
+// codes (ADR-0061) and OAuth connections (ADR-0062) included.
 func (q *Queries) LiveItemNamesOf(ctx context.Context, environmentIds []string) ([]LiveItemNamesOfRow, error) {
 	query := liveItemNamesOf
 	var queryParams []interface{}

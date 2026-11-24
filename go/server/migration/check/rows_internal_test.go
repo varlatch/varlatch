@@ -19,7 +19,8 @@ import (
 // reverse checks the target is Go's copy after it served, and
 // certificate_issuances (Go's issuance count, carried apart from the
 // bundle), exercise_credentials, oidc_token_uses (ADR-0060, left behind)
-// and one_time_codes_given (ADR-0061) may hold rows; every other target-only table is still held to
+// one_time_codes_given (ADR-0061), and oauth_connections and
+// oauth_authorizations (ADR-0062) may hold rows; every other target-only table is still held to
 // an import's rows.
 func TestTargetOnlyTablesInTheReverseChecks(t *testing.T) {
 	m, err := manifest.Load()
@@ -27,7 +28,8 @@ func TestTargetOnlyTablesInTheReverseChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.Tables = nil // no bundle table: every table here is target-only
-	m.TargetOnly.Tables = map[string]string{"schema_version": "", "certificate_issuances": "", "exercise_credentials": "", "oidc_token_uses": "", "one_time_codes_given": "", "other_target_only": ""}
+	m.TargetOnly.Tables = map[string]string{"schema_version": "", "certificate_issuances": "", "exercise_credentials": "", "oidc_token_uses": "", "one_time_codes_given": "",
+		"oauth_connections": "", "oauth_authorizations": "", "other_target_only": ""}
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +41,8 @@ func TestTargetOnlyTablesInTheReverseChecks(t *testing.T) {
 		"CREATE TABLE exercise_credentials (x TEXT)", "INSERT INTO exercise_credentials VALUES ('crd')",
 		"CREATE TABLE oidc_token_uses (x TEXT)", "INSERT INTO oidc_token_uses VALUES ('key')",
 		"CREATE TABLE one_time_codes_given (x TEXT)", "INSERT INTO one_time_codes_given VALUES ('ver')",
+		"CREATE TABLE oauth_connections (x TEXT)", "INSERT INTO oauth_connections VALUES ('val')",
+		"CREATE TABLE oauth_authorizations (x TEXT)", "INSERT INTO oauth_authorizations VALUES ('state')",
 		"CREATE TABLE other_target_only (x INTEGER)",
 	} {
 		if _, err := db.Exec(q); err != nil {
@@ -60,8 +64,8 @@ func TestTargetOnlyTablesInTheReverseChecks(t *testing.T) {
 		}
 		return strings.Join(names, ",")
 	}
-	if got := tables(run(false)); got != "certificate_issuances,exercise_credentials,oidc_token_uses,one_time_codes_given" {
-		t.Errorf("forward, Go's own rows: failures in %q, want all four tables", got)
+	if got := tables(run(false)); got != "certificate_issuances,exercise_credentials,oauth_authorizations,oauth_connections,oidc_token_uses,one_time_codes_given" {
+		t.Errorf("forward, Go's own rows: failures in %q, want all six tables", got)
 	}
 	if got := tables(run(true)); got != "" {
 		t.Errorf("reverse, Go's own rows: failures in %q, want none", got)

@@ -53,7 +53,7 @@ const deleteLiveValue = `-- name: DeleteLiveValue :execrows
 UPDATE env_values SET deleted_at = ?, current_version_id = NULL,
   retiring_version_id = NULL, rotation_deadline = NULL, rotation_started_at = NULL
 WHERE environment_id = ? AND item_name = ? AND (deleted_at IS NULL OR
-  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND json_type(s.payload, '$.totp') = 'object'))
+  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND (json_type(s.payload, '$.totp') = 'object' OR json_type(s.payload, '$.oauth') = 'object')))
 `
 
 type DeleteLiveValueParams struct {
@@ -137,7 +137,7 @@ func (q *Queries) InsertValueVersion(ctx context.Context, arg InsertValueVersion
 
 const liveValueCount = `-- name: LiveValueCount :one
 SELECT count(*) FROM env_values WHERE environment_id = ? AND item_name = ? AND (deleted_at IS NULL OR
-  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND json_type(s.payload, '$.totp') = 'object'))
+  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND (json_type(s.payload, '$.totp') = 'object' OR json_type(s.payload, '$.oauth') = 'object')))
 `
 
 type LiveValueCountParams struct {
@@ -190,7 +190,7 @@ func (q *Queries) SetCurrentValueVersion(ctx context.Context, arg SetCurrentValu
 
 const valueRotationOf = `-- name: ValueRotationOf :many
 SELECT id, current_version_id, retiring_version_id, rotation_deadline, deleted_at,
-  CAST(coalesce((SELECT json_type(s.payload, '$.totp') = 'object' FROM value_versions s WHERE s.id = env_values.current_version_id AND env_values.deleted_at IS NOT NULL), 0) AS INTEGER) AS seed
+  CAST(coalesce((SELECT CASE WHEN json_type(s.payload, '$.totp') = 'object' THEN 1 WHEN json_type(s.payload, '$.oauth') = 'object' THEN 2 END FROM value_versions s WHERE s.id = env_values.current_version_id AND env_values.deleted_at IS NOT NULL), 0) AS INTEGER) AS seed
 FROM env_values
 WHERE environment_id = ? AND item_name = ?
 `
@@ -244,7 +244,7 @@ func (q *Queries) ValueRotationOf(ctx context.Context, arg ValueRotationOfParams
 const valueRowsOfItems = `-- name: ValueRowsOfItems :many
 
 SELECT id, item_name, current_version_id, deleted_at,
-  CAST(coalesce((SELECT json_type(s.payload, '$.totp') = 'object' FROM value_versions s WHERE s.id = env_values.current_version_id AND env_values.deleted_at IS NOT NULL), 0) AS INTEGER) AS seed
+  CAST(coalesce((SELECT CASE WHEN json_type(s.payload, '$.totp') = 'object' THEN 1 WHEN json_type(s.payload, '$.oauth') = 'object' THEN 2 END FROM value_versions s WHERE s.id = env_values.current_version_id AND env_values.deleted_at IS NOT NULL), 0) AS INTEGER) AS seed
 FROM env_values
 WHERE environment_id = ?1 AND item_name IN (/*SLICE:item_names*/?) ORDER BY id
 `
@@ -267,7 +267,8 @@ type ValueRowsOfItemsRow struct {
 // values.sql's.
 // lockValueRows: an environment's value rows for these names, deleted ones
 // included, in id order. seed is 1 for one that holds a seed of one-time
-// codes (ADR-0061): its deleted_at does not mean deleted.
+// codes (ADR-0061) and 2 for an OAuth connection (ADR-0062): its deleted_at
+// does not mean deleted.
 func (q *Queries) ValueRowsOfItems(ctx context.Context, arg ValueRowsOfItemsParams) ([]ValueRowsOfItemsRow, error) {
 	query := valueRowsOfItems
 	var queryParams []interface{}

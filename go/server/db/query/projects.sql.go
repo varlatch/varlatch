@@ -80,7 +80,8 @@ type DeleteValuesOfEnvironmentParams struct {
 	EnvironmentID string
 }
 
-// Seeds of one-time codes (ADR-0061) included, which have both columns set.
+// Seeds of one-time codes (ADR-0061) and OAuth connections (ADR-0062)
+// included, which have both columns set.
 func (q *Queries) DeleteValuesOfEnvironment(ctx context.Context, arg DeleteValuesOfEnvironmentParams) error {
 	_, err := q.db.ExecContext(ctx, deleteValuesOfEnvironment, arg.DeletedAt, arg.EnvironmentID)
 	return err

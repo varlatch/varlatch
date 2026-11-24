@@ -60,4 +60,51 @@ CREATE TABLE one_time_codes_given (
   step INTEGER NOT NULL
 ) STRICT;
 `},
+	// 65: OAuth connections' tokens, and authorizations in progress
+	// (ADR-0062). New tables only, so rollback-safe: an older varlatchd never
+	// reads them, and a connection's row in env_values is one it reads as
+	// deleted.
+	{To: 6, CompatibleFrom: 1, SQL: `
+CREATE TABLE oauth_connections (
+  value_id TEXT NOT NULL PRIMARY KEY REFERENCES env_values (id),
+  version_id TEXT NOT NULL REFERENCES value_versions (id),
+  status TEXT NOT NULL CONSTRAINT oauth_connections_status_check CHECK (status IN ('not_connected', 'connected', 'failing', 'needs_reconnect', 'revoked')),
+  reason TEXT,
+  paused_at INTEGER,
+  generation INTEGER NOT NULL DEFAULT 0,
+  access_token TEXT CHECK (json_valid(access_token)),
+  access_expires_at INTEGER,
+  access_lifetime INTEGER,
+  refresh_token TEXT CHECK (json_valid(refresh_token)),
+  refresh_expires_at INTEGER,
+  keepalive_at INTEGER,
+  granted_scopes TEXT,
+  account TEXT NOT NULL DEFAULT '',
+  account_label TEXT NOT NULL DEFAULT '',
+  connected_by TEXT REFERENCES identities (id),
+  connected_at INTEGER,
+  refreshed_at INTEGER,
+  failures INTEGER NOT NULL DEFAULT 0,
+  retry_at INTEGER,
+  claim_id TEXT,
+  claim_until INTEGER,
+  unanswered INTEGER NOT NULL DEFAULT 0
+) STRICT;
+CREATE INDEX oauth_connections_keepalive ON oauth_connections (keepalive_at) WHERE keepalive_at IS NOT NULL;
+CREATE TABLE oauth_authorizations (
+  state_hash TEXT NOT NULL PRIMARY KEY CONSTRAINT oauth_authorizations_state_hash_check CHECK (length(state_hash) = 64 AND state_hash NOT GLOB '*[^0-9a-f]*'),
+  organization_id TEXT NOT NULL REFERENCES organizations (id),
+  value_id TEXT NOT NULL REFERENCES env_values (id),
+  version_id TEXT NOT NULL REFERENCES value_versions (id),
+  identity_id TEXT NOT NULL REFERENCES identities (id),
+  auth_session_id TEXT NOT NULL,
+  nonce_hash TEXT NOT NULL,
+  verifier TEXT NOT NULL CHECK (json_valid(verifier)),
+  redirect_uri TEXT NOT NULL,
+  account_change INTEGER NOT NULL CONSTRAINT oauth_authorizations_account_change_check CHECK (account_change IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX oauth_authorizations_expires ON oauth_authorizations (expires_at);
+`},
 }

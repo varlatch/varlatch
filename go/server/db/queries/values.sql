@@ -32,6 +32,17 @@ SELECT v.id, v.item_name, v.current_version_id, v.retiring_version_id, v.rotatio
 FROM env_values v JOIN value_versions s ON s.id = v.current_version_id
 WHERE v.environment_id = ? AND v.deleted_at IS NOT NULL AND v.current_version_id IS NOT NULL AND json_type(s.payload, '$.totp') = 'object';
 
+-- name: ConnectionsOfEnvironment :many
+-- An environment's OAuth connections (ADR-0062), as SeedsOfEnvironment finds
+-- seeds, with what their tokens are now: none when the row of oauth_connections
+-- is missing or is another version's.
+SELECT v.id, v.item_name, v.current_version_id, CAST(json_extract(s.payload, '$.oauth') AS TEXT) AS params,
+  c.status, c.reason, c.paused_at, c.generation, c.access_expires_at, c.access_lifetime, c.account, c.account_label, c.claim_until,
+  CAST(c.access_token IS NOT NULL AS INTEGER) AS has_token
+FROM env_values v JOIN value_versions s ON s.id = v.current_version_id
+LEFT JOIN oauth_connections c ON c.value_id = v.id AND c.version_id = v.current_version_id
+WHERE v.environment_id = ? AND v.deleted_at IS NOT NULL AND v.current_version_id IS NOT NULL AND json_type(s.payload, '$.oauth') = 'object';
+
 -- name: OneTimeCodeGiven :many
 -- The newest step a seed's code was given for; no row when there is none.
 SELECT step FROM one_time_codes_given WHERE version_id = ?;

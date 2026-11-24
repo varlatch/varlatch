@@ -57,6 +57,73 @@ func (q *Queries) CapturedCiphertext(ctx context.Context, ids []string) ([]Captu
 	return items, nil
 }
 
+const connectionsOfEnvironment = `-- name: ConnectionsOfEnvironment :many
+SELECT v.id, v.item_name, v.current_version_id, CAST(json_extract(s.payload, '$.oauth') AS TEXT) AS params,
+  c.status, c.reason, c.paused_at, c.generation, c.access_expires_at, c.access_lifetime, c.account, c.account_label, c.claim_until,
+  CAST(c.access_token IS NOT NULL AS INTEGER) AS has_token
+FROM env_values v JOIN value_versions s ON s.id = v.current_version_id
+LEFT JOIN oauth_connections c ON c.value_id = v.id AND c.version_id = v.current_version_id
+WHERE v.environment_id = ? AND v.deleted_at IS NOT NULL AND v.current_version_id IS NOT NULL AND json_type(s.payload, '$.oauth') = 'object'
+`
+
+type ConnectionsOfEnvironmentRow struct {
+	ID               string
+	ItemName         string
+	CurrentVersionID sql.NullString
+	Params           string
+	Status           sql.NullString
+	Reason           sql.NullString
+	PausedAt         sql.NullInt64
+	Generation       sql.NullInt64
+	AccessExpiresAt  sql.NullInt64
+	AccessLifetime   sql.NullInt64
+	Account          sql.NullString
+	AccountLabel     sql.NullString
+	ClaimUntil       sql.NullInt64
+	HasToken         int64
+}
+
+// An environment's OAuth connections (ADR-0062), as SeedsOfEnvironment finds
+// seeds, with what their tokens are now: none when the row of oauth_connections
+// is missing or is another version's.
+func (q *Queries) ConnectionsOfEnvironment(ctx context.Context, environmentID string) ([]ConnectionsOfEnvironmentRow, error) {
+	rows, err := q.db.QueryContext(ctx, connectionsOfEnvironment, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnectionsOfEnvironmentRow
+	for rows.Next() {
+		var i ConnectionsOfEnvironmentRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ItemName,
+			&i.CurrentVersionID,
+			&i.Params,
+			&i.Status,
+			&i.Reason,
+			&i.PausedAt,
+			&i.Generation,
+			&i.AccessExpiresAt,
+			&i.AccessLifetime,
+			&i.Account,
+			&i.AccountLabel,
+			&i.ClaimUntil,
+			&i.HasToken,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countWouldBlock = `-- name: CountWouldBlock :many
 INSERT INTO security_control_counters
   (organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour, count, first_seen, last_seen)

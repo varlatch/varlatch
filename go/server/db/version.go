@@ -21,7 +21,7 @@ package db
 // Upgrade (`varlatchd admin schema upgrade`, run by `varlatch upgrade`)
 // applies; go/release/release.json declares whether the release is
 // rollback-safe, and G6 checks it.
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 // CompatibleFrom is the oldest schema version whose varlatchd may open a
 // database of this schema: the last step's CompatibleFrom, or SchemaVersion

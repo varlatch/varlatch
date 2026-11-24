@@ -16,7 +16,7 @@ package db
 const SchemaVersion = releaseVersion + 1
 
 // releaseVersion is the released schema this fixture builds on.
-const releaseVersion = 5
+const releaseVersion = 6
 
 // CompatibleFrom is g6compat_safe.go's (1: the step is rollback-safe, so
 // version 1 may still open it) or, with the g6unsafe tag as well,

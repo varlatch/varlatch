@@ -673,9 +673,10 @@ CREATE TABLE environments (
 CREATE UNIQUE INDEX environments_live_name_key ON environments (project_id, name) WHERE deleted_at IS NULL;
 
 -- A row with both current_version_id and deleted_at holds the seed of
--- one-time codes (ADR-0061): the version's payload says so (its member
--- totp). Nothing else leaves both set, and whoever does not know it reads
--- the row as deleted, so it never takes the seed for a value.
+-- one-time codes (ADR-0061) or an OAuth connection (ADR-0062): the version's
+-- payload says so (its member totp or oauth). Nothing else leaves both set,
+-- and whoever does not know it reads the row as deleted, so it never takes
+-- the seed, or the client secret, for a value.
 CREATE TABLE env_values (
   id TEXT NOT NULL PRIMARY KEY,
   environment_id TEXT NOT NULL REFERENCES environments (id),
@@ -1496,3 +1497,56 @@ CREATE TABLE one_time_codes_given (
   version_id TEXT NOT NULL PRIMARY KEY REFERENCES value_versions (id),
   step INTEGER NOT NULL
 ) STRICT;
+
+-- OAuth connections (ADR-0062): Go only, schema version 6. A connection's
+-- parameters and client secret are a value version, in a row an older server
+-- reads as deleted (env_values, above); what its tokens are now is here.
+-- access_token and refresh_token are envelopes under the Organization's KEK,
+-- bound to the version, its parameters, the account and the generation, which
+-- every change of the tokens raises. claim_id and claim_until are a refresh
+-- in progress, and unanswered counts the ones sent whose answer was not kept.
+-- The tokens are of version_id: a row whose value has another current version
+-- is not a connection's any more.
+CREATE TABLE oauth_connections (
+  value_id TEXT NOT NULL PRIMARY KEY REFERENCES env_values (id),
+  version_id TEXT NOT NULL REFERENCES value_versions (id),
+  status TEXT NOT NULL CONSTRAINT oauth_connections_status_check CHECK (status IN ('not_connected', 'connected', 'failing', 'needs_reconnect', 'revoked')),
+  reason TEXT,
+  paused_at INTEGER,
+  generation INTEGER NOT NULL DEFAULT 0,
+  access_token TEXT CHECK (json_valid(access_token)),
+  access_expires_at INTEGER,
+  access_lifetime INTEGER,
+  refresh_token TEXT CHECK (json_valid(refresh_token)),
+  refresh_expires_at INTEGER,
+  keepalive_at INTEGER,
+  granted_scopes TEXT,
+  account TEXT NOT NULL DEFAULT '',
+  account_label TEXT NOT NULL DEFAULT '',
+  connected_by TEXT REFERENCES identities (id),
+  connected_at INTEGER,
+  refreshed_at INTEGER,
+  failures INTEGER NOT NULL DEFAULT 0,
+  retry_at INTEGER,
+  claim_id TEXT,
+  claim_until INTEGER,
+  unanswered INTEGER NOT NULL DEFAULT 0
+) STRICT;
+CREATE INDEX oauth_connections_keepalive ON oauth_connections (keepalive_at) WHERE keepalive_at IS NOT NULL;
+-- An authorization in progress: its state (a hash), and what its answer is
+-- checked with. Deleted by the answer, or once expired.
+CREATE TABLE oauth_authorizations (
+  state_hash TEXT NOT NULL PRIMARY KEY CONSTRAINT oauth_authorizations_state_hash_check CHECK (length(state_hash) = 64 AND state_hash NOT GLOB '*[^0-9a-f]*'),
+  organization_id TEXT NOT NULL REFERENCES organizations (id),
+  value_id TEXT NOT NULL REFERENCES env_values (id),
+  version_id TEXT NOT NULL REFERENCES value_versions (id),
+  identity_id TEXT NOT NULL REFERENCES identities (id),
+  auth_session_id TEXT NOT NULL,
+  nonce_hash TEXT NOT NULL,
+  verifier TEXT NOT NULL CHECK (json_valid(verifier)),
+  redirect_uri TEXT NOT NULL,
+  account_change INTEGER NOT NULL CONSTRAINT oauth_authorizations_account_change_check CHECK (account_change IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX oauth_authorizations_expires ON oauth_authorizations (expires_at);

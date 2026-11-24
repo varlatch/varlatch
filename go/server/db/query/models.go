@@ -440,6 +440,47 @@ type MembershipRemoval struct {
 	RemovedAt       int64
 }
 
+type OauthAuthorization struct {
+	StateHash      string
+	OrganizationID string
+	ValueID        string
+	VersionID      string
+	IdentityID     string
+	AuthSessionID  string
+	NonceHash      string
+	Verifier       string
+	RedirectUri    string
+	AccountChange  int64
+	CreatedAt      int64
+	ExpiresAt      int64
+}
+
+type OauthConnection struct {
+	ValueID          string
+	VersionID        string
+	Status           string
+	Reason           sql.NullString
+	PausedAt         sql.NullInt64
+	Generation       int64
+	AccessToken      sql.NullString
+	AccessExpiresAt  sql.NullInt64
+	AccessLifetime   sql.NullInt64
+	RefreshToken     sql.NullString
+	RefreshExpiresAt sql.NullInt64
+	KeepaliveAt      sql.NullInt64
+	GrantedScopes    sql.NullString
+	Account          string
+	AccountLabel     string
+	ConnectedBy      sql.NullString
+	ConnectedAt      sql.NullInt64
+	RefreshedAt      sql.NullInt64
+	Failures         int64
+	RetryAt          sql.NullInt64
+	ClaimID          sql.NullString
+	ClaimUntil       sql.NullInt64
+	Unanswered       int64
+}
+
 type OidcBinding struct {
 	ID             string
 	IdentityID     string

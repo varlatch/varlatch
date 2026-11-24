@@ -15,7 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/schemadiff"
 )
 
-// What starts what schema versions 2 to 5 added to schema.sql: what comes
+// What starts what schema versions 2 to 6 added to schema.sql: what comes
 // before is the version before's schema (0.50.0-rc.1's is version 1, 0.50.0's
 // version 2, 0.50.2's version 3; CI's G6 job checks against a tag's own
 // file).
@@ -24,6 +24,7 @@ const (
 	v2Marker  = "\n-- Audit reads of the repair of Capabilities"
 	v3Marker  = "\n-- Exercise-only credentials and tokens exchanged once"
 	v4Marker  = "\n-- One-time codes given (ADR-0061)"
+	v5Marker  = "\n-- OAuth connections"
 )
 
 // schemaBefore is schema.sql as released before marker's section.
@@ -115,7 +116,7 @@ func TestV2DatabaseUpgradesToVersion3(t *testing.T) {
 // adds is a step of its own, never more of that one.
 func TestEveryEarlierVersionUpgrades(t *testing.T) {
 	ctx := context.Background()
-	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker}
+	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker, v5Marker}
 	if len(markers) != SchemaVersion-1 {
 		t.Fatalf("%d markers for schema version %d", len(markers), SchemaVersion)
 	}
@@ -145,6 +146,7 @@ func TestEveryEarlierVersionUpgrades(t *testing.T) {
 			"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('jti', 1, 2)",
 			"INSERT INTO exercise_credentials (credential_id, oidc_binding_id) VALUES ('crd_none', 'oib_none')",
 			"INSERT INTO one_time_codes_given (version_id, step) VALUES ('ver_none', 1)",
+			"INSERT INTO oauth_connections (value_id, version_id, status) VALUES ('val_none', 'ver_none', 'connected')",
 		} {
 			if err := tryExec(older, bad); err == nil {
 				t.Errorf("from %d: accepted: %s", from, bad)

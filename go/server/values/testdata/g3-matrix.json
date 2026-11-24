@@ -636,6 +636,150 @@
       "direction": "go-to-ts",
       "level": "not-applicable",
       "reason": "varlatchd's own (ADR-0061): the TypeScript line seals no seed and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithSeeds)."
+    },
+    {
+      "purpose": "oauth-client",
+      "class": "OAuth connections' client secrets (inside a value's payload)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062): the TypeScript line seals none and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithConnections)."
+    },
+    {
+      "purpose": "oauth-client",
+      "class": "OAuth connections' client secrets (inside a value's payload)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062): the TypeScript line seals none and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithConnections)."
+    },
+    {
+      "purpose": "oauth-client",
+      "class": "OAuth connections' client secrets (inside a value's payload)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062): the TypeScript line seals none and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithConnections)."
+    },
+    {
+      "purpose": "oauth-client",
+      "class": "OAuth connections' client secrets (inside a value's payload)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062): the TypeScript line seals none and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithConnections)."
+    },
+    {
+      "purpose": "oauth-access-token",
+      "class": "OAuth connections' access tokens (oauth_connections)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-access-token",
+      "class": "OAuth connections' access tokens (oauth_connections)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-access-token",
+      "class": "OAuth connections' access tokens (oauth_connections)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-access-token",
+      "class": "OAuth connections' access tokens (oauth_connections)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-refresh-token",
+      "class": "OAuth connections' refresh tokens (oauth_connections)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-refresh-token",
+      "class": "OAuth connections' refresh tokens (oauth_connections)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-refresh-token",
+      "class": "OAuth connections' refresh tokens (oauth_connections)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-refresh-token",
+      "class": "OAuth connections' refresh tokens (oauth_connections)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-verifier",
+      "class": "PKCE verifiers of OAuth authorizations in progress (oauth_authorizations)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-verifier",
+      "class": "PKCE verifiers of OAuth authorizations in progress (oauth_authorizations)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-verifier",
+      "class": "PKCE verifiers of OAuth authorizations in progress (oauth_authorizations)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
+    },
+    {
+      "purpose": "oauth-verifier",
+      "class": "PKCE verifiers of OAuth authorizations in progress (oauth_authorizations)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0062), in a table the TypeScript line does not have and no migration carries."
     }
   ]
 }

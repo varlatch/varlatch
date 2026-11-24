@@ -61,7 +61,7 @@
     ]
   },
   "target": {
-    "schemaVersion": 5
+    "schemaVersion": 6
   },
   "foreignKeys": "The schema's foreign keys form cycles (identities and organization_deletions refer to each other), so no table order satisfies them all: tables are listed by name, the import defers foreign keys and checks every one before it commits.",
   "tables": [
@@ -1178,6 +1178,8 @@
       "exercise_credentials": "What limits an exercise-only credential (ADR-0060), schema version 4: varlatchd's own. An import writes no row, and a reverse carries none: such a credential's own row is copied, and its token_hash ('exercise:' and the hash) matches no token on the TypeScript server.",
       "oidc_token_uses": "The tokens exchanged under a binding that takes each once (ADR-0060), schema version 4: varlatchd's own. An import writes no row, and a reverse carries none: the TypeScript server exchanges no token under such a binding (its reserved claim matches none).",
       "one_time_codes_given": "The newest time step a seed's code was given for (ADR-0061), schema version 5: varlatchd's own, one row per seed version. An import writes no row, and a reverse carries none. The seeds are value versions and are carried: their env_values rows have deleted_at and current_version_id both set, which the TypeScript server reads as deleted, so it delivers none.",
+      "oauth_connections": "What an OAuth connection's tokens are now (ADR-0062), schema version 6: varlatchd's own. An import writes no row, so a connection has to be connected again, and a reverse carries none: the TypeScript server refreshes nothing. The connections are value versions and are carried as seeds are, read there as deleted.",
+      "oauth_authorizations": "OAuth authorizations in progress (ADR-0062), schema version 6: varlatchd's own, kept ten minutes. An import writes no row, and a reverse carries none.",
       "schema_version": "Written by the import: the target schema version above."
     }
   },
