@@ -1827,7 +1827,8 @@ func TestEveryPairOfInterruptions(t *testing.T) {
 					break
 				}
 			}
-			if pairs < 100 {
+			// 914 at the least when this was written, 85 of them one in eleven.
+			if pairs < 800/step {
 				t.Fatalf("only %d pairs", pairs)
 			}
 			t.Logf("%d pairs", pairs)
