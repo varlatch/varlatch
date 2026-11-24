@@ -1202,8 +1202,15 @@ func TestRestore(t *testing.T) {
 	if restoreAt != 0 || len(h.links) != 0 || h.backups != 1 || !slices.Contains(h.adminCalls, "bootstrap-status") {
 		t.Errorf("admin calls %q, links %q, backups %d", h.adminCalls, h.links, h.backups)
 	}
-	if h.chowns["/var/lib/varlatch/varlatch.db"] != [2]int{990, 990} {
-		t.Errorf("the restored database is not the unit's: %v", h.chowns)
+	// The data directory is the unit's before the restore, which works in it
+	// as its owner; nothing in it is chowned by name.
+	if h.chowns["/var/lib/varlatch"] != [2]int{990, 990} {
+		t.Errorf("the data directory is not the unit's: %v", h.chowns)
+	}
+	for p := range h.chowns {
+		if strings.HasPrefix(p, "/var/lib/varlatch/") {
+			t.Errorf("%s was chowned", p)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(out, "root-kek.copy")); err == nil {
 		t.Error("a restore wrote a key copy")
