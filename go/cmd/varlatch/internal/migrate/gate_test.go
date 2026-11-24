@@ -212,7 +212,7 @@ func TestTheWayBackNeedsTheGate(t *testing.T) {
 	_, err = w.eng.Rollback(t.Context())
 	after, _ = readJournal(w.src.dir)
 	if !errors.Is(err, lost) || !strings.Contains(err.Error(), "the TypeScript dashboard was not started") || w.src.recreates != 0 || !w.src.ingressDown || after.Phase != Open || p.gates != 1 ||
-		!slices.Equal(src.did, []string{"serve gated, the sidecar false", "stop started postgres varlatchd"}) {
+		!slices.Equal(src.did, []string{"serve gated, the sidecar false", "hold gate-1", "stop front", "stop started postgres varlatchd", "stop front", "held gate-1", "held gate-1"}) {
 		t.Errorf("once it runs: %v, %v, made again %d, probed %d, phase %s", err, src.did, w.src.recreates, p.gates, after.Phase)
 	}
 }
@@ -222,11 +222,11 @@ func TestTheWayBackNeedsTheGate(t *testing.T) {
 // --resume and --abort of one killed there.
 func TestTheUndoStopsWhatTheCheckStarted(t *testing.T) {
 	for _, starts := range [][]string{nil, {"postgres"}, {"postgres", "varlatchd"}, {"varlatchd"}} {
-		want := []string{"serve gated, the sidecar false"}
-		stop := "stop started " + strings.Join(starts, " ")
+		want := []string{"serve gated, the sidecar false", "hold gate-1", "stop front"}
 		if starts != nil {
-			want = append(want, stop)
+			want = append(want, "stop started "+strings.Join(starts, " "))
 		}
+		want = append(want, "stop front", "held gate-1", "held gate-1")
 		w, src, j := rolledWorld(t, Open, Coolify)
 		w.eng.Options.TransferTimeout = 2 * time.Second
 		src.starts, w.src.ingressDown = starts, true
@@ -260,64 +260,238 @@ func TestTheUndoStopsWhatTheCheckStarted(t *testing.T) {
 	if err := writeJournal(w.src.dir, j); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.eng.Abort(t.Context()); err != nil || !slices.Equal(src.did, []string{"undo p_postgres-data-abcdefgh"}) {
+	if _, err := w.eng.Abort(t.Context()); err != nil || slices.ContainsFunc(src.did, func(d string) bool { return strings.HasPrefix(d, "stop started") }) {
 		t.Errorf("with a plan: %v %v", err, src.did)
 	}
 }
 
-// A gate an undo made, the import having lifted the migration's, is
-// journalled, and is the one a later reverse asks for.
+// A gate an undo finds, another than the migration's (an earlier build's
+// undo made one), is journalled, and is the one a later reverse asks for.
 func TestTheUndosGateIsKnownLater(t *testing.T) {
 	w, src, _ := rolledWorld(t, RollbackChecked, Coolify)
 	src.remade = "gate-9"
+	other := stateVol
+	other.CreatedAt = "2026-11-23T00:00:00Z"
+	src.remadeIn = &other
 	if _, err := w.eng.Abort(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := readJournal(w.src.dir)
-	if after.SourceGate != "gate-9" || after.Barrier.GateID != "gate-1" || src.gates[0].ID != "gate-1" || sourceGate(after).ID != "gate-9" {
-		t.Errorf("%+v, asked %+v", after.SourceGate, src.gates)
+	if after.Source.State == nil || *after.Source.State != other {
+		t.Errorf("the volume: %+v", after.Source.State)
+	}
+	if after.SourceGate != "gate-9" || after.Barrier.GateID != "gate-1" || src.did[0] != "hold gate-1" || sourceGate(after).ID != "gate-9" || src.position != "46" {
+		t.Errorf("%+v, %v, position %q", after.SourceGate, src.did, src.position)
 	}
 }
 
-// The gate after an undone rebuild: the migration's, when the import did
-// not lift it; another made, journalled before it is marked, when it did;
-// varlatchd starts behind it only.
-func TestTheUndoStartsBehindAGate(t *testing.T) {
-	const status, barrier, mark, up = "docker compose run --rm -T --no-deps varlatchd admin migration status", "docker compose run --rm -T --no-deps varlatchd admin migration barrier",
-		"docker compose run --rm -T --no-deps varlatchd admin migration mark-migrated-out --id ", "docker start made"
-	made := strings.Replace(gateText, "gate-1", "gate-9", 1)
+// An undo's first step: the gate stands in the volume that carries it, made
+// again as the release makes it when the import lifted it, whatever the
+// Compose files are; what is there and not the migration's is left.
+func TestHoldGate(t *testing.T) {
 	for _, c := range []struct {
-		name, status, file string
-		gated              string // the gate journalled
-		fail               string
+		name string
+		set  func(cmp *Compose, h *labelled, g *GateRef)
+		want string // the refusal
+		wrote,
+		id string
 	}{
-		{"not lifted", `{"gate":{"kind":"migrated-out","id":"gate-1"}}`, gateText, "", ""},
-		{"lifted", `{"gate":null}`, made, "gate-9", ""},
-		{"killed before it was journalled", `{"gate":{"kind":"migration","id":"gate-9"}}`, made, "gate-9", ""},
-		{"killed before it was journalled, marked", `{"gate":{"kind":"migrated-out","id":"gate-9"}}`, made, "gate-9", ""},
-		{"gone again before varlatchd starts", `{"gate":{"kind":"migrated-out","id":"gate-1"}}`, "", "", "holds no gate"},
-		{"a restore's", `{"gate":{"kind":"restore","id":"gate-1"}}`, gateText, "", "behind a restore gate"},
+		{"there", func(*Compose, *labelled, *GateRef) {}, "", "", "gate-1"},
+		{"lifted", func(_ *Compose, h *labelled, _ *GateRef) { h.gates[stateVol.Name] = "" }, "", "new", "gate-1"},
+		{"a killed undo's barrier of an earlier build", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.ReplaceAll(strings.Replace(gateText, "migrated-out", "migration", 1), "gate-1", "gate-9")
+		}, "", "replace", "gate-1"},
+		{"another migrated-out one", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.Replace(gateText, "gate-1", "gate-9", 1)
+		}, "", "", "gate-9"},
+		{"a restore's", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.Replace(gateText, "migrated-out", "restore", 1)
+		}, "behind a restore gate (gate-1), not the migration's: left as it is", "", ""},
+		{"a capture's", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.Replace(strings.Replace(gateText, "migrated-out", "capture", 1), `"expiresAt":null`, `"expiresAt":1`, 1)
+		}, "behind a capture gate", "", ""},
+		{"one that expires", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.Replace(gateText, `"expiresAt":null`, `"expiresAt":1`, 1)
+		}, "behind a migrated-out gate", "", ""},
+		{"unreadable", func(_ *Compose, h *labelled, _ *GateRef) { h.gates[stateVol.Name] = "{" }, "cannot be read", "", ""},
+		{"a link", func(_ *Compose, h *labelled, _ *GateRef) { h.gates[stateVol.Name] = "link" }, "is not a plain file", "", ""},
+		{"the volume gone", func(_ *Compose, h *labelled, _ *GateRef) {
+			delete(h.volumes, stateVol.Name)
+			delete(h.gates, stateVol.Name)
+		}, "", "new", "gate-1"},
+		{"the volume another's of the project, empty", func(_ *Compose, h *labelled, _ *GateRef) {
+			v := stateVol
+			v.CreatedAt = "2026-11-23T00:00:00Z"
+			h.volumes[v.Name], h.gates[v.Name] = v, ""
+		}, "", "new", "gate-1"},
+		{"another project's volume", func(_ *Compose, h *labelled, _ *GateRef) {
+			v := stateVol
+			v.Project = "another"
+			h.volumes[v.Name], h.gates[v.Name] = v, ""
+		}, "is not of its project varlatch", "", ""},
+		{"its server on another volume", func(cmp *Compose, h *labelled, _ *GateRef) {
+			l := ownCtr(cmp, "varlatchd")
+			l.mounts[0].Name = "another"
+			h.containers, h.gates[stateVol.Name] = []composeContainer{l}, ""
+		}, "it is another", "", ""},
+		{"its server's state a part of the volume", func(cmp *Compose, h *labelled, _ *GateRef) {
+			l := ownCtr(cmp, "varlatchd")
+			l.id = "c1"
+			h.containers, h.gates[stateVol.Name] = []composeContainer{l}, ""
+			h.inspects = map[string]string{"c1": `[] [{"Type":"volume","Name":"varlatch_varlatch-state","Destination":"/var/lib/varlatch","Driver":"local","RW":true}] [{"Type":"volume","Source":"x","Target":"/var/lib/varlatch","VolumeOptions":{"Subpath":"p"}}] null`}
+		}, "a part of it", "", ""},
+		{"an earlier build's journal", func(_ *Compose, h *labelled, g *GateRef) { g.State, h.gates[stateVol.Name] = nil, "" }, "", "new", "gate-1"},
+		{"no gate recorded", func(_ *Compose, h *labelled, g *GateRef) { g.ID, h.gates[stateVol.Name] = "", "" }, "records no gate", "", ""},
+		{"it cannot be written", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = ""
+			h.runErr = func(write bool) *Ran {
+				if write {
+					return &Ran{Code: 1, Said: []byte("No space left on device")}
+				}
+				return nil
+			}
+		}, "No space left on device", "", ""},
+		{"written, and not there", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = ""
+			h.runErr = func(write bool) *Ran {
+				if write {
+					return &Ran{}
+				}
+				return nil
+			}
+		}, "holds no gate", "", ""},
+		{"it cannot be read", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.runErr = func(bool) *Ran { return &Ran{Code: 125, Said: []byte("the daemon is down")} }
+		}, "the daemon is down", "", ""},
+	} {
+		host, g := gatedHost(), gate1
+		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}}}
+		cmp := stockCompose(t, run)
+		c.set(cmp, host, &g)
+		recorded := g.State != nil
+		before := host.gates[stateVol.Name]
+		held, err := cmp.HoldGate(t.Context(), g, "46")
+		if (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+		if wrote := strings.TrimPrefix(strings.Join(host.writes, " "), stateVol.Name+" "); wrote != c.wrote {
+			t.Errorf("%s: wrote %q, want %q", c.name, wrote, c.wrote)
+		}
+		after := host.gates[stateVol.Name]
+		switch {
+		case c.wrote != "":
+			if after != `{"id":"gate-1","kind":"migrated-out","phase":"paused","expiresAt":null,"archiveId":null,"frozenPosition":"46","frozenSnapshot":null}` {
+				t.Errorf("%s: wrote %s", c.name, after)
+			}
+		case after != before:
+			t.Errorf("%s: the gate is %s", c.name, after)
+		}
+		if c.want == "" {
+			if held.ID != c.id || held.State == nil || *held.State != host.volumes[stateVol.Name] {
+				t.Errorf("%s: held %+v", c.name, held)
+			}
+			if err := cmp.CheckHeld(t.Context(), held); err != nil {
+				t.Errorf("%s: held: %v", c.name, err)
+			}
+		}
+		// Nothing of the Compose files is asked for, when the volume is
+		// recorded: they may not be whole. Nothing is started.
+		for _, r := range run.ran {
+			if recorded || !strings.HasPrefix(r, "docker compose config ") {
+				t.Errorf("%s: ran %q", c.name, r)
+			}
+		}
+	}
+	// A position that is none is not written as one.
+	if b := string(gate1.text("x")); !strings.Contains(b, `"frozenPosition":null`) {
+		t.Error(b)
+	}
+	if _, err := parseGate(gate1.text("46")); err != nil {
+		t.Error(err)
+	}
+}
+
+// Whoever starts the server, it is behind the gate: the gate in the recorded
+// volume, the server's containers on it, whole, and no import running.
+func TestCheckHeld(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		set  func(cmp *Compose, h *labelled, g *GateRef)
+		want string
+	}{
+		{"held, its server running", func(cmp *Compose, h *labelled, _ *GateRef) {
+			h.containers = []composeContainer{ownCtr(cmp, "varlatchd")}
+		}, ""},
+		{"held, without containers", func(*Compose, *labelled, *GateRef) {}, ""},
+		{"lifted", func(_ *Compose, h *labelled, _ *GateRef) { h.gates[stateVol.Name] = "" }, "holds no gate"},
+		{"another gate", func(_ *Compose, h *labelled, g *GateRef) { g.ID = "gate-2" }, "not the migration's own, gate-2"},
+		{"the barrier only", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.Replace(gateText, "migrated-out", "migration", 1)
+		}, "not the migration's own"},
+		{"the volume gone", func(_ *Compose, h *labelled, _ *GateRef) { delete(h.volumes, stateVol.Name) }, "is not there"},
+		{"another volume", func(_ *Compose, h *labelled, _ *GateRef) {
+			v := stateVol
+			v.CreatedAt = "2026-11-23T00:00:00Z"
+			h.volumes[v.Name] = v
+		}, "is not the one that carries the gate"},
+		{"its server on another volume", func(cmp *Compose, h *labelled, _ *GateRef) {
+			l := ownCtr(cmp, "varlatchd")
+			l.mounts[0].Name, l.status = "another", "exited"
+			h.containers = []composeContainer{l}
+		}, "it is another"},
+		{"the import running", func(cmp *Compose, h *labelled, _ *GateRef) {
+			l := ctr("varlatch", importService, filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "True")
+			l.name = "the-import"
+			h.containers = []composeContainer{l}
+		}, "the reverse's import (the-import) still runs"},
+		{"the import ended", func(cmp *Compose, h *labelled, _ *GateRef) {
+			l := ctr("varlatch", importService, filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "True")
+			l.status = "exited"
+			h.containers = []composeContainer{l}
+		}, ""},
+		{"no volume recorded", func(_ *Compose, _ *labelled, g *GateRef) { g.State = nil }, "does not record"},
+		{"another directory's container of the project", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.containers = []composeContainer{ctr("varlatch", "varlatchd", "/srv/live/docker-compose.yml", "/srv/live", "False")}
+		}, "made from /srv/live"},
+	} {
+		host, g := gatedHost(), gate1
+		run := &scripted{t: t, host: host}
+		cmp := stockCompose(t, run)
+		c.set(cmp, host, &g)
+		if err := cmp.CheckHeld(t.Context(), g); (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+		if len(run.ran) > 0 || len(host.writes) > 0 {
+			t.Errorf("%s: ran %q, wrote %v", c.name, run.ran, host.writes)
+		}
+	}
+}
+
+// The undone rebuild starts its server only with start, and behind the gate
+// that stands already: it makes none.
+func TestTheUndoStartsBehindTheGate(t *testing.T) {
+	for _, c := range []struct {
+		name, file string
+		start      bool
+		fail       string
+	}{
+		{"behind it", gateText, true, ""},
+		{"not started, its sidecar's to be", gateText, false, ""},
+		{"gone by then", "", true, "holds no gate"},
 	} {
 		host := gatedHost()
 		host.gates[stateVol.Name] = c.file
-		// Made again by the undo's own commands: another than the journal's.
-		v := stateVol
-		v.CreatedAt = "2026-11-23T00:00:00Z"
-		host.volumes[v.Name] = v
-		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker compose stop ": {}, "docker compose up ": {}, "docker compose ps ": {},
-			status: {Answer: []byte(c.status)}, barrier: {Answer: []byte(`{"gate":{"kind":"migration","id":"gate-9"}}`)}, mark: {}}}
-		var gated []string
+		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker compose up ": {}, "docker compose ps ": {}}}
 		cmp := stockCompose(t, run)
 		run.onRun = makes(cmp, host, false)
-		err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile}, gate1, func(id string) error {
-			gated = append(gated, id)
-			if slices.ContainsFunc(run.ran, func(r string) bool { return strings.HasPrefix(r, mark) }) {
-				t.Errorf("%s: journalled after it was marked", c.name)
+		err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile}, gate1, c.start)
+		if (err == nil) != (c.fail == "") || err != nil && !strings.Contains(err.Error(), c.fail) || slices.Contains(run.ran, "docker start made") != (c.start && c.fail == "") || len(host.writes) > 0 {
+			t.Errorf("%s: %v, ran %q", c.name, err, run.ran)
+		}
+		for _, r := range run.ran {
+			if strings.Contains(r, " run ") {
+				t.Errorf("%s: ran %q", c.name, r)
 			}
-			return nil
-		})
-		if (err == nil) != (c.fail == "") || err != nil && !strings.Contains(err.Error(), c.fail) || slices.Contains(run.ran, up) != (c.fail == "") || strings.Join(gated, " ") != c.gated {
-			t.Errorf("%s: %v, journalled %v, ran %q", c.name, err, gated, run.ran)
 		}
 	}
 }
@@ -649,7 +823,7 @@ func TestTheUndoOnAnOldCompose(t *testing.T) {
 		imp.id = "import"
 		host.containers = append(host.containers, imp, ownCtr(cmp, "varlatch-web"))
 		c.set(host)
-		err := cmp.UndoRebuild(t.Context(), plan, gate1, ungated)
+		err := cmp.UndoRebuild(t.Context(), plan, gate1, true)
 		if (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want %q", c.name, err, c.want)
 		}
@@ -712,21 +886,153 @@ func TestTheUndoOnAnOldCompose(t *testing.T) {
 	}
 }
 
-// Go's outage does not wait for the TypeScript side's recovery: its server
-// held stopped, Go opens and its barrier is lifted; --resume (or --abort)
-// puts the rest back, and no reverse and no --finish begins before. A server
-// that may run keeps Go behind its barrier.
+// The undo's order: the gate first, Go's barrier last, and only while the
+// gate is held; a warning before what it warns of, journalled.
+func TestTheUndosOrder(t *testing.T) {
+	for _, c := range []struct {
+		phase Phase
+		kind  Ingress
+		want  []string
+	}{
+		{Rollback, Public, []string{"hold gate-1", "undo p_postgres-data-abcdefgh", "held gate-1", "held gate-1", "lift"}},
+		{RollbackChecked, Coolify, []string{"hold gate-1", "stop front", "undo p_postgres-data-abcdefgh", "stop front", "held gate-1", "held gate-1", "lift"}},
+		{RollbackTransfer, Public, []string{"hold gate-1", "stop serving", "undo p_postgres-data-abcdefgh", "stop front", "held gate-1", "held gate-1", "lift"}},
+		{RollbackTransfer, Coolify, []string{"hold gate-1", "stop serving", "stop front", "undo p_postgres-data-abcdefgh", "stop front", "held gate-1", "held gate-1", "lift"}},
+	} {
+		w, src, _ := rolledWorld(t, c.phase, c.kind)
+		tgt := w.eng.Target.(*reverseTargetFake)
+		tgt.onRelease = func() { src.do("lift") }
+		if _, err := w.eng.Abort(t.Context()); err != nil || !slices.Equal(src.did, c.want) || !src.started {
+			t.Errorf("%s, %s: %v: %v, want %v", c.phase, c.kind, err, src.did, c.want)
+		}
+	}
+	// A sidecar the forward handoff stopped: its server is not started.
+	w, src, j := rolledWorld(t, RollbackChecked, Coolify)
+	j.Tailnet = &TailnetRecord{Handoff: &tailhandoff.State{Phase: tailhandoff.Done}}
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	up := true
+	fs := &sidecarFake{routedFake: routedFake{src}, up: &up}
+	w.eng.Source = fs
+	if _, err := w.eng.Abort(t.Context()); err != nil || src.started || !fs.stopped {
+		t.Errorf("the sidecar's: %v, started %v, the sidecar stopped %v", err, src.started, fs.stopped)
+	}
+}
+
+// The gate that cannot be held: nothing of the TypeScript side is started or
+// put back, and Go's barrier stands, said with what to do; --resume and
+// --abort try again.
+func TestTheUndoNeedsTheGateHeld(t *testing.T) {
+	lost := errors.New("the volume is not of its project")
+	for _, kind := range []Ingress{Coolify, Public} {
+		for _, phase := range []Phase{RollbackImported, RollbackTransfer} {
+			w, src, j := rolledWorld(t, phase, kind)
+			tgt := w.eng.Target.(*reverseTargetFake)
+			j.Rollback.Barrier = &BarrierRecord{}
+			if err := writeJournal(w.src.dir, j); err != nil {
+				t.Fatal(err)
+			}
+			src.holdErr = lost
+			want := []string{"hold gate-1"}
+			if phase != RollbackTransfer {
+				want = append(want, "stop servers")
+				if kind == Coolify {
+					want = append(want, "stop front")
+				}
+			}
+			for _, how := range []string{"--abort", "--resume", "--abort"} {
+				src.did = nil
+				var err error
+				if how == "--abort" {
+					_, err = w.eng.Abort(t.Context())
+				} else {
+					_, err = w.eng.Resume(t.Context())
+				}
+				for _, said := range []string{lost.Error(), "Go stays behind its barrier: the outage goes on, and no data is lost", "nothing of it was started", "Do not start the TypeScript installation", "By hand: ", "varlatch migrate --resume"} {
+					if err == nil || !strings.Contains(err.Error(), said) {
+						t.Errorf("%s, %s, %s: %v, want %q", kind, phase, how, err, said)
+					}
+				}
+				if after, _ := readJournal(w.src.dir); !slices.Equal(src.did, want) || tgt.released != 0 || after.Phase != phase || !after.Rollback.Undoing {
+					t.Errorf("%s, %s, %s: %v, lifted %d, phase %s", kind, phase, how, src.did, tgt.released, after.Phase)
+				}
+			}
+			src.holdErr = nil
+			if _, err := w.eng.Abort(t.Context()); err != nil || tgt.released != 1 {
+				t.Errorf("%s, %s: held again: %v", kind, phase, err)
+			}
+		}
+	}
+	// Held at first, not when Go's barrier is to be lifted: before its
+	// journal says open, and right before the lift.
+	for n, phase := range map[int]Phase{1: RollbackImported, 2: Open} {
+		w, src, j := rolledWorld(t, RollbackImported, Coolify)
+		tgt := w.eng.Target.(*reverseTargetFake)
+		j.Rollback.Barrier = &BarrierRecord{}
+		if err := writeJournal(w.src.dir, j); err != nil {
+			t.Fatal(err)
+		}
+		src.heldErr = func(i int) error {
+			if i == n {
+				return lost
+			}
+			return nil
+		}
+		_, err := w.eng.Abort(t.Context())
+		after, _ := readJournal(w.src.dir)
+		if phase != Open && (err == nil || !errors.Is(err, lost)) || tgt.released != 0 || after.Phase != phase {
+			t.Errorf("check %d: %v, lifted %d, phase %s", n, err, tgt.released, after.Phase)
+		}
+		// --resume lifts it only when it is held.
+		w.tgt.barrier = "paused"
+		src.heldErr = func(int) error { return lost }
+		if _, err := w.eng.Resume(t.Context()); !errors.Is(err, lost) || tgt.released != 0 {
+			t.Errorf("check %d, --resume: %v, lifted %d", n, err, tgt.released)
+		}
+		src.heldErr = nil
+		if _, err := w.eng.Resume(t.Context()); tgt.released != 1 {
+			t.Errorf("check %d, --resume once held: %v, lifted %d", n, err, tgt.released)
+		}
+	}
+	// Before Go's barrier was asked for, there is none to lift.
+	w, src, j := rolledWorld(t, Rollback, Coolify)
+	j.Rollback = &RollbackRecord{Started: []string{"postgres"}}
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	src.holdErr = lost
+	if _, err := w.eng.Abort(t.Context()); !errors.Is(err, lost) || !strings.Contains(err.Error(), "Go goes on as it was") {
+		t.Errorf("before the barrier: %v", err)
+	}
+}
+
+// Go's outage does not wait for the TypeScript side's recovery: its gate
+// held, Go opens and its barrier is lifted; --resume (or --abort) puts the
+// rest back, and no reverse and no --finish begins before.
 func TestTheUndoEndsGosOutage(t *testing.T) {
 	stuck := errors.New("postgres did not go back")
 	for _, kind := range []Ingress{Coolify, Public} {
 		for _, how := range []string{"--resume", "--abort"} {
 			w, src, _ := rolledWorld(t, RollbackChecked, kind)
 			tgt := w.eng.Target.(*reverseTargetFake)
-			src.undoErr, src.remade = stuck, "gate-9"
+			src.undoErr = stuck
+			// Said and journalled before Go opens.
+			tgt.onRelease = func() {
+				at, _ := readJournal(w.src.dir)
+				if !strings.Contains(strings.Join(w.said, "\n"), "The TypeScript installation is not put back") || !strings.Contains(at.Rollback.Unrestored, stuck.Error()) {
+					t.Errorf("%s: lifted before it was said (%v) and journalled (%q)", kind, w.said, at.Rollback.Unrestored)
+				}
+				src.do("lift")
+			}
 			_, err := w.eng.Abort(t.Context())
 			after, _ := readJournal(w.src.dir)
-			if err == nil || !strings.Contains(err.Error(), "is not put back") || after.Phase != Open || tgt.released != 1 || !strings.Contains(after.Rollback.Unrestored, stuck.Error()) || after.Rollback.Undoing || !after.Rollback.Undone.Released || after.SourceGate != "gate-9" ||
-				!slices.Equal(src.did, []string{"undo p_postgres-data-abcdefgh", "stop servers"}) || !w.tgt.running {
+			want := []string{"hold gate-1", "undo p_postgres-data-abcdefgh", "stop servers", "held gate-1", "held gate-1", "lift"}
+			if kind == Coolify {
+				want = []string{"hold gate-1", "stop front", "undo p_postgres-data-abcdefgh", "stop front", "stop servers", "held gate-1", "held gate-1", "lift"}
+			}
+			if err == nil || !strings.Contains(err.Error(), "is not put back") || !strings.Contains(err.Error(), "Do not start it") || after.Phase != Open || tgt.released != 1 || !strings.Contains(after.Rollback.Unrestored, stuck.Error()) ||
+				after.Rollback.Undoing || !after.Rollback.Undone.Released || !slices.Equal(src.did, want) || !w.tgt.running {
 				t.Fatalf("%s: %v: %+v, %v, lifted %d", kind, err, after.Rollback, src.did, tgt.released)
 			}
 			src.did = nil
@@ -747,34 +1053,77 @@ func TestTheUndoEndsGosOutage(t *testing.T) {
 				}
 				return err
 			}
-			if err := again(); !errors.Is(err, stuck) || !strings.Contains(err.Error(), "Go serves") || !slices.Equal(src.did, []string{"undo p_postgres-data-abcdefgh", "stop servers"}) || tgt.released != 1 {
+			if err := again(); !errors.Is(err, stuck) || !strings.Contains(err.Error(), "Go serves") || !slices.Equal(src.did, []string{"held gate-1", "undo p_postgres-data-abcdefgh", "stop servers"}) || tgt.released != 1 {
 				t.Errorf("%s, %s, still stuck: %v %v", kind, how, err, src.did)
 			}
-			src.did, src.undoErr, src.remade = nil, nil, ""
-			if err := again(); err != nil || !slices.Equal(src.did, []string{"undo p_postgres-data-abcdefgh"}) {
+			// Not held by then: nothing is started.
+			lost := errors.New("the volume holds no gate")
+			src.did, src.heldErr = nil, func(int) error { return lost }
+			if err := again(); !errors.Is(err, lost) || !slices.Equal(src.did, []string{"held gate-1"}) {
+				t.Errorf("%s, %s, not held: %v %v", kind, how, err, src.did)
+			}
+			src.did, src.undoErr, src.heldErr = nil, nil, nil
+			if err := again(); err != nil || !slices.Equal(src.did, []string{"held gate-1", "undo p_postgres-data-abcdefgh"}) {
 				t.Errorf("%s, %s: %v %v", kind, how, err, src.did)
 			}
-			if after, _ := readJournal(w.src.dir); after.Rollback.Unrestored != "" || after.Phase != Open || src.gates[len(src.gates)-1].ID != "gate-9" {
+			if after, _ := readJournal(w.src.dir); after.Rollback.Unrestored != "" || after.Phase != Open {
 				t.Errorf("%s, %s: after: %+v", kind, how, after.Rollback)
 			}
 		}
 	}
-	// Through --resume of an interrupted reverse: said, with what not to do.
+	// Journalled before it is said: killed there, the next run knows.
 	w, src, _ := rolledWorld(t, RollbackImported, Coolify)
 	src.undoErr = stuck
-	_, err := w.eng.Resume(t.Context())
-	for _, want := range []string{"the reverse was undone: Go runs and takes requests again", "is not put back", stuck.Error(), "its server is stopped", "Do not start it", "varlatch migrate --resume puts it back"} {
+	said, say := 0, w.eng.Options.Say
+	w.eng.Options.Say = func(text string) {
+		say(text)
+		if at, _ := readJournal(w.src.dir); strings.Contains(text, "is not put back") {
+			if said++; !strings.Contains(at.Rollback.Unrestored, stuck.Error()) || at.Phase == Open {
+				t.Errorf("said in phase %s with %q journalled", at.Phase, at.Rollback.Unrestored)
+			}
+		}
+	}
+	_, err := w.eng.Abort(t.Context())
+	if err == nil || said != 1 {
+		t.Errorf("%v, said %d times", err, said)
+	}
+	// Through --resume of an interrupted reverse: said, with what not to do.
+	w, src, _ = rolledWorld(t, RollbackImported, Coolify)
+	src.undoErr = stuck
+	_, err = w.eng.Resume(t.Context())
+	for _, want := range []string{"the reverse was undone: Go runs and takes requests again", "is not put back", stuck.Error(), "it is behind its gate, and its server is stopped", "Do not start it", "varlatch migrate --resume puts it back"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%v, want %q", err, want)
 		}
 	}
-	// Its server may run: Go stays behind its barrier.
-	w, src, _ = rolledWorld(t, RollbackImported, Coolify)
-	src.undoErr, src.stopErr = stuck, errors.New("docker does not answer")
-	_, err = w.eng.Resume(t.Context())
-	after, _ := readJournal(w.src.dir)
-	if !errors.Is(err, stuck) && !strings.Contains(fmt.Sprint(err), stuck.Error()) || w.eng.Target.(*reverseTargetFake).released != 0 || after.Phase == Open || !after.Rollback.Undoing {
-		t.Errorf("not stopped: %v, phase %s", err, after.Phase)
+}
+
+// What an undo's steps left counts, not what an earlier one said: a stop
+// that failed at first (the reverse's Compose file gone, say) and is so by
+// the end does not keep Go behind its barrier; one that is not does.
+func TestTheUndoCountsWhatIsSo(t *testing.T) {
+	failed := errors.New("open docker-compose.varlatch-rollback.yml: no such file or directory")
+	for _, phase := range []Phase{RollbackTransfer, RollbackChecked} {
+		for _, kind := range []Ingress{Coolify, Public, Proxy} {
+			if phase == RollbackChecked && kind != Coolify {
+				continue
+			}
+			w, src, _ := rolledWorld(t, phase, kind)
+			tgt := w.eng.Target.(*reverseTargetFake)
+			src.servingErr = failed
+			if kind == Coolify {
+				src.frontErrs = []error{failed, nil}
+			}
+			if _, err := w.eng.Abort(t.Context()); err != nil || tgt.released != 1 {
+				t.Errorf("%s, %s: %v, lifted %d", phase, kind, err, tgt.released)
+			}
+			w, src, _ = rolledWorld(t, phase, kind)
+			tgt = w.eng.Target.(*reverseTargetFake)
+			src.frontErrs = []error{failed, failed, failed}
+			if _, err := w.eng.Abort(t.Context()); !errors.Is(err, failed) && !strings.Contains(fmt.Sprint(err), failed.Error()) || tgt.released != 0 {
+				t.Errorf("%s, %s, still: %v, lifted %d", phase, kind, err, tgt.released)
+			}
+		}
 	}
 }
 
@@ -886,5 +1235,38 @@ func TestTheImagesEnvironment(t *testing.T) {
 	defer again()
 	if _, serr := os.Stat(filepath.Join(root, "seen")); err == nil || !strings.Contains(err.Error(), "cannot write in") || !strings.Contains(err.Error(), "TMPDIR set to a directory every user can pass through") || !os.IsNotExist(serr) {
 		t.Errorf("%v, asked %v", err, serr)
+	}
+}
+
+// The sidecar's certificate is asked for once it has heard of its name: a
+// node just renamed may not have, and would refuse it each time. Never for a
+// name it does not hear of.
+func TestTheCertificateWaitsForTheName(t *testing.T) {
+	was := certNameWait
+	defer func() { certNameWait = was }()
+	for _, c := range []struct{ after, wait, asked int }{{0, 3, 1}, {1, 3, 1}, {9, 2, 0}} {
+		dir := t.TempDir()
+		certNameWait = c.wait
+		script := ""
+		run := &scripted{t: t, answers: map[string]Ran{"docker compose exec -T tailscale sh -c ": {}}}
+		if err := stockCompose(t, run).RenewTailnetCert(t.Context(), "vault.x.ts.net", time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		script = strings.TrimPrefix(run.ran[0], "docker compose exec -T tailscale sh -c ")
+		fake := `#!/bin/sh
+echo "$@" >> "` + dir + `/calls"
+case "$1" in
+status) n=$(grep -c '^status' "` + dir + `/calls"); [ "$n" -gt ` + fmt.Sprint(c.after) + ` ] && echo '{"Self":{"DNSName":"vault.x.ts.net."},"CertDomains":["vault.x.ts.net"]}' || echo '{"Self":{"DNSName":"vault.x.ts.net."},"CertDomains":["vault-o.x.ts.net"]}' ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(dir, "tailscale"), []byte(fake), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		r, err := ExecRunner{Env: []string{"PATH=" + dir + ":" + os.Getenv("PATH"), "TMPDIR=" + dir}}.Run(t.Context(), dir, "sh", []string{"-c", script}, nil)
+		calls, _ := os.ReadFile(filepath.Join(dir, "calls"))
+		asked := strings.Count(string(calls), "cert --min-validity")
+		if err != nil || (r.Code == 0) != (c.asked == 1) || asked != c.asked || c.asked == 0 && !strings.Contains(string(r.Said), "is not named vault.x.ts.net yet") {
+			t.Errorf("after %d: %v %+v, asked %d: %s", c.after, err, r.Code, asked, calls)
+		}
 	}
 }

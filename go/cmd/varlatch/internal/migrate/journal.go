@@ -111,8 +111,8 @@ type Journal struct {
 	Ingress Ingress `json:"ingress"`
 	// Transfer is the address transfer's record.
 	Transfer *TransferRecord `json:"transfer,omitempty"`
-	// SourceGate is the source's migrated-out gate now, when an undone
-	// reverse made another than Barrier's ("": Barrier's).
+	// SourceGate is the source's migrated-out gate now, when an undo found
+	// another than Barrier's ("": Barrier's).
 	SourceGate string `json:"sourceGate,omitempty"`
 	// Rollback is the reverse migration's record (the last one begun).
 	Rollback *RollbackRecord `json:"rollback,omitempty"`

@@ -169,7 +169,7 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 				run.host.containers = append(run.host.containers, l)
 			}
 			run.onRun = makes(cmp, run.host, false)
-			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}}, gate1, ungated)
+			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}}, gate1, true)
 			started := slices.Contains(run.ran, "docker start made")
 			if run.ran[0] != "docker stop c-postgres-0 c-convex-backend-1 c-varlatchd-2" {
 				t.Errorf("ran %q first", run.ran[0])

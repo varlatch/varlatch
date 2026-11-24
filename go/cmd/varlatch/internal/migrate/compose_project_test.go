@@ -37,6 +37,11 @@ type labelled struct {
 	// the container's id.
 	tars     map[string][]byte
 	inspects map[string]string
+	// stdin is the command's; writes are the gates written, by volume; runErr
+	// answers the containers of migrate's own.
+	stdin  []byte
+	writes []string
+	runErr func(write bool) *Ran
 	// acted is called after a container was started, stopped or removed.
 	acted func(verb, id string)
 }
@@ -77,8 +82,13 @@ func tarOf(name, text string, typ byte) []byte {
 	return b.Bytes()
 }
 
-// gateRun is the arguments that read a volume's gate.
-const gateRun = "run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --mount type=volume,source=%s,target=/state,readonly,volume-nocopy --entrypoint cat %s /state/maintenance.json"
+// gateRun and gateWrite are the arguments that read and write a volume's gate.
+func gateRun(volume string) []string {
+	return append(ownRun("type=volume,source="+volume+",target=/state,readonly,volume-nocopy"), gate1.Image, "-c", readGateScript)
+}
+func gateWrite(volume, how string) []string {
+	return append(ownRun("type=volume,source="+volume+",target=/var/lib/varlatch"), gate1.Image, "-c", writeGateScript, "sh", how)
+}
 
 const gateText = `{"id":"gate-1","kind":"migrated-out","phase":"paused","expiresAt":null,"archiveId":null,"frozenPosition":"46"}`
 
@@ -91,8 +101,6 @@ func gatedHost() *labelled {
 }
 
 var gate1 = GateRef{ID: "gate-1", State: &stateVol, Image: "x@sha256:y"}
-
-func ungated(string) error { return errors.New("no gate was to be made") }
 
 func (h *labelled) byActs(args []string) bool {
 	return len(args) > 1 && slices.Contains([]string{"start", "restart", "stop", "rm"}, args[0])
@@ -157,12 +165,30 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 		}
 		return Ran{}, true
 	case args[0] == "run":
-		for name, text := range h.gates {
-			if strings.Join(args, " ") == fmt.Sprintf(gateRun, name, gate1.Image) {
-				h.reads++
-				if text == "" {
-					return Ran{Code: 1, Said: []byte("cat: /state/maintenance.json: No such file or directory")}, true
+		for name := range h.volumes {
+			write := slices.Equal(args, gateWrite(name, "new")) || slices.Equal(args, gateWrite(name, "replace"))
+			if !write && !slices.Equal(args, gateRun(name)) {
+				continue
+			}
+			if h.runErr != nil {
+				if r := h.runErr(write); r != nil {
+					return *r, true
 				}
+			}
+			switch text := h.gates[name]; {
+			case write && text != "" && args[len(args)-1] == "new":
+				return Ran{Code: 1, Said: []byte("ln: maintenance.json: File exists")}, true
+			case write:
+				h.gates[name] = string(h.stdin)
+				h.writes = append(h.writes, name+" "+args[len(args)-1])
+				return Ran{}, true
+			case text == "":
+				h.reads++
+				return Ran{Code: gateNone}, true
+			case text == "link":
+				return Ran{Code: gateNotPlain}, true
+			default:
+				h.reads++
 				return Ran{Answer: []byte(text)}, true
 			}
 		}
@@ -181,17 +207,19 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 			out.Write(append(b, ' '))
 		}
 		return Ran{Answer: []byte(out.String())}, true
-	case h.volumes != nil && len(args) == 9 && args[0] == "volume" && args[1] == "create":
+	case h.volumes != nil && len(args) >= 7 && args[0] == "volume" && args[1] == "create":
 		// As Docker: a name that is there is answered, not made again.
-		if _, ok := h.volumes[args[8]]; !ok {
-			v := VolumeRecord{Name: args[8], CreatedAt: "2026-11-09T09:09:09Z", Mountpoint: "/v/" + args[8]}
+		if _, ok := h.volumes[args[len(args)-1]]; !ok {
+			v := VolumeRecord{Name: args[len(args)-1], CreatedAt: "2026-11-09T09:09:09Z", Mountpoint: "/v/" + args[len(args)-1]}
 			for i, f := range []*string{&v.Project, &v.Key, &v.Owner} {
-				_, *f, _ = strings.Cut(args[3+2*i], "=")
+				if 3+2*i < len(args)-1 {
+					_, *f, _ = strings.Cut(args[3+2*i], "=")
+				}
 			}
 			h.volumes[v.Name] = v
 			h.made = append(h.made, v.Name)
 		}
-		return Ran{Answer: []byte(args[8] + "\n")}, true
+		return Ran{Answer: []byte(args[len(args)-1] + "\n")}, true
 	case h.volumes != nil && len(args) >= 3 && args[0] == "volume" && args[1] == "rm":
 		name := args[len(args)-1]
 		delete(h.volumes, name)
@@ -591,9 +619,8 @@ func TestComposeCommandsNameTheProject(t *testing.T) {
 	_ = c.StartServing(ctx, Coolify)
 	_ = c.StopServing(ctx, Coolify)
 	_, _ = c.running(ctx)
-	_, _ = c.gateOffline(ctx)
 	_, _, _ = c.TailnetCertExpiry(ctx, "a.example.ts.net")
-	if len(run.argv) < 16 {
+	if len(run.argv) < 12 {
 		t.Fatalf("%d compose commands", len(run.argv))
 	}
 	for _, a := range run.argv {
@@ -847,6 +874,27 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	if err := bare.startGated(ctx, gate, false); err != nil {
 		t.Errorf("again: %v", err)
 	}
+	// Lifted, and held again as it was; a barrier in its place replaced; a
+	// volume that is gone made again, its gate in it.
+	write("rm /s/maintenance.json")
+	for _, there := range []string{"", strings.Replace(gateText, "migrated-out", "migration", 1)} {
+		if there != "" {
+			write("printf '%s' '" + there + "' > /s/maintenance.json")
+		}
+		held, err := bare.HoldGate(ctx, gate, "46")
+		if err != nil || held.ID != gate.ID || *held.State != *gate.State {
+			t.Errorf("held: %+v %v", held, err)
+		}
+		if err := bare.CheckHeld(ctx, held); err != nil {
+			t.Errorf("held: %v", err)
+		}
+		check("")
+	}
+	write("rm /s/maintenance.json; mkdir /s/maintenance.json")
+	if _, err := bare.HoldGate(ctx, gate, "46"); err == nil || !strings.Contains(err.Error(), "is not a plain file") {
+		t.Errorf("a directory: %v", err)
+	}
+	write("rmdir /s/maintenance.json; printf '%s' '" + gateText + "' > /s/maintenance.json")
 	// A part of the volume, which has the same file: another container, and
 	// not the whole.
 	part := filepath.Join(dir, "part.yml")
@@ -859,6 +907,10 @@ func TestComposeProjectOnDocker(t *testing.T) {
 		t.Errorf("a part of the volume: %v", err)
 	}
 	docker(append(slices.Clone(named), "-f", part, "rm", "-sf")...)
+	docker("volume", "rm", gateVol)
+	if held, err := bare.HoldGate(ctx, gate, "46"); err != nil || held.State.Project != project || held.State.CreatedAt == "" || bare.CheckHeld(ctx, held) != nil {
+		t.Errorf("the volume gone: %+v %v", held, err)
+	}
 	docker("volume", "rm", gateVol)
 	if data, _, err := bare.MountedVolumes(ctx, source); err != nil || !slices.Equal(data, source) {
 		t.Errorf("--finish without containers: %+v %v", data, err)
@@ -1293,14 +1345,28 @@ type reverseFake struct {
 	gateErr func(n int) error
 	gates   []GateRef
 	starts  []string
-	// remade is the gate an undo makes; undoErr and stopErr are the undo's
-	// and its stop's failures.
-	remade           string
-	undoErr, stopErr error
-	planErr          error
+	// remade is the gate an undo finds; undoErr, stopErr, holdErr, heldErr
+	// (by its call) and frontErrs (in order) are the undo's failures.
+	remade, position          string
+	undoErr, stopErr, holdErr error
+	heldErr                   func(n int) error
+	remadeIn                  *VolumeRecord
+	helds                     int
+	frontErrs                 []error
+	servingErr                error
+	started                   bool
+	planErr                   error
 	// check, when set, answers instead of checkErr.
 	check func() error
 	did   []string
+}
+
+// apart is what was done, the undo's holding of the gate and its stops of the
+// dashboard aside (TestTheUndosOrder's).
+func apart(did []string) []string {
+	return slices.DeleteFunc(slices.Clone(did), func(d string) bool {
+		return strings.HasPrefix(d, "hold ") || strings.HasPrefix(d, "held ") || d == "stop front"
+	})
 }
 
 func (r *reverseFake) do(what string) { r.did = append(r.did, what) }
@@ -1339,16 +1405,47 @@ func (r *reverseFake) ExportForCheck(context.Context, []byte) (string, error) {
 	return "", errors.New("not reached")
 }
 func (r *reverseFake) StartServing(context.Context, Ingress) error { r.do("serve"); return nil }
-func (r *reverseFake) StopServing(context.Context, Ingress) error  { r.do("stop serving"); return nil }
-func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord, g GateRef, gated func(string) error) error {
+func (r *reverseFake) StopServing(context.Context, Ingress) error {
+	r.do("stop serving")
+	return r.servingErr
+}
+func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord, g GateRef, start bool) error {
 	r.do("undo " + p.Volumes[0])
 	r.gates = append(r.gates, g)
-	if r.remade != "" {
-		if err := gated(r.remade); err != nil {
-			return err
-		}
-	}
+	r.started = start
 	return r.undoErr
+}
+func (r *reverseFake) HoldGate(_ context.Context, g GateRef, position string) (GateRef, error) {
+	r.do("hold " + g.ID)
+	r.position = position
+	if r.holdErr != nil {
+		return g, r.holdErr
+	}
+	if r.remade != "" {
+		g.ID = r.remade
+	}
+	if r.remadeIn != nil {
+		g.State = r.remadeIn
+	}
+	return g, nil
+}
+func (r *reverseFake) CheckHeld(_ context.Context, g GateRef) error {
+	r.do("held " + g.ID)
+	r.helds++
+	if r.heldErr != nil {
+		return r.heldErr(r.helds)
+	}
+	return nil
+}
+func (r *reverseFake) StopFront(_ context.Context, kind Ingress) error {
+	r.do("stop front")
+	r.ingressDown = true
+	if len(r.frontErrs) > 0 {
+		err := r.frontErrs[0]
+		r.frontErrs = r.frontErrs[1:]
+		return err
+	}
+	return nil
 }
 func (r *reverseFake) CheckGate(_ context.Context, g GateRef) error {
 	r.gates = append(r.gates, g)
@@ -1386,7 +1483,8 @@ func (r *reverseFake) StartNetworkOwner(context.Context) error { return nil }
 
 type reverseTargetFake struct {
 	*fakeTarget
-	released int
+	released  int
+	onRelease func()
 }
 
 func (r *reverseTargetFake) Barrier(context.Context, string, time.Duration) (BarrierRecord, error) {
@@ -1398,7 +1496,14 @@ func (r *reverseTargetFake) WriteJournal(_ context.Context, j *Journal) error {
 	r.journal = &JournalHead{ID: j.ID, Phase: j.Phase}
 	return nil
 }
-func (r *reverseTargetFake) ReleaseBarrier(context.Context, string) error { r.released++; return nil }
+func (r *reverseTargetFake) ReleaseBarrier(context.Context, string) error {
+	if r.onRelease != nil {
+		r.onRelease()
+	}
+	r.released++
+	r.barrier = ""
+	return nil
+}
 func (r *reverseTargetFake) ExportReverse(context.Context, string, string) (CopyRecord, error) {
 	return CopyRecord{InstallationID: "inst_x"}, nil
 }
@@ -1430,7 +1535,7 @@ func TestARebuildOnAnotherVolumeIsUndoneBeforeTheImport(t *testing.T) {
 		src, tgt := &reverseFake{fakeSource: w.src, checkErr: c.check, importErr: errors.New("the import, reached")}, &reverseTargetFake{fakeTarget: w.tgt}
 		w.eng.Source, w.eng.Target = src, tgt
 		_, err := w.eng.Rollback(context.Background())
-		if !slices.Equal(src.did, c.want) {
+		if !slices.Equal(apart(src.did), c.want) {
 			t.Errorf("%s: %v, want %v (%v)", c.name, src.did, c.want, err)
 		}
 		if c.check != nil && (!errors.Is(err, wrong) || tgt.released != 1) {
