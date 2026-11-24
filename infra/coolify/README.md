@@ -424,7 +424,7 @@ root on the host.
 
    ```sh
    docker run -d --name varlatchd --network <the proxy's network> \
-     --restart unless-stopped --read-only --cap-drop ALL \
+     --restart unless-stopped --read-only --tmpfs /tmp --cap-drop ALL \
      --security-opt no-new-privileges --stop-timeout 30 \
      -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
      -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro \
@@ -500,23 +500,49 @@ Coolify, stop the resource and do not deploy it until you are done.
    ```sh
    docker network create varlatch-restore
    docker run -d --name varlatch-restore --network varlatch-restore -p 127.0.0.1:8686:8686 \
-     --read-only --cap-drop ALL --security-opt no-new-privileges --stop-timeout 30 \
+     --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --stop-timeout 30 \
      -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
      -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image>
    ```
 
-3. Sign in with the CLI as an Installation Admin
-   ([how](../../docs/operations/backup.md#sign-in-while-it-is-closed)), with
-   `docker exec varlatch-restore varlatchd admin recover --identity <id>
-   --cli-credential` and the server `http://127.0.0.1:8686`, and put right
-   what changed since the archive was made.
+3. Reach it at its own address, alone. Passkeys, and the approvals that
+   security controls ask for, work at that address only, and Coolify's proxy
+   is out of the way. A TLS proxy on the same network, with a certificate
+   authority of its own, stands in for it. With Caddy:
 
-4. Resume, remove that container and network, take the `#`s away, and
-   deploy:
+   ```sh
+   docker run -d --name varlatch-restore-tls --network varlatch-restore -p 127.0.0.1:443:443 \
+     caddy:2 caddy reverse-proxy --from app.example.com --to varlatch-restore:8686 --internal-certs
+   docker cp varlatch-restore-tls:/data/caddy/pki/authorities/local/root.crt ./restore-ca.crt
+   ```
+
+   When Coolify's proxy holds port 443 on the host, publish another local
+   port (`-p 127.0.0.1:8443:443`). On your computer, until you are done:
+   trust `restore-ca.crt`, add `127.0.0.1 app.example.com` to the hosts
+   file, and forward your own port 443 to it
+   (`sudo ssh -L 443:127.0.0.1:8443 you@the-host`). Then open
+   `https://app.example.com` and sign in. Each administrator who has
+   something to put right does this.
+
+   For the CLI, as an Installation Admin, without the proxy:
+
+   ```sh
+   docker exec varlatch-restore varlatchd admin recover --identity <id> --cli-credential |
+     grep -o 'vlt_[A-Za-z0-9_-]*' |
+     varlatch login --server http://127.0.0.1:8686 --token-stdin
+   ```
+
+   That credential does not expire: revoke it in the dashboard when you are
+   done. Put right what changed since the archive was made, an organization's
+   unwanted deletion first.
+
+4. Resume, remove what you ran by hand, take the `#`s away, and deploy. On
+   your computer, take the certificate authority and the hosts entry out
+   again:
 
    ```sh
    docker exec varlatch-restore varlatchd admin restore resume
-   docker rm -f varlatch-restore
+   docker rm -f varlatch-restore-tls varlatch-restore
    docker network rm varlatch-restore
    ```
 

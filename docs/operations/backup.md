@@ -291,11 +291,22 @@ Every restore leaves the installation **held**. `varlatchd` serves it, but
 its background work does not run: no sync, webhook, audit export or
 organization deletion, and no local archive is removed, until you run `sudo
 varlatch admin restore resume`. While it is held, `varlatch upgrade` is
-refused.
+refused. Scheduled backups go on, and go to your bucket.
 
 Held is not closed: **anyone with a session, token or credential in the
 archive can still read and write**, and what they ask for is done. You keep
 them away yourself: [Keep clients away](#keep-clients-away).
+
+In short:
+
+1. The old installation is off, everywhere.
+2. The saved configuration is in place, every way in closed.
+3. Restore.
+4. The files have their owner back.
+5. You put right what changed since the archive, deletions first.
+6. No upgrade is pending; resume; open the ways in again.
+
+Step by step:
 
 1. **Make sure the old installation no longer serves**, anywhere. Two copies
    of one installation must never run at the same time. With public HTTPS,
@@ -330,8 +341,10 @@ them away yourself: [Keep clients away](#keep-clients-away).
    that the Root KEK opens it, starts `varlatchd`, makes a backup and runs
    `varlatch doctor`, which says that the installation is held.
 
-   Answer **proxy** when it asks how people reach Varlatch: `varlatchd.conf`
-   decides that, not the answer. The address must be the one the
+   When it asks how people reach Varlatch, answer **my own reverse proxy**,
+   whatever you use: `varlatchd.conf` decides that, not the answer. Only for
+   an address such as `http://localhost:8686`, answer **this machine only**.
+   The address must be the one the
    installation had: its passkeys belong to it. To change it, restore first,
    then [move it](move-installation.md). Setup refuses a host that holds
    other keys. If it stops, run it again.
@@ -348,12 +361,29 @@ them away yourself: [Keep clients away](#keep-clients-away).
    one of them, run setup again.
 
 5. **Put right what changed since the archive was made.** Sign in
-   ([how](#sign-in-while-it-is-closed)), revoke the credentials and remove
-   the people again, withdraw the invitations, rotate the values, cancel or
-   request the deletions, and set freezes and controls as they were. An
-   audit export or your own notes say what those were.
+   ([how](#sign-in-while-it-is-closed)). First, an admin of the organization
+   cancels any deletion of it that should not happen: while one is open, it
+   blocks the changes below. Then revoke the credentials and remove the
+   people again, withdraw the invitations, rotate the values, request the
+   deletions that should happen, and set freezes and controls as they were.
+   An audit export or your own notes say what those were.
 
-6. **Resume, then open it:**
+6. **Resume, then open it.** On a host that had an upgrade under way, look
+   first whether it is still recorded as pending:
+
+   ```sh
+   sudo grep '"state"' /etc/varlatch/upgrade.json
+   ```
+
+   If it says `in-progress` or `failed`, move that record away **before** you
+   resume, or the next `varlatch upgrade` would undo that upgrade over the
+   restored database. Keep the files in `/var/lib/varlatch/upgrades`:
+
+   ```sh
+   sudo mv /etc/varlatch/upgrade.json /root/
+   ```
+
+   Then:
 
    ```sh
    sudo varlatch admin restore resume
@@ -380,13 +410,16 @@ Close every way in before you restore, and open it again after `resume`:
 
 | Way in | To close it | After `resume` |
 |---|---|---|
+| every host | `listen = 127.0.0.1:8686` in `varlatchd.conf`, whatever else it uses | put your own line back |
 | public HTTPS | `listen_https = 127.0.0.1:443` and `listen_http_redirect = :80` in `varlatchd.conf` | put your own two lines back |
-| your own proxy | let the proxy listen on `127.0.0.1` only, or accept only your own address; keep `listen = 127.0.0.1:8686` | undo it in the proxy |
+| your own proxy | let the proxy listen on `127.0.0.1` only, or accept only your own address | undo it in the proxy |
 | the tailnet | put a `#` in front of every `tailnet` line in `varlatchd.conf`, all of them | remove the `#`s ([the node](#the-tailnet-node)) |
 | the container image | run it by hand on a network of its own: [Restore in the container image](../../infra/coolify/README.md#restore-in-the-container-image) | remove that container and network, and deploy |
 
 Port 80 stays open with public HTTPS: it answers the certificate authority
-and redirects, and serves nothing else.
+and redirects, and serves nothing else. `listen = 127.0.0.1:8686` closes the
+plain listener to the network: a proxy on another machine cannot reach it
+until you put your own line back.
 
 #### Sign in while it is closed
 
@@ -399,15 +432,19 @@ and redirects, and serves nothing else.
   ```
 
   Other administrators do the same, or reach it through a proxy that
-  accepts only their addresses.
+  accepts only their addresses. Passkeys, and the approvals that
+  [security controls](../reference/security-controls.md) ask for, work at
+  the installation's own address only, so this is the way for them.
 
-- **With the CLI,** on the host, as an Installation Admin. This prints a
-  credential, which does not expire:
+- **With the CLI,** on the host, as an Installation Admin. This makes a
+  credential, which does not expire, and signs in with it without showing
+  it:
 
   ```sh
   sudo varlatchd admin bootstrap-status      # the administrators' ids
-  sudo varlatchd admin recover --identity <identity id> --cli-credential
-  varlatch login --server http://127.0.0.1:8686 --token-stdin   # paste it, then Ctrl-D
+  sudo varlatchd admin recover --identity <identity id> --cli-credential |
+    grep -o 'vlt_[A-Za-z0-9_-]*' |
+    varlatch login --server http://127.0.0.1:8686 --token-stdin
   ```
 
   Revoke that credential when you are done: in the dashboard, under your
@@ -438,7 +475,8 @@ sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db
 sudo systemctl start varlatchd
 ```
 
-Then do steps 5 and 6 above, and make a fresh backup.
+Then do steps 5 and 6 above, the check for a pending upgrade included, and
+make a fresh backup.
 
 It uses the keys in `/etc/varlatch`; `--backup-key-file` names another
 backup key. The restore runs as root, so the `chown` gives the restored
