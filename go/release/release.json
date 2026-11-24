@@ -3,7 +3,7 @@
   "compatibleFrom": 1,
   "rollbackSafe": true,
   "previous": {
-    "version": "0.50.0-rc.2",
+    "version": "0.50.0-rc.3",
     "schemaVersion": 2
   },
   "reversibleTo": "0.23.0",
