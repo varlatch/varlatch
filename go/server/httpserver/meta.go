@@ -88,8 +88,10 @@ var Capabilities = []string{
 // singleExchange), which a client looks for before it asks for a limit: a
 // server without them would ignore it. And values.totp, ADR-0061's one-time
 // codes: a seed in a value's place, an exercise's minValiditySeconds and
-// fresh, a disclosure's totpSeeds. The TypeScript server lists none of them.
-var GoCapabilities = []string{"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "auth.session", "realtime.sse"}
+// fresh, a disclosure's totpSeeds. And oauth.connections, ADR-0062's: OAuth
+// connections, whose access token an exercise gives. The TypeScript server
+// lists none of them.
+var GoCapabilities = []string{"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "auth.session", "realtime.sse"}
 
 // SemanticsVersions are the Contract Semantics versions the server
 // evaluates (packages/contract/src/semantics.ts SEMANTICS_VERSIONS).
@@ -127,7 +129,7 @@ func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (a
 		hidden["auth.device"] = true
 	}
 	caps := slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return hidden[c] })
-	caps = append(caps, "capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp")
+	caps = append(caps, "capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections")
 	if s.browser != nil {
 		caps = append(caps, "auth.session")
 		if s.opts.Realtime != nil {

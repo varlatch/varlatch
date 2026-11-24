@@ -35,6 +35,8 @@ import (
 	"github.com/varlatch/varlatch/go/server/daemon"
 	"github.com/varlatch/varlatch/go/server/httpserver"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/oauth"
+	"github.com/varlatch/varlatch/go/server/oauth/oauthtest"
 	"github.com/varlatch/varlatch/go/server/oidc"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/paritytest"
@@ -70,6 +72,12 @@ type world struct {
 	onFetch func()
 	// log is where the server logs (nowhere when nil).
 	log io.Writer
+	// idp is the fake OAuth provider (oauth_test.go), and names what its
+	// resolver answers for names that are not public.
+	idp    *oauthtest.Provider
+	names  map[string]string
+	oauth  *oauth.Service
+	policy *outbound.Policy
 }
 
 func newWorld(t *testing.T) *world {
@@ -106,16 +114,25 @@ func (w *world) start() {
 		w.log = io.Discard
 	}
 	log := slog.New(slog.NewTextHandler(w.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	policy := outbound.New(nil, outbound.Options{Log: log, Resolve: func(context.Context, string) ([]outbound.Answer, error) {
+	options := outbound.Options{Log: log, Resolve: func(_ context.Context, name string) ([]outbound.Answer, error) {
+		if a := w.names[name]; a != "" {
+			return []outbound.Answer{{Address: a, Family: 4}}, nil
+		}
 		return []outbound.Answer{{Address: "93.184.215.14", Family: 4}}, nil
-	}})
+	}}
+	if w.idp != nil {
+		options.Dial, options.TLS = w.idp.Dial, w.idp.TLS()
+	}
+	policy := outbound.New(nil, options)
+	w.policy = policy
 	public, _ := url.Parse("http://127.0.0.1:8686")
 	wr := &write.Writer{Store: store, Gates: write.NewGates()}
 	approvals := auth.New(store, auth.Options{Log: log, RootKEK: w.rootKEK, PublicURL: public, PersonGate: wr.Gates.PersonGate, Now: w.now})
-	vs := values.New(store, w.rootKEK, values.Options{Log: log, Approvals: approvals, Gates: wr.Gates, Now: w.now})
+	w.oauth = &oauth.Service{Writer: wr, RootKEK: w.rootKEK, Policy: policy, Now: w.now, Log: log}
+	vs := values.New(store, w.rootKEK, values.Options{Log: log, Approvals: approvals, Gates: wr.Gates, Now: w.now, Tokens: w.oauth})
 	h, err := httpserver.New(httpserver.Options{
 		Version: "0.50.0-test", Backend: daemon.NewBackend(store, w.rootKEK), Log: log, PublicURL: public,
-		Auth: approvals, Values: vs, Writer: wr, RootKEK: w.rootKEK, Now: w.now, Outbound: policy, OIDCFetch: w.fetch,
+		Auth: approvals, Values: vs, OAuth: w.oauth, Writer: wr, RootKEK: w.rootKEK, Now: w.now, Outbound: policy, OIDCFetch: w.fetch,
 	})
 	if err != nil {
 		w.t.Fatal(err)
@@ -124,6 +141,7 @@ func (w *world) start() {
 }
 
 func (w *world) stop() {
+	w.oauth.Close()
 	w.values.Settled()
 	_ = w.store.Close()
 }

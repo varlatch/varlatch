@@ -29,6 +29,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/migration/manifest"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
 	"github.com/varlatch/varlatch/go/server/migration/migrationtest"
+	"github.com/varlatch/varlatch/go/server/oauth/oauthparams"
 )
 
 // The seeded migration every test holds a damaged copy of: migrationtest's
@@ -674,6 +675,137 @@ func TestTheReverseChecksWithSeeds(t *testing.T) {
 	params, _ := json.Marshal(mark.TOTP)
 	if got, err := envelope.DecryptSeed(kek, org, value, version, string(params), v); err != nil || !strings.HasPrefix(string(got), "otpauth://totp/Portal:") {
 		t.Errorf("the seed after a forward import: %v (%s)", err, payload)
+	}
+}
+
+// sealConnection stores an OAuth connection, its client secret sealed as
+// varlatchd seals one, in place of a value, with tokens.
+func sealConnection(t *testing.T, s seeded, path string) oauthparams.Params {
+	t.Helper()
+	db := openRO(t, path)
+	defer db.Close()
+	var org, value, version, wrapped string
+	if err := db.QueryRow(`SELECT o.id, v.id, v.current_version_id, o.wrapped_org_kek FROM env_values v JOIN value_versions x ON x.id = v.current_version_id
+		JOIN environments e ON e.id = v.environment_id JOIN projects p ON p.id = e.project_id JOIN organizations o ON o.id = p.organization_id
+		WHERE x.erased_at IS NULL AND o.wrapped_org_kek IS NOT NULL AND o.org_kek_destroyed_at IS NULL ORDER BY v.id LIMIT 1`).Scan(&org, &value, &version, &wrapped); err != nil {
+		t.Fatal(err)
+	}
+	var w envelope.Envelope
+	if err := json.Unmarshal([]byte(wrapped), &w); err != nil {
+		t.Fatal(err)
+	}
+	kek, err := envelope.UnwrapOrgKEK(s.source.RootKEK, w, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := oauthparams.Params{V: oauthparams.Version, Provider: "generic", Issuer: "https://idp.example", AuthorizationEndpoint: "https://idp.example/authorize",
+		TokenEndpoint: "https://idp.example/token", AuthMethod: oauthparams.AuthBasic, Grant: oauthparams.AuthorizationCode, ClientID: "client-of-alice",
+		Scopes: []string{"openid", "a"}, AuthorizationParams: []oauthparams.Param{{Name: "prompt", Value: "consent"}}, Hosts: []string{"api.example.com:443"}, IdleDays: 90}
+	if err := p.Check(); err != nil {
+		t.Fatal(err)
+	}
+	params, _ := p.Text()
+	sealed, err := envelope.EncryptOAuthClient(kek, org, value, version, params, []byte("made-up client secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(sealed.Payload)
+	dek, _ := json.Marshal(sealed.WrappedDEK)
+	damage(t, path,
+		"UPDATE value_versions SET payload = json_set('"+string(payload)+"', '$.oauth', json('"+params+"')), wrapped_dek = '"+string(dek)+"' WHERE id = '"+version+"'",
+		"INSERT INTO oauth_connections (value_id, version_id, status, access_token, refresh_token, account, account_label) VALUES ('"+value+"', '"+version+"', 'connected', '{}', '{}', 'sub-1', 'tokens-of-alice')",
+		"INSERT INTO oauth_authorizations SELECT '"+strings.Repeat("0f", 32)+"', '"+org+"', '"+value+"', '"+version+"', id, 'ses', 'n', '{}', 'https://x.example/oauth/callback/idp.example', 0, 1, 2 FROM identities LIMIT 1",
+		"UPDATE env_values SET deleted_at = 1795000000000000 WHERE id = '"+value+"'")
+	return p
+}
+
+// An OAuth connection (ADR-0062) goes back and forth as a seed does: the
+// reverse checks pass, the bundle carries what it is in a row the TypeScript
+// server reads as deleted, and none of its tokens; a forward import brings it
+// back, its client secret opening with its parameters, and not connected.
+func TestTheReverseChecksWithConnections(t *testing.T) {
+	s := setUp(t)
+	path := copyDB(t, s)
+	want := sealConnection(t, s, path)
+	keep := filepath.Join(t.TempDir(), "keep")
+	var rev bytes.Buffer
+	if _, err := migrate.ExportReverse(context.Background(), &rev, migrate.Options{DataDir: filepath.Dir(path), Keep: keep, Release: "0.50.0-check"}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(rev.Bytes(), []byte("client-of-alice")) {
+		t.Error("the reverse bundle has no connection")
+	}
+	for _, kept := range []string{"oauth_connections", "oauth_authorizations", "tokens-of-alice"} {
+		if bytes.Contains(rev.Bytes(), []byte(kept)) {
+			t.Errorf("the reverse bundle has %s", kept)
+		}
+	}
+	rebuilt := migrationtest.FromReverse(t, rev.Bytes(), s.source.RootKEK)
+	db := openRO(t, filepath.Join(keep, config.DatabaseFile))
+	defer db.Close()
+	decisions := []bundle.Decision{}
+	for _, d := range tuples(t, db) {
+		got, err := check.Evaluate(context.Background(), db, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decisions = append(decisions, got)
+	}
+	b := migrationtest.Bundle(t, rebuilt, migrationtest.Options{Sections: &migrationtest.Sections{Digests: migrationtest.Digests(t, rebuilt, s.runKey), Decisions: decisions, At: 1}})
+	rep, err := check.Run(context.Background(), db, bytes.NewReader(b), check.Options{RootKEK: s.source.RootKEK, RunKey: s.runKey, Reverse: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Passed {
+		t.Fatalf("the reverse checks:\n%s", rep.Text())
+	}
+	dir := t.TempDir()
+	if _, err := migrate.Import(context.Background(), bytes.NewReader(b), migrate.Options{DataDir: dir, RootKEK: s.source.RootKEK, Release: "0.50.0-check"}); err != nil {
+		t.Fatal(err)
+	}
+	again := openRO(t, filepath.Join(dir, config.DatabaseFile))
+	defer again.Close()
+	var n int
+	if err := again.QueryRow("SELECT (SELECT count(*) FROM oauth_connections) + (SELECT count(*) FROM oauth_authorizations)").Scan(&n); err != nil || n != 0 {
+		t.Errorf("%d rows of tokens (%v)", n, err)
+	}
+	var org, value, version, payload, dek, wrapped, params string
+	var deleted sql.NullInt64
+	if err := again.QueryRow(`SELECT p.organization_id, v.id, x.id, x.payload, x.wrapped_dek, o.wrapped_org_kek, json_extract(x.payload, '$.oauth'), v.deleted_at
+		FROM env_values v JOIN value_versions x ON x.id = v.current_version_id
+		JOIN environments e ON e.id = v.environment_id JOIN projects p ON p.id = e.project_id JOIN organizations o ON o.id = p.organization_id
+		WHERE json_type(x.payload, '$.oauth') = 'object'`).Scan(&org, &value, &version, &payload, &dek, &wrapped, &params, &deleted); err != nil {
+		t.Fatal(err)
+	}
+	if !deleted.Valid {
+		t.Error("the row is live")
+	}
+	// jsonb kept no member order: the parameters are written again in theirs.
+	got, ok := oauthparams.Parse(params)
+	if !ok {
+		t.Fatalf("parameters: %s", params)
+	}
+	text, _ := got.Text()
+	if wanted, _ := want.Text(); text != wanted {
+		t.Errorf("parameters: %s, want %s", text, wanted)
+	}
+	var kekEnvelope envelope.Envelope
+	var v envelope.EncryptedValue
+	for text, to := range map[string]any{wrapped: &kekEnvelope, dek: &v.WrappedDEK, payload: &v.Payload} {
+		if err := json.Unmarshal([]byte(text), to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kek, err := envelope.UnwrapOrgKEK(s.source.RootKEK, kekEnvelope, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret, err := envelope.DecryptOAuthClient(kek, org, value, version, text, v); err != nil || string(secret) != "made-up client secret" {
+		t.Errorf("the client secret after a forward import: %v", err)
+	}
+	// Opened as a value, as the TypeScript server would, it is an envelope.
+	if plain, err := envelope.DecryptValue(kek, org, value, version, v); err != nil || bytes.Contains(plain, []byte("made-up")) || !bytes.Contains(plain, []byte("ciphertext")) {
+		t.Errorf("opened as a value: %s, %v", plain, err)
 	}
 }
 

@@ -392,7 +392,7 @@ func TestHealthReadyMeta(t *testing.T) {
 	// The TypeScript server's, then varlatchd's own: ADR-0060's limits and
 	// the browser session (auth.session); server-sent events (realtime.sse) come with step 3.5.
 	want := append(slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return c == "tailnet.browser-reads" || c == "cli.download" }),
-		"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "auth.session")
+		"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "auth.session")
 	if !slices.Equal(m.Capabilities, want) || !slices.Contains(m.Capabilities, "auth.device") {
 		t.Errorf("capabilities: %q", m.Capabilities)
 	}

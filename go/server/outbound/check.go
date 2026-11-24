@@ -19,8 +19,8 @@ import (
 // The configured destinations check (net/outbound-check.ts; ADR-0057
 // Decision 10): every live destination an Organization configured, with
 // the policy's verdict and the allow list value that would open the
-// refused ones. It reads only webhooks, platform_connections and
-// oidc_bindings and the Organizations' slugs, and makes DNS lookups only,
+// refused ones. It reads only webhooks, platform_connections,
+// oidc_bindings, OAuth connections' endpoints and the Organizations' slugs, and makes DNS lookups only,
 // never an HTTP request: an OIDC issuer's jwks_uri is known only from its
 // discovery document, so it is checked when it connects.
 
@@ -40,7 +40,11 @@ const (
 // (RunAdminCheck): the API's report keeps the four kinds it documents.
 const KindGitHub Kind = "github"
 
-var kindLabel = map[Kind]string{KindWebhook: "webhook", KindCoolify: "Coolify", KindConvex: "Convex", KindIssuer: "OIDC issuer", KindGitHub: "GitHub"}
+// KindOAuth is an OAuth connection's endpoint (ADR-0062), listed by the admin
+// check alone, as GitHub's.
+const KindOAuth Kind = "oauth-connection"
+
+var kindLabel = map[Kind]string{KindWebhook: "webhook", KindCoolify: "Coolify", KindConvex: "Convex", KindIssuer: "OIDC issuer", KindGitHub: "GitHub", KindOAuth: "OAuth connection"}
 
 // GitHubAPI is where every GitHub connection goes (githubapps.GitHubAPI).
 const GitHubAPI = "https://api.github.com"
@@ -73,6 +77,49 @@ func githubDestinations(ctx context.Context, db query.DBTX, org string) ([]row, 
 		rows = append(rows, r)
 	}
 	return rows, rs.Err()
+}
+
+// oauthDestinations are the endpoints this server asks of the live OAuth
+// connections, as they pinned them, one row an endpoint.
+func oauthDestinations(ctx context.Context, db query.DBTX, org string) ([]row, error) {
+	if db == nil {
+		return nil, nil
+	}
+	filter, args := "", []any{}
+	if org != "" {
+		filter, args = " AND (o.id = ? OR o.slug = ?)", []any{org, org}
+	}
+	rs, err := db.QueryContext(ctx, `SELECT DISTINCT p.organization_id, o.slug, v.id, v.item_name, x.value FROM env_values v
+		JOIN value_versions s ON s.id = v.current_version_id JOIN environments e ON e.id = v.environment_id
+		JOIN projects p ON p.id = e.project_id JOIN organizations o ON o.id = p.organization_id, json_each(s.payload, '$.oauth') x
+		WHERE v.deleted_at IS NOT NULL AND json_type(s.payload, '$.oauth') = 'object' AND e.deleted_at IS NULL AND p.deleted_at IS NULL AND o.deleted_at IS NULL
+		AND x.key IN ('tokenEndpoint', 'revocationEndpoint', 'userinfoEndpoint', 'jwksUri')`+filter+`
+		ORDER BY o.slug, v.id, x.value`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	var rows []row
+	for rs.Next() {
+		r := row{kind: KindOAuth, name: new(string)}
+		if err := rs.Scan(&r.organizationID, &r.organization, &r.id, r.name, &r.url); err != nil {
+			return nil, err
+		}
+		// One row a host: that is what is decided.
+		if n := len(rows); n > 0 && rows[n-1].id == r.id && hostOf(rows[n-1].url) == hostOf(r.url) {
+			continue
+		}
+		rows = append(rows, r)
+	}
+	return rows, rs.Err()
+}
+
+func hostOf(raw string) string {
+	u, ok := whatwg.ParseURL(raw)
+	if !ok {
+		return raw
+	}
+	return u.Host
 }
 
 // Checked is one configured destination and its verdict: "public",
@@ -272,9 +319,10 @@ func (p *Policy) RunCheck(ctx context.Context, db query.DBTX, org string, now fu
 }
 
 // RunAdminCheck is RunCheck with the GitHub Sync Targets' connections
-// too, after the others, in the same scan (GitHub's API resolved once, and
-// in the suggestion when refused): `varlatchd admin outbound check` lists
-// them, the API's report keeps the kinds it documents.
+// and the OAuth connections' endpoints too, after the others, in the same
+// scan (GitHub's API resolved once, and in the suggestion when refused):
+// `varlatchd admin outbound check` lists them, the API's report keeps the
+// kinds it documents.
 func (p *Policy) RunAdminCheck(ctx context.Context, db query.DBTX, org string, now func() time.Time) (Report, error) {
 	rows, err := liveDestinations(ctx, db, org)
 	if err != nil {
@@ -284,7 +332,11 @@ func (p *Policy) RunAdminCheck(ctx context.Context, db query.DBTX, org string, n
 	if err != nil {
 		return Report{}, err
 	}
-	return p.scan(ctx, append(rows, github...), now)
+	connections, err := oauthDestinations(ctx, db, org)
+	if err != nil {
+		return Report{}, err
+	}
+	return p.scan(ctx, append(append(rows, github...), connections...), now)
 }
 
 // scan checks the rows and makes the report: verdicts in the rows' order,

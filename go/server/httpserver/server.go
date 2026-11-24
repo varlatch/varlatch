@@ -43,6 +43,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/oauth"
 	"github.com/varlatch/varlatch/go/server/oidc"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/pgtime"
@@ -119,6 +120,9 @@ type Options struct {
 	// Values is the read path of values (ADR-0059 step 3.6): the effective
 	// configuration and disclosures. Without it they answer 500.
 	Values *values.Service
+	// OAuth is OAuth connections (ADR-0062). Without it their operations
+	// answer 500.
+	OAuth *oauth.Service
 	// Realtime publishes the dashboard's live updates (GET /auth/events,
 	// events.go; ADR-0059 Decision 4). Served only with Auth, which
 	// authenticates the streams; /v1/meta then lists realtime.sse.
@@ -283,6 +287,8 @@ var BuiltOperations = []string{
 	memberExposurePattern, confirmExposureRevocationPattern,
 	// Step 4.6: broker Capabilities (capabilities.go).
 	listCapabilitiesPattern, issueCapabilityPattern, revokeCapabilityPattern, exerciseCapabilityPattern,
+	listOAuthConnectionsPattern, createOAuthConnectionPattern, discoverOAuthProviderPattern, getOAuthConnectionPattern, updateOAuthConnectionPattern,
+	startOAuthAuthorizationPattern, completeOAuthAuthorizationPattern, refreshOAuthConnectionPattern, disconnectOAuthConnectionPattern,
 	// Step 4.8: OIDC workload identity (oidc.go).
 	listOidcBindingsPattern, createOidcBindingPattern, revokeOidcBindingPattern, exchangeOidcTokenPattern,
 	// Step 4.13a: the tailnet listeners (tailnet.go).

@@ -46,6 +46,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
+	"github.com/varlatch/varlatch/go/server/oauth"
 	"github.com/varlatch/varlatch/go/server/oidc"
 	"github.com/varlatch/varlatch/go/server/orgdeletion"
 	"github.com/varlatch/varlatch/go/server/outbound"
@@ -475,7 +476,11 @@ func serve(opts Options, h *hooks) int {
 	// after their responses: a stop waits for them before the database
 	// closes.
 	approvals := auth.New(store, auth.Options{PublicURL: cfg.PublicURL, Log: log, RootKEK: rootKEK, PersonGate: gates.PersonGate})
-	readPath := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: gates, Admit: admission.Enter})
+	// OAuth connections (ADR-0062): one in the process, so a connection's
+	// refreshes are shared. Its writer and its outbound policy are set below,
+	// before anything is served.
+	connections := &oauth.Service{RootKEK: rootKEK, Log: log, Admit: admission.Enter}
+	readPath := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: gates, Admit: admission.Enter, Tokens: connections})
 	defer readPath.Settled()
 	writer := &write.Writer{Store: store, Gates: gates}
 	if h.writer != nil {
@@ -514,6 +519,16 @@ func serve(opts Options, h *hooks) int {
 	if h.sync != nil {
 		h.sync(writer, approvals, policy)
 	}
+	// The OAuth connections' worker: a pass at once, then every minute. A stop
+	// ends it, and waits for the refreshes in progress, before the policy and
+	// the database close: an answer that replaced a refresh token is stored.
+	connections.Writer, connections.Policy = writer, policy
+	connectionsDone := make(chan struct{})
+	go func() {
+		defer close(connectionsDone)
+		connections.RunLoop(ctx, oauth.Interval)
+	}()
+	defer func() { cancel(); connections.Close(); <-connectionsDone }()
 	// Webhook delivery (feature-parity decision 10): a pass at once, then
 	// every 30 seconds, through the outbound policy. A stop ends it before
 	// the policy and the database close; an attempt cut short is not
@@ -610,6 +625,7 @@ func serve(opts Options, h *hooks) int {
 		Auth:            approvals,
 		Realtime:        hub,
 		Values:          readPath,
+		OAuth:           connections,
 		Writer:          writer,
 		RootKEK:         rootKEK,
 		Maintenance:     admission,
