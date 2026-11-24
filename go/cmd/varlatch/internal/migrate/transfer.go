@@ -169,8 +169,7 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 		if kind == Coolify {
 			// Before the target's container is made: its labels are the
 			// domain setting's then.
-			e.say("Address transfer, by hand, step %d: in Coolify, move the domain of %s from the TypeScript application to the Go one (its domain setting; Save only). "+
-				"Do not Deploy, Restart or Stop the TypeScript application: its stopped dashboard is the way back.", n, j.Transfer.Origin)
+			e.say("Address transfer, by hand, step %d: %s", n, coolifyMove(j))
 			n++
 		}
 		if human != nil {
@@ -190,12 +189,21 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 	}
 	if err := e.step(e.awaiting(j, "the target"), func() error { return e.waitForTarget(ctx, j) }); err != nil {
 		if kind == Coolify {
+			// A rerun, possibly by someone who never saw the first prompt:
+			// the whole step again, not only how to check it.
+			e.say("The move is not seen yet. Address transfer, by hand, if not done: %s", coolifyMove(j))
 			return fmt.Errorf("%w; once the domain is moved, varlatch migrate --resume checks again; varlatch migrate --abort undoes the migration: stop the Go service first when it asks, then it starts the TypeScript dashboard, which routes the domain itself, and waits for it; set the domain back in Coolify after that", err)
 		}
 		return e.undo(ctx, j, err)
 	}
 	j.Transfer.VerifiedAt = e.now().UTC().Format(time.RFC3339Nano)
 	return e.save(ctx, j)
+}
+
+// coolifyMove is the operator's step in the Coolify shape.
+func coolifyMove(j *Journal) string {
+	return fmt.Sprintf("in Coolify, move the domain of %s from the TypeScript application to the Go one (its domain setting; Save only). "+
+		"Do not Deploy, Restart or Stop the TypeScript application: its stopped dashboard is the way back.", j.Transfer.Origin)
 }
 
 func ingressPart(kind Ingress) string {

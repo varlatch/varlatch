@@ -418,10 +418,19 @@ func TestLinesInOrder(t *testing.T) {
 // Progress is dropped over the backlog and while the writer is stuck; Say is
 // not.
 func TestLinesBacklog(t *testing.T) {
-	go1 := make(chan struct{})
+	go1, taken := make(chan struct{}), make(chan struct{}, 1)
 	var got []string
-	lines := NewLines(func(s string) { <-go1; got = append(got, s) })
+	lines := NewLines(func(s string) {
+		select {
+		case taken <- struct{}{}:
+		default:
+		}
+		<-go1
+		got = append(got, s)
+	})
 	lines.Say("first")
+	// In the writer's hands, off the queue, before the test looks at it.
+	<-taken
 	for range 1000 {
 		lines.Progress("p")
 	}
