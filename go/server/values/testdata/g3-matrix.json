@@ -600,6 +600,42 @@
         }
       ],
       "databaseLevelWith": "never: only Convex uses it, and it goes with Convex (step 7)"
+    },
+    {
+      "purpose": "totp-seed",
+      "class": "Seeds of one-time codes (inside a value's payload)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0061): the TypeScript line seals no seed and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithSeeds)."
+    },
+    {
+      "purpose": "totp-seed",
+      "class": "Seeds of one-time codes (inside a value's payload)",
+      "release": "v0.21.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0061): the TypeScript line seals no seed and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithSeeds)."
+    },
+    {
+      "purpose": "totp-seed",
+      "class": "Seeds of one-time codes (inside a value's payload)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "ts-to-go",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0061): the TypeScript line seals no seed and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithSeeds)."
+    },
+    {
+      "purpose": "totp-seed",
+      "class": "Seeds of one-time codes (inside a value's payload)",
+      "release": "v0.22.0",
+      "envelopeVersion": 1,
+      "direction": "go-to-ts",
+      "level": "not-applicable",
+      "reason": "varlatchd's own (ADR-0061): the TypeScript line seals no seed and opens none. What it opens, for the reverse migration's digests, is the value around one, which the value and dek entries cover (server/migration/check TestTheReverseChecksWithSeeds)."
     }
   ]
 }

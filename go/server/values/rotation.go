@@ -8,6 +8,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/contract"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/lib/totp"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/contracts"
@@ -38,6 +39,10 @@ const (
 // RotationInput is beginRotation's body as its zod schema leaves it.
 type RotationInput struct {
 	Value string
+	// Seed, when set, is the new primary instead of Value (ADR-0061): until
+	// the rotation ends an exercise gives the codes of both seeds, which is
+	// what enrolling anew at the issuer needs.
+	Seed *totp.Seed
 	// ExpectedVersionID and GraceSeconds are nil when absent.
 	ExpectedVersionID *string
 	GraceSeconds      *int64
@@ -127,7 +132,7 @@ func BeginRotation(ctx context.Context, w *write.Writer, rootKEK []byte, p *auth
 		if err != nil {
 			return err
 		}
-		if row == nil || row.DeletedAt.Valid || !row.CurrentVersionID.Valid {
+		if row == nil || deleted(row.DeletedAt, row.Seed) || !row.CurrentVersionID.Valid {
 			return domainerr.New("RESOURCE_NOT_FOUND", "No current value to rotate")
 		}
 		if reports, err = write.Checkpoint(ctx, tx, p, t.OrganizationID); err != nil {
@@ -144,8 +149,22 @@ func BeginRotation(ctx context.Context, w *write.Writer, rootKEK []byte, p *auth
 				Details: jsvalue.Object{{Key: "currentVersionId", Value: row.CurrentVersionID.String}},
 			}
 		}
+		if in.Seed != nil && row.Seed == 0 {
+			// Both versions are delivered until the rotation ends, and only
+			// one kind of them at a time can be.
+			return &domainerr.Error{Code: "VALIDATION_FAILED", Details: jsvalue.Object{{Key: "reason", Value: "one-time-code"}},
+				Message: item + " holds a value: a rotation to the seed of a one-time code needs a seed to rotate from. Set the seed instead"}
+		}
+		if err := checkKind(item, row.Seed != 0, in.Seed, sensitive); err != nil {
+			return err
+		}
 		versionID := ids.New("ver")
-		if err := insertVersion(ctx, q, orgKEK, t.OrganizationID, row.ID, versionID, in.Value, row.CurrentVersionID, p.Identity.ID, at.UnixMicro()); err != nil {
+		if in.Seed != nil {
+			err = insertSeed(ctx, q, orgKEK, t.OrganizationID, row.ID, versionID, *in.Seed, row.CurrentVersionID, p.Identity.ID, at.UnixMicro())
+		} else {
+			err = insertVersion(ctx, q, orgKEK, t.OrganizationID, row.ID, versionID, in.Value, row.CurrentVersionID, p.Identity.ID, at.UnixMicro())
+		}
+		if err != nil {
 			return err
 		}
 		// new Date(Date.now() + grace * 1000).toISOString(): milliseconds.
@@ -164,10 +183,10 @@ func BeginRotation(ctx context.Context, w *write.Writer, rootKEK []byte, p *auth
 				{Key: "projectId", Value: t.Project.ID}, {Key: "environmentId", Value: t.Env.ID}, {Key: "itemName", Value: item},
 				{Key: "versionId", Value: versionID}, {Key: "previousVersionId", Value: row.CurrentVersionID.String},
 			},
-			Metadata: jsvalue.Object{
+			Metadata: ofSeed(jsvalue.Object{
 				{Key: "sensitive", Value: sensitive}, {Key: "retiring", Value: item + "@" + row.CurrentVersionID.String},
 				{Key: "deadline", Value: audit.ISOTime(deadline)},
-			},
+			}, in.Seed),
 		}); err != nil {
 			return err
 		}
@@ -210,7 +229,7 @@ func CompleteRotation(ctx context.Context, w *write.Writer, p *auth.Principal, t
 		if err != nil {
 			return err
 		}
-		if row == nil || row.DeletedAt.Valid || !row.CurrentVersionID.Valid {
+		if row == nil || deleted(row.DeletedAt, row.Seed) || !row.CurrentVersionID.Valid {
 			return domainerr.New("RESOURCE_NOT_FOUND", "No value to complete rotation for")
 		}
 		if reports, err = write.Checkpoint(ctx, tx, p, t.OrganizationID); err != nil {

@@ -4,10 +4,12 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/varlatch/varlatch/go/lib/totp"
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/domainerr"
@@ -70,8 +72,36 @@ func (p *projectRequest) claim(endpoint string, body any) write.Claim {
 	}
 }
 
+// seedOf is the body's otpauth, parsed (ADR-0061): nil when it has none.
+// It goes in value's place: a server that does not know it refuses the body
+// for want of a value, and never stores the URI as one.
+func seedOf(body any, at string) (*totp.Seed, string, error) {
+	obj, _ := body.(jsvalue.Object)
+	raw, ok := obj.Get("otpauth")
+	if !ok {
+		return nil, "", nil
+	}
+	uri, isString := raw.(string)
+	if !isString {
+		return nil, "", domainerr.New("VALIDATION_FAILED", at+"otpauth: Invalid input: expected string, received "+zodType(raw))
+	}
+	if _, both := obj.Get("value"); both {
+		return nil, "", domainerr.New("VALIDATION_FAILED", at+"otpauth: a value or the seed of a one-time code, not both")
+	}
+	seed, err := values.ParseSeed(uri)
+	if err != nil {
+		var d *domainerr.Error
+		if errors.As(err, &d) {
+			d.Message = at + d.Message
+		}
+		return nil, "", err
+	}
+	return &seed, uri, nil
+}
+
 // SetValue is PUT …/values/{item}: the body z.object({ value: z.string(),
-// expectedVersionId: z.string().optional() }).
+// expectedVersionId: z.string().optional() }), with otpauth, the seed of a
+// one-time code, in value's place.
 func (o *operations) SetValue(ctx context.Context, _ api.SetValueRequestObject) (api.SetValueResponseObject, error) {
 	p, t, err := o.writeTarget(ctx, valueRoute)
 	if err != nil {
@@ -81,16 +111,24 @@ func (o *operations) SetValue(ctx context.Context, _ api.SetValueRequestObject) 
 	if err != nil {
 		return nil, err
 	}
+	seed, uri, err := seedOf(body, "")
+	if err != nil {
+		return nil, err
+	}
 	if err := zodIssues([]bodyField{
-		{name: "value", kind: kindString, required: true, min: 0, max: noLimit},
+		{name: "value", kind: kindString, required: seed == nil, min: 0, max: noLimit},
 		{name: "expectedVersionId", kind: kindString, min: 0, max: noLimit},
 	}, body); err != nil {
 		return nil, err
 	}
 	obj := body.(jsvalue.Object)
-	value, _ := obj.Get("value")
-	parsed := jsvalue.Object{{Key: "value", Value: value}}
-	in := values.SetInput{Value: value.(string)}
+	in := values.SetInput{Seed: seed}
+	parsed := jsvalue.Object{{Key: "otpauth", Value: uri}}
+	if seed == nil {
+		value, _ := obj.Get("value")
+		parsed = jsvalue.Object{{Key: "value", Value: value}}
+		in.Value = value.(string)
+	}
 	if v, ok := obj.Get("expectedVersionId"); ok {
 		s := v.(string)
 		in.ExpectedVersionID = &s
@@ -210,7 +248,20 @@ func parseChanges(body any) ([]values.Change, any, error) {
 		}
 		ch.Item, _ = str("item", true, 1)
 		if ch.Op == "set" {
-			ch.Value, _ = str("value", true, 0)
+			seed, uri, err := seedOf(c, at+".")
+			switch {
+			case err != nil:
+				var d *domainerr.Error
+				if !errors.As(err, &d) {
+					return nil, nil, err
+				}
+				issues = append(issues, d.Message)
+			case seed != nil:
+				ch.Seed = seed
+				member = append(member, jsvalue.Member{Key: "otpauth", Value: uri})
+			default:
+				ch.Value, _ = str("value", true, 0)
+			}
 		}
 		if s, ok := str("expectedVersionId", false, 0); ok {
 			ch.ExpectedVersionID = &s
@@ -237,16 +288,23 @@ func (o *operations) BeginRotation(ctx context.Context, _ api.BeginRotationReque
 	if err != nil {
 		return nil, err
 	}
+	seed, _, err := seedOf(body, "")
+	if err != nil {
+		return nil, err
+	}
 	if err := zodIssues([]bodyField{
-		{name: "value", kind: kindString, required: true, min: 0, max: noLimit},
+		{name: "value", kind: kindString, required: seed == nil, min: 0, max: noLimit},
 		{name: "expectedVersionId", kind: kindString, min: 0, max: noLimit},
 		{name: "graceSeconds", kind: kindInt, min: 1, max: 2_592_000},
 	}, body); err != nil {
 		return nil, err
 	}
 	obj := body.(jsvalue.Object)
-	value, _ := obj.Get("value")
-	in := values.RotationInput{Value: value.(string)}
+	in := values.RotationInput{Seed: seed}
+	if seed == nil {
+		value, _ := obj.Get("value")
+		in.Value = value.(string)
+	}
 	if v, ok := obj.Get("expectedVersionId"); ok {
 		s := v.(string)
 		in.ExpectedVersionID = &s

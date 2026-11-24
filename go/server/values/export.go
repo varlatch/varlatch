@@ -155,7 +155,7 @@ func (s *Service) freshnessOf(ctx context.Context, tx *storage.Tx, st *State, se
 			return "the environment expired", nil
 		}
 	}
-	items, err := resolveItems(ctx, q, st, now)
+	items, _, err := resolveItems(ctx, q, st, now)
 	if err != nil {
 		return "", err
 	}

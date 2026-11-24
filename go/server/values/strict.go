@@ -152,7 +152,7 @@ func (st *State) stateDigests() (jsvalue.Object, error) {
 		contractPart = map[string]any{"revisionId": st.revision.ID, "contentHash": st.revision.ContentHash, "semanticsVersion": version}
 	}
 	items, rotation := []any{}, []any{}
-	for _, it := range st.Items {
+	for _, it := range st.all() {
 		items = append(items, map[string]any{"name": it.Name, "source": it.Source, "valueRowId": it.ValueRowID, "versionId": it.VersionID})
 		if it.RetiringVersionID != "" {
 			rotation = append(rotation, map[string]any{"name": it.Name, "retiringVersionId": it.RetiringVersionID})
@@ -259,11 +259,19 @@ func (s *Service) strict(ctx context.Context, req Request, st *State, mode, plai
 	type denial struct{ reason, requires string }
 	notEvaluable := map[string]denial{}
 	literalByName := map[string][]string{}
-	for _, it := range st.Items {
+	for _, it := range st.all() {
 		entry := jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "sensitive", Value: it.Sensitive}, {Key: "source", Value: it.Source},
 			{Key: "versionId", Value: it.VersionID}, {Key: "value", Value: nil}}
 		if it.RetiringVersionID != "" {
 			entry = append(entry, jsvalue.Member{Key: "rotating", Value: true})
+		}
+		if it.Code != nil {
+			// A seed of one-time codes is delivered to nobody here (ADR-0061).
+			if !preflight {
+				withheld = append(withheld, jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "reason", Value: "one-time-code"}, {Key: "requires", Value: "secret.use"}})
+			}
+			items = append(items, withCode(entry, it))
+			continue
 		}
 		if !delivers(it) {
 			access, requires := plainAccess, "config.value.read"
@@ -328,13 +336,19 @@ func (s *Service) strict(ctx context.Context, req Request, st *State, mode, plai
 		}
 		envCtx := contract.Environment{RootID: rootID(st.Env), Tier: st.Env.Tier}
 		stored := map[string]Item{}
-		for _, it := range st.Items {
+		for _, it := range st.all() {
 			stored[it.Name] = it
 		}
 		for _, it := range c.Items {
 			if _, ok := stored[it.Name]; !ok {
 				if sem.MissingWhenAbsent(it, envCtx) {
 					result.missing = append(result.missing, it.Name)
+				}
+				continue
+			}
+			if stored[it.Name].Code != nil {
+				if problem := codeProblem(it); problem != "" {
+					result.invalid = append(result.invalid, named(it.Name, problem))
 				}
 				continue
 			}

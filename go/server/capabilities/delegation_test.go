@@ -68,6 +68,8 @@ type world struct {
 	check bool
 	// onFetch, when set, runs as the verifier fetches an issuer's document.
 	onFetch func()
+	// log is where the server logs (nowhere when nil).
+	log io.Writer
 }
 
 func newWorld(t *testing.T) *world {
@@ -100,7 +102,10 @@ func (w *world) start() {
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if w.log == nil {
+		w.log = io.Discard
+	}
+	log := slog.New(slog.NewTextHandler(w.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	policy := outbound.New(nil, outbound.Options{Log: log, Resolve: func(context.Context, string) ([]outbound.Answer, error) {
 		return []outbound.Answer{{Address: "93.184.215.14", Family: 4}}, nil
 	}})

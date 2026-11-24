@@ -63,7 +63,8 @@ func ReadForSync(ctx context.Context, db query.DBTX, projectID, environmentID st
 		}
 		st.contract = &c
 	}
-	items, err := resolveItems(ctx, q, &st, now)
+	// Seeds of one-time codes are never synced (ADR-0061).
+	items, _, err := resolveItems(ctx, q, &st, now)
 	if err != nil {
 		return SyncRead{}, err
 	}
@@ -80,6 +81,9 @@ func OpenForSync(ctx context.Context, db query.DBTX, orgKEK []byte, organization
 	}
 	if len(rows) == 0 {
 		return "", domainerr.New("INTERNAL", "Missing value version")
+	}
+	if _, seed := seedParams(rows[0].Payload.String); seed {
+		return "", errSeed
 	}
 	var v envelope.EncryptedValue
 	if err := json.Unmarshal([]byte(rows[0].Payload.String), &v.Payload); err != nil {

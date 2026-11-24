@@ -199,7 +199,7 @@ func (s *Service) validateEnvironment(ctx context.Context, req Request, st *Stat
 		return result, nil
 	}
 	present := map[string]Item{}
-	for _, it := range st.Items {
+	for _, it := range st.all() {
 		present[it.Name] = it
 	}
 	envCtx := contract.Environment{RootID: rootID(st.Env), Tier: st.Env.Tier}
@@ -229,6 +229,14 @@ func (s *Service) validateEnvironment(ctx context.Context, req Request, st *Stat
 		if !ok {
 			if sem.MissingWhenAbsent(it, envCtx) {
 				result.missing = append(result.missing, it.Name)
+			}
+			continue
+		}
+		if resolved.Code != nil {
+			// Its verdict is the item's type alone: nothing is opened for it,
+			// so the right to see that it exists is enough.
+			if problem := codeProblem(it); problem != "" {
+				result.invalid = append(result.invalid, named(it.Name, problem))
 			}
 			continue
 		}
@@ -304,7 +312,7 @@ func (s *Service) validateEnvironment(ctx context.Context, req Request, st *Stat
 	// values.
 	inDomain := func(origin, name string) (bool, error) {
 		it, ok := present[name]
-		if !ok {
+		if !ok || it.Code != nil {
 			return false, nil
 		}
 		if origin == "plain" {

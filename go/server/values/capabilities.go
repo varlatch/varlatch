@@ -12,9 +12,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/lib/targets"
+	"github.com/varlatch/varlatch/go/lib/totp"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
@@ -192,7 +194,7 @@ func (s *Service) CheckPrecondition(ctx context.Context, req Request, pre Precon
 			return err
 		}
 		secrets := map[string]bool{}
-		for _, it := range st.Items {
+		for _, it := range st.all() {
 			if it.Sensitive {
 				secrets[it.Name] = true
 			}
@@ -234,6 +236,11 @@ type Exercise struct {
 	Host       string
 	Port       int
 	Placements []Placement
+	// MinValiditySeconds and Fresh are about the one-time codes among the
+	// items (ADR-0061): how long each must still be valid (0: no matter), and
+	// that none was given before.
+	MinValiditySeconds int64
+	Fresh              bool
 }
 
 // objectPrototype are the names a plain JavaScript object inherits:
@@ -303,6 +310,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 				}
 			}
 		}
+		st.wantsCode = func(it Item) bool { return bound[it.Name] }
 		if err := capture(ctx, tx, &st, now, func(it Item) bool {
 			if it.Sensitive {
 				return bound[it.Name]
@@ -447,11 +455,17 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			plainByName[it.Name] = it
 		}
 	}
-	var selected []Item
+	codes := map[string]Item{}
+	for _, it := range st.Codes {
+		codes[it.Name] = it
+	}
+	var selected, selectedCodes []Item
 	withheld := []any{}
 	for _, name := range placed {
 		if it, ok := secrets[name]; ok {
 			selected = append(selected, it)
+		} else if it, ok := codes[name]; ok {
+			selectedCodes = append(selectedCodes, it)
 		} else {
 			withheld = append(withheld, name)
 		}
@@ -463,14 +477,28 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		return nil, deny("authz-denied")
 	}
 
+	wanted, err := codesWanted(&st, selectedCodes)
+	if err != nil {
+		return nil, err
+	}
+	if name := tooLong(wanted, in.MinValiditySeconds); name != "" {
+		return nil, deny("min-validity-too-long", jsvalue.Member{Key: "item", Value: name},
+			jsvalue.Member{Key: "periodSeconds", Value: codes[name].Code.Period})
+	}
+
 	runID := nullable(row.RunID)
-	entries := make([]string, len(selected))
+	entries := make([]string, 0, len(placed))
 	var versions []string
-	for i, it := range selected {
-		entries[i] = it.Name + "@" + it.VersionID
+	for _, it := range append(slices.Clone(selected), selectedCodes...) {
+		entry := it.Name + "@" + it.VersionID
+		if it.RetiringVersionID != "" {
+			entry += "+" + it.RetiringVersionID
+		}
+		entries = append(entries, entry)
+	}
+	for _, it := range selected {
 		versions = append(versions, it.VersionID)
 		if it.RetiringVersionID != "" {
-			entries[i] += "+" + it.RetiringVersionID
 			versions = append(versions, it.RetiringVersionID)
 		}
 	}
@@ -488,7 +516,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	// A single-use Capability spends its use only when at least one item is
 	// delivered: an exercise whose placed items all have no value leaves it
 	// unused.
-	shouldSpend := singleUse && len(selected) > 0
+	shouldSpend := singleUse && len(selected)+len(selectedCodes) > 0
 	if shouldSpend {
 		exercised = append(exercised, jsvalue.Member{Key: "singleUse", Value: true})
 		// The use is spent in capability.exercised's own job: two exercises
@@ -514,18 +542,52 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			return nil, errCapabilityEnded
 		}
 	}
+	before, steps := spend, map[string]int64(nil)
+	if len(wanted) > 0 {
+		// Which code each seed gives is decided and recorded in the same
+		// job: two exercises that ask for a fresh one never get the same.
+		// Refused (notFresh), nothing of the job stays, a single use neither.
+		before = func(ctx context.Context, tx *storage.Tx) (md jsvalue.Object, err error) {
+			if spend != nil {
+				if _, err := spend(ctx, tx); err != nil {
+					return nil, err
+				}
+			}
+			steps, md, err = giveCodes(ctx, tx, wanted, time.Duration(in.MinValiditySeconds)*time.Second, in.Fresh, s.now())
+			return md, err
+		}
+	}
 	plaintext, err := s.auditThenDecrypt(ctx, &st, []audit.Event{{
 		Type: "capability.exercised", Decision: audit.Allow, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
 		Action: ptr("secret.use"), Resource: resource(), Authz: authz.AuditAuthz(use), RequestID: ptr(req.RequestID),
 		Metadata: exercised,
-	}}, versions, spend)
+	}}, versions, before)
 	if errors.Is(err, errCapabilityEnded) {
 		return nil, deny(ended)
+	}
+	if late := (*notFresh)(nil); errors.As(err, &late) {
+		return nil, deny("no-fresh-code", jsvalue.Member{Key: "item", Value: late.item},
+			jsvalue.Member{Key: "retryAfterSeconds", Value: max(1, int64((late.after+time.Second-1)/time.Second))})
 	}
 	if err != nil {
 		return nil, err
 	}
 	spent = shouldSpend
+	var codeVersions []string
+	for _, w := range wanted {
+		codeVersions = append(codeVersions, w.versionID)
+	}
+	var seeds map[string]totp.Seed
+	if len(wanted) > 0 {
+		if seeds, err = s.openSeeds(&st, codeVersions); err != nil {
+			return nil, err
+		}
+		defer func() {
+			for _, seed := range seeds {
+				seed.Clear()
+			}
+		}()
+	}
 
 	type out struct {
 		item     Item
@@ -572,6 +634,12 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 					queued[name] = true
 					secretNeeded = append(secretNeeded, it)
 					continue
+				}
+				if _, ok := codes[name]; ok {
+					// A reference never gives a seed, nor a code: a code is
+					// asked for by placing its item.
+					return nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: name},
+						jsvalue.Member{Key: "referencedBy", Value: f.by}, jsvalue.Member{Key: "cause", Value: "one-time-code"})
 				}
 				it, ok := plainByName[name]
 				if !ok {
@@ -627,8 +695,8 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			frontier = append(frontier, ref{it.Name, v})
 		}
 	}
-	items := make([]any, len(results))
-	for i, r := range results {
+	items := make([]any, 0, len(placed))
+	for _, r := range results {
 		value, err := expandStrict(r.value, func(n string) (string, bool) { v, ok := lookup[n]; return v, ok })
 		if err != nil {
 			return nil, deny("unresolved-reference", jsvalue.Member{Key: "referencedBy", Value: r.item.Name},
@@ -638,7 +706,18 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		if r.retiring != nil {
 			o = append(o, jsvalue.Member{Key: "retiring", Value: jsvalue.Object{{Key: "versionId", Value: r.item.RetiringVersionID}, {Key: "value", Value: *r.retiring}}})
 		}
-		items[i] = o
+		items = append(items, o)
+	}
+	// The codes last, so what they have left is counted from the answer.
+	now := s.now()
+	for _, it := range selectedCodes {
+		o := append(jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "versionId", Value: it.VersionID}, {Key: "kind", Value: "totp"}},
+			codeJS(seeds[it.VersionID], steps[it.VersionID], now)...)
+		if it.RetiringVersionID != "" {
+			o = append(o, jsvalue.Member{Key: "retiring", Value: append(jsvalue.Object{{Key: "versionId", Value: it.RetiringVersionID}},
+				codeJS(seeds[it.RetiringVersionID], steps[it.RetiringVersionID], now)...)})
+		}
+		items = append(items, o)
 	}
 	s.settle(t)
 	return jsvalue.Object{{Key: "items", Value: items}, {Key: "withheld", Value: withheld}, {Key: "targets", Value: held}}, nil
@@ -693,6 +772,14 @@ func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 			msg += " (" + get("item") + " at " + get("target") + ")"
 		}
 		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: msg, Details: details}
+	case "min-validity-too-long":
+		period, _ := detail.Get("periodSeconds")
+		return &domainerr.Error{Code: "VALIDATION_FAILED", Details: details,
+			Message: "A code of " + get("item") + " lasts " + seconds(period.(int64)) + ": minValiditySeconds cannot be more"}
+	case "no-fresh-code":
+		after, _ := detail.Get("retryAfterSeconds")
+		return &domainerr.Error{Code: "RATE_LIMITED", Details: details,
+			Message: "The codes of " + get("item") + " for now and for the next period were given before: a fresh one can be asked for in " + seconds(after.(int64))}
 	case "unresolved-reference":
 		reference, has := detail.Get("reference")
 		if !has {
@@ -702,6 +789,8 @@ func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 		switch get("cause") {
 		case "secret-not-bound":
 			which = "is a Secret this Capability does not name \u2014 bind it in the Capability's items"
+		case "one-time-code":
+			which = "is a one-time code \u2014 a reference gives neither the code nor its seed"
 		case "plain-read-denied":
 			which = "the Agent's Grants do not allow reading here (config.value.read)"
 		default:

@@ -40,6 +40,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/lib/totp"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
@@ -139,12 +140,21 @@ type Item struct {
 	// RetiringVersionID is set while a rotation's window is open at the
 	// snapshot's time.
 	RetiringVersionID string
+	// Code is set for a seed of one-time codes (ADR-0061): what people may
+	// read of it. Such an item is in State.Codes, never in State.Items, and
+	// is always Sensitive.
+	Code *totp.Params
 }
 
 type ciphertext struct {
 	valueRowID string
 	payload    envelope.Envelope
 	wrappedDEK envelope.Envelope
+	// seed is whether the stored version says it is a seed of one-time codes
+	// (decrypt refuses one, openSeeds refuses anything else), with what it
+	// says of it.
+	seed   bool
+	params totp.Params
 }
 
 type contractDoc struct {
@@ -164,8 +174,26 @@ type State struct {
 	Env        query.LiveEnvironmentRow
 	revision   *query.ProjectContractRevisionRow
 	contract   *contractDoc
-	Items      []Item
+	// Items are the values. Every path that delivers values reads them from
+	// here, so none of them can deliver a seed.
+	Items []Item
+	// Codes are the seeds of one-time codes (ADR-0061, seeds.go).
+	Codes []Item
+	// wantsCode selects the seeds whose ciphertext is captured (none when
+	// nil), set by the two paths that open one before they capture.
+	wantsCode  func(Item) bool
 	ciphertext map[string]ciphertext
+}
+
+// all is the values and the seeds, by name: what exists, for listings and
+// the state manifest.
+func (s *State) all() []Item {
+	if len(s.Codes) == 0 {
+		return s.Items
+	}
+	out := append(slices.Clone(s.Items), s.Codes...)
+	sort.SliceStable(out, func(i, j int) bool { return utf16Less(out[i].Name, out[j].Name) })
+	return out
 }
 
 func (s *State) resource() authz.Resource {
@@ -342,16 +370,14 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 		}
 		st.revision, st.contract = &rev, &c
 	}
-	items, err := resolveItems(ctx, q, st, now)
-	if err != nil {
+	if st.Items, st.Codes, err = resolveItems(ctx, q, st, now); err != nil {
 		return err
 	}
-	st.Items = items
 
 	rowOf := map[string]string{}
 	var ids []string
-	for _, it := range items {
-		if !wants(it) {
+	for _, it := range st.all() {
+		if it.Code != nil && (st.wantsCode == nil || !st.wantsCode(it)) || it.Code == nil && !wants(it) {
 			continue
 		}
 		for _, v := range []string{it.VersionID, it.RetiringVersionID} {
@@ -377,6 +403,7 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 		if err := json.Unmarshal([]byte(r.Payload.String), &c.payload); err != nil {
 			return fmt.Errorf("values: the payload of %s is not an envelope: %w", r.ID, err)
 		}
+		c.params, c.seed = seedParams(r.Payload.String)
 		if err := json.Unmarshal([]byte(r.WrappedDek.String), &c.wrappedDEK); err != nil {
 			return fmt.Errorf("values: the wrapped DEK of %s is not an envelope: %w", r.ID, err)
 		}
@@ -389,17 +416,18 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 // resolveItems is resolveItems: the environment's own current values,
 // then its parent's for names it does not set, each with the version a
 // rotation retires while its window is open at now, sorted by name as
-// JavaScript sorts strings.
-func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) ([]Item, error) {
+// JavaScript sorts strings. codes are the seeds of one-time codes, resolved
+// the same way: a name is one or the other, the environment's own first.
+func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) (items, codes []Item, err error) {
 	byName := map[string]int{}
-	var items []Item
+	codeNames := map[string]bool{}
 	load := func(environmentID, source string) error {
 		rows, err := q.CurrentValuesOfEnvironment(ctx, environmentID)
 		if err != nil {
 			return err
 		}
 		for _, r := range rows {
-			if _, seen := byName[r.ItemName]; source == "parent" && seen {
+			if _, seen := byName[r.ItemName]; source == "parent" && (seen || codeNames[r.ItemName]) {
 				continue
 			}
 			it := Item{
@@ -416,19 +444,33 @@ func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) (
 				items = append(items, it)
 			}
 		}
+		seeds, err := q.SeedsOfEnvironment(ctx, environmentID)
+		if err != nil {
+			return err
+		}
+		for _, r := range seeds {
+			if _, seen := byName[r.ItemName]; seen || codeNames[r.ItemName] {
+				continue
+			}
+			codeNames[r.ItemName] = true
+			if it, ok := seedItem(r, source, now); ok {
+				codes = append(codes, it)
+			}
+		}
 		return nil
 	}
 	if err := load(st.Env.ID, "self"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	readHook(ctx, "between the environment's values and its parent's")
 	if st.Env.ParentEnvironmentID.Valid {
 		if err := load(st.Env.ParentEnvironmentID.String, "parent"); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool { return utf16Less(items[i].Name, items[j].Name) })
-	return items, nil
+	sort.SliceStable(codes, func(i, j int) bool { return utf16Less(codes[i].Name, codes[j].Name) })
+	return items, codes, nil
 }
 
 // expired is assertNotExpired.
@@ -465,7 +507,7 @@ func (st *State) Manifest() (jsvalue.Object, string, error) {
 	}
 	items := make([]any, 0, len(st.Items))
 	canonItems := make([]any, 0, len(st.Items))
-	for _, it := range st.Items {
+	for _, it := range st.all() {
 		o := jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "source", Value: it.Source}, {Key: "valueRowId", Value: it.ValueRowID}, {Key: "versionId", Value: it.VersionID}}
 		c := map[string]any{"name": it.Name, "source": it.Source, "valueRowId": it.ValueRowID, "versionId": it.VersionID}
 		if it.RetiringVersionID != "" {
@@ -572,6 +614,9 @@ func (s *Service) decrypt(st *State, versionIDs []string) (map[string]string, er
 		c, ok := st.ciphertext[v]
 		if !ok {
 			return nil, domainerr.New("INTERNAL", "A value version was not captured in the retrieval snapshot")
+		}
+		if c.seed {
+			return nil, errSeed
 		}
 		plain, err := envelope.DecryptValue(kek, st.Org.ID, c.valueRowID, v, envelope.EncryptedValue{Payload: c.payload, WrappedDEK: c.wrappedDEK})
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -83,13 +84,16 @@ func (s *Service) EffectiveConfiguration(ctx context.Context, req Request, inclu
 
 	items := make([]any, 0, len(st.Items))
 	unexpanded := []any{}
+	// What is listed: the seeds of one-time codes too, whose value is always
+	// null here.
+	all := st.all()
 	if !includeValues {
-		for _, it := range st.Items {
+		for _, it := range all {
 			o := jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "sensitive", Value: it.Sensitive}, {Key: "source", Value: it.Source}, {Key: "versionId", Value: it.VersionID}, {Key: "value", Value: nil}}
 			if it.RetiringVersionID != "" {
 				o = append(o, jsvalue.Member{Key: "rotating", Value: true})
 			}
-			items = append(items, o)
+			items = append(items, withCode(o, it))
 		}
 	} else {
 		var disclosed []string
@@ -116,9 +120,9 @@ func (s *Service) EffectiveConfiguration(ctx context.Context, req Request, inclu
 			o     jsvalue.Object
 			value *string
 		}
-		results := make([]result, 0, len(st.Items))
+		results := make([]result, 0, len(all))
 		lookup := map[string]string{}
-		for _, it := range st.Items {
+		for _, it := range all {
 			var value *string
 			if v, ok := plaintext[it.VersionID]; ok {
 				value = &v
@@ -127,7 +131,7 @@ func (s *Service) EffectiveConfiguration(ctx context.Context, req Request, inclu
 			o := jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "sensitive", Value: it.Sensitive}, {Key: "source", Value: it.Source}, {Key: "versionId", Value: it.VersionID}, {Key: "value", Value: nil}}
 			results = append(results, result{o: o, value: value})
 		}
-		for i, it := range st.Items {
+		for i, it := range all {
 			r := results[i]
 			if r.value != nil {
 				literal := literalSet{}
@@ -146,7 +150,7 @@ func (s *Service) EffectiveConfiguration(ctx context.Context, req Request, inclu
 			if it.RetiringVersionID != "" {
 				r.o = append(r.o, jsvalue.Member{Key: "rotating", Value: true})
 			}
-			items = append(items, r.o)
+			items = append(items, withCode(r.o, it))
 		}
 	}
 	withheld := []any{}
@@ -180,6 +184,10 @@ type disclosureRequest struct {
 	items   []string // nil for the all-authorized scope
 	all     bool
 	purpose string // "" when none was declared
+	// seeds is whether the request asks for the seeds among items (ADR-0061).
+	// Without it a seed is withheld, so whoever asks for every Secret by
+	// name, as clients do, is not given one.
+	seeds bool
 }
 
 // Disclose is POST …/disclosures: the Secrets the request names, or every
@@ -227,6 +235,7 @@ func (s *Service) Disclose(ctx context.Context, req Request, body []byte) (jsval
 		for _, n := range dr.items {
 			requested[n] = true
 		}
+		st.wantsCode = func(it Item) bool { return dr.seeds && requested[it.Name] }
 		if err := capture(ctx, tx, &st, now, func(it Item) bool {
 			if it.Sensitive {
 				return dr.all || requested[it.Name]
@@ -273,9 +282,13 @@ func (s *Service) Disclose(ctx context.Context, req Request, body []byte) (jsval
 	}
 
 	// selectDisclosure.
-	var selected []Item
+	var selected, seeds []Item
 	withheld := []any{}
 	secrets := map[string]Item{}
+	codes := map[string]Item{}
+	for _, it := range st.Codes {
+		codes[it.Name] = it
+	}
 	for _, it := range st.Items {
 		if it.Sensitive {
 			if dr.all {
@@ -288,6 +301,8 @@ func (s *Service) Disclose(ctx context.Context, req Request, body []byte) (jsval
 		for _, n := range dr.items {
 			if it, ok := secrets[n]; ok {
 				selected = append(selected, it)
+			} else if it, ok := codes[n]; ok && dr.seeds {
+				seeds = append(seeds, it)
 			} else {
 				withheld = append(withheld, n)
 			}
@@ -297,20 +312,27 @@ func (s *Service) Disclose(ctx context.Context, req Request, body []byte) (jsval
 	if dr.all {
 		mode = "all-authorized-secrets"
 	}
-	entries := make([]string, 0, len(selected))
-	var versions []string
-	for _, it := range selected {
+	entries := make([]string, 0, len(selected)+len(seeds))
+	var versions, seedVersions []string
+	for _, it := range append(slices.Clone(selected), seeds...) {
+		to := &versions
+		if it.Code != nil {
+			to = &seedVersions
+		}
 		if it.RetiringVersionID != "" {
 			entries = append(entries, it.Name+"@"+it.VersionID+"+"+it.RetiringVersionID)
-			versions = append(versions, it.VersionID, it.RetiringVersionID)
+			*to = append(*to, it.VersionID, it.RetiringVersionID)
 		} else {
 			entries = append(entries, it.Name+"@"+it.VersionID)
-			versions = append(versions, it.VersionID)
+			*to = append(*to, it.VersionID)
 		}
 	}
 	md := jsvalue.Object{{Key: "mode", Value: mode}, {Key: "items", Value: strings.Join(entries, ",")}, {Key: "withheld", Value: len(withheld)}}
 	if dr.purpose != "" {
 		md = append(md, jsvalue.Member{Key: "purpose", Value: dr.purpose})
+	}
+	if len(seeds) > 0 {
+		md = append(md, jsvalue.Member{Key: "totpSeeds", Value: len(seeds)})
 	}
 	var before beforeAudit
 	var gates []write.Gate
@@ -440,6 +462,22 @@ func (s *Service) Disclose(ctx context.Context, req Request, body []byte) (jsval
 		}
 		items = append(items, o)
 	}
+	if len(seeds) > 0 {
+		opened, err := s.openSeeds(&st, seedVersions)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range seeds {
+			o := jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "versionId", Value: it.VersionID}, {Key: "value", Value: opened[it.VersionID].URI()}}
+			if it.RetiringVersionID != "" {
+				o = append(o, jsvalue.Member{Key: "retiring", Value: jsvalue.Object{{Key: "versionId", Value: it.RetiringVersionID}, {Key: "value", Value: opened[it.RetiringVersionID].URI()}}})
+			}
+			items = append(items, withCode(o, it))
+		}
+		for _, seed := range opened {
+			seed.Clear()
+		}
+	}
 	result := jsvalue.Object{{Key: "items", Value: items}, {Key: "withheld", Value: withheld}}
 	s.settle(t)
 	if !metadata.Allowed {
@@ -471,15 +509,37 @@ var errNotJSON = errors.New("values: the request body is not JSON")
 // stripped; the first option that fits wins. When neither fits, zod 4
 // reports the issues of the one option whose issues are all checks
 // (too_small), when exactly one is; otherwise "(root): Invalid input".
+//
+// Then totpSeeds, which the TypeScript server does not have (ADR-0061): a
+// boolean that is true only with items and without a purpose, since a seed
+// is never part of a scan, an export or everything one may reveal.
 func parseDisclosure(body []byte) (disclosureRequest, error) {
+	dr, v, err := parseDisclosureItems(body)
+	if err != nil {
+		return dr, err
+	}
+	if raw, ok := v.Get("totpSeeds"); ok {
+		seeds, isBool := raw.(bool)
+		switch {
+		case !isBool:
+			return dr, domainerr.New("VALIDATION_FAILED", "totpSeeds: Invalid input: expected boolean, received "+jsKind(raw))
+		case seeds && (dr.all || dr.purpose != ""):
+			return dr, domainerr.New("VALIDATION_FAILED", "totpSeeds: seeds are disclosed by their items' names, without a purpose")
+		}
+		dr.seeds = seeds
+	}
+	return dr, nil
+}
+
+func parseDisclosureItems(body []byte) (disclosureRequest, jsvalue.Object, error) {
 	v, err := jsvalue.Parse(body)
 	if err != nil {
-		return disclosureRequest{}, errNotJSON
+		return disclosureRequest{}, nil, errNotJSON
 	}
 	obj, isObject := v.(jsvalue.Object)
 	invalid := domainerr.New("VALIDATION_FAILED", "(root): Invalid input")
 	if !isObject {
-		return disclosureRequest{}, invalid
+		return disclosureRequest{}, nil, invalid
 	}
 	purpose, purposeOK := "", true
 	if p, ok := obj.Get("purpose"); ok {
@@ -512,21 +572,21 @@ func parseDisclosure(body []byte) (disclosureRequest, error) {
 		}
 	}
 	if !itemsAborted && len(checks) == 0 {
-		return disclosureRequest{items: items, purpose: purpose}, nil
+		return disclosureRequest{items: items, purpose: purpose}, obj, nil
 	}
 	scopeOK := false
 	if sc, ok := obj.Get("scope"); ok {
 		scopeOK = sc == "all-authorized-secrets"
 	}
 	if scopeOK && purposeOK {
-		return disclosureRequest{all: true, purpose: purpose}, nil
+		return disclosureRequest{all: true, purpose: purpose}, obj, nil
 	}
 	// The scope option failed on a type or value, which aborts it: only the
 	// items option can be the one that did not abort.
 	if !itemsAborted {
-		return disclosureRequest{}, domainerr.New("VALIDATION_FAILED", strings.Join(checks, "; "))
+		return disclosureRequest{}, nil, domainerr.New("VALIDATION_FAILED", strings.Join(checks, "; "))
 	}
-	return disclosureRequest{}, invalid
+	return disclosureRequest{}, nil, invalid
 }
 
 func itoa(i int) string {

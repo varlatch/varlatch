@@ -4,6 +4,7 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -89,6 +90,9 @@ var exerciseCapabilityBody = zObject{
 		{name: "item", schema: zString{min: 1}},
 		{name: "target", schema: zString{min: 1}},
 	}, max: 200}, optional: true},
+	// The one-time codes among the items (ADR-0061).
+	{name: "minValiditySeconds", schema: zNumber{min: bound(0), max: bound(values.MaxMinValiditySeconds)}, optional: true},
+	{name: "fresh", schema: zBool{}, optional: true},
 }
 
 // brokerOf is the caller's Broker id when it is a Broker of q's
@@ -340,9 +344,21 @@ func (o *operations) ExerciseCapability(ctx context.Context, _ api.ExerciseCapab
 				in.Placements = append(in.Placements, values.Placement{Item: item.(string), Target: target.(string)})
 			}
 		}
+		if n, ok := obj.Get("minValiditySeconds"); ok {
+			in.MinValiditySeconds = int64(n.(float64))
+		}
+		if f, ok := obj.Get("fresh"); ok {
+			in.Fresh = f.(bool)
+		}
 		return in, nil
 	}
 	out, err := o.s.opts.Values.ExerciseCapability(ctx, req, tryDecodeURIComponent(segs[8]), parse)
+	var refused *domainerr.Error
+	if errors.As(err, &refused) && refused.Code == "RATE_LIMITED" {
+		if after, ok := refused.Details.Get("retryAfterSeconds"); ok {
+			return nil, &headerError{err: err, headers: retryAfter(after.(int64))}
+		}
+	}
 	if err != nil {
 		return nil, valuesError(err)
 	}
