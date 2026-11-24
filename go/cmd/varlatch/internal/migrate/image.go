@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -217,11 +218,17 @@ func PrepareImage(ctx context.Context, img *Image, tmp string, fresh bool) (clea
 	}
 	cleanup = func() { _ = os.RemoveAll(dir) }
 	conf := filepath.Join(dir, "varlatchd.conf")
-	if err := os.WriteFile(conf, []byte(derived), 0o600); err != nil {
+	if err := makeFor(conf, strings.NewReader(derived), img.User); err != nil {
 		return cleanup, err
 	}
-	if err := chownAll(img.User, dir, conf); err != nil {
+	own := filepath.Join(dir, "tmp")
+	if err := os.Mkdir(own, 0o700); err != nil {
 		return cleanup, err
+	}
+	for _, d := range []string{own, dir} {
+		if err := giveDir(d, img.User); err != nil {
+			return cleanup, err
+		}
 	}
 	img.Host.Config = conf
 	// Its programs run in an environment of their own: this process's
@@ -229,13 +236,6 @@ func PrepareImage(ctx context.Context, img *Image, tmp string, fresh bool) (clea
 	// they would find out in the downtime (the tailnet's reach probe makes
 	// its node's directory).
 	if x, ok := img.Host.Run.(ExecRunner); ok {
-		own := filepath.Join(dir, "tmp")
-		if err := os.Mkdir(own, 0o700); err != nil {
-			return cleanup, err
-		}
-		if err := chownAll(img.User, own); err != nil {
-			return cleanup, err
-		}
 		base := x.Env
 		if base == nil {
 			base = os.Environ()
@@ -299,17 +299,33 @@ func ownedDir(path string, o Owner) error {
 	return nil
 }
 
-// chownAll gives paths to o, unless this process is o already.
-func chownAll(o Owner, paths ...string) error {
+// give gives an open file to o, unless this process is o already.
+func give(f *os.File, o Owner) error {
 	if int(o.UID) == os.Getuid() && int(o.GID) == os.Getgid() {
 		return nil
 	}
-	for _, p := range paths {
-		if err := os.Chown(p, int(o.UID), int(o.GID)); err != nil {
-			return err
-		}
+	return f.Chown(int(o.UID), int(o.GID))
+}
+
+// makeFor makes a file, which must not be there, with r's content, o's
+// before it has its content's last byte synced: in a directory of this
+// process's own, which is given to o after.
+func makeFor(path string, r io.Reader, o Owner) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
 	}
-	return nil
+	_, err = io.Copy(f, r)
+	if err == nil {
+		err = give(f, o)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // Start is the operator's: the service started (a HumanStep) unless it

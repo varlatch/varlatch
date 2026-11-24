@@ -4,8 +4,19 @@
 
 package daemon
 
-import "github.com/varlatch/varlatch/go/server/config"
+import (
+	"io"
+	"os"
 
-func becomeOwner(*config.Config, func()) error { return nil }
+	"github.com/varlatch/varlatch/go/server/config"
+)
 
-func below(string, string) bool { return false }
+func becomeOwner(*config.Config, func(), io.Writer) error { return nil }
+
+func rootsAlone(string) bool { return false }
+
+func rootsOnlyName(os.FileInfo) bool { return false }
+
+func createAlone(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+}

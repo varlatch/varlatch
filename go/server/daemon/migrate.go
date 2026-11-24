@@ -374,6 +374,14 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 			return fail(ExitFailure, "%v", err)
 		}
 		o.Work = filepath.Dir(abs)
+		if os.Getenv(outputEnv) != "" {
+			// The bundle's directory is root's alone, and this process is
+			// the data directory's owner now.
+			if o.Work, err = os.MkdirTemp("", "varlatchd-export-"); err != nil {
+				return fail(ExitFailure, "%v", err)
+			}
+			defer os.RemoveAll(o.Work)
+		}
 	}
 	if a.scratch != "" {
 		if a.sub == "import" {
@@ -414,23 +422,12 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 			return fail(ExitFailure, "%v; nothing was kept", err)
 		}
 	} else {
-		out, err := os.OpenFile(a.out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		out, done, err := output(a.out)
 		if err != nil {
 			return fail(ExitFailure, "%v (the reverse bundle is a new file)", err)
 		}
 		res, err = migrate.ExportReverse(context.Background(), out, o)
-		if cerr := out.Close(); err == nil {
-			err = cerr
-		}
-		if err == nil {
-			err = syncFile(a.out)
-		}
-		if err == nil {
-			// The bundle's name in its directory, durable too.
-			err = syncFile(filepath.Dir(a.out))
-		}
-		if err != nil {
-			_ = os.Remove(a.out)
+		if err := done(err); err != nil {
 			return fail(ExitFailure, "%v; nothing was written", err)
 		}
 	}

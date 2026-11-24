@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -49,7 +51,7 @@ func setIDs(uid, gid int) error {
 // directory that is root's, and for one that does not exist yet (the
 // command then says so). The directory's path is checked before its owner
 // is believed, and the directory itself held by its descriptor from then.
-func becomeOwner(cfg *config.Config, keep func()) error {
+func becomeOwner(cfg *config.Config, keep func(), stderr io.Writer) error {
 	if os.Geteuid() != 0 {
 		return nil
 	}
@@ -71,8 +73,12 @@ func becomeOwner(cfg *config.Config, keep func()) error {
 	}
 	keep()
 	_, _ = x509.SystemCertPool()
-	if err := giveLeftovers(dir, int(st.Uid), int(st.Gid)); err != nil {
+	left, err := giveLeftovers(dir, int(st.Uid), int(st.Gid))
+	if err != nil {
 		return err
+	}
+	if len(left) > 0 {
+		fmt.Fprintf(stderr, "varlatchd: left as it is in the data directory, root's and not varlatchd's: %s\n", strings.Join(left, ", "))
 	}
 	if err := setIDs(owner, int(st.Gid)); err != nil {
 		return fmt.Errorf("becoming the data directory's owner: %w", err)
@@ -124,29 +130,31 @@ func fstat(f *os.File) (*syscall.Stat_t, error) {
 	return st, nil
 }
 
-// leftoverDepth is how deep below the data directory an earlier release's
-// root-run commands made anything (.restore-work, backups and an upgrade's
-// copies among it).
-const leftoverDepth = 5
-
-// giveLeftovers gives what is root's in the data directory dir to its owner.
-// Each name is opened below its directory's descriptor, never through a
-// link, and changed through its own: only root's, on the directory's file
-// system, a directory or a file with that one name (a file with another
-// name may be anything of root's, linked there). The owner cannot move in
-// what is root's elsewhere. An error names what is not given, and how to.
-func giveLeftovers(dir *os.File, uid, gid int) error {
+// giveLeftovers gives what earlier releases' root-run commands made in the
+// data directory dir (leftovers) to its owner. Each name is opened below its
+// directory's descriptor, never through a link, and changed through its own:
+// only root's, on the directory's file system, a directory or a file with
+// that one name (a file with another name may be anything of root's, linked
+// there). What else of root's is in the directories it looks in stays, and
+// is named. An error names what is not given, and how to.
+func giveLeftovers(dir *os.File, uid, gid int) (left []string, err error) {
 	st, err := fstat(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return giveIn(dir, uint64(st.Dev), uid, gid, leftoverDepth)
+	g := giver{dev: uint64(st.Dev), uid: uid, gid: gid}
+	err = g.in(dir, "")
+	return g.left, err
 }
 
-func giveIn(dir *os.File, dev uint64, uid, gid, depth int) error {
-	if depth == 0 {
-		return nil
-	}
+type giver struct {
+	dev      uint64
+	uid, gid int
+	left     []string
+}
+
+// in gives what is in dir, whose path below the data directory is rel.
+func (g *giver) in(dir *os.File, rel string) error {
 	if _, err := dir.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
@@ -155,15 +163,18 @@ func giveIn(dir *os.File, dev uint64, uid, gid, depth int) error {
 		return err
 	}
 	for _, name := range names {
-		if err := giveOne(dir, name, dev, uid, gid, depth); err != nil {
+		if err := g.one(dir, name, path.Join(rel, name)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func giveOne(dir *os.File, name string, dev uint64, uid, gid, depth int) error {
-	path := filepath.Join(dir.Name(), name)
+// leave notes what stays root's.
+func (g *giver) leave(p string) { g.left = append(g.left, strconv.Quote(p)) }
+
+func (g *giver) one(dir *os.File, name, rel string) error {
+	full := filepath.Join(dir.Name(), name)
 	var st unix.Stat_t
 	if err := unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		if errors.Is(err, syscall.ENOENT) {
@@ -172,8 +183,15 @@ func giveOne(dir *os.File, name string, dev uint64, uid, gid, depth int) error {
 		return err
 	}
 	kind := st.Mode & unix.S_IFMT
-	// A directory of the owner's may hold what root made in it.
-	if uint64(st.Dev) != dev || kind != unix.S_IFDIR && (kind != unix.S_IFREG || st.Uid != 0) {
+	if kind != unix.S_IFDIR && st.Uid != 0 {
+		return nil
+	}
+	if !isLeftover(rel) || uint64(st.Dev) != g.dev || kind != unix.S_IFDIR && kind != unix.S_IFREG {
+		// A directory of the owner's that is none of those is varlatchd's
+		// own, which never was root's, or the owner's.
+		if st.Uid == 0 {
+			g.leave(full)
+		}
 		return nil
 	}
 	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
@@ -181,36 +199,47 @@ func giveOne(dir *os.File, name string, dev uint64, uid, gid, depth int) error {
 		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ELOOP) {
 			return nil // another thing there now
 		}
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", full, err)
 	}
-	f := os.NewFile(uintptr(fd), path)
+	f := os.NewFile(uintptr(fd), full)
 	defer f.Close()
 	open, err := fstat(f)
 	if err != nil {
 		return err
 	}
 	isDir := open.Mode&syscall.S_IFMT == syscall.S_IFDIR
-	if uint64(open.Dev) != dev || !isDir && (open.Mode&syscall.S_IFMT != syscall.S_IFREG || open.Nlink != 1) {
+	if uint64(open.Dev) != g.dev || !isDir && (open.Mode&syscall.S_IFMT != syscall.S_IFREG || open.Nlink != 1) {
+		if open.Uid == 0 {
+			g.leave(full)
+		}
 		return nil
 	}
 	if open.Uid == 0 {
-		if err := f.Chown(uid, gid); err != nil {
-			return fmt.Errorf("%s is root's, and varlatchd's user cannot use it: chown -h %d:%d '%s' (%v)", path, uid, gid, strings.ReplaceAll(path, "'", `'\''`), err)
+		if err := f.Chown(g.uid, g.gid); err != nil {
+			return fmt.Errorf("%s is root's, and varlatchd's user cannot use it: chown -h %d:%d '%s' (%v)", full, g.uid, g.gid, strings.ReplaceAll(full, "'", `'\''`), err)
 		}
 	}
 	if isDir {
-		return giveIn(f, dev, uid, gid, depth-1)
+		return g.in(f, rel)
 	}
 	return nil
 }
 
-// below is whether path, cleaned, names something below dir, as they are
-// written.
-func below(dir, path string) bool {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(filepath.Clean(dir), abs)
-	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+// rootsAlone is whether only root may change the directory dir and where its
+// path leads: every directory and link on it is root's, and not writable by
+// others.
+func rootsAlone(dir string) bool {
+	st, err := checkPath(dir, func(uid uint32) bool { return uid == 0 })
+	return err == nil && st.Uid == 0
+}
+
+// rootsOnlyName is whether a file is root's and has one name.
+func rootsOnlyName(info os.FileInfo) bool {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && st.Uid == 0 && st.Nlink == 1
+}
+
+// createAlone makes a file that must not be there.
+func createAlone(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 }
