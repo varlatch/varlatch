@@ -260,7 +260,7 @@ fixes.
   `varlatchd-image.txt`, listed in the signed `SHA256SUMS`, gives the
   image's digest to pin ([verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)).
 
-## 0.50.0-rc.3 (DATE AT TAG)
+## 0.50.0-rc.3 (2026-11-24)
 
 The third prerelease of the Go line (ADR-0059), and the first to publish
 the server's container image, to test that image and more of the Go CLI
@@ -352,9 +352,17 @@ Changes since 0.50.0-rc.2, by pull request:
   lifted last, only while that gate is there.
 - **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
   refuses an earlier one before anything is done.
-<!-- SLOT IMAGE-READONLY (5.1e's: the image with a read-only root has a temporary directory for SQLite; number and text to come) -->
-<!-- END SLOT IMAGE-READONLY -->
-<!-- SLOT #451 (open, head 427f857c, its own text, the same as at 8a182138; recheck against the merged PR) -->
+- **The container image works with a read-only root filesystem (#457).**
+  SQLite had nowhere to put its temporary files there, so a larger write
+  failed with a server error while smaller ones went on: enrolling the first
+  passkey, `admin bootstrap --cli-credential`, a new machine identity, and a
+  change set of five values or more (an import). The image now sets
+  `SQLITE_TMPDIR` to the data directory, and `varlatchd` does the same by
+  itself wherever it finds no writable temporary directory. It refuses to
+  start, and says what to set, when the data directory is not writable
+  either. The tailnet reach check keeps its state in the data directory too
+  when it has no other place. None of these files stays there: SQLite's have
+  no name in the directory, and the reach check removes its own.
 - **`varlatch setup` on a terminal shows the first administrator's link
   (#451).** In 0.50.0-rc.2 and earlier it showed `/enroll#[redacted]`, so an
   interactive setup could not go on without a link from `varlatchd admin
@@ -362,7 +370,6 @@ Changes since 0.50.0-rc.2, by pull request:
   `varlatch invite`, `move` and `admin reenroll`, were not affected. In
   assisted mode setup neither asks nor shows anything on the terminal, as
   without one: a coding agent would read the link and the keys.
-<!-- END SLOT #451 -->
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing
   (#446).** Each step says when it starts, every 15 seconds while it
   lasts (how long so far, and what it waits for) and when it ends; so do the
