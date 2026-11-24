@@ -2053,8 +2053,9 @@ paths:
         identity's Grants, evaluated per request. Subject matches exactly,
         or by prefix when it ends with '*'. exerciseOnly, runIdClaim, and
         singleExchange limit what its exchanges give (capability
-        auth.oidc.limits, ADR-0060); a token that matches several bindings
-        gets the limits of all of them.
+        auth.oidc.limits, ADR-0060); an identity's live bindings for one
+        issuer are either all limited or all unlimited, and a token that
+        matches several limited bindings gets the limits of all of them.
       parameters:
         - $ref: "#/components/parameters/org"
         - name: identity

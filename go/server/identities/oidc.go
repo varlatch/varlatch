@@ -163,6 +163,44 @@ func claimsText(claims jsvalue.Object) (sql.NullString, error) {
 	return sql.NullString{String: string(jsvalue.Stringify(jsvalue.Jsonb(claims))), Valid: true}, nil
 }
 
+// checkBindingLimitMix enforces that an identity's live OIDC bindings for one
+// issuer are either all limited (exerciseOnly or singleExchange) or all
+// unlimited. Otherwise an older server that does not understand varlatch:limits
+// would ignore the limited binding and still exchange tokens through the
+// unlimited one.
+func checkBindingLimitMix(ctx context.Context, db query.DBTX, organizationID, identityID, rawIssuer string, wantLimited bool) error {
+	issuer, err := write.Text(rawIssuer)
+	if err != nil {
+		return err
+	}
+	rows, err := query.New(db).ListOidcBindings(ctx, query.ListOidcBindingsParams{OrganizationID: organizationID, IdentityID: identityID})
+	if err != nil {
+		return err
+	}
+	for _, b := range rows {
+		if b.Issuer != issuer {
+			continue
+		}
+		limited := false
+		if b.Claims.Valid {
+			v, err := jsvalue.Parse([]byte(b.Claims.String))
+			if err != nil {
+				return err
+			}
+			if o, ok := v.(jsvalue.Object); ok {
+				limited = limits.IsLimited(o)
+			}
+		}
+		if limited != wantLimited {
+			if wantLimited {
+				return domainerr.New("VALIDATION_FAILED", "This identity already has an unlimited OIDC binding for this issuer; revoke it first, or use a separate identity, before adding a limited binding")
+			}
+			return domainerr.New("VALIDATION_FAILED", "This identity already has a limited OIDC binding for this issuer; revoke it first, or use a separate identity, before adding an unlimited binding")
+		}
+	}
+	return nil
+}
+
 // CreateOIDCBinding is createOidcBinding. The issuer must be a plain https
 // URL; the outbound policy refuses it (recorded, configuration phase)
 // before anything is held. A protected operation: admin-step-up's
@@ -209,6 +247,9 @@ func CreateOIDCBinding(ctx context.Context, w *write.Writer, approvals *auth.Ser
 				}
 				if err == nil && in.Limits.ExerciseOnly && m.Kind != "broker" {
 					err = domainerr.New("VALIDATION_FAILED", "exerciseOnly: only a Broker exercises Capabilities")
+				}
+				if err == nil {
+					err = checkBindingLimitMix(ctx, db, organizationID, identityID, in.Issuer, in.Limits.Any())
 				}
 				return err
 			},

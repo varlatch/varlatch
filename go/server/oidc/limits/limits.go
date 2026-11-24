@@ -156,6 +156,13 @@ func parse(text string) (Limits, bool) {
 	return l, true
 }
 
+// IsLimited reports whether a binding's stored claims hold a limit, one a
+// later release wrote included.
+func IsLimited(claims jsvalue.Object) bool {
+	_, ok := claims.Get(claim)
+	return ok
+}
+
 // Combine is the limits of a token that matches several bindings of one
 // identity: all of them together. ok is false when they tie the credential
 // to different claims, which no one run can satisfy.

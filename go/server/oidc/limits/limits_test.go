@@ -72,3 +72,15 @@ func TestCombine(t *testing.T) {
 		t.Error("two run claims combine")
 	}
 }
+
+func TestIsLimited(t *testing.T) {
+	if IsLimited(nil) || IsLimited(jsvalue.Object{{Key: "team", Value: "a"}}) {
+		t.Error("plain claims reported as limited")
+	}
+	if !IsLimited(Join(nil, Limits{SingleExchange: true})) {
+		t.Error("known limit not reported as limited")
+	}
+	if !IsLimited(jsvalue.Object{{Key: claim, Value: `{"v":2,"future":true}`}}) {
+		t.Error("unknown reserved limit not reported as limited")
+	}
+}

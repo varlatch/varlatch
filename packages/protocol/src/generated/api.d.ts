@@ -822,7 +822,7 @@ export interface paths {
         /** List a machine identity's active OIDC bindings */
         get: operations["listOidcBindings"];
         put?: never;
-        /** Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'. exerciseOnly, runIdClaim, and singleExchange limit what its exchanges give (capability auth.oidc.limits, ADR-0060); a token that matches several bindings gets the limits of all of them. */
+        /** Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'. exerciseOnly, runIdClaim, and singleExchange limit what its exchanges give (capability auth.oidc.limits, ADR-0060); an identity's live bindings for one issuer are either all limited or all unlimited, and a token that matches several limited bindings gets the limits of all of them. */
         post: operations["createOidcBinding"];
         delete?: never;
         options?: never;

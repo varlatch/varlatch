@@ -46,9 +46,10 @@ import (
 // fixture's rows: its people, machines, Agents and Secrets.
 
 const (
-	testIssuer = "https://issuer.example"
-	capsPath   = "/v1/organizations/cap/projects/api/environments/development/capabilities"
-	prodPath   = "/v1/organizations/cap/projects/api/environments/production/capabilities"
+	testIssuer  = "https://issuer.example"
+	testIssuer2 = "https://issuer2.example"
+	capsPath    = "/v1/organizations/cap/projects/api/environments/development/capabilities"
+	prodPath    = "/v1/organizations/cap/projects/api/environments/production/capabilities"
 )
 
 type world struct {
@@ -123,16 +124,18 @@ func (w *world) restart() { w.t.Helper(); w.stop(); w.start() }
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 func (w *world) fetch(_ context.Context, raw string) (*oidc.Response, error) {
-	switch raw {
-	case testIssuer + "/.well-known/openid-configuration":
-		return &oidc.Response{Status: 200, Body: []byte(`{"issuer":"` + testIssuer + `","jwks_uri":"` + testIssuer + `/jwks"}`)}, nil
-	case testIssuer + "/jwks":
-		pub, err := w.key.PublicKey.Bytes()
-		if err != nil {
-			return nil, err
+	for _, iss := range []string{testIssuer, testIssuer2} {
+		switch raw {
+		case iss + "/.well-known/openid-configuration":
+			return &oidc.Response{Status: 200, Body: []byte(`{"issuer":"` + iss + `","jwks_uri":"` + iss + `/jwks"}`)}, nil
+		case iss + "/jwks":
+			pub, err := w.key.PublicKey.Bytes()
+			if err != nil {
+				return nil, err
+			}
+			return &oidc.Response{Status: 200, Body: []byte(`{"keys":[{"kty":"EC","crv":"P-256","alg":"ES256","use":"sig","kid":"k1","x":"` +
+				b64(pub[1:33]) + `","y":"` + b64(pub[33:]) + `"}]}`)}, nil
 		}
-		return &oidc.Response{Status: 200, Body: []byte(`{"keys":[{"kty":"EC","crv":"P-256","alg":"ES256","use":"sig","kid":"k1","x":"` +
-			b64(pub[1:33]) + `","y":"` + b64(pub[33:]) + `"}]}`)}, nil
 	}
 	return &oidc.Response{Status: 404}, nil
 }
@@ -735,8 +738,10 @@ func TestExerciseOnlyBindings(t *testing.T) {
 		t.Errorf("claims: %v", a.body["claims"])
 	}
 	w.wantEvent("oidc_binding.created", "Alice", nil, map[string]any{"exerciseOnly": true, "runIdClaim": "job", "singleExchange": true})
-	// Listed the same; a binding without limits reads as it always did.
-	w.want("plain", w.bind("broker", with{"subject": "machine:m2"}), 201, "")
+	// Mixing an unlimited binding on the same identity and issuer is refused;
+	// another issuer on the same identity is allowed, and reads as it always did.
+	w.want("mixed plain on same issuer", w.bind("broker", with{"subject": "machine:m2"}), 422, "VALIDATION_FAILED")
+	w.want("plain on another issuer", w.bind("broker", with{"issuer": testIssuer2, "subject": "machine:m2"}), 201, "")
 	list := w.want("list", w.call("GET", "/v1/organizations/cap/identities/"+w.idn("broker")+"/oidc-bindings", "alice", nil), 200, "")
 	items := list.body["items"].([]any)
 	first, _ := json.Marshal(items[0])
@@ -998,30 +1003,78 @@ func TestATokenIsExchangedOnceUnderConcurrency(t *testing.T) {
 	}
 }
 
-// A binding made without limits exchanges a token as often as before; one
-// beside it that limits the same token limits it.
+// An identity's live bindings for one issuer are either all limited or all
+// unlimited; several limited ones combine.
 func TestLimitsOfSeveralBindings(t *testing.T) {
 	w := newWorld(t)
-	w.want("plain", w.bind("broker", nil), 201, "")
+	plain := w.want("plain", w.bind("broker", nil), 201, "")
 	token := w.token(map[string]any{"job": "job-1"})
 	for range 3 {
 		cred := w.exchanged(token)
 		w.want("a full credential", w.call("GET", "/v1/me", cred, nil), 200, "")
 	}
-	b := w.want("limited", w.bind("broker", with{"exerciseOnly": true, "subject": "machine:*"}), 201, "")
+	// Adding a limited binding for the same identity and issuer is refused.
+	w.want("limited beside plain", w.bind("broker", with{"exerciseOnly": true, "subject": "machine:*"}), 422, "VALIDATION_FAILED")
+	w.want("singleExchange beside plain", w.bind("broker", with{"singleExchange": true, "subject": "machine:m2"}), 422, "VALIDATION_FAILED")
+	// Another identity on the same issuer, or another issuer on the same identity, is allowed.
+	w.want("limited on broker2", w.bind("broker2", with{"exerciseOnly": true, "subject": "machine:other"}), 201, "")
+	w.want("limited on issuer2", w.bind("broker", with{"issuer": testIssuer2, "exerciseOnly": true}), 201, "")
+
+	// Rotation from unlimited to limited: revoke the unlimited binding first.
+	w.want("revoke plain", w.call("DELETE", "/v1/organizations/cap/identities/"+w.idn("broker")+"/oidc-bindings/"+plain.body["id"].(string), "alice", nil), 204, "")
+	b := w.want("limited after revoke", w.bind("broker", with{"exerciseOnly": true, "subject": "machine:*"}), 201, "")
+	// Adding an unlimited binding beside the limited one is refused.
+	w.want("plain beside limited", w.bind("broker", with{"subject": "machine:m2"}), 422, "VALIDATION_FAILED")
+
 	ex := w.want("exchange", w.exchange(token), 201, "")
 	if ex.body["exerciseOnly"] != true {
-		t.Errorf("a token two bindings match: %s", ex.raw)
+		t.Errorf("limited exchange: %s", ex.raw)
 	}
 	w.wantEvent("credential.issued", "broker", nil, map[string]any{"oidcBindingId": b.body["id"]})
 	w.want("listing", w.call("GET", capsPath, ex.body["token"].(string), nil), 403, "PERMISSION_DENIED")
 	w.want("again", w.exchange(token), 401, "INVALID_CREDENTIAL")
+
+	// Rotating between two limited bindings on the same identity and issuer works;
+	// their limits combine, and two different runIdClaims are ambiguous.
 	w.want("a run claim", w.bind("broker", with{"exerciseOnly": true, "runIdClaim": "job", "subject": "machine:m*"}), 201, "")
 	if ex = w.want("exchange", w.exchange(w.token(map[string]any{"job": "job-1"})), 201, ""); ex.body["runId"] != "job-1" {
-		t.Errorf("a token three bindings match: %s", ex.raw)
+		t.Errorf("a token two limited bindings match: %s", ex.raw)
 	}
 	w.want("another run claim", w.bind("broker", with{"exerciseOnly": true, "runIdClaim": "run", "subject": "machine:m1*"}), 201, "")
 	w.want("two run claims", w.exchange(w.token(map[string]any{"job": "job-1", "run": "job-1"})), 401, "INVALID_CREDENTIAL")
+}
+
+// Concurrent creation of a plain and a limited binding on one identity and
+// issuer serializes: exactly one succeeds, never both.
+func TestConcurrentMixedOIDCBindings(t *testing.T) {
+	w := newWorld(t)
+	for round := range 10 {
+		iss := fmt.Sprintf("https://concurrent-%d.example", round)
+		var okCount, errCount atomic.Int64
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for _, more := range []with{
+			{"issuer": iss, "subject": "machine:plain"},
+			{"issuer": iss, "subject": "machine:limit", "exerciseOnly": true},
+		} {
+			wg.Go(func() {
+				<-start
+				switch a := w.bind("broker", more); a.status {
+				case 201:
+					okCount.Add(1)
+				case 422:
+					errCount.Add(1)
+				default:
+					t.Errorf("round %d: %d %s", round, a.status, a.raw)
+				}
+			})
+		}
+		close(start)
+		wg.Wait()
+		if okCount.Load() != 1 || errCount.Load() != 1 {
+			t.Fatalf("round %d: %d created, %d refused; want 1 and 1", round, okCount.Load(), errCount.Load())
+		}
+	}
 }
 
 // A server that does not know the limits (an earlier varlatchd after a

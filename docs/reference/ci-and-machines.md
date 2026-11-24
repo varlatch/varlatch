@@ -154,6 +154,15 @@ apart from the credential that issues. The
 [threat model](../THREAT-MODEL.md#6-agent-safety-the-credential-broker-shipped)
 says what each party can still do when compromised.
 
+An identity's live OIDC bindings for one issuer must be all limited
+(`exerciseOnly` or `singleExchange`) or all unlimited, so a rollback to an
+earlier server cannot fall back to an unlimited binding for that issuer. To
+move from unlimited to limited bindings without downtime, create a separate
+identity with the limited binding, switch workloads to it, and revoke the old
+one; to switch an existing identity in place, revoke its unlimited bindings
+for that issuer before creating the limited one. Rotating between two limited
+bindings on the same identity and issuer works with overlap.
+
 `singleExchange` on its own, without `exerciseOnly`, makes each token of an
 ordinary binding exchange once. It is off by default: a CI job that runs
 `varlatch login --oidc` more than once with one token needs it off.

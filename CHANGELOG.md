@@ -145,7 +145,8 @@ are part of this release.
     claim of the token) and `singleExchange` (each token exchanges once, by
     its issuer and `jti`, or by the token itself without a `jti`; always on
     with `exerciseOnly`, off for existing bindings). Claim names that start
-    with `varlatch:` are reserved.
+    with `varlatch:` are reserved. An identity's live bindings for one issuer
+    must be all limited or all unlimited.
   - The `Action` enum gains `capability.issue`: a client generated from the
     earlier document that rejects unknown values needs regenerating.
   - The database schema is version 3 (two new tables). It is rollback-safe:
