@@ -310,7 +310,7 @@ func TestARollbackAsksAgainForWhatWasMadeMeanwhile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := u.admin(context.Background(), filepath.Join(h.bin, "varlatchd"), "admin", "backup", "run", "--json"); err != nil {
+		if _, err := u.admin(context.Background(), filepath.Join(h.bin, "varlatchd"), "admin", "recover", "--new-admin", "--cli-credential"); err != nil {
 			t.Fatal(err)
 		}
 		return plan
@@ -383,7 +383,8 @@ func upgradedServes(t *testing.T, h *host, j *journal.Journal) {
 	}
 }
 
-// Killed at each point, the next run finishes the rollback (after its
+// Killed, with the real varlatchd and database (every point is
+// crash_test.go's), the next run finishes the rollback (after its
 // checks) or undoes it (before them): the release it returns to serves, or
 // the one it left, on its database as it was.
 func TestAKilledRollbackIsFinishedOrUndone(t *testing.T) {
@@ -391,8 +392,8 @@ func TestAKilledRollbackIsFinishedOrUndone(t *testing.T) {
 		safe   bool
 		points []string
 	}{
-		{false, []string{"stopping", "stop:done", "data:keep-original:rename:original", "install:" + fromVersion + ":varlatchd", "installed", "rollback:restored", "swapped", "started", "checked"}},
-		{true, []string{"stop:done", "install:" + fromVersion + ":varlatchd", "started", "checked"}},
+		{false, []string{"stop:done", "install:" + fromVersion + ":varlatchd", "rollback:restored", "started", "checked"}},
+		{true, []string{"install:" + fromVersion + ":varlatchd", "checked"}},
 	} {
 		for _, point := range c.points {
 			name := point
@@ -400,7 +401,6 @@ func TestAKilledRollbackIsFinishedOrUndone(t *testing.T) {
 				name = "safe:" + point
 			}
 			t.Run(name, func(t *testing.T) {
-				t.Parallel()
 				h := upgraded(t, c.safe)
 				plan, err := h.upgrader(nil).PlanRollback(context.Background())
 				if err != nil {
@@ -449,7 +449,6 @@ func TestTheRollbackRuleNeedsTheDeclarationAndTheOpenCheck(t *testing.T) {
 		{"neither", "unsafe", unsafeDecl, false, false, "does not declare it rollback-safe for " + fromVersion + ", and " + fromVersion + " cannot open the database"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
 			h := upgradedWith(t, c.build, c.decl)
 			plan, err := h.upgrader(nil).PlanRollback(context.Background())
 			if err != nil || plan.Safe || plan.Declared != c.declared || plan.Opens != c.opens || plan.Lost == nil || !strings.Contains(plan.Rule, c.rule) {
