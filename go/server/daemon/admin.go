@@ -210,6 +210,10 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			return ExitConfig
 		}
 	}
+	// As the user the command goes on as, and before any command opens the
+	// database (storage.Open refuses, with the reason, when there is no
+	// place; a command that only reads goes on).
+	_, _ = storage.PrepareTemp(cfg.DataDir)
 	switch {
 	case sub == "config":
 		return runConfigCheck(cfg, stdout, stderr)
