@@ -55,6 +55,8 @@ on:
       - "scripts/check-timing-tests.sh"
       # go's shellcheck step checks it.
       - "scripts/ci-nightly-report.sh"
+      # G13 and the conformance cells pull MinIO's image with it.
+      - "scripts/ci-pull-image.sh"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"
       - "scripts/conformance/inventory.json"
@@ -177,6 +179,7 @@ jobs:
             scripts/check-licenses.mjs
             scripts/check-timing-tests.sh
             scripts/ci-nightly-report.sh
+            scripts/ci-pull-image.sh
             packages/protocol/openapi.yaml
             scripts/conformance/run.mjs
             scripts/conformance/inventory.json
@@ -561,8 +564,8 @@ jobs:
       - name: install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck
         run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh go/install/test-setup.sh
 
-      - name: The release's asset scripts and the nightly report pass shellcheck
-        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh scripts/ci-nightly-report.sh
+      - name: The release's asset scripts, the nightly report and the image pull pass shellcheck
+        run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh scripts/ci-nightly-report.sh scripts/ci-pull-image.sh
 
       # varlatch migrate on a directory shaped as Coolify's (the
       # repository's docker-compose.yml beside the file that runs), with
@@ -598,9 +601,11 @@ jobs:
           name="vlt-s3-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           secret=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
           echo "::add-mask::$secret"
+          image=cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b
+          ../scripts/ci-pull-image.sh "$image"
           MINIO_ROOT_PASSWORD="$secret" docker run -d --rm --name "$name" -p 127.0.0.1::9000 \
             -e MINIO_ROOT_USER=vlts3test -e MINIO_ROOT_PASSWORD \
-            cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b server /data > /dev/null
+            "$image" server /data > /dev/null
           trap 'docker rm -fv "$name" > /dev/null 2>&1 || true' EXIT
           endpoint="http://$(docker port "$name" 9000/tcp | head -n 1)"
           for _ in $(seq 1 100); do curl -fsS "$endpoint/minio/health/ready" > /dev/null 2>&1 && break; sleep 0.2; done
