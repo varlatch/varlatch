@@ -47,6 +47,10 @@ const (
 	makingDir   = ".making"
 )
 
+// workDirs are what an upgrade's directory holds while it runs; its snapshot
+// stays.
+var workDirs = []string{copyDir, copyDir + makingDir, originalDir, originalDir + makingDir}
+
 // dataOp is one op and what it needs.
 type dataOp struct {
 	Op      string `json:"op"`
@@ -116,8 +120,20 @@ func (o dataOp) locked(fn func() error) error {
 	if unlock != nil {
 		defer unlock()
 	}
+	// A restore made since (it took the same lock) is not undone over, nor
+	// copied as if it were the database the upgrade began on.
+	if exists(filepath.Join(o.DataDir, holdFile)) {
+		return fmt.Errorf("%w (%s)", errHeld, filepath.Join(o.DataDir, holdFile))
+	}
 	return fn()
 }
+
+// holdFile is a restored installation's hold (go/lib/backup HoldFile).
+const holdFile = "restore-hold.json"
+
+// errHeld is an installation restored from an archive since the upgrade
+// began.
+var errHeld = errors.New("this installation was restored from an archive since the upgrade began, and is held: finishing or undoing the upgrade would replace the restored database")
 
 func (o dataOp) size() (dataResult, error) {
 	var r dataResult
@@ -137,7 +153,7 @@ func (o dataOp) size() (dataResult, error) {
 // begin makes the upgrade's directory, and its name durable up to the data
 // directory.
 func (o dataOp) begin(f fsys) error {
-	upgrades := filepath.Dir(o.work())
+	upgrades := filepath.Join(o.DataDir, "upgrades")
 	info, err := os.Lstat(upgrades)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -388,7 +404,7 @@ func sameFile(a, b string) bool {
 
 // clean removes what an ended upgrade leaves; its snapshot stays.
 func (o dataOp) clean(f fsys) error {
-	for _, name := range []string{copyDir, copyDir + makingDir, originalDir + makingDir, originalDir} {
+	for _, name := range workDirs {
 		if err := f.removeAll(filepath.Join(o.work(), name)); err != nil {
 			return err
 		}
@@ -449,8 +465,10 @@ func Child(in io.Reader, out, errs io.Writer) int {
 	r, err := o.run(f)
 	if err != nil {
 		fmt.Fprintln(errs, err)
-		if errors.Is(err, errNoOriginal) {
-			return exitNoOriginal
+		for status, known := range childErrors {
+			if errors.Is(err, known) {
+				return status
+			}
 		}
 		return 1
 	}
@@ -460,7 +478,8 @@ func Child(in io.Reader, out, errs io.Writer) int {
 	return 0
 }
 
-const exitNoOriginal = 3
+// childErrors are the errors the child's exit status tells its parent.
+var childErrors = map[int]error{3: errNoOriginal, 4: errHeld}
 
 // data runs an op as the data directory's owner.
 func (u *Upgrader) data(ctx context.Context, o dataOp) (dataResult, error) {
@@ -470,9 +489,6 @@ func (u *Upgrader) data(ctx context.Context, o dataOp) (dataResult, error) {
 	}
 	if !child {
 		return o.run(u.fsys("data:" + o.Op + ":"))
-	}
-	if u.fault("data:"+o.Op) != nil {
-		return dataResult{}, u.fault("data:" + o.Op)
 	}
 	exe := u.ChildProgram
 	if exe == "" {
@@ -500,8 +516,10 @@ func (u *Upgrader) data(ctx context.Context, o dataOp) (dataResult, error) {
 			msg = err.Error()
 		}
 		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == exitNoOriginal {
-			return dataResult{}, fmt.Errorf("%w%s", errNoOriginal, strings.TrimPrefix(msg, errNoOriginal.Error()))
+		if errors.As(err, &exit) {
+			if known := childErrors[exit.ExitCode()]; known != nil {
+				return dataResult{}, fmt.Errorf("%w%s", known, strings.TrimPrefix(msg, known.Error()))
+			}
 		}
 		return dataResult{}, errors.New(msg)
 	}

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,7 +122,12 @@ func key(t *testing.T, path string) {
 	}
 }
 
-func newHost(t *testing.T) *host {
+func newHost(t *testing.T) *host { t.Helper(); return newHostOf(t, -1) }
+
+// newHostOf is newHost with varlatchd and its data directory uid's, as the
+// unit runs it as the varlatch user, its keys root's, which the unit hands
+// it (here: copies of its own); -1 is the test's own user.
+func newHostOf(t *testing.T, uid int) *host {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("a Go installation's host is Linux")
@@ -147,7 +153,41 @@ func newHost(t *testing.T) *host {
 	if err := os.WriteFile(filepath.Join(h.bin, "varlatch"), h.installedCLI, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h.svc = &fakeService{bin: h.bin, conf: h.conf}
+	h.svc = &fakeService{bin: h.bin, conf: h.conf, uid: uid}
+	if uid >= 0 {
+		// The service reads its keys from its own copies, as the unit's
+		// credentials are.
+		own := filepath.Join(dir, "own")
+		if err := os.Mkdir(own, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range []string{"root-kek", "backup-key"} {
+			b, err := os.ReadFile(filepath.Join(dir, "keys", k))
+			if err != nil || os.WriteFile(filepath.Join(own, k), b, 0o400) != nil || os.Chown(filepath.Join(own, k), uid, uid) != nil {
+				t.Fatal(err)
+			}
+		}
+		h.svc.conf = filepath.Join(dir, "etc", "service.conf")
+		if err := os.WriteFile(h.svc.conf, []byte(strings.ReplaceAll(conf, filepath.Join(dir, "keys"), own)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{h.data, own} {
+			if err := os.Chown(p, uid, uid); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for p := h.bin; p != dir; p = filepath.Dir(p) {
+			if err := os.Chmod(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// dir's parent is the test's own temporary directory, private.
+		for _, p := range []string{filepath.Dir(h.conf), filepath.Dir(filepath.Dir(h.conf)), dir, filepath.Dir(dir)} {
+			if err := os.Chmod(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	t.Cleanup(func() { _ = h.svc.Stop(context.Background()) })
 	if err := h.svc.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -160,6 +200,7 @@ func newHost(t *testing.T) *host {
 // place when it starts.
 type fakeService struct {
 	bin, conf string
+	uid       int
 	mu        sync.Mutex
 	cmd       *exec.Cmd
 	done      chan struct{}
@@ -172,6 +213,9 @@ func (f *fakeService) Start(context.Context) error {
 		return nil // as systemctl start: nothing to do for a running unit
 	}
 	cmd := exec.Command(filepath.Join(f.bin, "varlatchd"), "serve", "--config", f.conf)
+	if f.uid >= 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(f.uid), Gid: uint32(f.uid), Groups: []uint32{}}}
+	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
@@ -621,4 +665,73 @@ func TestALinkedUpgradesDirectoryIsRefused(t *testing.T) {
 		t.Fatalf("written or removed through the link: %v", entries)
 	}
 	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
+}
+
+// As root with varlatchd another user's, as the unit runs it: the data
+// directory's work is that user's (a child of this program, killed at each
+// of its points too), and nothing there is root's after.
+func TestUpgradeAsRootWorksAsTheOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("runs varlatchd as another user, as root (go.yml)")
+	}
+	const uid = 65534
+	owned := func(h *host, what string) {
+		t.Helper()
+		_ = filepath.WalkDir(h.data, func(p string, _ fs.DirEntry, err error) error {
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Lstat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Sys().(*syscall.Stat_t).Uid; got != uid {
+				t.Errorf("%s: %s is uid %d's", what, p, got)
+			}
+			return nil
+		})
+	}
+	h := newHostOf(t, uid)
+	inst := h.inspect(t)
+	if j, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe)); err != nil || j.State != journal.Done {
+		t.Fatalf("%+v, %v", j, err)
+	}
+	h.upgrader(nil).mustServe(t, toVersion, toSchema)
+	owned(h, "an upgrade")
+
+	for _, point := range []string{"data:copy-database:create:varlatch.db", "data:keep-original:rename:original", "data:swap:rename:varlatch.db"} {
+		h := newHostOf(t, uid)
+		inst := h.inspect(t)
+		u := h.upgrader(func(string) bool { return false })
+		u.ChildCrash = point
+		if j, err := u.Run(context.Background(), inst, h.release(t, "to", safe)); !errors.Is(err, errKilled) || !j.Pending() {
+			t.Fatalf("%s: %+v, %v", point, j, err)
+		}
+		j, err := h.upgrader(nil).Recover(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", point, err)
+		}
+		previousServes(t, h, j)
+		owned(h, point)
+	}
+
+	// A link of that user's leads the upgrade nowhere.
+	h = newHostOf(t, uid)
+	inst = h.inspect(t)
+	outside := filepath.Join(h.dir, "roots")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(h.data, "upgrades")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Lchown(filepath.Join(h.data, "upgrades"), uid, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe)); err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("%v", err)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("written through a link: %v", entries)
+	}
 }

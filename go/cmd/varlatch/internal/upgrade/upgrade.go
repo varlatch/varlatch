@@ -155,6 +155,8 @@ type Upgrader struct {
 	boot       func() string
 	// run stands in for running a varlatchd (the tests').
 	run func(binary string, args ...string) ([]byte, error)
+	// free stands in for FreeSpace (the tests').
+	free func(path string) (uint64, uint64, error)
 }
 
 func (u *Upgrader) bootID() string {
@@ -773,6 +775,16 @@ func (u *Upgrader) tidy(ctx context.Context, j *journal.Journal) error {
 	return nil
 }
 
+// leftBehind is whether an ended upgrade left what tidy removes.
+func leftBehind(j *journal.Journal) bool {
+	for _, name := range workDirs {
+		if exists(filepath.Join(j.Work, name)) {
+			return true
+		}
+	}
+	return false
+}
+
 // undo brings the host back to the previous release on its database as it
 // was, from wherever j stands, and from wherever an undo before got (Undo):
 // varlatchd stopped, the original database back from its set, then the
@@ -787,6 +799,9 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 	if j.Reached(journal.Stopping) {
 		if err := u.restore(ctx, j); errors.Is(err, errKilled) {
 			return err
+		} else if errors.Is(err, errHeld) {
+			// The journal stays as it is: nothing was done.
+			return fmt.Errorf("%w. Nothing was changed", err)
 		} else if err != nil {
 			return u.failed(j, why, err)
 		}
@@ -973,7 +988,14 @@ func (u *Upgrader) Recover(ctx context.Context) (*journal.Journal, error) {
 	}
 	if !j.Pending() {
 		// One that is over, and was stopped before it had tidied up.
-		if j != nil && (exists(filepath.Join(j.Work, originalDir)) || exists(filepath.Join(j.Work, copyDir))) {
+		if j != nil && j.State == journal.Undone && older(j) {
+			if err := u.leave(j); errors.Is(err, errKilled) {
+				return j, err
+			} else if err != nil {
+				return j, &Error{Message: err.Error(), Journal: j}
+			}
+		}
+		if j != nil && leftBehind(j) {
 			if err := u.tidy(ctx, j); err != nil {
 				return j, err
 			}
@@ -1043,7 +1065,11 @@ func (u *Upgrader) enoughSpace(ctx context.Context, inst Installed, rel Release)
 		bytes int64
 		what  string
 	}{{inst.DataDir, 2 * db, "a copy of the database and a snapshot"}, {u.BinDir, binaries, "the new binaries and the kept ones"}} {
-		free, fsid, err := FreeSpace(n.path)
+		space := FreeSpace
+		if u.free != nil {
+			space = u.free
+		}
+		free, fsid, err := space(n.path)
 		if err != nil {
 			// Unknown: the writes themselves still fail cleanly.
 			continue
