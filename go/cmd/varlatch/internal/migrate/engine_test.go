@@ -1466,6 +1466,29 @@ func TestAReleaseWaitsForTheImagesStop(t *testing.T) {
 	}
 }
 
+// The source's extra certificate authorities: a warning that names the
+// file, where the Go installation takes one, and nothing refused.
+func TestTheSourcesExtraCAIsWarnedOf(t *testing.T) {
+	for _, c := range []struct{ ca, kind, want, not string }{
+		{"", "", "", "NODE_EXTRA_CA_CERTS"},
+		{"/certs/ca.pem", "", `NODE_EXTRA_CA_CERTS="/certs/ca.pem"`, "mount a file"},
+		{"/certs/ca.pem", "image", "mount a file into its service", "systemctl edit"},
+		{"/certs/a\x1b[2Jb.pem", "", `"/certs/a\x1b[2Jb.pem"`, "\x1b"},
+	} {
+		w := newWorld(t)
+		w.src.ingress.ExtraCACerts = c.ca
+		if c.kind != "" {
+			w.tgt.info.Kind = c.kind
+		}
+		if _, err := w.eng.Run(context.Background(), true); err != nil {
+			t.Fatalf("%+v: %v", c, err)
+		}
+		if said := strings.Join(w.said, "\n"); !strings.Contains(said, c.want) || strings.Contains(said, c.not) || c.ca != "" && strings.Count(said, "Warning: the source's varlatchd trusts") != 1 {
+			t.Errorf("%+v: %s", c, said)
+		}
+	}
+}
+
 // The source's outbound allow list against the target's: none at the
 // source changes nothing; a target with none while the source allows some
 // is refused before anything is done; one that lacks some of the source's

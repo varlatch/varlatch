@@ -68,6 +68,11 @@ fixes.
 
 ### CLI
 
+- **`varlatch migrate` warns of `NODE_EXTRA_CA_CERTS`.** The old server trusts
+  the certificate authorities in that file; the new one does not read the
+  variable. The preflight names the file (it does not read it) and says where
+  the new server takes one: the system's trust store, or `SSL_CERT_FILE`. See
+  [What you need](docs/operations/migrate-to-0.50.md#what-you-need).
 - **`varlatch migrate` finds a Coolify installation's Compose project.** A
   directory Coolify deploys from can hold the repository's
   `docker-compose.yml` beside the file that runs, and plain `docker compose`

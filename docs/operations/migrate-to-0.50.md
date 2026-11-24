@@ -85,6 +85,22 @@ the Linux host of the installation it migrates`):
   refuse it before anything is done: `Docker Compose <version> is too old:
   varlatch migrate needs 2.32.0 or later`. An undo (`--resume`, `--abort`)
   works with an earlier one too.
+- **No certificate authority the old server alone trusts.** A server whose
+  `varlatchd` has `NODE_EXTRA_CA_CERTS` trusts the authorities in that file
+  beside its own. The new server does not read that variable: it trusts the
+  system's, or the file `SSL_CERT_FILE` names in the place of the system's,
+  which must then hold the system's authorities and yours. The preflight, a
+  dry run's too, says so with `Warning: the source's varlatchd trusts
+  certificate authorities of its own (NODE_EXTRA_CA_CERTS="<file>", ...)` and
+  goes on; it does not read the file. Give the new server the authority
+  before the migration, or its connections to the webhooks, platforms, OIDC
+  issuers and backup destinations that need it fail:
+  - **A host install:** add it to the host's trust store (on Debian and
+    Ubuntu, `update-ca-certificates`), or set `SSL_CERT_FILE` with `systemctl
+    edit varlatchd` (`[Service]`, `Environment=SSL_CERT_FILE=<file>`; a file
+    the service may read, not under `/home`).
+  - **The image:** mount a file with both, and set `SSL_CERT_FILE` to it in
+    the service's environment (the image sets it to its own).
 - **The Backup Encryption Key** (`--bek-file`) and, when the Root KEK is not
   where the installation's `.env` says, its file (`--kek-file`). The new
   server uses the same two keys, so every archive, old and new, opens with

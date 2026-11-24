@@ -315,6 +315,7 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if err := e.sameOutbound(ing, tgt); err != nil {
 		return prev, err
 	}
+	e.warnExtraCA(ing, tgt)
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
 		Drain: int64(e.drain() / time.Second), Ingress: e.Options.Ingress, Transfer: &TransferRecord{Origin: origin}, History: []Step{}, Created: created}
 	if e.Options.Ingress == Proxy {
@@ -1423,6 +1424,23 @@ func (e *Engine) sameOutbound(ing IngressInfo, tgt TargetInfo) error {
 			tgt.OutboundAllow, strings.Join(missing, ","), ing.OutboundAllow)
 	}
 	return nil
+}
+
+// warnExtraCA says that the source's extra certificate authorities
+// (NODE_EXTRA_CA_CERTS) do not carry over: the Go server does not read that
+// variable. A migration goes on, since none of its own steps need them, and
+// the host's roots may have them already.
+func (e *Engine) warnExtraCA(ing IngressInfo, tgt TargetInfo) {
+	if ing.ExtraCACerts == "" {
+		return
+	}
+	where := "add the authority to this host's trust store, or set SSL_CERT_FILE for its unit (systemctl edit <unit>: [Service], Environment=SSL_CERT_FILE=<file>; a file the service may read, not under /home)"
+	if tgt.Kind == "image" {
+		where = "mount a file into its service, and set SSL_CERT_FILE to it in the service's environment"
+	}
+	e.say("Warning: the source's varlatchd trusts certificate authorities of its own (%s=%q, a file in its container), and the Go installation does not read that variable: it trusts the system's roots, or the file SSL_CERT_FILE names in the place of the system's, "+
+		"which must then hold the system's roots and the authority. Where a webhook, a platform, an OIDC issuer, the audit export or a backup destination has a certificate of such an authority, the Go installation fails to connect to it. Before the migration: %s.",
+		extraCAEnv, ing.ExtraCACerts, where)
 }
 
 // allowEntries are an allow list's entries as compared: without blanks,
