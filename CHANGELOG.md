@@ -210,9 +210,9 @@ Changes since 0.50.0-rc.2, by pull request:
 - **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
   refuses an earlier one before anything is done.
 <!-- END SLOT #436 -->
-<!-- SLOT PROGRESS (no pull request yet, local 8d4bb540 on #436; give its number, recheck, then remove both markers; or drop) -->
+<!-- SLOT #446 (open, head d6a9d52d, stacked on #436; recheck against the merged PR, then remove both markers; or drop) -->
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing
-  (#PROGRESS).** Each step says when it starts, every 15 seconds while it
+  (#446).** Each step says when it starts, every 15 seconds while it
   lasts (how long so far, and what it waits for) and when it ends; so do the
   final copy and `--finish`'s archive. Not with `--json`. A pipe nobody
   reads holds no step up, and a closed one no longer ends `varlatch migrate`
@@ -220,7 +220,7 @@ Changes since 0.50.0-rc.2, by pull request:
   whole step again. rc.2's entry on #423 is corrected: Ctrl-C or a kill ends
   `varlatch migrate` at once, and the old node can stay on the tailnet until
   `--resume`.
-<!-- END SLOT PROGRESS -->
+<!-- END SLOT #446 -->
 - **A stop during a certificate issuance ends `varlatchd` (#440).** With
   `listen_https`, the server kept trying again without end after a stop
   interrupted an issuance or a renewal, until it was killed (after the 30
