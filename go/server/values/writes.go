@@ -353,6 +353,9 @@ func DeleteValue(ctx context.Context, w *write.Writer, p *auth.Principal, t Targ
 		if reports, err = write.Checkpoint(ctx, tx, p, t.OrganizationID); err != nil {
 			return err
 		}
+		if err := checkDeletion(ctx, q, p, t.Env.ID, item); err != nil {
+			return err
+		}
 		if _, err := q.DeleteLiveValue(ctx, query.DeleteLiveValueParams{
 			DeletedAt: sql.NullInt64{Int64: now().UnixMicro(), Valid: true}, EnvironmentID: t.Env.ID, ItemName: item,
 		}); err != nil {
@@ -471,6 +474,8 @@ func ApplyChangeSet(ctx context.Context, w *write.Writer, rootKEK []byte, p *aut
 				if err := checkKind(c.Item, rows[c.Item].Seed, c.Seed, sensitive(c.Item)); err != nil {
 					return write.Response{}, err
 				}
+			} else if err := checkDeletion(ctx, q, p, t.Env.ID, c.Item); err != nil {
+				return write.Response{}, err
 			}
 		}
 		// Phase 2: every change, then the audit events.

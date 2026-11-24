@@ -26,6 +26,26 @@ func (q *Queries) AdoptOAuthConnections(ctx context.Context) error {
 	return err
 }
 
+const changeOAuthServer = `-- name: ChangeOAuthServer :exec
+UPDATE oauth_connections SET version_id = ?1, status = 'not_connected', reason = NULL,
+  generation = generation + 1, access_token = NULL, access_expires_at = NULL, access_lifetime = NULL,
+  refresh_token = NULL, refresh_expires_at = NULL, keepalive_at = NULL, granted_scopes = NULL,
+  failures = 0, retry_at = NULL, claim_id = NULL, claim_until = NULL, unanswered = 0
+WHERE value_id = ?2
+`
+
+type ChangeOAuthServerParams struct {
+	VersionID string
+	ValueID   string
+}
+
+// Another server or client: no token is left, and whose account it was, who
+// connected it and whether it is paused stay.
+func (q *Queries) ChangeOAuthServer(ctx context.Context, arg ChangeOAuthServerParams) error {
+	_, err := q.db.ExecContext(ctx, changeOAuthServer, arg.VersionID, arg.ValueID)
+	return err
+}
+
 const claimOAuthRefresh = `-- name: ClaimOAuthRefresh :execrows
 UPDATE oauth_connections SET claim_id = ?1, claim_until = ?2, unanswered = unanswered + 1
 WHERE value_id = ?3 AND generation = ?4 AND (claim_id IS NULL OR claim_until <= ?5)
@@ -448,17 +468,18 @@ func (q *Queries) OAuthConnectionByID(ctx context.Context, valueID string) (OAut
 }
 
 const oAuthConnectionNow = `-- name: OAuthConnectionNow :many
-SELECT c.status, c.paused_at, c.generation FROM oauth_connections c JOIN env_values v ON v.id = c.value_id AND v.current_version_id = c.version_id
+SELECT c.version_id, c.status, c.paused_at, c.generation FROM oauth_connections c JOIN env_values v ON v.id = c.value_id AND v.current_version_id = c.version_id
 WHERE c.value_id = ? AND v.deleted_at IS NOT NULL
 `
 
 type OAuthConnectionNowRow struct {
+	VersionID  string
 	Status     string
 	PausedAt   sql.NullInt64
 	Generation int64
 }
 
-// An exercise's own job: the connection is still one that may be used.
+// An exercise's own job: the connection is still the one it decided about.
 func (q *Queries) OAuthConnectionNow(ctx context.Context, valueID string) ([]OAuthConnectionNowRow, error) {
 	rows, err := q.db.QueryContext(ctx, oAuthConnectionNow, valueID)
 	if err != nil {
@@ -468,7 +489,12 @@ func (q *Queries) OAuthConnectionNow(ctx context.Context, valueID string) ([]OAu
 	var items []OAuthConnectionNowRow
 	for rows.Next() {
 		var i OAuthConnectionNowRow
-		if err := rows.Scan(&i.Status, &i.PausedAt, &i.Generation); err != nil {
+		if err := rows.Scan(
+			&i.VersionID,
+			&i.Status,
+			&i.PausedAt,
+			&i.Generation,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -561,6 +587,24 @@ func (q *Queries) OAuthConnectionOf(ctx context.Context, arg OAuthConnectionOfPa
 	return i, err
 }
 
+const oAuthConnectionOnceConnected = `-- name: OAuthConnectionOnceConnected :one
+SELECT CAST(EXISTS (SELECT 1 FROM oauth_connections c JOIN env_values v ON v.id = c.value_id AND v.current_version_id = c.version_id
+  WHERE v.environment_id = ? AND v.item_name = ? AND v.deleted_at IS NOT NULL AND c.connected_at IS NOT NULL) AS INTEGER) AS connected
+`
+
+type OAuthConnectionOnceConnectedParams struct {
+	EnvironmentID string
+	ItemName      string
+}
+
+// Whether an item is a connection a person has connected.
+func (q *Queries) OAuthConnectionOnceConnected(ctx context.Context, arg OAuthConnectionOnceConnectedParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, oAuthConnectionOnceConnected, arg.EnvironmentID, arg.ItemName)
+	var connected int64
+	err := row.Scan(&connected)
+	return connected, err
+}
+
 const oAuthConnectionStatus = `-- name: OAuthConnectionStatus :many
 SELECT version_id, status, generation, claim_id FROM oauth_connections WHERE value_id = ?
 `
@@ -602,30 +646,62 @@ func (q *Queries) OAuthConnectionStatus(ctx context.Context, valueID string) ([]
 }
 
 const oAuthConnectionsDue = `-- name: OAuthConnectionsDue :many
-SELECT value_id FROM oauth_connections
-WHERE keepalive_at IS NOT NULL AND keepalive_at <= ?1 AND paused_at IS NULL AND (retry_at IS NULL OR retry_at <= ?1)
-ORDER BY keepalive_at LIMIT ?2
+WITH due AS (
+  SELECT c.value_id, c.generation, c.keepalive_at, p.organization_id,
+    row_number() OVER (PARTITION BY p.organization_id ORDER BY c.keepalive_at, c.value_id) AS place
+  FROM oauth_connections c
+  JOIN env_values v ON v.id = c.value_id AND v.current_version_id = c.version_id
+  JOIN value_versions s ON s.id = c.version_id
+  JOIN environments e ON e.id = v.environment_id
+  JOIN projects p ON p.id = e.project_id
+  JOIN organizations o ON o.id = p.organization_id
+  WHERE c.keepalive_at IS NOT NULL AND c.keepalive_at <= ?3 AND c.paused_at IS NULL AND c.refresh_token IS NOT NULL
+    AND c.status IN ('connected', 'failing')
+    AND (c.retry_at IS NULL OR c.retry_at <= ?3) AND (c.claim_until IS NULL OR c.claim_until <= ?3)
+    AND (c.refresh_expires_at IS NULL OR c.refresh_expires_at > ?3)
+    AND v.deleted_at IS NOT NULL AND json_extract(s.payload, '$.oauth.v') = CAST(?4 AS INTEGER)
+    AND e.deleted_at IS NULL AND (e.expires_at IS NULL OR e.expires_at > ?3)
+    AND p.deleted_at IS NULL AND o.deleted_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = o.id AND f.lifted_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM organization_deletions x WHERE x.organization_id = o.id AND x.cancelled_at IS NULL AND x.completed_at IS NULL)
+)
+SELECT value_id, generation, organization_id FROM due WHERE place <= CAST(?1 AS INTEGER)
+ORDER BY place, keepalive_at LIMIT ?2
 `
 
 type OAuthConnectionsDueParams struct {
-	Now sql.NullInt64
-	Lim int64
+	Each          int64
+	Lim           int64
+	Now           sql.NullInt64
+	ParamsVersion int64
 }
 
-// The connections whose refresh token the provider would otherwise drop.
-func (q *Queries) OAuthConnectionsDue(ctx context.Context, arg OAuthConnectionsDueParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, oAuthConnectionsDue, arg.Now, arg.Lim)
+type OAuthConnectionsDueRow struct {
+	ValueID        string
+	Generation     int64
+	OrganizationID string
+}
+
+// The connections whose refresh token the provider would otherwise drop, and
+// that may be refreshed now: each Organization's first, then each one's next.
+func (q *Queries) OAuthConnectionsDue(ctx context.Context, arg OAuthConnectionsDueParams) ([]OAuthConnectionsDueRow, error) {
+	rows, err := q.db.QueryContext(ctx, oAuthConnectionsDue,
+		arg.Each,
+		arg.Lim,
+		arg.Now,
+		arg.ParamsVersion,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []OAuthConnectionsDueRow
 	for rows.Next() {
-		var value_id string
-		if err := rows.Scan(&value_id); err != nil {
+		var i OAuthConnectionsDueRow
+		if err := rows.Scan(&i.ValueID, &i.Generation, &i.OrganizationID); err != nil {
 			return nil, err
 		}
-		items = append(items, value_id)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -737,6 +813,22 @@ type PauseOAuthConnectionParams struct {
 
 func (q *Queries) PauseOAuthConnection(ctx context.Context, arg PauseOAuthConnectionParams) error {
 	_, err := q.db.ExecContext(ctx, pauseOAuthConnection, arg.PausedAt, arg.ValueID)
+	return err
+}
+
+const postponeOAuthKeepalive = `-- name: PostponeOAuthKeepalive :exec
+UPDATE oauth_connections SET keepalive_at = ?1 WHERE value_id = ?2 AND keepalive_at <= ?3
+`
+
+type PostponeOAuthKeepaliveParams struct {
+	KeepaliveAt sql.NullInt64
+	ValueID     string
+	Now         sql.NullInt64
+}
+
+// One that is due and could not be refreshed: later, if it still is.
+func (q *Queries) PostponeOAuthKeepalive(ctx context.Context, arg PostponeOAuthKeepaliveParams) error {
+	_, err := q.db.ExecContext(ctx, postponeOAuthKeepalive, arg.KeepaliveAt, arg.ValueID, arg.Now)
 	return err
 }
 

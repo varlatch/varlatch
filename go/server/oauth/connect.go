@@ -59,8 +59,9 @@ func session(p *auth.Principal) (string, error) {
 	return *p.Credential.AuthSessionID, nil
 }
 
-// Start begins an authorization: the URL to send the browser to.
-func (s *Service) Start(ctx context.Context, req Request, item string, accountChange bool, base *url.URL) (jsvalue.Object, []auth.PendingReport, error) {
+// Start begins an authorization: the URL to send the browser to. version,
+// when it is not "", is the one the person was shown.
+func (s *Service) Start(ctx context.Context, req Request, item string, accountChange bool, version string, base *url.URL) (jsvalue.Object, []auth.PendingReport, error) {
 	sid, err := session(req.Principal)
 	if err != nil {
 		return nil, nil, err
@@ -79,6 +80,10 @@ func (s *Service) Start(ctx context.Context, req Request, item string, accountCh
 		}
 		if reports, err = write.Checkpoint(ctx, tx, req.Principal, req.Target.OrganizationID); err != nil {
 			return err
+		}
+		if version != "" && r.VersionID != version {
+			return &domainerr.Error{Code: "VERSION_CONFLICT", Message: "The OAuth connection changed since the expected version",
+				Details: jsvalue.Object{{Key: "currentVersionId", Value: r.VersionID}}}
 		}
 		if r.params.Grant != oauthparams.AuthorizationCode {
 			return &domainerr.Error{Code: "VALIDATION_FAILED", Message: "This OAuth connection is the client's own: nobody consents to it",

@@ -41,12 +41,18 @@ func contentSecurityPolicy(endpoint string) string {
 	return strings.Replace(ContentSecurityPolicy, "connect-src 'self';", "connect-src 'self' "+endpoint+";", 1)
 }
 
+// oauthCallbackPath is where an OAuth provider sends the browser back to
+// (ADR-0062), with the authorization code in the address: no request the page
+// makes names that address, whatever it loads first, and no cache keeps it.
+const oauthCallbackPath = "/oauth/callback/"
+
 // serveWeb serves the dashboard as nginx did (try_files $uri /index.html):
 // a file of the build when the path names one, the app's index.html for
 // every other path (single-page routing). /v1, /auth, /enroll and /convex
 // never get here (ServeHTTP). HTML answers Cache-Control: no-cache (except
-// /device, which is never cached: no-store) so browsers revalidate after a
-// migration or upgrade instead of serving a stale app from heuristic cache.
+// /device and /oauth/callback/, which are never cached: no-store) so browsers
+// revalidate after a migration or upgrade instead of serving a stale app from
+// heuristic cache.
 func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	if !isGet(r) {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -57,6 +63,10 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(s.opts.browserEndpoint()))
 	if r.URL.Path == "/device" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	if strings.HasPrefix(path.Clean("/"+r.URL.Path)+"/", oauthCallbackPath) {
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	if !s.webExists {
@@ -80,7 +90,7 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if r.URL.Path != "/device" {
+	if w.Header().Get("Cache-Control") == "" {
 		w.Header().Set("Cache-Control", "no-cache")
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

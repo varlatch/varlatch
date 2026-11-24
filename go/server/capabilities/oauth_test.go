@@ -855,10 +855,11 @@ func TestMixUp(t *testing.T) {
 	w.idp.Set(func(p *oauthtest.Provider) {
 		p.Metadata = map[string]any{"authorization_endpoint": "https://idp.example/authorize"}
 	})
-	mixed := w.want("create", w.call("POST", oauthPath, "alice", connection(with{"item": "MIXED_TOKEN",
-		"provider": map[string]any{"preset": "generic", "issuer": "https://evil.example"}})), 201, "")
-	if !strings.HasSuffix(mixed.body["redirectUri"].(string), "/oauth/callback/evil.example") {
-		t.Errorf("%s", mixed.raw)
+	mixed := connection(with{"item": "MIXED_TOKEN", "provider": map[string]any{"preset": "generic", "issuer": "https://evil.example"}})
+	w.wantReason("not named", w.call("POST", oauthPath, "alice", mixed), 422, "VALIDATION_FAILED", "endpoint-hosts")
+	mixed["provider"].(map[string]any)["endpointHosts"] = []string{"idp.example"}
+	if a := w.want("named", w.call("POST", oauthPath, "alice", mixed), 201, ""); !strings.HasSuffix(a.body["redirectUri"].(string), "/oauth/callback/evil.example~idp.example") {
+		t.Errorf("%s", a.raw)
 	}
 	// A state of one connection at another one's address.
 	a := w.want("start", w.call("POST", oauthPath+"/EVIL_TOKEN/authorizations", "web", nil), 201, "")
@@ -1096,7 +1097,7 @@ func TestEndpointsArePinned(t *testing.T) {
 		w.wantReason(fmt.Sprint(body), w.call("PATCH", mailPath, "svc", body), 403, "PERMISSION_DENIED", "person-required")
 	}
 	changed := w.want("another server", w.call("PATCH", mailPath, "alice", map[string]any{"provider": evil, "clientSecret": "another"}), 200, "")
-	if changed.body["account"] != nil || changed.body["status"] != "not_connected" {
+	if fmt.Sprint(changed.body["account"]) != "map[id:sub-alice label:alice@example.com]" || changed.body["status"] != "not_connected" {
 		t.Errorf("%s", changed.raw)
 	}
 	// The rows.

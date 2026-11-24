@@ -1169,7 +1169,9 @@ paths:
                     type: [string, "null"]
                     description: >
                       What a connection's redirect URI starts with; the token
-                      endpoint's host (and port, when it is not 443) follows.
+                      endpoint's host (and port, when it is not 443) follows,
+                      and for a generic provider its other endpointHosts, in
+                      order, each after a "~".
                       Null when this installation has no public URL over HTTPS
                       (or on a loopback host).
         "429": { $ref: "#/components/responses/RequestWindow" }
@@ -1178,10 +1180,14 @@ paths:
       tags: [oauth]
       operationId: createOAuthConnection
       summary: >
-        Make an OAuth connection, not connected yet. Needs config.value.write.
-        Its endpoints are pinned: the provider's metadata is read now and
-        never again, and nothing but these endpoints is ever sent the client
-        secret or a token. The item has no value in this environment
+        Make an OAuth connection, not connected yet. Needs config.value.write;
+        one to a person's account (authorization_code) is made by a person
+        (PERMISSION_DENIED, reason person-required). Its endpoints are pinned:
+        the provider's metadata is read now and never again, and nothing but
+        these endpoints is ever sent the client secret or a token. They are
+        all on the host that was given, or on hosts the request names
+        (VALIDATION_FAILED, reason endpoint-hosts, with the others in
+        details.endpointHosts). The item has no value in this environment
         (VERSION_CONFLICT otherwise) and is sensitive.
       parameters:
         - $ref: "#/components/parameters/org"
@@ -1206,8 +1212,9 @@ paths:
       tags: [oauth]
       operationId: discoverOAuthProvider
       summary: >
-        What a connection to this provider would pin, and the redirect URI to
-        register there, without making one. Needs config.value.write.
+        What a connection to this provider would pin, the hosts its endpoints
+        are on (named or not), and the redirect URI to register there, without
+        making one. Needs config.value.write.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -1234,7 +1241,8 @@ paths:
         One of the environment's own OAuth connections. Needs
         config.metadata.read. An item is deleted as any item is
         (deleteValue), which forgets its tokens without revoking them:
-        disconnect it first for that.
+        disconnect it first for that. One a person has connected is deleted
+        by a person (PERMISSION_DENIED, reason person-required).
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -6368,6 +6376,15 @@ components:
           type: string
           maxLength: 2000
           description: Asked once at each connection, with the access token, for whose account it is (sub or id).
+        endpointHosts:
+          type: array
+          maxItems: 10
+          items: { type: string, minLength: 1, maxLength: 300 }
+          description: >
+            generic, authorization_code only: the hosts the provider's
+            addresses may be on beside the issuer's (or, with its endpoints
+            given, the token endpoint's), each with its port when that is not
+            443. The ones they are on are in the redirect URI.
         tokenEndpointAuthMethod: { $ref: "#/components/schemas/OAuthAuthMethod" }
         authorizationParams:
           type: object
@@ -6394,9 +6411,16 @@ components:
     OAuthProvider:
       type: object
       description: A provider as a connection pinned it.
-      required: [preset, tokenEndpoint, tokenEndpointAuthMethod]
+      required: [preset, tokenEndpoint, endpointHosts, tokenEndpointAuthMethod]
       properties:
         preset: { type: string }
+        endpointHosts:
+          type: array
+          items: { type: string }
+          description: >
+            The hosts of every address of the provider's here, the token
+            endpoint's first: the client secret, codes and tokens are sent to
+            no other, and neither is the browser.
         tenant: { type: string }
         issuer: { type: string }
         authorizationEndpoint: { type: string }
@@ -6532,7 +6556,9 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/OAuthAccount" }
             - { type: "null" }
-          description: Whose account it is or, disconnected, was. Null when the provider does not say.
+          description: >
+            Whose account it is or, disconnected or after a change of its
+            provider or client, was. Null when the provider does not say.
         grantedScopes:
           type: [array, "null"]
           items: { type: string }
@@ -6558,6 +6584,7 @@ components:
         confirmAccountChange:
           type: boolean
           description: Another account than the one it was connected to may connect it.
+        expectedVersionId: { type: string, description: The version the person was shown. Another one is refused with VERSION_CONFLICT. }
 
     OAuthAuthorization:
       type: object

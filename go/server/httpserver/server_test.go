@@ -518,6 +518,20 @@ func TestCLIDownloadNotOnTheTailnetListener(t *testing.T) {
 	}
 }
 
+// Where an OAuth provider sends the browser back to, the address holds the
+// code (ADR-0062): nothing loaded from there names it, and nothing keeps it.
+func TestTheOAuthCallbacksHeaders(t *testing.T) {
+	s, _, _, _ := newTestServer(t, nil)
+	for p, want := range map[string]bool{"/oauth/callback/idp.example?code=x&state=y": true, "/oauth/callback/idp.example~api.example": true, "/oauth/callback/idp.example/": true,
+		"//oauth/callback/idp.example?code=x": true, "/oauth/../oauth/callback/x": true, "/": false, "/oauth/callback2/x": false, "/o/acme/projects": false} {
+		w := do(s, "GET", p, "", nil)
+		h := w.Header()
+		if got := h.Get("Referrer-Policy") == "no-referrer" && h.Get("Cache-Control") == "no-store"; got != want || want && w.Code != 200 {
+			t.Errorf("%s: %d %v", p, w.Code, h)
+		}
+	}
+}
+
 // With a tailnet browser endpoint, the dashboard's connect-src names it,
 // as the TypeScript installation's dashboard container writes it for
 // VARLATCH_TAILNET_ENDPOINT (less the Convex origins the Go server has

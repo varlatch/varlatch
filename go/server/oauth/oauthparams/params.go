@@ -67,8 +67,9 @@ type Param struct {
 // through, keeps none.
 type Params struct {
 	V int `json:"v"`
-	// Provider is the preset's name, for people: nothing depends on it once
-	// the connection is made. Tenant is Microsoft's.
+	// Provider is the preset's name, for people and the redirect URI
+	// (RedirectName): nothing else depends on it once the connection is made.
+	// Tenant is Microsoft's.
 	Provider string `json:"provider"`
 	Tenant   string `json:"tenant,omitempty"`
 	// Issuer is the OpenID Provider (or authorization server) the endpoints
@@ -152,6 +153,11 @@ func CheckEndpoint(raw string) error {
 	if u.User != nil || u.Fragment != "" || strings.Contains(raw, "#") {
 		return errors.New("no credentials and no fragment")
 	}
+	// A host is shown to people, and part of the redirect URI
+	// (RedirectName): nothing that could be read as another.
+	if !plainHost(u.Hostname()) {
+		return errors.New("a host of letters, digits, dots and hyphens, or an address")
+	}
 	// Both parsers (net/url's, and the WHATWG one the outbound policy
 	// reads with) name the same host.
 	w, ok := whatwg.ParseURL(raw)
@@ -159,6 +165,49 @@ func CheckEndpoint(raw string) error {
 		return errors.New("not a URL that reads one way")
 	}
 	return nil
+}
+
+// plainHost is whether h is a host name of letters, digits, hyphens,
+// underscores and dots, or an IP address.
+func plainHost(h string) bool {
+	if whatwg.IsIP(h) != 0 {
+		return true
+	}
+	return h != "" && !strings.ContainsFunc(h, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' && r != '.'
+	})
+}
+
+// Host is the host of an endpoint, with its port when that is not 443, as
+// people and the redirect URI see it.
+func Host(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	host, port := strings.ToLower(u.Hostname()), u.Port()
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port != "" && port != "443" {
+		host += ":" + port
+	}
+	return host
+}
+
+// CanonicalEndpointHosts reads the hosts a request names for a provider's
+// endpoints (host, or host:port), each once.
+func CanonicalEndpointHosts(in []string) ([]string, error) {
+	var out []string
+	for _, raw := range in {
+		if strings.ContainsAny(raw, "/?#@\\") || CheckEndpoint("https://"+raw+"/") != nil {
+			return nil, bad("endpointHosts", "hosts, with a port when it is not 443")
+		}
+		if h := Host("https://" + raw); !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 // Scope tokens (RFC 6749 section 3.3).
@@ -210,6 +259,11 @@ func (p Params) Check() error {
 	}
 	if p.Issuer != "" && strings.Contains(p.Issuer, "?") {
 		return bad("issuer", "no query")
+	}
+	// Nothing at the provider says which hosts a client's own connection may
+	// have: a person's has its redirect URI.
+	if p.Grant == ClientCredentials && len(p.EndpointHosts()) > 1 {
+		return bad("provider", "the endpoints of a client's own connection are all on one host: give the token endpoint, and a revocation endpoint on its host or none")
 	}
 	if !slices.Contains([]string{AuthBasic, AuthPost, AuthNone}, p.AuthMethod) {
 		return bad("tokenEndpointAuthMethod", "one of client_secret_basic, client_secret_post, none")
@@ -338,22 +392,37 @@ func (p Params) OpenID() bool {
 	return p.Issuer != "" && p.JWKSURI != "" && slices.Contains(p.Scopes, "openid")
 }
 
-// Server is the token endpoint's host and port, the last segment of the
-// redirect URI: each server has its own, so a code another server was asked
-// for is never sent to this one (RFC 9700 section 4.4.2).
-func (p Params) Server() string {
-	u, err := url.Parse(p.TokenEndpoint)
-	if err != nil {
-		return ""
+// Server is the token endpoint's host and port.
+func (p Params) Server() string { return Host(p.TokenEndpoint) }
+
+// EndpointHosts are the hosts of every address of the connection's, the
+// token endpoint's first: all that its client secret, a code or a token is
+// ever sent to, that its identity is learned from, and that the browser is
+// sent to.
+func (p Params) EndpointHosts() []string {
+	out := []string{p.Server()}
+	for _, e := range []string{p.Issuer, p.AuthorizationEndpoint, p.RevocationEndpoint, p.UserinfoEndpoint, p.JWKSURI} {
+		if e == "" {
+			continue
+		}
+		if h := Host(e); !slices.Contains(out, h) {
+			out = append(out, h)
+		}
 	}
-	host, port := strings.ToLower(u.Hostname()), u.Port()
-	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
+	slices.Sort(out[1:])
+	return out
+}
+
+// RedirectName is the last segment of the redirect URI. Each server has its
+// own, so a code another server was asked for is never sent to this one (RFC
+// 9700 section 4.4.2); and each set of hosts has its own, so a connection
+// with another host among them than the ones its owner registered it with
+// connects at no provider. A preset's hosts are fixed. No host holds a "~".
+func (p Params) RedirectName() string {
+	if _, ok := Presets[p.Provider]; ok {
+		return p.Server()
 	}
-	if port != "" && port != "443" {
-		host += ":" + port
-	}
-	return host
+	return strings.Join(p.EndpointHosts(), "~")
 }
 
 // JS is what answers carry of the parameters.
@@ -372,6 +441,11 @@ func (p Params) JS() jsvalue.Object {
 	o = opt(o, "revocationEndpoint", p.RevocationEndpoint)
 	o = opt(o, "userinfoEndpoint", p.UserinfoEndpoint)
 	o = opt(o, "jwksUri", p.JWKSURI)
+	hosts := []any{}
+	for _, h := range p.EndpointHosts() {
+		hosts = append(hosts, h)
+	}
+	o = append(o, jsvalue.Member{Key: "endpointHosts", Value: hosts})
 	o = append(o, jsvalue.Member{Key: "tokenEndpointAuthMethod", Value: p.AuthMethod})
 	if len(p.AuthorizationParams) > 0 {
 		x := jsvalue.Object{}

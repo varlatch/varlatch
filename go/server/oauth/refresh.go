@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
@@ -59,7 +60,11 @@ const (
 	// firstBackoff doubles with every failure in a row, up to maxBackoff.
 	firstBackoff = 5 * time.Second
 	maxBackoff   = 10 * time.Minute
-	// storeTries is how often the answer's job is tried.
+	// gateWait bounds how long a refresh waits for its turn, behind a freeze or
+	// what else holds a gate, and storeFor how long its answer's job is tried,
+	// storeTries times.
+	gateWait   = time.Minute
+	storeFor   = 30 * time.Second
 	storeTries = 5
 )
 
@@ -87,7 +92,7 @@ func (s *Service) RefreshNow(ctx context.Context, req Request, item string, base
 	if r.OauthConnection.Status == values.Revoked && r.params.Grant == oauthparams.ClientCredentials {
 		// Nobody consents to a client's own connection: asking for a token is
 		// how it is connected again, by a person.
-		if err := person(req.Principal, "The client's own connection"); err != nil {
+		if err := person(req.Principal, "A client's own OAuth connection is used again by a person"); err != nil {
 			return nil, err
 		}
 		if err := s.Writer.Job(ctx, req.gates(gate(r.ValueID)), func(ctx context.Context, tx *storage.Tx) error {
@@ -184,7 +189,10 @@ type claimed struct {
 
 // fly is one refresh, in the background.
 func (s *Service) fly(valueID string, seen int64, req Request, force bool) error {
-	ctx, cancel := context.WithTimeout(audit.WithClock(context.Background(), s.now), 2*claimFor)
+	// What each step has is its own: waiting for the gates takes nothing from
+	// the call, nor the call from storing its answer.
+	base := audit.WithClock(context.Background(), s.now)
+	ctx, cancel := context.WithTimeout(base, cmp.Or(s.GateWait, gateWait))
 	defer cancel()
 	if s.Admit != nil {
 		leave, ok := s.Admit()
@@ -203,7 +211,7 @@ func (s *Service) fly(valueID string, seen int64, req Request, force bool) error
 	// A freeze, a deletion and a change of the Organization wait for a refresh
 	// that was sent, as for every external effect, and one that waits for them
 	// sees what they did.
-	ctx, release, err := s.Writer.Gates.Acquire(ctx, write.Organization(first.OrganizationID, write.Shared), gate(valueID))
+	held, release, err := s.Writer.Gates.Acquire(ctx, write.Organization(first.OrganizationID, write.Shared), gate(valueID))
 	if errors.Is(err, context.DeadlineExceeded) {
 		return &values.NoToken{Status: first.OauthConnection.Status, Reason: "busy", RetryAfter: firstBackoff}
 	}
@@ -211,6 +219,9 @@ func (s *Service) fly(valueID string, seen int64, req Request, force bool) error
 		return err
 	}
 	defer release()
+	held = context.WithoutCancel(held)
+	ctx, cancel = context.WithTimeout(held, claimFor)
+	defer cancel()
 	var c *claimed
 	var why error
 	err = s.store().Write(ctx, func(tx *storage.Tx) (err error) {
@@ -234,8 +245,10 @@ func (s *Service) fly(valueID string, seen int64, req Request, force bool) error
 	if s.crashes("answered") {
 		return errCrashed
 	}
-	// The answer is kept whatever else happens: the job is tried again, the
-	// answer being in memory only until then.
+	// The answer is kept whatever else happens, and however long it took to get
+	// here: the job is tried again, the answer being in memory only until then.
+	ctx, cancel = context.WithTimeout(held, storeFor)
+	defer cancel()
 	for try := 1; ; try++ {
 		var out error
 		err := s.store().Write(ctx, func(tx *storage.Tx) (err error) {
@@ -414,14 +427,11 @@ func (s *Service) settle(ctx context.Context, tx *storage.Tx, c *claimed, t toke
 			return end("account-mismatch")
 		}
 	}
-	// No new refresh token: the one that was used stays.
+	// No new refresh token: the one that was used stays, until when it was
+	// said to unless this answer says another time.
 	refresh := t.refresh
 	if refresh == "" {
 		refresh = c.refresh
-		if stored.RefreshExpiresAt.Valid {
-			left := (stored.RefreshExpiresAt.Int64 - t.at.UnixMicro()) / 1_000_000
-			t.refreshLifetime = max(left, 1)
-		}
 	}
 	if r.params.Grant == oauthparams.ClientCredentials {
 		refresh = ""
@@ -450,6 +460,13 @@ func (s *Service) settle(ctx context.Context, tx *storage.Tx, c *claimed, t toke
 	}
 	if !sl.refreshExpires.Valid && t.refresh == "" {
 		sl.refreshExpires = stored.RefreshExpiresAt
+	}
+	// Using it to keep it has to keep it: one whose end a use does not move is
+	// left to end, but for the time the provider keeps it without use.
+	if before := stored.RefreshExpiresAt; sl.refreshExpires.Valid && before.Valid &&
+		(sl.refreshExpires.Int64-before.Int64)*2 < now.UnixMicro()-stored.RefreshedAt.Int64 {
+		t.refreshLifetime = 0
+		sl.keptTo = nullInt(keepalive(r.params, t, refresh != ""))
 	}
 	granted := stored.GrantedScopes
 	md := jsvalue.Object{{Key: "rotated", Value: t.refresh != "" && t.refresh != c.refresh}}
@@ -520,10 +537,20 @@ func claimsOf(raw string) (sub string, audience func(string) bool) {
 // ---------------------------------------------------------------------------
 // Keeping refresh tokens.
 
-// Interval is the worker's, and dueLimit what one pass looks at.
+// Interval is the worker's. One pass looks at dueLimit connections, dueEach of
+// them one Organization's at most, the ones due longest of every Organization
+// before the next ones of any; it refreshes keepers at once, keepersEach of
+// them for one Organization, and starts no more once passFor is over. So what
+// is slow, or cannot be refreshed, holds up no other Organization's.
 const (
-	Interval = time.Minute
-	dueLimit = 500
+	Interval    = time.Minute
+	dueLimit    = 500
+	dueEach     = 20
+	keepers     = 16
+	keepersEach = 2
+	passFor     = Interval
+	// laterBy is when one that could not be refreshed is looked at again.
+	laterBy = 10 * time.Minute
 )
 
 // RunOnce refreshes the connections whose refresh token the provider would
@@ -548,29 +575,70 @@ func (s *Service) RunOnce(ctx context.Context) error {
 			return err
 		}
 	}
-	due, err := query.New(s.store().Reader()).OAuthConnectionsDue(ctx, query.OAuthConnectionsDueParams{Now: nullInt(s.now().UnixMicro()), Lim: dueLimit})
+	// Only what may be refreshed: the claim decides it again, in a job.
+	due, err := query.New(s.store().Reader()).OAuthConnectionsDue(ctx, query.OAuthConnectionsDueParams{
+		Now: nullInt(s.now().UnixMicro()), ParamsVersion: oauthparams.Version, Each: dueEach, Lim: dueLimit})
 	if err != nil {
 		return err
 	}
-	for _, id := range due {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	byOrg := map[string][]query.OAuthConnectionsDueRow{}
+	var orgs []string
+	for _, d := range due {
+		if byOrg[d.OrganizationID] == nil {
+			orgs = append(orgs, d.OrganizationID)
 		}
-		r, err := byID(ctx, s.store().Reader(), id)
-		if err != nil || r == nil {
-			continue
+		byOrg[d.OrganizationID] = append(byOrg[d.OrganizationID], d)
+	}
+	over, cancel := context.WithTimeout(ctx, passFor)
+	defer cancel()
+	slots := make(chan struct{}, keepers)
+	var wg sync.WaitGroup
+	for _, org := range orgs {
+		next := make(chan query.OAuthConnectionsDueRow, len(byOrg[org]))
+		for _, d := range byOrg[org] {
+			next <- d
 		}
-		// Not for one that may not be refreshed now: the claim decides it
-		// again, in a job.
-		if write.CheckLive(ctx, s.store().Reader(), write.Scope{OrganizationID: r.OrganizationID, ProjectID: r.ProjectID, EnvironmentIDs: []string{r.EnvironmentID}}) != nil {
-			continue
-		}
-		var none *values.NoToken
-		if err := s.Refresh(ctx, id, r.OauthConnection.Generation); err != nil && !errors.As(err, &none) {
-			s.log().Error("OAuth connection keepalive error", "valueId", id, "error", err)
+		close(next)
+		for range min(keepersEach, len(byOrg[org])) {
+			wg.Go(func() {
+				for d := range next {
+					select {
+					case slots <- struct{}{}:
+					case <-over.Done():
+						return
+					}
+					s.keep(ctx, d)
+					<-slots
+					if over.Err() != nil {
+						return
+					}
+				}
+			})
 		}
 	}
-	return nil
+	wg.Wait()
+	return ctx.Err()
+}
+
+// keep refreshes one that is due. Whatever came of it, it is not the first in
+// line at the next pass: a refresh moved it, a failure has its own next try,
+// and one that was refused is looked at later.
+func (s *Service) keep(ctx context.Context, d query.OAuthConnectionsDueRow) {
+	err := s.Refresh(ctx, d.ValueID, d.Generation)
+	var none *values.NoToken
+	if err != nil && !errors.As(err, &none) {
+		s.log().Error("OAuth connection keepalive error", "valueId", d.ValueID, "error", err)
+	}
+	if err == nil || ctx.Err() != nil {
+		return
+	}
+	now := s.now()
+	if err := s.store().Write(ctx, func(tx *storage.Tx) error {
+		return query.New(tx).PostponeOAuthKeepalive(ctx, query.PostponeOAuthKeepaliveParams{
+			KeepaliveAt: nullInt(now.Add(laterBy).UnixMicro()), ValueID: d.ValueID, Now: nullInt(now.UnixMicro())})
+	}); err != nil {
+		s.log().Error("OAuth connection keepalive error", "valueId", d.ValueID, "error", err)
+	}
 }
 
 // RunLoop runs a pass at once and then every interval, inside the maintenance

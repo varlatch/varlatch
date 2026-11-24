@@ -5114,6 +5114,9 @@ type OAuthAuthorizationAnswer struct {
 type OAuthAuthorizationInput struct {
 	// ConfirmAccountChange Another account than the one it was connected to may connect it.
 	ConfirmAccountChange *bool `json:"confirmAccountChange,omitempty"`
+
+	// ExpectedVersionId The version the person was shown. Another one is refused with VERSION_CONFLICT.
+	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
 }
 
 // OAuthAuthorizationOutcome defines model for OAuthAuthorizationOutcome.
@@ -5137,7 +5140,7 @@ type OAuthAuthorizationOutcomeOutcome string
 type OAuthConnection struct {
 	AccessTokenExpiresAt nullable.Nullable[time.Time] `json:"accessTokenExpiresAt"`
 
-	// Account Whose account it is or, disconnected, was. Null when the provider does not say.
+	// Account Whose account it is or, disconnected or after a change of its provider or client, was. Null when the provider does not say.
 	Account     nullable.Nullable[OAuthAccount] `json:"account"`
 	ClientId    string                          `json:"clientId"`
 	ConnectedAt nullable.Nullable[time.Time]    `json:"connectedAt"`
@@ -5282,15 +5285,18 @@ type OAuthProvider struct {
 	AccessTokenLifetimeSeconds *int               `json:"accessTokenLifetimeSeconds,omitempty"`
 	AuthorizationEndpoint      *string            `json:"authorizationEndpoint,omitempty"`
 	AuthorizationParams        *map[string]string `json:"authorizationParams,omitempty"`
-	Issuer                     *string            `json:"issuer,omitempty"`
-	JwksUri                    *string            `json:"jwksUri,omitempty"`
-	Preset                     string             `json:"preset"`
-	RefreshTokenIdleDays       *int               `json:"refreshTokenIdleDays,omitempty"`
-	RevocationEndpoint         *string            `json:"revocationEndpoint,omitempty"`
-	Tenant                     *string            `json:"tenant,omitempty"`
-	TokenEndpoint              string             `json:"tokenEndpoint"`
-	TokenEndpointAuthMethod    OAuthAuthMethod    `json:"tokenEndpointAuthMethod"`
-	UserinfoEndpoint           *string            `json:"userinfoEndpoint,omitempty"`
+
+	// EndpointHosts The hosts of every address of the provider's here, the token endpoint's first: the client secret, codes and tokens are sent to no other, and neither is the browser.
+	EndpointHosts           []string        `json:"endpointHosts"`
+	Issuer                  *string         `json:"issuer,omitempty"`
+	JwksUri                 *string         `json:"jwksUri,omitempty"`
+	Preset                  string          `json:"preset"`
+	RefreshTokenIdleDays    *int            `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint      *string         `json:"revocationEndpoint,omitempty"`
+	Tenant                  *string         `json:"tenant,omitempty"`
+	TokenEndpoint           string          `json:"tokenEndpoint"`
+	TokenEndpointAuthMethod OAuthAuthMethod `json:"tokenEndpointAuthMethod"`
+	UserinfoEndpoint        *string         `json:"userinfoEndpoint,omitempty"`
 }
 
 // OAuthProviderInput A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
@@ -5300,9 +5306,12 @@ type OAuthProviderInput struct {
 	AuthorizationEndpoint      *string `json:"authorizationEndpoint,omitempty"`
 
 	// AuthorizationParams More parameters of the authorization request, at most 10; none of the request's own.
-	AuthorizationParams *map[string]string       `json:"authorizationParams,omitempty"`
-	Issuer              *string                  `json:"issuer,omitempty"`
-	Preset              OAuthProviderInputPreset `json:"preset"`
+	AuthorizationParams *map[string]string `json:"authorizationParams,omitempty"`
+
+	// EndpointHosts generic, authorization_code only: the hosts the provider's addresses may be on beside the issuer's (or, with its endpoints given, the token endpoint's), each with its port when that is not 443. The ones they are on are in the redirect URI.
+	EndpointHosts *[]string                `json:"endpointHosts,omitempty"`
+	Issuer        *string                  `json:"issuer,omitempty"`
+	Preset        OAuthProviderInputPreset `json:"preset"`
 
 	// RefreshTokenIdleDays After how many days without use the provider drops a refresh token: Varlatch then refreshes after two thirds of them, used or not.
 	RefreshTokenIdleDays *int    `json:"refreshTokenIdleDays,omitempty"`
@@ -8848,13 +8857,13 @@ type ServerInterface interface {
 	// ListOAuthConnections The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
 	ListOAuthConnections(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
-	// CreateOAuthConnection Make an OAuth connection, not connected yet. Needs config.value.write. Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive.
+	// CreateOAuthConnection Make an OAuth connection, not connected yet. Needs config.value.write; one to a person's account (authorization_code) is made by a person (PERMISSION_DENIED, reason person-required). Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. They are all on the host that was given, or on hosts the request names (VALIDATION_FAILED, reason endpoint-hosts, with the others in details.endpointHosts). The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
 	CreateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
-	// DiscoverOAuthProvider What a connection to this provider would pin, and the redirect URI to register there, without making one. Needs config.value.write.
+	// DiscoverOAuthProvider What a connection to this provider would pin, the hosts its endpoints are on (named or not), and the redirect URI to register there, without making one. Needs config.value.write.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery)
 	DiscoverOAuthProvider(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
-	// GetOAuthConnection One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that.
+	// GetOAuthConnection One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that. One a person has connected is deleted by a person (PERMISSION_DENIED, reason person-required).
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
 	GetOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
 	// UpdateOAuthConnection Change an OAuth connection. Needs config.value.write; its provider, client ID, scopes and hosts are changed by a person (PERMISSION_DENIED, reason person-required). Its provider and client ID can change only while it holds no tokens (VALIDATION_FAILED, reason connected: disconnect it first), and need the client secret again. A new client secret or new hosts leave it connected; new scopes are asked for at the next connection. Paused, it is neither used nor refreshed, and its tokens stay.
@@ -24210,7 +24219,7 @@ type ListOAuthConnections200JSONResponse struct {
 	// NextCursor Opaque; null when no further pages exist.
 	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
 
-	// RedirectBase What a connection's redirect URI starts with; the token endpoint's host (and port, when it is not 443) follows. Null when this installation has no public URL over HTTPS (or on a loopback host).
+	// RedirectBase What a connection's redirect URI starts with; the token endpoint's host (and port, when it is not 443) follows, and for a generic provider its other endpointHosts, in order, each after a "~". Null when this installation has no public URL over HTTPS (or on a loopback host).
 	RedirectBase nullable.Nullable[string] `json:"redirectBase,omitempty"`
 }
 
@@ -27993,13 +28002,13 @@ type StrictServerInterface interface {
 	// ListOAuthConnections The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
 	ListOAuthConnections(ctx context.Context, request ListOAuthConnectionsRequestObject) (ListOAuthConnectionsResponseObject, error)
-	// CreateOAuthConnection Make an OAuth connection, not connected yet. Needs config.value.write. Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive.
+	// CreateOAuthConnection Make an OAuth connection, not connected yet. Needs config.value.write; one to a person's account (authorization_code) is made by a person (PERMISSION_DENIED, reason person-required). Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. They are all on the host that was given, or on hosts the request names (VALIDATION_FAILED, reason endpoint-hosts, with the others in details.endpointHosts). The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
 	CreateOAuthConnection(ctx context.Context, request CreateOAuthConnectionRequestObject) (CreateOAuthConnectionResponseObject, error)
-	// DiscoverOAuthProvider What a connection to this provider would pin, and the redirect URI to register there, without making one. Needs config.value.write.
+	// DiscoverOAuthProvider What a connection to this provider would pin, the hosts its endpoints are on (named or not), and the redirect URI to register there, without making one. Needs config.value.write.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery)
 	DiscoverOAuthProvider(ctx context.Context, request DiscoverOAuthProviderRequestObject) (DiscoverOAuthProviderResponseObject, error)
-	// GetOAuthConnection One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that.
+	// GetOAuthConnection One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that. One a person has connected is deleted by a person (PERMISSION_DENIED, reason person-required).
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
 	GetOAuthConnection(ctx context.Context, request GetOAuthConnectionRequestObject) (GetOAuthConnectionResponseObject, error)
 	// UpdateOAuthConnection Change an OAuth connection. Needs config.value.write; its provider, client ID, scopes and hosts are changed by a person (PERMISSION_DENIED, reason person-required). Its provider and client ID can change only while it holds no tokens (VALIDATION_FAILED, reason connected: disconnect it first), and need the client secret again. A new client secret or new hosts leave it connected; new scopes are asked for at the next connection. Paused, it is neither used nor refreshed, and its tokens stay.

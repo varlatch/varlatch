@@ -267,8 +267,11 @@ var objectPrototype = []string{
 // in which a Grant, the Capability or the Organization's freeze may change.
 func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilityID string, parse func() (Exercise, error)) (jsvalue.Object, error) {
 	outcomes := refreshes{}
-	for range maxRefreshRounds {
-		out, stale, err := s.exercise(ctx, req, capabilityID, parse, outcomes)
+	for round := range maxRefreshRounds {
+		out, stale, err := s.exercise(ctx, req, capabilityID, parse, outcomes, round == maxRefreshRounds-1)
+		if errors.Is(err, errTokenGone) {
+			continue // another token came in between: decided again
+		}
 		if err != nil || len(stale) == 0 {
 			return out, err
 		}
@@ -280,8 +283,9 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 }
 
 // maxRefreshRounds is more than an exercise needs: each round asks for
-// connections that had none tried.
-const maxRefreshRounds = 4
+// connections that had none tried, or is one whose connection changed while
+// it was decided.
+const maxRefreshRounds = 6
 
 // refreshes is what became of the refreshes an exercise asked for, by value
 // row: nil for one that gave a token.
@@ -311,8 +315,9 @@ func (s *Service) refresh(ctx context.Context, stale []Item, outcomes refreshes)
 	return nil
 }
 
-// exercise is one round: the answer, or the connections to refresh first.
-func (s *Service) exercise(ctx context.Context, req Request, capabilityID string, parse func() (Exercise, error), refreshed refreshes) (jsvalue.Object, []Item, error) {
+// exercise is one round: the answer, or the connections to refresh first, or
+// errTokenGone, which the last round refuses.
+func (s *Service) exercise(ctx context.Context, req Request, capabilityID string, parse func() (Exercise, error), refreshed refreshes, last bool) (jsvalue.Object, []Item, error) {
 	t := &tracker{}
 	var st State
 	var in Exercise
@@ -560,20 +565,29 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 		if why := c.usable(); why != "" {
 			return nil, nil, deny(why, append(jsvalue.Object{item}, reasonOf(c)...)...)
 		}
-		// A token given a moment ago for less is asked for in vain: the next
-		// one would not last longer.
-		if anyway, _ := c.needsRefresh(0, s.now().UnixMicro()); !anyway && c.justGiven(s.now().UnixMicro()) && in.MinValiditySeconds > c.Lifetime {
-			return nil, nil, deny("min-validity-too-long", item, jsvalue.Member{Key: "lifetimeSeconds", Value: c.Lifetime})
-		}
-		needs, enough := c.needsRefresh(minValidity, s.now().UnixMicro())
+		now := s.now().UnixMicro()
+		needs, enough := c.needsRefresh(minValidity, now)
 		outcome, tried := refreshed[it.ValueRowID]
+		// For a longer validity and nothing else, one is asked for once a
+		// minute at most.
+		if anyway, _ := c.needsRefresh(0, now); needs && !anyway {
+			switch wait := c.gapLeft(now); {
+			case wait == 0 || outcome != nil:
+			case in.MinValiditySeconds >= c.Lifetime:
+				// The next one would not last longer.
+				return nil, nil, deny("min-validity-too-long", item, jsvalue.Member{Key: "lifetimeSeconds", Value: c.Lifetime})
+			case !tried:
+				return nil, nil, deny("connection-unavailable", item, jsvalue.Member{Key: "cause", Value: "just-refreshed"},
+					jsvalue.Member{Key: "retryAfterSeconds", Value: max(1, int64((wait+time.Second-1)/time.Second))})
+			}
+		}
 		switch {
 		case needs && !tried:
 			stale = append(stale, it)
 		case enough || !needs:
-		case outcome == nil && c.HasToken && c.justGiven(s.now().UnixMicro()) && in.MinValiditySeconds > 0:
+		case outcome == nil && c.HasToken && c.gapLeft(now) > 0 && in.MinValiditySeconds > 0:
 			// Just given, and it does not last as long.
-			left := max(0, int64(time.Duration(c.ExpiresAt-s.now().UnixMicro())*time.Microsecond/time.Second))
+			left := max(0, int64(time.Duration(c.ExpiresAt-now)*time.Microsecond/time.Second))
 			return nil, nil, deny("min-validity-too-long", item, jsvalue.Member{Key: "lifetimeSeconds", Value: left})
 		case outcome != nil && outcome.RetryAfter <= 0:
 			return nil, nil, deny("connection-needs-reconnect", item, jsvalue.Member{Key: "cause", Value: outcome.Reason})
@@ -709,6 +723,9 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 	})
 	if errors.Is(err, errCapabilityEnded) {
 		return nil, nil, deny(ended)
+	}
+	if errors.Is(err, errTokenGone) && !last {
+		return nil, nil, errTokenGone
 	}
 	if errors.Is(err, errTokenGone) {
 		return nil, nil, deny("connection-unavailable", jsvalue.Member{Key: "item", Value: selectedConnections[0].Name},

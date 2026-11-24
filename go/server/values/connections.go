@@ -237,7 +237,8 @@ func recordConnection(ctx context.Context, tx *storage.Tx, p *auth.Principal, t 
 		prev = previous
 	}
 	md := jsvalue.Object{{Key: "sensitive", Value: true}, {Key: "oauth", Value: true}, {Key: "preset", Value: params.Provider},
-		{Key: "grant", Value: params.Grant}, {Key: "server", Value: params.Server()}, {Key: "clientId", Value: params.ClientID},
+		{Key: "grant", Value: params.Grant}, {Key: "server", Value: params.Server()},
+		{Key: "endpointHosts", Value: strings.Join(params.EndpointHosts(), ",")}, {Key: "clientId", Value: params.ClientID},
 		{Key: "scopes", Value: strings.Join(params.Scopes, " ")}}
 	if len(params.Hosts) > 0 {
 		md = append(md, jsvalue.Member{Key: "hosts", Value: strings.Join(params.Hosts, ",")})
@@ -253,9 +254,23 @@ func recordConnection(ctx context.Context, tx *storage.Tx, p *auth.Principal, t 
 	return err
 }
 
+// checkDeletion refuses a machine the deletion of a connection a person has
+// connected: what it was, and whose, is theirs to end.
+func checkDeletion(ctx context.Context, q *query.Queries, p *auth.Principal, environmentID, item string) error {
+	if p.Identity.Kind == "human" {
+		return nil
+	}
+	once, err := q.OAuthConnectionOnceConnected(ctx, query.OAuthConnectionOnceConnectedParams{EnvironmentID: environmentID, ItemName: item})
+	if err != nil || once == 0 {
+		return err
+	}
+	return &domainerr.Error{Code: "PERMISSION_DENIED", Message: item + " is an OAuth connection a person connected: a person deletes it",
+		Details: jsvalue.Object{{Key: "reason", Value: "person-required"}}}
+}
+
 // ConnectionSecret opens a connection's client secret: for go/server/oauth,
-// which sends it to the token endpoint the parameters pin, and to nothing
-// else. It opens only with the parameters it was sealed with.
+// which sends it to the token and revocation endpoints the parameters pin,
+// and to nothing else. It opens only with the parameters it was sealed with.
 func ConnectionSecret(orgKEK []byte, organizationID, valueID, versionID, paramsText, payload, wrappedDEK string) (string, error) {
 	var v envelope.EncryptedValue
 	if err := json.Unmarshal([]byte(payload), &v.Payload); err != nil {
@@ -325,10 +340,16 @@ func (c *Connection) needsRefresh(minValidity time.Duration, now int64) (needs, 
 	return !enough || left < margin, enough
 }
 
-// justGiven is whether the access token was given less than a minute before
-// now.
-func (c *Connection) justGiven(now int64) bool {
-	return c.Lifetime > 0 && c.ExpiresAt != 0 && now-(c.ExpiresAt-c.Lifetime*1_000_000) < time.Minute.Microseconds()
+// gapLeft is how long after the access token was given another one is not
+// asked for, for want of a longer validity alone: a minute, or a quarter of a
+// shorter life. 0 when that is over.
+func (c *Connection) gapLeft(now int64) time.Duration {
+	if c.Lifetime <= 0 || c.ExpiresAt == 0 {
+		return 0
+	}
+	gap := min(tokenMargin, time.Duration(c.Lifetime)*time.Second/4)
+	age := time.Duration(now-(c.ExpiresAt-c.Lifetime*1_000_000)) * time.Microsecond
+	return min(max(gap-age, 0), gap)
 }
 
 // usable is why a connection cannot be used at all, "" when it can.
@@ -391,14 +412,16 @@ func (s *Service) openToken(st *State, it Item) (string, error) {
 }
 
 // stillUsable checks, in the exercise's own job, that each connection is the
-// one the snapshot saw: not disconnected, paused, deleted or changed since.
+// one the snapshot saw, with the token it saw: not disconnected, paused,
+// deleted, changed, connected again or refreshed since.
 func stillUsable(ctx context.Context, tx *storage.Tx, selected []Item) error {
 	for _, it := range selected {
 		rows, err := query.New(tx).OAuthConnectionNow(ctx, it.ValueRowID)
 		if err != nil {
 			return err
 		}
-		if len(rows) == 0 || rows[0].PausedAt.Valid || rows[0].Status == Revoked || rows[0].Status == NeedsReconnect {
+		if len(rows) == 0 || rows[0].VersionID != it.VersionID || rows[0].Generation != it.Connection.Generation ||
+			rows[0].PausedAt.Valid || rows[0].Status == Revoked || rows[0].Status == NeedsReconnect {
 			return errTokenGone
 		}
 	}

@@ -46,25 +46,26 @@ func TestCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	for what, change := range map[string]func(*Params){
-		"provider":                 func(p *Params) { p.Provider = "" },
-		"a token endpoint":         func(p *Params) { p.TokenEndpoint = "" },
-		"an authorization one":     func(p *Params) { p.AuthorizationEndpoint = "" },
-		"issuer with a query":      func(p *Params) { p.Issuer = "https://idp.example?x" },
-		"method":                   func(p *Params) { p.AuthMethod = "private_key_jwt" },
-		"grant":                    func(p *Params) { p.Grant = "password" },
-		"public client, no person": func(p *Params) { p.Grant, p.AuthMethod = ClientCredentials, AuthNone },
-		"client":                   func(p *Params) { p.ClientID = "a\nb" },
-		"bidi in the client":       func(p *Params) { p.ClientID = "a‮b" },
-		"a scope with a blank":     func(p *Params) { p.Scopes = []string{"a b"} },
-		"a scope twice":            func(p *Params) { p.Scopes = []string{"a", "a"} },
-		"a parameter twice":        func(p *Params) { p.AuthorizationParams = []Param{{"a", "1"}, {"a", "2"}} },
-		"not in order":             func(p *Params) { p.AuthorizationParams = []Param{{"b", "1"}, {"a", "2"}} },
-		"state":                    func(p *Params) { p.AuthorizationParams = []Param{{"State", "1"}} },
-		"code_challenge_method":    func(p *Params) { p.AuthorizationParams = []Param{{"code_challenge_method", "plain"}} },
-		"request_uri":              func(p *Params) { p.AuthorizationParams = []Param{{"request_uri", "https://x.example"}} },
-		"hosts":                    func(p *Params) { p.Hosts = []string{"api.example"} }, // not canonical
-		"lifetime":                 func(p *Params) { p.LifetimeSeconds = MaxLifetimeSeconds + 1 },
-		"idle":                     func(p *Params) { p.IdleDays = -1 },
+		"provider":                  func(p *Params) { p.Provider = "" },
+		"a token endpoint":          func(p *Params) { p.TokenEndpoint = "" },
+		"an authorization one":      func(p *Params) { p.AuthorizationEndpoint = "" },
+		"issuer with a query":       func(p *Params) { p.Issuer = "https://idp.example?x" },
+		"method":                    func(p *Params) { p.AuthMethod = "private_key_jwt" },
+		"grant":                     func(p *Params) { p.Grant = "password" },
+		"public client, no person":  func(p *Params) { p.Grant, p.AuthMethod = ClientCredentials, AuthNone },
+		"client":                    func(p *Params) { p.ClientID = "a\nb" },
+		"bidi in the client":        func(p *Params) { p.ClientID = "a‮b" },
+		"a scope with a blank":      func(p *Params) { p.Scopes = []string{"a b"} },
+		"a scope twice":             func(p *Params) { p.Scopes = []string{"a", "a"} },
+		"a parameter twice":         func(p *Params) { p.AuthorizationParams = []Param{{"a", "1"}, {"a", "2"}} },
+		"not in order":              func(p *Params) { p.AuthorizationParams = []Param{{"b", "1"}, {"a", "2"}} },
+		"state":                     func(p *Params) { p.AuthorizationParams = []Param{{"State", "1"}} },
+		"code_challenge_method":     func(p *Params) { p.AuthorizationParams = []Param{{"code_challenge_method", "plain"}} },
+		"request_uri":               func(p *Params) { p.AuthorizationParams = []Param{{"request_uri", "https://x.example"}} },
+		"hosts":                     func(p *Params) { p.Hosts = []string{"api.example"} }, // not canonical
+		"lifetime":                  func(p *Params) { p.LifetimeSeconds = MaxLifetimeSeconds + 1 },
+		"idle":                      func(p *Params) { p.IdleDays = -1 },
+		"a client's own, two hosts": func(p *Params) { p.Grant = ClientCredentials },
 	} {
 		p := valid()
 		change(&p)
@@ -81,7 +82,7 @@ func TestCheckEndpoint(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"", "idp.example", "http://idp.example", "HTTPS://idp.example#x", "https://idp.example#", "https://u@idp.example", "https://u:p@idp.example", "https:idp.example", "https:///x",
-		"https://idp.example\\@evil.example", "https://idp.example /", "https://idp.example/\n", "https://bücher.example/", "javascript:alert(1)", "https://idp%2eexample/", "https://0x7f.1/", "ftp://idp.example"} {
+		"https://idp.example\\@evil.example", "https://idp.example /", "https://idp.example/\n", "https://bücher.example/", "javascript:alert(1)", "https://idp%2eexample/", "https://idp.example~evil.example/", "https://idp.example,evil.example/", "https://idp.example+evil.example/", "https://idp$.example/", "https://[fe80::1%25en0]/", "https://0x7f.1/", "ftp://idp.example"} {
 		if err := CheckEndpoint(bad); err == nil {
 			t.Errorf("%q: accepted", bad)
 		}
@@ -134,6 +135,62 @@ func TestServerAndHosts(t *testing.T) {
 	p.Hosts = nil
 	if !p.Reaches(authz.Destination{Host: "any.example", Port: 1}) {
 		t.Error("no hosts")
+	}
+}
+
+// Every address's host is one of them, and each set of hosts has a redirect
+// URI of its own.
+func TestEndpointHosts(t *testing.T) {
+	p := valid()
+	if got := strings.Join(p.EndpointHosts(), " "); got != "idp.example:8443 idp.example" {
+		t.Error(got)
+	}
+	names := map[string]bool{p.RedirectName(): true}
+	for what, change := range map[string]func(*Params){
+		"issuer":        func(p *Params) { p.Issuer = "https://evil.example" },
+		"authorization": func(p *Params) { p.AuthorizationEndpoint = "https://evil.example/a" },
+		"revocation":    func(p *Params) { p.RevocationEndpoint = "https://EVIL.example:443/r" },
+		"userinfo":      func(p *Params) { p.UserinfoEndpoint = "https://evil.example/u" },
+		"keys":          func(p *Params) { p.JWKSURI = "https://evil.example/k" },
+	} {
+		p := valid()
+		change(&p)
+		if got := p.RedirectName(); got != "idp.example:8443~evil.example~idp.example" {
+			t.Errorf("%s: %s", what, got)
+		}
+	}
+	for _, token := range []string{"https://evil.example/t", "https://idp.example/t", "https://idp.example:8444/t", "https://idp.example./t"} {
+		p := valid()
+		p.TokenEndpoint = token
+		if names[p.RedirectName()] {
+			t.Errorf("%s: %s", token, p.RedirectName())
+		}
+		names[p.RedirectName()] = true
+	}
+	g := Params{V: Version, Provider: "google", Issuer: "https://accounts.google.com", AuthorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth", TokenEndpoint: "https://oauth2.googleapis.com/token",
+		RevocationEndpoint: "https://oauth2.googleapis.com/revoke", UserinfoEndpoint: "https://openidconnect.googleapis.com/v1/userinfo", JWKSURI: "https://www.googleapis.com/oauth2/v3/certs",
+		AuthMethod: AuthBasic, Grant: AuthorizationCode, ClientID: "c"}
+	if err := g.Check(); err != nil || Presets["google"].CheckHosts(g) != nil || g.RedirectName() != "oauth2.googleapis.com" {
+		t.Errorf("%v %v %s", err, Presets["google"].CheckHosts(g), g.RedirectName())
+	}
+	g.RevocationEndpoint = "https://oauth2.googleapis.com.evil.example/revoke"
+	if Presets["google"].CheckHosts(g) == nil || Presets["microsoft"].CheckHosts(g) == nil {
+		t.Error("a preset with another host")
+	}
+	// A stored one is what it was when it was made.
+	if g.Check() != nil {
+		t.Error("another list takes away a connection")
+	}
+	for in, want := range map[string]string{"A.example, b.example:8443,a.example:443": "a.example b.example:8443", "[2001:db8::1]:444": "[2001:db8::1]:444"} {
+		got, err := CanonicalEndpointHosts(strings.FieldsFunc(in, func(r rune) bool { return r == ',' || r == ' ' }))
+		if err != nil || strings.Join(got, " ") != want {
+			t.Errorf("%s: %v %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"", "https://a.example", "a.example/x", "u@a.example", "a.example?x", "a b", "*.example", "a~b", "a.example:99999999", `a\b`, "bücher.example"} {
+		if got, err := CanonicalEndpointHosts([]string{bad}); err == nil {
+			t.Errorf("%q: %v", bad, got)
+		}
 	}
 }
 

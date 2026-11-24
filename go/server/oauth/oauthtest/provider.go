@@ -19,11 +19,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"maps"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -103,9 +105,15 @@ type Provider struct {
 	RevokeStatus int
 	Now          func() time.Time
 
-	// What happened.
+	// Registered, when it is set, are the client's redirect URIs: the
+	// authorization endpoint sends the browser to no other.
+	Registered []string
+
+	// What happened: the requests to the token and revocation endpoints, and
+	// every host that was sent a credential of any kind.
 	Requests []Request
 	Refused  []string
+	Trusted  map[string]bool
 
 	mu       sync.Mutex
 	server   *httptest.Server
@@ -127,12 +135,12 @@ type refreshToken struct {
 // New starts a provider that answers for every name.
 func New() *Provider {
 	p := &Provider{Account: Account{"sub-alice", "alice@example.com"}, ExpiresIn: "3600", Rotate: true, TokenType: "Bearer", Now: time.Now,
-		codes: map[string]*grant{}, refresh: map[string]*refreshToken{}, access: map[string]*grant{}, families: map[int]bool{}}
+		codes: map[string]*grant{}, refresh: map[string]*refreshToken{}, access: map[string]*grant{}, families: map[int]bool{}, Trusted: map[string]bool{}}
 	var err error
 	if p.key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
 		panic(err)
 	}
-	cert, pool := certificate("idp.example", "evil.example", "other.example", "localhost")
+	cert, pool := certificate("idp.example", "evil.example", "other.example", "localhost", "accounts.google.com", "login.microsoftonline.com")
 	p.ca, p.caPEM = pool, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})
 	p.server = httptest.NewUnstartedServer(http.HandlerFunc(p.serve))
 	p.server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
@@ -250,6 +258,9 @@ func (p *Provider) Consent(authorizationURL string) (*url.URL, error) {
 	if v.Get("response_type") != "code" || v.Get("client_id") != ClientID || v.Get("code_challenge_method") != "S256" || v.Get("state") == "" {
 		return nil, fmt.Errorf("not an authorization request with PKCE: %s", u.RawQuery)
 	}
+	if len(p.Registered) > 0 && !slices.Contains(p.Registered, v.Get("redirect_uri")) {
+		return nil, fmt.Errorf("redirect_uri_mismatch: %s is not registered", v.Get("redirect_uri"))
+	}
 	p.seq++
 	code := p.token("code")
 	p.codes[code] = &grant{account: p.Account, challenge: v.Get("code_challenge"), redirect: v.Get("redirect_uri"), nonce: v.Get("nonce"), client: ClientID, scope: v.Get("scope"), family: p.seq}
@@ -265,9 +276,26 @@ func (p *Provider) Consent(authorizationURL string) (*url.URL, error) {
 	return back, nil
 }
 
+// TrustedHosts are the hosts that were sent a credential, in order.
+func (p *Provider) TrustedHosts() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Sorted(maps.Keys(p.Trusted))
+}
+
 func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/.well-known/openid-configuration":
+	if r.Method == http.MethodPost || r.Header.Get("Authorization") != "" {
+		p.mu.Lock()
+		p.Trusted[r.Host] = true
+		p.mu.Unlock()
+	}
+	const wellKnown = "/.well-known/openid-configuration"
+	path := r.URL.Path
+	if strings.HasSuffix(path, wellKnown) {
+		path = wellKnown // an issuer with a path
+	}
+	switch path {
+	case wellKnown:
 		p.mu.Lock()
 		iss := "https://" + r.Host
 		m := map[string]any{"issuer": iss, "authorization_endpoint": iss + "/authorize", "token_endpoint": iss + "/token", "userinfo_endpoint": iss + "/userinfo",

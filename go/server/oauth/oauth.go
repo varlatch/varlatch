@@ -8,7 +8,8 @@
 //
 // A connection is an item of an environment. What it is (endpoints, client,
 // scopes, hosts) is a value version, with the client secret sealed in it;
-// the endpoints are pinned when it is made. Its tokens are in
+// the endpoints are pinned when it is made, on one host or on hosts the
+// request names, all of which are in its redirect URI. Its tokens are in
 // oauth_connections, sealed with those parameters: changed ones open
 // nothing.
 //
@@ -64,9 +65,10 @@ type Service struct {
 	// Admit is the maintenance admission (nil for none): a refresh outlives
 	// the request that asked for it, so it enters on its own.
 	Admit func() (leave func(), ok bool)
-	// Timeout bounds one request to a provider (0: CallTimeout), and Wait how
-	// long who asks for a refresh waits (0: refreshWait).
-	Timeout, Wait time.Duration
+	// Timeout bounds one request to a provider (0: CallTimeout), Wait how long
+	// who asks for a refresh waits (0: refreshWait), and GateWait how long the
+	// refresh itself waits for its turn (0: gateWait).
+	Timeout, Wait, GateWait time.Duration
 
 	mu      sync.Mutex
 	closed  bool
@@ -254,6 +256,9 @@ func (r *row) openRefresh(orgKEK []byte) (string, error) {
 // what people call it.
 type account struct{ id, label string }
 
+// minKeepalive is how often, at most, a connection nobody uses is kept.
+const minKeepalive = 10 * time.Minute
+
 // keepalive is when a refresh token would have to be used to stay one, 0 for
 // never: after two thirds of the time the provider keeps it without use, or
 // of the time it lasts when it says.
@@ -273,8 +278,7 @@ func keepalive(p oauthparams.Params, t tokens, hasRefresh bool) int64 {
 	if after == 0 {
 		return 0
 	}
-	// Not more often than a connection in use is refreshed.
-	return t.at.Add(max(after, time.Minute)).UnixMicro()
+	return t.at.Add(max(after, minKeepalive)).UnixMicro()
 }
 
 // sealed are a token set's columns.
@@ -289,7 +293,7 @@ func (r *row) sealTokens(orgKEK []byte, t tokens, refresh string, generation int
 	if t.lifetime > 0 {
 		out.expiresAt, out.lifetime = nullInt(t.at.Add(time.Duration(t.lifetime)*time.Second).UnixMicro()), nullInt(t.lifetime)
 	}
-	if t.refreshLifetime > 0 && t.refresh != "" {
+	if t.refreshLifetime > 0 && refresh != "" {
 		out.refreshExpires = nullInt(t.at.Add(time.Duration(t.refreshLifetime) * time.Second).UnixMicro())
 	}
 	out.keptTo = nullInt(keepalive(r.params, t, refresh != ""))
@@ -308,22 +312,46 @@ func (r *row) sealTokens(orgKEK []byte, t tokens, refresh string, generation int
 type Provider struct {
 	Preset, Tenant, Issuer                                                             string
 	AuthorizationEndpoint, TokenEndpoint, RevocationEndpoint, UserinfoEndpoint, Method string
-	Lifetime, IdleDays                                                                 int64
-	Params                                                                             []oauthparams.Param
+	// EndpointHosts are hosts its endpoints may be on, beside the issuer's,
+	// or the token endpoint's where that was given.
+	EndpointHosts      []string
+	Lifetime, IdleDays int64
+	Params             []oauthparams.Param
 }
 
 func invalid(err error) error { return domainerr.New("VALIDATION_FAILED", err.Error()) }
 
+// Discover is what Resolve makes of a provider, whether or not the hosts of
+// its endpoints were named: to show them.
+func (s *Service) Discover(ctx context.Context, req Request, in Provider, grant string, withSecret bool) (oauthparams.Params, error) {
+	return s.endpoints(ctx, req, in, grant, nil, withSecret, false)
+}
+
 // Resolve makes the parameters of a provider's: a preset's or an issuer's
 // from its metadata, or the endpoints given. Nothing is asked of anything
 // but the issuer, and every endpoint is one the outbound policy lets be
-// asked. withSecret is whether the client has a secret.
+// asked. Every address is on the host that was given (the issuer's, or the
+// token endpoint's) or on one the request names: whoever names them sees
+// them, and they are in the redirect URI (oauthparams.RedirectName).
+// withSecret is whether the client has a secret.
 func (s *Service) Resolve(ctx context.Context, req Request, in Provider, grant string, scopes []string, withSecret bool) (oauthparams.Params, error) {
+	return s.endpoints(ctx, req, in, grant, scopes, withSecret, true)
+}
+
+func (s *Service) endpoints(ctx context.Context, req Request, in Provider, grant string, scopes []string, withSecret, named bool) (oauthparams.Params, error) {
 	p := oauthparams.Params{V: oauthparams.Version, Provider: in.Preset, Grant: grant, Scopes: slices.Clone(scopes),
 		AuthMethod: in.Method, LifetimeSeconds: in.Lifetime, IdleDays: in.IdleDays, AuthorizationParams: oauthparams.SortParams(in.Params)}
 	given := in.AuthorizationEndpoint != "" || in.TokenEndpoint != "" || in.RevocationEndpoint != "" || in.UserinfoEndpoint != ""
 	preset, known := oauthparams.Presets[in.Preset]
+	more, err := oauthparams.CanonicalEndpointHosts(in.EndpointHosts)
+	if err != nil {
+		return p, invalid(err)
+	}
 	switch {
+	case len(more) > 0 && known:
+		return p, invalid(errors.New("endpointHosts: a preset has its own hosts"))
+	case len(more) > 0 && grant == oauthparams.ClientCredentials:
+		return p, invalid(errors.New("endpointHosts: the endpoints of a client's own connection are all on one host"))
 	case known:
 		if given || in.Issuer != "" {
 			return p, invalid(errors.New("provider: a preset has its own issuer and endpoints; use the preset generic to give them"))
@@ -405,13 +433,28 @@ func (s *Service) Resolve(ctx context.Context, req Request, in Provider, grant s
 	if (p.AuthMethod == oauthparams.AuthNone) == withSecret {
 		return p, invalid(errors.New("clientSecret: needed, unless tokenEndpointAuthMethod is none"))
 	}
-	for _, e := range []struct{ name, url string }{{"authorizationEndpoint", p.AuthorizationEndpoint}, {"tokenEndpoint", p.TokenEndpoint},
-		{"revocationEndpoint", p.RevocationEndpoint}, {"userinfoEndpoint", p.UserinfoEndpoint}, {"jwksUri", p.JWKSURI}} {
+	endpoints := []struct{ name, url string }{{"authorizationEndpoint", p.AuthorizationEndpoint}, {"tokenEndpoint", p.TokenEndpoint},
+		{"revocationEndpoint", p.RevocationEndpoint}, {"userinfoEndpoint", p.UserinfoEndpoint}, {"jwksUri", p.JWKSURI}}
+	for _, e := range endpoints {
 		if e.url == "" {
 			continue
 		}
 		if err := oauthparams.CheckEndpoint(e.url); err != nil {
 			return p, invalid(errors.New(e.name + ": " + err.Error()))
+		}
+	}
+	if known {
+		if err := preset.CheckHosts(p); err != nil {
+			return p, invalid(err)
+		}
+	} else if named {
+		if err := checkHosts(p, more); err != nil {
+			return p, err
+		}
+	}
+	for _, e := range endpoints {
+		if e.url == "" {
+			continue
 		}
 		// The browser asks the authorization endpoint, not this server.
 		if e.name != "authorizationEndpoint" {
@@ -421,6 +464,30 @@ func (s *Service) Resolve(ctx context.Context, req Request, in Provider, grant s
 		}
 	}
 	return p, nil
+}
+
+// checkHosts refuses addresses on hosts nobody named.
+func checkHosts(p oauthparams.Params, named []string) error {
+	given := p.Server()
+	if p.Issuer != "" {
+		given = oauthparams.Host(p.Issuer)
+	}
+	var others []string
+	for _, h := range p.EndpointHosts() {
+		if h != given && h != "" && !slices.Contains(named, h) {
+			others = append(others, h)
+		}
+	}
+	if len(others) == 0 {
+		return nil
+	}
+	message := "The provider has addresses on other hosts than " + given + ": " + strings.Join(others, ", ") + ". If they are the provider's own, name them in endpointHosts"
+	if p.Grant == oauthparams.ClientCredentials {
+		message = "The endpoints of a client's own connection are all on one host, and " + strings.Join(others, ", ") + " is not " + given +
+			": give the token endpoint itself, and a revocation endpoint on its host or none"
+	}
+	return &domainerr.Error{Code: "VALIDATION_FAILED", Message: message,
+		Details: jsvalue.Object{{Key: "reason", Value: "endpoint-hosts"}, {Key: "endpointHosts", Value: list(others)}}}
 }
 
 // allowed is the outbound policy's verdict on a URL before it is saved
@@ -479,6 +546,13 @@ func (s *Service) Create(ctx context.Context, req Request, in Input, base *url.U
 	if err != nil {
 		return nil, nil, invalid(err)
 	}
+	// Whose account is used, and where its tokens go, is a person's decision
+	// from the start.
+	if in.Grant == oauthparams.AuthorizationCode {
+		if err := person(req.Principal, "An OAuth connection to a person's account is made by a person"); err != nil {
+			return nil, nil, err
+		}
+	}
 	// Nothing is asked of a provider for an Organization that may not write.
 	if err := write.CheckLive(ctx, s.store().Reader(), req.scope("")); err != nil {
 		return nil, nil, err
@@ -522,11 +596,11 @@ type Change struct {
 
 // person refuses whoever is none: what a connection's tokens can reach is
 // decided by people.
-func person(p *auth.Principal, what string) error {
+func person(p *auth.Principal, message string) error {
 	if p.Identity.Kind == "human" {
 		return nil
 	}
-	return &domainerr.Error{Code: "PERMISSION_DENIED", Message: what + " of an OAuth connection is changed by a person",
+	return &domainerr.Error{Code: "PERMISSION_DENIED", Message: message,
 		Details: jsvalue.Object{{Key: "reason", Value: "person-required"}}}
 }
 
@@ -541,7 +615,7 @@ func (s *Service) Update(ctx context.Context, req Request, item string, in Chang
 		what string
 	}{{in.Provider != nil, "The provider"}, {in.ClientID != nil, "The client"}, {in.Scopes != nil, "The scopes"}, {in.Hosts != nil, "The hosts"}} {
 		if c.has {
-			if err := person(req.Principal, c.what); err != nil {
+			if err := person(req.Principal, c.what+" of an OAuth connection is changed by a person"); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -650,8 +724,8 @@ func (s *Service) Update(ctx context.Context, req Request, item string, in Chang
 }
 
 // rewrite writes new parameters (or a new client secret) as a new version,
-// and seals the tokens again for it; another server's or client's are a new
-// connection, with nothing of the old one's.
+// and seals the tokens again for it; another server's or client's hold no
+// token of the old one's.
 func (s *Service) rewrite(ctx context.Context, tx *storage.Tx, req Request, r *row, item string, next oauthparams.Params, secret *string, at int64) error {
 	q, c := query.New(tx), r.OauthConnection
 	same := next.SameServer(r.params)
@@ -690,7 +764,8 @@ func (s *Service) rewrite(ctx context.Context, tx *storage.Tx, req Request, r *r
 		return err
 	}
 	if !same {
-		return q.PutOAuthConnection(ctx, query.PutOAuthConnectionParams{ValueID: r.ValueID, VersionID: versionID})
+		// Whose account it was stays: another one is still another one.
+		return q.ChangeOAuthServer(ctx, query.ChangeOAuthServerParams{ValueID: r.ValueID, VersionID: versionID})
 	}
 	text, err := next.Text()
 	if err != nil {
@@ -737,9 +812,9 @@ func (s *Service) Get(ctx context.Context, db query.DBTX, t values.Target, item 
 }
 
 // RedirectURI is where a server sends the browser back to: the dashboard's
-// page for that server.
+// page for that server and its hosts.
 func RedirectURI(base *url.URL, p oauthparams.Params) string {
-	return base.Scheme + "://" + base.Host + strings.TrimRight(base.EscapedPath(), "/") + "/oauth/callback/" + url.PathEscape(p.Server())
+	return base.Scheme + "://" + base.Host + strings.TrimRight(base.EscapedPath(), "/") + "/oauth/callback/" + url.PathEscape(p.RedirectName())
 }
 
 func isoOrNil(n sql.NullInt64) any {
@@ -825,7 +900,8 @@ func (s *Service) js(r *row, base *url.URL) jsvalue.Object {
 // kind it is.
 func (s *Service) record(ctx context.Context, tx query.DBTX, r *row, typ, decision string, req Request, outcome string, md jsvalue.Object) error {
 	e := audit.Event{Type: typ, Decision: decision, OrganizationID: &r.OrganizationID, Resource: r.resource(),
-		Metadata: append(jsvalue.Object{{Key: "connection", Value: "oauth"}, {Key: "outcome", Value: outcome}, {Key: "server", Value: r.params.Server()}}, md...)}
+		Metadata: append(jsvalue.Object{{Key: "connection", Value: "oauth"}, {Key: "outcome", Value: outcome}, {Key: "server", Value: r.params.Server()},
+			{Key: "endpointHosts", Value: strings.Join(r.params.EndpointHosts(), ",")}}, md...)}
 	if req.Principal != nil {
 		action := "config.value.write"
 		e.ActorIdentityID, e.Action = &req.Principal.Identity.ID, &action

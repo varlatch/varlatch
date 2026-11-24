@@ -78,6 +78,7 @@ var (
 		{name: "tokenEndpoint", schema: zString{min: 1, max: 2000}, optional: true},
 		{name: "revocationEndpoint", schema: zString{min: 1, max: 2000}, optional: true},
 		{name: "userinfoEndpoint", schema: zString{min: 1, max: 2000}, optional: true},
+		{name: "endpointHosts", schema: zArray{element: zString{min: 1, max: 300}, max: 10}, optional: true},
 		{name: "tokenEndpointAuthMethod", schema: zEnum{oauthparams.AuthBasic, oauthparams.AuthPost, oauthparams.AuthNone}, optional: true},
 		{name: "authorizationParams", schema: zRecord{value: zString{max: 512}}, optional: true},
 		{name: "accessTokenLifetimeSeconds", schema: zNumber{min: bound(1), max: bound(oauthparams.MaxLifetimeSeconds)}, optional: true},
@@ -105,8 +106,11 @@ var (
 		{name: "provider", schema: oauthProviderSchema},
 		{name: "grant", schema: oauthGrant, optional: true},
 	}
-	oauthAuthorizationSchema = zObject{{name: "confirmAccountChange", schema: zBool{}, optional: true}}
-	oauthAnswerSchema        = zObject{
+	oauthAuthorizationSchema = zObject{
+		{name: "confirmAccountChange", schema: zBool{}, optional: true},
+		{name: "expectedVersionId", schema: zString{}, optional: true},
+	}
+	oauthAnswerSchema = zObject{
 		{name: "state", schema: zString{min: 1, max: 200}},
 		{name: "redirectUri", schema: zString{min: 1, max: 2000}},
 		{name: "code", schema: zString{max: 8192}, optional: true},
@@ -180,7 +184,7 @@ func providerOf(o jsvalue.Object) oauth.Provider {
 	out := oauth.Provider{
 		Preset: str(p, "preset"), Tenant: str(p, "tenant"), Issuer: str(p, "issuer"),
 		AuthorizationEndpoint: str(p, "authorizationEndpoint"), TokenEndpoint: str(p, "tokenEndpoint"),
-		RevocationEndpoint: str(p, "revocationEndpoint"), UserinfoEndpoint: str(p, "userinfoEndpoint"),
+		RevocationEndpoint: str(p, "revocationEndpoint"), UserinfoEndpoint: str(p, "userinfoEndpoint"), EndpointHosts: texts(p, "endpointHosts"),
 		Method: str(p, "tokenEndpointAuthMethod"), Lifetime: number(p, "accessTokenLifetimeSeconds"), IdleDays: number(p, "refreshTokenIdleDays"),
 	}
 	if x, ok := p.Get("authorizationParams"); ok {
@@ -271,7 +275,7 @@ func (o *operations) DiscoverOAuthProvider(ctx context.Context, _ api.DiscoverOA
 		return nil, err
 	}
 	in := providerOf(body)
-	found, err := svc.Resolve(ctx, req, in, grantOf(body), nil, in.Method != oauthparams.AuthNone)
+	found, err := svc.Discover(ctx, req, in, grantOf(body), in.Method != oauthparams.AuthNone)
 	if err != nil {
 		return nil, p.refused(ctx, err)
 	}
@@ -342,7 +346,7 @@ func (o *operations) StartOAuthAuthorization(ctx context.Context, _ api.StartOAu
 	if err != nil {
 		return nil, err
 	}
-	out, reports, err := svc.Start(ctx, req, p.itemSegment(), boolean(body, "confirmAccountChange"), base)
+	out, reports, err := svc.Start(ctx, req, p.itemSegment(), boolean(body, "confirmAccountChange"), str(body, "expectedVersionId"), base)
 	writerOf(ctx).Header().Set("Cache-Control", "no-store")
 	return p.oauthReply(ctx, http.StatusCreated, out, reports, err)
 }

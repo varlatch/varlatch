@@ -35,8 +35,8 @@ ORDER BY v.item_name;
 SELECT c.access_token, c.access_expires_at, c.generation, c.account FROM oauth_connections c WHERE c.value_id = ? AND c.version_id = ?;
 
 -- name: OAuthConnectionNow :many
--- An exercise's own job: the connection is still one that may be used.
-SELECT c.status, c.paused_at, c.generation FROM oauth_connections c JOIN env_values v ON v.id = c.value_id AND v.current_version_id = c.version_id
+-- An exercise's own job: the connection is still the one it decided about.
+SELECT c.version_id, c.status, c.paused_at, c.generation FROM oauth_connections c JOIN env_values v ON v.id = c.value_id AND v.current_version_id = c.version_id
 WHERE c.value_id = ? AND v.deleted_at IS NOT NULL;
 
 -- name: OAuthConnectionStatus :many
@@ -50,6 +50,20 @@ ON CONFLICT (value_id) DO UPDATE SET version_id = excluded.version_id, status = 
   generation = oauth_connections.generation + 1, access_token = NULL, access_expires_at = NULL, access_lifetime = NULL,
   refresh_token = NULL, refresh_expires_at = NULL, keepalive_at = NULL, granted_scopes = NULL, account = '', account_label = '',
   connected_by = NULL, connected_at = NULL, refreshed_at = NULL, failures = 0, retry_at = NULL, claim_id = NULL, claim_until = NULL, unanswered = 0;
+
+-- name: ChangeOAuthServer :exec
+-- Another server or client: no token is left, and whose account it was, who
+-- connected it and whether it is paused stay.
+UPDATE oauth_connections SET version_id = sqlc.arg(version_id), status = 'not_connected', reason = NULL,
+  generation = generation + 1, access_token = NULL, access_expires_at = NULL, access_lifetime = NULL,
+  refresh_token = NULL, refresh_expires_at = NULL, keepalive_at = NULL, granted_scopes = NULL,
+  failures = 0, retry_at = NULL, claim_id = NULL, claim_until = NULL, unanswered = 0
+WHERE value_id = sqlc.arg(value_id);
+
+-- name: OAuthConnectionOnceConnected :one
+-- Whether an item is a connection a person has connected.
+SELECT CAST(EXISTS (SELECT 1 FROM oauth_connections c JOIN env_values v ON v.id = c.value_id AND v.current_version_id = c.version_id
+  WHERE v.environment_id = ? AND v.item_name = ? AND v.deleted_at IS NOT NULL AND c.connected_at IS NOT NULL) AS INTEGER) AS connected;
 
 -- name: MoveOAuthConnection :exec
 -- The parameters changed: the tokens, sealed again, are the new version's,
@@ -164,10 +178,33 @@ DELETE FROM oauth_connections WHERE value_id IN (
   SELECT v.id FROM env_values v JOIN environments e ON e.id = v.environment_id JOIN projects p ON p.id = e.project_id WHERE p.organization_id = ?);
 
 -- name: OAuthConnectionsDue :many
--- The connections whose refresh token the provider would otherwise drop.
-SELECT value_id FROM oauth_connections
-WHERE keepalive_at IS NOT NULL AND keepalive_at <= sqlc.arg(now) AND paused_at IS NULL AND (retry_at IS NULL OR retry_at <= sqlc.arg(now))
-ORDER BY keepalive_at LIMIT sqlc.arg(lim);
+-- The connections whose refresh token the provider would otherwise drop, and
+-- that may be refreshed now: each Organization's first, then each one's next.
+WITH due AS (
+  SELECT c.value_id, c.generation, c.keepalive_at, p.organization_id,
+    row_number() OVER (PARTITION BY p.organization_id ORDER BY c.keepalive_at, c.value_id) AS place
+  FROM oauth_connections c
+  JOIN env_values v ON v.id = c.value_id AND v.current_version_id = c.version_id
+  JOIN value_versions s ON s.id = c.version_id
+  JOIN environments e ON e.id = v.environment_id
+  JOIN projects p ON p.id = e.project_id
+  JOIN organizations o ON o.id = p.organization_id
+  WHERE c.keepalive_at IS NOT NULL AND c.keepalive_at <= sqlc.arg(now) AND c.paused_at IS NULL AND c.refresh_token IS NOT NULL
+    AND c.status IN ('connected', 'failing')
+    AND (c.retry_at IS NULL OR c.retry_at <= sqlc.arg(now)) AND (c.claim_until IS NULL OR c.claim_until <= sqlc.arg(now))
+    AND (c.refresh_expires_at IS NULL OR c.refresh_expires_at > sqlc.arg(now))
+    AND v.deleted_at IS NOT NULL AND json_extract(s.payload, '$.oauth.v') = CAST(sqlc.arg(params_version) AS INTEGER)
+    AND e.deleted_at IS NULL AND (e.expires_at IS NULL OR e.expires_at > sqlc.arg(now))
+    AND p.deleted_at IS NULL AND o.deleted_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = o.id AND f.lifted_at IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM organization_deletions x WHERE x.organization_id = o.id AND x.cancelled_at IS NULL AND x.completed_at IS NULL)
+)
+SELECT value_id, generation, organization_id FROM due WHERE place <= CAST(sqlc.arg(each) AS INTEGER)
+ORDER BY place, keepalive_at LIMIT sqlc.arg(lim);
+
+-- name: PostponeOAuthKeepalive :exec
+-- One that is due and could not be refreshed: later, if it still is.
+UPDATE oauth_connections SET keepalive_at = sqlc.arg(keepalive_at) WHERE value_id = sqlc.arg(value_id) AND keepalive_at <= sqlc.arg(now);
 
 -- name: InsertOAuthAuthorization :exec
 INSERT INTO oauth_authorizations (state_hash, organization_id, value_id, version_id, identity_id, auth_session_id, nonce_hash, verifier, redirect_uri, account_change, created_at, expires_at)

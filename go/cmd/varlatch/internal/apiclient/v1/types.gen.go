@@ -5106,6 +5106,9 @@ type OAuthAuthorizationAnswer struct {
 type OAuthAuthorizationInput struct {
 	// ConfirmAccountChange Another account than the one it was connected to may connect it.
 	ConfirmAccountChange *bool `json:"confirmAccountChange,omitempty"`
+
+	// ExpectedVersionId The version the person was shown. Another one is refused with VERSION_CONFLICT.
+	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
 }
 
 // OAuthAuthorizationOutcome defines model for OAuthAuthorizationOutcome.
@@ -5129,7 +5132,7 @@ type OAuthAuthorizationOutcomeOutcome string
 type OAuthConnection struct {
 	AccessTokenExpiresAt nullable.Nullable[time.Time] `json:"accessTokenExpiresAt"`
 
-	// Account Whose account it is or, disconnected, was. Null when the provider does not say.
+	// Account Whose account it is or, disconnected or after a change of its provider or client, was. Null when the provider does not say.
 	Account     nullable.Nullable[OAuthAccount] `json:"account"`
 	ClientId    string                          `json:"clientId"`
 	ConnectedAt nullable.Nullable[time.Time]    `json:"connectedAt"`
@@ -5274,15 +5277,18 @@ type OAuthProvider struct {
 	AccessTokenLifetimeSeconds *int               `json:"accessTokenLifetimeSeconds,omitempty"`
 	AuthorizationEndpoint      *string            `json:"authorizationEndpoint,omitempty"`
 	AuthorizationParams        *map[string]string `json:"authorizationParams,omitempty"`
-	Issuer                     *string            `json:"issuer,omitempty"`
-	JwksUri                    *string            `json:"jwksUri,omitempty"`
-	Preset                     string             `json:"preset"`
-	RefreshTokenIdleDays       *int               `json:"refreshTokenIdleDays,omitempty"`
-	RevocationEndpoint         *string            `json:"revocationEndpoint,omitempty"`
-	Tenant                     *string            `json:"tenant,omitempty"`
-	TokenEndpoint              string             `json:"tokenEndpoint"`
-	TokenEndpointAuthMethod    OAuthAuthMethod    `json:"tokenEndpointAuthMethod"`
-	UserinfoEndpoint           *string            `json:"userinfoEndpoint,omitempty"`
+
+	// EndpointHosts The hosts of every address of the provider's here, the token endpoint's first: the client secret, codes and tokens are sent to no other, and neither is the browser.
+	EndpointHosts           []string        `json:"endpointHosts"`
+	Issuer                  *string         `json:"issuer,omitempty"`
+	JwksUri                 *string         `json:"jwksUri,omitempty"`
+	Preset                  string          `json:"preset"`
+	RefreshTokenIdleDays    *int            `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint      *string         `json:"revocationEndpoint,omitempty"`
+	Tenant                  *string         `json:"tenant,omitempty"`
+	TokenEndpoint           string          `json:"tokenEndpoint"`
+	TokenEndpointAuthMethod OAuthAuthMethod `json:"tokenEndpointAuthMethod"`
+	UserinfoEndpoint        *string         `json:"userinfoEndpoint,omitempty"`
 }
 
 // OAuthProviderInput A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
@@ -5292,9 +5298,12 @@ type OAuthProviderInput struct {
 	AuthorizationEndpoint      *string `json:"authorizationEndpoint,omitempty"`
 
 	// AuthorizationParams More parameters of the authorization request, at most 10; none of the request's own.
-	AuthorizationParams *map[string]string       `json:"authorizationParams,omitempty"`
-	Issuer              *string                  `json:"issuer,omitempty"`
-	Preset              OAuthProviderInputPreset `json:"preset"`
+	AuthorizationParams *map[string]string `json:"authorizationParams,omitempty"`
+
+	// EndpointHosts generic, authorization_code only: the hosts the provider's addresses may be on beside the issuer's (or, with its endpoints given, the token endpoint's), each with its port when that is not 443. The ones they are on are in the redirect URI.
+	EndpointHosts *[]string                `json:"endpointHosts,omitempty"`
+	Issuer        *string                  `json:"issuer,omitempty"`
+	Preset        OAuthProviderInputPreset `json:"preset"`
 
 	// RefreshTokenIdleDays After how many days without use the provider drops a refresh token: Varlatch then refreshes after two thirds of them, used or not.
 	RefreshTokenIdleDays *int    `json:"refreshTokenIdleDays,omitempty"`

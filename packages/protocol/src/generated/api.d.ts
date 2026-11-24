@@ -428,7 +428,7 @@ export interface paths {
         /** The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one. */
         get: operations["listOAuthConnections"];
         put?: never;
-        /** Make an OAuth connection, not connected yet. Needs config.value.write. Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive. */
+        /** Make an OAuth connection, not connected yet. Needs config.value.write; one to a person's account (authorization_code) is made by a person (PERMISSION_DENIED, reason person-required). Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. They are all on the host that was given, or on hosts the request names (VALIDATION_FAILED, reason endpoint-hosts, with the others in details.endpointHosts). The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive. */
         post: operations["createOAuthConnection"];
         delete?: never;
         options?: never;
@@ -445,7 +445,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** What a connection to this provider would pin, and the redirect URI to register there, without making one. Needs config.value.write. */
+        /** What a connection to this provider would pin, the hosts its endpoints are on (named or not), and the redirect URI to register there, without making one. Needs config.value.write. */
         post: operations["discoverOAuthProvider"];
         delete?: never;
         options?: never;
@@ -460,7 +460,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that. */
+        /** One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that. One a person has connected is deleted by a person (PERMISSION_DENIED, reason person-required). */
         get: operations["getOAuthConnection"];
         put?: never;
         post?: never;
@@ -2751,6 +2751,8 @@ export interface components {
             revocationEndpoint?: string;
             /** @description Asked once at each connection, with the access token, for whose account it is (sub or id). */
             userinfoEndpoint?: string;
+            /** @description generic, authorization_code only: the hosts the provider's addresses may be on beside the issuer's (or, with its endpoints given, the token endpoint's), each with its port when that is not 443. The ones they are on are in the redirect URI. */
+            endpointHosts?: string[];
             tokenEndpointAuthMethod?: components["schemas"]["OAuthAuthMethod"];
             /** @description More parameters of the authorization request, at most 10; none of the request's own. */
             authorizationParams?: {
@@ -2766,6 +2768,8 @@ export interface components {
         /** @description A provider as a connection pinned it. */
         OAuthProvider: {
             preset: string;
+            /** @description The hosts of every address of the provider's here, the token endpoint's first: the client secret, codes and tokens are sent to no other, and neither is the browser. */
+            endpointHosts: string[];
             tenant?: string;
             issuer?: string;
             authorizationEndpoint?: string;
@@ -2833,7 +2837,7 @@ export interface components {
             /** @description Why it is failing or needs to be connected again: a word of Varlatch's (unreachable, timeout, refresh-answer-lost, no-refresh-token, refused-by-provider) or the provider's error code (invalid_client). Never text of the provider's. */
             reason: string | null;
             paused: boolean;
-            /** @description Whose account it is or, disconnected, was. Null when the provider does not say. */
+            /** @description Whose account it is or, disconnected or after a change of its provider or client, was. Null when the provider does not say. */
             account: components["schemas"]["OAuthAccount"] | null;
             /** @description As the provider named them; null when it did not. */
             grantedScopes: string[] | null;
@@ -2865,6 +2869,8 @@ export interface components {
         OAuthAuthorizationInput: {
             /** @description Another account than the one it was connected to may connect it. */
             confirmAccountChange?: boolean;
+            /** @description The version the person was shown. Another one is refused with VERSION_CONFLICT. */
+            expectedVersionId?: string;
         };
         OAuthAuthorization: {
             authorizationUrl: string;
@@ -5905,7 +5911,7 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["OAuthConnection"][];
                         nextCursor: components["schemas"]["NextCursor"];
-                        /** @description What a connection's redirect URI starts with; the token endpoint's host (and port, when it is not 443) follows. Null when this installation has no public URL over HTTPS (or on a loopback host). */
+                        /** @description What a connection's redirect URI starts with; the token endpoint's host (and port, when it is not 443) follows, and for a generic provider its other endpointHosts, in order, each after a "~". Null when this installation has no public URL over HTTPS (or on a loopback host). */
                         redirectBase?: string | null;
                     };
                 };
