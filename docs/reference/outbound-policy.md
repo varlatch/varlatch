@@ -1,5 +1,9 @@
 # Outbound policy
 
+> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
+> The current release is 0.23.0:
+> [docs.varlatch.com](https://docs.varlatch.com/reference/outbound-policy/).
+
 Some of what an Organization configures makes varlatchd send requests: audit
 webhooks, Coolify and Convex Connections and their Sync Targets, GitHub
 Actions Sync Targets and the GitHub App, and OIDC issuers for machine
@@ -15,8 +19,8 @@ By default, an Organization reaches what the internet reaches, over https:
 - **Unspecified, multicast and reserved addresses** are always refused.
 - **Plain http** is refused unless the host operator allows the destination.
 
-Only the host operator can allow a destination, with the
-`VARLATCH_OUTBOUND_ALLOW` setting. It is not stored in the database, and no
+Only the host operator can allow a destination, with the `outbound_allow`
+setting in `varlatchd.conf`. It is not stored in the database, and no
 one can change it through the API or the dashboard: an Organization admin
 never decides what the host's network lets through. An allowed destination
 is open to every Organization on the installation.
@@ -31,20 +35,47 @@ For every governed request, varlatchd:
 1. reads the URL's host name after normal URL parsing (an international
    name in its `xn--` form, an IPv4 shorthand such as `127.1` as the full
    address);
-2. resolves the name with the system resolver, so `/etc/hosts` and the
-   container's DNS apply as for anything else on the host;
+2. resolves the name with the host's DNS settings and `/etc/hosts` (in a
+   container, the container's);
 3. classifies **every** address the name resolves to. When one of them is
    refused, the request is refused, even if another one is public;
 4. connects only to the addresses it checked. The check runs where the
    connection is opened, so a name whose DNS answer changes between saving
    and sending cannot move the request to an address that was not checked.
 
-TLS is unchanged: the server must present a certificate for the name in the
-URL, and the `Host` header is the URL's host. A private certificate
-authority still works through `NODE_EXTRA_CA_CERTS`.
+The server must present a certificate for the name in the URL, from an
+authority the host trusts, and the `Host` header is the URL's host.
 
 Requests never follow redirects, and never use a proxy from the environment
-(`HTTP_PROXY`, `HTTPS_PROXY`, `NODE_USE_ENV_PROXY`).
+(`HTTP_PROXY`, `HTTPS_PROXY`).
+
+### A private certificate authority
+
+For these requests, `varlatchd` trusts the certificate authorities its host trusts: the
+system's own list, and nothing built in. Backups to a bucket and
+`varlatch`'s release downloads use the same list. To add your own
+authority, add it to the host, then restart `varlatchd`, which reads the
+list once. On Debian and Ubuntu:
+
+```sh
+sudo install -m 644 company-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+sudo systemctl restart varlatchd
+```
+
+Other distributions have their own command, such as `update-ca-trust`.
+
+Instead, `SSL_CERT_FILE` in the service's environment names a PEM file to
+use. It **replaces** the system's list: a file that holds only your
+authority makes every public destination fail. Put the public authorities
+and yours in one file, readable by the `varlatch` user. In the container
+image, `SSL_CERT_FILE` is set to the image's own list: mount a file that
+holds both over it, or point the variable at one.
+
+The TypeScript server (0.23.0 and earlier) took extra authorities from
+`NODE_EXTRA_CA_CERTS`. `varlatchd` does not read that variable: when you
+migrate, add those authorities to the host. The CLI still reads it, on each
+person's machine.
 
 ## Address classes
 
@@ -63,12 +94,15 @@ address: IPv4-mapped (`::ffff:0:0/96`), IPv4-compatible (`::/96`) and NAT64
 (`64:ff9b::/96`). So `::ffff:127.0.0.1` is loopback, and `64:ff9b::a00:1`
 is `10.0.0.1`, private.
 
-## `VARLATCH_OUTBOUND_ALLOW`
+## `outbound_allow`
+
+<a id="varlatch_outbound_allow"></a>
 
 A comma-separated list of entries. Spaces are ignored. Empty or unset means
-no exceptions. varlatchd reads it at startup: change it in `.env`, then
-recreate varlatchd (`docker compose up -d varlatchd`). An invalid entry stops
-varlatchd from starting, with an error that names the entry.
+no exceptions. varlatchd reads it at startup: change it in
+`/etc/varlatch/varlatchd.conf`, then `sudo systemctl restart varlatchd`. An
+invalid entry stops varlatchd from starting, with an error that names the
+entry. (In 0.23.0 and earlier, the setting was `VARLATCH_OUTBOUND_ALLOW`.)
 
 | Entry | Matches |
 |---|---|
@@ -111,15 +145,14 @@ control, and narrow CIDR entries otherwise.
 ## Check your destinations
 
 ```sh
-varlatch admin outbound check            # on the host, in the Compose directory
-varlatchd admin outbound check           # inside the varlatchd container
+sudo varlatch admin outbound check       # on the host
+varlatchd admin outbound check           # inside the container image
 ```
 
 It lists every configured webhook, Coolify and Convex Connection and OIDC
 issuer: the Organization, the kind, its id and name, host and port, the
 addresses the name resolves to, and the verdict (public, allowed by an
-entry, or refused with the reason). It ends with a suggested
-`VARLATCH_OUTBOUND_ALLOW` value. Literal addresses and names that resolve to
+entry, or refused with the reason). It ends with a suggested value. Literal addresses and names that resolve to
 loopback, link-local or metadata addresses are listed apart and never
 suggested: decide those yourself.
 
@@ -160,9 +193,9 @@ A refusal never loses anything:
 - **Saving** a webhook, a Coolify or Convex Connection, or an OIDC binding
   to a refused destination fails with a message that names the address
   class, never the address, for example "This address is on a private
-  network, which this installation does not let Organizations reach. The
-  host operator can allow it with VARLATCH_OUTBOUND_ALLOW." A name that does
-  not resolve is saved; the policy decides when it is used.
+  network, which this installation does not let Organizations reach." The
+  message names the setting as `VARLATCH_OUTBOUND_ALLOW`, its name in 0.23.0:
+  it is `outbound_allow` now. A name that does not resolve is saved; the policy decides when it is used.
 - **Connection checks and destination listings** report the destination as
   unreachable, with the same message.
 - **Webhooks** keep their position. The webhook shows that this
@@ -189,9 +222,8 @@ the resolved addresses for the host operator, within the same bounds.
 
 ## Migration guide
 
-Run `varlatch admin outbound check` with the new release before or right
-after upgrading; `varlatch upgrade` runs it for you and shows the suggested
-line. Then:
+The policy came with 0.22.0. Run `sudo varlatch admin outbound check`, then
+allow what you need:
 
 - **Coolify or Convex on a tailnet:** a hostname entry for its name, or its
   address as `/32`. Do not allow `100.64.0.0/10`: that opens the whole
@@ -207,14 +239,14 @@ line. Then:
 - **A public webhook receiver over plain http:** move it to https, or add a
   hostname entry for it.
 - **Local development:** `127.0.0.1/32:*,::1/128:*`.
-- **A private certificate authority:** unchanged, through
-  `NODE_EXTRA_CA_CERTS`.
+- **A private certificate authority:** add it to the host
+  ([above](#a-private-certificate-authority)).
 
 For example, an installation whose Coolify is on a tailnet and whose Convex
 answers on port 3210 on the LAN:
 
-```sh
-VARLATCH_OUTBOUND_ALLOW=coolify.internal.example.com,convex.lan.example.com:3210
+```ini
+outbound_allow = coolify.internal.example.com,convex.lan.example.com:3210
 ```
 
 ### OIDC issuers that redirect

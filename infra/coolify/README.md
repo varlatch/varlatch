@@ -1,7 +1,7 @@
 # Deploying Varlatch on Coolify
 
 Coolify is a first-class deployment target, but **not a second architecture**:
-a Coolify deployment is the canonical `infra/compose` contract
+up to 0.23.0, a Coolify deployment is the canonical `infra/compose` contract
 deployed through Coolify's Docker Compose support. For Varlatch 0.50 and later
 (the single-container Go `varlatchd` image), see
 [Single-container Go service (0.50+)](#single-container-go-service-050) below.
@@ -319,10 +319,8 @@ pins the published image by digest using Coolify environment variables.
 
    When migrating from 0.23.0 with `varlatch migrate --ingress coolify`, leave
    `/srv/varlatch/data` empty and let `varlatch migrate` populate the bind
-   paths as `65532:65532`. For a fresh install, place the Root KEK
-   (`/srv/varlatch/keys/root-kek`) and Backup Encryption Key
-   (`/srv/varlatch/keys/backup-key`) in `/srv/varlatch/keys` with mode `0400`
-   and owner `65532:65532`.
+   paths as `65532:65532`. For a fresh install, follow
+   [A fresh install by hand](#a-fresh-install-by-hand) instead of this step.
 
    **Keys never go in Coolify environment variables.** `varlatchd` refuses to
    start (exit `78`) if any key value or key variable name is present in its
@@ -384,6 +382,92 @@ pins the published image by digest using Coolify environment variables.
      `varlatchd.conf`) run in-process via `tsnet` and store node state under
      `/var/lib/varlatch/tailnet`. No Tailscale sidecar container,
      `/dev/net/tun` device, or elevated Linux capabilities are required.
+
+### A fresh install by hand
+
+There is no guided setup for the container yet: a later release adds one.
+Until then, these are the steps of `varlatch setup`, one by one. Run them as
+root on the host.
+
+1. Make the directories, the two keys and the configuration. Put your own
+   address in `public_url`. Outside Coolify, put your proxy container's name
+   in `trusted_proxies`.
+
+   ```sh
+   install -d -m 700 -o 65532 -g 65532 /srv/varlatch/data /srv/varlatch/keys
+   for key in root-kek backup-key; do
+     openssl rand -hex 32 | install -m 400 -o 65532 -g 65532 /dev/stdin /srv/varlatch/keys/$key
+   done
+   tee /srv/varlatch/varlatchd.conf >/dev/null <<'EOF'
+   listen = 0.0.0.0:8686
+   public_url = https://app.example.com
+   trusted_proxies = coolify-proxy
+   data_dir = /var/lib/varlatch
+   root_kek_file = /keys/root-kek
+   backup_key_file = /keys/backup-key
+   EOF
+   ```
+
+   Do this once. Never make the keys again for an installation that has
+   data: it would not start, and nothing could read its values.
+
+2. **Copy both keys off the host**, apart from each other, before you store
+   anything in the installation. Without the Root KEK, every value is lost;
+   without the backup key, every backup.
+
+3. Deploy it: in Coolify, steps 2 to 4
+   [above](#creating-the-coolify-application), then **Deploy**. With plain
+   Docker, on the network of your own proxy's container:
+
+   ```sh
+   docker run -d --name varlatchd --network <the proxy's network> \
+     --restart unless-stopped --read-only --cap-drop ALL \
+     --security-opt no-new-privileges --stop-timeout 30 \
+     -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
+     -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro \
+     ghcr.io/varlatch/varlatchd@sha256:<the release's digest>
+   ```
+
+   The proxy serves HTTPS and forwards to `varlatchd:8686`.
+   [Verifying a release](../../docs/operations/verify-release.md#the-go-lines-image-0500-and-later)
+   gives the digest.
+
+4. Create the first administrator. This prints a one-time link, valid for 15
+   minutes. Open it and create the passkey:
+
+   ```sh
+   docker exec <container> varlatchd admin bootstrap --name "Your Name"
+   ```
+
+   Too late? `varlatchd admin bootstrap --revoke-unused` prints a new one.
+
+5. Check the key, and record that both copies exist off the host:
+
+   ```sh
+   docker exec <container> varlatchd admin kek verify
+   docker exec <container> varlatchd admin custody attest --key root-kek --method copy
+   docker exec <container> varlatchd admin custody attest --key backup-key --method copy
+   ```
+
+6. Make the first backup, and check the installation:
+
+   ```sh
+   docker exec <container> varlatchd admin backup run
+   docker exec <container> varlatchd admin doctor
+   ```
+
+Give it a bucket next: [S3-compatible
+destinations](../../docs/operations/backup.md#s3-compatible-destinations).
+Mount both files, readable by `65532`, at the paths they name.
+
+To restore an archive, stop the container, run the image once with the same
+mounts, and start the container again:
+
+```sh
+docker run --rm -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
+  -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image> \
+  admin backup restore --in /var/lib/varlatch/backups/ARCHIVE-ID.vltbak
+```
 
 ### Pinning and upgrading by digest
 

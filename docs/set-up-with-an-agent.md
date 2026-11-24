@@ -1,5 +1,9 @@
 # Set up with a coding agent
 
+> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
+> The current release, 0.23.0, has a CLI that needs Node.js:
+> [docs.varlatch.com](https://docs.varlatch.com/set-up-with-an-agent/).
+
 Your coding agent can set Varlatch up in a repository for you. It installs
 the CLI, connects the repository, and moves your `.env` files in. You do
 the steps that need you: signing in with your passkey, choosing names, and
@@ -19,14 +23,12 @@ shell, and you can read every step before your agent runs it.
 ## Before you start
 
 - **An installation.** One person on your team runs it, once, on a Linux
-  host with Docker: [Run an installation](run-an-installation.md).
+  host: [Run an installation](run-an-installation.md).
   Your agent does not set up the server for you. `varlatch setup` asks you
   to choose the address, creates the first passkey, and hands you the
   recovery keys, which no agent should see.
 - **An account on it.** You ran the setup, or you opened an invitation and
   created your passkey ([Join a project](join-a-team.md)).
-- **Node.js** 22, 24 or 26, at least 22.23.4, 24.22.1 or 26.12.1
-  ([Node.js version](reference/install-the-cli.md#nodejs-version)).
 - **[cosign](https://docs.sigstore.dev/cosign/system_config/installation/)**,
   to check that the CLI was published by Varlatch's release workflow
   ([Verifying a release](operations/verify-release.md)).
@@ -80,10 +82,8 @@ never run `varlatch init` there. Install the CLI (step 2), sign in
 ### 2. Install the CLI
 
 If `varlatch --assisted --version` already prints the installation's version, skip
-this step. Check `node --version` against the versions under
-[Before you start](#before-you-start), and check that `cosign version`
-works. If Node.js or cosign is missing, or Node.js is older, stop and tell
-the human: installing them is theirs to decide.
+this step. Check that `cosign version` works. If cosign is missing, stop and
+tell the human: installing it is theirs to decide.
 
 On Linux and macOS, check the release's signature, then the CLI against
 `SHA256SUMS`, and only then install it in `~/.local/bin`. Run the block as
@@ -91,12 +91,15 @@ it is: each step runs only when the one before it succeeded (`&&`), so a
 failed download or check never reaches `install`.
 
 ```sh
-V=0.22.0  # serverVersion from step 1
+V=0.50.0  # serverVersion from step 1
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+CLI="varlatch-$V-$OS-$ARCH"
 REPO=varlatch/varlatch
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
 BASE="https://github.com/$REPO/releases/download/v$V"
-curl -fLO "$BASE/varlatch-cli-$V.cjs" &&
+curl -fLO "$BASE/$CLI" &&
   curl -fLO "$BASE/SHA256SUMS" &&
   curl -fLO "$BASE/SHA256SUMS.sigstore.json" &&
   cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
@@ -104,10 +107,10 @@ curl -fLO "$BASE/varlatch-cli-$V.cjs" &&
   if command -v sha256sum >/dev/null; then
     sha256sum --ignore-missing -c SHA256SUMS
   else
-    grep " varlatch-cli-$V.cjs\$" SHA256SUMS | shasum -a 256 -c -
+    grep " $CLI\$" SHA256SUMS | shasum -a 256 -c -
   fi &&
   mkdir -p ~/.local/bin &&
-  install -m 755 "varlatch-cli-$V.cjs" ~/.local/bin/varlatch &&
+  install -m 755 "$CLI" ~/.local/bin/varlatch &&
   varlatch --assisted --version
 ```
 
@@ -115,7 +118,9 @@ curl -fLO "$BASE/varlatch-cli-$V.cjs" &&
 release has no `SHA256SUMS.sigstore.json`, tell the human what failed: do
 not install the file another way. Releases 0.15.0 and earlier are not signed: for those,
 stop and point the human to
-[Verifying a release](operations/verify-release.md). On Windows, follow
+[Verifying a release](operations/verify-release.md). An installation on 0.23.0 or earlier has no such file: follow
+[its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/set-up-with-an-agent.md).
+On Windows, follow
 [On Windows](reference/install-the-cli.md#on-windows), with the signature check
 first. If `~/.local/bin` is not on the `PATH`, tell the human.
 

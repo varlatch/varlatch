@@ -8,6 +8,12 @@ release tag, so there is no key to fetch or trust separately. Each image also
 carries a build-provenance attestation and an SBOM, and is published for
 linux/amd64 and linux/arm64.
 
+From 0.50, `install.sh`, `install.ps1`, `varlatch upgrade` and `varlatch
+self-update` check the signature themselves, before they put anything in
+place. The checks on this page are for doing it first, with tools you
+already trust. With cosign and `curl` alone, the
+[release assets](#release-assets) check is enough for the binaries.
+
 You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
 2.x or later, `docker buildx`, `jq`, and the GitHub CLI. A release from a
 private repository also needs a `gh` login with access to the repository and
@@ -15,7 +21,7 @@ a registry login that can read its images (`docker login ghcr.io` with a
 token that has the `read:packages` scope).
 
 ```sh
-V=0.22.0                                      # the release to verify
+V=0.50.0                                      # the release to verify
 REPO=varlatch/varlatch                        # the repository releases come from
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
@@ -57,15 +63,27 @@ sha256sum --check --ignore-missing SHA256SUMS
 ```
 
 The first check proves that `SHA256SUMS` was produced by the release
-workflow for this tag. The second checks every downloaded asset against it,
-including the operator CLI and the release manifest.
+workflow for this tag. The second checks every downloaded asset against it.
+
+Without the GitHub CLI, fetch the files you need with `curl`:
+
+```sh
+BASE="https://github.com/$REPO/releases/download/v$V"
+curl -fLO "$BASE/SHA256SUMS"
+curl -fLO "$BASE/SHA256SUMS.sigstore.json"
+curl -fLO "$BASE/varlatch-$V-linux-amd64"
+```
+
+For 0.50 and later, the image's checks are
+[below](#the-go-lines-image-0500-and-later). The next two sections are for
+0.23.0 and earlier.
 
 ## Images
 
-The release manifest pins each image by digest. Their signatures are kept in
-a separate package, `ghcr.io/varlatch/varlatch-signatures`, so tell cosign
-to look there. Then verify Varlatch's own three images against the same
-identity:
+A release of 0.23.0 or earlier has three images of Varlatch's own. Its
+release manifest pins each image by digest. Their signatures are kept in a
+separate package, `ghcr.io/varlatch/varlatch-signatures`, so tell cosign to
+look there. Then verify the three images against the same identity:
 
 ```sh
 export COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures
@@ -302,5 +320,5 @@ repository and its packages: who can push tags, publish releases, and push
 images. If that is not enough for your installation, do not install an
 unsigned release.
 
-`varlatch upgrade` does not verify signatures yet. Verify a release before
-you upgrade to it.
+Up to 0.23.0, `varlatch upgrade` does not verify signatures. Verify a release
+before you upgrade to it.

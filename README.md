@@ -145,15 +145,17 @@ where you are: [joining a team](docs/join-a-team.md) you were invited to,
 
 ### Run your own installation
 
-Varlatch runs with Docker Compose on any Linux host, amd64 or arm64, and on
-Coolify. [`infra/compose/README.md`](infra/compose/README.md) walks through
-setup, access, backups, and upgrades.
+Varlatch runs on any Linux host, amd64 or arm64, and on Coolify. The current
+release, 0.23.0, runs with Docker Compose: follow
+[its documentation](https://docs.varlatch.com/run-an-installation/). From
+0.50, a prerelease now, it is one program with its own database:
+[Run an installation](docs/run-an-installation.md).
 
 ### Use the CLI
 
-The CLI is one file attached to every release, `varlatch-cli-<version>.cjs`,
-and needs Node.js 22, 24 or 26 with its current security fixes:
-[Install the CLI](docs/reference/install-the-cli.md).
+The CLI is one file attached to every release. 0.23.0's needs Node.js
+([install it](https://docs.varlatch.com/reference/install-the-cli/)); from
+0.50 it needs nothing else: [Install the CLI](docs/reference/install-the-cli.md).
 
 ```sh
 varlatch login --server https://varlatch.example.com
@@ -208,13 +210,17 @@ The same documentation, searchable, is at
   grants and contracts
 - [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md): what Varlatch guarantees,
   each guarantee mapped to a test, and what it explicitly does not
-- [`infra/compose/README.md`](infra/compose/README.md): self-hosting
+- [`docs/self-hosting.md`](docs/self-hosting.md): operating an installation
+  from 0.50; [`infra/compose/README.md`](infra/compose/README.md): 0.23.0 and
+  earlier, with Docker Compose
 - [`docs/self-hosting/requirements.md`](docs/self-hosting/requirements.md):
   what a host needs, with measured memory, processor, and disk use
 - [`docs/self-hosting/configuration.md`](docs/self-hosting/configuration.md):
   every setting of an installation
 - [`docs/operations/backup.md`](docs/operations/backup.md): backups and
   recovery
+- [`docs/operations/upgrade.md`](docs/operations/upgrade.md): upgrading, from
+  0.50
 - [`docs/operations/verify-release.md`](docs/operations/verify-release.md):
   verifying a release's signatures and provenance
 - [`docs/operations/migrate-to-0.50.md`](docs/operations/migrate-to-0.50.md):

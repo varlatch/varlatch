@@ -1,12 +1,14 @@
 # Join a team
 
+> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
+> The current release, 0.23.0, has a CLI that needs Node.js:
+> [docs.varlatch.com](https://docs.varlatch.com/join-a-team/).
+
 Someone on your team runs a Varlatch installation and sent you an
 invitation link. Three steps take you from that link to running your
 application with its configuration.
 
-You need Node.js 22, 24 or 26 with its current security fixes
-([Node.js version](reference/install-the-cli.md#nodejs-version)), and a
-browser that supports passkeys.
+You need a browser that supports passkeys.
 
 ## 1. Create your passkey
 
@@ -21,27 +23,24 @@ one device never locks you out:
 
 ## 2. Install the CLI
 
-If your installation serves the CLI, one line installs it (on Windows,
-`irm https://vault.example.com/install.ps1 | iex`):
+If your installation serves the CLI, install it from there, on Linux and
+macOS:
 
 ```sh
-curl -fsSL https://vault.example.com/install.sh | sh
+curl -fsSLo install.sh https://vault.example.com/install.sh && sh install.sh
 ```
 
 Otherwise, install the release your installation runs. The dashboard
-shows it under Settings, then Server. On Linux:
+shows it under Settings, then Server:
 
 ```sh
-V=0.22.0  # the release your installation runs
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
-sha256sum --ignore-missing -c SHA256SUMS
-mkdir -p ~/.local/bin
-install -m 755 varlatch-cli-$V.cjs ~/.local/bin/varlatch
-varlatch --version
+V=0.50.0  # the release your installation runs
+curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
+sh install.sh
 ```
 
-On macOS or Windows, or to check the release signature too, follow
+Both check the release's signature before they put anything in place. On
+Windows, or to check the signature with cosign yourself, follow
 [Install the CLI](reference/install-the-cli.md).
 
 ## 3. Sign in and run
