@@ -135,7 +135,7 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	}
 	before, _ := os.ReadFile(filepath.Join(filepath.Dir(h.conf), journal.File))
 	if code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf); code != ExitFailure || out != "" || !strings.Contains(errs, "is still pending") ||
-		!strings.Contains(errs, "move "+filepath.Join(filepath.Dir(h.conf), journal.File)+" away") || !strings.Contains(errs, "restore resume") {
+		!strings.Contains(errs, "First move "+filepath.Join(filepath.Dir(h.conf), journal.File)+" away") || strings.Index(errs, "restore resume") < strings.Index(errs, "First move") {
 		t.Fatalf("held with an upgrade pending: %d %q %q", code, out, errs)
 	}
 	if after, _ := os.ReadFile(filepath.Join(filepath.Dir(h.conf), journal.File)); string(after) != string(before) {

@@ -122,7 +122,7 @@ func (r *Run) upgrade() error {
 		if h, err := backup.ReadHold(j.DataDir); err != nil || h != nil {
 			file := filepath.Join(filepath.Dir(config), journal.File)
 			return Fail("varlatch upgrade: this installation was restored from an archive and is held, and an upgrade from "+j.From+" to "+j.To+" is still pending: finishing or undoing it would replace the restored database. "+
-				"Put right what changed since the archive and run varlatch admin restore resume; move "+file+" away, which closes that upgrade (its files stay in "+j.Work+"); then run varlatch upgrade. Nothing was changed.", ExitFailure)
+				"First move "+file+" away, which closes that upgrade (its files stay in "+j.Work+"); then put right what changed since the archive and run varlatch admin restore resume; then varlatch upgrade. Nothing was changed.", ExitFailure)
 		}
 	}
 
