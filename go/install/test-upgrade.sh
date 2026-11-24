@@ -475,7 +475,39 @@ for point in $KILLS; do
   if [ "$failures" -gt 0 ]; then finish; fi
 done
 
-# --- 4b. killed in an undo ---
+# --- 5. the rollback ---
+
+if has_rollback; then
+  put THIRD
+  upgrade rollback "$VARLATCH" --rollback --yes
+  upgraded rollback "$CANDIDATE"
+  check "rollback: the binaries alone: a change made since is kept" has THIRD
+  upgrade unsafe-refused "$VARLATCH" "$UNSAFE" --yes
+  check "unsafe: refused unless accepted" [ "$status" != 0 ]
+  upgrade unsafe "$VARLATCH" "$UNSAFE" --yes --accept-not-rollback-safe
+  upgraded unsafe "$UNSAFE"
+  put FOURTH
+  upgrade loss-refused "$VARLATCH" --rollback --yes
+  check "snapshot: refused without --accept-data-loss" [ "$status" != 0 ]
+  check "snapshot: $UNSAFE still serves" serves "$UNSAFE"
+  check "snapshot: the change is still there" has FOURTH
+  upgrade loss "$VARLATCH" --rollback --yes --accept-data-loss
+  upgraded loss "$CANDIDATE"
+  check "snapshot: what was there before the upgrade is there" has THIRD
+  check "snapshot: what changed since is lost, as it says" has_not FOURTH
+  if has_hold && held; then
+    # It is a restore too.
+    check "snapshot: held until it is resumed" "$VARLATCH" admin restore resume --config "$CONF"
+  fi
+  upgrade after-loss "$VARLATCH" "$NEXT" --yes
+  upgraded after-loss "$NEXT"
+else
+  echo "SKIP  rollback: this candidate has no upgrade --rollback"
+fi
+
+# --- 5b. killed in an undo ---
+
+# After the rollbacks: an upgrade that was undone leaves none to roll back.
 
 for point in $UNDOS; do
   name=$(echo "undo-$point" | tr ':' '-')
@@ -509,35 +541,6 @@ for point in $UNDOS; do
   if [ "$failures" -gt 0 ]; then finish; fi
 done
 
-# --- 5. the rollback ---
-
-if has_rollback; then
-  put THIRD
-  upgrade rollback "$VARLATCH" --rollback --yes
-  upgraded rollback "$CANDIDATE"
-  check "rollback: the binaries alone: a change made since is kept" has THIRD
-  upgrade unsafe-refused "$VARLATCH" "$UNSAFE" --yes
-  check "unsafe: refused unless accepted" [ "$status" != 0 ]
-  upgrade unsafe "$VARLATCH" "$UNSAFE" --yes --accept-not-rollback-safe
-  upgraded unsafe "$UNSAFE"
-  put FOURTH
-  upgrade loss-refused "$VARLATCH" --rollback --yes
-  check "snapshot: refused without --accept-data-loss" [ "$status" != 0 ]
-  check "snapshot: $UNSAFE still serves" serves "$UNSAFE"
-  check "snapshot: the change is still there" has FOURTH
-  upgrade loss "$VARLATCH" --rollback --yes --accept-data-loss
-  upgraded loss "$CANDIDATE"
-  check "snapshot: what was there before the upgrade is there" has THIRD
-  check "snapshot: what changed since is lost, as it says" has_not FOURTH
-  if has_hold && held; then
-    # It is a restore too.
-    check "snapshot: held until it is resumed" "$VARLATCH" admin restore resume --config "$CONF"
-  fi
-  upgrade after-loss "$VARLATCH" "$NEXT" --yes
-  upgraded after-loss "$NEXT"
-else
-  echo "SKIP  rollback: this candidate has no upgrade --rollback"
-fi
 journalctl -u varlatchd.service --no-pager >"$work/journal.txt" 2>&1 || true
 check "no key in an upgrade's output, its journal or the unit's" no_key_in "$work"/*.out "$work/journal.txt" /etc/varlatch/upgrade.json
 check "varlatch doctor passes" doctor
