@@ -64,6 +64,10 @@ case "$FROM" in
   0.50.0-rc.2) FROM_INSTALL=82ca234af771ada287d7074077afc759d3204180665edb6765ed087dd6068ed7 ;;
   *) echo "refusing: this script has no hash of $FROM's install.sh" >&2; exit 2 ;;
 esac
+# The same for an upgrade from $FROM with the candidate's varlatch, run from
+# elsewhere: the new varlatch is installed before anything is written down, so
+# that the installed one can always read it. Finished by "checked" alone.
+FROM_KILLS="verified snapshot stopping stop:done stopped prepared data:keep-original:link:varlatch.db kept install:$CANDIDATE:varlatchd installed data:swap:rename:varlatch.db swapped start:$CANDIDATE started"
 # Whether the candidate's varlatchd refuses to serve while an upgrade is not
 # over (its journal says it may be half done).
 GATE=${VARLATCH_TEST_UPGRADE_GATE:-1}
@@ -277,6 +281,36 @@ past() {
   done
   return 1
 }
+# killed_from <point>: an upgrade from $FROM by the candidate's varlatch at
+# $tool, killed there, then the installed varlatch.
+killed_from() {
+  point=$1
+  name=from-new-$(echo "$point" | tr ':' '-')
+  export VARLATCH_TEST_UPGRADE_KILL="$point"
+  upgrade "$name" "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
+  unset VARLATCH_TEST_UPGRADE_KILL
+  case "$point" in
+    data:*) check "$name: killed there" [ "$status" = 1 ] ;;
+    *) check "$name: killed there" [ "$status" = 137 ] ;;
+  esac
+  check "$name: the journal says in progress" journal_says in-progress
+  echo "      $("$VARLATCH" --version), $("$VARLATCHD" --version) installed"
+  restarted
+  upgrade "$name-again" "$VARLATCH"
+  if [ "$status" != 0 ]; then tail -n 8 "$work/$name-again.out" >&2; fi
+  check "$name: finished by the installed varlatch: it exits 0" [ "$status" = 0 ]
+  if [ "$point" = checked ]; then
+    check "$name: finished: $CANDIDATE serves" serves "$CANDIDATE"
+    check "$name: the journal says done" journal_says "done"
+  else
+    check "$name: undone: $FROM serves" serves "$FROM"
+    check "$name: the journal says undone" journal_says undone
+  fi
+  check "$name: the data is there" has FIRST
+  check "$name: the data directory is varlatch's" data_is_varlatchs
+  check "$name: the keys are root's" keys_are_roots
+  if [ "$failures" -gt 0 ]; then finish; fi
+}
 # Beside the installed varlatchd. $FROM's own engine, and not the candidate's.
 tool=/usr/local/bin/varlatch-upgrade-test
 trap 'rm -f "$tool"; cleanup' EXIT
@@ -312,6 +346,10 @@ for step in stopped swapped started; do
 done
 if [ "$failures" -gt 0 ]; then finish; fi
 must "from-kill: $FROM serves, to go on from" serves "$FROM"
+# And the candidate's varlatch, finished by the one it installed.
+install -m 755 "$client_bin" "$tool"
+for point in $FROM_KILLS; do killed_from "$point"; done
+install -m 755 "$built/from/varlatch" "$tool"
 upgrade to-candidate "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
 upgraded to-candidate "$CANDIDATE"
 must "to-candidate: the data is there" has FIRST
@@ -376,7 +414,7 @@ for point in $KILLS; do
   restarted
   step=$(sed -n 's/.*"step": *"\([^"]*\)".*/\1/p' /etc/varlatch/upgrade.json)
   case "$GATE $step" in
-    '1 stopping' | '1 stopped' | '1 prepared' | '1 kept' | '1 installed' | '1 swapped' | '1 started')
+    '1 stopping' | '1 stopped' | '1 prepared' | '1 kept' | '1 installed' | '1 swapped' | '1 started' | '1 checked')
       check "$name: varlatchd serves nothing until the upgrade is over" not_answering
       ;;
   esac
