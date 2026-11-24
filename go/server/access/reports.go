@@ -37,7 +37,7 @@ var reachProjectActions = []string{"project.read", "project.manage", "contract.r
 // reachEnvironmentActions are decided for one Environment.
 var reachEnvironmentActions = []string{
 	"environment.read", "environment.manage", "config.metadata.read", "config.value.read", "config.value.write",
-	"secret.reveal", "secret.use", "config.sync.manage",
+	"secret.reveal", "secret.use", authz.CapabilityIssue, "config.sync.manage",
 }
 
 // conditioned are the Environment actions Tailnet Requirements constrain.

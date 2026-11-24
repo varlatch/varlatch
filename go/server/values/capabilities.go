@@ -32,7 +32,8 @@ import (
 // audit event before anything is decrypted.
 
 // RequireBroker is the routes' requireBroker: only a Broker of the
-// Organization may issue or exercise; anyone else learns nothing.
+// Organization exercises a Capability, or issues one for itself; anyone
+// else learns nothing.
 func RequireBroker(p *auth.Principal, organizationID string) error {
 	if p.Identity.Kind != "broker" || p.Identity.OrganizationID == nil || *p.Identity.OrganizationID != organizationID {
 		return domainerr.New("RESOURCE_NOT_FOUND", "Not found")
@@ -45,6 +46,40 @@ func HashSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }
+
+// How a single-use Capability's secret is stored (ADR-0060): its hash
+// behind one of these, so whether it is spent is part of what a secret is
+// matched by. A server that does not know them (an earlier varlatchd after
+// a rollback, the TypeScript server after a reverse migration) matches no
+// secret against either, and refuses the exercise.
+const (
+	singleUseUnused = "once:"
+	singleUseUsed   = "used:"
+)
+
+// StoredSecret is what a Capability's row keeps of its secret.
+func StoredSecret(secret string, singleUse bool) string {
+	if singleUse {
+		return singleUseUnused + HashSecret(secret)
+	}
+	return HashSecret(secret)
+}
+
+// SecretState reads a stored secret: its hash, whether the Capability is
+// single-use, and whether that use is spent.
+func SecretState(stored string) (hash string, singleUse, used bool) {
+	if h, ok := strings.CutPrefix(stored, singleUseUnused); ok {
+		return h, true, false
+	}
+	if h, ok := strings.CutPrefix(stored, singleUseUsed); ok {
+		return h, true, true
+	}
+	return stored, false, false
+}
+
+// errCapabilityEnded is a single-use Capability another exercise or a
+// revocation got to first, between the snapshot and the use.
+var errCapabilityEnded = errors.New("values: the Capability was used or revoked meanwhile")
 
 // agentEvaluation is evaluateAgentSecretUse: the Agent's action on the
 // environment, with the Organization's Requirements and the request's
@@ -200,6 +235,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	var in Exercise
 	var row *query.Capability
 	var use, plainRead authz.Evaluation
+	issuerAllowed := true
 	bound := map[string]bool{}
 	err := s.snapshot(ctx, func(tx *sql.Tx, now int64) error {
 		var err error
@@ -239,6 +275,11 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			if plainRead, err = agentEvaluation(ctx, tx, &st, r.AgentIdentityID, "config.value.read"); err != nil {
 				return err
 			}
+			if r.CreatedBy != r.BrokerIdentityID {
+				if issuerAllowed, err = issuerMayIssue(ctx, tx, &st, r.CreatedBy); err != nil {
+					return err
+				}
+			}
 		}
 		if err := capture(ctx, tx, &st, now, func(it Item) bool {
 			if it.Sensitive {
@@ -264,13 +305,33 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		return jsvalue.Object{{Key: "capabilityId", Value: capabilityID}, {Key: "agentIdentityId", Value: agent},
 			{Key: "projectId", Value: st.Project.ID}, {Key: "environmentId", Value: st.Env.ID}}
 	}
+	// issuer names who issued the Capability, when that is not its Broker.
+	issuer := func() jsvalue.Object {
+		if row == nil || row.CreatedBy == row.BrokerIdentityID {
+			return nil
+		}
+		return jsvalue.Object{{Key: "issuedByIdentityId", Value: row.CreatedBy}}
+	}
+	// spent is set while this exercise holds a single-use Capability's use.
+	spent := false
 	deny := func(reason string, detail ...jsvalue.Member) error {
 		md := append(jsvalue.Object{{Key: "reason", Value: reason}, {Key: "destination", Value: destination}}, detail...)
+		md = append(md, issuer()...)
 		event := audit.Event{
 			Type: "capability.denied", Decision: audit.Deny, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
 			Action: ptr("secret.use"), Resource: resource(), RequestID: ptr(req.RequestID), Metadata: md,
 		}
-		if err := s.store.Write(ctx, func(tx *storage.Tx) error { _, err := audit.Record(ctx, tx, event); return err }); err != nil {
+		if err := s.store.Write(ctx, func(tx *storage.Tx) error {
+			if spent {
+				// Refused after all: the use is not spent.
+				hash, _, _ := SecretState(row.SecretHash)
+				if err := query.New(tx).ReleaseCapability(ctx, query.ReleaseCapabilityParams{ID: row.ID, Used: singleUseUsed + hash, Unused: singleUseUnused + hash}); err != nil {
+					return err
+				}
+			}
+			_, err := audit.Record(ctx, tx, event)
+			return err
+		}); err != nil {
 			return err
 		}
 		return exerciseRefusal(reason, detail, authz.TailnetFrom(ctx) != nil)
@@ -282,14 +343,28 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	if row.BrokerIdentityID != broker {
 		return nil, deny("wrong-broker")
 	}
-	if subtle.ConstantTimeCompare([]byte(HashSecret(in.Secret)), []byte(row.SecretHash)) != 1 {
+	// An exercise-only credential bound to a run exercises that run's
+	// Capabilities; another run's is as unknown to it as another Broker's.
+	if x := req.Principal.Credential.ExerciseOnly; x != nil && x.RunID != nil && (!row.RunID.Valid || row.RunID.String != *x.RunID) {
+		return nil, deny("wrong-run")
+	}
+	hash, singleUse, used := SecretState(row.SecretHash)
+	if subtle.ConstantTimeCompare([]byte(HashSecret(in.Secret)), []byte(hash)) != 1 {
 		return nil, deny("bad-secret")
 	}
 	if row.RevokedAt.Valid {
 		return nil, deny("revoked")
 	}
+	if used {
+		return nil, deny("already-used")
+	}
 	if row.ExpiresAt/1000 <= st.Now/1000 {
 		return nil, deny("expired")
+	}
+	// Issued for this Broker by another identity: that identity may still
+	// issue here (it is live and its Grant holds), as of this exercise.
+	if !issuerAllowed {
+		return nil, deny("issuer-not-allowed")
 	}
 	selectors, err := stringList(row.Destinations)
 	if err != nil {
@@ -377,17 +452,46 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	for i, p := range in.Placements {
 		placements[i] = p.Item + "=" + p.Target
 	}
+	exercised := jsvalue.Object{
+		{Key: "destination", Value: destination}, {Key: "items", Value: strings.Join(entries, ",")},
+		{Key: "placements", Value: strings.Join(placements, ";")}, {Key: "withheld", Value: len(withheld)}, {Key: "runId", Value: runID},
+	}
+	exercised = append(exercised, issuer()...)
+	var spend beforeAudit
+	ended := "already-used"
+	if singleUse {
+		exercised = append(exercised, jsvalue.Member{Key: "singleUse", Value: true})
+		// The use is spent in capability.exercised's own job: two exercises
+		// at once, and only one of them has it. From here on it stays
+		// spent, whatever becomes of the answer, unless deny takes it back.
+		spend = func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error) {
+			q := query.New(tx)
+			n, err := q.UseCapability(ctx, query.UseCapabilityParams{ID: row.ID, Unused: singleUseUnused + hash, Used: singleUseUsed + hash})
+			if err != nil || n == 1 {
+				return nil, err
+			}
+			now, err := q.CapabilityOf(ctx, query.CapabilityOfParams{ID: row.ID, OrganizationID: st.Org.ID, EnvironmentID: st.Env.ID})
+			if err != nil {
+				return nil, err
+			}
+			if now.RevokedAt.Valid {
+				ended = "revoked"
+			}
+			return nil, errCapabilityEnded
+		}
+	}
 	plaintext, err := s.auditThenDecrypt(ctx, &st, []audit.Event{{
 		Type: "capability.exercised", Decision: audit.Allow, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
 		Action: ptr("secret.use"), Resource: resource(), Authz: authz.AuditAuthz(use), RequestID: ptr(req.RequestID),
-		Metadata: jsvalue.Object{
-			{Key: "destination", Value: destination}, {Key: "items", Value: strings.Join(entries, ",")},
-			{Key: "placements", Value: strings.Join(placements, ";")}, {Key: "withheld", Value: len(withheld)}, {Key: "runId", Value: runID},
-		},
-	}}, versions, nil)
+		Metadata: exercised,
+	}}, versions, spend)
+	if errors.Is(err, errCapabilityEnded) {
+		return nil, deny(ended)
+	}
 	if err != nil {
 		return nil, err
 	}
+	spent = singleUse
 
 	type out struct {
 		item     Item
@@ -506,6 +610,24 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	return jsvalue.Object{{Key: "items", Value: items}, {Key: "withheld", Value: withheld}, {Key: "targets", Value: held}}, nil
 }
 
+// issuerMayIssue is whether the identity that issued a Capability for
+// another may still issue in st's environment: live, of a kind that may,
+// and holding capability.issue.
+func issuerMayIssue(ctx context.Context, db query.DBTX, st *State, issuerID string) (bool, error) {
+	id, err := query.New(db).GetIdentity(ctx, issuerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil || id.Disabled || !authz.MayIssueCapabilities(id.Kind) || id.OrganizationID.String != st.Org.ID {
+		return false, err
+	}
+	grants, err := authz.LoadGrants(ctx, db, st.Org.ID, issuerID)
+	if err != nil {
+		return false, err
+	}
+	return authz.Evaluate(authz.Input{Action: authz.CapabilityIssue, Resource: st.resource(), Grants: grants}).Allowed, nil
+}
+
 // exerciseRefusal is the error deny throws for reason. Existence is hidden:
 // only the bound Broker presenting the right secret learns more than
 // not-found.
@@ -517,13 +639,17 @@ func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 	}
 	details := append(jsvalue.Object{{Key: "reason", Value: reason}}, detail...)
 	switch reason {
-	case "not-found", "wrong-broker", "bad-secret":
+	case "not-found", "wrong-broker", "wrong-run", "bad-secret":
 		return domainerr.New("RESOURCE_NOT_FOUND", "Capability not found")
 	case "requirement-failed":
 		if tailnet {
 			return domainerr.New("TAILNET_CONTEXT_UNAVAILABLE", "Tailnet Context does not satisfy the required selector")
 		}
 		return domainerr.New("TAILNET_CONTEXT_REQUIRED", "This exercise requires trusted Tailnet Context")
+	case "already-used":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "This Capability may be exercised once, and was", Details: details}
+	case "issuer-not-allowed":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The identity that issued this Capability may no longer issue Capabilities here", Details: details}
 	case "capability-without-targets":
 		return &domainerr.Error{Code: "PERMISSION_DENIED", Details: details,
 			Message: "This Capability was issued before substitution targets were required. Restart the agent-safe run with Varlatch CLI 0.11.0 or later."}
