@@ -207,7 +207,7 @@ func (s *standService) refusal(version string) error {
 	if !j.Holds() || j.Settled(boot) {
 		return nil
 	}
-	formatOne := j.Format == journal.FormatOne && j.State == journal.InProgress && j.To == version && (j.Step == journal.Swapped || j.Step == journal.Started)
+	formatOne := j.Format == journal.FormatOne && j.State == journal.InProgress && j.To == version && (j.Step == journal.Swapped || j.Step == journal.Started || j.Step == journal.Checked)
 	if !j.Allows(version, boot) && !formatOne {
 		return errors.New("an upgrade is not over")
 	}

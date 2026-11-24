@@ -85,8 +85,8 @@ func TestUpgradeStart(t *testing.T) {
 		for _, state := range []upgradejournal.State{upgradejournal.InProgress, upgradejournal.Failed} {
 			dir := t.TempDir()
 			writeUpgrade(t, dir, upgradeTo(upgradejournal.FormatOne, state, step, nil))
-			wantHeld := state == upgradejournal.InProgress && (step == upgradejournal.Swapped || step == upgradejournal.Started)
-			closed := slices.Contains(held, step) && step != upgradejournal.Checked
+			wantHeld := state == upgradejournal.InProgress && (step == upgradejournal.Swapped || step == upgradejournal.Started || step == upgradejournal.Checked)
+			closed := slices.Contains(held, step)
 			wantErr := closed && !wantHeld
 			if got, err := upgradeStart(dir, buildinfo.Version); got != wantHeld || (err != nil) != wantErr {
 				t.Errorf("format 1, %s at %q: held %v, %v", state, step, got, err)
@@ -204,19 +204,14 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 			}
 			time.Sleep(3 * upgradeHoldEvery)
 			closed("gone")
-			if next.Format != upgradejournal.FormatOne {
-				// Its checks passed, which a power cut may take back.
-				next.Step = upgradejournal.Checked
-				writeUpgrade(t, in.dir, &next)
-				time.Sleep(3 * upgradeHoldEvery)
-				closed("checked")
-			}
+			// Its checks passed, which a power cut may take back.
+			next.Step = upgradejournal.Checked
+			writeUpgrade(t, in.dir, &next)
+			time.Sleep(3 * upgradeHoldEvery)
+			closed("checked")
 			// Over, but not readable yet: looked at again though the file does
 			// not change.
-			next.Step, next.State, next.Start = upgradejournal.Checked, upgradejournal.Done, nil
-			if next.Format == upgradejournal.FormatOne {
-				next.State = upgradejournal.InProgress
-			}
+			next.State, next.Start = upgradejournal.Done, nil
 			other := t.TempDir()
 			writeUpgrade(t, other, &next)
 			path := filepath.Join(in.dir, upgradejournal.File)

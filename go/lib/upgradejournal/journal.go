@@ -209,11 +209,8 @@ func (j *Journal) Pending() bool { return j != nil && (j.State == InProgress || 
 // the binaries, may be neither release's to serve. Checked is not enough:
 // seen, its record may still be lost to a power cut, and what was served
 // since with it, until the upgrader, having made it durable, writes that the
-// upgrade is done. (In format 1, whose recovery never goes back once the new
-// release may have served, Checked is.)
-func (j *Journal) Holds() bool {
-	return j.Pending() && j.Reached(Stopping) && (j.Format != FormatOne || !j.Reached(Checked))
-}
+// upgrade is done.
+func (j *Journal) Holds() bool { return j.Pending() && j.Reached(Stopping) }
 
 // Settled is whether the record of Checked is durable for certain: it was
 // read in another boot (bootID) than it was written in. The upgrade is then

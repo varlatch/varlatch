@@ -94,7 +94,7 @@ func upgradeNotOver(j *upgradejournal.Journal) error {
 // test-upgrade.sh upgrades from rc.2 with rc.2's own engine.
 func startedByFormatOne(j *upgradejournal.Journal, version string) bool {
 	return j.Format == upgradejournal.FormatOne && j.State == upgradejournal.InProgress && j.To == version &&
-		(j.Step == upgradejournal.Swapped || j.Step == upgradejournal.Started)
+		(j.Step == upgradejournal.Swapped || j.Step == upgradejournal.Started || j.Step == upgradejournal.Checked)
 }
 
 // endUpgradeHold lifts admission's upgrade hold once the journal in configDir

@@ -96,10 +96,6 @@ func TestJournalHolds(t *testing.T) {
 	if none.Holds() || none.Settled("a") {
 		t.Error("no journal holds")
 	}
-	// Format 1's recovery never goes back once the new release may serve.
-	if (&Journal{Format: FormatOne, State: InProgress, Step: Checked}).Holds() || !(&Journal{Format: FormatOne, State: InProgress, Step: Started}).Holds() {
-		t.Error("format 1 at its checks")
-	}
 	// Checked is settled in another boot than it was written in, and only
 	// where there is one to compare.
 	for _, c := range []struct {
