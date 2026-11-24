@@ -87,7 +87,7 @@ func build(t *testing.T, name string) []byte {
 		} {
 			out := filepath.Join(dir, b.name)
 			cmd := exec.Command("go", "build", "-tags", b.tags, "-trimpath",
-				"-ldflags", "-X github.com/varlatch/varlatch/go/lib/buildinfo.Version="+b.version, "-o", out, "github.com/varlatch/varlatch/go/cmd/varlatchd")
+				"-ldflags", "-s -w -X github.com/varlatch/varlatch/go/lib/buildinfo.Version="+b.version, "-o", out, "github.com/varlatch/varlatch/go/cmd/varlatchd")
 			cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 			if o, err := cmd.CombinedOutput(); err != nil {
 				buildsErr = fmt.Errorf("go build varlatchd %s: %v\n%s", b.name, err, o)
@@ -108,10 +108,10 @@ func build(t *testing.T, name string) []byte {
 // varlatchd), etc/ (varlatchd.conf, the journal), the keys, the data
 // directory, and varlatchd run as a process by the fake service.
 type host struct {
-	t                      *testing.T
-	dir, bin, conf, data   string
-	svc                    *fakeService
-	installedCLI, cliBytes []byte
+	t                    *testing.T
+	dir, bin, conf, data string
+	svc                  *fakeService
+	installedCLI         []byte
 }
 
 func key(t *testing.T, path string) {
@@ -125,6 +125,14 @@ func key(t *testing.T, path string) {
 	}
 }
 
+// hostIn is a host in a directory, nothing of it made.
+func hostIn(dir string) *host {
+	h := &host{dir: dir, bin: filepath.Join(dir, "usr", "local", "bin"), conf: filepath.Join(dir, "etc", "varlatch", "varlatchd.conf"), data: filepath.Join(dir, "data"),
+		installedCLI: []byte("#!/bin/sh\necho varlatch " + fromVersion + "\n")}
+	h.svc = &fakeService{bin: h.bin, conf: h.conf, uid: -1}
+	return h
+}
+
 func newHost(t *testing.T) *host { t.Helper(); return newHostOf(t, -1) }
 
 // newHostOf is newHost with varlatchd and its data directory uid's, as the
@@ -136,7 +144,8 @@ func newHostOf(t *testing.T, uid int) *host {
 		t.Skip("a Go installation's host is Linux")
 	}
 	dir := t.TempDir()
-	h := &host{t: t, dir: dir, bin: filepath.Join(dir, "usr", "local", "bin"), conf: filepath.Join(dir, "etc", "varlatch", "varlatchd.conf"), data: filepath.Join(dir, "data")}
+	h := hostIn(dir)
+	h.t, h.svc.uid = t, uid
 	for _, d := range []string{h.bin, filepath.Dir(h.conf), h.data, filepath.Join(dir, "keys")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
@@ -149,14 +158,12 @@ func newHostOf(t *testing.T, uid int) *host {
 	if err := os.WriteFile(h.conf, []byte(conf), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h.installedCLI = []byte("#!/bin/sh\necho varlatch " + fromVersion + "\n")
 	if err := os.WriteFile(filepath.Join(h.bin, "varlatchd"), build(t, "from"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(h.bin, "varlatch"), h.installedCLI, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h.svc = &fakeService{bin: h.bin, conf: h.conf, uid: uid}
 	if uid >= 0 {
 		// The service reads its keys from its own copies, as the unit's
 		// credentials are.
@@ -253,7 +260,7 @@ func (f *fakeService) Stop(context.Context) error {
 }
 
 func (h *host) upgrader(crash func(string) bool) *Upgrader {
-	return &Upgrader{BinDir: h.bin, ConfigPath: h.conf, Service: h.svc, HealthTimeout: 30 * time.Second, Crash: crash}
+	return &Upgrader{BinDir: h.bin, ConfigPath: h.conf, Service: h.svc, HealthTimeout: 30 * time.Second, Crash: crash, poll: 20 * time.Millisecond}
 }
 
 // mustServe: the running varlatchd answers as version, on schema.
@@ -414,9 +421,9 @@ func previousServes(t *testing.T, h *host, j *journal.Journal) {
 // in that state. Every point is crash_test.go's; here are the ones the real
 // thing differs at.
 func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
-	points := []string{"snapshot", "stop:done", "data:copy-database:create:varlatch.db", "data:keep-original:rename:original",
-		"install:" + toVersion + ":varlatchd", "data:swap:rename:varlatch.db", "start:" + toVersion, "started", "checked", "done"}
-	for _, point := range points {
+	points := []string{"data:copy-database:create:varlatch.db", "data:swap:rename:varlatch.db", "checked",
+		"snapshot", "stop:done", "data:keep-original:rename:original", "install:" + toVersion + ":varlatchd", "start:" + toVersion, "started", "done"}
+	for _, point := range of(2, points) {
 		t.Run(point, func(t *testing.T) {
 			h := newHost(t)
 			inst := h.inspect(t)
@@ -459,7 +466,7 @@ func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
 
 // An undo that is itself killed is undone again by the next run.
 func TestAKilledUndoIsUndoneAgain(t *testing.T) {
-	for _, point := range []string{"data:put-back:rename:varlatch.db", "undo:files-back", "start:" + fromVersion} {
+	for _, point := range of(1, []string{"data:put-back:rename:varlatch.db", "undo:files-back", "start:" + fromVersion}) {
 		t.Run(point, func(t *testing.T) {
 			h := newHost(t)
 			inst := h.inspect(t)

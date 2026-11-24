@@ -224,6 +224,8 @@ type Upgrader struct {
 	version func(path string) string
 	// free stands in for FreeSpace (the tests').
 	free func(path string) (uint64, uint64, error)
+	// poll is the time between two health checks; zero is half a second.
+	poll time.Duration
 	// held is the upgrade lock while a run holds it.
 	held *os.File
 }
@@ -1043,6 +1045,10 @@ func (u *Upgrader) check(ctx context.Context, version string, schema int64, inst
 	if timeout == 0 {
 		timeout = time.Minute
 	}
+	wait := u.poll
+	if wait == 0 {
+		wait = 500 * time.Millisecond
+	}
 	deadline := time.Now().Add(timeout)
 	last := "it did not answer"
 	for {
@@ -1085,7 +1091,7 @@ func (u *Upgrader) check(ctx context.Context, version string, schema int64, inst
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(wait):
 		}
 	}
 }

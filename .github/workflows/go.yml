@@ -256,8 +256,8 @@ jobs:
           # and notices); varlatchd's entrypoint, serve and admin (the
           # daemon), the configuration they parse; and the key-environment
           # refusal varlatchd and the CLI share (lib/keyenv, with the key
-          # parsers it uses) and the CLI's entrypoint, which applies it in
-          # the image; the storage engine (its temporary files, under a
+          # parsers and the files kept open it uses) and the CLI's entrypoint, which
+          # applies it in the image; the storage engine (its temporary files, under a
           # read-only root filesystem) and the Compose file the check runs.
           # scripts/conformance/test/routing.test.mjs checks that these
           # select every file the image's build and check read and the
@@ -269,6 +269,7 @@ jobs:
             go/server/config/*
             go/lib/keyenv/*
             go/lib/backup/*
+            go/lib/preread/*
             go/lib/envelope/*
             go/lib/storage/*
             go/cmd/varlatch/main.go
@@ -1847,6 +1848,29 @@ jobs:
       - name: The migration and its way back on the published release
         run: go/test/rehearsal/published.sh whole "$RUNNER_TEMP/g5-published"
 
+  # `varlatch upgrade` and its rollback interrupted at every point, and every
+  # pair of points (internal/upgrade's sample_test.go): a pull request's `go`
+  # tries a fixed part of them. release.yml's go-g5 runs this for the release
+  # being cut.
+  go-upgrade-all:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - name: Every interruption of an upgrade and of a rollback
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          VARLATCH_UPGRADE_TESTS: all
+        run: go test -count=1 -timeout 50m ./cmd/varlatch/internal/upgrade
+
   # The required check (the main ruleset's merge queue): every Go job
   # succeeded or was skipped because none of its paths changed.
   # The backup converter's conversions (go-step7 decision 18, slice 7.7b),
@@ -1914,11 +1938,12 @@ jobs:
     name: go-ok
     # On a draft it runs too, and fails: every other job is skipped then, and
     # a skipped required check would read as passed.
-    # go-container and go-g5-published run only at night and by hand (skipped
-    # on a pull request and in the merge queue, which go-ok accepts): listed so
-    # that a failed nightly run's go-ok is red too, not green beside a red job.
+    # go-container, go-g5-published and go-upgrade-all run only at night and by
+    # hand (skipped on a pull request and in the merge queue, which go-ok
+    # accepts): listed so that a failed nightly run's go-ok is red too, not
+    # green beside a red job.
     if: always()
-    needs: [changes, go, go-g5, go-g5-published, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
+    needs: [changes, go, go-g5, go-g5-published, go-upgrade-all, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

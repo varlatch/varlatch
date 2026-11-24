@@ -371,7 +371,7 @@ test("the steps the setup, ingress and installers replacements name cannot skip 
   assert.ok(ps1Tests.length >= 2, "the install.ps1 tests named");
   for (const { dir, t } of ps1Tests) runs(ps1, dir, t);
   // install.sh under shellcheck.
-  assert.match(stepOf(workflow, "install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck"), /shellcheck -s sh go\/install\/install\.sh /);
+  assert.match(stepOf(workflow, "install.sh, the G9a runner, the restore drill, G6, the setup and the upgrade test pass shellcheck"), /shellcheck -s sh go\/install\/install\.sh /);
   // Setup from an empty host: test-setup.sh with Pebble, so its public
   // mode runs rather than saying SKIP.
   const setup = stepOf(workflow, "varlatch setup from an empty host, on this runner's systemd");

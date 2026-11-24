@@ -5,10 +5,12 @@
 package upgrade
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,8 +41,118 @@ func upgraded(t *testing.T, rollbackSafe bool) *host {
 }
 
 // upgradedWith is upgraded, with the new release's varlatchd build and
-// the declaration its release.json makes.
+// the declaration its release.json makes: a host upgraded once, and for each
+// test after that one a copy of it, in its own directory.
 func upgradedWith(t *testing.T, build string, d release.Declaration) *host {
+	t.Helper()
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := build + " " + string(b)
+	if kept := upgradedHosts[name]; kept != "" {
+		return copiedHost(t, kept)
+	}
+	h := upgradedAnew(t, build, d)
+	dir, err := os.MkdirTemp("", "varlatch-upgrade-host-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	copyHost(t, h.dir, dir)
+	upgradedHosts[name] = dir
+	if err := h.svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.upgrader(nil).mustServe(t, toVersion, toSchema)
+	return h
+}
+
+// upgradedHosts are the directories of the hosts upgradedWith has made, by
+// what they were upgraded to; TestMain removes them.
+var upgradedHosts = map[string]string{}
+
+func init() {
+	atEnd = func() {
+		for _, dir := range upgradedHosts {
+			os.RemoveAll(dir)
+		}
+	}
+}
+
+// copiedHost is a copy of a host, its varlatchd started.
+func copiedHost(t *testing.T, from string) *host {
+	t.Helper()
+	h := hostIn(t.TempDir())
+	h.t = t
+	copyHost(t, from, h.dir)
+	t.Cleanup(func() { _ = h.svc.Stop(context.Background()) })
+	if err := h.svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.upgrader(nil).mustServe(t, toVersion, toSchema)
+	return h
+}
+
+// copyHost copies a host's files into the directory to, with the paths in
+// them (the configuration's, the journal's). Its programs are the same files,
+// under second names: whatever replaces one renames another into its place.
+func copyHost(t *testing.T, from, to string) {
+	t.Helper()
+	// What a host was made in, and the configuration says.
+	conf, err := os.ReadFile(hostIn(from).conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, _ := strings.Cut(string(conf), "data_dir = ")
+	was, _, _ := strings.Cut(rest, "/data\n")
+	err = filepath.WalkDir(from, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(from, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(to, rel)
+		switch {
+		case d.IsDir():
+			if err := os.MkdirAll(target, info.Mode().Perm()); err != nil {
+				return err
+			}
+			return os.Chmod(target, info.Mode().Perm())
+		case !info.Mode().IsRegular():
+			return nil // the control socket
+		case info.Mode().Perm()&0o100 != 0:
+			return os.Link(p, target)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if strings.HasSuffix(p, ".json") || strings.HasSuffix(p, ".conf") {
+			b = bytes.ReplaceAll(b, []byte(was+"/"), []byte(to+"/"))
+		} else if bytes.Contains(b, []byte(was+"/")) {
+			return fmt.Errorf("%s holds a path of its host's", p)
+		}
+		return os.WriteFile(target, b, info.Mode().Perm())
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(to, 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// upgradedAnew is a host of its own, another installation than any other's.
+func upgradedAnew(t *testing.T, build string, d release.Declaration) *host {
 	t.Helper()
 	h := newHost(t)
 	inst := h.inspect(t)
@@ -394,42 +506,41 @@ func upgradedServes(t *testing.T, h *host, j *journal.Journal) {
 // checks) or undoes it (before them): the release it returns to serves, or
 // the one it left, on its database as it was.
 func TestAKilledRollbackIsFinishedOrUndone(t *testing.T) {
-	for _, c := range []struct {
-		safe   bool
-		points []string
-	}{
-		{false, []string{"stop:done", "install:" + fromVersion + ":varlatchd", "rollback:restored", "started", "checked"}},
-		{true, []string{"install:" + fromVersion + ":varlatchd", "checked"}},
-	} {
-		for _, point := range c.points {
-			name := point
-			if c.safe {
-				name = "safe:" + point
-			}
-			t.Run(name, func(t *testing.T) {
-				h := upgraded(t, c.safe)
-				plan, err := h.upgrader(nil).PlanRollback(context.Background())
-				if err != nil {
-					t.Fatal(err)
-				}
-				j, err := h.upgrader(func(p string) bool { return p == point }).Rollback(context.Background(), plan, nil)
-				if !errors.Is(err, errKilled) || !j.Pending() {
-					t.Fatalf("killed at %s: %+v, %v", point, j, err)
-				}
-				j, err = h.upgrader(nil).Recover(context.Background())
-				if err != nil {
-					t.Fatalf("recover: %v", err)
-				}
-				if point == "checked" {
-					if j.State != journal.Done {
-						t.Fatalf("after its checks, finished: %+v", j)
-					}
-					h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
-					return
-				}
-				upgradedServes(t, h, j)
-			})
+	type cut struct {
+		safe  bool
+		point string
+	}
+	for _, c := range of(1, []cut{
+		{false, "rollback:restored"}, {true, "install:" + fromVersion + ":varlatchd"},
+		{false, "stop:done"}, {false, "install:" + fromVersion + ":varlatchd"}, {false, "started"}, {false, "checked"}, {true, "checked"},
+	}) {
+		name, point := c.point, c.point
+		if c.safe {
+			name = "safe:" + point
 		}
+		t.Run(name, func(t *testing.T) {
+			h := upgraded(t, c.safe)
+			plan, err := h.upgrader(nil).PlanRollback(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			j, err := h.upgrader(func(p string) bool { return p == point }).Rollback(context.Background(), plan, nil)
+			if !errors.Is(err, errKilled) || !j.Pending() {
+				t.Fatalf("killed at %s: %+v, %v", point, j, err)
+			}
+			j, err = h.upgrader(nil).Recover(context.Background())
+			if err != nil {
+				t.Fatalf("recover: %v", err)
+			}
+			if point == "checked" {
+				if j.State != journal.Done {
+					t.Fatalf("after its checks, finished: %+v", j)
+				}
+				h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
+				return
+			}
+			upgradedServes(t, h, j)
+		})
 	}
 }
 
@@ -437,13 +548,14 @@ func TestAKilledRollbackIsFinishedOrUndone(t *testing.T) {
 // the release returned to, and that release opening the database. Each
 // other combination restores the snapshot and says which rule decided.
 func TestTheRollbackRuleNeedsTheDeclarationAndTheOpenCheck(t *testing.T) {
-	for _, c := range []struct {
+	type count struct {
 		name            string
 		build           string
 		decl            release.Declaration
 		declared, opens bool
 		rule            string
-	}{
+	}
+	for _, c := range of(1, []count{
 		// Rollback-safe, but checked against another release (a skipped
 		// one): the previous varlatchd opens the database, yet nothing
 		// says it understands what is in it.
@@ -453,7 +565,7 @@ func TestTheRollbackRuleNeedsTheDeclarationAndTheOpenCheck(t *testing.T) {
 		// the previous varlatchd out (a declaration the build does not keep).
 		{"declared, does not open", "unsafe", safe, true, false, "declares it rollback-safe for " + fromVersion + ", but " + fromVersion + " cannot open the database"},
 		{"neither", "unsafe", unsafeDecl, false, false, "does not declare it rollback-safe for " + fromVersion + ", and " + fromVersion + " cannot open the database"},
-	} {
+	}) {
 		t.Run(c.name, func(t *testing.T) {
 			h := upgradedWith(t, c.build, c.decl)
 			plan, err := h.upgrader(nil).PlanRollback(context.Background())
@@ -566,7 +678,7 @@ func TestTheCommandsByHand(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stubs, "sudo"), []byte("#!/bin/sh\nexec \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, last := range []int{2, 3, 4, 5, 6, 7, 8} {
+	for _, last := range of(1, []int{8, 5, 2, 3, 4, 6, 7}) {
 		t.Run(fmt.Sprintf("back after %d", last), func(t *testing.T) {
 			h := upgraded(t, false)
 			events := h.auditEvents(t)
@@ -664,8 +776,8 @@ func TestTheCommandsByHand(t *testing.T) {
 // data directory, or the database is gone or another's: nothing is taken for
 // the planned one, and nothing is made.
 func TestARollbackOnAnotherDatabaseThanPlanned(t *testing.T) {
-	for _, safe := range []bool{true, false} {
-		h := upgraded(t, safe)
+	for _, keeps := range of(1, []bool{false, true}) {
+		h := upgraded(t, keeps)
 		u := h.upgrader(nil)
 		plan, err := u.PlanRollback(context.Background())
 		if err != nil {
@@ -676,7 +788,10 @@ func TestARollbackOnAnotherDatabaseThanPlanned(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Healthy, of the same release: another installation's.
-		other := upgraded(t, safe)
+		other := upgradedAnew(t, "unsafe", unsafeDecl)
+		if keeps {
+			other = upgradedAnew(t, "to", safe)
+		}
 		if err := other.svc.Stop(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -717,7 +832,7 @@ func TestARollbackOnAnotherDatabaseThanPlanned(t *testing.T) {
 			}
 			return false
 		}
-		at.HealthTimeout = 5 * time.Second
+		at.HealthTimeout = time.Second
 		j, err := at.Rollback(context.Background(), plan, nil)
 		if err == nil || !strings.Contains(err.Error(), "names the data directory "+other.data) || j.State != journal.Failed || !strings.Contains(err.Error(), "the configuration may name another data directory") {
 			t.Fatalf("%+v, %v", j, err)
