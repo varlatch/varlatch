@@ -239,12 +239,27 @@ Changes since 0.50.0-rc.2, by pull request:
   effect. `install.ps1` was not affected. To update 0.50.0-rc.2, run
   `varlatch self-update`, or this release's `install.sh`: 0.50.0-rc.2's own
   copy still refuses.
+<!-- SLOT #448 (open, head df8c4514; recheck against the merged PR, then remove both markers; or drop) -->
+- **`varlatch self-update` on Windows waits for a held file (#448).** When
+  another process holds the old or the new binary (a virus scanner, an
+  indexer), the replacement is tried again for up to 5 seconds, with the old
+  binary in its place during the waits; before, it failed at once. When the
+  old binary cannot be put back, the message says where it is.
+<!-- END SLOT #448 -->
+<!-- SLOT #332 (draft, head 056eb810, to be restacked; recheck against the merged PR, then remove both markers; or drop) -->
+- **`varlatch upgrade --rollback` (#332).** On a Linux host install, as root,
+  it returns to the release the last upgrade came from, with the binaries
+  that upgrade kept. The database stays when the upgraded release's manifest
+  declares itself rollback-safe for that release and the old varlatchd opens
+  the database as it is; otherwise the snapshot from before the upgrade is
+  restored, after a list of what is lost and a confirmation
+  (`--accept-data-loss`). `varlatch doctor` says when an upgrade is pending.
+<!-- END SLOT #332 -->
 - **`varlatch migrate --to-image`, refused clearly (#435).** A reference
   without a tag, or otherwise not pinned, was refused with a message whose
   reference was masked. The refusal now names the repository and the digest
   when the value is an image reference by digest, does not show any other
   value, and gives the form to use, `repository:tag@sha256:<digest>`.
-<!-- SLOT #436 (open, armed, head 7a4e45d9; recheck against the merged PR, then remove both markers) -->
 - **`varlatch migrate` from a Coolify installation (#436).** A directory
   Coolify deploys from can hold the repository's `docker-compose.yml`
   beside the file that runs, and plain `docker compose` read the wrong one
@@ -277,8 +292,7 @@ Changes since 0.50.0-rc.2, by pull request:
   lifted last, only while that gate is there.
 - **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
   refuses an earlier one before anything is done.
-<!-- END SLOT #436 -->
-<!-- SLOT #446 (open, head d6a9d52d, stacked on #436; recheck against the merged PR, then remove both markers; or drop) -->
+<!-- SLOT #446 (armed, head d6a9d52d; recheck against the merged PR, then remove both markers; or drop) -->
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing
   (#446).** Each step says when it starts, every 15 seconds while it
   lasts (how long so far, and what it waits for) and when it ends; so do the
@@ -319,9 +333,11 @@ Changes since 0.50.0-rc.2, by pull request:
   members yet", and Invite shows only to someone who may invite; the server
   refused both before too. A members list that cannot be read says so, with
   Try again. The Audit page fits a phone's width.
-- **The migration's rehearsals (#435).** Fixes to the rehearsal harness for
-  the image target and for a public address with its own certificate
-  authority. No change to what is shipped.
+<!-- SLOT #447 (armed, head a50e4c43; on merge put it in the line below and remove this marker) -->
+- **The migration's rehearsals (#435, #447).** Fixes to the rehearsal harness
+  for the image target and for a public address with its own certificate
+  authority; Coolify and the Tailscale sidecar together, and `--resume` after
+  a kill. No change to what is shipped.
 - **The release process (#438).** The G1 gate reads its walkthrough record
   from a commit of its own (`walkthrough_ref`), which differs from the
   candidate it judges only in regular files added or changed under
