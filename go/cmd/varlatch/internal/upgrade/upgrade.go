@@ -198,6 +198,8 @@ type Upgrader struct {
 	boot       func() string
 	// run stands in for running a varlatchd (the tests').
 	run func(binary string, args ...string) ([]byte, error)
+	// version stands in for a varlatch's --version (the tests').
+	version func(path string) string
 	// free stands in for FreeSpace (the tests').
 	free func(path string) (uint64, uint64, error)
 	// held is the upgrade lock while a run holds it.
@@ -742,6 +744,14 @@ func (u *Upgrader) stage(j *journal.Journal, rel Release) error {
 			return fmt.Errorf("staging: %w", err)
 		}
 		for _, name := range binaryNames {
+			if v.version == j.From && name == "varlatch" && u.keptVarlatch(j) {
+				sum, err := fileSum(filepath.Join(dir, name))
+				if err != nil {
+					return fmt.Errorf("staging %s's %s: %w", v.version, name, err)
+				}
+				v.sums.Varlatch = sum
+				continue
+			}
 			r, err := v.open(name)
 			if err != nil {
 				return fmt.Errorf("staging %s's %s: %w", v.version, name, err)
@@ -766,6 +776,27 @@ func (u *Upgrader) stage(j *journal.Journal, rel Release) error {
 	}
 	j.Binaries = sums
 	return nil
+}
+
+// keptVarlatch is whether the previous release's varlatch is kept, and is not
+// the one installed: an attempt before was cut short once it had put another
+// in its place. The kept one is then what there is to go back to.
+func (u *Upgrader) keptVarlatch(j *journal.Journal) bool {
+	want := "varlatch " + j.From
+	kept := filepath.Join(j.Releases, j.From, "varlatch")
+	return u.versionOf(filepath.Join(u.BinDir, "varlatch")) != want && rootOwned(kept) == nil && u.versionOf(kept) == want
+}
+
+// versionOf is what a varlatch says its version is, "" when it says nothing.
+func (u *Upgrader) versionOf(path string) string {
+	if u.version != nil {
+		return u.version(path)
+	}
+	out, err := exec.Command(path, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // rootFS is the file system for root's own directories.
