@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -247,7 +248,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		// The live open, and the reverse's barrier: through the running
 		// daemon, whose admission holds the migration's gate; offline, on
 		// the data directory.
-		return route(cfg, append([]string{sub}, rest...), stdout, stderr)
+		return route(cfg, filepath.Dir(path), append([]string{sub}, rest...), stdout, stderr)
 	case sub == "migrate":
 		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "status":
@@ -257,7 +258,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	case sub == "changes":
 		return runChanges(cfg, rest, stdout, stderr)
 	}
-	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
+	return route(cfg, filepath.Dir(path), append([]string{sub}, rest...), stdout, stderr)
 }
 
 // adminAsRoot is whether admin runs as root (never on Windows, where
