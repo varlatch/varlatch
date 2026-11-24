@@ -142,6 +142,13 @@ fixes.
 - **`varlatch migrate --rollback` makes the dashboard again** once the
   rebuilt server starts. Its nginx resolves the server's address once, and
   one that kept running could answer 502 when the address had changed.
+- **`varlatch setup` on a terminal shows the first administrator's link.**
+  In 0.50.0-rc.2 and earlier it showed `/enroll#[redacted]`, so an
+  interactive setup could not go on without a link from `varlatchd admin
+  bootstrap --revoke-unused`. Setup without a terminal, and the links of
+  `varlatch invite`, `move` and `admin reenroll`, were not affected. In
+  assisted mode setup neither asks nor shows anything on the terminal, as
+  without one: a coding agent would read the link and the keys.
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing.**
   Each step says when it starts, every 15 seconds while it lasts (how long
   so far, and what it waits for) and when it ends, where a minute or more
