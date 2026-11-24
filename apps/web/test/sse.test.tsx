@@ -149,6 +149,23 @@ describe("the signal stream", () => {
     expect(h.fire()).toBeLessThanOrEqual(reconnectDelay(1, () => 1));
   });
 
+  it("reconnects once after a change of its scope, without a loop", () => {
+    const h = harness();
+    const stream = new SignalStream(h.deps);
+    stream.start();
+    h.last().emit("ready", {});
+    h.last().emit("close", { reason: "scope-changed" });
+    h.last().fail();
+    h.last().fail();
+    expect(h.timers.filter((t) => !t.cleared)).toHaveLength(1);
+    expect(h.fire()).toBe(reconnectDelay(0, () => 0.5));
+    expect(h.sources).toHaveLength(2);
+    h.last().emit("ready", {});
+    expect(stream.isConnected()).toBe(true);
+    expect(h.timers.every((t) => t.cleared)).toBe(true);
+    stream.stop();
+  });
+
   it("bounds the backoff", () => {
     for (let i = 0; i < 20; i++) {
       expect(reconnectDelay(i, () => 1)).toBeLessThanOrEqual(36_000);

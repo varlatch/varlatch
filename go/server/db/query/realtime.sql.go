@@ -110,35 +110,20 @@ func (q *Queries) DeletedOrganizationsAmong(ctx context.Context, ids []string) (
 	return items, nil
 }
 
-const memberOrganizationIDs = `-- name: MemberOrganizationIDs :many
-SELECT o.id FROM organizations o
-JOIN org_memberships m ON m.organization_id = o.id
-WHERE m.identity_id = ? AND m.removed_at IS NULL AND o.deleted_at IS NULL
+const sessionEvidence = `-- name: SessionEvidence :one
+SELECT user_verified, passkey_id FROM auth_session_evidence WHERE session_id = ?
 `
 
-// The Organizations whose signals an identity's streams receive: the ones
-// it is a live member of (GET /v1/organizations' list).
-func (q *Queries) MemberOrganizationIDs(ctx context.Context, identityID string) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, memberOrganizationIDs, identityID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+type SessionEvidenceRow struct {
+	UserVerified bool
+	PasskeyID    string
+}
+
+func (q *Queries) SessionEvidence(ctx context.Context, sessionID string) (SessionEvidenceRow, error) {
+	row := q.db.QueryRowContext(ctx, sessionEvidence, sessionID)
+	var i SessionEvidenceRow
+	err := row.Scan(&i.UserVerified, &i.PasskeyID)
+	return i, err
 }
 
 const sessionOfCredential = `-- name: SessionOfCredential :one
@@ -150,6 +135,48 @@ func (q *Queries) SessionOfCredential(ctx context.Context, id string) (sql.NullS
 	var auth_session_id sql.NullString
 	err := row.Scan(&auth_session_id)
 	return auth_session_id, err
+}
+
+const streamOrganizations = `-- name: StreamOrganizations :many
+SELECT o.id,
+       EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = o.id AND f.lifted_at IS NULL) AS frozen,
+       EXISTS (SELECT 1 FROM security_controls c WHERE c.organization_id = o.id AND c.control = 'passkey-verification' AND c.mode = 'enforce') AS verified_only
+FROM organizations o
+JOIN org_memberships m ON m.organization_id = o.id
+WHERE m.identity_id = ? AND m.removed_at IS NULL AND o.deleted_at IS NULL
+`
+
+type StreamOrganizationsRow struct {
+	ID           string
+	Frozen       bool
+	VerifiedOnly bool
+}
+
+// The Organizations an identity is a live member of (GET
+// /v1/organizations' list), and what holds their signals back: an open
+// incident freeze, and passkey-verification at enforce, for a sign-in
+// without the evidence it asks for.
+func (q *Queries) StreamOrganizations(ctx context.Context, identityID string) ([]StreamOrganizationsRow, error) {
+	rows, err := q.db.QueryContext(ctx, streamOrganizations, identityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StreamOrganizationsRow
+	for rows.Next() {
+		var i StreamOrganizationsRow
+		if err := rows.Scan(&i.ID, &i.Frozen, &i.VerifiedOnly); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const streamSessionLive = `-- name: StreamSessionLive :one

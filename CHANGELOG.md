@@ -56,6 +56,12 @@ fixes.
 
 ### Dashboard
 
+- **Live updates say nothing about an Organization you may not read.** The
+  Go server's stream kept sending change signals (which domains changed and
+  when, never what) to members of an Organization frozen for an incident,
+  and to people whose sign-in `passkey-verification` refuses. 0.23.0 sent
+  them none. A stream that loses an Organization this way closes
+  (`scope-changed`), and the dashboard reconnects and refreshes.
 - **An address without a page shows a not-found page** of the dashboard,
   with its navigation and a way back, where the router's developer error
   page ("Unexpected Application Error!") showed. A page that fails shows a
