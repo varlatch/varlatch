@@ -243,6 +243,7 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		_ = os.Remove(state("sidecar-remade"))
 		if stopped("varlatchd") && containerGone("varlatchd") {
+			_ = os.Remove(state("gone-varlatchd"))
 			return okOr(os.WriteFile(state("created-varlatchd"), nil, 0o600)), true
 		}
 		return 0, true

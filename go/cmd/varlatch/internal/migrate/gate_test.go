@@ -127,6 +127,23 @@ func TestCheckGate(t *testing.T) {
 			t.Errorf("%s: the plan: %v, want %q", name, err, c.want)
 		}
 	}
+	// The reverse's plan, in every shape: the recorded volume, there.
+	for name, set := range map[string]func(h *labelled){
+		"is not there": func(h *labelled) { delete(h.volumes, stateVol.Name) },
+		"is not the one that carried the gate when the migration began": func(h *labelled) {
+			v := stateVol
+			v.CreatedAt = "2026-11-23T00:00:00Z"
+			h.volumes[v.Name] = v
+		},
+	} {
+		host := gatedHost()
+		set(host)
+		cmp := stockCompose(t, &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}}})
+		j := &Journal{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaabcdefgh", Source: SourceInfo{State: &stateVol, Digest: "sha256:" + strings.Repeat("a", 64), DigestRepository: "ghcr.io/varlatch/varlatchd", Volumes: stockVolumes}}
+		if _, err := cmp.RebuildPlan(t.Context(), j); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("the plan: %v, want %q", err, name)
+		}
+	}
 	// An image that is gone is pulled, never through the gate's own run.
 	host := gatedHost()
 	run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker image inspect ": {Code: 1}, "docker pull -q other@sha256:z": {Code: 1}}}
@@ -280,6 +297,12 @@ func TestTheUndosGateIsKnownLater(t *testing.T) {
 	if after.Source.State == nil || *after.Source.State != other {
 		t.Errorf("the volume: %+v", after.Source.State)
 	}
+	if g := sourceGate(after); g.Was != "gate-1" {
+		t.Errorf("%+v", g)
+	}
+	if g := sourceGate(&Journal{SourceGate: "gate-1", Barrier: &BarrierRecord{GateID: "gate-1"}}); g.ID != "gate-1" || g.Was != "" {
+		t.Errorf("%+v", g)
+	}
 	if after.SourceGate != "gate-9" || after.Barrier.GateID != "gate-1" || src.did[0] != "hold gate-1" || sourceGate(after).ID != "gate-9" || src.position != "46" {
 		t.Errorf("%+v, %v, position %q", after.SourceGate, src.did, src.position)
 	}
@@ -298,12 +321,43 @@ func TestHoldGate(t *testing.T) {
 	}{
 		{"there", func(*Compose, *labelled, *GateRef) {}, "", "", "gate-1"},
 		{"lifted", func(_ *Compose, h *labelled, _ *GateRef) { h.gates[stateVol.Name] = "" }, "", "new", "gate-1"},
-		{"a killed undo's barrier of an earlier build", func(_ *Compose, h *labelled, _ *GateRef) {
+		{"the barrier it was", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.Replace(gateText, "migrated-out", "migration", 1)
+		}, "", "replace gate-1", "gate-1"},
+		{"a barrier of an id journalled before", func(_ *Compose, h *labelled, g *GateRef) {
+			g.Was = "gate-9"
 			h.gates[stateVol.Name] = strings.ReplaceAll(strings.Replace(gateText, "migrated-out", "migration", 1), "gate-1", "gate-9")
-		}, "", "replace", "gate-1"},
-		{"another migrated-out one", func(_ *Compose, h *labelled, _ *GateRef) {
+		}, "", "replace gate-9", "gate-1"},
+		{"another's barrier", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.ReplaceAll(strings.Replace(gateText, "migrated-out", "migration", 1), "gate-1", "gate-9")
+		}, "behind a migration gate (gate-9), not the migration's: left as it is", "", ""},
+		{"the migrated-out gate of an id journalled before", func(_ *Compose, h *labelled, g *GateRef) {
+			g.Was = "gate-9"
 			h.gates[stateVol.Name] = strings.Replace(gateText, "gate-1", "gate-9", 1)
 		}, "", "", "gate-9"},
+		{"another's migrated-out gate", func(_ *Compose, h *labelled, _ *GateRef) {
+			h.gates[stateVol.Name] = strings.Replace(gateText, "gate-1", "gate-9", 1)
+		}, "behind a migrated-out gate (gate-9), not the migration's: left as it is", "", ""},
+		{"an external volume, which has no labels", func(_ *Compose, h *labelled, g *GateRef) {
+			v := stateVol
+			v.Project, v.Key = "", ""
+			h.volumes[v.Name], h.gates[v.Name], g.State = v, "", &v
+		}, "", "new", "gate-1"},
+		{"an external volume made again", func(_ *Compose, h *labelled, g *GateRef) {
+			v := stateVol
+			v.Project, v.Key = "", ""
+			h.gates[v.Name], g.State = "", &v
+			w := v
+			w.CreatedAt = "2026-11-23T00:00:00Z"
+			h.volumes[v.Name] = w
+		}, "is not of its project varlatch", "", ""},
+		{"an external volume gone", func(_ *Compose, h *labelled, g *GateRef) {
+			v := stateVol
+			v.Project, v.Key = "", ""
+			g.State = &v
+			delete(h.volumes, v.Name)
+			delete(h.gates, v.Name)
+		}, "is not there", "", ""},
 		{"a restore's", func(_ *Compose, h *labelled, _ *GateRef) {
 			h.gates[stateVol.Name] = strings.Replace(gateText, "migrated-out", "restore", 1)
 		}, "behind a restore gate (gate-1), not the migration's: left as it is", "", ""},
@@ -390,15 +444,17 @@ func TestHoldGate(t *testing.T) {
 			if held.ID != c.id || held.State == nil || *held.State != host.volumes[stateVol.Name] {
 				t.Errorf("%s: held %+v", c.name, held)
 			}
-			if err := cmp.CheckHeld(t.Context(), held); err != nil {
-				t.Errorf("%s: held: %v", c.name, err)
-			}
 		}
 		// Nothing of the Compose files is asked for, when the volume is
 		// recorded: they may not be whole. Nothing is started.
 		for _, r := range run.ran {
 			if recorded || !strings.HasPrefix(r, "docker compose config ") {
 				t.Errorf("%s: ran %q", c.name, r)
+			}
+		}
+		if c.want == "" {
+			if err := cmp.CheckHeld(t.Context(), held); err != nil {
+				t.Errorf("%s: held: %v", c.name, err)
 			}
 		}
 	}
@@ -414,54 +470,80 @@ func TestHoldGate(t *testing.T) {
 // Whoever starts the server, it is behind the gate: the gate in the recorded
 // volume, the server's containers on it, whole, and no import running.
 func TestCheckHeld(t *testing.T) {
+	elsewhere := Ran{Answer: []byte(strings.Replace(stockConfig, `"varlatchd":{"volumes":[{"type":"volume","source":"varlatch-state"`, `"varlatchd":{"volumes":[{"type":"volume","source":"varlatch-state-new"`, 1))}
+	bind := Ran{Answer: []byte(strings.Replace(stockConfig, `"varlatchd":{"volumes":[{"type":"volume","source":"varlatch-state"`, `"varlatchd":{"volumes":[{"type":"bind","source":"/srv/state"`, 1))}
+	dir := Ran{Answer: []byte(strings.Replace(stockConfig, `"varlatchd":{`, `"varlatchd":{"environment":{"VARLATCH_STATE_DIR":"/elsewhere"},`, 1))}
 	for _, c := range []struct {
-		name string
-		set  func(cmp *Compose, h *labelled, g *GateRef)
-		want string
+		name   string
+		set    func(cmp *Compose, h *labelled, g *GateRef)
+		want   string
+		config *Ran
 	}{
+		{"the next container would be on another volume, none now", func(*Compose, *labelled, *GateRef) {}, "the Compose files give varlatchd's state the volume varlatch_varlatch-state-new, and the gate is in varlatch_varlatch-state: put them back", &elsewhere},
+		{"the next container would be on a bind mount", func(*Compose, *labelled, *GateRef) {}, "mounts no named volume", &bind},
+		{"the next container would keep its state elsewhere", func(*Compose, *labelled, *GateRef) {}, "in another directory", &dir},
+		{"the Compose files are not whole", func(*Compose, *labelled, *GateRef) {}, "put them back as the migration left them", &Ran{Code: 1, Said: []byte("no such file")}},
+		{"another service's container on another volume there", func(cmp *Compose, h *labelled, _ *GateRef) {
+			l := ownCtr(cmp, "convex-backend")
+			l.name, l.mounts = "the-convex", []containerMount{{Type: "volume", Name: "theirs", Destination: stateTarget}}
+			h.containers = []composeContainer{l}
+		}, "the project's convex-backend (the-convex) container has theirs at /var/lib/varlatch", nil},
+		{"a one-off's on a bind mount there", func(cmp *Compose, h *labelled, _ *GateRef) {
+			l := ctr("varlatch", "varlatch-migrate", filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "True")
+			l.status, l.mounts = "exited", []containerMount{{Type: "bind", Destination: stateTarget}}
+			h.containers = []composeContainer{l}
+		}, "has a bind at /var/lib/varlatch", nil},
+		{"an external volume, held", func(_ *Compose, h *labelled, g *GateRef) {
+			v := stateVol
+			v.Project, v.Key = "", ""
+			h.volumes[v.Name], g.State = v, &v
+		}, "", nil},
 		{"held, its server running", func(cmp *Compose, h *labelled, _ *GateRef) {
 			h.containers = []composeContainer{ownCtr(cmp, "varlatchd")}
-		}, ""},
-		{"held, without containers", func(*Compose, *labelled, *GateRef) {}, ""},
-		{"lifted", func(_ *Compose, h *labelled, _ *GateRef) { h.gates[stateVol.Name] = "" }, "holds no gate"},
-		{"another gate", func(_ *Compose, h *labelled, g *GateRef) { g.ID = "gate-2" }, "not the migration's own, gate-2"},
+		}, "", nil},
+		{"held, without containers", func(*Compose, *labelled, *GateRef) {}, "", nil},
+		{"lifted", func(_ *Compose, h *labelled, _ *GateRef) { h.gates[stateVol.Name] = "" }, "holds no gate", nil},
+		{"another gate", func(_ *Compose, h *labelled, g *GateRef) { g.ID = "gate-2" }, "not the migration's own, gate-2", nil},
 		{"the barrier only", func(_ *Compose, h *labelled, _ *GateRef) {
 			h.gates[stateVol.Name] = strings.Replace(gateText, "migrated-out", "migration", 1)
-		}, "not the migration's own"},
-		{"the volume gone", func(_ *Compose, h *labelled, _ *GateRef) { delete(h.volumes, stateVol.Name) }, "is not there"},
+		}, "not the migration's own", nil},
+		{"the volume gone", func(_ *Compose, h *labelled, _ *GateRef) { delete(h.volumes, stateVol.Name) }, "is not there", nil},
 		{"another volume", func(_ *Compose, h *labelled, _ *GateRef) {
 			v := stateVol
 			v.CreatedAt = "2026-11-23T00:00:00Z"
 			h.volumes[v.Name] = v
-		}, "is not the one that carries the gate"},
+		}, "is not the one that carries the gate", nil},
 		{"its server on another volume", func(cmp *Compose, h *labelled, _ *GateRef) {
 			l := ownCtr(cmp, "varlatchd")
 			l.mounts[0].Name, l.status = "another", "exited"
 			h.containers = []composeContainer{l}
-		}, "it is another"},
+		}, "container is on another", nil},
 		{"the import running", func(cmp *Compose, h *labelled, _ *GateRef) {
 			l := ctr("varlatch", importService, filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "True")
 			l.name = "the-import"
 			h.containers = []composeContainer{l}
-		}, "the reverse's import (the-import) still runs"},
+		}, "the reverse's import (the-import) still runs", nil},
 		{"the import ended", func(cmp *Compose, h *labelled, _ *GateRef) {
 			l := ctr("varlatch", importService, filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "True")
 			l.status = "exited"
 			h.containers = []composeContainer{l}
-		}, ""},
-		{"no volume recorded", func(_ *Compose, _ *labelled, g *GateRef) { g.State = nil }, "does not record"},
+		}, "", nil},
+		{"no volume recorded", func(_ *Compose, _ *labelled, g *GateRef) { g.State = nil }, "does not record", nil},
 		{"another directory's container of the project", func(_ *Compose, h *labelled, _ *GateRef) {
 			h.containers = []composeContainer{ctr("varlatch", "varlatchd", "/srv/live/docker-compose.yml", "/srv/live", "False")}
-		}, "made from /srv/live"},
+		}, "made from /srv/live", nil},
 	} {
 		host, g := gatedHost(), gate1
-		run := &scripted{t: t, host: host}
+		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}}}
+		if c.config != nil {
+			run.answers["docker compose config "] = *c.config
+		}
 		cmp := stockCompose(t, run)
 		c.set(cmp, host, &g)
 		if err := cmp.CheckHeld(t.Context(), g); (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want %q", c.name, err, c.want)
 		}
-		if len(run.ran) > 0 || len(host.writes) > 0 {
+		if len(run.ran) > 1 || len(host.writes) > 0 {
 			t.Errorf("%s: ran %q, wrote %v", c.name, run.ran, host.writes)
 		}
 	}
@@ -750,6 +832,11 @@ func TestTheCheckedContainerStarts(t *testing.T) {
 				}
 			}
 		}, "is not the one that carried the gate", ""},
+		{"the volume another before its container is made", func(_ *Compose, h *labelled, _ *scripted) {
+			v := stateVol
+			v.CreatedAt = "2026-11-23T00:00:00Z"
+			h.volumes[v.Name] = v
+		}, "is not the one that carried the gate", ""},
 		{"the volume lost before", func(_ *Compose, h *labelled, _ *scripted) { delete(h.volumes, stateVol.Name) }, "is not there", ""},
 	} {
 		host := gatedHost()
@@ -769,6 +856,9 @@ func TestTheCheckedContainerStarts(t *testing.T) {
 		}
 		if runs != c.runs {
 			t.Errorf("%s: %q runs, want %q", c.name, runs, c.runs)
+		}
+		if strings.Contains(c.name, "before its container") && slices.ContainsFunc(run.ran, func(r string) bool { return strings.HasPrefix(r, "docker compose up") }) {
+			t.Errorf("%s: ran %q", c.name, run.ran)
 		}
 		if c.name == "the volume lost before" && len(run.ran) > 1 {
 			t.Errorf("%s: ran %q", c.name, run.ran)
@@ -981,7 +1071,7 @@ func TestTheUndoNeedsTheGateHeld(t *testing.T) {
 		}
 		_, err := w.eng.Abort(t.Context())
 		after, _ := readJournal(w.src.dir)
-		if phase != Open && (err == nil || !errors.Is(err, lost)) || tgt.released != 0 || after.Phase != phase {
+		if !errors.Is(err, lost) || !strings.Contains(err.Error(), "varlatch migrate --resume") || tgt.released != 0 || after.Phase != phase {
 			t.Errorf("check %d: %v, lifted %d, phase %s", n, err, tgt.released, after.Phase)
 		}
 		// --resume lifts it only when it is held.
@@ -993,6 +1083,63 @@ func TestTheUndoNeedsTheGateHeld(t *testing.T) {
 		src.heldErr = nil
 		if _, err := w.eng.Resume(t.Context()); tgt.released != 1 {
 			t.Errorf("check %d, --resume once held: %v, lifted %d", n, err, tgt.released)
+		}
+	}
+	// A lift that fails is no success either; --abort again, or --resume, lifts
+	// it. An earlier build's journal, which records no volume, is given it.
+	for _, how := range []string{"--abort", "--resume"} {
+		for _, recorded := range []bool{true, false} {
+			w, src, j := rolledWorld(t, RollbackImported, Coolify)
+			tgt := w.eng.Target.(*reverseTargetFake)
+			j.Rollback.Barrier = &BarrierRecord{}
+			if err := writeJournal(w.src.dir, j); err != nil {
+				t.Fatal(err)
+			}
+			tgt.failRelease = errors.New("the socket does not answer")
+			if _, err := w.eng.Abort(t.Context()); err == nil || !strings.Contains(err.Error(), tgt.failRelease.Error()) {
+				t.Errorf("a lift that fails: %v", err)
+			}
+			after, _ := readJournal(w.src.dir)
+			if after.Phase != Open || after.Rollback.Undone.Released {
+				t.Errorf("a lift that fails: phase %s, %+v", after.Phase, after.Rollback.Undone)
+			}
+			if !recorded {
+				after.Source.State = nil
+				if err := writeJournal(w.src.dir, after); err != nil {
+					t.Fatal(err)
+				}
+				src.remadeIn = &stateVol
+			}
+			tgt.failRelease, w.tgt.barrier = nil, "paused"
+			if !recorded {
+				// Journalled as it is found, whatever comes after.
+				src.heldErr = func(int) error { return lost }
+				if _, err := w.eng.Resume(t.Context()); !errors.Is(err, lost) {
+					t.Errorf("not held: %v", err)
+				}
+				if at, _ := readJournal(w.src.dir); at.Source.State == nil || *at.Source.State != stateVol {
+					t.Errorf("not held: the volume journalled is %+v", at.Source.State)
+				}
+				after.Source.State, src.heldErr = nil, nil
+				if err := writeJournal(w.src.dir, after); err != nil {
+					t.Fatal(err)
+				}
+			}
+			src.did = nil
+			var err error
+			if how == "--abort" {
+				_, err = w.eng.Abort(t.Context())
+			} else {
+				_, err = w.eng.Resume(t.Context())
+			}
+			want := []string{"held gate-1"}
+			if !recorded {
+				want = []string{"hold gate-1", "held gate-1"}
+			}
+			after, _ = readJournal(w.src.dir)
+			if err != nil || tgt.released != 1 || !after.Rollback.Undone.Released || !slices.Equal(src.did, want) || after.Source.State == nil || *after.Source.State != stateVol {
+				t.Errorf("%s, recorded %v: %v, lifted %d, %v, %+v", how, recorded, err, tgt.released, src.did, after.Rollback.Undone)
+			}
 		}
 	}
 	// Before Go's barrier was asked for, there is none to lift.

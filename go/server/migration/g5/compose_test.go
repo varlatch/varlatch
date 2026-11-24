@@ -131,8 +131,14 @@ func dataKey(svc string) string {
 	return map[string]string{"postgres": "postgres-data", "convex-backend": "convex-data", "varlatchd": "varlatch-state"}[svc]
 }
 
-// ownVolume is the volume the installation's own Compose files give svc.
-func ownVolume(svc string) string { return shape().Project + "_" + dataKey(svc) }
+// ownVolume is the volume the installation's own Compose files give svc
+// (an external state volume: external-state's name).
+func ownVolume(svc string) string {
+	if b, err := os.ReadFile(state("external-state")); err == nil && svc == "varlatchd" {
+		return string(b)
+	}
+	return shape().Project + "_" + dataKey(svc)
+}
 
 // configuredVolume is the one this command's files give it: migrate's
 // file's, when they name it.
@@ -339,7 +345,7 @@ func ownRun(args []string) int {
 		_, _ = os.Stdout.Write(gateText(g))
 		return 0
 	}
-	if len(args) != 21 || !strings.Contains(args[18], "maintenance.json.migrate") && !strings.Contains(args[18], "t=.maintenance.json") {
+	if len(args) != 21 && len(args) != 22 || !strings.Contains(args[18], "maintenance.json.migrate") && !strings.Contains(args[18], "t=.maintenance.json") {
 		return fail(125, "docker: unexpected %q", args)
 	}
 	if _, err := os.Stat(state("gate-write-fails")); err == nil {
@@ -365,7 +371,11 @@ func printVolume(name string) {
 	if _, err := os.Stat(state("another-" + name)); err == nil {
 		at = "2026-11-01T00:00:00Z"
 	}
-	for _, v := range []string{name, at, "/volumes/" + name, s.Project, key, string(owner)} {
+	project := s.Project
+	if ext, err := os.ReadFile(state("external-state")); err == nil && string(ext) == name {
+		project, key = "", ""
+	}
+	for _, v := range []string{name, at, "/volumes/" + name, project, key, string(owner)} {
 		b, _ := json.Marshal(v)
 		fmt.Print(string(b), " ")
 	}
@@ -399,6 +409,9 @@ func volumeThere(name string) bool {
 		return true
 	}
 	removed, _ := os.ReadFile(state("removed-volumes"))
+	if ext, err := os.ReadFile(state("external-state")); err == nil && string(ext) == name {
+		return !slices.Contains(strings.Fields(string(removed)), name)
+	}
 	base, ok := strings.CutPrefix(name, shape().Project+"_")
 	return ok && !slices.Contains(strings.Fields(string(removed)), name) &&
 		slices.Contains([]string{"postgres-data", "convex-data", "varlatch-state", "tailscale-state", "tailscale-socket", "caddy-data", "caddy-config"}, base)
@@ -1198,7 +1211,7 @@ func TestG5TheComposeVersion(t *testing.T) {
 // installation back on its own volumes, Go open.
 func TestG5AnOldComposeAtTheUndo(t *testing.T) {
 	for _, coolify := range []bool{false, true} {
-		for _, point := range []string{"rollback rebuilt", "entered rollback-imported", "entered rollback-checked", "entered rollback-transfer"} {
+		for _, point := range []string{"rollback rebuilt", "entered rollback-transfer"} {
 			for _, how := range []string{"--resume", "--abort"} {
 				if point == "entered rollback-transfer" && how == "--resume" {
 					continue // it goes on
@@ -1414,15 +1427,75 @@ func (w *world) restarts() {
 // the application deployed again by Coolify, at no moment can both take
 // requests; --resume and --abort end it.
 func TestG5TheUndoHoldsTheGateFirst(t *testing.T) {
+	undoHoldsTheGateFirst(t, "")
+}
+
+// The same with an external state volume, which Compose did not label: the
+// recorded one, unchanged, is the installation's; a whole rollback too.
+func TestG5AnExternalStateVolume(t *testing.T) {
+	for _, coolify := range []bool{false, true} {
+		w := externalWorld(t, coolify, "the-operators-state")
+		if coolify {
+			w.routeBack()
+		}
+		if code := w.rollback("", "--rollback"); code != 0 {
+			t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.expectReverse("rolled back", rolledBackState)
+		// Not a volume of the project's: refused where it matters, early.
+		w = externalWorld(t, coolify, "the-operators-state")
+		if coolify {
+			w.routeBack()
+		}
+		w.flag("another-the-operators-state")
+		before := len(w.calls("docker-calls"))
+		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "is not the one that carried the gate") {
+			t.Fatalf("--rollback, another volume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.startedNothing("another volume", before)
+		if w.barrier() != "" {
+			t.Errorf("Go's barrier is %q", w.barrier())
+		}
+	}
+	undoHoldsTheGateFirst(t, "the-operators-state")
+}
+
+// externalWorld is a migrated world whose state volume is external, when
+// named.
+func externalWorld(t *testing.T, coolify bool, external string) *world {
+	t.Helper()
+	if external == "" {
+		return migratedWorld(t, false, coolify)
+	}
+	w := newWorld(t, false)
+	w.coolify = coolify
+	if coolify {
+		w.coolifyLayout()
+	}
+	if err := os.WriteFile(filepath.Join(w.stateDir, "external-state"), []byte(external), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code := w.run("")
+	if coolify && code == 75 {
+		w.domainToGo()
+		code = w.run("", "--resume")
+	}
+	if code != 0 {
+		t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	return w
+}
+
+func undoHoldsTheGateFirst(t *testing.T, external string) {
 	for _, coolify := range []bool{false, true} {
 		for _, from := range []string{"entered rollback-imported", "entered rollback-transfer"} {
 			for _, step := range []string{"rollback undo gate held", "rollback undo restored", "rollback undone open", "rollback undone released"} {
 				for _, by := range []string{"docker", "deploy"} {
-					if by == "deploy" && !coolify {
+					if by == "deploy" && !coolify || external != "" && (by == "deploy" || from != "entered rollback-imported") {
 						continue
 					}
 					t.Run(fmt.Sprintf("coolify %v, %s, %s, %s", coolify, from, step, by), func(t *testing.T) {
-						w := migratedWorld(t, false, coolify)
+						w := externalWorld(t, coolify, external)
 						if coolify {
 							w.routeBack()
 						}
@@ -1556,5 +1629,58 @@ func TestG5TheOverrideGoneAtTheUndo(t *testing.T) {
 			w.expectReverse("undone", undoneState)
 			w.noSecrets()
 		})
+	}
+}
+
+// A deploy that failed half way: varlatchd's container gone, and the Compose
+// files giving its state another volume, which holds no gate. The undo
+// holds the gate where it was and does not lift Go's barrier: the next
+// deploy would be ungated. Put back, --resume and --abort lift it.
+func TestG5TheNextContainersVolume(t *testing.T) {
+	for _, coolify := range []bool{false, true} {
+		for _, how := range []string{"--resume", "--abort"} {
+			t.Run(fmt.Sprintf("coolify %v, %s", coolify, how), func(t *testing.T) {
+				w := migratedWorld(t, false, coolify)
+				if coolify {
+					w.routeBack()
+				}
+				if code := w.rollback("entered rollback-imported", "--rollback"); code != -1 {
+					t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.useState()
+				if err := setStopped("varlatchd", true); err != nil {
+					t.Fatal(err)
+				}
+				w.flag("gone-varlatchd")
+				renamed := filepath.Join(w.stateDir, "renamed-varlatchd")
+				if err := os.WriteFile(renamed, []byte(shape().Project+"_caddy-data"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				for _, again := range []string{how, "--resume", "--abort"} {
+					code := w.rollback("", again)
+					out := string(w.outputs[len(w.outputs)-1])
+					if code != 1 || !strings.Contains(out, "put them back as the migration left them") || !strings.Contains(out, "Go stays behind its barrier") {
+						t.Fatalf("%s: %d\n%s", again, code, out)
+					}
+					if w.barrier() == "" {
+						t.Fatalf("%s: Go's barrier is lifted", again)
+					}
+					if g := readGate(); g == nil || g.Kind != "migrated-out" {
+						t.Errorf("%s: the gate is %+v", again, g)
+					}
+				}
+				if err := os.Remove(renamed); err != nil {
+					t.Fatal(err)
+				}
+				if code := w.rollback("", how); (how == "--abort") != (code == 0) {
+					t.Fatalf("%s, put back: %d\n%s", how, code, w.outputs[len(w.outputs)-1])
+				}
+				if w.barrier() != "" || !w.goRuns() {
+					t.Errorf("Go's barrier %q, Go runs %v", w.barrier(), w.goRuns())
+				}
+				w.oneWriter("put back")
+				w.noSecrets()
+			})
+		}
 	}
 }

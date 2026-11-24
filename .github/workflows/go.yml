@@ -55,7 +55,8 @@ on:
       - "scripts/check-timing-tests.sh"
       # go's shellcheck step checks it.
       - "scripts/ci-nightly-report.sh"
-      # G13 and the conformance cells pull MinIO's image with it.
+      # G13 and the conformance cells have MinIO's image with them.
+      - ".github/actions/minio-image/**"
       - "scripts/ci-pull-image.sh"
       - "packages/protocol/openapi.yaml"
       - "scripts/conformance/run.mjs"
@@ -179,6 +180,7 @@ jobs:
             scripts/check-licenses.mjs
             scripts/check-timing-tests.sh
             scripts/ci-nightly-report.sh
+            .github/actions/minio-image/*
             scripts/ci-pull-image.sh
             packages/protocol/openapi.yaml
             scripts/conformance/run.mjs
@@ -593,6 +595,8 @@ jobs:
       # reports delivery, retention and recoverability separately and
       # passes only a bucket that holds the uploaded version against
       # deletion. The root key goes through the environment by name only.
+      - name: MinIO's image
+        uses: ./.github/actions/minio-image
       - name: G13, the S3 client and the bucket test against a local S3 with Object Lock
         working-directory: go
         env:
@@ -602,7 +606,7 @@ jobs:
           secret=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
           echo "::add-mask::$secret"
           image=cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b
-          ../scripts/ci-pull-image.sh "$image"
+          image=$(../scripts/ci-pull-image.sh "$image")
           MINIO_ROOT_PASSWORD="$secret" docker run -d --rm --name "$name" -p 127.0.0.1::9000 \
             -e MINIO_ROOT_USER=vlts3test -e MINIO_ROOT_PASSWORD \
             "$image" server /data > /dev/null
@@ -841,8 +845,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    # G5's own -timeout is 25 minutes; the Headscale steps add about 10.
-    timeout-minutes: 50
+    # G5's own -timeout is 45 minutes (it takes 13 to 20 on this runner,
+    # November 2026); the Headscale steps add about 11.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -882,7 +887,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
         # -timeout: go test's default 10m is shorter than the G5 package now.
-        run: go test -count=1 -tags g5 -timeout 25m -run '^TestG5' -v ./server/migration/g5/
+        run: go test -count=1 -tags g5 -timeout 45m -run '^TestG5' -v ./server/migration/g5/
 
       # A self-hosted control server (ADR-0059 Decision 5 as amended for
       # step 7.5c; go/server/tailnet/headscaletest): varlatchd's node joins
@@ -1270,6 +1275,8 @@ jobs:
           (cd go && go test -count=1 -run '^TestGoVectors$' ./server/custody -args -write-go-vectors="$RUNNER_TEMP/go-custody-vectors.json")
           VARLATCH_GO_BACKUP_VECTORS="$RUNNER_TEMP/go-backup-vectors.json" VARLATCH_GO_CUSTODY_VECTORS="$RUNNER_TEMP/go-custody-vectors.json" \
             pnpm --filter @varlatch/varlatchd exec vitest run test/go-backup-vectors.test.ts
+      - name: MinIO's image
+        uses: ./.github/actions/minio-image
       - name: The go-binary adapter and the stale-lacks probe against varlatchd
         if: matrix.shard == 1
         env:
@@ -1487,6 +1494,8 @@ jobs:
           go/image/build.sh --version "$version" --assets "$RUNNER_TEMP/conformance-assets" --tag varlatchd-image:conformance --platforms linux/amd64 --load
       - name: Install Chromium
         run: scripts/ci-install-chromium.sh
+      - name: MinIO's image
+        uses: ./.github/actions/minio-image
       - name: Run the conformance suites against the image
         run: node scripts/conformance/run.mjs --target go-container:varlatchd-image:conformance --cli source --report conformance-report.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1752,6 +1761,8 @@ jobs:
           VARLATCH_TEST_CLI="$RUNNER_TEMP/varlatch" pnpm --filter @varlatch/cli exec vitest run "${files[@]}"
       - name: Install Chromium
         run: scripts/ci-install-chromium.sh
+      - name: MinIO's image
+        uses: ./.github/actions/minio-image
       - name: Run the conformance suites with the Go CLI
         env:
           SHARD: ${{ matrix.shard }}
