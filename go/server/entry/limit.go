@@ -8,8 +8,10 @@ import (
 )
 
 // The unknown tokens an address may ask for: beyond that it waits. A token
-// has 256 random bits, so nobody finds one by trying; this bounds the work,
-// and keeps it out of the database.
+// has 256 random bits, so nobody finds one by trying, and each try costs one
+// read of an index at most; this says so to whoever tries. It stops no token
+// that is a link's: many people share an address, and whoever is one of them
+// could stop all the others.
 const (
 	maxUnknown    = 20
 	unknownWindow = 10 * time.Minute

@@ -1531,8 +1531,8 @@ paths:
         word on whether it was cancelled or ended with its credential;
         PERMISSION_DENIED for another person (reason not-for-you), or when
         whoever made the link may no longer (requester-not-allowed).
-        RATE_LIMITED after 20 unknown tokens from one address in ten minutes.
-        Never cacheable.
+        RATE_LIMITED for an unknown token after 20 of them from one address in
+        ten minutes; a link that there is is answered all the same. Never cacheable.
       security:
         - {}
         - bearerAuth: []

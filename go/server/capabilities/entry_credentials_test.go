@@ -249,6 +249,13 @@ func TestAPersonsOrdinaryEndsEndNoLink(t *testing.T) {
 		"another person's": func(w *world) {
 			w.want("bob's", w.call("DELETE", "/v1/me/credentials/crd_t_bobs", "bob", nil), 204, "")
 		},
+		"a machine's": func(w *world) {
+			id := w.credential("m", "svc", "service", 0, nil)
+			w.want("an admin's doing", w.call("DELETE", "/v1/organizations/cap/identities/"+w.idn("svc")+"/credentials/"+id, "b", nil), 204, "")
+		},
+		"nobody's": func(w *world) {
+			w.want("another person's credential", w.call("DELETE", "/v1/me/credentials/crd_t_bobs", "b", nil), 404, "RESOURCE_NOT_FOUND")
+		},
 	} {
 		t.Run(what, func(t *testing.T) {
 			w := entryWorld(t)
@@ -291,6 +298,23 @@ func TestAPersonsLinkEndsWithAWithdrawal(t *testing.T) {
 		as  string
 		end func(w *world)
 	}{
+		"an unrelated one, from another session": {"a", revoke("crd_t_cli2", "b")},
+		"the CLI's, given up by itself, and then another": {"cli", func(w *world) {
+			revoke("crd_t_cli", "cli")(w)
+			revoke("crd_t_cli2", "b")(w)
+		}},
+		"the CLI's, given up by itself, and then a browser": {"cli", func(w *world) {
+			revoke("crd_t_cli", "cli")(w)
+			revoke("crd_t_a", "b")(w)
+		}},
+		"the CLI's, given up by itself, and then again": {"cli", func(w *world) {
+			revoke("crd_t_cli", "cli")(w)
+			revoke("crd_t_cli", "b")(w)
+		}},
+		"a browser's that signed itself out, and then the CLI": {"a", func(w *world) {
+			revoke("crd_t_a", "a")(w)
+			revoke("crd_t_cli2", "b")(w)
+		}},
 		"its bearer, from another session": {"a", revoke("crd_t_a", "b")},
 		"another bearer of the session":    {"a", revoke("crd_t_a2", "b")},
 		"the bearer, from the CLI":         {"a", revoke("crd_t_a", "cli")},
@@ -308,27 +332,44 @@ func TestAPersonsLinkEndsWithAWithdrawal(t *testing.T) {
 			w := entryWorld(t)
 			ses(w)
 			l := w.link(c.as, nil)
-			unrelated := w.link("cli2", with{"item": "UNRELATED"})
+			bobs := w.link("bob", with{"item": "BOBS"})
+			machines := w.link("svc", with{"item": "MACHINES"})
 			c.end(w)
 			if what != "the move to another address" {
 				w.wantEvent("capability.revoked", "Alice", map[string]any{"entryLinkId": l.id}, map[string]any{"reason": "credential-ended", "entryLink": "member"})
 			}
 			w.wantEnded("alice", l, "")
 			w.wantCancelledAlike(l)
-			if what != "the CLI's, from another CLI" {
-				w.want("unrelated", w.submit("bob", unrelated, nil), 200, "")
-			}
+			// Another person's links, and a machine's, are none of it.
+			w.want("another person's", w.submit("alice", bobs, nil), 200, "")
+			w.want("a machine's", w.submit("bob", machines, nil), 200, "")
 		})
 	}
-	// Revoking the CLI's credential leaves what a browser made, and the other
-	// way round.
+	// What the one it is done with made stays: the login's own, and a browser's
+	// in every tab of its session. Nobody else's, whatever was revoked.
 	w := entryWorld(t)
 	ses(w)
-	l, m := w.link("a", nil), w.link("cli", with{"item": "NEW_2"})
-	revoke("crd_t_cli2", "b")(w)
-	w.want("the browser's", w.submit("bob", l, nil), 200, "")
-	revoke("crd_t_a", "b")(w)
-	w.want("the CLI's", w.submit("bob", m, nil), 200, "")
+	l, m, n := w.link("a", nil), w.link("cli", with{"item": "NEW_2"}), w.link("a2", with{"item": "NEW_3"})
+	revoke("crd_t_cli2", "a2")(w)
+	w.want("the session's", w.submit("bob", l, nil), 200, "")
+	w.want("the tab's own", w.submit("bob", n, nil), 200, "")
+	w.want("the CLI's", w.submit("bob", m, nil), 410, "EXPIRED")
+	l, m = w.link("a", with{"item": "NEW_4"}), w.link("cli", with{"item": "NEW_5"})
+	revoke("crd_t_b", "cli")(w)
+	w.want("the browser's", w.submit("bob", l, nil), 410, "EXPIRED")
+	w.want("the CLI's own", w.submit("bob", m, nil), 200, "")
+	// A CLI login handed on by a browser is a login of its own.
+	w = entryWorld(t)
+	ses(w)
+	w.credential("handed", "Alice", "cli", 3600, "ses_a")
+	l, m = w.link("handed", nil), w.link("a", with{"item": "NEW_2"})
+	revoke("crd_t_cli2", "a")(w)
+	w.want("the handed on one's", w.submit("bob", l, nil), 410, "EXPIRED")
+	w.want("the browser's", w.submit("bob", m, nil), 200, "")
+	l, m = w.link("handed", with{"item": "NEW_3"}), w.link("a", with{"item": "NEW_4"})
+	revoke("crd_t_b", "handed")(w)
+	w.want("its own", w.submit("bob", l, nil), 200, "")
+	w.want("the browser's", w.submit("bob", m, nil), 410, "EXPIRED")
 	// The membership: removed, and added again.
 	w = entryWorld(t)
 	w.browser("bobs", "bob", "ses_bob")

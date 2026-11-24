@@ -677,17 +677,30 @@ func TestUnknownLinks(t *testing.T) {
 	for range 6 {
 		w.want("unknown", w.lookup("", link{token: "x"}), 404, "RESOURCE_NOT_FOUND")
 	}
-	// The twenty-first waits, whatever it asks for; another address does not.
+	// The twenty-first waits. A link that there is does not, whoever shares the
+	// address: looked at and used.
 	a := w.want("limited", w.lookup("", link{token: "x"}), 429, "RATE_LIMITED")
 	if !strings.Contains(a.raw, "retryAfterSeconds") {
 		t.Errorf("%s", a.raw)
 	}
-	w.want("limited", w.lookup("bob", l), 429, "RATE_LIMITED")
+	if strings.Contains(a.raw, "NEW_KEY") {
+		t.Errorf("%s", a.raw)
+	}
+	w.want("a link", w.lookup("bob", l), 200, "")
+	w.want("limited", w.call("POST", "/v1/entry-links/submit", "", map[string]any{"token": "vlt_entry_" + strings.Repeat("A", 43), "value": "x"}), 429, "RATE_LIMITED")
+	cancelled := w.link("svc", with{"item": "CANCELLED"})
+	w.want("cancel", w.call("DELETE", entryPath+"/"+cancelled.id, "svc", nil), 204, "")
+	w.want("one that ended", w.lookup("bob", cancelled), 410, "EXPIRED")
+	before = w.text("SELECT count(*) FROM audit_events")
 	w.later(10*time.Minute + time.Second)
-	w.want("later", w.lookup("bob", l), 200, "")
+	w.want("later", w.lookup("", link{token: "x"}), 404, "RESOURCE_NOT_FOUND")
+	for range 30 {
+		w.lookup("", link{token: "x"})
+	}
 	if got := w.text("SELECT count(*) FROM audit_events"); got != before {
 		t.Error("unknown links were recorded")
 	}
+	w.want("entered", w.submit("bob", l, nil), 200, "")
 	// A body that is none.
 	w.want("no token", w.call("POST", "/v1/entry-links/lookup", "", map[string]any{}), 422, "VALIDATION_FAILED")
 	w.check = false

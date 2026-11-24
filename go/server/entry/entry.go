@@ -71,6 +71,7 @@ const (
 	MaxValue = 65_536
 
 	tokenPrefix = "vlt_entry_"
+	tokenLength = len(tokenPrefix) + 43
 )
 
 // Service makes, shows and takes entry links.
@@ -506,23 +507,21 @@ func no(code, reason, message string) *refusal {
 
 var errNoLink = domainerr.New("RESOURCE_NOT_FOUND", "There is no such entry link: it may be old, or not copied whole")
 
-// byToken is the link of a token. An unknown one is counted by the client's
-// address.
+// byToken is the link of a token, whoever asks. An unknown one is counted by
+// the client's address, and beyond so many of them refused as such.
 func (s *Service) byToken(ctx context.Context, db query.DBTX, token, client string) (query.EntryLink, error) {
+	if strings.HasPrefix(token, tokenPrefix) && len(token) == tokenLength {
+		l, err := query.New(db).EntryLinkByToken(ctx, hash(token))
+		if !errors.Is(err, sql.ErrNoRows) {
+			return l, err
+		}
+	}
 	if retry := s.limit.blocked(client, s.Now()); retry > 0 {
 		return query.EntryLink{}, &domainerr.Error{Code: "RATE_LIMITED", Message: "Too many unknown entry links from this address",
 			Details: jsvalue.Object{{Key: "retryAfterSeconds", Value: int64(retry/time.Second) + 1}}}
 	}
-	var l query.EntryLink
-	err := error(sql.ErrNoRows)
-	if strings.HasPrefix(token, tokenPrefix) {
-		l, err = query.New(db).EntryLinkByToken(ctx, hash(token))
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		s.limit.unknown(client, s.Now())
-		return query.EntryLink{}, errNoLink
-	}
-	return l, err
+	s.limit.unknown(client, s.Now())
+	return query.EntryLink{}, errNoLink
 }
 
 // ended is the refusal, in db and at now, of a link that has ended, its

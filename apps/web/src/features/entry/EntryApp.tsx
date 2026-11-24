@@ -44,6 +44,8 @@ export function secureEnough(loc: { protocol: string; hostname: string }): boole
 export function EntryApp() {
   const token = useRef("");
   const bearer = useRef<string | null>(null);
+  // Which link is open, so that what was asked about another one is dropped.
+  const turn = useRef(0);
   const [step, setStep] = useState<Step>({ kind: "loading" });
 
   const refused = useCallback((err: unknown) => {
@@ -60,15 +62,23 @@ export function EntryApp() {
   }, []);
 
   const look = useCallback(async () => {
+    const mine = turn.current;
+    const link = token.current;
     try {
-      const view = await lookup(token.current, bearer.current);
-      if (!view.signInRequired) return setStep({ kind: "form", view });
-      // Somebody signed in in this browser already is asked nothing.
-      bearer.current = await signedIn().catch(() => null);
-      if (!bearer.current) return setStep({ kind: "sign-in" });
-      setStep({ kind: "form", view: await lookup(token.current, bearer.current) });
+      let view = await lookup(link, bearer.current);
+      if (turn.current !== mine) return;
+      if (view.signInRequired) {
+        // Somebody signed in in this browser already is asked nothing.
+        const somebody = await signedIn().catch(() => null);
+        if (turn.current !== mine) return;
+        bearer.current = somebody;
+        if (!somebody) return setStep({ kind: "sign-in" });
+        view = await lookup(link, somebody);
+        if (turn.current !== mine) return;
+      }
+      setStep({ kind: "form", view });
     } catch (err) {
-      refused(err);
+      if (turn.current === mine) refused(err);
     }
   }, [refused]);
 
@@ -78,6 +88,7 @@ export function EntryApp() {
       const taken = takeToken();
       if (taken === "" && token.current !== "") return;
       token.current = taken;
+      turn.current++;
       if (!secureEnough(window.location)) {
         return setStep({ kind: "stopped", tone: "danger", title: "This page needs HTTPS", text: "A value entered here would be sent unencrypted. Open the link with https://." });
       }
@@ -116,7 +127,10 @@ export function EntryApp() {
       <SignIn
         wrong={step.wrong}
         onSignIn={async () => {
-          bearer.current = await signIn(step.wrong !== undefined);
+          const mine = turn.current;
+          const somebody = await signIn(step.wrong !== undefined);
+          if (turn.current !== mine) return;
+          bearer.current = somebody;
           setStep({ kind: "loading" });
           await look();
         }}
@@ -134,7 +148,14 @@ export function EntryApp() {
       <EntryForm
         view={step.view}
         onSubmit={async (value) => {
-          await submit(token.current, bearer.current, value);
+          const mine = turn.current;
+          try {
+            await submit(token.current, bearer.current, value);
+          } catch (err) {
+            if (turn.current === mine) throw err;
+            return;
+          }
+          if (turn.current !== mine) return;
           token.current = "";
           bearer.current = null;
           setStep({ kind: "done", item: step.view.item ?? "" });

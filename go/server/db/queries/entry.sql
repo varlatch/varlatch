@@ -50,16 +50,15 @@ SELECT c.kind, c.revoked_at, c.expires_at, i.kind AS identity_kind, i.disabled, 
 FROM credentials c JOIN identities i ON i.id = c.identity_id WHERE c.id = ?;
 
 -- name: EndEntryLinksOfPerson :many
--- A person revoked one of their credentials, with another one: the pending
--- links made with it end, and with a browser's those of all their browser
--- sessions, which nobody can tell apart by their short bearers. Not those of
--- the credential, or the browser session, they revoked it with.
+-- A person revoked one of their credentials, with another one: all their
+-- pending links end, whatever they were made with, and whether that is revoked
+-- now, was before or expired. Not those of the credential, or the browser
+-- session, they revoked it with.
 UPDATE entry_links SET status = 'cancelled', reason = 'credential-ended', ended_at = CAST(sqlc.arg(now) AS INTEGER)
-WHERE requested_by = sqlc.arg(requested_by) AND status = 'pending' AND expires_at > CAST(sqlc.arg(now) AS INTEGER) AND credential_id IN (
-  SELECT c.id FROM credentials c, credentials x, credentials r
-  WHERE x.id = sqlc.arg(revoked) AND r.id = sqlc.arg(revoked_with) AND c.identity_id = x.identity_id
-    AND (c.id = x.id OR c.kind = 'browser' AND x.kind = 'browser')
-    AND c.id <> r.id AND NOT (c.kind = 'browser' AND r.kind = 'browser' AND coalesce(c.auth_session_id = r.auth_session_id, 0)))
+WHERE requested_by = sqlc.arg(requested_by) AND status = 'pending' AND expires_at > CAST(sqlc.arg(now) AS INTEGER) AND credential_id NOT IN (
+  SELECT c.id FROM credentials c, credentials r
+  WHERE r.id = sqlc.arg(revoked_with) AND c.identity_id = r.identity_id
+    AND (c.id = r.id OR c.kind = 'browser' AND r.kind = 'browser' AND coalesce(c.auth_session_id = r.auth_session_id, 0)))
 RETURNING *;
 
 -- name: EndEntryLinksOfMember :many

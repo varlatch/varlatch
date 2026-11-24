@@ -14,10 +14,11 @@ import (
 // made with. A machine's is looked at when a link is used. A person's is
 // not: their bearers and CLI logins end all the time in the ordinary way (a
 // bearer lives 15 minutes, a browser signs out, `varlatch logout` revokes its
-// own credential), and that ends no link they sent. What ends one is taking
+// own credential), and that ends no link they sent. What ends them is taking
 // a session away, which is known only while it happens, so it ends the links
 // in its own job: revoking a credential with another one, and losing the
-// membership.
+// membership. Which login a link was made with is not asked then: whoever had
+// one may have given it up themselves.
 
 // EntryLinkCredentialEnded is the reason of a link that ended with its
 // credential.
@@ -45,17 +46,16 @@ func recordEndedEntryLinks(ctx context.Context, tx query.DBTX, links []query.Ent
 	return nil
 }
 
-// endEntryLinksOfPerson ends, in the job that revokes a person's credential,
-// the links made with what that withdraws: the credential, and for a
-// browser's bearer every browser session of theirs but the one it was
-// revoked from (their bearers are short and look alike). A credential that
-// revokes itself signs out and withdraws nothing.
+// endEntryLinksOfPerson ends, in the job that revokes a person's credential
+// from elsewhere, all the person's links but those of the credential, or the
+// browser session, it is revoked with. A credential that revokes itself signs
+// out and withdraws nothing.
 func endEntryLinksOfPerson(ctx context.Context, tx query.DBTX, now int64, p *Principal, credentialID string) error {
 	if p.Identity.Kind != "human" || credentialID == p.Credential.ID {
 		return nil
 	}
 	links, err := query.New(tx).EndEntryLinksOfPerson(ctx, query.EndEntryLinksOfPersonParams{
-		Now: now, RequestedBy: p.Identity.ID, Revoked: credentialID, RevokedWith: p.Credential.ID,
+		Now: now, RequestedBy: p.Identity.ID, RevokedWith: p.Credential.ID,
 	})
 	if err != nil {
 		return err

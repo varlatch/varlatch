@@ -214,6 +214,84 @@ describe("the page", () => {
   });
 });
 
+describe("another link opened in the tab", () => {
+  const SECOND = `vlt_entry_${"b".repeat(43)}`;
+  const second = { ...view, item: "OTHER_KEY", project: "Other" };
+  const held = () => {
+    let free: (answer: [number, unknown]) => void = () => undefined;
+    const answer = new Promise<[number, unknown]>((r) => (free = r));
+    return {
+      answer,
+      free: async (a: [number, unknown]) => {
+        await act(async () => free(a));
+        await flush();
+      },
+    };
+  };
+  const serve = (by: (path: string, token: string) => [number, unknown] | Promise<[number, unknown]>) =>
+    vi.stubGlobal("fetch", async (path: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      asked.push({ path, body, init });
+      const [status, json] = await by(path, String(body.token));
+      return { ok: status < 400, status, json: async () => json };
+    });
+  const open = async () => {
+    page.location.hash = `#${SECOND}`;
+    await act(async () => page.listeners.hashchange!.forEach((f) => f()));
+    await flush();
+  };
+  it("drops what was asked about the first", async () => {
+    for (const late of [[200, view], refusal(410, "EXPIRED", "This link has ended"), [200, { restrictedTo: "member", signInRequired: true }]] as [number, unknown][]) {
+      const first = held();
+      serve((_, token) => (token === TOKEN ? first.answer : [200, second]));
+      page.location.hash = `#${TOKEN}`;
+      await render(<EntryApp />);
+      await open();
+      expect(text()).toContain("OTHER_KEY");
+      await first.free(late);
+      expect(text()).toContain("OTHER_KEY");
+      expect(text()).not.toContain("PROVIDER_KEY");
+      expect(session.browserSession).not.toHaveBeenCalled();
+      await type("made-up");
+      await send();
+      expect(asked.at(-1)!).toMatchObject({ path: "/v1/entry-links/submit", body: { token: SECOND } });
+      await act(async () => root!.unmount());
+    }
+  });
+  it("drops what became of a value sent with the first, and of a sign-in", async () => {
+    const sent = held();
+    serve((path, token) => (path.endsWith("submit") ? sent.answer : [200, token === TOKEN ? view : second]));
+    await render(<EntryApp />);
+    await type("made-up");
+    await send();
+    await open();
+    expect(text()).toContain("OTHER_KEY");
+    await sent.free([200, { status: "entered" }]);
+    expect(text()).toContain("OTHER_KEY");
+    expect(one("entry-value").props.value).toBe("");
+    await type("another");
+    await send();
+    expect(asked.at(-1)!.body.token).toBe(SECOND);
+    await act(async () => root!.unmount());
+
+    let done: () => void = () => undefined;
+    session.signInWithPasskey.mockReturnValue(new Promise<void>((r) => (done = r)));
+    session.authPost.mockResolvedValue({ ok: true, json: async () => ({ token: "vlt_web_made_up" }) });
+    serve((_, token) => [200, token === TOKEN ? { restrictedTo: "member", signInRequired: true } : second]);
+    page.location.hash = `#${TOKEN}`;
+    await render(<EntryApp />);
+    await act(async () => one("entry-sign-in-button").props.onClick());
+    await open();
+    session.browserSession.mockResolvedValue({ csrfToken: "c", identityId: "idn_1" });
+    await act(async () => done());
+    await flush();
+    expect(text()).toContain("OTHER_KEY");
+    await type("x");
+    await send();
+    expect((asked.at(-1)!.init.headers as Record<string, string>).Authorization).toBeUndefined();
+  });
+});
+
 describe("a link for a person", () => {
   const forMember = (body: Record<string, unknown>, init: RequestInit): [number, unknown] =>
     (init.headers as Record<string, string>).Authorization ? [200, { ...view, restrictedTo: "member" }] : [200, { restrictedTo: "member", signInRequired: true }];

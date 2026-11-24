@@ -584,7 +584,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status), with no word on whether it was cancelled or ended with its credential; PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED after 20 unknown tokens from one address in ten minutes. Never cacheable. */
+        /** What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status), with no word on whether it was cancelled or ended with its credential; PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED for an unknown token after 20 of them from one address in ten minutes; a link that there is is answered all the same. Never cacheable. */
         post: operations["lookupEntryLink"];
         delete?: never;
         options?: never;
