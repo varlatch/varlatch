@@ -44,6 +44,7 @@ func killedAt(t *testing.T, in *installation, rel release, what string) bool {
 	cmd.Env = append(cmd.Env, "VARLATCH_MIGRATE_LOG="+log, "VARLATCH_MIGRATE_PAUSE="+point)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
+	began := time.Now()
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +70,7 @@ func killedAt(t *testing.T, in *installation, rel release, what string) bool {
 		_ = cmd.Process.Kill()
 		<-done
 	}
+	measureSteps(in.dir, cmd.Path, cmd.Args[1:], out.String(), time.Since(began))
 	record(t, killItem, what+"killed at "+point, reached, lastLines(out.String(), 3))
 	if o := out.String(); strings.Contains(o, "panic:") || strings.Contains(o, "goroutine ") {
 		measure(fmt.Sprintf("item %d: %smigrate's output before the kill at %s (a stack in it)", killItem, what, point), lastLines(o, 60))
@@ -153,4 +155,5 @@ func killThenResume(t *testing.T, rel release, s3 *s3Server) {
 	}
 	got, err := rd.read()
 	record(t, killItem, "after --resume the CLI reads the same on "+where, err == nil && sameReads(before, got), rd.compare(before, got, err))
+	in.memoryLogs(t, rd)
 }

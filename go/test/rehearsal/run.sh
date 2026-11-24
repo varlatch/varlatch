@@ -31,6 +31,29 @@
 # honoured or refused before anything starts, never left aside: the cases of
 # VL_RH_INGRESS=coolify, tailnet and combined take neither.
 #
+# VL_RH_MEMORY=1 (a restored copy, B6; off by default): what the copy holds
+# stays in memory. The run's directories, the target's, the archive, the keys,
+# TMPDIR and HOME must be on a tmpfs already (checked, never mounted here).
+# Docker's part goes through a docker of the run's own, first on its PATH:
+# every volume is a directory of that tmpfs, no container has a log, and all
+# but the dashboard have a read-only layer, with their /tmp and /run in
+# memory. It is refused without enough memory (the archive's size and a
+# margin; VL_RH_MEMORY_MARGIN_MIB, 2048), and on the box with swap that is
+# neither encrypted nor in memory (zram). The end checks each container as it
+# was before its removal, and that no value the CLI read is in the target's
+# log, the unit's journal or the run's log. What it does not cover:
+#   - Docker's own files of a container while there is one (its environment,
+#     the run's own passwords; its labels and mounts), and the image layers:
+#     no data of the copy's;
+#   - the dashboard's own layer: what it wrote is seen at the end, a file it
+#     wrote and removed is not (what it buffers is in memory);
+#   - the run's report and log, on disk: redacted, and searched for the values
+#     of the one Project the CLI read, those of 12 characters or more;
+#   - the journal's other lines (systemd's, Docker's, sudo's);
+#   - the host's memory itself: a kernel crash dump, hibernation, a provider's
+#     snapshot of the machine;
+#   - a run that is killed: what it left is on the tmpfs, until it is unmounted.
+#
 # VL_RH_PROFILE=box (the experiments server; internal
 # docs/design/go-step8-rehearsals.md): run by the owner as root on the
 # host (sudo -i first), the test binary directly on the host, with real
@@ -282,7 +305,7 @@ cp "$gomod/../scripts/conformance/lib/platform-fakes.cjs" "$root/bin/platform-fa
 release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
-  VL_RH_KEEP VL_RH_ONLY VL_RH_RESTORE_BEK VL_RH_RESTORE_KEK VL_RH_BUNDLE_OUT VL_RH_RESTORE_READ
+  VL_RH_KEEP VL_RH_ONLY VL_RH_MEMORY VL_RH_MEMORY_MARGIN_MIB VL_RH_RESTORE_BEK VL_RH_RESTORE_KEK VL_RH_BUNDLE_OUT VL_RH_RESTORE_READ
   VL_RH_TAILSCALE_OAUTH_FILE VL_RH_TAILSCALE_AUTH_KEY_FILE VL_RH_TAILSCALE_TAILNET VL_RH_COOLIFY_TARGET VL_RH_GIT_NAME)
 if [ "$profile" = box ]; then
   # On the box: as root on the host, real systemd, the target under a

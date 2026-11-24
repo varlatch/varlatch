@@ -126,6 +126,25 @@ func TestProfileRefusals(t *testing.T) {
 		t.Setenv("VL_RH_SOURCE", "restore:"+archive)
 		t.Setenv("VL_RH_RESTORE_BEK", bek)
 		t.Setenv("VL_RH_RESTORE_KEK", kek)
+		for _, c := range []struct{ memory, source, sync, keep, want string }{
+			{"1", "restore:" + archive, "", "", ""},
+			{"", "restore:" + archive, "", "1", ""},
+			{"yes", "restore:" + archive, "", "", "VL_RH_MEMORY is 1 or unset"},
+			{"1", "", "", "", "is a restored copy's"},
+			{"1", "restore:" + archive, "fakes", "", "leave VL_RH_SYNC unset"},
+			{"1", "restore:" + archive, "", "1", "leave VL_RH_KEEP unset"},
+		} {
+			for k, v := range map[string]string{"VL_RH_MEMORY": c.memory, "VL_RH_SOURCE": c.source, "VL_RH_SYNC": c.sync, "VL_RH_KEEP": c.keep} {
+				t.Setenv(k, v)
+			}
+			p, err := readProfile(1000)
+			if (c.want == "") != (err == nil) || err != nil && !strings.Contains(err.Error(), c.want) || err == nil && p.memory != (c.memory == "1") {
+				t.Errorf("%+v: %v, %v", c, p.memory, err)
+			}
+		}
+		for k, v := range map[string]string{"VL_RH_MEMORY": "", "VL_RH_SOURCE": "restore:" + archive, "VL_RH_SYNC": "", "VL_RH_KEEP": ""} {
+			t.Setenv(k, v)
+		}
 		if err := os.Chmod(kek, 0o644); err != nil {
 			t.Fatal(err)
 		}
