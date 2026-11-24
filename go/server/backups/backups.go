@@ -16,9 +16,9 @@
 //     version and canary, and the schema version. It refuses a snapshot
 //     taken during an incomplete Root KEK rotation, and one whose canary
 //     the loaded Root KEK does not open;
-//  4. hashes the components for the manifest and seals the snapshot and
-//     the non-key configuration into a format-3 archive, staged in the
-//     run's work directory;
+//  4. hashes the components for the manifest, then compresses and seals the
+//     snapshot and the non-key configuration into a format-3 archive,
+//     staged in the run's work directory;
 //  5. opens it again (integrity, compatibility with this release, the Root
 //     KEK match). Steps 4 and 5 each go at SealRate (pace), and derive the
 //     archive key (scrypt) once between them (a KeyCache, zeroed when the
@@ -91,8 +91,9 @@ type Options struct {
 	// Now is the clock (time.Now).
 	Now func() time.Time
 	// SealRate is the backup's pace after the snapshot, in bytes per
-	// second: the manifest's hashing, the sealing and the archive's check
-	// each go at it (pace). 0 is DefaultSealRate, below 0 unpaced (tests).
+	// second, before compression: the manifest's hashing, the sealing and
+	// the archive's check each go at it (pace). 0 is DefaultSealRate, below 0 unpaced (an
+	// offline run, tests).
 	SealRate int64
 	// Snapshot paces the snapshot (zero: lib/storage's defaults).
 	Snapshot storage.SnapshotOptions
@@ -253,7 +254,9 @@ const spaceMargin = 64 << 20
 // RequiredSpace is the free space a run needs beside a database of
 // dbBytes (the file and its WAL): the snapshot, a temporary file the size
 // of the database, then the archive and, while it is checked, its
-// unpacked copy, plus a margin. Setup and doctor (step 6) count it too.
+// unpacked copy, plus a margin. The archive counts as the database's size:
+// it is compressed, but what a database holds sealed compresses little.
+// Setup and doctor (step 6) count it too.
 func RequiredSpace(dbBytes int64) int64 { return 3*dbBytes + spaceMargin }
 
 // Run takes one backup now.

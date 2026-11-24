@@ -6,8 +6,9 @@
 // It is varlatchd's and, in steps 5 and 6, the CLI's `admin backup`
 // (Apache-2.0: it never imports go/server).
 //
-// The seal is packages/backup archive.ts's, byte for byte, so archives
-// cross between the servers in both directions:
+// The seal of the TypeScript server's formats (1 and 2) is packages/backup
+// archive.ts's, byte for byte, so archives cross between the servers in
+// both directions:
 //
 //	header    "VLTBAK01" || salt (16 bytes) || nonce (12 bytes)
 //	body      AES-256-GCM of: uint32 big-endian manifest length ||
@@ -15,7 +16,18 @@
 //	          the header is the additional data
 //	tag       the GCM tag (16 bytes)
 //
-// The key is scrypt(BEK, salt, N=32768, r=8, p=1, 32 bytes), for a key
+// The Go server's (format 3) is compressed, then encrypted the same way:
+//
+//	header    "VLTBAK02" || salt (16 bytes) || nonce (12 bytes) ||
+//	          compression (uint32 big-endian: 1 is zstd)
+//	body      AES-256-GCM of: uint32 big-endian manifest length ||
+//	          manifest JSON || one zstd frame of the components, in the
+//	          manifest's order; the header is the additional data
+//	tag       the GCM tag (16 bytes)
+//
+// The manifest's sizes and SHA-256 are the components' own, before
+// compression. A format-3 archive under "VLTBAK01", not compressed, is
+// still opened: 0.50.0-rc.1 to rc.3 made them. The key is scrypt(BEK, salt, N=32768, r=8, p=1, 32 bytes), for a key
 // file (32 bytes) and a passphrase (at least 12 bytes) alike. An archive is
 // at most 60 GiB, below one GCM message's limit.
 package backup
@@ -44,15 +56,26 @@ import (
 )
 
 const (
-	headerBytes = 36
+	// The header's parts: the magic, the salt, the nonce, then, in a
+	// VLTBAK02 archive, the compression.
+	saltAt       = 8
+	nonceAt      = 24
+	headerBytes  = 36
+	header2Bytes = 40
 	// MaxBytes bounds an archive's plaintext (packages/backup MAX_BYTES).
 	MaxBytes = 60 << 30
+	// maxGrowth is more than compressing MaxBytes that do not compress
+	// makes them grow (three bytes to a block of 64 KiB or more).
+	maxGrowth = 64 << 20
 	// MaxManifestBytes bounds the manifest.
 	MaxManifestBytes = 1 << 20
 	chunk            = 1 << 20
 )
 
-var magic = []byte("VLTBAK01")
+var (
+	magic  = []byte("VLTBAK01")
+	magic2 = []byte("VLTBAK02")
+)
 
 // Error is a refusal with the TypeScript server's message (BackupError).
 type Error struct{ msg string }
@@ -215,6 +238,9 @@ type SealOptions struct {
 	// archive with the same cache (OpenOptions.Keys) does not derive it
 	// again.
 	Keys *KeyCache
+	// Uncompressed seals a format-3 archive as 0.50.0-rc.1 to rc.3 did (the
+	// tests of reading those).
+	Uncompressed bool
 }
 
 // LinkedError is a sealed archive in place whose directory could not be
@@ -273,16 +299,21 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 	if total > MaxBytes {
 		return &Error{"Archive exceeds the v1 60 GiB size limit"}
 	}
+	compressed := m.FormatVersion == FormatGo && !o.Uncompressed
 	header := make([]byte, headerBytes)
 	copy(header, magic)
-	if _, err := rand.Read(header[8:]); err != nil {
+	if _, err := rand.Read(header[saltAt:]); err != nil {
 		return err
 	}
-	key, err := o.Keys.derive(bek, header[8:24])
+	if compressed {
+		copy(header, magic2)
+		header = binary.BigEndian.AppendUint32(header, compressionZstd)
+	}
+	key, err := o.Keys.derive(bek, header[saltAt:nonceAt])
 	if err != nil {
 		return err
 	}
-	s, err := newGCMStream(key, header[24:], header, false)
+	s, err := newGCMStream(key, header[nonceAt:headerBytes], header, false)
 	clear(key)
 	if err != nil {
 		return err
@@ -303,44 +334,46 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 	if _, err := out.Write(header); err != nil {
 		return err
 	}
-	var sealed int64
-	buf := make([]byte, chunk)
-	write := func(p []byte) error {
-		if err := s.xor(p, p); err != nil {
+	enc := &encrypter{s: s, w: out}
+	head := make([]byte, 4, 4+len(manifest))
+	binary.BigEndian.PutUint32(head, uint32(len(manifest)))
+	head = append(head, manifest...)
+	if _, err := enc.Write(head); err != nil {
+		return err
+	}
+	var body io.Writer = enc
+	finish := func() error { return nil }
+	if compressed {
+		z, err := newCompressor(enc, total-int64(len(head)))
+		if err != nil {
 			return err
 		}
-		if _, err := out.Write(p); err != nil {
-			return err
-		}
-		sealed += int64(len(p))
+		// Not closed on an error: closing writes.
+		body, finish = z, z.Close
+	}
+	// The pace counts what is read (and compressed), before compression.
+	sealed := int64(len(head))
+	pace := func(n int) error {
+		sealed += int64(n)
 		if o.Pace != nil {
 			return o.Pace(sealed)
 		}
 		return nil
 	}
-	head := make([]byte, 4, 4+len(manifest))
-	binary.BigEndian.PutUint32(head, uint32(len(manifest)))
-	if err := write(append(head, manifest...)); err != nil {
+	if err := pace(0); err != nil {
 		return err
 	}
+	buf := make([]byte, chunk)
 	for _, f := range files {
-		for {
-			n, rerr := f.Read(buf)
-			if n > 0 {
-				if err := write(buf[:n]); err != nil {
-					return err
-				}
-			}
-			if rerr == io.EOF {
-				break
-			}
-			if rerr != nil {
-				return rerr
-			}
+		if _, err := copyPaced(body, f, buf, pace); err != nil {
+			return err
 		}
 	}
 	if sealed != total {
 		return &Error{"A component changed size while it was sealed"}
+	}
+	if err := finish(); err != nil {
+		return err
 	}
 	tag := s.tag()
 	if _, err := out.Write(tag[:]); err != nil {
@@ -360,6 +393,32 @@ func Seal(output string, manifest []byte, components []string, bek BEK, o SealOp
 		return &LinkedError{Path: output, Err: err}
 	}
 	return nil
+}
+
+// encrypter encrypts what is written to it onto w, and hashes the
+// ciphertext.
+type encrypter struct {
+	s   *gcmStream
+	w   io.Writer
+	buf []byte
+}
+
+func (e *encrypter) Write(p []byte) (int, error) {
+	// Into a buffer of its own: a writer leaves p as it is.
+	for n := 0; n < len(p); {
+		if e.buf == nil {
+			e.buf = make([]byte, 1<<17)
+		}
+		k := min(len(e.buf), len(p)-n)
+		if err := e.s.xor(e.buf[:k], p[n:n+k]); err != nil {
+			return n, err
+		}
+		if _, err := e.w.Write(e.buf[:k]); err != nil {
+			return n, err
+		}
+		n += k
+	}
+	return len(p), nil
 }
 
 // SyncDir syncs a directory, so a file linked or renamed into it survives a
@@ -386,7 +445,8 @@ func (o *Opened) Close() error { return os.RemoveAll(o.dir) }
 // Open authenticates the whole archive before interpreting any of it: the
 // plaintext goes to a file in a new directory under scratch, the GCM tag
 // is checked, and only then are the manifest parsed and the components
-// split out, each checked against its size and SHA-256.
+// split out (a compressed archive's decompressed, never past the sizes the
+// manifest declares), each checked against its size and SHA-256.
 func Open(path string, bek BEK, scratch string) (*Opened, error) {
 	return OpenWith(path, bek, scratch, OpenOptions{})
 }
@@ -396,9 +456,10 @@ type OpenOptions struct {
 	// Keys, when set, gives the archive key a Seal with the same cache
 	// derived (the backup's own check), and keeps one it derives.
 	Keys *KeyCache
-	// Pace, when set, is called after each chunk (about 1 MiB) of either
-	// pass, the decryption and the components' SHA-256, with the bytes of
-	// both passes so far; opening waits for it, as Seal waits for
+	// Pace, when set, is called after each chunk (at most 1 MiB) of either
+	// pass, the decryption (of a compressed archive's fewer bytes) and the
+	// components' decompression and SHA-256, with the bytes of both passes
+	// so far; opening waits for it, as Seal waits for
 	// SealOptions.Pace. An error from it ends the opening: OpenWith
 	// returns it. It changes only the timing: every check is made.
 	Pace func(done int64) error
@@ -416,25 +477,41 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 		return nil, err
 	}
 	size := st.Size()
-	if size < headerBytes+20 || size > MaxBytes+headerBytes+16 {
+	if size < headerBytes+20 || size > MaxBytes+maxGrowth+header2Bytes+gcmTagSize {
 		return nil, ErrSize
 	}
 	header := make([]byte, headerBytes)
 	if _, err := io.ReadFull(f, header); err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(header[:8], magic) {
+	// Everything the header says is refused before any key work.
+	compressed := bytes.Equal(header[:saltAt], magic2)
+	switch {
+	case compressed:
+		if size < header2Bytes+20 {
+			return nil, ErrSize
+		}
+		header = append(header, make([]byte, header2Bytes-headerBytes)...)
+		if _, err := io.ReadFull(f, header[headerBytes:]); err != nil {
+			return nil, err
+		}
+		if binary.BigEndian.Uint32(header[headerBytes:]) != compressionZstd {
+			return nil, ErrCompression
+		}
+	case !bytes.Equal(header[:saltAt], magic):
 		return nil, ErrFormat
+	case size > MaxBytes+headerBytes+gcmTagSize:
+		return nil, ErrSize
 	}
 	tag := make([]byte, gcmTagSize)
 	if _, err := f.ReadAt(tag, size-gcmTagSize); err != nil {
 		return nil, err
 	}
-	key, err := o.Keys.derive(bek, header[8:24])
+	key, err := o.Keys.derive(bek, header[saltAt:nonceAt])
 	if err != nil {
 		return nil, err
 	}
-	s, err := newGCMStream(key, header[24:], header, true)
+	s, err := newGCMStream(key, header[nonceAt:headerBytes], header, true)
 	clear(key)
 	if err != nil {
 		return nil, err
@@ -457,7 +534,8 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 		return nil, err
 	}
 	defer plain.Close()
-	body := io.NewSectionReader(f, headerBytes, size-headerBytes-gcmTagSize)
+	plainSize := size - int64(len(header)) - gcmTagSize
+	body := io.NewSectionReader(f, int64(len(header)), plainSize)
 	buf := make([]byte, chunk)
 	var done int64
 	pace := func(n int) error {
@@ -490,7 +568,6 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 	if !s.verify(tag) {
 		return nil, ErrIntegrity
 	}
-	plainSize := size - headerBytes - gcmTagSize
 	head := make([]byte, 4)
 	if _, err := plain.ReadAt(head, 0); err != nil {
 		return nil, &Error{"Invalid manifest size"}
@@ -507,12 +584,30 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 	if err != nil {
 		return nil, err
 	}
-	offset := 4 + n
-	sum := offset
-	for _, c := range m.Components {
-		sum += c.Bytes
+	if compressed && m.FormatVersion != FormatGo {
+		// Only Go's are compressed: the TypeScript servers know no such
+		// archive.
+		return nil, ErrFormat
 	}
-	if sum != plainSize {
+	packed := io.NewSectionReader(plain, 4+n, plainSize-4-n)
+	var sum int64
+	for _, c := range m.Components {
+		if sum += c.Bytes; c.Bytes > MaxBytes || sum > MaxBytes {
+			return nil, &Error{"Component sizes do not match archive"}
+		}
+	}
+	var unpacked io.Reader = packed
+	if compressed {
+		if err := checkFrame(packed, packed.Size(), sum); err != nil {
+			return nil, err
+		}
+		z, err := newDecompressor(packed)
+		if err != nil {
+			return nil, err
+		}
+		defer z.z.Close()
+		unpacked = z
+	} else if sum != packed.Size() {
 		return nil, &Error{"Component sizes do not match archive"}
 	}
 	for _, c := range m.Components {
@@ -521,7 +616,10 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 			return nil, err
 		}
 		h := sha256.New()
-		_, cerr := copyPaced(io.MultiWriter(out, h), io.NewSectionReader(plain, offset, c.Bytes), buf, pace)
+		got, cerr := copyPaced(io.MultiWriter(out, h), io.LimitReader(unpacked, c.Bytes), buf, pace)
+		if cerr == nil && got != c.Bytes {
+			cerr = &Error{"Component sizes do not match archive"}
+		}
 		if err := out.Close(); cerr == nil {
 			cerr = err
 		}
@@ -531,7 +629,16 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 		if hex.EncodeToString(h.Sum(nil)) != c.SHA256 {
 			return nil, &Error{"Component checksum mismatch"}
 		}
-		offset += c.Bytes
+	}
+	if compressed {
+		// To the frame's end: its own checksum, and nothing more in it.
+		switch _, err := io.ReadFull(unpacked, buf[:1]); err {
+		case io.EOF:
+		case nil:
+			return nil, errCompressed
+		default:
+			return nil, err
+		}
 	}
 	_ = plain.Close()
 	if err := os.Remove(plainPath); err != nil {

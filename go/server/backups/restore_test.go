@@ -113,6 +113,45 @@ func TestRestore(t *testing.T) {
 	}
 }
 
+// An archive as 0.50.0-rc.1 to rc.3 sealed it, not compressed, is verified,
+// checked and restored.
+func TestRestoreUncompressed(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.exec(t, "CREATE TABLE marker (v TEXT) STRICT")
+	f.exec(t, "INSERT INTO marker VALUES ('restored')")
+	s := f.service(nil)
+	res, err := s.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(res.Path); err != nil || res.Bytes != info.Size() || res.Bytes*4 > res.Capture.DumpBytes {
+		t.Errorf("an archive of %d bytes (%d reported) of a database of %d (%v): not compressed", info.Size(), res.Bytes, res.Capture.DumpBytes, err)
+	}
+	o, err := backup.Open(res.Path, f.bekOf(t), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	older := filepath.Join(t.TempDir(), "older.vltbak")
+	if err := backup.Seal(older, o.ManifestJSON, []string{o.Path(backup.ComponentDatabase), o.Path(backup.ComponentConfiguration)}, f.bekOf(t), backup.SealOptions{Uncompressed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := s.verify(ctx, res.ArchiveID, older, f.bekOf(t), t.TempDir(), nil); err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {
+		t.Errorf("its verification: %+v %v", v, err)
+	}
+	cfg := f.target(t)
+	if c, err := CheckRestore(ctx, cfg, older, f.bekOf(t), f.rootKEK, false); err != nil || !c.Restores || c.ArchiveID != res.ArchiveID {
+		t.Errorf("its check: %+v %v", c, err)
+	}
+	if _, err := Restore(ctx, cfg, older, f.bekOf(t), f.rootKEK, nil); err != nil {
+		t.Fatal(err)
+	}
+	if v := queryOne(t, cfg.DatabasePath(), "SELECT v FROM marker"); v != "restored" {
+		t.Errorf("marker %q", v)
+	}
+}
+
 // A restore of an archive with a live audit export (ADR-0056 Decision 5):
 // the export continues in a new stream at its restored cursor, its
 // pending plan replaced by that stream's manifest, and

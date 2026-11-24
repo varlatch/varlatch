@@ -36,9 +36,10 @@ func TestRunDerivesOnce(t *testing.T) {
 // The manifest's hashing, the sealing and the check each go at SealRate:
 // before, only the sealing did, and the check's full re-open ran unpaced
 // at a whole CPU. With every step paced a run takes at least the paced
-// bytes over the rate: the hashing (the snapshot), the sealing (about the
-// snapshot) and the check (decryption and hashing, twice the snapshot),
-// four times the snapshot where the sealing alone was once.
+// bytes over the rate: the hashing (the snapshot), the sealing (the
+// snapshot again) and the check (the archive's decryption, then its
+// decompression and hashing, the snapshot once more), more than three times
+// the snapshot where the sealing alone was once.
 func TestRunPacesHashingSealingAndCheck(t *testing.T) {
 	f := newFixture(t)
 	f.exec(t, "CREATE TABLE filler (v BLOB) STRICT")
@@ -56,7 +57,7 @@ func TestRunPacesHashingSealingAndCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	elapsed := time.Since(start)
-	if want := time.Duration(0.9 * 4 * 0.25 * float64(time.Second)); elapsed < want {
+	if want := time.Duration(0.9 * 3 * 0.25 * float64(time.Second)); elapsed < want {
 		t.Fatalf("a paced run took %v, under the %v that pacing every step gives (the snapshot %d bytes at %d bytes/s)", elapsed, want, size, rate)
 	}
 	if !res.Verification.Integrity || !res.Verification.KeyMatch || !res.Verification.Compatibility {

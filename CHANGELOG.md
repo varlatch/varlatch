@@ -200,6 +200,15 @@ fixes.
 
 ### Server
 
+- **Backup archives are compressed** (zstd), before they are sealed. An
+  installation's audit history takes a fraction of the room it took; sealed
+  values little less. `varlatchd` reads the archives 0.50.0-rc.1 to rc.3 and
+  their converter made; those prereleases do not read the new ones ("Unsupported
+  archive format"). `admin backup run` prints both sizes.
+- **An offline backup does not take its time.** `admin backup run` with
+  `varlatchd` stopped, `varlatch migrate --finish`'s final archive, the
+  converter's, and the copy `varlatch migrate --rollback` is made from were
+  paced as if somebody were served meanwhile.
 - **The check of a backup's remote copy checks that it is that archive.**
   `admin backup run --verify-remote`, and with it `varlatch migrate --finish
   --delete-old-data`, accepted any archive sealed with the same keys at the

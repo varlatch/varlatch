@@ -101,8 +101,12 @@ func TestOpenAndDescribePaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.Close()
-	plain := int64(len(manifest) + 4 + sizes[0] + sizes[1])
-	want := plain + int64(sizes[0]+sizes[1]) // decrypted, then hashed
+	st, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Decrypted (the archive but its header and tag), then hashed.
+	want := st.Size() - header2Bytes - gcmTagSize + int64(sizes[0]+sizes[1])
 	if len(calls) < 6 || calls[len(calls)-1] != want {
 		t.Fatalf("paced %d times, to %v; want at least 6, to %d", len(calls), calls[len(calls)-1:], want)
 	}

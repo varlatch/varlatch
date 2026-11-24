@@ -218,11 +218,25 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
 - `lib/backup/` (step 4.14): the installation archive (ADR-0033 as
   ADR-0036 and Decision 7 amend it), Apache-2.0 for the CLI's `admin
   backup` in steps 5 and 6.
-  - **The seal** is `packages/backup`'s, byte for byte: `VLTBAK01`, a
-    salt and a nonce, then one AES-256-GCM message (the header as
-    additional data) over the manifest's length, the manifest and the
+  - **The seal** of formats 1 and 2 is `packages/backup`'s, byte for byte:
+    `VLTBAK01`, a salt and a nonce, then one AES-256-GCM message (the header
+    as additional data) over the manifest's length, the manifest and the
     components, under scrypt(BEK, salt), whether the BEK is a 32-byte key
-    file or a passphrase. One GCM message over up to 60 GiB needs a
+    file or a passphrase.
+  - **Format 3 is compressed, then sealed the same way:** `VLTBAK02`, a salt,
+    a nonce and the compression's number (1, zstd), all of it additional
+    data; in the message, the manifest's length, the manifest (as it is) and
+    one zstd frame of the components, which states their size. The
+    manifest's sizes and SHA-256 are the components' before compression.
+    Another magic or compression is refused before any key work. Opening
+    authenticates the whole archive first, then holds the frame to what
+    `Seal` writes without decompressing it (`checkFrame`: one frame, no
+    dictionary, a window of at most 8 MiB, the manifest's size, nothing
+    after it), and never writes more than the manifest declares. Format 3
+    under `VLTBAK01`, not compressed (0.50.0-rc.1 to rc.3, and what their
+    converter wrote), still opens; those releases answer a compressed one
+    "Unsupported archive format", as the TypeScript CLI does.
+  - **A long message.** One GCM message over up to 60 GiB needs a
     streaming GCM (`gcm.go`, CTR and a 4-bit-table GHASH); its output
     equals `crypto/cipher`'s for every length, additional data and write
     split tested.
