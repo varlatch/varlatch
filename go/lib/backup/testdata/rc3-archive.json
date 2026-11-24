@@ -1,0 +1,9 @@
+{
+  "archive": "VkxUQkFLMDHCJG5ggab2yTuenjDLAwrvuQyAXC+Mp9Cab6A80RizEcz5yRrmIWmlfLALMW++6mPFdMV1c9WgmvFO70f+4yl48JbnHo9JPhE23O2Z7prM/I4DdNUerNLQ6Q3E13hUQhNb/3qaOkinrxDeWE7LPVo0fKeyQfyuHh58yFp6KxoBr8oOmRTjGdGodrWpL+ZlHJx84kaQkANrRwL25MZHG6c3evNrTW/d3ukUzuLDjOh1w0/qbuUgJVd2IWBo/pBwJ4Er+6IWlcsbzGl8vyONHqotXy37al6tqdiTwVHZBr1sboqGgHhloePwpuoPxkDvQ1ifGp2eesa1V+fRZZDFDSDEIb3clkIDpDhhOzPqgstSFjtbBBkghC+HsTw9RsdgW4HTj8xetCIXokmBEuIfrehvltgqUoMzByOh8oezL5fjdbi7V0/xuIMSsZSWOrUjDPjHeI2dOY5CXMbQGjD2Fy6utUGlIcR0tiNe2GsJxOtZOIbptckqKD8W4x7JNYsDn5YKQUb9lNby6C/+OMQ7by5kXcA9zkxtsUP54oyHx7CfBh+sEIv+BHcNqnmZCcmqahas2UePvDoiEt/yaw0CSPciHCdHGN1FxDpkiC5V9UGygNhri1s1ct0alAgGAIegBg0kBKMy4RXA8LStR/dQFY3/FhBT0xR459+wIFrQD9xwC0b+/0vx9Rbf2L5ARVXsMJIMMOUjZ+wOq1pjmfDsjXiWYXuLUeN0e1GthraJ53xAB9qLzDRSZtG9QMXUtrb5qttSa6qhSbYk5rmng2rJAigLWHrhGXqh5oomofQCgKkTUA9VLbnkFhNXH87kU6s/GdOjwRhgtKIxp/37QyW5rJSbC3jNcxa0lQaZhLw3gnpTxplDsisbaBJdC0K5cI54DcBCPYbXDvqeBWNEEQ3KeSOLHFb1Mr/6D2Q0I+L0+YbskQM5KfIba3z4Pj5pPXp+zXYVwA7FkgQI+hmxFCqh4cxavQJj5IXC+gzTrMKhUnwC4ofO0+LN4UIqQNKz8fXZU4BgIG2dLH6j7hV4Vecwn0bT9NbH7F+gxIxy",
+  "comment": "A format-3 archive, not compressed, sealed with a passphrase by the code of 0.50.0-rc.1 to rc.3 (lib/backup before VLTBAK02, at 97a3e9b5); do not edit.",
+  "components": {
+    "configuration.json": "{\"formatVersion\":1,\"settings\":{}}",
+    "varlatch.db": "a database of rc.3's, as bytes\n"
+  },
+  "passphrase": "a passphrase of the rc.3 vector"
+}

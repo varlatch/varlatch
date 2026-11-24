@@ -41,17 +41,19 @@ sudo varlatch admin backup run      # make, check and deliver a backup now
 sudo varlatch admin backup status   # every archive, and the warnings
 ```
 
-`run` prints the archive's path, what each check found, and how long the
-database snapshot was held. Every archive, scheduled or not, is checked
+`run` prints the archive's path, what each check found, how long the
+database snapshot was held, and the size of the database and of its archive. Every archive, scheduled or not, is checked
 before it counts:
 
-- **integrity:** the archive opens with the backup key, whole;
+- **integrity:** the archive opens with the backup key, whole, and its
+  settings and its installation are what a restore reads;
 - **compatibility:** this release can restore it;
 - **Root KEK match:** the installed Root KEK opens what the archive holds.
 
 A backup pauses nothing: people and applications go on working while it
-runs. It takes a consistent snapshot of the database, seals it with the
-backup key, and puts it in `/var/lib/varlatch/backups` (mode 0600). The
+runs. It takes a consistent snapshot of the database, compresses it, seals
+it with the backup key, and puts it in `/var/lib/varlatch/backups` (mode
+0600). The
 archive holds the database and the settings of `varlatchd.conf`, never a
 key. It does not run during maintenance, and
 `backup run` then says so.
@@ -89,8 +91,16 @@ The snapshot is taken online, so its cost is processor and disk time, not
 downtime. `backup run` prints both for your installation, and `status`
 records them with each archive. Both grow with the audit history.
 
-Keep free space for a copy of the database, plus the archive:
-`varlatch doctor` checks it. Finished archives are encrypted. A killed run
+A backup goes slowly on purpose, so that the server goes on serving: a
+database of 600 MB takes several minutes. Run while `varlatchd` is stopped,
+it does not.
+
+Archives are compressed. How much smaller they are than the database depends
+on what it holds: an audit history compresses well, sealed values little.
+While it runs, a backup needs free space for a copy of the database and, in
+the worst case, two more: it does not start without three times the
+database's size. `varlatch doctor` checks for one. Archives kept on this
+host come on top. Finished archives are encrypted. A killed run
 can leave its working files in `/var/lib/varlatch/backups`; the next run
 removes them.
 

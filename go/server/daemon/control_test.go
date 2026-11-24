@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -305,6 +306,11 @@ func TestRecoverTakesItsSubjectsGate(t *testing.T) {
 		t.Fatalf("open: %d", status)
 	}
 	defer env.store.Close()
+	// Nobody is served offline: its backups are not paced.
+	var o backups.Options
+	if env.tune(&o); o.SealRate >= 0 || o.Snapshot != storage.Unpaced {
+		t.Fatalf("an offline backup's pace: %d, %+v", o.SealRate, o.Snapshot)
+	}
 	ctx := context.Background()
 	host := func(args ...string) (int, string) {
 		var out, errOut bytes.Buffer

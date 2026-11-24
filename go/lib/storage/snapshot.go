@@ -30,6 +30,11 @@ type SnapshotOptions struct {
 	Pause     time.Duration
 }
 
+// Unpaced copies in large steps with no pause: for a database that nobody
+// is served from (a stopped server's, one behind a migration's barrier),
+// where the pacing would only be waiting.
+var Unpaced = SnapshotOptions{StepPages: 4096, Pause: time.Nanosecond}
+
 // SnapshotStats describes a finished snapshot.
 type SnapshotStats struct {
 	Pages    int

@@ -20,7 +20,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 )
 
-var archiveCreated = regexp.MustCompile(`^Archive created: (\S+) \(([0-9a-f-]{36})\)\nSnapshot \d+\.\d s, sealing \d+\.\d s, \d+\.\d MiB; checks: integrity true, compatibility true, Root KEK match true\.\n$`)
+var archiveCreated = regexp.MustCompile(`^Archive created: (\S+) \(([0-9a-f-]{36})\)\nSnapshot \d+\.\d s, sealing \d+\.\d s, \d+\.\d MiB sealed as \d+\.\d MiB; checks: integrity true, compatibility true, Root KEK match true\.\n$`)
 
 // `admin maintenance` and `admin backup`, through the daemon: a lease
 // isolates the running server at once (503 MAINTENANCE, /readyz not

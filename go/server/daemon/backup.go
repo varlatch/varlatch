@@ -203,8 +203,8 @@ func runBackupCommand(ctx context.Context, env *hostEnv, sub string, rest []stri
 	if res.ArchiveID != "" {
 		v := res.Verification
 		fmt.Fprintf(stdout, "Archive created: %s (%s)\n", res.Path, res.ArchiveID)
-		fmt.Fprintf(stdout, "Snapshot %.1f s, sealing %.1f s, %.1f MiB; checks: integrity %t, compatibility %t, Root KEK match %t.\n",
-			float64(res.Capture.SnapshotHeldMs)/1000, float64(res.Capture.DumpMs)/1000, float64(res.Capture.DumpBytes)/(1<<20), v.Integrity, v.Compatibility, v.KeyMatch)
+		fmt.Fprintf(stdout, "Snapshot %.1f s, sealing %.1f s, %.1f MiB sealed as %.1f MiB; checks: integrity %t, compatibility %t, Root KEK match %t.\n",
+			float64(res.Capture.SnapshotHeldMs)/1000, float64(res.Capture.DumpMs)/1000, float64(res.Capture.DumpBytes)/(1<<20), float64(res.Bytes)/(1<<20), v.Integrity, v.Compatibility, v.KeyMatch)
 		if res.Delivery != nil {
 			fmt.Fprintf(stdout, "Upload completed to %s; remote retrieval has not been verified.\n", res.Delivery.Destination)
 		}
