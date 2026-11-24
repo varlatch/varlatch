@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The pinned MinIO image on this host, from the Actions cache before its
+# registry: every job that starts MinIO uses this first (its registry,
+# cgr.dev, has had hours of intermittent failures). It needs the checkout,
+# nothing else.
+#
+# The cache: one entry, key ci-image-<os>-<arch>-<digest>, a docker save of
+# the image (about 66 MB), which scripts/ci-pull-image.sh loads only as the
+# pinned image. Only a run on main saves it, when main has none (nightly or
+# dispatched; main has no push runs); pull requests and merge groups restore
+# main's. It is read by nearly every run, so it is not the one evicted at the
+# repository's limit (10 GB). Until the first main run after a change of the
+# digest has saved it, and whenever it is not there, the image is pulled
+# with the script's retries. A bad entry is refused and said; delete it then:
+# gh cache delete <key>.
+#
+# An image that could not be had here fails nothing yet: not every job that
+# uses this starts MinIO, and what does has the script again.
+name: MinIO's image
+description: The pinned MinIO image, from the Actions cache or pulled with retries.
+runs:
+  using: composite
+  steps:
+    - id: image
+      shell: bash
+      env:
+        IMAGE: cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b
+      run: |
+        {
+          echo "image=$IMAGE"
+          echo "key=ci-image-$RUNNER_OS-$RUNNER_ARCH-${IMAGE##*@sha256:}"
+          echo "dir=$RUNNER_TEMP/ci-images"
+        } >> "$GITHUB_OUTPUT"
+    - id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.image.outputs.dir }}
+        key: ${{ steps.image.outputs.key }}
+    - id: get
+      shell: bash
+      env:
+        IMAGE: ${{ steps.image.outputs.image }}
+        CI_IMAGE_CACHE: ${{ steps.image.outputs.dir }}
+      run: |
+        scripts/ci-pull-image.sh "$IMAGE" > /dev/null || echo "::warning::MinIO's image could not be had; what starts it tries again"
+        if [ -f "$CI_IMAGE_CACHE/${IMAGE##*@sha256:}.tar" ]; then echo "saved=true" >> "$GITHUB_OUTPUT"; fi
+    - if: github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true' && steps.get.outputs.saved == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.image.outputs.dir }}
+        key: ${{ steps.image.outputs.key }}
