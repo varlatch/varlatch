@@ -26,7 +26,8 @@
 # 6. Uninstalled as docs/reference/uninstall.md says: nothing is left.
 # 7. The candidate on the emptied host: set up on a terminal (setupterminal,
 #    which acts only on what it shows), a backup, the host emptied, setup
-#    --restore, doctor, uninstalled again.
+#    --restore, doctor; where a restored installation is held, an upgrade is
+#    refused until it is resumed. Uninstalled again.
 #
 # It touches only a disposable machine: it refuses to start unless
 # VARLATCH_TEST_DISPOSABLE_ROOT=1, as root, with nothing of a Varlatch
@@ -165,6 +166,9 @@ no_key_in() {
   done
 }
 doctor() { "$VARLATCH" doctor --config "$CONF" >"$work/doctor.txt" 2>&1 || { cat "$work/doctor.txt" >&2; return 1; }; }
+has_hold() { "$client_bin" admin --help 2>/dev/null | grep -q 'restore resume'; }
+held() { curl -s "$URL/readyz" | grep -q '"held": *true' && "$VARLATCHD" admin restore status --config "$CONF" >"$work/hold.txt" 2>&1; }
+not_held() { ready && ! curl -s "$URL/readyz" | grep -q '"held": *true'; }
 has_rollback() { "$client_bin" upgrade --help 2>/dev/null | grep -q -- --rollback; }
 
 # upgrade <name> <binary> <arguments...>: its output in $work/<name>.out, its
@@ -381,6 +385,10 @@ if has_rollback; then
   upgraded loss "$CANDIDATE"
   check "snapshot: what was there before the upgrade is there" has THIRD
   check "snapshot: what changed since is lost, as it says" has_not FOURTH
+  if has_hold && held; then
+    # It is a restore too.
+    check "snapshot: held until it is resumed" "$VARLATCH" admin restore resume --config "$CONF"
+  fi
   upgrade after-loss "$VARLATCH" "$NEXT" --yes
   upgraded after-loss "$NEXT"
 else
@@ -427,6 +435,24 @@ must "restore: setup --restore onto the emptied host exits 0" [ "$status" = 0 ]
 check "restore: $CANDIDATE serves" serves "$CANDIDATE"
 check "restore: the administrator is back" sh -c '"$1" admin bootstrap-status --config "$2" | grep -qF "$3,\"enabled\":true,\"hasPasskey\":true"' sh "$VARLATCHD" "$CONF" "$admin"
 check "restore: varlatch doctor passes" doctor
+if has_hold; then
+  # What the archive holds may be undone since: the work waits for the
+  # operator, and so does an upgrade.
+  check "hold: a restored installation is held" held
+  install -m 755 "$client_bin" "$tool"
+  upgrade held "$tool" "$NEXT" --yes
+  check "hold: an upgrade is refused" [ "$status" != 0 ]
+  check "hold: it says what to run" says held "restore resume"
+  check "hold: $CANDIDATE still serves, held" held
+  check "hold: resumed" "$VARLATCH" admin restore resume --config "$CONF"
+  check "hold: it is held no more" not_held
+  upgrade resumed "$tool" "$NEXT" --yes
+  upgraded resumed "$NEXT"
+  check "hold: not held after the upgrade" not_held
+  rm -f "$tool"
+else
+  echo "SKIP  hold: this candidate holds no restored installation"
+fi
 check "restore: no key in an output" no_key_in "$work/terminal.out" "$work/restore.out" "$work/backup.json"
 uninstall
 if host_is_empty; then pass "uninstalled again: nothing is left"; else fail "uninstalled again: left:$there"; fi
