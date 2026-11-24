@@ -412,3 +412,26 @@ func TestAnOlderServerMatchesNoPage(t *testing.T) {
 		t.Errorf("%s", a.raw)
 	}
 }
+
+// What is recorded of targets and placements has an entry for each there is,
+// whatever the names in them.
+func TestPlacementsAreRecordedAsTheyAre(t *testing.T) {
+	w := newWorld(t)
+	web := with{"items": []string{"SECRET_A"}, "destinations": []string{"web:https://portal.example.com"}}
+	for _, bad := range []string{"field:x;SECRET_B=header:authorization", "field:a=b", "field:Pass‮dnrow​", "field: a"} {
+		web["targets"] = map[string]any{"SECRET_A": []string{bad}}
+		w.want(bad, w.call("POST", capsPath, "broker", w.issueBody(web)), 422, "VALIDATION_FAILED")
+	}
+	for _, bad := range []string{"pipe:/x;SECRET_B=header:authorization", "pipe:/a‮b"} {
+		w.want(bad, w.call("POST", capsPath, "broker", w.issueBody(with{"items": []string{"SECRET_A"}, "targets": map[string]any{"SECRET_A": []string{bad}}})), 422, "VALIDATION_FAILED")
+	}
+	// The targets of a request, which may hold such characters.
+	for _, kind := range []string{"json:/", "query:", "form:"} {
+		target := kind + "x;SECRET_B=header:authorization‮"
+		want := "SECRET_A=" + kind + "x%3BSECRET_B=header:authorization%E2%80%AE"
+		c := w.issue("broker", with{"items": []string{"SECRET_A"}, "targets": map[string]any{"SECRET_A": []string{target}}})
+		w.wantEvent("capability.issued", "broker", nil, map[string]any{"targets": want})
+		w.want("exercise", w.exercise("broker", c, with{"placements": []any{map[string]any{"item": "SECRET_A", "target": target}}}), 200, "")
+		w.wantEvent("capability.exercised", "broker", nil, map[string]any{"placements": want})
+	}
+}

@@ -953,7 +953,8 @@ paths:
                     form:<name>, in a request; or (capability
                     capabilities.target-kinds, ADR-0064) pipe:<RFC 6901
                     pointer>, in a JSON document handed to a process over a
-                    pipe, or field:<name>, typed into a field. A field goes
+                    pipe, or field:<name>, typed into a field (both without
+                    ; and = and characters that do not show). A field goes
                     with pages and applications, a pipe with hosts and
                     applications, the others with hosts: a target no
                     destination takes is refused (VALIDATION_FAILED, reason

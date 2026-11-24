@@ -348,19 +348,10 @@ func AppName(raw string) (string, bool) {
 		return "", false
 	}
 	name := norm.NFC.String(raw)
-	if n := utf8.RuneCountInString(name); n == 0 || n > MaxAppName || strings.TrimSpace(name) != name || strings.ContainsAny(name, "@*,;=\\/") || !plainText(name) {
+	if n := utf8.RuneCountInString(name); n == 0 || n > MaxAppName || strings.TrimSpace(name) != name || strings.ContainsAny(name, "@*,;=\\/") || !targets.Plain(name) {
 		return "", false
 	}
 	return name, true
-}
-
-func plainText(s string) bool {
-	for _, r := range s {
-		if !unicode.IsPrint(r) || unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Variation_Selector, r) {
-			return false
-		}
-	}
-	return true
 }
 
 // Takes is whether a value may be put at a target of this kind there: a part

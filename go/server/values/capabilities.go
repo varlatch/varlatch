@@ -639,7 +639,7 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 		placements := make([]string, 0, len(in.Placements))
 		for _, p := range in.Placements {
 			if theirs(p.Item) {
-				placements = append(placements, p.Item+"="+p.Target)
+				placements = append(placements, p.Item+"="+targets.Recorded(p.Target))
 			}
 		}
 		return audit.Event{
