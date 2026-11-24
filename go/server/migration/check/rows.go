@@ -342,8 +342,10 @@ func normalize(v any) any {
 // after it served) may hold rows in: varlatchd's own records, which no
 // bundle carries. certificate_issuances is the public name's issuance
 // count (schema version 2), carried across a reverse apart from the bundle
-// (migrate's migration-issuances.json).
-var reverseKeeps = map[string]bool{"certificate_issuances": true}
+// (migrate's migration-issuances.json). exercise_credentials and
+// oidc_token_uses (schema version 4) stay behind: what they limit is inert
+// on the TypeScript server (ADR-0060).
+var reverseKeeps = map[string]bool{"certificate_issuances": true, "exercise_credentials": true, "oidc_token_uses": true}
 
 // otherTables checks the target holds no table the bundle does not
 // account for, and the target-only tables what an import writes:

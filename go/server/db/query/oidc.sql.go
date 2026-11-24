@@ -109,6 +109,27 @@ func (q *Queries) InsertOidcBinding(ctx context.Context, arg InsertOidcBindingPa
 	return i, err
 }
 
+const insertOidcTokenUse = `-- name: InsertOidcTokenUse :execrows
+INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES (?, ?, ?)
+ON CONFLICT (token_key) DO NOTHING
+`
+
+type InsertOidcTokenUseParams struct {
+	TokenKey  string
+	UsedAt    int64
+	ExpiresAt int64
+}
+
+// A token exchanged under a binding that takes each once: no row when it
+// was exchanged before.
+func (q *Queries) InsertOidcTokenUse(ctx context.Context, arg InsertOidcTokenUseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertOidcTokenUse, arg.TokenKey, arg.UsedAt, arg.ExpiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const listOidcBindings = `-- name: ListOidcBindings :many
 
 SELECT id, identity_id, organization_id, issuer, audience, subject, claims, created_by, created_at, revoked_at FROM oidc_bindings WHERE organization_id = ? AND identity_id = ? AND revoked_at IS NULL
@@ -184,6 +205,17 @@ func (q *Queries) LiveOidcBinding(ctx context.Context, arg LiveOidcBindingParams
 		&i.RevokedAt,
 	)
 	return i, err
+}
+
+const pruneOidcTokenUses = `-- name: PruneOidcTokenUses :exec
+DELETE FROM oidc_token_uses WHERE token_key IN (
+  SELECT t.token_key FROM oidc_token_uses t WHERE t.expires_at < ?1 ORDER BY t.expires_at LIMIT 500)
+`
+
+// Uses of tokens no longer accepted, oldest first, a bounded number at once.
+func (q *Queries) PruneOidcTokenUses(ctx context.Context, before int64) error {
+	_, err := q.db.ExecContext(ctx, pruneOidcTokenUses, before)
+	return err
 }
 
 const revokeOidcBinding = `-- name: RevokeOidcBinding :one

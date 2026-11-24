@@ -30,3 +30,14 @@ JOIN organizations o ON o.id = b.organization_id
 WHERE (o.id = sqlc.arg(organization) OR o.slug = sqlc.arg(organization)) AND o.deleted_at IS NULL
   AND b.issuer = sqlc.arg(issuer) AND b.revoked_at IS NULL AND i.disabled = 0
 ORDER BY b.rowid;
+
+-- name: InsertOidcTokenUse :execrows
+-- A token exchanged under a binding that takes each once: no row when it
+-- was exchanged before.
+INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES (?, ?, ?)
+ON CONFLICT (token_key) DO NOTHING;
+
+-- name: PruneOidcTokenUses :exec
+-- Uses of tokens no longer accepted, oldest first, a bounded number at once.
+DELETE FROM oidc_token_uses WHERE token_key IN (
+  SELECT t.token_key FROM oidc_token_uses t WHERE t.expires_at < sqlc.arg(before) ORDER BY t.expires_at LIMIT 500);

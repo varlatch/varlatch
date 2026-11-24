@@ -24,7 +24,8 @@ import (
 // (services/varlatchd/src/migration/manifest-v1.json, release/0.22) is the
 // same but for the target's side, which only varlatchd reads: its
 // target.schemaVersion and targetOnly tables follow schema.sql (since
-// schema version 2, certificate_issuances), while the bundle header names
+// schema version 2, certificate_issuances; since 4, exercise_credentials
+// and oidc_token_uses), while the bundle header names
 // the manifest version, 1 in both, and every source table and column is
 // the same.
 //

@@ -489,6 +489,67 @@ func loadManifest(t *testing.T) *manifest.Manifest {
 	return m
 }
 
+// What ADR-0060 limits (an exercise-only credential and its binding, a
+// single-use Capability, a token exchanged once, a capability.issue Grant)
+// is in the copied tables in a form the TypeScript server's columns hold:
+// the reverse checks pass, the reverse bundle carries each row as it is
+// (where it matches no token and no secret), and varlatchd's own two tables
+// stay behind.
+func TestTheReverseChecksWithLimits(t *testing.T) {
+	s := setUp(t)
+	path := copyDB(t, s)
+	const broker = "(SELECT id FROM identities WHERE kind = 'broker' ORDER BY id LIMIT 1)"
+	const org = "(SELECT organization_id FROM identities WHERE kind = 'broker' ORDER BY id LIMIT 1)"
+	for _, q := range []string{
+		`INSERT INTO oidc_bindings (id, identity_id, organization_id, issuer, audience, subject, claims, created_at)
+		 VALUES ('oib_limited', ` + broker + `, ` + org + `, 'https://issuer.example', 'varlatch', 'machine:*',
+		 '{"varlatch:limits": "{\"v\":1,\"exerciseOnly\":true,\"singleExchange\":true}"}', 1000)`,
+		`INSERT INTO credentials (id, identity_id, kind, token_hash, created_at, expires_at)
+		 VALUES ('crd_limited', ` + broker + `, 'oidc', 'exercise:' || printf('%064d', 7), 1000, 2000)`,
+		`INSERT INTO exercise_credentials (credential_id, oidc_binding_id, run_id) VALUES ('crd_limited', 'oib_limited', 'run-left-behind')`,
+		`INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES (printf('%064d', 1), 1, 2)`,
+		`INSERT INTO grants (id, organization_id, subject_identity_id, scope, actions, created_at)
+		 VALUES ('grt_issue', ` + org + `, ` + broker + `, '{"kind": "organization"}', '["capability.issue"]', 1000)`,
+		`UPDATE capabilities SET secret_hash = 'once:' || secret_hash, created_by = (SELECT id FROM identities WHERE kind = 'service' ORDER BY id LIMIT 1)
+		 WHERE id = (SELECT min(id) FROM capabilities)`,
+		`UPDATE capabilities SET secret_hash = 'used:' || secret_hash WHERE id = (SELECT max(id) FROM capabilities)`,
+	} {
+		damage(t, path, q)
+	}
+	keep := filepath.Join(t.TempDir(), "keep")
+	var rev bytes.Buffer
+	if _, err := migrate.ExportReverse(context.Background(), &rev, migrate.Options{DataDir: filepath.Dir(path), Keep: keep, Release: "0.50.0-check"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"oib_limited", "varlatch:limits", "crd_limited", "exercise:", "grt_issue", "once:", "used:"} {
+		if !bytes.Contains(rev.Bytes(), []byte(want)) {
+			t.Errorf("the reverse bundle has no %s", want)
+		}
+	}
+	if bytes.Contains(rev.Bytes(), []byte("run-left-behind")) || bytes.Contains(rev.Bytes(), []byte("oidc_token_uses")) {
+		t.Error("the reverse bundle carries varlatchd's own tables")
+	}
+	rebuilt := migrationtest.FromReverse(t, rev.Bytes(), s.source.RootKEK)
+	db := openRO(t, filepath.Join(keep, config.DatabaseFile))
+	defer db.Close()
+	decisions := []bundle.Decision{}
+	for _, d := range tuples(t, db) {
+		got, err := check.Evaluate(context.Background(), db, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decisions = append(decisions, got)
+	}
+	b := migrationtest.Bundle(t, rebuilt, migrationtest.Options{Sections: &migrationtest.Sections{Digests: migrationtest.Digests(t, rebuilt, s.runKey), Decisions: decisions, At: 1}})
+	rep, err := check.Run(context.Background(), db, bytes.NewReader(b), check.Options{RootKEK: s.source.RootKEK, RunKey: s.runKey, Reverse: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Passed {
+		t.Fatalf("the reverse checks:\n%s", rep.Text())
+	}
+}
+
 // The reverse checks: the transformed copy a reverse export kept, held
 // against the stand-in TypeScript release's export of the database it
 // rebuilt from the reverse bundle, pass with every check reading

@@ -1458,3 +1458,27 @@ CREATE INDEX audit_events_identity_lifecycle_idx ON audit_events (organization_i
 CREATE INDEX audit_events_capability_issued_idx ON audit_events (organization_id, json_extract(resource, '$.capabilityId'), event_order)
   WHERE event_type = 'capability.issued';
 CREATE INDEX capabilities_live_idx ON capabilities (organization_id, id) WHERE revoked_at IS NULL;
+
+-- Exercise-only credentials and tokens exchanged once (ADR-0060): Go only,
+-- schema version 4.
+--
+-- exercise_credentials is what limits an exercise-only credential, beside
+-- its row in credentials: the binding its token was exchanged under and,
+-- with a runIdClaim, the run whose Capabilities it exercises. The limit
+-- itself is in credentials.token_hash ('exercise:' and the hash), which no
+-- server without it can match, so it fails closed on an older one.
+--
+-- oidc_token_uses is the tokens exchanged under a binding that takes each
+-- once: the SHA-256 of the issuer and the jti (or, without one, of the
+-- token's signed part), kept until the token itself is no longer accepted.
+CREATE TABLE exercise_credentials (
+  credential_id TEXT NOT NULL PRIMARY KEY REFERENCES credentials (id),
+  oidc_binding_id TEXT NOT NULL REFERENCES oidc_bindings (id),
+  run_id TEXT CONSTRAINT exercise_credentials_run_id_check CHECK (length(run_id) BETWEEN 1 AND 200)
+) STRICT;
+CREATE TABLE oidc_token_uses (
+  token_key TEXT NOT NULL PRIMARY KEY CONSTRAINT oidc_token_uses_token_key_check CHECK (length(token_key) = 64 AND token_key NOT GLOB '*[^0-9a-f]*'),
+  used_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX oidc_token_uses_expires ON oidc_token_uses (expires_at);

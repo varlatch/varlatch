@@ -287,6 +287,12 @@ type Environment struct {
 	DeletedAt           sql.NullInt64
 }
 
+type ExerciseCredential struct {
+	CredentialID  string
+	OidcBindingID string
+	RunID         sql.NullString
+}
+
 type ExposureBackfill struct {
 	Singleton  int64
 	Cursor     int64
@@ -445,6 +451,12 @@ type OidcBinding struct {
 	CreatedBy      sql.NullString
 	CreatedAt      int64
 	RevokedAt      sql.NullInt64
+}
+
+type OidcTokenUse struct {
+	TokenKey  string
+	UsedAt    int64
+	ExpiresAt int64
 }
 
 type OrgMembership struct {
