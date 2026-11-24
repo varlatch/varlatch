@@ -2,7 +2,7 @@
 
 > **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
 > The current release, 0.23.0, runs on Docker Compose:
-> [docs.varlatch.com](https://docs.varlatch.com/operations/backup/).
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md).
 
 An installation backs itself up: `varlatchd` makes an encrypted archive of
 its database every day, checks it, and uploads it when you gave it a bucket.
@@ -18,7 +18,12 @@ To restore, you need all of these:
 2. the **backup key** (the Backup Encryption Key), which opens the archive;
 3. the **Root KEK** the archive's values depend on;
 4. a `varlatchd` of a release that can read the archive: the one that made
-   it, or a newer one.
+   it, or a newer one;
+5. **`/etc/varlatch/varlatchd.conf`, and the files it names:** the
+   destinations file and the bucket's key, a proxy's certificates, a private
+   certificate authority. An archive records the settings, but a restore on
+   a fresh host does not apply them. Keep a copy off this host, with the
+   backups' other papers, and again after each change.
 
 Setup makes both keys, in `/etc/varlatch/backup-key` and
 `/etc/varlatch/root-kek`, readable by root only, and shows each once for you
@@ -60,7 +65,10 @@ key. It does not run during maintenance, and
 | [`backup_destinations_file`](../self-hosting/configuration.md#backup_destinations_file) | none | the buckets archives can go to |
 | [`backup_destination`](../self-hosting/configuration.md#backup_destination) | `offsite` | which of them is used |
 
-A backup that fails is tried again an hour later. The journal says why.
+When no archive could be made, the next try is an hour later. When the
+archive was made but its upload failed, it stays on this host, and the next
+try is the next scheduled backup: run `backup run` yourself once the bucket
+works again. The journal says why.
 
 ### Warnings
 
@@ -199,8 +207,8 @@ A destination has one key, and the server uses it for everything. So choose:
   keeps the warning that no remote copy was verified within 30 days. Check
   archives from another machine instead, with a read key and a
   [restore rehearsal](#rehearse-a-restore).
-- **A key that may also read** (`GetObject` and `GetObjectRetention`) under
-  the prefix. `test-bucket` and the remote check then work. Archives are
+- **A key that may also read** (`GetObject`, `GetObjectVersion` and
+  `GetObjectRetention`) under the prefix. `test-bucket` and the remote check then work. Archives are
   encrypted with the backup key, so a stolen copy opens only with that key.
 
 A write-only key can still **overwrite** an object if it knows the key name.
@@ -231,8 +239,8 @@ three multipart calls with `s3:PutObject`; abort needs `s3:AbortMultipartUpload`
 }
 ```
 
-For a key that may also read, add `"s3:GetObject"` and
-`"s3:GetObjectRetention"`. Against overwrites, enable versioning (a write-only key cannot delete old
+For a key that may also read, add `"s3:GetObject"`,
+`"s3:GetObjectVersion"` and `"s3:GetObjectRetention"`. Against overwrites, enable versioning (a write-only key cannot delete old
 versions) or Object Lock in compliance mode. Omit `endpoint` in the
 destinations file for AWS.
 
@@ -273,32 +281,70 @@ prevents overwrites.
 
 ## Restore on a fresh host or retry an interrupted restore
 
-Keep the archive and the two keys in files only root can read, and give
-them to a fresh host on which Varlatch was never set up:
+A restored installation is the one the archive holds: the same people,
+passkeys, credentials and audit log, **as they were then**. A credential
+you revoked since works again, a person you removed is back, and a value
+you rotated is the old one. So restore it closed, put those things right,
+and only then open it.
 
-```sh
-V=0.50.0  # the release that made the archive, or a newer one
-curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
-sudo sh install.sh --server -- --restore /root/backup.vltbak \
-  --root-kek-file /root/root-kek --backup-key-file /root/backup-key
-```
+1. **Make sure the old installation no longer serves**, anywhere. Two copies
+   of one installation must never run at the same time.
 
-Or, when the binaries are already there, `sudo varlatch setup --restore`
-with the same flags.
+2. **Let only yourself reach the new host.** Point the name at it, and allow
+   only your own address: in your proxy, or in the host's firewall on port
+   443. With public HTTPS leave port 80 open to all: it answers the
+   certificate authority and redirects, and serves no page.
 
-It installs your keys, restores the archive, checks that the Root KEK opens
-it, then goes on as setup does: it starts `varlatchd`, makes a backup and
-runs `varlatch doctor`. It asks the same questions, such as the ingress and
-where backups go. The address must be the one the archive's installation
-had (`--public-url`): its passkeys belong to it. To change the address,
-restore first, then [move it](move-installation.md). Setup refuses a host
-that holds other keys. If it stops, run it again.
+3. **Put the configuration in place first**, before anything starts. Copy
+   `varlatchd.conf` and the files it names to the same paths. In it, turn
+   delivery off until you have checked the installation:
 
-The restored installation is the one the archive holds: the same people,
-passkeys, credentials and audit log, as they were then. What was revoked
-since the archive was made is not revoked in it: revoke it again before
-people use the installation. Two copies of one installation must never
-serve at the same time.
+   ```sh
+   sudo install -d -m 750 /etc/varlatch
+   sudo install -m 644 varlatchd.conf /etc/varlatch/varlatchd.conf
+   sudoedit /etc/varlatch/varlatchd.conf   # sync = off, audit_export = off
+   ```
+
+   Setup keeps a `varlatchd.conf` it finds. Without one it writes a new one
+   from its questions, with `sync` and `audit_export` on: the installation
+   then starts to deliver again at once. No setting stops audit webhooks:
+   block the host's other outgoing connections too if that matters.
+
+4. **Restore.** Keep the archive and the two keys in files only root can
+   read:
+
+   ```sh
+   V=0.50.0  # the release that made the archive, or a newer one
+   curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
+   sudo sh install.sh --server -- --restore /root/backup.vltbak \
+     --root-kek-file /root/root-kek --backup-key-file /root/backup-key
+   ```
+
+   Or, when the binaries are already there, `sudo varlatch setup --restore`
+   with the same flags. It installs your keys, restores the archive, checks
+   that the Root KEK opens it, starts `varlatchd`, makes a backup and runs
+   `varlatch doctor`. Answer its questions as `varlatchd.conf` says. The
+   address must be the one the installation had: its passkeys belong to it.
+   To change it, restore first, then [move it](move-installation.md). Setup
+   refuses a host that holds other keys. If it stops, run it again.
+
+5. **Give the configuration its owner back:**
+
+   ```sh
+   sudo chown root:varlatch /etc/varlatch/varlatchd.conf
+   sudo chmod 640 /etc/varlatch/varlatchd.conf
+   ```
+
+   Do the same for the bucket's key file. When setup stopped at the first
+   backup because the service could not read it, run setup again.
+
+6. **Put right what changed since the archive was made:** sign in, revoke
+   the credentials and remove the people again, rotate the values again, and
+   undo any freeze or control that is no longer true. An audit export or
+   your own notes say what those were.
+
+7. **Open it:** set `sync` and `audit_export` back, `sudo systemctl restart
+   varlatchd`, then let people reach the host again.
 
 - **Public ingress:** the certificate is not in the archive; the new host
   obtains its own. Point the name at it.
@@ -308,25 +354,33 @@ serve at the same time.
 
 ### Put an archive back on the same host
 
+Every change since the archive is lost, revocations included. Before you
+start, let only yourself reach the host, as in step 2 above, and turn `sync`
+and `audit_export` off in `varlatchd.conf`. Copy the archive out of
+`backups/` first, so that nothing removes it.
+
 ```sh
 sudo systemctl stop varlatchd
-sudo varlatch admin backup restore --in /var/lib/varlatch/backups/ARCHIVE-ID.vltbak
+sudo cp /var/lib/varlatch/backups/ARCHIVE-ID.vltbak /root/
+sudo varlatch admin backup restore --in /root/ARCHIVE-ID.vltbak
 sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db
 sudo systemctl start varlatchd
 sudo varlatch admin backup run
 ```
 
+Then put right what changed and open the installation again, as in steps 6
+and 7 above.
+
 It uses the keys in `/etc/varlatch`; `--backup-key-file` names another
-backup key. Every change since the archive is lost. The restore runs as
-root, so the `chown` gives the restored database back to the service:
-without it, `varlatchd` cannot open it.
+backup key. The restore runs as root, so the `chown` gives the restored
+database back to the service: without it, `varlatchd` cannot open it. It
+prints the archive's settings, to compare with `varlatchd.conf`.
 
-It prints the archive's settings, to compare with `varlatchd.conf`. It
-refuses while `varlatchd` runs, an archive of another installation, and an
-archive this release cannot read.
-
-A restore that fails or is killed leaves the installation closed: it
-answers `503` until you run the same restore again with the same archive.
+It refuses while `varlatchd` runs, a wrong key, an archive it cannot read,
+and an archive of another installation, and then changes nothing. A restore
+that fails or is killed later, while it replaces the database, leaves the
+installation closed: it answers `503` until you run the same restore again
+with the same archive.
 
 ### Rehearse a restore
 

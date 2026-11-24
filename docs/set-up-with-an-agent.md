@@ -2,7 +2,7 @@
 
 > **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
 > The current release, 0.23.0, has a CLI that needs Node.js:
-> [docs.varlatch.com](https://docs.varlatch.com/set-up-with-an-agent/).
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/set-up-with-an-agent.md).
 
 Your coding agent can set Varlatch up in a repository for you. It installs
 the CLI, connects the repository, and moves your `.env` files in. You do

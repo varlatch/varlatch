@@ -2,7 +2,7 @@
 
 > **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
 > The current release, 0.23.0, runs on Docker Compose:
-> [docs.varlatch.com](https://docs.varlatch.com/operations/move-installation/).
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/move-installation.md).
 
 An installation's public URL ([`public_url`](../self-hosting/configuration.md#public_url))
 is the address people open in the browser. Use `varlatch move` to change it,
@@ -58,13 +58,16 @@ sudo varlatch move --public-url https://vault.example.org
 ```
 
 Add `--ingress public` or `--ingress external` when that changes too:
-`public` is `varlatchd`'s own HTTPS, `external` is your own proxy. The
-command:
+`public` is `varlatchd`'s own HTTPS, `external` is your own proxy. A
+localhost installation needs one of them. The command:
 
 1. Reads what the move affects and prints it: the number of people,
    passkeys, and sessions. It asks before it changes anything (`--yes`
    skips the question, and is needed without a terminal).
-2. Takes an archive and verifies it. Restoring it is the way back.
+2. Takes an archive, verifies it and prints its path. Restoring it is the
+   way back. **Copy it out of `/var/lib/varlatch/backups` now:** there it is
+   an ordinary archive, which later backups push out
+   ([`backup_keep`](../self-hosting/configuration.md#backup_keep)).
 3. Writes the new address to `/etc/varlatch/varlatchd.conf`, and restarts
    `varlatchd` with it.
 4. Removes the passkeys of the old address, and ends every browser session.
@@ -106,12 +109,14 @@ the archive the move took. It prints the archive's path:
 
 ```sh
 sudo systemctl stop varlatchd
-sudo varlatch admin backup restore --in <the path it printed>
+sudo varlatch admin backup restore --in <your copy of it>
 sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db
 sudo systemctl start varlatchd
 ```
 
-Every change since the move began is lost with it. Passkeys enrolled at the
+Every change since the move began is lost with it, revocations included: let
+only yourself reach the installation until you made them again
+([Put an archive back](backup.md#put-an-archive-back-on-the-same-host)). Passkeys enrolled at the
 new address are not in that archive, and would not work at the old address
 anyway.
 

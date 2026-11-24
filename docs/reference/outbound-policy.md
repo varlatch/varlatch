@@ -2,7 +2,7 @@
 
 > **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
 > The current release is 0.23.0:
-> [docs.varlatch.com](https://docs.varlatch.com/reference/outbound-policy/).
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/outbound-policy.md).
 
 Some of what an Organization configures makes varlatchd send requests: audit
 webhooks, Coolify and Convex Connections and their Sync Targets, GitHub
@@ -65,12 +65,14 @@ sudo systemctl restart varlatchd
 
 Other distributions have their own command, such as `update-ca-trust`.
 
-Instead, `SSL_CERT_FILE` in the service's environment names a PEM file to
-use. It **replaces** the system's list: a file that holds only your
-authority makes every public destination fail. Put the public authorities
-and yours in one file, readable by the `varlatch` user. In the container
-image, `SSL_CERT_FILE` is set to the image's own list: mount a file that
-holds both over it, or point the variable at one.
+In the container image, mount your authority's PEM file, readable by 65532,
+and set the container's `SSL_CERT_FILE` to its path. The image's own list
+still counts.
+
+`SSL_CERT_FILE` names the file to read in place of the system's bundle. The
+certificates in the system's directories (or `SSL_CERT_DIR`'s) are read too,
+so it does not take the public authorities away, and is no way to distrust
+them.
 
 The TypeScript server (0.23.0 and earlier) took extra authorities from
 `NODE_EXTRA_CA_CERTS`. `varlatchd` does not read that variable: when you
@@ -115,7 +117,7 @@ entry. (In 0.23.0 and earlier, the setting was `VARLATCH_OUTBOUND_ALLOW`.)
 
 An entry may end with a port:
 
-- `coolify.lan:8443`, `10.0.0.0/8:8000`, `[fd00::/8]:3210`;
+- `coolify.example.com:8443`, `10.0.0.0/8:8000`, `[fd00::/8]:3210`;
 - `:*` means any port, as in `127.0.0.1/32:*`;
 - **without a port, an entry allows the scheme's default port only:** 443
   for https and 80 for http. A self-hosted Convex at port 3210 needs
@@ -246,7 +248,7 @@ For example, an installation whose Coolify is on a tailnet and whose Convex
 answers on port 3210 on the LAN:
 
 ```ini
-outbound_allow = coolify.internal.example.com,convex.lan.example.com:3210
+outbound_allow = coolify.internal.example.com,convex.example.com:3210
 ```
 
 ### OIDC issuers that redirect

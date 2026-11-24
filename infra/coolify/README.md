@@ -406,6 +406,9 @@ root on the host.
    root_kek_file = /keys/root-kek
    backup_key_file = /keys/backup-key
    EOF
+   # Readable by the image's user whatever root's umask is.
+   chown root:65532 /srv/varlatch/varlatchd.conf
+   chmod 640 /srv/varlatch/varlatchd.conf
    ```
 
    Do this once. Never make the keys again for an installation that has
@@ -432,14 +435,28 @@ root on the host.
    [Verifying a release](../../docs/operations/verify-release.md#the-go-lines-image-0500-and-later)
    gives the digest.
 
-4. Create the first administrator. This prints a one-time link, valid for 15
-   minutes. Open it and create the passkey:
+4. Check that it answers at its address, then create the first
+   administrator. `/readyz` must answer 200:
 
    ```sh
-   docker exec <container> varlatchd admin bootstrap --name "Your Name"
+   curl -fsS https://app.example.com/readyz
    ```
 
+   ```sh
+   docker exec <container> varlatchd admin bootstrap
+   ```
+
+   `bootstrap` prints a one-time link, valid for 15 minutes. Open it and
+   create the passkey.
+
    Too late? `varlatchd admin bootstrap --revoke-unused` prints a new one.
+   When it says the installation is bootstrapped already (the enrollment was
+   interrupted), ask for that administrator's id, then for a link for them:
+
+   ```sh
+   docker exec <container> varlatchd admin bootstrap-status
+   docker exec <container> varlatchd admin recover --identity <identity id>
+   ```
 
 5. Check the key, and record that both copies exist off the host:
 
@@ -460,8 +477,13 @@ Give it a bucket next: [S3-compatible
 destinations](../../docs/operations/backup.md#s3-compatible-destinations).
 Mount both files, readable by `65532`, at the paths they name.
 
-To restore an archive, stop the container, run the image once with the same
-mounts, and start the container again:
+To restore an archive, first let only yourself reach the address, in your
+proxy or the host's firewall, and turn `sync` and `audit_export` off in
+`varlatchd.conf`: the archive brings back credentials revoked since it was
+made. [Backup and recovery](../../docs/operations/backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore)
+explains what to put right before you open it again. Then stop the
+container, run the image once with the same mounts, and start the container
+again:
 
 ```sh
 docker run --rm -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \

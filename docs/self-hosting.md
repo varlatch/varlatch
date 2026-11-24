@@ -111,8 +111,9 @@ sudo varlatchd admin custody status
 
 `kek export` wraps the Root KEK with a passphrase. The file it writes is
 safe to store anywhere, backups included; only the passphrase must be kept
-apart. `kek restore` checks the key against the installation before it
-writes it.
+apart. `kek restore` checks the key against the installation's database
+before it writes it. On a fresh host, with no database yet, it writes the key
+with a warning: run `kek verify` once the installation is restored.
 
 ```sh
 sudo varlatchd admin kek export --passphrase-file /root/passphrase > kek-escrow.json
@@ -130,12 +131,13 @@ together.
 
 ```sh
 sudo varlatchd admin kek split --shares 3 --threshold 2
-sudo varlatchd admin kek combine --out /root/root-kek --share <share> --share <share>
+sudo varlatchd admin kek combine --out /root/root-kek
 ```
 
-Arguments are visible to other users of the host while a command runs:
-combine on a host only you use, or give the shares one per line on standard
-input.
+`combine` reads the shares from standard input: paste one per line, then
+press Ctrl-D. Never give shares as arguments: they would be in the shell's
+history, and visible to other users while the command runs. Clear the
+terminal afterwards.
 
 ## Break-glass recovery
 

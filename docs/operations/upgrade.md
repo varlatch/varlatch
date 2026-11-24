@@ -8,7 +8,7 @@ you change the image's digest:
 ## Upgrade
 
 ```sh
-sudo varlatch upgrade --check   # is there a newer release? Changes nothing
+sudo varlatch upgrade --check   # is there a newer release? Upgrades nothing
 sudo varlatch upgrade           # to the newest release
 ```
 
@@ -27,8 +27,8 @@ The command:
    and restarts `varlatchd`. The installation does not answer for the few
    seconds this takes.
 5. Checks the new release's health. When a check fails, it puts the
-   previous binaries and the snapshot back, and the previous release
-   serves.
+   previous binaries and the database from before the upgrade back, and the
+   previous release serves.
 
 It needs root, and no keys from you. It never goes to an older release.
 
@@ -43,30 +43,12 @@ anything else.
 
 ## Go back
 
-> **Being built.** `--rollback` comes with 0.50.0. Its details may still
+> **Being built.** `--rollback` is not in a release yet, and its details may
 > change.
 
-```sh
-sudo varlatch upgrade --rollback
-```
-
-It returns to the release the last upgrade came from, with the binaries
-that upgrade kept:
-
-- **When that release can open the database as it is,** and the upgrade
-  declared itself safe for it, the binaries go back and the database stays.
-  Every change made since the upgrade is kept.
-- **Otherwise it restores the snapshot** taken before the upgrade. Every
-  change made since is lost. The command lists those changes first, and
-  the revocations among them, which would be undone: a credential revoked
-  since then works again. It asks, or needs `--accept-data-loss` without a
-  terminal. The database it replaces is kept 30 days.
-
-Without a terminal, `--yes` is needed too. You can go back to 0.50.0-rc.3
-or later. To an earlier prerelease the command refuses, and prints the
-steps to take by hand; after the restore it names, give the database back
-to the service with
-`sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db`.
+`sudo varlatch upgrade --rollback` returns to the release you upgraded from.
+When that release cannot use the database as it is now, going back loses the
+changes made since the upgrade: the command says which, and asks first.
 
 ## Newer releases in the dashboard
 

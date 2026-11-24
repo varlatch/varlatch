@@ -147,14 +147,14 @@ where you are: [joining a team](docs/join-a-team.md) you were invited to,
 
 Varlatch runs on any Linux host, amd64 or arm64, and on Coolify. The current
 release, 0.23.0, runs with Docker Compose: follow
-[its documentation](https://docs.varlatch.com/run-an-installation/). From
+[its documentation](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/run-an-installation.md). From
 0.50, a prerelease now, it is one program with its own database:
 [Run an installation](docs/run-an-installation.md).
 
 ### Use the CLI
 
 The CLI is one file attached to every release. 0.23.0's needs Node.js
-([install it](https://docs.varlatch.com/reference/install-the-cli/)); from
+([install it](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/install-the-cli.md)); from
 0.50 it needs nothing else: [Install the CLI](docs/reference/install-the-cli.md).
 
 ```sh

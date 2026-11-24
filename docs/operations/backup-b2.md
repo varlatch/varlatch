@@ -2,7 +2,7 @@
 
 > **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
 > The current release, 0.23.0, runs on Docker Compose:
-> [docs.varlatch.com](https://docs.varlatch.com/operations/backup-b2/).
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup-b2.md).
 
 An installation makes encrypted backups on its own disk without any cloud
 storage. A copy off the host is needed to survive losing the host. B2 is one

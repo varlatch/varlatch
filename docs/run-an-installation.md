@@ -2,7 +2,7 @@
 
 > **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
 > The current release, 0.23.0, runs on Docker Compose:
-> [docs.varlatch.com](https://docs.varlatch.com/run-an-installation/).
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/run-an-installation.md).
 
 Varlatch is self-hosted: one person on your team runs an installation,
 once, and everyone else signs in to it. Skip this page if someone already
@@ -90,13 +90,17 @@ proxy, and stops for the passkey:
 ```sh
 sudo varlatch setup --ingress proxy --public-url https://vault.example.com \
   --backups host --admin-wait 0s --admin-link-out /root/admin-link \
-  --root-kek-out /root/root-kek --backup-key-out /root/backup-key --attest
+  --root-kek-out /root/root-kek --backup-key-out /root/backup-key
 ```
 
-Open the link in `/root/admin-link` and create the passkey, then run the
-same command again. It writes the two keys to the files you named. Store
-them off this host, then delete those files. `--attest` is your statement
-that you did: setup records it, and cannot check it.
+It exits 75 twice, each time waiting for you:
+
+1. Open the link in `/root/admin-link` and create the passkey. Run the same
+   command again.
+2. It wrote the two keys to the files you named. Store them off this host,
+   apart from each other, and delete those files. Only then run the same
+   command a third time, with `--attest` added: your statement that the
+   copies are safe. Setup records it, and cannot check it.
 
 On a disk whose writes are slow, setup stops unless you add
 `--accept-slow-disk`.
@@ -112,9 +116,12 @@ reaches it, and nobody but you can join.
 [What Varlatch puts on your machine](reference/uninstall.md#what-varlatch-puts-on-your-machine)
 lists everything setup writes, and how to remove it.
 
-An installation keeps the address it was set up with, and every passkey is
-registered for that address. To move on to a real server later, set up a
-new installation there, rather than moving this one.
+Every passkey is registered for the address the installation was set up
+with. To move on to a real server later, the simplest way is a new
+installation there. You can also keep this one and
+[move it](operations/move-installation.md) to a public address, with
+`--ingress public` or `--ingress external`: everyone then registers their
+passkey again.
 
 ## The container image
 

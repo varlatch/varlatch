@@ -2,7 +2,7 @@
 
 > **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
 > The current release, 0.23.0, runs on Docker Compose:
-> [docs.varlatch.com](https://docs.varlatch.com/self-hosting/requirements/).
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/self-hosting/requirements.md).
 
 This page lists what a host needs to run a Varlatch installation.
 [Run an installation](../run-an-installation.md) walks you through the

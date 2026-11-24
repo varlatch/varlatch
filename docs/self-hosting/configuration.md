@@ -2,7 +2,7 @@
 
 > **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
 > The current release, 0.23.0, is configured with environment variables:
-> [docs.varlatch.com](https://docs.varlatch.com/self-hosting/configuration/).
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/self-hosting/configuration.md).
 
 Every setting of an installation is in one file, `varlatchd.conf`. On a host
 it is `/etc/varlatch/varlatchd.conf`, and `varlatch setup` writes it. In the
@@ -217,9 +217,9 @@ The name, in that file, of the bucket each archive is uploaded to.
 
 The private destinations Organizations may reach: webhook receivers,
 Coolify and Convex instances, and OIDC issuers on your LAN, a Docker network
-or a tailnet. Comma-separated host names (`coolify.lan`), subdomain
+or a tailnet. Comma-separated host names (`coolify.example.com`), subdomain
 wildcards (`*.private.example.com`), addresses and CIDR ranges
-(`10.0.0.0/8`), each with an optional port (`convex.lan:3210`,
+(`10.0.0.0/8`), each with an optional port (`convex.example.com:3210`,
 `10.0.0.5:*`). Without a port, an entry allows 443 for https and 80 for
 http.
 
