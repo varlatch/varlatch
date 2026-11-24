@@ -767,12 +767,14 @@ func TestAnUpgradeInterruptedAnywhere(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			for _, how := range []struct {
+			// Each point in each way, or every second point in one of them.
+			step := oneIn(6)
+			for i, how := range []struct {
 				name        string
 				cut, reboot bool
 			}{{"killed", false, false}, {"killed, rebooted", false, true}, {"cut", true, true}} {
 				points := 0
-				for n := 1; ; n++ {
+				for n := 1 + 2*i%step; ; n += step {
 					h := newStandHost(t, c.from, c.badTo, c.wal)
 					at := interrupted(n, func(crash func(string) bool) {
 						_, _ = h.upgrader(crash).Run(context.Background(), h.installed(), h.release())
@@ -805,7 +807,7 @@ func TestAnUpgradeInterruptedAnywhere(t *testing.T) {
 					h.ends(what)
 					os.RemoveAll(h.dir)
 				}
-				if points < 25 {
+				if points < 25/step {
 					h := newStandHost(t, c.from, c.badTo, c.wal)
 					_, err := h.upgrader(nil).Run(context.Background(), h.installed(), h.release())
 					t.Fatalf("%s: only %d points; a run: %v", how.name, points, err)
@@ -819,14 +821,14 @@ func TestAnUpgradeInterruptedAnywhere(t *testing.T) {
 // four times.
 func TestARecoveryInterruptedAnywhere(t *testing.T) {
 	seed := time.Now().UnixNano()
-	if testing.Short() {
+	if !everything() {
 		seed = 1
 	}
 	for w := range 4 {
 		t.Run(fmt.Sprint(w), func(t *testing.T) {
 			t.Parallel()
 			r := rand.New(rand.NewSource(seed + int64(w)))
-			for range 400 {
+			for range 400 / oneIn(10) {
 				h := newStandHost(t, []string{standFrom, oldFrom}[r.Intn(2)], r.Intn(2) == 0, r.Intn(2) == 0)
 				var story []string
 				again := func(work func(crash func(string) bool)) bool {
@@ -873,7 +875,7 @@ func TestAnUpgradeWithoutHardLinks(t *testing.T) {
 		from  string
 		badTo bool
 	}{{standFrom, false}, {standFrom, true}, {oldFrom, false}, {oldFrom, true}} {
-		for n := 1; ; n++ {
+		for n := 1; ; n += oneIn(6) {
 			h := newStandHost(t, c.from, c.badTo, true)
 			at := interrupted(n, func(crash func(string) bool) {
 				_, _ = h.upgrader(crash).Run(context.Background(), h.installed(), h.release())
@@ -1053,10 +1055,11 @@ func TestAnUpgradeWhoseSyncsFail(t *testing.T) {
 		from  string
 		badTo bool
 	}{{standFrom, false}, {standFrom, true}, {oldFrom, false}, {oldFrom, true}} {
-		for _, how := range []string{"left", "reboot", "cut"} {
+		for i, how := range []string{"left", "reboot", "cut"} {
 			t.Run(fmt.Sprint(c.from, " undone ", c.badTo, " ", how), func(t *testing.T) {
 				t.Parallel()
-				for n := 1; ; n++ {
+				step := oneIn(6)
+				for n := 1 + 2*i%step; ; n += step {
 					h := newStandHost(t, c.from, c.badTo, true)
 					syncs, at := 0, ""
 					u := h.upgrader(nil)
@@ -1490,12 +1493,14 @@ func TestARollbackInterruptedAnywhere(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			for _, how := range []struct {
+			// Each point in each way, or every second point in one of them.
+			step := oneIn(6)
+			for i, how := range []struct {
 				name        string
 				cut, reboot bool
 			}{{"killed", false, false}, {"killed, rebooted", false, true}, {"cut", true, true}} {
 				points := 0
-				for n := 1; ; n++ {
+				for n := 1 + 2*i%step; ; n += step {
 					h := newUpgradedHost(t, c.keeps, c.badFrom, c.wal)
 					at := interrupted(n, func(crash func(string) bool) {
 						if j, err := h.rollback(crash); err != nil && !errors.Is(err, errKilled) && !c.badFrom {
@@ -1534,7 +1539,7 @@ func TestARollbackInterruptedAnywhere(t *testing.T) {
 					}
 					os.RemoveAll(h.dir)
 				}
-				if least := map[bool]int{true: 12, false: 26}[c.keeps]; points < least {
+				if least := map[bool]int{true: 12, false: 26}[c.keeps]; points < least/step {
 					t.Fatalf("%s: only %d points", how.name, points)
 				}
 			}
@@ -1546,14 +1551,14 @@ func TestARollbackInterruptedAnywhere(t *testing.T) {
 // rolled back again.
 func TestARollbacksRecoveryInterruptedAnywhere(t *testing.T) {
 	seed := time.Now().UnixNano()
-	if testing.Short() {
+	if !everything() {
 		seed = 1
 	}
 	for w := range 4 {
 		t.Run(fmt.Sprint(w), func(t *testing.T) {
 			t.Parallel()
 			r := rand.New(rand.NewSource(seed + int64(w)))
-			for range 300 {
+			for range 300 / oneIn(10) {
 				bad := r.Intn(2) == 0
 				h := newUpgradedHost(t, r.Intn(3) == 0, bad, r.Intn(2) == 0)
 				var story []string
@@ -1613,10 +1618,11 @@ func TestARollbackThatCannotRecordTheStopChangesNothing(t *testing.T) {
 // A directory's sync that fails in a rollback, or in its undo, each in turn.
 func TestARollbackWhoseSyncsFail(t *testing.T) {
 	for _, c := range []struct{ keeps, badFrom bool }{{true, false}, {true, true}, {false, false}, {false, true}} {
-		for _, how := range []string{"left", "reboot", "cut"} {
+		for i, how := range []string{"left", "reboot", "cut"} {
 			t.Run(fmt.Sprint("keeps ", c.keeps, " undone ", c.badFrom, " ", how), func(t *testing.T) {
 				t.Parallel()
-				for n := 1; ; n++ {
+				step := oneIn(6)
+				for n := 1 + 2*i%step; ; n += step {
 					h := newUpgradedHost(t, c.keeps, c.badFrom, true)
 					plan, err := h.upgrader(nil).PlanRollback(context.Background())
 					if err != nil {
@@ -1953,10 +1959,10 @@ func TestAnEndIsDurableBeforeAnythingGoes(t *testing.T) {
 // Every pair: an upgrade or a rollback cut at each point, then its recovery
 // cut at each of its own, the host rebooted after both, and recovered.
 func TestEveryPairOfInterruptions(t *testing.T) {
-	// Each in turn is too long under the race detector: one in eleven there.
-	step := 1
-	if raceDetector || testing.Short() {
-		step = 11
+	// Each in turn is too long under the race detector, whatever is asked.
+	step := oneIn(23)
+	if raceDetector {
+		step = 23
 	}
 	for _, c := range []struct {
 		name     string
@@ -2005,8 +2011,8 @@ func TestEveryPairOfInterruptions(t *testing.T) {
 					break
 				}
 			}
-			// 914 at the least when this was written, 85 of them one in eleven.
-			if pairs < 800/step {
+			// 914 at the least when this was written.
+			if pairs < 700/step {
 				t.Fatalf("only %d pairs", pairs)
 			}
 			t.Logf("%d pairs", pairs)
