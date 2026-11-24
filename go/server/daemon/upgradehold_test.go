@@ -48,7 +48,7 @@ func inThisBoot(t *testing.T) {
 func TestUpgradeStart(t *testing.T) {
 	inThisBoot(t)
 	allowed := &upgradejournal.Start{Version: buildinfo.Version, BootID: thisBoot, At: "2026-11-24T08:00:00Z"}
-	held := []upgradejournal.Step{upgradejournal.Stopping, upgradejournal.Stopped, upgradejournal.Prepared, upgradejournal.Kept, upgradejournal.Installed, upgradejournal.Swapped, upgradejournal.Started}
+	held := []upgradejournal.Step{upgradejournal.Stopping, upgradejournal.Stopped, upgradejournal.Prepared, upgradejournal.Kept, upgradejournal.Installed, upgradejournal.Swapped, upgradejournal.Started, upgradejournal.Checked}
 	for _, step := range append([]upgradejournal.Step{upgradejournal.None}, upgradejournal.Steps...) {
 		for _, state := range []upgradejournal.State{upgradejournal.InProgress, upgradejournal.Failed, upgradejournal.Done, upgradejournal.Undone} {
 			holds := slices.Contains(held, step) && (state == upgradejournal.InProgress || state == upgradejournal.Failed)
@@ -62,11 +62,14 @@ func TestUpgradeStart(t *testing.T) {
 				writeUpgrade(t, dir, upgradeTo(upgradejournal.Format, state, step, start))
 				got, err := upgradeStart(dir, buildinfo.Version)
 				wantHeld := holds && name == "this"
-				wantErr := holds && !wantHeld
+				// Checked, read in another boot than it was written in, is for
+				// good: it serves.
+				settled := holds && step == upgradejournal.Checked && name == "another boot"
+				wantErr := holds && !wantHeld && !settled
 				if got != wantHeld || (err != nil) != wantErr || err != nil && !strings.Contains(err.Error(), "run sudo varlatch upgrade") {
 					t.Errorf("%s at %q, start %s: held %v, %v; want held %v, refused %v", state, step, name, got, err, wantHeld, wantErr)
 				}
-				if over := upgradeOver(dir); (over != nil) != holds {
+				if over := upgradeOver(dir); (over != nil) != (holds && !settled) {
 					t.Errorf("%s at %q: an offline command: %v, want refused %v", state, step, over, holds)
 				}
 			}
@@ -83,11 +86,12 @@ func TestUpgradeStart(t *testing.T) {
 			dir := t.TempDir()
 			writeUpgrade(t, dir, upgradeTo(upgradejournal.FormatOne, state, step, nil))
 			wantHeld := state == upgradejournal.InProgress && (step == upgradejournal.Swapped || step == upgradejournal.Started)
-			wantErr := slices.Contains(held, step) && !wantHeld
+			closed := slices.Contains(held, step) && step != upgradejournal.Checked
+			wantErr := closed && !wantHeld
 			if got, err := upgradeStart(dir, buildinfo.Version); got != wantHeld || (err != nil) != wantErr {
 				t.Errorf("format 1, %s at %q: held %v, %v", state, step, got, err)
 			}
-			if got, err := upgradeStart(dir, "0.50.0-rc.9"); got || (err != nil) != slices.Contains(held, step) {
+			if got, err := upgradeStart(dir, "0.50.0-rc.9"); got || (err != nil) != closed {
 				t.Errorf("format 1, %s at %q, another release: held %v, %v", state, step, got, err)
 			}
 		}
@@ -200,9 +204,19 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 			}
 			time.Sleep(3 * upgradeHoldEvery)
 			closed("gone")
+			if next.Format != upgradejournal.FormatOne {
+				// Its checks passed, which a power cut may take back.
+				next.Step = upgradejournal.Checked
+				writeUpgrade(t, in.dir, &next)
+				time.Sleep(3 * upgradeHoldEvery)
+				closed("checked")
+			}
 			// Over, but not readable yet: looked at again though the file does
 			// not change.
-			next.Step, next.Start = upgradejournal.Checked, nil
+			next.Step, next.State, next.Start = upgradejournal.Checked, upgradejournal.Done, nil
+			if next.Format == upgradejournal.FormatOne {
+				next.State = upgradejournal.InProgress
+			}
 			other := t.TempDir()
 			writeUpgrade(t, other, &next)
 			path := filepath.Join(in.dir, upgradejournal.File)
@@ -224,7 +238,7 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 				open = getJSON(t, "http://"+r.addr+"/readyz", nil) == http.StatusOK
 			}
 			if !open {
-				t.Fatalf("not open once checked: %s", r.stderr.String())
+				t.Fatalf("not open once over: %s", r.stderr.String())
 			}
 			if code := getJSON(t, "http://"+r.addr+"/v1/meta", nil); code != http.StatusOK {
 				t.Fatalf("/v1/meta: %d", code)

@@ -85,7 +85,7 @@ func TestJournalHolds(t *testing.T) {
 		want  bool
 	}{
 		{InProgress, None, false}, {InProgress, Snapshot, false}, {InProgress, Stopping, true}, {InProgress, Kept, true}, {InProgress, Started, true},
-		{InProgress, Checked, false}, {Failed, Swapped, true}, {Failed, Snapshot, false}, {Done, Checked, false}, {Undone, Swapped, false},
+		{InProgress, Checked, true}, {Failed, Swapped, true}, {Failed, Snapshot, false}, {Done, Checked, false}, {Undone, Swapped, false},
 	} {
 		j := &Journal{State: c.state, Step: c.step}
 		if j.Holds() != c.want {
@@ -93,8 +93,28 @@ func TestJournalHolds(t *testing.T) {
 		}
 	}
 	var none *Journal
-	if none.Holds() {
+	if none.Holds() || none.Settled("a") {
 		t.Error("no journal holds")
+	}
+	// Format 1's recovery never goes back once the new release may serve.
+	if (&Journal{Format: FormatOne, State: InProgress, Step: Checked}).Holds() || !(&Journal{Format: FormatOne, State: InProgress, Step: Started}).Holds() {
+		t.Error("format 1 at its checks")
+	}
+	// Checked is settled in another boot than it was written in, and only
+	// where there is one to compare.
+	for _, c := range []struct {
+		step         Step
+		wrote, reads string
+		want         bool
+	}{{Checked, "a", "b", true}, {Checked, "a", "a", false}, {Checked, "", "b", false}, {Checked, "a", "", false}, {Started, "a", "b", false}} {
+		j := &Journal{State: InProgress, Step: c.step, Start: &Start{Version: "0.50.0", BootID: c.wrote}}
+		if j.Settled(c.reads) != c.want {
+			t.Errorf("%s written in %q, read in %q: %v", c.step, c.wrote, c.reads, !c.want)
+		}
+		j.Start = nil
+		if j.Settled(c.reads) {
+			t.Errorf("%s with no start is settled", c.step)
+		}
 	}
 	j := &Journal{State: InProgress, Step: Swapped}
 	if j.Allows("0.50.0", "a") {
