@@ -78,7 +78,7 @@ func TestTheDeclarationMatchesThisBuild(t *testing.T) {
 	}
 	// A declaration of another schema version does not match it.
 	code, _, errs = runIt(t, "declaration", "--declaration", filepath.Join(g6, "fixture.json"))
-	if code != exitFailed || !strings.Contains(errs, "declares schemaVersion 5 and compatibleFrom 1; this varlatchd's schema is 4, compatible from 1") {
+	if code != exitFailed || !strings.Contains(errs, "declares schemaVersion 6 and compatibleFrom 1; this varlatchd's schema is 5, compatible from 1") {
 		t.Fatalf("%d %q", code, errs)
 	}
 }

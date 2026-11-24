@@ -459,6 +459,12 @@ type OidcTokenUse struct {
 	ExpiresAt int64
 }
 
+type OneTimeCodesGiven struct {
+	VersionID string
+	Step      int64
+	EndsAt    int64
+}
+
 type OrgMembership struct {
 	OrganizationID string
 	IdentityID     string

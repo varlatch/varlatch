@@ -220,6 +220,22 @@ func (q *Queries) ExportControl(ctx context.Context, organizationID string) (Exp
 	return i, err
 }
 
+const giveOneTimeCode = `-- name: GiveOneTimeCode :exec
+INSERT INTO one_time_codes_given (version_id, step, ends_at) VALUES (?, ?, ?)
+ON CONFLICT (version_id) DO UPDATE SET step = max(one_time_codes_given.step, excluded.step), ends_at = max(one_time_codes_given.ends_at, excluded.ends_at)
+`
+
+type GiveOneTimeCodeParams struct {
+	VersionID string
+	Step      int64
+	EndsAt    int64
+}
+
+func (q *Queries) GiveOneTimeCode(ctx context.Context, arg GiveOneTimeCodeParams) error {
+	_, err := q.db.ExecContext(ctx, giveOneTimeCode, arg.VersionID, arg.Step, arg.EndsAt)
+	return err
+}
+
 const liveEnvironment = `-- name: LiveEnvironment :one
 SELECT id, project_id, name, kind, tier, parent_environment_id, owner_identity_id, expires_at, created_at FROM environments
 WHERE project_id = ?1 AND (id = ?2 OR name = ?2) AND deleted_at IS NULL
@@ -323,6 +339,34 @@ func (q *Queries) LiveProject(ctx context.Context, arg LiveProjectParams) (LiveP
 	return i, err
 }
 
+const oneTimeCodeGiven = `-- name: OneTimeCodeGiven :many
+SELECT step FROM one_time_codes_given WHERE version_id = ?
+`
+
+// The newest step a seed's code was given for; no row when there is none.
+func (q *Queries) OneTimeCodeGiven(ctx context.Context, versionID string) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, oneTimeCodeGiven, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var step int64
+		if err := rows.Scan(&step); err != nil {
+			return nil, err
+		}
+		items = append(items, step)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const projectContractRevision = `-- name: ProjectContractRevision :one
 SELECT id, content_hash, contract FROM contract_revisions WHERE id = ? AND project_id = ?
 `
@@ -363,6 +407,15 @@ func (q *Queries) ProjectFreshness(ctx context.Context, id string) (ProjectFresh
 	return i, err
 }
 
+const pruneOneTimeCodesGiven = `-- name: PruneOneTimeCodesGiven :exec
+DELETE FROM one_time_codes_given WHERE ends_at < ?
+`
+
+func (q *Queries) PruneOneTimeCodesGiven(ctx context.Context, endsAt int64) error {
+	_, err := q.db.ExecContext(ctx, pruneOneTimeCodesGiven, endsAt)
+	return err
+}
+
 const retrievalOrganization = `-- name: RetrievalOrganization :one
 
 SELECT id, wrapped_org_kek FROM organizations WHERE id = ?
@@ -381,4 +434,52 @@ func (q *Queries) RetrievalOrganization(ctx context.Context, id string) (Retriev
 	var i RetrievalOrganizationRow
 	err := row.Scan(&i.ID, &i.WrappedOrgKek)
 	return i, err
+}
+
+const seedsOfEnvironment = `-- name: SeedsOfEnvironment :many
+SELECT v.id, v.item_name, v.current_version_id, v.retiring_version_id, v.rotation_deadline,
+  CAST(json_extract(s.payload, '$.totp') AS TEXT) AS params
+FROM env_values v JOIN value_versions s ON s.id = v.current_version_id
+WHERE v.environment_id = ? AND v.deleted_at IS NOT NULL AND v.current_version_id IS NOT NULL AND json_type(s.payload, '$.totp') = 'object'
+`
+
+type SeedsOfEnvironmentRow struct {
+	ID                string
+	ItemName          string
+	CurrentVersionID  sql.NullString
+	RetiringVersionID sql.NullString
+	RotationDeadline  sql.NullInt64
+	Params            string
+}
+
+// An environment's seeds of one-time codes (ADR-0061): the rows a reader of
+// values takes for deleted ones, whose current version says it is a seed.
+func (q *Queries) SeedsOfEnvironment(ctx context.Context, environmentID string) ([]SeedsOfEnvironmentRow, error) {
+	rows, err := q.db.QueryContext(ctx, seedsOfEnvironment, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeedsOfEnvironmentRow
+	for rows.Next() {
+		var i SeedsOfEnvironmentRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ItemName,
+			&i.CurrentVersionID,
+			&i.RetiringVersionID,
+			&i.RotationDeadline,
+			&i.Params,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

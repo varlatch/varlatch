@@ -344,8 +344,9 @@ func normalize(v any) any {
 // count (schema version 2), carried across a reverse apart from the bundle
 // (migrate's migration-issuances.json). exercise_credentials and
 // oidc_token_uses (schema version 4) stay behind: what they limit is inert
-// on the TypeScript server (ADR-0060).
-var reverseKeeps = map[string]bool{"certificate_issuances": true, "exercise_credentials": true, "oidc_token_uses": true}
+// on the TypeScript server (ADR-0060). So does one_time_codes_given (schema
+// version 5): the seeds are no values there (ADR-0061).
+var reverseKeeps = map[string]bool{"certificate_issuances": true, "exercise_credentials": true, "oidc_token_uses": true, "one_time_codes_given": true}
 
 // otherTables checks the target holds no table the bundle does not
 // account for, and the target-only tables what an import writes:

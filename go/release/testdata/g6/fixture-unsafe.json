@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 5,
-  "compatibleFrom": 5,
+  "schemaVersion": 6,
+  "compatibleFrom": 6,
   "rollbackSafe": false,
   "previous": {
     "version": "0.0.0-g6.base",
-    "schemaVersion": 4
+    "schemaVersion": 5
   },
   "reversibleTo": "0.23.1",
   "endsRollbackWindow": false

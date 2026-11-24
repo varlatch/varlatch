@@ -24,6 +24,25 @@ SELECT id, content_hash, contract FROM contract_revisions WHERE id = ? AND proje
 SELECT id, item_name, current_version_id, retiring_version_id, rotation_deadline FROM env_values
 WHERE environment_id = ? AND deleted_at IS NULL AND current_version_id IS NOT NULL;
 
+-- name: SeedsOfEnvironment :many
+-- An environment's seeds of one-time codes (ADR-0061): the rows a reader of
+-- values takes for deleted ones, whose current version says it is a seed.
+SELECT v.id, v.item_name, v.current_version_id, v.retiring_version_id, v.rotation_deadline,
+  CAST(json_extract(s.payload, '$.totp') AS TEXT) AS params
+FROM env_values v JOIN value_versions s ON s.id = v.current_version_id
+WHERE v.environment_id = ? AND v.deleted_at IS NOT NULL AND v.current_version_id IS NOT NULL AND json_type(s.payload, '$.totp') = 'object';
+
+-- name: OneTimeCodeGiven :many
+-- The newest step a seed's code was given for; no row when there is none.
+SELECT step FROM one_time_codes_given WHERE version_id = ?;
+
+-- name: GiveOneTimeCode :exec
+INSERT INTO one_time_codes_given (version_id, step, ends_at) VALUES (?, ?, ?)
+ON CONFLICT (version_id) DO UPDATE SET step = max(one_time_codes_given.step, excluded.step), ends_at = max(one_time_codes_given.ends_at, excluded.ends_at);
+
+-- name: PruneOneTimeCodesGiven :exec
+DELETE FROM one_time_codes_given WHERE ends_at < ?;
+
 -- name: CapturedCiphertext :many
 -- domain/retrieval.ts captureState: an erased version has nothing to capture.
 SELECT id, payload, wrapped_dek FROM value_versions WHERE id IN (sqlc.slice(ids)) AND erased_at IS NULL;

@@ -1677,7 +1677,8 @@
       "schema_version": "The schema's version (db.go): replaces varlatch_migrations.",
       "certificate_issuances": "The public HTTPS name's certificate issuance count (ADR-0059 Decision 9, step 6 decision 16): Go only, schema version 2.",
       "exercise_credentials": "What limits an exercise-only credential (ADR-0060): Go only, schema version 4. Its credentials row goes back to PostgreSQL inert (its token_hash matches no token there).",
-      "oidc_token_uses": "The tokens exchanged under a binding that takes each once (ADR-0060): Go only, schema version 4."
+      "oidc_token_uses": "The tokens exchanged under a binding that takes each once (ADR-0060): Go only, schema version 4.",
+      "one_time_codes_given": "The newest time step a seed's code was given for (ADR-0061): Go only, schema version 5. The seeds themselves are value versions, whose rows PostgreSQL's columns hold."
     },
     "indexes": {
       "audit_events_capability_issued_idx": "A Capability's capability.issued by Organization, for the repair of Capabilities earlier retirements left live (capabilities.RevokeOfRetired): schema version 3. The TypeScript server's migration 53 adds its PostgreSQL counterpart, after v0.22.0.",

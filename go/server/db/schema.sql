@@ -672,6 +672,10 @@ CREATE TABLE environments (
 ) STRICT;
 CREATE UNIQUE INDEX environments_live_name_key ON environments (project_id, name) WHERE deleted_at IS NULL;
 
+-- A row with both current_version_id and deleted_at holds the seed of
+-- one-time codes (ADR-0061): the version's payload says so (its member
+-- totp). Nothing else leaves both set, and whoever does not know it reads
+-- the row as deleted, so it never takes the seed for a value.
 CREATE TABLE env_values (
   id TEXT NOT NULL PRIMARY KEY,
   environment_id TEXT NOT NULL REFERENCES environments (id),
@@ -1482,3 +1486,14 @@ CREATE TABLE oidc_token_uses (
   expires_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX oidc_token_uses_expires ON oidc_token_uses (expires_at);
+
+-- One-time codes given (ADR-0061): Go only, schema version 5. The newest
+-- time step a seed's code was given for, so a code asked to be fresh is of a
+-- later one; one row per seed version (bounded, never pruned). A seed itself
+-- is a value version, in a row an older server reads as deleted (env_values,
+-- above).
+CREATE TABLE one_time_codes_given (
+  version_id TEXT NOT NULL PRIMARY KEY REFERENCES value_versions (id),
+  step INTEGER NOT NULL,
+  ends_at INTEGER NOT NULL
+) STRICT;

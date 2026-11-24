@@ -47,7 +47,9 @@ SELECT name FROM environments WHERE parent_environment_id = ? AND deleted_at IS 
 UPDATE environments SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL;
 
 -- name: DeleteValuesOfEnvironment :exec
-UPDATE env_values SET deleted_at = ?, current_version_id = NULL WHERE environment_id = ? AND deleted_at IS NULL;
+-- Seeds of one-time codes (ADR-0061) included, which have both columns set.
+UPDATE env_values SET deleted_at = ?, current_version_id = NULL
+WHERE environment_id = ? AND (deleted_at IS NULL OR current_version_id IS NOT NULL);
 
 -- name: RevokeCapabilitiesOfEnvironment :execrows
 UPDATE capabilities SET revoked_at = ? WHERE environment_id = ? AND revoked_at IS NULL;

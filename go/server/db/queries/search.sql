@@ -15,7 +15,9 @@ WHERE p.organization_id = sqlc.arg(organization_id) AND e.deleted_at IS NULL
 ORDER BY e.project_id, e.name;
 
 -- name: LiveItemNamesOf :many
--- The live, current item names of these environments.
+-- The live, current item names of these environments, seeds of one-time
+-- codes (ADR-0061) included.
 SELECT environment_id, item_name FROM env_values
-WHERE environment_id IN (sqlc.slice(environment_ids)) AND deleted_at IS NULL AND current_version_id IS NOT NULL
+WHERE environment_id IN (sqlc.slice(environment_ids)) AND current_version_id IS NOT NULL AND (deleted_at IS NULL OR
+  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND json_type(s.payload, '$.totp') = 'object'))
 ORDER BY rowid;

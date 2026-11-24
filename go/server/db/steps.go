@@ -36,8 +36,8 @@ CREATE INDEX capabilities_live_idx ON capabilities (organization_id, id) WHERE r
 	// 4: exercise-only credentials and tokens exchanged once (ADR-0060). New
 	// tables only, so rollback-safe: an older varlatchd never reads them.
 	// What they limit fails closed there: it matches neither an
-	// exercise-only credential's token_hash, nor a single-use Capability's
-	// secret_hash, nor a limited binding's claims.
+	// exercise-only credential's token_hash, nor a delegated or single-use
+	// Capability's secret_hash, nor a limited binding's claims.
 	{To: 4, CompatibleFrom: 1, SQL: `
 CREATE TABLE exercise_credentials (
   credential_id TEXT NOT NULL PRIMARY KEY REFERENCES credentials (id),
@@ -50,5 +50,15 @@ CREATE TABLE oidc_token_uses (
   expires_at INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX oidc_token_uses_expires ON oidc_token_uses (expires_at);
+`},
+	// 5: one-time codes given (ADR-0061). A new table only, so rollback-safe:
+	// an older varlatchd never reads it, and a seed's row in env_values is
+	// one it reads as deleted.
+	{To: 5, CompatibleFrom: 1, SQL: `
+CREATE TABLE one_time_codes_given (
+  version_id TEXT NOT NULL PRIMARY KEY REFERENCES value_versions (id),
+  step INTEGER NOT NULL,
+  ends_at INTEGER NOT NULL
+) STRICT;
 `},
 }

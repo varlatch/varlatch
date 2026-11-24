@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/schemadiff"
 )
 
-// What starts what schema versions 2 to 4 added to schema.sql: what comes
+// What starts what schema versions 2 to 5 added to schema.sql: what comes
 // before is the version before's schema (0.50.0-rc.1's is version 1, 0.50.0's
 // version 2, 0.50.2's version 3; CI's G6 job checks against a tag's own
 // file).
@@ -22,6 +23,7 @@ const (
 	rc1Marker = "\n-- Certificate issuances for the public HTTPS name"
 	v2Marker  = "\n-- Audit reads of the repair of Capabilities"
 	v3Marker  = "\n-- Exercise-only credentials and tokens exchanged once"
+	v4Marker  = "\n-- One-time codes given (ADR-0061)"
 )
 
 // schemaBefore is schema.sql as released before marker's section.
@@ -107,35 +109,46 @@ func TestV2DatabaseUpgradesToVersion3(t *testing.T) {
 	}
 }
 
-// Schema version 4, from a database 0.50.2 made (schema 3): additive, and
-// its tables take rows, checked, once upgraded.
-func TestV3DatabaseUpgradesToVersion4(t *testing.T) {
+// A database that reached any earlier schema version upgrades to this one,
+// to the schema a new database gets, and every step is additive. Each step
+// is one a database got when it reached its version: what a later version
+// adds is a step of its own, never more of that one.
+func TestEveryEarlierVersionUpgrades(t *testing.T) {
 	ctx := context.Background()
-	older := openFile(t, filepath.Join(t.TempDir(), "v3.db"))
-	defer older.Close()
-	v3 := schemaBefore(t, v3Marker)
-	exec(t, older, v3,
-		"INSERT INTO schema_version (version, compatible_from, created_at, created_by_release, updated_at, updated_by_release) VALUES (3, 1, 1, '0.50.2', 1, '0.50.2')")
-	up, err := Upgrade(ctx, older, testRelease)
-	if err != nil || !up.Changed || up.From != 3 || up.To != 4 || up.CompatibleFrom != 1 {
-		t.Fatalf("%+v, %v", up, err)
+	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker}
+	if len(markers) != SchemaVersion-1 {
+		t.Fatalf("%d markers for schema version %d", len(markers), SchemaVersion)
 	}
-	if changes, err := schemadiff.Diff(ctx, schemaOf(t, openDB(t)), schemaOf(t, older)); err != nil || len(changes) != 0 {
-		t.Fatalf("the upgraded schema differs from a new one: %v, %v", changes, err)
-	}
-	changes, err := schemadiff.Diff(ctx, v3, schemaSQL)
-	if err != nil || schemadiff.Breaks(changes) || len(changes) != 3 {
-		t.Fatalf("version 4's change: %v, %v", changes, err)
-	}
-	key := strings.Repeat("0f", 32)
-	exec(t, older, "INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('"+key+"', 1, 2)")
-	for _, bad := range []string{
-		"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('" + key + "', 1, 2)",
-		"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('jti', 1, 2)",
-		"INSERT INTO exercise_credentials (credential_id, oidc_binding_id) VALUES ('crd_none', 'oib_none')",
-	} {
-		if err := tryExec(older, bad); err == nil {
-			t.Errorf("accepted: %s", bad)
+	for i, marker := range markers {
+		from, before, next := int64(i+1), schemaBefore(t, marker), schemaSQL
+		if i+1 < len(markers) {
+			next = schemaBefore(t, markers[i+1])
+		}
+		if changes, err := schemadiff.Diff(ctx, before, next); err != nil || schemadiff.Breaks(changes) || len(changes) == 0 {
+			t.Fatalf("version %d's change: %v, %v", from+1, changes, err)
+		}
+		older := openFile(t, filepath.Join(t.TempDir(), "older.db"))
+		defer older.Close()
+		exec(t, older, before, fmt.Sprintf("INSERT INTO schema_version (version, compatible_from, created_at, created_by_release, updated_at, updated_by_release) VALUES (%d, 1, 1, 'earlier', 1, 'earlier')", from))
+		up, err := Upgrade(ctx, older, testRelease)
+		if err != nil || !up.Changed || up.From != from || up.To != SchemaVersion || up.CompatibleFrom != 1 {
+			t.Fatalf("from %d: %+v, %v", from, up, err)
+		}
+		if changes, err := schemadiff.Diff(ctx, schemaOf(t, openDB(t)), schemaOf(t, older)); err != nil || len(changes) != 0 {
+			t.Fatalf("from %d: the upgraded schema differs from a new one: %v, %v", from, changes, err)
+		}
+		// The new tables take rows, checked.
+		key := strings.Repeat("0f", 32)
+		exec(t, older, "INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('"+key+"', 1, 2)")
+		for _, bad := range []string{
+			"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('" + key + "', 1, 2)",
+			"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('jti', 1, 2)",
+			"INSERT INTO exercise_credentials (credential_id, oidc_binding_id) VALUES ('crd_none', 'oib_none')",
+			"INSERT INTO one_time_codes_given (version_id, step, ends_at) VALUES ('ver_none', 1, 2)",
+		} {
+			if err := tryExec(older, bad); err == nil {
+				t.Errorf("from %d: accepted: %s", from, bad)
+			}
 		}
 	}
 }
