@@ -206,6 +206,12 @@ func serve(opts Options, h *hooks) int {
 	if err := migrationGate(cfg.DataDir); err != nil {
 		return fail(ExitConfig, "varlatchd does not start: "+err.Error())
 	}
+	// Mid-upgrade, only the start the upgrade itself makes, held.
+	configDir := filepath.Dir(opts.ConfigPath)
+	upgrading, err := upgradeStart(configDir, buildinfo.Version)
+	if err != nil {
+		return fail(ExitConfig, "varlatchd does not start: "+err.Error())
+	}
 	material, err := os.ReadFile(cfg.RootKEKFile)
 	if err != nil {
 		return fail(ExitFailure, "cannot read the Root KEK file", "file", cfg.RootKEKFile, "error", err)
@@ -334,6 +340,11 @@ func serve(opts Options, h *hooks) int {
 		log.Error("the maintenance gate cannot be read; varlatchd answers 503 MAINTENANCE until it is repaired", "file", filepath.Join(cfg.DataDir, backup.GateFile), "error", err)
 	} else if g != nil {
 		log.Warn("installation maintenance is active; varlatchd answers 503 MAINTENANCE until it ends", "kind", g.Kind, "lease", g.ID)
+	}
+	if upgrading {
+		admission.HoldForUpgrade()
+		log.Warn("an upgrade is checking this varlatchd: it answers 503 MAINTENANCE and does nothing else until the checks have passed")
+		go endUpgradeHold(ctx, configDir, admission, log)
 	}
 	// Public HTTPS (step 6's decision 4), when listen_https is set: the
 	// certificate manager first, so the listeners report can show it.

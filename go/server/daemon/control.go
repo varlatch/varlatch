@@ -199,8 +199,9 @@ func controlAnswers(dir string, timeout time.Duration) bool {
 }
 
 // route runs a host command: through the daemon's socket, else offline
-// under the lock, else not at all. args[0] is the command.
-func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
+// under the lock, else not at all. args[0] is the command, configDir the
+// configuration file's directory.
+func route(cfg *config.Config, configDir string, args []string, stdout, stderr io.Writer) int {
 	what := "varlatchd admin " + args[0]
 	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
@@ -243,6 +244,11 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 		env := &hostEnv{cfg: cfg, admission: maintenance.Open(cfg.DataDir, nil), log: slog.New(slog.NewTextHandler(stderr, nil))}
 		env.backups = newBackups(env)
 		return runHost(context.Background(), env, args, stdout, stderr)
+	}
+	// Mid-upgrade the database may be away, or one an undo discards.
+	if err := upgradeOver(configDir); err != nil {
+		fmt.Fprintf(stderr, "%s: %v; nothing was written\n", what, err)
+		return ExitFailure
 	}
 	if maintenance.Open(cfg.DataDir, nil).Isolated() {
 		switch {
