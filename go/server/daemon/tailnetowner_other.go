@@ -12,7 +12,9 @@ import (
 
 // openSecretFile opens a secret file, refusing symbolic links and
 // non-regular files.
-func openSecretFile(path string) (*os.File, error) {
+func openSecretFile(path string) (*os.File, error) { return checkedSecretFile(path) }
+
+func checkedSecretFile(path string) (*os.File, error) {
 	if fi, err := os.Lstat(path); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
 		return nil, fmt.Errorf("%s is a symbolic link: give the regular file itself", path)
 	}

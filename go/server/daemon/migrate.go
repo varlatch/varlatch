@@ -19,6 +19,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/check"
@@ -240,6 +241,18 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 	if frozen != nil || (a.sub == "check" || a.sub == "import") && a.scratch != "" {
 		return migrateWork(cfg, a, frozen, stdin, stdout, fail)
 	}
+	if a.sub == "keys" && rootOverOwner(cfg.DataDir) {
+		// The keys are root's, the data directory is not: nothing is made
+		// in it, its lock neither. Nothing else runs on a target whose keys
+		// are not there yet.
+		if _, _, err := checkClientDir(cfg.DataDir, os.Getuid()); err != nil {
+			return fail(ExitConfig, "%v; nothing was written", err)
+		}
+		if controlAnswers(cfg.DataDir, 5*time.Second) {
+			return fail(ExitFailure, "varlatchd is running on %s: stop it first; nothing was written", cfg.DataDir)
+		}
+		return runMigrateKeys(cfg, stdin, stdout, fail)
+	}
 	if a.sub == "import" || a.sub == "keys" || a.sub == "state" {
 		if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 			return fail(ExitFailure, "%v", err)
@@ -371,7 +384,7 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 		o.DataDir, o.Ignore, o.KeepDirs = a.scratch, nil, nil
 	}
 	if a.sub == "import" || a.sub == "check" {
-		raw, err := os.ReadFile(cfg.RootKEKFile)
+		raw, err := preread.ReadFile(cfg.RootKEKFile)
 		if err != nil {
 			return fail(ExitFailure, "cannot read the Root KEK file: %v", err)
 		}
@@ -392,7 +405,7 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 		}
 	}
 	if a.sub == "import" {
-		in, err := os.Open(a.in)
+		in, err := preread.Open(a.in)
 		if err != nil {
 			return fail(ExitFailure, "%v", err)
 		}
@@ -470,7 +483,7 @@ func runCheck(cfg *config.Config, a migrateArgs, dataDir string, rootKEK []byte,
 		return fail(ExitFailure, "the data directory %s holds no database: import first", dataDir)
 	}
 	defer db.Close()
-	in, err := os.Open(a.in)
+	in, err := preread.Open(a.in)
 	if err != nil {
 		return fail(ExitFailure, "%v", err)
 	}
