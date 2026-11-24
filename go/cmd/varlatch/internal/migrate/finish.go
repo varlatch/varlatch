@@ -416,11 +416,11 @@ func (e *Engine) finalArchive(ctx context.Context, j *Journal) error {
 			return failed(err)
 		}
 		e.say("Final archive: the TypeScript installation, made, uploaded, then downloaded and verified (format 2).")
-		id, err := e.Source.Backup(ctx)
+		id, err := stepOf(e, "making and uploading the final archive", func() (string, error) { return e.Source.Backup(ctx) })
 		if err != nil {
 			return failed(fmt.Errorf("the final archive: %w", err))
 		}
-		if err := e.Source.VerifyBackup(ctx, id); err != nil {
+		if err := e.step("downloading and verifying the final archive", func() error { return e.Source.VerifyBackup(ctx, id) }); err != nil {
 			return failed(fmt.Errorf("the final archive %s did not verify: %w", id, err))
 		}
 		j.Finish.ArchiveID, j.Finish.ArchiveFormat = id, 2
@@ -441,7 +441,7 @@ func (e *Engine) finalArchive(ctx context.Context, j *Journal) error {
 			}
 		}
 		e.say("Final archive: Go's copy, made by varlatchd, uploaded, then downloaded and verified (format 3).")
-		id, err := ft.FinalArchive(ctx)
+		id, err := stepOf(e, "making, uploading, downloading and verifying the final archive of Go's copy", func() (string, error) { return ft.FinalArchive(ctx) })
 		if err != nil {
 			return fmt.Errorf("the final archive of Go's copy: %w; nothing was removed", err)
 		}
