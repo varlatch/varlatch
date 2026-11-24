@@ -797,7 +797,7 @@ jobs:
           set -o pipefail
           cache=$(go env GOCACHE) mod=$(go env GOMODCACHE)
           trap 'sudo chown -R "$(id -u):$(id -g)" "$cache" "$mod"' EXIT
-          names="$(grep -hoE '^func (TestAdminAsRoot|TestMigrate)[A-Za-z]*AsRoot?[A-Za-z]*|^func TestAdminAsRoot[A-Za-z]*' server/daemon/privileges_test.go | sed 's/^func //' | sort -u) TestUpgradeAsRootWorksAsTheOwner TestUpgradeCommandOnAHost"
+          names="$(grep -hoE '^func (TestAdminAsRoot|TestMigrate)[A-Za-z]*AsRoot?[A-Za-z]*|^func TestAdminAsRoot[A-Za-z]*' server/daemon/privileges_test.go | sed 's/^func //' | sort -u) TestUpgradeAsRootWorksAsTheOwner TestARollbackAsRootGivesTheServerItsDatabase TestUpgradeCommandOnAHost TestUpgradeBelowTheDatabasesSchema"
           status=0
           # shellcheck disable=SC2086 # one word per test
           sudo env PATH="$PATH" HOME="$RUNNER_TEMP" GOCACHE="$cache" GOMODCACHE="$mod" GOFLAGS=-buildvcs=false CGO_ENABLED=0 \
