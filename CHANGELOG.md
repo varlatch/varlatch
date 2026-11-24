@@ -162,6 +162,13 @@ fixes.
   `/opt/homebrew/` or `/home/linuxbrew/.linuxbrew/`. It still refuses the
   TypeScript CLI's formula's wrapper script, which says it is Homebrew's.
   `install.ps1` was not affected.
+- **`varlatch self-update` on Windows waits for a file another process
+  holds.** A virus scanner or an indexer reading the new binary made it
+  fail with "The process cannot access the file because it is being used by
+  another process". It now tries again for up to 5 seconds, with the old
+  binary in its place between the tries, and then fails as before. If the
+  old binary cannot be put back, it now says where that is, where it said
+  that nothing had changed.
 
 ### Server
 
@@ -173,6 +180,44 @@ fixes.
   `infra/coolify/varlatchd.compose.yml` sets `stop_grace_period: 30s`, as
   the systemd unit has it; Docker's default, 10 seconds, can cut off
   requests in flight. For `docker run`, give `--stop-timeout 30`.
+
+### Tailnet
+
+- **varlatchd's tailnet node no longer starts on a cached network map.**
+  Tailscale's embedded client keeps the node's own map on disk and, at the
+  next start, was up on it before it had spoken to the control plane. A node
+  renamed, retagged or moved since could read back as it was: `varlatchd
+  admin tailnet enroll` refused (or held) a node by a name of an earlier
+  start, which failed a handoff resumed after an undo, and varlatchd judged
+  its pin, tags and name by that map until the new one came. A map on disk is
+  never read now, and the tailnet listener opens only once the control plane
+  has answered. The client may still write the node's own map (its name,
+  tags and addresses, no peers) while it runs, for which it has no switch;
+  varlatchd removes it when the node starts and when it stops. A restart
+  while the control plane is unreachable keeps the tailnet listener closed
+  until it answers.
+- **The tailnet listener opens when the control plane recovers, without a
+  restart.** A control plane that limited the node's registration (HTTP 429)
+  while varlatchd started left the tailnet listener closed until varlatchd
+  was restarted. It is waited for now, however long it takes, and the host
+  commands and the restore's probe wait too, within their own time. The log,
+  `varlatch doctor` and the listeners report's `warnings` say what the node
+  waits for: its control plane, or a login or an approval there. A node the
+  control plane refuses (an auth key it does not take) keeps the listener
+  closed as before, and they say so until varlatchd is restarted. The
+  control plane's own words are no longer logged or shown by `varlatchd admin
+  tailnet open` and the other host commands: such an answer can repeat the
+  auth key it was given.
+- **The handoff's host commands wait for the control plane's change to reach
+  the node**, for 30 seconds at most, and refuse as before, naming what the
+  node is and what it must be, when it does not. `admin tailnet enroll` takes
+  the node's name and, on a self-hosted control server, its tags from one
+  reading of the node, and pins that one: it could succeed with the name seen
+  first and the tags later, under another name. `admin tailnet certificate
+  obtain` and `take-name` wait for the name and for the control plane to list
+  exactly that name among the node's certificate domains: before it does, the
+  node itself refuses the certificate, so the handoff's three attempts could
+  be spent at once.
 
 ### Documentation
 
