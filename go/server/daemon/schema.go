@@ -247,6 +247,10 @@ func upgradeCopy(cfg *config.Config, database string, asJSON bool, binary schema
 		return fail(ExitFailure, "the database copy %s is not a file", database)
 	}
 	if live, err := os.Stat(cfg.DatabasePath()); err == nil && os.SameFile(info, live) {
+		if rootOverOwner(cfg.DataDir) {
+			// Never as root in the directory of the user varlatchd runs as.
+			return fail(ExitFailure, "%s is the installation's own database: run it without --database; nothing was changed", database)
+		}
 		return 0, false
 	}
 	ctx := context.Background()

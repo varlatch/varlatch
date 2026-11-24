@@ -89,7 +89,7 @@ func TestUpgradeUsageAndPrivilege(t *testing.T) {
 // The command end to end on a host in a temporary directory: --check
 // records the newer release for the dashboard; upgrade --yes upgrades to
 // it; a release that is not rollback-safe is refused until accepted. As
-// root (the command's rule): the host's directories are root's.
+// root (the command's rule), the data directory the service user's.
 // reversible is the test releases' declaration that a reverse migration
 // returns their data to the last TypeScript release, which lib/release
 // requires of a release (reversibleTo, go-step7 decision 17).
@@ -296,6 +296,9 @@ func (h *cliHost) migrated(t *testing.T, switched time.Time) {
 	if err := os.WriteFile(filepath.Join(h.data, migrate.JournalFile), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chown(filepath.Join(h.data, migrate.JournalFile), serviceUID, serviceUID); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.svc.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -376,6 +379,35 @@ func newCLIHost(t *testing.T, varlatchd []byte) *cliHost {
 		t.Fatal(err)
 	}
 	h.svc = &cliService{bin: h.bin, conf: h.conf}
+	// As a host has it: the data directory and the server are the service
+	// user's, the keys root's, of which the unit hands the server copies.
+	own := filepath.Join(dir, "own")
+	if err := os.Mkdir(own, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"root-kek", "backup-key"} {
+		b, err := os.ReadFile(filepath.Join(dir, "keys", k))
+		if err != nil || os.WriteFile(filepath.Join(own, k), b, 0o400) != nil || os.Chown(filepath.Join(own, k), serviceUID, serviceUID) != nil {
+			t.Fatal(err)
+		}
+	}
+	h.svc.conf = filepath.Join(dir, "etc", "service.conf")
+	if err := os.WriteFile(h.svc.conf, []byte(strings.ReplaceAll(conf, filepath.Join(dir, "keys"), own)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{h.data, own} {
+		if err := os.Chown(p, serviceUID, serviceUID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The way to them is open to that user.
+	for _, leaf := range []string{h.bin, filepath.Dir(h.conf)} {
+		for p := leaf; p != filepath.Dir(filepath.Dir(dir)); p = filepath.Dir(p) {
+			if err := os.Chmod(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	prevService := upgradeService
 	upgradeService = func() upgrade.Service { return h.svc }
 	t.Cleanup(func() { upgradeService = prevService; _ = h.svc.Stop(context.Background()) })
@@ -402,6 +434,9 @@ func (h *cliHost) serves(t *testing.T, version string) {
 	}
 }
 
+// serviceUID stands for the user the unit runs varlatchd as.
+const serviceUID = 65534
+
 // cliService runs bin/varlatchd serve as the unit would.
 type cliService struct {
 	bin, conf string
@@ -417,6 +452,7 @@ func (s *cliService) Start(context.Context) error {
 		return nil // as systemctl start: nothing to do for a running unit
 	}
 	cmd := exec.Command(filepath.Join(s.bin, "varlatchd"), "serve", "--config", s.conf)
+	asServiceUser(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

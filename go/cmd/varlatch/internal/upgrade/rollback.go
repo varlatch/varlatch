@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
@@ -144,11 +143,11 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	case last.State == journal.Undone:
 		return RollbackPlan{}, fmt.Errorf("the last upgrade, to %s, was undone and %s serves: there is nothing to roll back", last.To, last.From)
 	case !ReturnsTo(last.From):
-		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("%s's varlatch cannot read a rollback's journal (%s is the first that can), so it could neither finish an interrupted rollback nor upgrade after one", last.From, RollbackSince), Steps: u.byHand(last)}
+		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("%s's varlatch cannot read a rollback's journal (%s is the first that can), so it could neither finish an interrupted rollback nor upgrade after one", last.From, RollbackSince), Steps: u.restoreByHand(last)}
 	case last.Format == journal.FormatOne || last.Binaries == nil:
-		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("the upgrade to %s was made by a varlatch that did not record its binaries' checksums: they are not run unchecked", last.To), Steps: u.byHand(last)}
+		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("the upgrade to %s was made by a varlatch that did not record its binaries' checksums: they are not run unchecked", last.To), Steps: u.restoreByHand(last)}
 	}
-	if err := u.trusted(); err != nil {
+	if err := u.Trusted(); err != nil {
 		return RollbackPlan{}, err
 	}
 	migration, err := rollbackHost(last, u.now())
@@ -246,38 +245,6 @@ type ByHand struct {
 
 func (e *ByHand) Error() string { return e.Why }
 
-// byHand are the steps back for a release a rollback does not return to.
-func (u *Upgrader) byHand(last *journal.Journal) []string {
-	kept := filepath.Join(last.Releases, last.From)
-	uid, gid, _, err := ownerToBe(last.DataDir)
-	owner := fmt.Sprintf("%d:%d", uid, gid)
-	if err != nil {
-		owner = "<its owner>"
-	}
-	lines := []string{
-		"sudo systemctl stop varlatchd",
-		fmt.Sprintf("sudo install -m 755 %s %s %s", shellWord(filepath.Join(kept, "varlatch")), shellWord(filepath.Join(kept, "varlatchd")), shellWord(u.BinDir)),
-		fmt.Sprintf("sudo %s admin backup restore --in %s --config %s", shellWord(u.varlatchd()), shellWord(last.Snapshot), shellWord(u.ConfigPath)),
-		// Its restore runs as root and leaves root's files.
-		fmt.Sprintf("sudo chown -R --no-dereference --from=0 %s %s", owner, shellWord(last.DataDir)),
-	}
-	if last.Format != journal.FormatOne {
-		journalPath := filepath.Join(u.configDir(), journal.File)
-		lines = append(lines, fmt.Sprintf("sudo mv %s %s", shellWord(journalPath), shellWord(filepath.Join(u.configDir(), "upgrade-"+last.ID+".json"))))
-	}
-	return append(lines, "sudo systemctl start varlatchd")
-}
-
-// shellWord is s as one word of a shell's.
-func shellWord(s string) string {
-	if strings.IndexFunc(s, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-+:@%", r))
-	}) < 0 && s != "" {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 // snapshotStands checks that the snapshot is there and is the one the
 // upgrade recorded, where only root changes it.
 func (u *Upgrader) snapshotStands(last *journal.Journal) error {
@@ -348,9 +315,9 @@ var ErrDeclined = errors.New("more changes were made since the list was shown, a
 // plan's: whether to go on. Its error is an *Error unless a crash point
 // stopped it.
 func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan, grown func(*Changes) (bool, error)) (*journal.Journal, error) {
-	unlock, err := lock(u.configDir())
+	unlock, err := u.hold()
 	if err != nil {
-		return nil, &Error{Message: err.Error()}
+		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
 	defer unlock()
 	last := plan.Last
@@ -408,6 +375,8 @@ func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan, grown func(*
 		return j, nil
 	case errors.Is(err, errKilled):
 		return j, err
+	case errors.Is(err, release.ErrNotDurable) && !j.Reached(journal.Checked):
+		return j, &Error{Message: u.notDurable(j, err).Error(), Journal: j}
 	case j.Reached(journal.Checked):
 		return j, &Error{Message: u.unfinished(j, err), Journal: j}
 	case !j.Reached(journal.Stopping):
@@ -490,7 +459,7 @@ func (u *Upgrader) rollbackSteps(ctx context.Context, j *journal.Journal, plan R
 	if err := u.start(ctx, j, j.To); err != nil {
 		return err
 	}
-	if err := u.reachStarted(j); err != nil {
+	if err := u.reach(j, journal.Started); err != nil {
 		return err
 	}
 	if err := u.check(ctx, j.To, j.ToSchema); err != nil {

@@ -180,6 +180,27 @@ type Upgrader struct {
 	run func(binary string, args ...string) ([]byte, error)
 	// free stands in for FreeSpace (the tests').
 	free func(path string) (uint64, uint64, error)
+	// held is the upgrade lock while a run holds it.
+	held *os.File
+}
+
+// hold takes the upgrade lock for a run, once the directories it works in
+// are only root's to change.
+func (u *Upgrader) hold() (release func(), err error) {
+	if err := u.Trusted(); err != nil {
+		return nil, err
+	}
+	if u.held, err = lock(u.configDir()); err != nil {
+		return nil, err
+	}
+	return func() { u.held.Close(); u.held = nil }, nil
+}
+
+// bind makes cmd hold the upgrade lock as long as it runs.
+func (u *Upgrader) bind(cmd *exec.Cmd) {
+	if u.held != nil {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, u.held)
+	}
 }
 
 func (u *Upgrader) bootID() string {
@@ -218,6 +239,7 @@ func (u *Upgrader) admin(ctx context.Context, binary string, args ...string) ([]
 		return u.run(binary, args...)
 	}
 	cmd := exec.CommandContext(ctx, binary, append(args, "--config", u.ConfigPath)...)
+	u.bind(cmd)
 	// Both pipes read whole, at once: what varlatchd answers, and what it
 	// says when it refuses, which a failure carries.
 	answerPipe, err := cmd.StdoutPipe()
@@ -249,6 +271,9 @@ func (u *Upgrader) admin(ctx context.Context, binary string, args ...string) ([]
 // schema and data directory (`admin schema status`). The database must be
 // one it serves.
 func (u *Upgrader) Inspect(ctx context.Context) (Installed, error) {
+	if err := u.Trusted(); err != nil {
+		return Installed{}, err
+	}
 	out, err := exec.CommandContext(ctx, u.varlatchd(), "--version").Output()
 	if err != nil {
 		return Installed{}, fmt.Errorf("%s --version: %v", u.varlatchd(), err)
@@ -283,25 +308,53 @@ func (u *Upgrader) Inspect(ctx context.Context) (Installed, error) {
 	return Installed{Version: version, Schema: st.Binary.SchemaVersion, Database: st.Database.SchemaVersion, DataDir: st.DataDir}, nil
 }
 
-// write records j.
+// write records j, durably: an error that is release.ErrNotDurable left it
+// in place, not known to survive a power cut, and nothing may be done that
+// relies on it, nor on the one before; any other left the one before.
 func (u *Upgrader) write(j *journal.Journal) error {
-	if err := u.fault(filepath.Join(u.configDir(), journal.File)); err != nil {
+	path := filepath.Join(u.configDir(), journal.File)
+	if err := u.fault(path); err != nil {
 		return err
 	}
 	j.UpdatedAt = u.now().UTC().Format(time.RFC3339)
-	return journal.Write(u.configDir(), j)
+	b, err := j.Encode()
+	if err != nil {
+		return err
+	}
+	f := u.fsys("journal:")
+	temp := filepath.Join(u.configDir(), "."+journal.File+".new")
+	if err := f.remove(temp); err != nil {
+		return err
+	}
+	if _, err := f.create(temp, 0o644, bytes.NewReader(b)); err != nil {
+		return err
+	}
+	if err := os.Rename(temp, path); err != nil {
+		_ = os.Remove(temp)
+		return err
+	}
+	if err := f.did("rename", temp, path); err != nil {
+		return err
+	}
+	if err := f.syncDir(u.configDir()); errors.Is(err, errKilled) {
+		return err
+	} else if err != nil {
+		return fmt.Errorf("%w: %v", release.ErrNotDurable, err)
+	}
+	return nil
 }
 
-// reach records step s, the start allowed before it gone, then stops there
-// if a test kills the run.
+// reach records step s, the start allowed before it gone (but for Checked,
+// which keeps it), then stops there if a test kills the run. On an error the
+// step is the one before.
 func (u *Upgrader) reach(j *journal.Journal, s journal.Step) error {
 	was, start := j.Step, j.Start
-	j.Step, j.Start = s, nil
+	j.Step = s
+	if s != journal.Checked && s != journal.Started {
+		j.Start = nil
+	}
 	if err := u.write(j); err != nil {
-		if !errors.Is(err, release.ErrNotDurable) {
-			// The journal on disk is the one before.
-			j.Step, j.Start = was, start
-		}
+		j.Step, j.Start = was, start
 		return err
 	}
 	return u.point(string(s))
@@ -309,11 +362,18 @@ func (u *Upgrader) reach(j *journal.Journal, s journal.Step) error {
 
 // undone records how far an undo got.
 func (u *Upgrader) undone(j *journal.Journal, s journal.UndoStep) error {
+	was, start := j.Undo, j.Start
 	j.Undo, j.Start = s, nil
 	if err := u.write(j); err != nil {
+		j.Undo, j.Start = was, start
 		return err
 	}
 	return u.point("undo:" + string(s))
+}
+
+// notDurable says that a run stopped at a record it cannot rely on.
+func (u *Upgrader) notDurable(j *journal.Journal, err error) error {
+	return fmt.Errorf("the upgrade journal in %s could not be made durable (%v), so nothing more was done: whether the %s to %s is at step %q or the next is not known until it can be. varlatchd may be stopped. Put the disk right, then run sudo varlatch upgrade", u.configDir(), err, change(j), j.To, j.Step)
 }
 
 func (u *Upgrader) point(name string) error {
@@ -333,9 +393,9 @@ func (u *Upgrader) fault(path string) error {
 // Run upgrades the installed release to rel. Its error is an *Error unless
 // a crash point stopped it.
 func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journal.Journal, error) {
-	unlock, err := lock(u.configDir())
+	unlock, err := u.hold()
 	if err != nil {
-		return nil, &Error{Message: err.Error()}
+		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
 	defer unlock()
 	prev, err := journal.Read(u.configDir())
@@ -351,17 +411,17 @@ func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journ
 	if err := SchemaRefusal(inst, rel.Version, m); err != nil {
 		return nil, err
 	}
-	if err := u.trusted(); err != nil {
+	if err := u.makeReleases(); err != nil {
 		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
 	// <data>/upgrades is checked before anything reads or removes there.
 	if _, err := u.data(ctx, dataOp{Op: "begin", DataDir: inst.DataDir}); err != nil {
 		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
-	u.prune(ctx, inst.DataDir, prev)
 	if err := u.enoughSpace(ctx, inst, rel); err != nil {
 		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
+	u.prune(ctx, inst.DataDir, prev)
 	id := make([]byte, 8)
 	if _, err := rand.Read(id); err != nil {
 		return nil, &Error{Message: err.Error()}
@@ -373,15 +433,23 @@ func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journ
 		BinDir: u.BinDir, Releases: u.Releases(), DataDir: inst.DataDir,
 	}
 	j.Work = filepath.Join(inst.DataDir, "upgrades", j.ID)
-	if err := u.write(j); err != nil {
-		return nil, &Error{Message: fmt.Sprintf("cannot write the upgrade journal in %s: %v; nothing was changed", u.configDir(), err)}
+	// Nothing is recorded until the release is staged, and, from a release
+	// whose varlatch could not read the record, its varlatch is in place: the
+	// installed varlatch can always go on with what is recorded.
+	if err := u.prepareHost(j, rel); err != nil {
+		if errors.Is(err, errKilled) {
+			return j, err
+		}
+		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
-	err = u.steps(ctx, j, rel)
+	err = u.steps(ctx, j)
 	switch {
 	case err == nil:
 		return j, nil
 	case errors.Is(err, errKilled):
 		return j, err
+	case errors.Is(err, release.ErrNotDurable) && !j.Reached(journal.Checked):
+		return j, &Error{Message: u.notDurable(j, err).Error(), Journal: j}
 	case j.Reached(journal.Checked):
 		// Its checks passed, and the journal says so: never undone.
 		return j, &Error{Message: u.unfinished(j, err), Journal: j}
@@ -401,14 +469,43 @@ func (u *Upgrader) unfinished(j *journal.Journal, err error) string {
 	return fmt.Sprintf("%s serves, after its health checks, but the upgrade's end could not be recorded: %v. Run sudo varlatch upgrade to finish it", j.To, err)
 }
 
-// steps runs decision 6's steps from j's.
-func (u *Upgrader) steps(ctx context.Context, j *journal.Journal, rel Release) error {
+// prepareHost stages the release and makes the journal's first record
+// (Verified). Its failure leaves no journal, and the host as it was.
+func (u *Upgrader) prepareHost(j *journal.Journal, rel Release) error {
+	back := func(err error) error {
+		if errors.Is(err, errKilled) {
+			return err
+		}
+		if older(j) && j.Binaries != nil {
+			if berr := u.install(j, j.From, j.Binaries.From, "varlatch"); berr != nil {
+				err = fmt.Errorf("%w (and %s's varlatch is not back in %s: %v)", err, j.From, u.BinDir, berr)
+			}
+		}
+		_ = os.RemoveAll(filepath.Join(j.Releases, j.To))
+		return err
+	}
 	if err := u.stage(j, rel); err != nil {
-		return err
+		return back(err)
 	}
-	if err := u.reach(j, journal.Verified); err != nil {
-		return err
+	if older(j) {
+		if err := u.install(j, j.To, j.Binaries.To, "varlatch"); err != nil {
+			return back(fmt.Errorf("putting %s's varlatch in place: %w", j.To, err))
+		}
 	}
+	if err := u.reach(j, journal.Verified); errors.Is(err, errKilled) {
+		return err
+	} else if errors.Is(err, release.ErrNotDurable) {
+		// In place for now: an upgrade that did nothing, which the next run
+		// undoes.
+		return fmt.Errorf("the upgrade journal in %s could not be made durable: %w", u.configDir(), err)
+	} else if err != nil {
+		return back(fmt.Errorf("cannot write the upgrade journal in %s: %w", u.configDir(), err))
+	}
+	return nil
+}
+
+// steps runs decision 6's steps from the first record on.
+func (u *Upgrader) steps(ctx context.Context, j *journal.Journal) error {
 	u.logf("Verified %s and staged it; %s's binaries are kept in %s.", j.To, j.From, filepath.Join(j.Releases, j.From))
 
 	if err := u.snapshot(ctx, j); err != nil {
@@ -468,7 +565,7 @@ func (u *Upgrader) steps(ctx context.Context, j *journal.Journal, rel Release) e
 	if err := u.start(ctx, j, j.To); err != nil {
 		return err
 	}
-	if err := u.reachStarted(j); err != nil {
+	if err := u.reach(j, journal.Started); err != nil {
 		return err
 	}
 	if err := u.check(ctx, j.To, j.ToSchema); err != nil {
@@ -497,31 +594,47 @@ func (u *Upgrader) start(ctx context.Context, j *journal.Journal, version string
 	return nil
 }
 
-// reachStarted records Started, the start it allowed still allowed: the
-// unit may start varlatchd again (Restart=) while it is checked.
-func (u *Upgrader) reachStarted(j *journal.Journal) error {
-	j.Step = journal.Started
-	if err := u.write(j); err != nil {
-		return err
-	}
-	return u.point(string(journal.Started))
-}
-
-// trusted checks that the binaries' directories are root's, so what is kept
-// there, and checked, is what runs.
-func (u *Upgrader) trusted() error {
-	if err := os.MkdirAll(u.Releases(), 0o755); err != nil {
-		return err
-	}
-	for _, dir := range []string{u.BinDir, u.Releases()} {
-		if err := rootOwned(dir); err != nil {
+// Trusted checks that only root may change what an upgrade runs and works
+// in: the installed binaries, their directory, the journal's, and, as far as
+// it is there, the releases'. Before anything of theirs is run as root, and
+// before anything is made there.
+func (u *Upgrader) Trusted() error {
+	for _, path := range []string{u.configDir(), u.BinDir, u.varlatchd(), filepath.Join(u.BinDir, "varlatch"), u.Releases()} {
+		for !exists(path) && path != filepath.Dir(path) {
+			path = filepath.Dir(path)
+		}
+		if err := rootOwned(path); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-var binaryNames = []string{"varlatchd", "varlatch"}
+// makeReleases makes the releases' directory, one level at a time, each in
+// one that is trusted.
+func (u *Upgrader) makeReleases() error {
+	var missing []string
+	for p := u.Releases(); !exists(p); p = filepath.Dir(p) {
+		missing = append(missing, p)
+	}
+	slices.Reverse(missing)
+	for _, p := range missing {
+		if err := rootOwned(filepath.Dir(p)); err != nil {
+			return err
+		}
+		if err := u.rootFS().mkdir(p, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		if err := u.rootFS().syncDir(filepath.Dir(p)); err != nil {
+			return err
+		}
+	}
+	return rootOwned(u.Releases())
+}
+
+// The order they are put in place in: varlatch first, so that whatever
+// varlatchd holds because of the journal, the varlatch installed reads it.
+var binaryNames = []string{"varlatch", "varlatchd"}
 
 func sumOf(b journal.BinarySums, name string) string {
 	if name == "varlatch" {
@@ -550,7 +663,7 @@ func (u *Upgrader) stage(j *journal.Journal, rel Release) error {
 		{j.From, &sums.From, func(name string) (io.ReadCloser, error) { return os.Open(filepath.Join(u.BinDir, name)) }},
 	} {
 		dir := filepath.Join(j.Releases, v.version)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := u.rootFS().mkdir(dir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("staging: %w", err)
 		}
 		if err := rootOwned(dir); err != nil {
@@ -584,7 +697,7 @@ func (u *Upgrader) stage(j *journal.Journal, rel Release) error {
 }
 
 // rootFS is the file system for root's own directories.
-func (u *Upgrader) rootFS() fsys { return fsys{fault: u.Fault} }
+func (u *Upgrader) rootFS() fsys { return u.fsys("root:") }
 
 // putBinary puts r's content at path, whole, through a temporary name, when
 // its SHA-256 is want ("" for any), and returns it.
@@ -892,12 +1005,17 @@ func leftBehind(j *journal.Journal) bool {
 func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) error {
 	ctx = context.WithoutCancel(ctx)
 	j.Reason = why
+	if u.mayHaveServed(j) {
+		return u.forward(ctx, j, why)
+	}
 	if j.Reached(journal.Stopping) {
 		if err := u.restore(ctx, j); errors.Is(err, errKilled) {
 			return err
 		} else if errors.Is(err, errHeld) {
 			// The journal stays as it is: nothing was done.
-			return fmt.Errorf("%w. Nothing was changed", err)
+			return fmt.Errorf("%w. Nothing was changed. To keep the restored database:\n  %s", err, strings.Join(u.keepRestored(j), "\n  "))
+		} else if errors.Is(err, release.ErrNotDurable) {
+			return u.notDurable(j, err)
 		} else if err != nil {
 			return u.failed(j, why, err)
 		}
@@ -908,6 +1026,8 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 	}
 	if err := u.start(ctx, j, j.From); errors.Is(err, errKilled) {
 		return err
+	} else if errors.Is(err, release.ErrNotDurable) {
+		return u.notDurable(j, err)
 	} else if err != nil {
 		return u.failed(j, why, err)
 	}
@@ -960,17 +1080,11 @@ func older(j *journal.Journal) bool {
 // leave moves an undone upgrade's journal aside, then puts the older
 // release's varlatch back.
 func (u *Upgrader) leave(j *journal.Journal) error {
-	if err := os.Rename(filepath.Join(u.configDir(), journal.File), filepath.Join(u.configDir(), "upgrade-"+j.ID+".json")); err != nil {
+	if err := u.fsys("journal:").rename(filepath.Join(u.configDir(), journal.File), u.aside(j)); err != nil {
 		return err
 	}
 	if err := u.rootFS().syncDir(u.configDir()); err != nil {
 		return err
-	}
-	if err := u.point("journal-aside"); err != nil {
-		return err
-	}
-	if !j.Reached(journal.Kept) {
-		return nil
 	}
 	if err := u.install(j, j.From, j.Binaries.From, "varlatch"); err != nil {
 		if errors.Is(err, errKilled) {
@@ -979,6 +1093,11 @@ func (u *Upgrader) leave(j *journal.Journal) error {
 		u.logf("%s's varlatch is not back in %s (%v): install it, or go on with %s's.", j.From, u.BinDir, err, j.To)
 	}
 	return nil
+}
+
+// aside is where an upgrade's journal goes when it may not stay.
+func (u *Upgrader) aside(j *journal.Journal) string {
+	return filepath.Join(u.configDir(), "upgrade-"+j.ID+".json")
 }
 
 // restore stops varlatchd and puts the original database and the previous
@@ -1054,10 +1173,16 @@ func (u *Upgrader) restoreFormatOne(ctx context.Context, j *journal.Journal) err
 	if !j.Reached(journal.Prepared) {
 		return nil
 	}
+	return u.installFormatOne(j, j.From)
+}
+
+// installFormatOne puts a release's kept binaries in place, whose SHA-256 a
+// format 1 journal does not record.
+func (u *Upgrader) installFormatOne(j *journal.Journal, version string) error {
 	for _, name := range binaryNames {
-		path, err := u.kept(j, j.From, name)
+		path, err := u.kept(j, version, name)
 		if err != nil {
-			return fmt.Errorf("%s's binaries: %w", j.From, err)
+			return fmt.Errorf("%s's binaries: %w", version, err)
 		}
 		r, err := os.Open(path)
 		if err != nil {
@@ -1066,10 +1191,126 @@ func (u *Upgrader) restoreFormatOne(ctx context.Context, j *journal.Journal) err
 		_, err = u.putBinary(filepath.Join(u.BinDir, name), r, "")
 		r.Close()
 		if err != nil {
-			return fmt.Errorf("%s's %s: %w", j.From, name, err)
+			return fmt.Errorf("%s's %s: %w", version, name, err)
 		}
 	}
 	return u.rootFS().syncDir(u.BinDir)
+}
+
+// mayHaveServed is whether an earlier release's upgrade may have had its new
+// release serve: its database is in the original's place. That engine started
+// it, as any start of the host's would, with nothing holding it, so what it
+// took is not to be discarded.
+func (u *Upgrader) mayHaveServed(j *journal.Journal) bool {
+	return j.Format == journal.FormatOne && dataOp{DataDir: j.DataDir, ID: j.ID}.another()
+}
+
+// forward finishes an earlier release's interrupted upgrade, when the new
+// release passes its health checks; otherwise it stops there, with both
+// databases kept, and says how to go either way. Run again, it tries again.
+func (u *Upgrader) forward(ctx context.Context, j *journal.Journal, why string) error {
+	stop := func(err error) error {
+		if errors.Is(err, errKilled) {
+			return err
+		}
+		if errors.Is(err, release.ErrNotDurable) {
+			return u.notDurable(j, err)
+		}
+		_ = u.Service.Stop(ctx)
+		j.State, j.Start = journal.Failed, nil
+		j.Reason = fmt.Sprintf("%s; %s, whose database is in place and may hold what was written since, could not be brought to serve: %v. Both databases are kept: that one in %s, %s's in %s. To go on, put right what it says and run sudo varlatch upgrade. To go back to %s instead, losing what was written since:\n  %s",
+			why, j.To, err, j.DataDir, j.From, filepath.Join(j.Work, originalDir), j.From, strings.Join(u.backByHand(j), "\n  "))
+		if werr := u.write(j); werr != nil {
+			return fmt.Errorf("%s; and the journal could not record it: %v", j.Reason, werr)
+		}
+		return errors.New(j.Reason)
+	}
+	if err := u.Service.Stop(ctx); err != nil {
+		return stop(fmt.Errorf("stopping varlatchd: %w", err))
+	}
+	if err := u.point("forward:stopped"); err != nil {
+		return err
+	}
+	if err := u.installFormatOne(j, j.To); err != nil {
+		return stop(err)
+	}
+	// From here on the new varlatchd may start (held, when it reads this).
+	if !j.Reached(journal.Started) {
+		if err := u.reach(j, journal.Started); err != nil {
+			return stop(err)
+		}
+	}
+	if err := u.Service.Start(ctx); err != nil {
+		return stop(fmt.Errorf("starting varlatchd %s: %w", j.To, err))
+	}
+	if err := u.point("forward:started"); err != nil {
+		return err
+	}
+	if err := u.check(ctx, j.To, j.ToSchema); err != nil {
+		return stop(fmt.Errorf("the health checks of %s: %w", j.To, err))
+	}
+	if err := u.reach(j, journal.Checked); err != nil {
+		return stop(err)
+	}
+	return u.promote(ctx, j)
+}
+
+// backByHand are the commands that go back to an earlier release's upgrade's
+// previous release, with the original database.
+func (u *Upgrader) backByHand(j *journal.Journal) []string {
+	kept, replaced, original := filepath.Join(j.Releases, j.From), filepath.Join(j.Work, "replaced"), filepath.Join(j.Work, originalDir)
+	files := func(dir string) string {
+		return shellWord(filepath.Join(dir, databaseFile)) + "*"
+	}
+	return []string{
+		"sudo systemctl stop varlatchd",
+		fmt.Sprintf("sudo install -m 755 %s %s %s", shellWord(filepath.Join(kept, "varlatch")), shellWord(filepath.Join(kept, "varlatchd")), shellWord(u.BinDir)),
+		fmt.Sprintf("sudo sh -c 'mkdir -p %s && mv %s %s/ && cp -p %s %s/'", replaced, files(j.DataDir), replaced, files(original), j.DataDir),
+		fmt.Sprintf("sudo mv %s %s", shellWord(filepath.Join(u.configDir(), journal.File)), shellWord(u.aside(j))),
+		"sudo systemctl start varlatchd",
+	}
+}
+
+// keepRestored are the commands that keep a database restored since an
+// upgrade began, which is then over.
+func (u *Upgrader) keepRestored(j *journal.Journal) []string {
+	return []string{
+		fmt.Sprintf("sudo mv %s %s", shellWord(filepath.Join(u.configDir(), journal.File)), shellWord(u.aside(j))),
+		"sudo systemctl start varlatchd",
+		"sudo varlatch admin restore resume",
+	}
+}
+
+// restoreByHand are the commands that go back to the previous release by
+// restoring the pre-upgrade snapshot with it.
+func (u *Upgrader) restoreByHand(j *journal.Journal) []string {
+	kept := filepath.Join(j.Releases, j.From)
+	uid, gid, _, err := ownerToBe(j.DataDir)
+	owner := fmt.Sprintf("%d:%d", uid, gid)
+	if err != nil {
+		owner = "<its owner>"
+	}
+	lines := []string{
+		"sudo systemctl stop varlatchd",
+		fmt.Sprintf("sudo install -m 755 %s %s %s", shellWord(filepath.Join(kept, "varlatch")), shellWord(filepath.Join(kept, "varlatchd")), shellWord(u.BinDir)),
+		fmt.Sprintf("sudo %s admin backup restore --in %s --config %s", shellWord(u.varlatchd()), shellWord(j.Snapshot), shellWord(u.ConfigPath)),
+		// An earlier release's restore runs as root and leaves root's files.
+		fmt.Sprintf("sudo chown -R --no-dereference --from=0 %s %s", owner, shellWord(j.DataDir)),
+	}
+	if j.Format != journal.FormatOne || j.Pending() {
+		lines = append(lines, fmt.Sprintf("sudo mv %s %s", shellWord(filepath.Join(u.configDir(), journal.File)), shellWord(u.aside(j))))
+	}
+	return append(lines, "sudo systemctl start varlatchd")
+}
+
+// shellWord is s as one word of a shell's.
+func shellWord(s string) string {
+	if strings.IndexFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("/._-+:@%", r))
+	}) < 0 && s != "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // failed records an undo that did not complete, with what is left.
@@ -1077,8 +1318,8 @@ func (u *Upgrader) failed(j *journal.Journal, why string, left error) error {
 	j.State, j.Start = journal.Failed, nil
 	j.Reason = fmt.Sprintf("%s; the undo did not complete: %v. varlatchd does not start until it does: put right what it says, then run sudo varlatch upgrade. The pre-upgrade snapshot is %s", why, left, j.Snapshot)
 	if errors.Is(left, errNoOriginal) {
-		j.Reason = fmt.Sprintf("%s; the undo did not complete: %v. Put the original database's files back into %s, then run sudo varlatch upgrade; or restore the pre-upgrade snapshot %s (varlatchd admin backup restore --in <it>)",
-			why, left, filepath.Join(j.Work, originalDir), j.Snapshot)
+		j.Reason = fmt.Sprintf("%s; the undo did not complete: %v. Put the original database's files back into %s, then run sudo varlatch upgrade; or restore the pre-upgrade snapshot, losing what was written since:\n  %s",
+			why, left, filepath.Join(j.Work, originalDir), strings.Join(u.restoreByHand(j), "\n  "))
 	}
 	if errors.Is(left, errNoOriginal) && j.Kind == journal.Rollback {
 		// The snapshot is the release's that the undo leaves.
@@ -1095,7 +1336,7 @@ func (u *Upgrader) failed(j *journal.Journal, why string, left error) error {
 // undo is tried again). It returns the journal, nil when nothing was
 // pending.
 func (u *Upgrader) Recover(ctx context.Context) (*journal.Journal, error) {
-	unlock, err := lock(u.configDir())
+	unlock, err := u.hold()
 	if err != nil {
 		return nil, &Error{Message: err.Error()}
 	}
@@ -1117,6 +1358,13 @@ func (u *Upgrader) Recover(ctx context.Context) (*journal.Journal, error) {
 			return j, err
 		}
 		return nil, nil
+	}
+	// What is read may not survive a power cut, if the run that wrote it
+	// could not make it durable: first it does.
+	if err := u.write(j); errors.Is(err, errKilled) {
+		return j, err
+	} else if err != nil {
+		return j, &Error{Message: u.notDurable(j, err).Error(), Journal: j}
 	}
 	if j.State == journal.InProgress && j.Reached(journal.Checked) {
 		if err := u.promote(ctx, j); errors.Is(err, errKilled) {

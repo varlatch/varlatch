@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -346,6 +347,39 @@ func TestAdminAsRootGivesWhatWasLeft(t *testing.T) {
 	if err := os.Symlink(h.private, filepath.Join(h.data, "dir")); err != nil {
 		t.Fatal(err)
 	}
+	// What is none of varlatchd's stays root's, and is named: a file of the
+	// operator's, one with an archive's name elsewhere, a directory, one with
+	// a name of varlatchd's in it, one where varlatchd makes no such name.
+	theirs := []string{"notes", "x.vltbak", "kept/varlatch.db", "kept", "backups/notes", "upgrades/a/b/varlatch.db"}
+	for _, name := range theirs {
+		p := filepath.Join(h.data, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("root's"), 0o600); err != nil && !os.IsExist(err) && name != "kept" {
+			t.Fatal(err)
+		}
+	}
+	out, status := h.admin("backup", "status")
+	if status != ExitOK || !strings.Contains(out, "left as it is in the data directory, root's and not varlatchd's: ") {
+		t.Fatalf("%d %s", status, out)
+	}
+	for _, name := range []string{"notes", "x.vltbak", "kept", "backups/notes", "upgrades/a/b", "hard", "soft", "dir"} {
+		if !strings.Contains(out, strconv.Quote(filepath.Join(h.data, name))) {
+			t.Errorf("%s is not named: %s", name, out)
+		}
+	}
+	for _, name := range theirs {
+		info, err := os.Lstat(filepath.Join(h.data, name))
+		if err != nil || info.Sys().(*syscall.Stat_t).Uid != 0 {
+			t.Errorf("%s: %v %v", name, info, err)
+		}
+	}
+	for _, name := range []string{"notes", "x.vltbak", "kept", "backups/notes", "upgrades/a"} {
+		if err := os.RemoveAll(filepath.Join(h.data, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, args := range [][]string{{"backup", "status"}, {"backup", "run"}, {"schema", "status"}} {
 		if out, status := h.admin(args...); status != ExitOK {
 			t.Fatalf("%q: %d %s", args, status, out)
@@ -493,6 +527,30 @@ func TestMigrateAsRootLeavesTheOwnersFiles(t *testing.T) {
 		}
 	}
 	h.owned("migrate export")
+
+	// A reverse bundle in a directory only root enters is root's, made
+	// before the command becomes the owner, and gone when it fails.
+	out := filepath.Join(h.private, "reverse.jsonl")
+	if text, status := h.admin("migrate", "export", "--reverse", "--out", out, "--keep", filepath.Join(h.private, "keep")); status == ExitOK || !strings.Contains(text, "--keep") {
+		t.Fatalf("a kept copy the owner cannot make: %d %s", status, text)
+	}
+	if _, err := os.Lstat(out); !os.IsNotExist(err) {
+		t.Fatalf("a failed export left its bundle: %v", err)
+	}
+	if text, status := h.admin("migrate", "export", "--reverse", "--out", out); status != ExitOK {
+		t.Fatalf("export to root's directory: %d %s", status, text)
+	}
+	info, err := os.Stat(out)
+	if err != nil || info.Size() == 0 || info.Mode().Perm() != 0o600 || info.Sys().(*syscall.Stat_t).Uid != 0 {
+		t.Errorf("%v %v", info, err)
+	}
+	if text, status := h.admin("migrate", "export", "--reverse", "--out", out); status != ExitFailure || !strings.Contains(text, "new file") {
+		t.Fatalf("over a file: %d %s", status, text)
+	}
+	if again, err := os.Stat(out); err != nil || again.Size() != info.Size() {
+		t.Errorf("the bundle there changed: %v %v", again, err)
+	}
+	h.owned("migrate export to root's directory")
 }
 
 // The keys are root's, and nothing is made in the data directory for them.
@@ -523,6 +581,95 @@ func TestMigrateKeysAsRoot(t *testing.T) {
 	}
 }
 
+// A key file whose directory another user may change is written as the
+// data directory's owner, never by root at a path that user can lead
+// elsewhere.
+func TestMigrateKeysAsRootBelowTheDataDirectory(t *testing.T) {
+	h := newRootHost(t)
+	keys := filepath.Join(h.data, "keys")
+	if err := os.Mkdir(keys, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(keys, serviceUID, serviceUID); err != nil {
+		t.Fatal(err)
+	}
+	kekText, _ := os.ReadFile(filepath.Join(h.private, "root-kek"))
+	in, _ := json.Marshal(map[string][]byte{"rootKek": kekText})
+	h.stdin = string(in)
+	conf, _ := os.ReadFile(h.conf)
+	if err := os.WriteFile(h.conf, []byte(strings.ReplaceAll(string(conf), h.private, keys)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, status := h.admin("migrate", "keys")
+	if want := fmt.Sprintf("ids %d %d", serviceUID, serviceUID); status != ExitOK || !strings.Contains(out, want) {
+		t.Fatalf("%d %s", status, out)
+	}
+	h.owned("migrate keys")
+	// One of them elsewhere: root's directory is not the owner's to write in.
+	if err := os.Remove(filepath.Join(keys, "root-kek")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(h.private, "taken"), filepath.Join(keys, "root-kek")); err != nil {
+		t.Fatal(err)
+	}
+	if out, status := h.admin("migrate", "keys"); status == ExitOK {
+		t.Fatalf("through a link: %s", out)
+	}
+	if _, err := os.Lstat(filepath.Join(h.private, "taken")); !os.IsNotExist(err) {
+		t.Fatalf("root wrote through a link: %v", err)
+	}
+}
+
+// schema upgrade --database keeps root for root's own database only: what
+// leads to the configured one, by any path, is the owner's work.
+func TestAdminAsRootSchemaOfADatabase(t *testing.T) {
+	h := newRootHost(t)
+	if out, status := h.admin("bootstrap"); status != ExitOK {
+		t.Fatal(out)
+	}
+	live := filepath.Join(h.data, "varlatch.db")
+	owners := fmt.Sprintf("ids %d %d", serviceUID, serviceUID)
+	upgrade := func(path string) (string, int) { return h.admin("schema", "upgrade", "--database", path) }
+
+	alias := filepath.Join(h.dir, "alias")
+	if err := os.Symlink(h.data, alias); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{live, filepath.Join(alias, "varlatch.db"), filepath.Join(h.private, "..", "data", "varlatch.db")} {
+		if out, status := upgrade(path); status != ExitOK || !strings.Contains(out, owners) {
+			t.Errorf("%s: %d %s", path, status, out)
+		}
+	}
+	link, hard := filepath.Join(h.private, "link.db"), filepath.Join(h.private, "hard.db")
+	if err := os.Symlink(live, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(live, hard); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{link, hard} {
+		if out, status := upgrade(path); status == ExitOK || !strings.Contains(out, owners) {
+			t.Errorf("%s: %d %s", path, status, out)
+		}
+	}
+	if err := os.Remove(hard); err != nil {
+		t.Fatal(err)
+	}
+	// Root's own copy, in root's directory.
+	b, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := filepath.Join(h.private, "own.db")
+	if err := os.WriteFile(own, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, status := upgrade(own); status != ExitOK || !strings.Contains(out, "ids 0 0 0 0") {
+		t.Errorf("root's own: %d %s", status, out)
+	}
+	h.owned("schema upgrade --database")
+}
+
 // A data directory that is root's keeps root's commands root's, and a path
 // its owner could have changed is refused.
 func TestAdminAsRootWhoseDirectory(t *testing.T) {
@@ -546,15 +693,14 @@ func TestAdminAsRootWhoseDirectory(t *testing.T) {
 
 func TestStaysRoot(t *testing.T) {
 	cfg := &config.Config{DataDir: "/var/lib/varlatch"}
-	for _, args := range [][]string{{"kek", "verify"}, {"config", "check"}, {"doctor"}, {"outbound", "check"}, {"migrate", "keys"}, {"tailnet", "reaches"},
-		{"schema", "upgrade", "--database", "/root/varlatch.db"}, {"schema", "upgrade", "--database", "/var/lib/varlatch-other/varlatch.db"}} {
+	for _, args := range [][]string{{"kek", "verify"}, {"config", "check"}, {"doctor"}, {"outbound", "check"}, {"migrate", "keys"}, {"tailnet", "reaches"}} {
 		if !staysRoot(cfg, args[0], args[1:]) {
 			t.Errorf("%q", args)
 		}
 	}
 	for _, args := range [][]string{{"backup", "restore"}, {"schema", "status"}, {"tailnet", "enroll"}, {"tailnet", "take-name"}, {"maintenance", "begin"}, {"status"},
 		{"migrate", "import", "--in", "x"}, {"migrate", "open"}, {"migrate", "barrier"}, {"migrate", "state"},
-		{"schema", "upgrade"}, {"schema", "upgrade", "--database", "/var/lib/varlatch/upgrades/x/db/varlatch.db"}, {"schema", "upgrade", "--database", "/root/../var/lib/varlatch/x.db"}} {
+		{"schema", "upgrade"}, {"schema", "upgrade", "--database", "/var/lib/varlatch/upgrades/x/db/varlatch.db"}, {"schema", "upgrade", "--database", "/root/../var/lib/varlatch/x.db"}, {"schema", "upgrade", "--database", "/nowhere/varlatch.db"}} {
 		if staysRoot(cfg, args[0], args[1:]) {
 			t.Errorf("%q", args)
 		}

@@ -15,5 +15,10 @@ func runAs(*exec.Cmd, Owner) error {
 	return errors.New("running as another user is built for Linux hosts only")
 }
 
+// giveDir is not built here either.
+func giveDir(string, Owner) error {
+	return errors.New("giving a directory to another user is built for Linux hosts only")
+}
+
 // ownerOf is unknown here.
 func ownerOf(fs.FileInfo) (uint32, uint32, bool) { return 0, 0, false }

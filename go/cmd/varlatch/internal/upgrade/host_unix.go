@@ -16,8 +16,10 @@ import (
 )
 
 // lock holds the configuration directory's upgrade lock (upgrade.lock,
-// flock), so two upgrades never run at once.
-func lock(dir string) (func(), error) {
+// flock), so two upgrades never run at once. What an upgrade starts inherits
+// it (Upgrader.bind): killed, it leaves the lock held until what it started
+// has ended, so that nothing of it goes on beside a recovery.
+func lock(dir string) (*os.File, error) {
 	f, err := os.OpenFile(filepath.Join(dir, "upgrade.lock"), os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open the upgrade lock in %s: %v", dir, err)
@@ -25,11 +27,11 @@ func lock(dir string) (func(), error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, errors.New("another varlatch upgrade is running on this host")
+			return nil, errors.New("another varlatch upgrade is running on this host, or a command that a killed one started: wait until it has ended")
 		}
 		return nil, fmt.Errorf("cannot take the upgrade lock: %v", err)
 	}
-	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+	return f, nil
 }
 
 // lockData takes the lock file path, which is there.

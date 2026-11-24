@@ -393,7 +393,7 @@ var restoreLeftovers = []string{holdFile, ".restore-work", databaseFile + ".rest
 // database.
 func (o dataOp) putBackFormatOne(f fsys) error {
 	original := filepath.Join(o.work(), originalDir)
-	if exists(filepath.Join(original, databaseFile)) && exists(filepath.Join(o.DataDir, databaseFile)) {
+	if o.another() {
 		if err := o.dropLog(f); err != nil {
 			return err
 		}
@@ -402,14 +402,29 @@ func (o dataOp) putBackFormatOne(f fsys) error {
 		if !exists(filepath.Join(original, name)) {
 			continue
 		}
-		if err := f.rename(filepath.Join(original, name), filepath.Join(o.DataDir, name)); err != nil {
+		from, to := filepath.Join(original, name), filepath.Join(o.DataDir, name)
+		// A move a power cut left with both names is done.
+		move := f.rename
+		if sameFile(from, to) {
+			move = func(from, _ string) error { return f.remove(from) }
+		}
+		if err := move(from, to); err != nil {
 			return err
 		}
-		if err := f.syncDir(o.DataDir); err != nil {
-			return err
+		for _, dir := range []string{o.DataDir, original} {
+			if err := f.syncDir(dir); err != nil {
+				return err
+			}
 		}
 	}
 	return f.remove(filepath.Join(o.DataDir, databaseFile+shmSuffix))
+}
+
+// another is whether a database that is not the original stands in its
+// place, which is aside.
+func (o dataOp) another() bool {
+	original, inPlace := filepath.Join(o.work(), originalDir, databaseFile), filepath.Join(o.DataDir, databaseFile)
+	return exists(original) && exists(inPlace) && !sameFile(original, inPlace)
 }
 
 func sameFile(a, b string) bool {
@@ -527,6 +542,7 @@ func (u *Upgrader) data(ctx context.Context, o dataOp) (dataResult, error) {
 	cmd.Stdin = bytes.NewReader(b)
 	cmd.Env, cmd.Dir = []string{"PATH=/usr/bin:/bin"}, "/"
 	asOwner(cmd, uid, gid)
+	u.bind(cmd)
 	var out, errs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errs
 	if err := cmd.Run(); err != nil {
