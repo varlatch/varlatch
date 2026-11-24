@@ -94,7 +94,7 @@ func runSchema(cfg *config.Config, rest []string, stdout, stderr io.Writer) int 
 		if asJSON {
 			return printJSON(stdout, stderr, what, id)
 		}
-		fmt.Fprintf(stdout, "%s is the installation %s's, with %d audit events.\n", database, id.Installation, id.History)
+		fmt.Fprintf(stdout, "%s is the installation %s's, with %d audit events; %s last changed its schema.\n", database, id.Installation, id.History, id.Release)
 		return ExitOK
 	}
 	binary := schemaJSON{db.SchemaVersion, db.CompatibleFrom}
@@ -176,10 +176,12 @@ func runSchema(cfg *config.Config, rest []string, stdout, stderr io.Writer) int 
 
 // identityJSON is whose a database is, and how far its history goes: its
 // installation and its last audit position. `varlatch upgrade` compares an
-// original with the copy in its place.
+// original with the copy in its place, and says which release one is of.
 type identityJSON struct {
 	Installation string `json:"installation"`
 	History      int64  `json:"history"`
+	// Release last changed its schema (created it, or upgraded it).
+	Release string `json:"release"`
 }
 
 // readIdentity reads a database's identity, its log with it, without
@@ -199,6 +201,9 @@ func readIdentity(path string) (id identityJSON, err error) {
 	}
 	if err := conn.QueryRow("SELECT coalesce(max(event_order), 0) FROM audit_events").Scan(&id.History); err != nil {
 		return id, fmt.Errorf("its audit events cannot be read: %w", err)
+	}
+	if err := conn.QueryRow("SELECT updated_by_release FROM schema_version WHERE singleton = 1").Scan(&id.Release); err != nil {
+		return id, fmt.Errorf("its schema version cannot be read: %w", err)
 	}
 	return id, nil
 }

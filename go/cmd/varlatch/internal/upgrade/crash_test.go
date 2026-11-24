@@ -98,7 +98,7 @@ func (h *standHost) run(binary string, args ...string) ([]byte, error) {
 		if _, err := fmt.Sscanf(content, "db original\nschema %d\n", &n); err == nil {
 			database = fmt.Sprintf(`{"schemaVersion":%d}`, n)
 		}
-		return fmt.Appendf(nil, `{"opens":%v,"dataDir":%q,"database":%s}`, n == schema || h.keeps || n == 0, h.data, database), nil
+		return fmt.Appendf(nil, `{"opens":%v,"dataDir":%q,"database":%s}`, n == schema || n > schema && h.keeps || n == 0, h.data, database), nil
 	case "schema upgrade":
 		f := args[len(args)-1]
 		content, log := h.read(f), h.read(f+walSuffix)
@@ -118,7 +118,11 @@ func (h *standHost) run(binary string, args ...string) ([]byte, error) {
 			return nil, errors.New("another's log")
 		}
 		name, _, _ := strings.Cut(strings.TrimPrefix(content, "db "), "\n")
-		return fmt.Appendf(nil, `{"installation":"inst_%s","history":%d}`, name, strings.Count(content+log, "write ")), nil
+		of := h.from
+		if !strings.Contains(content, "schema 1\n") {
+			of = h.to
+		}
+		return fmt.Appendf(nil, `{"installation":"inst_%s","history":%d,"release":%q}`, name, strings.Count(content+log, "write "), of), nil
 	case "status --json":
 		if h.svc.running != version {
 			return nil, errors.New("it is not running")
@@ -1718,35 +1722,209 @@ func TestConfigOfTheUnit(t *testing.T) {
 	}
 }
 
-// A damaged journal: varlatch says the ways out, whole, and they work.
+// A journal that cannot be read: both ways are printed, the one that keeps
+// the database in place first, and the commands of each do what it says,
+// whatever was kept and whatever is missing. Nothing is overwritten.
 func TestADamagedJournal(t *testing.T) {
-	for _, c := range []struct {
-		name, point string
-	}{{"before the stop", "snapshot"}, {"with the original kept", "swapped"}} {
-		t.Run(c.name, func(t *testing.T) {
+	upgradedTo := func(point string) func(t *testing.T) *standHost {
+		return func(t *testing.T) *standHost {
 			h := newStandHost(t, standFrom, false, true)
-			_, _ = h.upgrader(func(p string) bool { return p == c.point }).Run(context.Background(), h.installed(), h.release())
-			path := filepath.Join(filepath.Dir(h.conf), journal.File)
-			h.put(path, "{", 0o644)
-			h.svc.running = ""
-			_, err := h.upgrader(nil).Recover(context.Background())
-			if err == nil || strings.Contains(err.Error(), "run sudo varlatch upgrade") || !strings.Contains(err.Error(), "is damaged") || !strings.Contains(err.Error(), "varlatchd\n  sudo ") {
+			_, _ = h.upgrader(func(p string) bool { return p == point }).Run(context.Background(), h.installed(), h.release())
+			return h
+		}
+	}
+	// What rc.3's swap leaves, cut, and what its undo does.
+	earlier := func(installed string, names ...string) func(t *testing.T) *standHost {
+		return func(t *testing.T) *standHost {
+			h := newStandHost(t, oldFrom, false, true)
+			_ = h.svc.Stop(context.Background())
+			original := filepath.Join(h.data, "upgrades", "0011223344556677", originalDir)
+			if err := os.MkdirAll(original, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			var lines []string
-			for _, line := range strings.Split(err.Error(), "\n") {
-				if strings.HasPrefix(line, "  sudo ") {
-					lines = append(lines, strings.TrimPrefix(line, "  "))
+			for _, n := range names {
+				if err := os.Rename(filepath.Join(h.data, n), filepath.Join(original, n)); err != nil {
+					t.Fatal(err)
 				}
 			}
-			h.byHand(lines)
-			if err := h.svc.Start(context.Background()); err != nil || h.svc.running != standFrom {
+			for v, schema := range map[string]int{oldFrom: 1, standTo: 2} {
+				dirs := []string{filepath.Join(h.upgrader(nil).Releases(), v)}
+				if v == installed {
+					dirs = append(dirs, h.bin)
+				}
+				for _, dir := range dirs {
+					if err := os.MkdirAll(dir, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					h.put(filepath.Join(dir, "varlatchd"), standIn(v, schema, standStatus(v, schema)), 0o755)
+					h.put(filepath.Join(dir, "varlatch"), "varlatch "+v, 0o755)
+				}
+			}
+			return h
+		}
+	}
+	for _, c := range []struct {
+		name string
+		make func(t *testing.T) *standHost
+		on   string // the release that serves when gone on with, "" when that is not printed
+		back string // when gone back, "" when that is not printed
+		only bool   // no other database is kept
+		// What was kept is another database, so that what was in place is
+		// moved beside it; loses: and has less than what was accepted.
+		moved, loses bool
+		log          bool // a log without its database is what is kept
+	}{
+		{name: "before the stop", make: upgradedTo("snapshot"), on: standFrom, only: true},
+		{name: "the original kept, in place", make: upgradedTo("kept"), on: standFrom},
+		{name: "installed", make: upgradedTo("installed"), on: standFrom},
+		{name: "swapped", make: upgradedTo("swapped"), on: standTo, back: standFrom, moved: true},
+		{name: "a rollback done, from the snapshot", make: func(t *testing.T) *standHost {
+			h := newUpgradedHost(t, false, false, true)
+			if j, err := h.rollback(nil); err != nil || j.State != journal.Done {
+				t.Fatalf("%+v, %v", j, err)
+			}
+			return h
+		}, on: standFrom, back: standTo, moved: true, loses: true},
+		{name: "an earlier release's, the database aside, its log not", make: earlier(oldFrom, databaseFile), back: oldFrom},
+		{name: "an earlier release's, both aside", make: earlier(oldFrom, databaseFile, databaseFile+walSuffix), back: oldFrom},
+		{name: "an earlier release's, the copy in, the binaries not", make: func(t *testing.T) *standHost {
+			h := earlier(oldFrom, databaseFile, databaseFile+walSuffix)(t)
+			h.keeps = false
+			h.put(filepath.Join(h.data, databaseFile), "db original\nschema 2\nwrite 1\nwrite 2\n", 0o600)
+			return h
+		}, on: standTo, back: oldFrom, moved: true},
+		{name: "an earlier release's undo, the log still aside", make: earlier(standTo, databaseFile+walSuffix), back: oldFrom, log: true},
+	} {
+		// printed is the text, and its commands by way.
+		printed := func(t *testing.T, h *standHost) (text string, identity, on, back []string) {
+			t.Helper()
+			h.put(filepath.Join(filepath.Dir(h.conf), journal.File), "{", 0o644)
+			_ = h.svc.Stop(context.Background())
+			_, err := h.upgrader(nil).Recover(context.Background())
+			if err == nil || strings.Contains(err.Error(), "run sudo varlatch upgrade") || !strings.Contains(err.Error(), "is damaged") {
+				t.Fatal(err)
+			}
+			way := &identity
+			for _, line := range strings.Split(err.Error(), "\n") {
+				switch {
+				case strings.HasPrefix(line, "  sudo "):
+					*way = append(*way, strings.TrimPrefix(line, "  "))
+				case strings.HasPrefix(line, "To go back"), strings.HasPrefix(line, "In "):
+					way = &back
+				}
+				if strings.Contains(line, "To go on with the database in place") {
+					way = &on
+				}
+			}
+			return err.Error(), identity, on, back
+		}
+		whole := func(h *standHost, dir string) string {
+			return h.read(filepath.Join(dir, databaseFile)) + h.read(filepath.Join(dir, databaseFile+walSuffix))
+		}
+		serves := func(t *testing.T, h *standHost, want string, loses bool) {
+			t.Helper()
+			if exists(filepath.Join(filepath.Dir(h.conf), journal.File)) {
+				t.Fatalf("the journal stays\n%s", h.tree())
+			}
+			if err := h.svc.Start(context.Background()); err != nil || h.svc.running != want {
 				t.Fatalf("%v, %q runs\n%s", err, h.svc.running, h.tree())
 			}
 			// (Start looked for every write that was accepted.)
-			if len(h.svc.faults) > 0 {
+			if len(h.svc.faults) > 0 && !loses {
 				t.Fatalf("%q\n%s", h.svc.faults, h.tree())
 			}
+		}
+		t.Run(c.name+", gone on with", func(t *testing.T) {
+			h := c.make(t)
+			text, identity, on, _ := printed(t, h)
+			if c.on == "" {
+				want := "would make an empty one"
+				if c.log {
+					want = "start no varlatchd before"
+				}
+				if len(on) > 0 || !strings.Contains(text, want) {
+					t.Fatal(text)
+				}
+				return
+			}
+			if len(on) < 3 || !strings.HasPrefix(on[len(on)-1], "sudo systemctl ") {
+				t.Fatalf("%q\n%s", on, text)
+			}
+			if c.only {
+				if len(identity) > 0 || !strings.Contains(text, "is the only one") {
+					t.Fatal(text)
+				}
+			} else if warned := strings.Index(text, "Replace nothing until you know which is which"); len(identity) == 0 || warned < 0 || strings.Index(text, identity[0]) < warned || strings.Index(text, "To go on with") < strings.Index(text, identity[0]) || c.back != "" && strings.Index(text, "To go back") < strings.Index(text, "To go on with") {
+				t.Fatal(text)
+			}
+			before := whole(h, h.data)
+			h.byHand(on)
+			if whole(h, h.data) != before {
+				t.Fatalf("the database changed\n%s", h.tree())
+			}
+			serves(t, h, c.on, false)
+		})
+		if c.back == "" {
+			continue
+		}
+		t.Run(c.name+", gone back", func(t *testing.T) {
+			h := c.make(t)
+			text, identity, _, back := printed(t, h)
+			live, dirs := filepath.Join(h.data, databaseFile), keptSets(h.data)
+			if len(dirs) != 1 {
+				t.Fatalf("%+v", dirs)
+			}
+			// Whose each is, asked before anything is replaced; with its date.
+			want := 0
+			for _, db := range []string{live, filepath.Join(dirs[0].dir, databaseFile)} {
+				if exists(db) {
+					want++
+					if want > len(identity) || !strings.HasSuffix(identity[want-1], " admin schema identity --database "+db+" --config "+h.conf) {
+						t.Fatalf("%q\n%s", identity, text)
+					}
+				}
+			}
+			if len(identity) != want || !strings.Contains(text, dirs[0].date) || (c.moved || !exists(live)) && !strings.Contains(text, "it may be an earlier one's copy") {
+				t.Fatalf("%q\n%s", identity, text)
+			}
+			kept, inPlace, accepted := whole(h, dirs[0].dir), whole(h, h.data), whole(h, h.data)
+			switch {
+			case c.moved:
+				accepted = kept
+			case !exists(live):
+				accepted = kept
+				if !exists(filepath.Join(dirs[0].dir, databaseFile+walSuffix)) {
+					accepted += h.read(live + walSuffix)
+				}
+			case c.log:
+				accepted = inPlace + kept
+			}
+			h.byHand(back)
+			if got := whole(h, h.data); got != accepted {
+				t.Fatalf("in place: %q, not %q", got, accepted)
+			}
+			if got := whole(h, dirs[0].dir); got != kept {
+				t.Fatalf("what was kept: %q, not %q", got, kept)
+			}
+			replaced := filepath.Join(dirs[0].work, "replaced")
+			if got := whole(h, replaced); c.moved && got != inPlace || !c.moved && got != "" {
+				t.Fatalf("replaced: %q, not %q", got, inPlace)
+			}
+			// The same command again stops, and changes nothing; printed
+			// again, it has another place.
+			for _, line := range back {
+				if strings.Contains(line, "sudo sh ") {
+					if out, err := exec.Command("sh", "-c", strings.TrimPrefix(line, "sudo ")).CombinedOutput(); err == nil || whole(h, h.data) != accepted || c.moved && whole(h, replaced) != inPlace {
+						t.Fatalf("again: %v %s\n%s", err, out, h.tree())
+					}
+					if again := h.upgrader(nil).placeByHand(h.data, dirs[0].work); !strings.HasSuffix(again, "/replaced-2") {
+						t.Fatal(again)
+					}
+				} else if c.moved && strings.Contains(line, "cp ") {
+					t.Fatal(line)
+				}
+			}
+			serves(t, h, c.back, c.loses)
 		})
 	}
 }

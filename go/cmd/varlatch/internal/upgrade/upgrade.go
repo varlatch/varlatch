@@ -1442,6 +1442,8 @@ func (u *Upgrader) forward(ctx context.Context, j *journal.Journal, why string) 
 type identity struct {
 	Installation string `json:"installation"`
 	History      int64  `json:"history"`
+	// Release last changed the database's schema.
+	Release string `json:"release"`
 }
 
 func (u *Upgrader) identity(ctx context.Context, varlatchd, dir string) (id identity, err error) {
@@ -1479,77 +1481,256 @@ func (u *Upgrader) upgradedCopy(ctx context.Context, j *journal.Journal) error {
 }
 
 // damaged says what to do about a journal that cannot be read: nothing runs
-// on from it, so each way out is by hand, and whole.
+// on from it, so each way out is by hand, and whole. What the journal said is
+// not known: a database kept beside the one in place may be the original of an
+// upgrade that was under way, or what a rollback that is over replaced.
 func (u *Upgrader) damaged(ctx context.Context, err error) string {
 	path := filepath.Join(u.configDir(), journal.File)
 	said := fmt.Sprintf("%v. If a newer varlatch wrote it, run that one's upgrade. Otherwise %s is damaged: varlatchd does not start beside it, and what an upgrade had done is put right by hand", err, path)
-	aside := fmt.Sprintf("sudo mv %s %s", shellWord(path), shellWord(path+".damaged"))
-	dataDir := ""
-	if out, err := u.admin(ctx, u.varlatchd(), "admin", "schema", "status", "--json"); err == nil {
-		var st struct {
-			DataDir string `json:"dataDir"`
+	aside := fmt.Sprintf("sudo mv %s %s", shellWord(path), shellWord(freeName(path+".damaged")))
+	var st struct {
+		DataDir  string `json:"dataDir"`
+		Opens    bool   `json:"opens"`
+		Database *struct {
+			UpdatedByRelease string `json:"updatedByRelease"`
+		} `json:"database"`
+	}
+	if out, err := u.admin(ctx, u.varlatchd(), "admin", "schema", "status", "--json"); err != nil || json.Unmarshal(out, &st) != nil || st.DataDir == "" {
+		return said + ": say what the data directory is (data_dir in " + u.ConfigPath + "), whether it holds " + databaseFile + ", and whether " + filepath.Join("<data_dir>", "upgrades", "*", originalDir) + " holds a database: that is the original of an upgrade that was under way, or what an earlier rollback replaced. Keep both, and start no varlatchd until you know which is which"
+	}
+	live, releases, kept := filepath.Join(st.DataDir, databaseFile), u.keptReleases(), keptSets(st.DataDir)
+	// What was kept of the database in place: nothing but its log.
+	lacksLog := exists(live) && !exists(live+walSuffix) && slices.ContainsFunc(kept, func(k keptSet) bool { return !k.database })
+	goOn := func() string {
+		inPlace := "the database in place"
+		if st.Database != nil && st.Database.UpdatedByRelease != "" {
+			inPlace += " (its schema last changed by " + st.Database.UpdatedByRelease + ")"
 		}
-		if json.Unmarshal(out, &st) == nil {
-			dataDir = st.DataDir
+		if st.Opens {
+			return "To go on with " + inPlace + ":\n  " + strings.Join([]string{"sudo systemctl stop varlatchd", aside, "sudo systemctl start varlatchd"}, "\n  ")
 		}
+		from := releases.of(u.releaseOf(ctx, releases.says, st.DataDir), false)
+		return fmt.Sprintf("To go on with %s, which the installed varlatchd does not open as it is, and its release%s:\n  %s", inPlace, unknown(from), strings.Join(u.goBack(from, u.Releases(), "", aside), "\n  "))
 	}
-	if dataDir == "" {
-		return said + ": say what the data directory is (data_dir in " + u.ConfigPath + ") and whether " + filepath.Join("<data_dir>", "upgrades", "*", originalDir) + " holds a database: that is the original of an upgrade that was under way. Keep it"
+	if len(kept) == 0 {
+		if !exists(live) {
+			return fmt.Sprintf("%s. There is no database in %s, and none is kept in %s: a varlatchd that starts would make an empty one. Start none; restore a backup, or the pre-upgrade snapshot kept in %s, with %s admin backup restore",
+				said, st.DataDir, filepath.Join(st.DataDir, "upgrades"), u.Snapshots(), u.varlatchd())
+		}
+		return fmt.Sprintf("%s. No other database is kept in %s, so the one in place is the only one. %s", said, filepath.Join(st.DataDir, "upgrades"), goOn())
 	}
-	originals, _ := filepath.Glob(filepath.Join(dataDir, "upgrades", "*", originalDir, databaseFile))
-	if len(originals) == 0 {
-		return fmt.Sprintf("%s. No upgrade's original database is in %s, so the one in place is the only one; %s's schema status says whether the installed release opens it. To go on with it:\n  sudo systemctl stop varlatchd\n  %s\n  sudo systemctl start varlatchd",
-			said, filepath.Join(dataDir, "upgrades"), u.varlatchd(), aside)
+	if len(releases.others) > 0 {
+		said += fmt.Sprintf(" (the releases kept in %s: %s)", u.Releases(), strings.Join(releases.all(), ", "))
 	}
-	from := "<release>"
-	if kept, _ := os.ReadDir(u.Releases()); len(kept) > 0 {
-		var names []string
-		for _, e := range kept {
-			if sum, err := fileSum(filepath.Join(u.Releases(), e.Name(), "varlatchd")); err == nil {
-				if now, err := fileSum(u.varlatchd()); err != nil || now != sum {
-					names = append(names, e.Name())
-				}
+	said += ". Beside the database's place is what was kept of another: the original of an upgrade that was under way, or what an earlier rollback replaced, which is kept 30 days and may be an earlier one's copy. Replace nothing until you know which is which"
+	if releases.says != "" {
+		said += ". Whose each is, how far its history goes, and the release that last changed its schema:"
+		for _, db := range append([]string{live}, kept.databases()...) {
+			if exists(db) {
+				said += fmt.Sprintf("\n  sudo %s admin schema identity --database %s --config %s", shellWord(releases.says), shellWord(db), shellWord(u.ConfigPath))
 			}
 		}
-		if len(names) == 1 {
-			from = names[0]
-		} else if len(names) > 1 {
-			from = "<release>"
-			said += fmt.Sprintf(" (the releases kept in %s: %s; <release> below is the one the original database is of)", u.Releases(), strings.Join(names, ", "))
-		}
+		said += "\n"
+	} else {
+		said += ". "
 	}
-	for _, original := range originals {
-		work := filepath.Dir(filepath.Dir(original))
-		lines := u.goBack(from, u.Releases(), dataDir, work, aside)
-		said += fmt.Sprintf(". An upgrade was under way; its original database is kept in %s. To go back to it, and to its release, losing what was written to the one in place:\n  %s", filepath.Dir(original), strings.Join(lines, "\n  "))
+	switch {
+	case lacksLog:
+		said += "The database in place may lack its log: start no varlatchd before that is put back"
+	case exists(live):
+		said += goOn()
+	default:
+		said += fmt.Sprintf("There is no database in %s: a varlatchd that starts there would make an empty one, so start none before one is back", st.DataDir)
+	}
+	for _, k := range kept {
+		what, losing, of := "To go back to the database kept in %s (%s; it may be an earlier one's copy), and its release", ", losing what was written to the one in place, which is moved beside it", k.dir
+		// Where no database says its release: with none in place, or one the
+		// installed release does not open, an earlier release's swap was cut
+		// before the binaries, and what it kept is the installed release's.
+		installed := !(exists(live) && st.Opens)
+		switch {
+		case k.database && sameFile(filepath.Join(k.dir, databaseFile), live):
+			said += fmt.Sprintf("\nThe database kept in %s (%s) is the one in place, under a second name", k.dir, k.date)
+			continue
+		case !k.database && !lacksLog:
+			said += fmt.Sprintf("\nIn %s (%s) is a log without its database: keep it", k.dir, k.date)
+			continue
+		case !k.database:
+			// An undo of an earlier release, cut short.
+			what, losing, of, installed = "In %s (%s) is a log without its database: most likely of the one in place, which an undo that was cut short had put back, and which lacks what was written last. To put the log back, with the release it is of", "", st.DataDir, false
+		case !exists(live):
+			losing = ""
+		}
+		from := releases.of(u.releaseOf(ctx, releases.says, of), installed)
+		said += fmt.Sprintf("\n"+what+"%s%s:\n  %s", k.dir, k.date, losing, unknown(from), strings.Join(u.goBack(from, u.Releases(), u.placeByHand(st.DataDir, k.work), aside), "\n  "))
 	}
 	return said
+}
+
+// unknown says what a release that is not known stands for.
+func unknown(release string) string {
+	if release != anyRelease {
+		return ""
+	}
+	return " (" + anyRelease + " is the one that database is of)"
+}
+
+// keptSet is what an upgrade or a rollback keeps of a database that was
+// replaced, in an upgrade's directory.
+type keptSet struct {
+	work, dir, date string
+	database        bool // the database itself, not its log alone
+}
+
+type keptDatabases []keptSet
+
+func (k keptDatabases) databases() (paths []string) {
+	for _, s := range k {
+		if s.database {
+			paths = append(paths, filepath.Join(s.dir, databaseFile))
+		}
+	}
+	return paths
+}
+
+// keptSets are the sets in a data directory, the newest first.
+func keptSets(dataDir string) (kept keptDatabases) {
+	dirs, _ := filepath.Glob(filepath.Join(dataDir, "upgrades", "*", originalDir))
+	times := map[string]time.Time{}
+	for _, dir := range dirs {
+		info, err := os.Lstat(dir)
+		database := exists(filepath.Join(dir, databaseFile))
+		if err != nil || !info.IsDir() || !database && !exists(filepath.Join(dir, databaseFile+walSuffix)) {
+			continue
+		}
+		times[dir] = info.ModTime()
+		kept = append(kept, keptSet{work: filepath.Dir(dir), dir: dir, date: "kept " + info.ModTime().UTC().Format("2006-01-02 15:04 UTC"), database: database})
+	}
+	slices.SortStableFunc(kept, func(a, b keptSet) int { return times[b.dir].Compare(times[a.dir]) })
+	return kept
+}
+
+// anyRelease is printed where which release is not known.
+const anyRelease = "<release>"
+
+// keptReleases are the releases whose binaries are kept.
+type keptReleases struct {
+	installed string   // "" when the installed varlatchd is none of them
+	others    []string // the rest
+	says      string   // a varlatchd that says whose a database is, "" for none
+}
+
+func (u *Upgrader) keptReleases() (k keptReleases) {
+	says := func(version string) bool {
+		order, ok := release.CompareVersions(version, journal.FormatSince)
+		return ok && order >= 0
+	}
+	now, _ := fileSum(u.varlatchd())
+	entries, _ := os.ReadDir(u.Releases())
+	for _, e := range entries {
+		sum, err := fileSum(filepath.Join(u.Releases(), e.Name(), "varlatchd"))
+		switch {
+		case err != nil:
+		case sum == now:
+			k.installed = e.Name()
+		default:
+			k.others = append(k.others, e.Name())
+		}
+	}
+	if k.installed == "" || says(k.installed) {
+		k.says = u.varlatchd()
+		return k
+	}
+	for _, name := range k.others {
+		if says(name) {
+			k.says = filepath.Join(u.Releases(), name, "varlatchd")
+		}
+	}
+	return k
+}
+
+func (k keptReleases) all() []string {
+	if k.installed == "" {
+		return k.others
+	}
+	return append([]string{k.installed}, k.others...)
+}
+
+// of is the kept release a database is of: the one its schema says, or else
+// the installed one, or the only other one.
+func (k keptReleases) of(said string, installed bool) string {
+	switch {
+	case said != "" && slices.Contains(k.all(), said):
+		return said
+	case installed && k.installed != "":
+		return k.installed
+	case !installed && len(k.others) == 1:
+		return k.others[0]
+	}
+	return anyRelease
+}
+
+// releaseOf is the release that last changed the schema of the database in a
+// directory, "" when that cannot be said.
+func (u *Upgrader) releaseOf(ctx context.Context, varlatchd, dir string) string {
+	if varlatchd == "" {
+		return ""
+	}
+	id, err := u.identity(ctx, varlatchd, dir)
+	if err != nil {
+		return ""
+	}
+	return id.Release
+}
+
+// freeName is path, or path with the first number that is not taken.
+func freeName(path string) string {
+	name := path
+	for n := 2; exists(name); n++ {
+		name = fmt.Sprintf("%s-%d", path, n)
+	}
+	return name
 }
 
 // backByHand are the commands that go back to an earlier release's upgrade's
 // previous release, with the original database.
 func (u *Upgrader) backByHand(j *journal.Journal) []string {
-	return u.goBack(j.From, j.Releases, j.DataDir, j.Work, fmt.Sprintf("sudo mv %s %s", shellWord(filepath.Join(u.configDir(), journal.File)), shellWord(u.aside(j))))
+	return u.goBack(j.From, j.Releases, u.placeByHand(j.DataDir, j.Work), fmt.Sprintf("sudo mv %s %s", shellWord(filepath.Join(u.configDir(), journal.File)), shellWord(u.aside(j))))
 }
 
-func (u *Upgrader) goBack(from, releases, dataDir, work, aside string) []string {
-	kept, replaced, original := filepath.Join(releases, from), filepath.Join(work, "replaced"), filepath.Join(work, originalDir)
-	files := func(dir string) string {
-		return shellWord(filepath.Join(dir, databaseFile)) + "*"
-	}
+// goBack are the commands that go back to a kept release: data puts its
+// database in place, and is "" where it is.
+func (u *Upgrader) goBack(from, releases, data, aside string) []string {
 	binary := func(name string) string {
-		if from == "<release>" {
-			return filepath.Join(kept, name)
+		path := filepath.Join(releases, from, name)
+		if from == anyRelease {
+			return path
 		}
-		return shellWord(filepath.Join(kept, name))
+		return shellWord(path)
 	}
-	return []string{
+	lines := []string{
 		"sudo systemctl disable --now varlatchd",
 		fmt.Sprintf("sudo install -m 755 %s %s %s", binary("varlatch"), binary("varlatchd"), shellWord(u.BinDir)),
-		fmt.Sprintf("sudo sh -c 'mkdir -p %s && mv %s %s/ && cp -p %s %s/'", replaced, files(dataDir), replaced, files(original), dataDir),
-		aside,
-		"sudo systemctl enable --now varlatchd",
 	}
+	if data != "" {
+		lines = append(lines, data)
+	}
+	return append(lines, aside, "sudo systemctl enable --now varlatchd")
+}
+
+// placeByHand is the command that puts what is kept in work in the database's
+// place, its log with it, and what stands there into a directory of its own.
+// Nothing is overwritten, and what is kept stays. With no database in place (an
+// earlier release moves it aside file by file), a log there is the kept
+// database's own, unless that has one.
+func (u *Upgrader) placeByHand(dataDir, work string) string {
+	const script = `cd "$1"; mkdir "$3"; chown --reference=. "$3"; ` +
+		`if [ -e "$2/varlatch.db" ]; then ` +
+		`if [ -e varlatch.db ] || [ -e "$2/varlatch.db-wal" ]; then for f in varlatch.db varlatch.db-wal; do if [ -e $f ]; then mv $f "$3/"; fi; done; fi; ` +
+		`if [ -e varlatch.db-shm ]; then mv varlatch.db-shm "$3/"; fi; ` +
+		`[ ! -e varlatch.db ]; cp -pP "$2/varlatch.db" .; fi; ` +
+		`if [ -e "$2/varlatch.db-wal" ]; then [ ! -e varlatch.db-wal ]; cp -pP "$2/varlatch.db-wal" .; fi`
+	return fmt.Sprintf("sudo sh -ec '%s' sh %s %s %s", script, shellWord(dataDir), shellWord(filepath.Join(work, originalDir)), shellWord(freeName(filepath.Join(work, "replaced"))))
 }
 
 // keepRestored are the commands that keep a database restored since an

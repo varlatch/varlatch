@@ -511,6 +511,37 @@ func TestTheUpgradedCopyIsKnown(t *testing.T) {
 	if _, err := u.admin(context.Background(), filepath.Join(h.bin, "varlatchd"), "admin", "bootstrap", "--cli-credential"); err == nil {
 		t.Fatal("an offline command that writes ran while the upgrade holds")
 	}
+	// With the journal damaged, the commands that say so are printed, and
+	// run as printed (real varlatchd admin), before either way.
+	path := filepath.Join(filepath.Dir(h.conf), journal.File)
+	record, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = u.Recover(context.Background())
+	if err == nil {
+		t.Fatal("recovered")
+	}
+	said := 0
+	for _, line := range strings.Split(err.Error(), "\n") {
+		if strings.Contains(line, " admin schema identity --database ") {
+			said++
+			out, cerr := exec.Command("sh", "-c", strings.TrimPrefix(line, "  sudo ")).CombinedOutput()
+			if cerr != nil || !strings.Contains(string(out), " audit events; ") || !strings.Contains(string(out), " last changed its schema.") {
+				t.Fatalf("%s: %v %s", line, cerr, out)
+			}
+		}
+	}
+	if said != 2 || !strings.Contains(err.Error(), "To go on with the database in place (its schema last changed by "+toVersion+")") ||
+		!strings.Contains(err.Error(), filepath.Join(u.Releases(), fromVersion, "varlatchd")) {
+		t.Fatalf("%d: %v", said, err)
+	}
+	if err := os.WriteFile(path, record, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// Another installation's, made where there was none.
 	other := newHost(t)
 	if err := other.svc.Stop(context.Background()); err != nil {
