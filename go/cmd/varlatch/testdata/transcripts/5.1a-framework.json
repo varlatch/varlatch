@@ -3011,6 +3011,9 @@
         "--",
         "--help"
       ],
+      "differences": [
+        "host-usage"
+      ],
       "expect": {
         "status": 64,
         "stdout": "",
