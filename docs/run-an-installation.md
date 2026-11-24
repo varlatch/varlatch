@@ -1,105 +1,142 @@
 # Run an installation
 
+> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
+> The current release, 0.23.0, runs on Docker Compose:
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/run-an-installation.md).
+
 Varlatch is self-hosted: one person on your team runs an installation,
 once, and everyone else signs in to it. Skip this page if someone already
 runs one for you: [Join a team](join-a-team.md).
 
+An installation is one program, `varlatchd`, with its own database. It
+needs no Docker, no database server and no other service.
+
 ## What you need
 
-A Linux host, amd64 or arm64, with Docker and Docker Compose 2.24 or
-newer, and a way for people to reach it: a domain name pointing at the
-host, a Tailscale network, or your own reverse proxy (the choice is
-[below](#choose-the-address)). [Host requirements](self-hosting/requirements.md)
-lists memory, disk, and ports.
+- **A Linux host** with systemd, on amd64 or arm64, where you are root
+  (`sudo`).
+- **A way for people to reach it:** a domain name that points at the host,
+  or your own reverse proxy. The choice is [below](#choose-the-address).
 
-To try Varlatch first, your own Linux machine with Docker is enough:
-[Try it on your own machine](#try-it-on-your-own-machine).
+[Host requirements](self-hosting/requirements.md) lists memory, disk, ports
+and outbound connections. To try Varlatch first, your own Linux machine is
+enough: [Try it on your own machine](#try-it-on-your-own-machine). To run
+it in a container, for example on Coolify, see
+[The container image](#the-container-image).
+
+An installation on 0.23.0 or earlier is moved, not installed again:
+[Migrating to 0.50](operations/migrate-to-0.50.md).
 
 ## Install
 
-On the host, download the CLI and the deployment bundle of the same
-release, check them, install the CLI root-owned, and unpack the bundle
-where the installation will live:
+On the host:
 
 ```sh
-V=0.22.0  # the release to run
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-compose-$V.tar.gz
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
-sha256sum --ignore-missing -c SHA256SUMS
-sudo install -m 755 varlatch-cli-$V.cjs /usr/local/bin/varlatch
-tar -xzf varlatch-compose-$V.tar.gz
-cd varlatch-$V
-varlatch setup
+V=0.50.0  # the release to run
+curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
+sudo sh install.sh --server
 ```
 
-Releases after 0.15.0 also sign `SHA256SUMS`: check that signature
-first, as [Verifying a release](operations/verify-release.md) describes.
-The CLI needs Node.js
-([Node.js version](reference/install-the-cli.md#nodejs-version)), and
-[Install the operator CLI](operations/backup.md#install-the-operator-cli)
-explains why the host keeps its own root-owned copy.
+`install.sh` downloads `varlatch`, `varlatchd` and the systemd unit, and
+checks them against the release's `SHA256SUMS`. The downloaded `varlatch`
+then checks that the release workflow signed `SHA256SUMS` for this version.
+When a check fails, nothing is installed. To check the signature with
+cosign before you run anything, follow
+[Verifying a release](operations/verify-release.md).
 
-Run `varlatch setup` as a user who can use Docker.
+It puts both binaries in `/usr/local/bin`, then starts `varlatch setup`,
+which asks a few questions.
 
 ## Choose the address
 
-`varlatch setup` first asks how people will reach Varlatch:
+Setup first asks how people will reach Varlatch:
 
 | Choice | Address | You need |
 |---|---|---|
-| **public** | `https://vault.example.com`, with a certificate a bundled Caddy obtains | the name resolving to this host in public DNS, and ports 80 and 443 reachable from the internet |
-| **tailnet** | `https://<machine>.<tailnet>.ts.net`, for members of your tailnet only | a Tailscale auth key, and MagicDNS and HTTPS certificates enabled in the Tailscale admin console |
-| **external** | whatever your reverse proxy serves; also for a LAN-only installation, or `http://localhost:8787` to try Varlatch on your own machine | a proxy forwarding to `127.0.0.1:8787`, WebSocket upgrades included; nothing for `http://localhost:8787` |
+| **public** | `https://vault.example.com`, with a certificate that `varlatchd` obtains from Let's Encrypt and renews | the name resolving to this host in public DNS, and ports 80 and 443 reachable from the internet |
+| **proxy** | whatever your reverse proxy serves; also for a LAN-only or tailnet-only address | a proxy that forwards to `127.0.0.1:8686` |
+| **localhost** | `http://localhost:8686`, on this machine only | nothing |
+| **tailnet** | whatever your own proxy serves; `varlatchd` also joins your tailnet | a Tailscale auth key, and what [Tailscale](self-hosting/configuration.md#tailscale) says about it |
 
 Choose carefully: the address is where passkeys are registered, so changing
 it later means everyone registers their passkey again.
 
 ## What setup does
 
-Setup also asks whether the installation should serve the CLI, so people
-install it with one line from your address. That trusts the installation
-to run code on their machines, so it is off unless you say yes:
-[Serving the CLI](self-hosting/configuration.md#serving-the-cli).
-
-Setup does the rest, and tells you what it is doing:
-
-1. It generates every key and password the installation needs, as files in
-   `./secrets`, and starts the services.
-2. It prints a one-time link. Open it and create the first administrator's
+1. It creates the `varlatch` system user, and measures the disk that will
+   hold the data.
+2. It makes the two keys an installation needs, readable by root only: the
+   Root KEK, which protects every stored value, and the backup key, which
+   encrypts backups.
+3. It writes `/etc/varlatch/varlatchd.conf` and starts the `varlatchd`
+   service.
+4. It shows a one-time link. Open it and create the first administrator's
    passkey. Setup waits until you have.
-3. It walks you through keeping the two recovery keys off this host: the
-   Root KEK, which every stored value depends on, and the backup key. Without
-   a copy of the Root KEK, a backup cannot be restored. Do not skip this.
-4. It finishes with `varlatch doctor`, a read-only health check you can run
-   on the host at any time.
+5. It shows both keys once, and asks you to paste them back. Keep copies
+   off this host, apart from each other. Without both, no backup can be
+   restored. Do not skip this.
+6. It makes the first backup, verifies it, and runs `varlatch doctor`, a
+   read-only health check you can run at any time.
 
-If setup stops halfway, for a failed download, a reboot, or a cancelled
-passkey prompt, run it again: it continues where it stopped and never
-replaces a key it already made.
+If setup stops halfway, run it again: `sudo varlatch setup` continues where
+it stopped, and never replaces a key it made. It exits 75 when it waits for
+you, for the passkey or for the keys.
+
+### Without a terminal
+
+Every question has a flag. This sets up an installation behind your own
+proxy, and stops for the passkey:
+
+```sh
+sudo varlatch setup --ingress proxy --public-url https://vault.example.com \
+  --backups host --admin-wait 0s --admin-link-out /root/admin-link \
+  --root-kek-out /root/root-kek --backup-key-out /root/backup-key
+```
+
+It exits 75 twice, each time waiting for you:
+
+1. Open the link in `/root/admin-link` and create the passkey. Run the same
+   command again.
+2. It wrote the two keys to the files you named. Store them off this host,
+   apart from each other, and delete those files. Only then run the same
+   command a third time, with `--attest` added: your statement that the
+   copies are safe. Setup records it, and cannot check it.
+
+On a disk whose writes are slow, setup stops unless you add
+`--accept-slow-disk`.
 
 ## Try it on your own machine
 
 To try Varlatch before you choose a server, run the installation on your
-own Linux machine, with Docker, and reach it at `http://localhost:8787`.
-Browsers allow passkeys on `http://localhost`, so you need no domain, no
-certificate, and no proxy. In `varlatch setup`, choose **external**, and
-enter `http://localhost:8787` as the address.
+own Linux machine and choose **localhost**. Browsers allow passkeys on
+`http://localhost`, so you need no domain, no certificate and no proxy.
 
-Every port stays on `127.0.0.1`: nobody else on your network reaches it,
-and nobody but you can join. Setup writes only inside the directory you
-unpacked; [What Varlatch puts on your machine](reference/uninstall.md#what-varlatch-puts-on-your-machine)
-lists everything, and how to remove it.
+`varlatchd` then listens on `127.0.0.1` only: nobody else on your network
+reaches it, and nobody but you can join.
+[What Varlatch puts on your machine](reference/uninstall.md#what-varlatch-puts-on-your-machine)
+lists everything setup writes, and how to remove it.
 
-An installation keeps the address it was set up with, and every passkey is
-registered for that address. To move on to a real server later, set up a
-new installation there, rather than moving this one.
+Every passkey is registered for the address the installation was set up
+with. To move on to a real server later, the simplest way is a new
+installation there. You can also keep this one and
+[move it](operations/move-installation.md) to a public address, with
+`--ingress public` or `--ingress external`: everyone then registers their
+passkey again.
+
+## The container image
+
+`ghcr.io/varlatch/varlatchd` is the same server in a container, from 0.50.0.
+There is no guided setup for it yet: you place the two keys and the
+configuration file yourself, then bootstrap the first administrator with a
+command. [A fresh install by hand](../infra/coolify/README.md#a-fresh-install-by-hand)
+has every step, for Coolify and for plain Docker.
 
 ## Next steps
 
-- **Schedule backups:** [Backup and recovery](operations/backup.md) covers
-  where they go and how to test a restore.
+- **Back up off this host:** [Backup and recovery](operations/backup.md).
+  A new installation backs itself up every day, but only to its own disk
+  until you give it a bucket.
 - **Set up your first project:** [Set up a project](set-up-a-project.md).
-- **Upgrades and every setup option,** including running on Coolify: the
-  [deployment guide](../infra/compose/README.md), and
-  [Configuration](self-hosting/configuration.md).
+- **Run it day to day:** [Install and operate](self-hosting.md), and
+  [Upgrading](operations/upgrade.md).
+- **Every setting:** [Configuration](self-hosting/configuration.md).

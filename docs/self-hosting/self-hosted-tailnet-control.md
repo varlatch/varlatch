@@ -4,7 +4,7 @@
 
 Tested with **Headscale 0.29.7**.
 
-These settings apply to `varlatchd`'s in-process tailnet node (`tailnet = on` in `varlatchd.conf`), not to the Docker Compose Tailscale sidecar (`docker-compose.tailscale.yml`).
+These settings apply to `varlatchd`'s in-process tailnet node (`tailnet = on` in `varlatchd.conf`), from 0.50.
 
 ## Configuration in `varlatchd.conf`
 

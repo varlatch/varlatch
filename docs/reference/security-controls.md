@@ -1147,16 +1147,13 @@ Whoever runs the server can set controls back to off from the host,
 without the API and without anyone's passkey:
 
 ```sh
-varlatch admin security reset --org acme --control admin-step-up
-varlatch admin security reset --org acme --all
-# or inside the container:
-docker compose exec varlatchd node dist/cli.js admin security reset --org acme --all
+sudo varlatch admin security reset --org acme --control admin-step-up
+sudo varlatch admin security reset --org acme --all
+# or inside the container image:
+varlatchd admin security reset --org acme --all
 ```
 
-`varlatch admin security reset` runs the command in the varlatchd
-container of the Compose installation in the current directory; pass
-`--dir <compose-directory>` to name another one. `--org` takes the
-organization's slug or id, and `--json` prints the outcome as JSON.
+`--org` takes the organization's slug or id, and `--json` prints the outcome as JSON.
 
 It sets the named controls (or all four) to off, closes their open
 approvals, and records `security_control.reset` in the audit log for each.

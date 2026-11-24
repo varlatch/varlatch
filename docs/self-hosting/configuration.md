@@ -1,722 +1,456 @@
 # Configuration reference
 
-This page lists every setting you can change on an installation that runs
-the canonical Docker Compose deployment. Almost all of them are variables
-in `.env`, next to `docker-compose.yml`, and `varlatch setup` writes that
-file for you. The [compose guide](../../infra/compose/README.md#first-install)
-covers setup itself, and [Host requirements](requirements.md) what the host
-needs.
+> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
+> The current release, 0.23.0, is configured with environment variables:
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/self-hosting/configuration.md).
 
-On Coolify, these variables are the resource's environment variables, and
-Coolify passes every one of them to every service. Keep secrets in files
-there, as [Deploying on Coolify](../../infra/coolify/README.md#setup)
-describes.
+Every setting of an installation is in one file, `varlatchd.conf`. On a host
+it is `/etc/varlatch/varlatchd.conf`, and `varlatch setup` writes it. In the
+container image you mount it at the same path.
 
-## How the configuration is applied
+It holds no secrets. The two keys are files of their own:
+[Keys](#keys).
 
-Docker Compose reads `.env` from the directory it runs in and substitutes
-the values into the Compose files. A service sees a value only where a
-Compose file passes it on, so a variable that no Compose file names has no
-effect. `docker compose config` shows the result. It also prints every
-secret that is set as a variable, so do not paste its output anywhere.
+## The file
 
-After you change `.env`, apply it in the installation's directory:
+One setting per line:
+
+```ini
+# A comment.
+listen = 127.0.0.1:8686
+public_url = https://vault.example.com
+```
+
+- Blank lines and lines that start with `#` are ignored.
+- The value is the rest of the line, taken as written: no quotes, no
+  escapes, no comment after it.
+- An empty value means the default.
+- An unknown name, a name given twice, a line without `=`, or a value
+  `varlatchd` cannot use is a configuration error. `varlatchd` then exits
+  with status 78 and says which line is wrong.
+
+After a change, check the file, then restart the service:
 
 ```sh
-docker compose up -d
+sudo varlatchd admin config check
+sudo systemctl restart varlatchd
 ```
 
-Compose recreates every service whose configuration changed. `docker
-compose restart` is not enough: it restarts the containers with the
-configuration they were created with.
+systemd does not restart the service after a configuration error: fix the
+file, then `sudo systemctl start varlatchd`.
 
-Some values are used only once. The database passwords, for example, take
-effect when PostgreSQL first creates its data directory:
-[Keys and passwords](#keys-and-passwords) says which.
+## All settings
 
-### The managed `.env`
-
-`varlatch setup` writes `.env` on every run, from
-[`varlatch-install.json`](#varlatch-installjson), with mode 0600. It holds
-addresses, ports, and the paths of the secret files, never a secret value.
-Its last managed line is:
-
-```
-# --- your additions below this line are kept by setup ---
-```
-
-Put the settings you add below that line. Setup keeps them on every rerun
-and rewrites everything above it. If a variable appears twice, Compose uses
-the later line.
-
-Setup refuses to take over a `.env` it did not write. An installation
-configured by hand moves to the managed file with
-[`varlatch adopt`](../../infra/compose/README.md#existing-installations-varlatch-adopt).
-
-For the public ingress at `https://vault.example.com`, setup writes this
-(comments left out):
-
-```
-VARLATCH_PUBLIC_URL=https://vault.example.com
-CONVEX_CLOUD_ORIGIN=https://vault.example.com/convex
-CONVEX_SITE_ORIGIN=https://vault.example.com/convex
-VARLATCH_JWKS_URL=http://varlatchd:8686/.well-known/jwks.json
-VARLATCH_CONVEX_URL=http://convex-backend:3210
-BIND_ADDRESS=127.0.0.1
-VARLATCH_WEB_PORT=8787
-VARLATCHD_PORT=0
-CONVEX_PORT=0
-VARLATCH_KEK_HOST_PATH=./secrets/varlatch-kek
-POSTGRES_SUPERUSER_PASSWORD_HOST_PATH=./secrets/postgres-superuser-password
-VARLATCH_MIGRATE_PASSWORD_HOST_PATH=./secrets/varlatch-migrate-password
-VARLATCH_RUNTIME_PASSWORD_HOST_PATH=./secrets/varlatch-runtime-password
-CONVEX_DB_PASSWORD_HOST_PATH=./secrets/convex-db-password
-CONVEX_INSTANCE_SECRET_HOST_PATH=./secrets/convex-instance-secret
-COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
-VARLATCH_PUBLIC_HOST=vault.example.com
-# --- your additions below this line are kept by setup ---
-```
-
-### Files you do not edit
-
-`docker-compose.yml`, the overlays (`docker-compose.caddy.yml`,
-`docker-compose.tailscale.yml`, `docker-compose.tailnet-https.yml`),
-`Caddyfile`, `tailscale-serve.json`, and `convex-supervisor.cjs` are release
-files. `varlatch upgrade` replaces them and keeps the previous ones as
-`*.pre-<version>`. Keep your changes in `.env`.
-
-For changes that `.env` cannot express, add a `docker-compose.override.yml`
-next to `docker-compose.yml`: upgrades never touch it. Compose reads that
-file by itself only while `COMPOSE_FILE` is not set, which is the case with
-the external ingress. With the public or tailnet ingress, setup lists it
-last in `COMPOSE_FILE` when it exists: after you create or delete the file,
-run `varlatch setup` again. `varlatch doctor` warns when the file exists but
-is not in effect. Do not add a `COMPOSE_FILE` line of your own below the
-keep marker: it would replace the list setup writes, and keep an outdated
-one when a later setup run changes it.
-
-## `varlatch-install.json`
-
-Setup records the installation's configuration in `varlatch-install.json`
-and derives `.env` from it. Its fields:
-
-| Field | What it is | Becomes |
+| Setting | Default | What it is |
 |---|---|---|
-| `publicUrl` | the public URL | `VARLATCH_PUBLIC_URL`, and the Convex origins under it |
-| `ingress` | `public`, `tailnet`, or `external` (absent in older files, meaning `external`) | `COMPOSE_FILE` and the ingress variables |
-| `tailnetMachine` | the Tailscale machine name asked for | `VARLATCH_TAILNET_MACHINE` |
-| `tailnetName` | the tailnet's MagicDNS suffix, read from the node | `VARLATCH_TAILNET_NAME` |
-| `webPort` | the dashboard's host port | `VARLATCH_WEB_PORT` |
-| `bindAddress` | the host address of the published ports | `BIND_ADDRESS` |
-| `convexOrigin` | the browser-facing Convex origin, when it is not `<publicUrl>/convex` (adopted installations only) | `CONVEX_CLOUD_ORIGIN` and `CONVEX_SITE_ORIGIN` |
-| `secretPaths` | where an adopted installation keeps its secret files, by path variable | the `*_HOST_PATH` variables |
-
-To change `webPort` or `bindAddress`, edit the file and run `varlatch setup`
-again. Leave `publicUrl`, `ingress`, `tailnetMachine`, and `tailnetName`
-alone: they decide the address passkeys are registered for. To give the
-installation another address, use `varlatch move`:
-[Moving an installation to another address](../operations/move-installation.md).
-Setup refuses a `--public-url` or `--ingress` that differs from the
-recorded one, and a `publicUrl` edited into the file.
-
-## All variables
-
-| Variable | Section | Written by setup | Holds a secret |
-|---|---|---|---|
-| `VARLATCH_PUBLIC_URL` | [Public address](#public-address) | yes | no |
-| `CONVEX_CLOUD_ORIGIN` | [Public address](#public-address) | yes | no |
-| `CONVEX_SITE_ORIGIN` | [Public address](#public-address) | yes | no |
-| `COMPOSE_FILE` | [Ingress](#ingress) | public and tailnet ingress, and with the tailnet browser endpoint | no |
-| `VARLATCH_PUBLIC_HOST` | [Ingress](#ingress) | public ingress | no |
-| `VARLATCH_ACME_CA` | [Ingress](#ingress) | no | no |
-| `VARLATCH_HTTP_PORT`, `VARLATCH_HTTPS_PORT` | [Ingress](#ingress) | no | no |
-| `BIND_ADDRESS` | [Host ports](#host-ports) | yes | no |
-| `VARLATCH_WEB_PORT` | [Host ports](#host-ports) | yes | no |
-| `VARLATCHD_PORT`, `CONVEX_PORT` | [Host ports](#host-ports) | yes | no |
-| `VARLATCH_JWKS_URL` | [Internal addresses](#internal-addresses) | yes | no |
-| `VARLATCH_CONVEX_URL` | [Internal addresses](#internal-addresses) | yes | no |
-| `VARLATCH_KEK_HOST_PATH` and the other `*_HOST_PATH` variables | [Keys and passwords](#keys-and-passwords) | yes | a path to one |
-| `POSTGRES_SUPERUSER_PASSWORD`, `VARLATCH_MIGRATE_PASSWORD`, `VARLATCH_RUNTIME_PASSWORD`, `CONVEX_DB_PASSWORD`, `CONVEX_INSTANCE_SECRET` | [Keys and passwords](#keys-and-passwords) | no | yes |
-| `CONVEX_ADMIN_KEY` | [Keys and passwords](#keys-and-passwords) | no | yes |
-| `TS_AUTHKEY_HOST_PATH` | [Tailscale](#tailscale) | with the Tailscale sidecar | a path to one |
-| `TS_AUTHKEY` | [Tailscale](#tailscale) | no | yes |
-| `VARLATCH_TAILNET_NAME` | [Tailscale](#tailscale) | with the Tailscale sidecar | no |
-| `VARLATCH_TAILNET_MACHINE` | [Tailscale](#tailscale) | with the Tailscale sidecar | no |
-| `VARLATCH_TAILNET_HTTPS_PORT`, `VARLATCH_TAILNET_NODE`, `VARLATCH_TAILNET_ENDPOINT`, `VARLATCH_TAILNET_CERT_UID` | [Tailnet browser endpoint](#tailnet-browser-endpoint) | with `--tailnet-endpoint` | no |
-| `VARLATCH_TAILNET_BROWSER_ORIGINS` | [Tailnet browser endpoint](#tailnet-browser-endpoint) | no | no |
-| `VARLATCH_TRUSTED_PROXIES` | [Client addresses](#client-addresses) | no | no |
-| `VARLATCH_SYNC`, `VARLATCH_SYNC_ADAPTERS` | [Sync Targets](#sync-targets) | no | no |
-| `VARLATCH_AUDIT_EXPORT` | [Audit export](#audit-export) | no | no |
-| `VARLATCH_OUTBOUND_ALLOW` | [Outbound destinations](#outbound-destinations) | no | no |
-| `VARLATCH_SERVE_CLI` | [Serving the CLI](#serving-the-cli) | when setup asked (new installations) | no |
-
-A default below is what the Compose files use when the variable is unset
-or empty.
-
-## Public address
-
-### `VARLATCH_PUBLIC_URL`
-
-- **Read by:** `varlatchd`, and `convex-deploy`, which gives it to Convex as
-  `VARLATCH_ISSUER`.
-- **Default:** none. Compose refuses to start without it.
-- **Setup:** writes the `--public-url` you give, or with the tailnet
-  ingress, the address the node reports once it has joined.
-
-The address people open in their browser. Passkeys are registered for it,
-it is the issuer of the tokens varlatchd signs, and enrollment links start
-with it. It must be exactly the URL users visit: an origin such as
-`https://vault.example.com`, with no path. Browsers only allow passkeys on
-HTTPS; `http://localhost` works for local testing. varlatchd does not start
-with a value that is not a URL.
-
-When to change it: only with `varlatch move`. Every passkey is registered
-for this address, so a move is a re-enrollment event:
-[Moving an installation to another address](../operations/move-installation.md).
-When you restore onto a new host, set it to the original installation's
-URL, even though the new host does not serve that address, and move
-afterwards if you need a new one:
-[Restore on a fresh host](../operations/backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore).
-
-### `CONVEX_CLOUD_ORIGIN`
-
-- **Read by:** `convex-backend`, and `varlatch-web`, which serves it to
-  browsers in `/varlatch-config.js` when its container starts.
-- **Default:** `http://127.0.0.1:3210` for `convex-backend`. `varlatch-web`
-  gets no value, and browsers then try `http://localhost:3210`.
-- **Setup:** writes `<public URL>/convex`, or an adopted installation's
-  separate Convex origin.
-
-Where browsers open the dashboard's live-update connection. With one public
-origin, `varlatch-web` forwards `/convex/` to `convex-backend`, WebSocket
-included, so Convex needs no public route of its own. An installation that
-gives browsers a separate Convex origin, such as
-`https://convex.example.com`, routes that origin to `convex-backend` on
-port 3210.
-
-When to change it: to move an existing installation from a separate Convex
-origin to `<public URL>/convex`. Remove the old route afterwards.
-`varlatch doctor` fails when browsers cannot use the value: a loopback
-address behind a dashboard on a public address, or plain HTTP behind an
-HTTPS dashboard. While Convex cannot be reached, the dashboard keeps working
-without live updates.
-
-### `CONVEX_SITE_ORIGIN`
-
-- **Read by:** `convex-backend`.
-- **Default:** `http://127.0.0.1:3211`.
-- **Setup:** writes the same value as `CONVEX_CLOUD_ORIGIN`.
+| [`listen`](#listen) | `127.0.0.1:8686` | the plain HTTP listener |
+| [`public_url`](#public_url) | none | the address people open |
+| [`trusted_proxies`](#trusted_proxies) | none | proxies whose `X-Forwarded-For` counts |
+| [`listen_https`](#listen_https) | off | `varlatchd`'s own public HTTPS |
+| [`listen_http_redirect`](#listen_http_redirect) | port 80 | the plain listener beside it |
+| [`acme_email`](#acme_email) | none | the certificate account's contact |
+| [`acme_ca`](#acme_ca) | Let's Encrypt | the certificate authority |
+| [`acme_ca_root`](#acme_ca_root) | the system's | roots trusted for a private one |
+| [`data_dir`](#data_dir) | `/var/lib/varlatch` | the data directory |
+| [`root_kek_file`](#root_kek_file) | the service's credential | the Root KEK's file |
+| [`backup_key_file`](#backup_key_file) | the service's credential | the backup key's file |
+| [`backup_interval`](#backup_interval) | `24h` | how often a backup is made |
+| [`backup_keep`](#backup_keep) | `7` | archives kept on this host |
+| [`backup_destinations_file`](#backup_destinations_file) | none | the buckets archives can go to |
+| [`backup_destination`](#backup_destination) | `offsite` | the bucket in use |
+| [`outbound_allow`](#outbound_allow) | none | private destinations Organizations may reach |
+| [`sync`](#sync) | `on` | Sync Targets |
+| [`sync_adapters`](#sync_adapters) | all | the platforms Sync Targets may use |
+| [`audit_export`](#audit_export) | `on` | audit export to a bucket |
+| [`serve_cli`](#serve_cli) | `off` | serving the CLI |
+| [`access_log`](#access_log) | `stdout` | the access log |
+| [`tailnet`](#tailnet) | `off` | the tailnet node and its listener |
+| [`tailnet_hostname`](#tailnet_hostname) | none | the node's name |
+| [`tailnet_tags`](#tailnet_tags) | none | the node's tags |
+| [`tailnet_port`](#tailnet_port) | none | the tailnet listener's port |
+| [`tailnet_control_url`](#tailnet_control_url) | Tailscale's | a self-hosted control server |
+| [`tailnet_auth_key_file`](#tailnet_auth_key_file) | the service's credential | the key the node joins with |
+| [`tailnet_https_port`](#tailnet_https_port) | off | the tailnet browser endpoint |
+| [`tailnet_browser_origins`](#tailnet_browser_origins) | `public_url` | dashboards that may use it |
+
+## Addresses and listeners
+
+### `listen`
+
+The plain HTTP listener, as `address:port`. The address is an IP address,
+or empty for every address. In the container image, use `0.0.0.0:8686`.
+
+It serves the dashboard and the API without TLS, so put a proxy in front of
+it. With [`listen_https`](#listen_https) it must stay on a loopback address.
+
+### `public_url`
+
+The origin people open, such as `https://vault.example.com`. Passkeys are
+registered for its host name, and enrollment links start with it.
+
+It must be https. Plain http is accepted only for `localhost`, `127.0.0.1`
+and `[::1]`.
+
+Choose it once. Changing it here would leave every passkey unusable: use
+[`varlatch move`](../operations/move-installation.md). When you restore a
+backup on another host, keep the installation's address.
+
+### `trusted_proxies`
+
+The proxies whose `X-Forwarded-For` header `varlatchd` believes:
+comma-separated IP addresses, CIDR ranges and host names. With the proxy
+ingress, setup writes `127.0.0.1,::1`.
+
+`varlatchd` limits some requests per client, and shows the address that
+asked for a sign-in. It reads the header from the right, and takes the first
+address that is not a trusted proxy, so an address a caller writes into the
+header is never used. Without this setting, everyone behind your proxy
+counts as one client.
+
+Your proxy must replace the header with the client's address, or append it.
+Host names are resolved again as the server runs; one that does not resolve
+is not trusted. Never list a range that holds a Docker network's gateway:
+callers on the host reach containers from that address.
+
+### `listen_https`
+
+`varlatchd`'s own public HTTPS, such as `:443`. Off when unset or `off`.
+Setup writes it for the public ingress.
+
+`varlatchd` obtains a certificate for `public_url`'s host name over ACME
+and renews it. It serves nothing over HTTPS before it has one. `public_url`
+must be https and name a DNS name. The certificate and its account key are in
+`acme/` in the data directory, and never in a backup.
+
+Clients connect to it directly, so no `X-Forwarded-For` is believed on it.
+No `Strict-Transport-Security` header is sent.
+
+### `listen_http_redirect`
+
+With `listen_https`: the plain listener that answers the certificate
+authority's HTTP challenges, and redirects everything else to `public_url`.
+Default: port 80 on `listen_https`'s address. `off` leaves the challenge on
+port 443 as the only one.
+
+### `acme_email`
+
+With `listen_https`: the address the certificate authority sends expiry
+notices to.
+
+### `acme_ca`
+
+With `listen_https`: the ACME directory. The default is Let's Encrypt,
+`https://acme-v02.api.letsencrypt.org/directory`. For a trial run, use its
+staging directory, `https://acme-staging-v02.api.letsencrypt.org/directory`,
+whose certificates no browser trusts.
+
+### `acme_ca_root`
 
-Convex's origin for HTTP actions. Varlatch's functions define none, and the
-Compose file publishes no port for them. Keep it equal to
-`CONVEX_CLOUD_ORIGIN`.
+With `listen_https`: an absolute path to a PEM file of roots trusted for a
+private authority's own API.
 
-## Ingress
+## Data
 
-The ingress overlays put a TLS proxy in front of the dashboard: Caddy for
-the public ingress, the Tailscale sidecar for the tailnet ingress. With the
-external ingress, your own proxy does this instead.
-[Host requirements](requirements.md#the-address) compares the three.
-
-### `COMPOSE_FILE`
-
-- **Read by:** Docker Compose itself, and so by every `varlatch` command
-  that runs `docker compose` in the directory.
-- **Default:** not set. Compose reads `docker-compose.yml`, and
-  `docker-compose.override.yml` when it exists.
-- **Setup:** writes
-  `docker-compose.yml:docker-compose.caddy.yml` for the public ingress and
-  `docker-compose.yml:docker-compose.tailscale.yml:docker-compose.tailnet-https.yml`
-  for the tailnet ingress, followed by `docker-compose.override.yml` when
-  that file exists. It writes nothing for the external ingress.
+### `data_dir`
 
-The Compose files that make up the installation, separated by colons. When
-it is set, Compose reads only the files it lists.
-
-When to change it: not for the ingress setup chose. To give varlatchd its
-tailnet listener, for Tailnet Requirements, an installation adds
-`docker-compose.tailscale.yml`: see
-[Optional Tailscale integration](../../infra/compose/README.md#optional-tailscale-integration).
+The data directory, an absolute path. It holds the database
+(`varlatch.db`), local archives, and the certificate and tailnet state.
+Default: the service's state directory, `/var/lib/varlatch`. Put it on a
+local disk: every write waits for that disk
+([Disk](requirements.md#disk)).
 
-### `VARLATCH_PUBLIC_HOST`
+## Keys
 
-- **Read by:** `caddy`, as the site address in the `Caddyfile`.
-- **Default:** none. Compose refuses to start the Caddy overlay without it.
-- **Setup:** writes the host name of the public URL, with the public
-  ingress.
+Keys are never in this file or in an environment variable: `varlatchd`
+refuses to start with one in its environment.
 
-The name Caddy serves and obtains a certificate for. It is always the host
-of `VARLATCH_PUBLIC_URL`: never change it on its own.
-
-### `VARLATCH_ACME_CA`
-
-- **Read by:** `caddy`.
-- **Default:** `https://acme-v02.api.letsencrypt.org/directory`, Let's
-  Encrypt.
-- **Setup:** does not write it.
-
-The ACME directory Caddy obtains certificates from. Change it to use
-another ACME certificate authority. Varlatch's own tests point it at a local
-ACME server.
-
-### `VARLATCH_HTTP_PORT` and `VARLATCH_HTTPS_PORT`
-
-- **Read by:** Docker Compose, for the ports `caddy` publishes.
-- **Default:** `80` and `443` (443 for both TCP and UDP).
-- **Setup:** does not write them.
-
-The host ports Caddy listens on, on every interface. Change them only when
-something in front of the host forwards the public ports 80 and 443 to
-other ports: certificate validation arrives on ports 80 and 443, and the
-public URL cannot carry a port.
-
-## Host ports
-
-With one public origin, only the ingress needs to be reachable from outside
-the host. The other ports are published on loopback, for your own proxy and
-for local checks.
-
-### `BIND_ADDRESS`
-
-- **Read by:** Docker Compose, as the host address of the ports published
-  for `varlatch-web`, `varlatchd`, and `convex-backend` (with the Tailscale
-  overlay, the sidecar's port instead of varlatchd's). Caddy's ports do not
-  use it.
-- **Default:** `127.0.0.1`.
-- **Setup:** writes `127.0.0.1`.
-
-Loopback keeps the containers' ports off the network, so the ingress is the
-only way in. Change it rarely: `0.0.0.0` publishes all of these ports on
-every interface, varlatchd's and Convex's included. A browser cannot sign
-in at a plain `http://<host>:8787` address anyway, since passkeys need
-HTTPS. For an installation on a LAN, use the external ingress with a TLS
-proxy.
-
-### `VARLATCH_WEB_PORT`
-
-- **Read by:** Docker Compose, for the port `varlatch-web` publishes.
-- **Default:** `8787`.
-- **Setup:** writes `--port` (default 8787), recorded as `webPort`.
-
-The dashboard's host port. With the external ingress, your proxy forwards
-to it. The dashboard also answers `/readyz` here, from varlatchd. Change it
-when 8787 is taken on the host: on a managed installation, change `webPort`
-in `varlatch-install.json` and run setup again.
-
-### `VARLATCHD_PORT` and `CONVEX_PORT`
-
-- **Read by:** Docker Compose, for the ports `varlatchd` and
-  `convex-backend` publish. With the Tailscale overlay, the sidecar
-  publishes `VARLATCHD_PORT` instead.
-- **Default:** `8686` and `3210`.
-- **Setup:** writes `0` for both, unless the installation keeps a separate
-  Convex origin. Then it writes neither, and your own lines stay.
-
-`0` lets Docker choose a free loopback port. Nothing needs to reach
-varlatchd or Convex directly, because the dashboard serves varlatchd's API
-and Convex at the public URL. Never route a public domain at varlatchd's
-port: passkey sign-in works only at the public URL. An installation that
-keeps a separate Convex origin forwards that origin to `CONVEX_PORT`.
-Otherwise, leave both as setup writes them.
-
-## Internal addresses
-
-### `VARLATCH_JWKS_URL`
-
-- **Read by:** `convex-deploy`, which sets it in Convex's configuration.
-- **Default:** `http://varlatchd:8686/.well-known/jwks.json`.
-- **Setup:** writes the default.
-
-Where Convex fetches the public keys that verify varlatchd's tokens, over
-the Compose network. Never change it on a new installation. Installations
-deployed before 0.10.0 may still name `http://tailscale:8686/...`, and
-`varlatch adopt` moves them to the fixed name. Archives made with the old
-name still restore: the Compose file gives varlatchd the alias `tailscale`.
-
-### `VARLATCH_CONVEX_URL`
-
-- **Read by:** `varlatchd`.
-- **Default:** `http://convex-backend:3210`.
-- **Setup:** writes the default.
-
-Where varlatchd publishes the dashboard's read models (Mirrors) and reaches
-Convex during backup and restore. Never change it.
-
-## Keys and passwords
-
-Every key and password of an installation is a file. Setup generates each
-one, except the Tailscale auth key, which you give it. The Compose files
-mount each file only into the services that need it, and `.env` holds only
-its path. Keep secrets out of `.env`.
-
-### Secret files
-
-| Path variable | File setup creates | Mounted into | Holds |
-|---|---|---|---|
-| `VARLATCH_KEK_HOST_PATH` | `secrets/varlatch-kek` | `varlatchd` | the Root KEK |
-| `POSTGRES_SUPERUSER_PASSWORD_HOST_PATH` | `secrets/postgres-superuser-password` | `postgres` | the PostgreSQL superuser's password |
-| `VARLATCH_MIGRATE_PASSWORD_HOST_PATH` | `secrets/varlatch-migrate-password` | `postgres`, `varlatch-migrate` | the password of the role that applies migrations |
-| `VARLATCH_RUNTIME_PASSWORD_HOST_PATH` | `secrets/varlatch-runtime-password` | `postgres`, `varlatchd` | the password of varlatchd's runtime role |
-| `CONVEX_DB_PASSWORD_HOST_PATH` | `secrets/convex-db-password` | `postgres`, `convex-backend` | the password of Convex's own role |
-| `CONVEX_INSTANCE_SECRET_HOST_PATH` | `secrets/convex-instance-secret` | `convex-backend`, `convex-deploy` | the Convex instance secret |
-| `TS_AUTHKEY_HOST_PATH` | `secrets/tailscale-authkey`, from the key you give | `tailscale` | the Tailscale auth key ([Tailscale](#tailscale)) |
-
-- **Default:** `./secrets/varlatch-kek` for the Root KEK. For the others,
-  `/dev/null`: an empty file, which the services ignore.
-- **Setup:** writes every path, relative to the installation's directory
-  (the Tailscale one only with the tailnet ingress). For a new installation
-  it generates the files as random hex: 32 bytes for the Root KEK and the
-  Convex instance secret, 24 bytes for each password. It never generates
-  one for an installation that already has a database: it stops instead
-  and asks you to restore the missing file.
-
-Setup creates `secrets/` with mode 0700, and the files containers read
-with mode 0644: the containers' users must read them, and the directory
-keeps everyone else out. If you place the files yourself, do the same. On
-a host that redeploys from a fresh checkout, such as Coolify, keep them
-outside the checkout, for example in `/data/varlatch/secrets`.
-
-### Secret variables
-
-Each password and secret can also be given as a variable of the same name:
-`POSTGRES_SUPERUSER_PASSWORD`, `VARLATCH_MIGRATE_PASSWORD`,
-`VARLATCH_RUNTIME_PASSWORD`, `CONVEX_DB_PASSWORD`, `CONVEX_INSTANCE_SECRET`,
-and `TS_AUTHKEY`. They are empty by default, and setup never writes them. A
-variable that is set wins over its file.
-
-They exist for installations configured by hand, and `varlatch adopt` moves
-their values into files. Prefer files: a variable becomes part of the
-container's configuration, and on Coolify it reaches every service,
-`varlatchd` included.
-
-The Root KEK has no variable in the Compose files. varlatchd would also
-accept it as `VARLATCH_KEK`, but never put it there: the Root KEK belongs in
-a file, with copies off the host.
-
-### What each one is for
-
-- **The Root KEK** is the root of the encryption hierarchy: 32 bytes, as 64
-  hex characters or base64. At startup varlatchd checks it against the
-  installation's canary and refuses to start with any other key. Never
-  replace the file, and keep copies off the host, as
-  [The root KEK is your responsibility](../../infra/compose/README.md#the-root-kek-is-your-responsibility)
-  describes.
-- **The database passwords** are used when PostgreSQL first creates its
-  data directory: `postgres-init/` then creates a role for migrations, a
-  role for varlatchd, and a role for Convex, which has no access to
-  varlatchd's database. Changing a file later does not change the password
-  in the database; that also needs `ALTER ROLE`.
-- **The Convex instance secret** is required: `convex-backend` refuses to
-  start without one. `convex-deploy` derives the Convex admin key from it
-  inside its own container, so there is no admin key to store.
-- **The Backup Encryption Key** is `secrets/backup-key`, mode 0600. Setup
-  generates it for a new installation, no container mounts it, and the host
-  CLI reads it with `--bek-file`. Keep a copy off the host, apart from the
-  Root KEK copy:
-  [Keys and recovery inputs](../operations/backup.md#keys-and-recovery-inputs).
-
-### `CONVEX_ADMIN_KEY`
-
-- **Read by:** `convex-deploy`.
-- **Default:** empty.
-- **Setup:** does not write it. It holds a secret.
-
-Leave it empty: `convex-deploy` derives the key. Installations that still
-set it keep working, and `varlatch adopt` removes it once the derived key
-has worked. After a restore onto a fresh Convex instance secret, an
-installation that still sets it must generate a new one.
-
-## Tailscale
-
-These variables belong to `docker-compose.tailscale.yml`, which the tailnet
-ingress uses, and which also gives varlatchd its tailnet listener. With the
-public or external ingress, `varlatch setup --tailnet-endpoint` adds it too,
-and the setup notes below for the tailnet ingress apply to it as well; the
-public address stays what it is.
-
-For `varlatchd`'s built-in tailnet node (`varlatchd.conf`) connected to a
-self-hosted control server such as Headscale, see
-[Self-hosted tailnet control server (Headscale)](self-hosted-tailnet-control.md).
-
-### `TS_AUTHKEY_HOST_PATH` and `TS_AUTHKEY`
-
-- **Read by:** `tailscale`, the sidecar.
-- **Default:** `/dev/null` and empty.
-- **Setup:** with the tailnet ingress, asks for the key (or reads
-  `--tailscale-auth-key-file`), stores it in `secrets/tailscale-authkey`
-  with mode 0600, and writes that path. It holds a secret.
-
-The auth key (`tskey-...`) the node joins your tailnet with. Only a node
-that has not joined yet needs it: afterwards, its identity lives in the
-`tailscale-state` volume. The key must not be expired or used up. You can
-tag the node, for example `tag:varlatch`.
-
-### `VARLATCH_TAILNET_NAME`
-
-- **Read by:** `varlatchd`, as `VARLATCH_TAILSCALE_TAILNET`.
-- **Default:** none. Compose refuses to start the Tailscale overlay without
-  it.
-- **Setup:** with the tailnet ingress, writes `pending.invalid` until the
-  node has joined, then the tailnet's MagicDNS suffix the node reports.
-
-Your tailnet, for example `example.ts.net`. varlatchd's tailnet listener
-identifies each caller with Tailscale's WhoIs and accepts only callers from
-this tailnet. Set it yourself only when you add the overlay by hand.
-
-### `VARLATCH_TAILNET_MACHINE`
-
-- **Read by:** Docker Compose, as the sidecar's host name.
-- **Default:** `varlatch`.
-- **Setup:** with the tailnet ingress, writes `--tailnet-machine` (default
-  `varlatch`).
-
-The machine name the node asks for. The dashboard is then at
-`https://<name>.<tailnet>.ts.net`. When the name is taken, Tailscale adds a
-suffix, and setup uses the name the node actually got. Use lowercase
-letters, digits, and hyphens, at most 63 characters. The certificate is
-published in Certificate Transparency logs, so keep the name
-non-sensitive.
-
-Choose it before the first run. Renaming the machine or the tailnet later
-changes the address, and everyone registers their passkey again. Setup
-stops when it sees the name has changed.
-
-## Tailnet browser endpoint
-
-Off unless you turn it on with `varlatch setup --tailnet-endpoint`; turn it
-off again with `--no-tailnet-endpoint` (the Tailscale sidecar stays).
-varlatchd then also serves its tailnet listener over HTTPS on port 8688 of
-the node, with the node's own certificate, so that people on approved
-devices can read tailnet-protected values in the dashboard. The device is
-checked on every request, as for the CLI on the tailnet listener; network
-requirements still decide which devices may read which values. It needs
-HTTPS certificates enabled for the tailnet. Setup writes these together,
-from `varlatch-install.json`:
-
-| Variable | Read by | Value |
+| Key | On a host | In the container image |
 |---|---|---|
-| `VARLATCH_TAILNET_HTTPS_PORT` | `varlatchd` | `8688`; empty: off |
-| `VARLATCH_TAILNET_NODE` | `varlatchd`, as `VARLATCH_TAILNET_MACHINE` | the machine name the node actually got: its certificate is for `<name>.<tailnet>` |
-| `VARLATCH_TAILNET_ENDPOINT` | `varlatch-web` | `https://<name>.<tailnet>:8688`: the dashboard's Content-Security-Policy lets browsers connect to it |
-| `VARLATCH_TAILNET_CERT_UID` | `tailscale`, as `TS_PERMIT_CERT_UID` | `999`, varlatchd's user: it may fetch the node's certificate, and nothing more |
+| Root KEK | `/etc/varlatch/root-kek` | `/keys/root-kek` |
+| Backup key | `/etc/varlatch/backup-key` | `/keys/backup-key` |
 
-`VARLATCH_TAILNET_BROWSER_ORIGINS` (read by `varlatchd`, not written by
-setup) lists further exact origins, comma-separated, that may read from the
-endpoint; the dashboard's own origin (`VARLATCH_PUBLIC_URL`, when it is
-HTTPS) always may. Wildcards and `null` are refused at startup.
+Each file holds 32 bytes, as hex or base64. On a host they are readable by
+root only, and systemd hands them to the service. Keep copies off the host:
+[The Root KEK is your responsibility](../self-hosting.md#the-root-kek-is-your-responsibility).
 
-Browsers reach the endpoint only where your tailnet policy lets their
-device connect to the node on port 8688. Setup prints a grant to start
-from; it never edits the policy. `varlatch doctor` reports what varlatchd
-observes (listener, certificate, node), never whether a browser can reach
-it: only a browser can find that out, with Connect to tailnet in the
-dashboard. Installation Admins see the same checks in the dashboard, under
-Installation settings, Tailnet.
+### `root_kek_file`
 
-## Client addresses
+The file the Root KEK is read from, an absolute path. Default: the
+`root-kek` credential the service gets from systemd. Leave it unset on a
+host; set it in the container image.
 
-### `VARLATCH_TRUSTED_PROXIES`
+At startup `varlatchd` checks the key against the installation, and refuses
+to start with another one.
 
-- **Read by:** `varlatchd`.
-- **Default:** depends on the Compose files:
+### `backup_key_file`
 
-  | Files | Default |
-  |---|---|
-  | `docker-compose.yml` | `varlatch-web` |
-  | with `docker-compose.caddy.yml` | `varlatch-web,caddy` |
-  | with `docker-compose.tailnet-https.yml` | `varlatch-web,tailscale` |
-  | `docker-compose.coolify-tailscale.yml` | `varlatch-web,coolify-proxy` |
+The backup key's file, an absolute path. Default: the `backup-key`
+credential, when the service has one. Without a backup key, no scheduled
+backup is made.
 
-- **Setup:** does not write it.
+## Backups
 
-The proxies whose `X-Forwarded-For` header varlatchd believes, so that its
-per-client limits and the device sign-in confirmation see each caller's own
-address. Entries are separated by commas: Compose service or container
-names, IP addresses, and CIDR ranges.
+[Backup and recovery](../operations/backup.md) explains these.
 
-Change it when your own reverse proxy sits in front of the dashboard, or
-when varlatchd logs that a proxy name does not resolve. Your value replaces
-the default, so keep `varlatch-web` in the list, and `caddy` or `tailscale`
-where the ingress adds one. An entry that is not an IP address, a CIDR
-range, or a host name stops varlatchd from starting.
-[Client addresses behind proxies](../../infra/compose/README.md#client-addresses-behind-proxies)
-explains how varlatchd reads the header, and which ranges never to list.
+### `backup_interval`
 
-## Sync Targets
+How often a backup is made, from `1h` to `744h`, or `off`.
 
-### `VARLATCH_SYNC`
+### `backup_keep`
 
-- **Read by:** `varlatchd`.
-- **Default:** `on`.
-- **Setup:** does not write it.
+How many archives stay in `backups/` in the data directory, from 1 to 1000.
+Older ones are removed there, never at a destination.
 
-With `on`, authorized users may add Sync Targets, which push an
-environment's values to GitHub Actions, Coolify, or Convex. With `off`,
-varlatchd delivers nothing for the whole installation, and the dashboard
-points users at the client-side `varlatch sync push` instead. Any other
-value stops varlatchd from starting. Set `off` on networks the installation
-must not reach out from, or when your policy forbids it.
+### `backup_destinations_file`
 
-### `VARLATCH_SYNC_ADAPTERS`
+An absolute path to the file that lists your buckets
+([S3-compatible destinations](../operations/backup.md#s3-compatible-destinations)).
+Unset, archives stay on this host.
 
-- **Read by:** `varlatchd`.
-- **Default:** empty: all built-in adapters, `github-actions`, `coolify`,
-  and `convex`.
-- **Setup:** does not write it.
+### `backup_destination`
 
-A comma-separated list of the platforms Sync Targets may use. varlatchd
-refuses to connect another platform and delivers only through the listed
-adapters. Set it to allow only the platforms you use.
-
-## Audit export
-
-### `VARLATCH_AUDIT_EXPORT`
-
-- **Read by:** `varlatchd`.
-- **Default:** `on`.
-- **Setup:** does not write it.
-
-With `on`, an organization's admins may copy its audit log to a bucket
-they control ([Audit export](../reference/audit-export.md)); nothing is
-sent anywhere until one does. With `off`, varlatchd delivers nothing for
-the whole installation and refuses to set up or change an export, and the
-Security page says that the host operator stopped it. An organization can
-still remove its export, and a deleted organization's export key is still
-cleared at its 30-day deadline. Any other value stops varlatchd from
-starting. A destination on a private network needs
-[`VARLATCH_OUTBOUND_ALLOW`](#varlatch_outbound_allow).
+The name, in that file, of the bucket each archive is uploaded to.
 
 ## Outbound destinations
 
-### `VARLATCH_OUTBOUND_ALLOW`
-
-- **Read by:** `varlatchd` only, at startup. Compose never passes it to
-  Convex or the dashboard.
-- **Default:** empty: Organizations reach public https destinations only.
-- **Setup:** does not write it.
+### `outbound_allow`
 
 The private destinations Organizations may reach: webhook receivers,
-Coolify and Convex instances, and OIDC issuers on your LAN, a Docker
-network or a tailnet. Entries are separated by commas: host names
-(`coolify.lan`), subdomain wildcards (`*.private.example.com`), addresses
-and CIDR ranges (`10.0.0.0/8`), each with an optional port
-(`convex.lan:3210`, `10.0.0.5:*`). An entry without a port allows only 443
-for https and 80 for http. Loopback, link-local and cloud metadata addresses
-open only through a CIDR entry inside their range, such as
-`127.0.0.1/32:*`. An invalid entry stops varlatchd from starting.
+Coolify and Convex instances, and OIDC issuers on your LAN, a Docker network
+or a tailnet. Comma-separated host names (`coolify.example.com`), subdomain
+wildcards (`*.private.example.com`), addresses and CIDR ranges
+(`10.0.0.0/8`), each with an optional port (`convex.example.com:3210`,
+`10.0.0.5:*`). Without a port, an entry allows 443 for https and 80 for
+http.
 
-`varlatch admin outbound check` lists every configured destination with
-its verdict and suggests the value. [Outbound policy](../reference/outbound-policy.md)
-explains the classes, the entries and the migration from earlier releases.
-After a change, recreate varlatchd: `docker compose up -d varlatchd`.
+Unset, Organizations reach public https destinations only.
+`sudo varlatch admin outbound check` lists every configured destination
+with its verdict, and suggests the value.
+[Outbound policy](../reference/outbound-policy.md) has every rule.
+
+## Sync Targets
+
+### `sync`
+
+With `on`, authorized users may add Sync Targets, which push an
+environment's values to GitHub Actions, Coolify, or Convex. With `off`,
+`varlatchd` delivers nothing, and the dashboard points users at `varlatch
+sync push` instead.
+
+### `sync_adapters`
+
+The platforms Sync Targets may use, comma-separated, out of
+`github-actions`, `coolify` and `convex`. Unset allows all of them.
+
+## Audit export
+
+### `audit_export`
+
+With `on`, an organization's admins may copy its audit log to a bucket they
+control ([Audit export](../reference/audit-export.md)). Nothing is sent
+anywhere until one does. With `off`, an export cannot be created or changed;
+removing one still works.
 
 ## Serving the CLI
 
-### `VARLATCH_SERVE_CLI`
+### `serve_cli`
 
-- **Read by:** `varlatchd` only, at startup.
-- **Default:** `off`.
-- **Setup:** asks on a new installation, in a terminal, and writes the
-  answer; `varlatch setup --serve-cli` or `--no-serve-cli` changes it. An
-  installation set up before this setting has no line, so it stays off
-  until you run setup with one of those flags or add the line below the
-  marker.
+`on` makes the installation serve the CLI of the release it runs, for Linux,
+macOS and Windows, and the scripts that install it:
+[From your installation](../reference/install-the-cli.md#from-your-installation)
+shows how people use them. It needs `public_url`, without a path.
 
-`on` makes the installation serve the CLI it was built with, and two
-scripts that install it for the current user:
-
-- `GET /install.sh`, for Linux and macOS:
-  `curl -fsSL https://vault.example.com/install.sh | sh`
-- `GET /install.ps1`, for Windows: `irm https://vault.example.com/install.ps1 | iex`
-- `GET /cli/varlatch.cjs`, the file the scripts download.
-
-They need no sign-in, like `/v1/meta`, which already tells the version.
-The scripts name this installation's address from `VARLATCH_PUBLIC_URL`,
-never from the request, and download only from it: over https, or over
-http on this machine only (`http://localhost`). Over any other plain http
-address varlatchd serves nothing and logs why at startup. Off, the three
-paths answer 404, and `/v1/meta` does not list the `cli.download`
-capability. `varlatch doctor` reports the setting.
+`varlatchd` downloads the release's files from github.com in the
+background, and checks that Varlatch's release workflow signed them. It
+keeps them in `cli/` in the data directory, and checks them again at every
+start. Until that is done, or when GitHub cannot be reached, `/install.sh`,
+`/install.ps1` and the files answer 404; the journal says when it serves
+them.
 
 **What it trusts.** Installing this way trusts the installation, and
 whoever controls its host or its address, to run code on each installer's
 machine. A compromised installation already exposes the values it holds;
 with this on, it can also reach the machines of people who install from it
-afterwards. The SHA-256 in each script only catches a damaged download.
-That is why it is off unless you turn it on, and why the docs always show
-the verified route beside it: [Install the CLI](../reference/install-the-cli.md)
-checks the release signature. After a change, recreate varlatchd:
-`docker compose up -d varlatchd`.
+afterwards. That is why it is off unless you turn it on.
 
 ## Logs
 
-There are no logging settings. Every service logs to standard output:
-`docker compose logs <service>` shows it. At startup, varlatchd logs the
-address each trusted proxy name resolves to, whether Sync Targets are
-enabled, and where it publishes Mirrors.
+### `access_log`
 
-## Backups
+Where the access log goes, one JSON line per request: `stdout` (the
+journal), an absolute path, or `off`. A line has the request's times,
+client address, method, path, status and `X-Forwarded-For`. It never has
+the query.
 
-No variable in `.env` configures backups. The host CLI runs them, as
-[Installation backup and recovery](../operations/backup.md) describes, with
-these settings:
+There are no other log settings. `varlatchd` writes to the journal:
+`sudo journalctl -u varlatchd`.
 
-| Setting | Where | Default |
-|---|---|---|
-| Backup Encryption Key | `--bek-file` (setup generates `secrets/backup-key`), or `--bek-passphrase-file` | none |
-| Destinations | `backup-destinations.json` in the installation's directory, or `--destinations-file` | none: archives stay on the host |
-| Archive path | `--out` | `backups/<archive-id>.vltbak` in the installation's directory |
-| Scratch space | `--scratch-dir` | the system's temporary directory |
-| Capture deadline | `--timeout-seconds`, 1 to 86400 | 300 seconds |
+## Tailscale
 
-Backup status, the backup history, and the restore gate live on the
-`varlatch-state` volume: keep it with the installation. The reference
-systemd timer in [`infra/host-backup`](../../infra/host-backup/README.md)
-keeps its own settings in `/etc/varlatch-backup/config.env`: `COMPOSE_DIR`,
-`COMPOSE_FILE`, `DESTINATION` (default `offsite`), `LOCAL_KEEP` (default 7),
-`CLI`, and `STATUS_FILE`.
+`varlatchd` can join your tailnet as a node of its own, in the same process:
+no sidecar, no TUN device. Its tailnet listener serves the API on the node's
+tailnet address, where each request carries the identity of the device it
+came from. A Tailnet Requirement ("production values only from these
+machines") is met only there; without the listener, such a requirement
+refuses every request.
 
-## Fixed settings
+The tailnet listener does not serve the dashboard. People open the dashboard
+at `public_url`, which is public HTTPS, your own proxy or this machine. For a
+dashboard that only your tailnet reaches, use the proxy ingress with a proxy
+that answers on a tailnet address.
 
-The services also read variables that the Compose files set to fixed
-values. They appear in `docker compose config`, and they are part of the
-deployment, not settings: leave them as they are.
+To add the node to an installation:
 
-| Service | Variable | Value |
-|---|---|---|
-| `varlatchd` | `VARLATCH_STATE_DIR` | `/var/lib/varlatch`, the `varlatch-state` volume |
-| `varlatchd` | `VARLATCH_DATABASE_URL`, `VARLATCH_DATABASE_PASSWORD_FILE` | the runtime role on `postgres:5432/varlatch`, password from `/run/secrets/varlatch-runtime-password` |
-| `varlatchd` | `VARLATCH_KEK_FILE` | `/run/secrets/varlatch-kek` |
-| `varlatchd` | `VARLATCH_PORT` | `8686` |
-| `varlatchd`, with the Tailscale overlay | `VARLATCH_TAILSCALE_SOCKET`, `VARLATCH_TAILNET_PORT` | `/var/run/tailscale/tailscaled.sock`, `8687` |
-| `varlatch-migrate` | `VARLATCH_DATABASE_URL`, `VARLATCH_DATABASE_PASSWORD_FILE` | the migration role, password from `/run/secrets/varlatch-migrate-password` |
-| `convex-backend` | `INSTANCE_NAME` | `convex-self-hosted` |
-| `convex-backend` | `POSTGRES_URL`, `DO_NOT_REQUIRE_SSL` | Convex's role on `postgres:5432`, without TLS inside the Compose network |
-| `convex-backend` | `DISABLE_BEACON` | `1`: no usage beacon |
-| `convex-deploy` | `CONVEX_SELF_HOSTED_URL` | `http://convex-backend:3210` |
-| `tailscale` | `TS_USERSPACE`, `TS_STATE_DIR`, `TS_SOCKET`, `TS_ENABLE_HEALTH_CHECK`, `TS_LOCAL_ADDR_PORT`, `TS_SERVE_CONFIG` | userspace networking, the state and socket volumes, the health check, and with the tailnet ingress, `tailscale-serve.json` |
+1. Create a tagged auth key in the Tailscale admin console, and put it in a
+   file the service can read:
 
-Three of them carry more weight than they seem to:
+   ```sh
+   sudo install -m 640 -o root -g varlatch tailnet-auth-key /etc/varlatch/tailnet-auth-key
+   ```
 
-- `INSTANCE_NAME` names Convex's database (`convex_self_hosted`, which
-  `postgres-init/` creates) and is part of the admin key `convex-deploy`
-  derives.
-- The Convex supervisor refuses to start when `DATA_DIR` or `STORAGE_DIR`
-  point elsewhere, or when any `S3_STORAGE_` variable is set: installation
-  backups need Convex's local storage layout.
-- varlatchd also accepts `VARLATCH_KEK` and `VARLATCH_TAILNET_BIND`, but the
-  Compose files pass neither, and you should not add them. The tailnet
-  browser endpoint always binds 127.0.0.1 inside the sidecar's namespace,
-  where tailscaled's forwarding reaches it and other Compose services do
-  not.
+2. Add to `varlatchd.conf`, and restart:
 
-## Operator CLI environment
+   ```ini
+   tailnet = on
+   tailnet_hostname = varlatch
+   tailnet_tags = tag:varlatch
+   tailnet_port = 8687
+   tailnet_auth_key_file = /etc/varlatch/tailnet-auth-key
+   ```
 
-The host CLI reads a few variables of its own:
+3. Once the node has joined, delete the key file and its line: the node
+   keeps its identity in `tailnet/` in the data directory.
 
-| Variable | Used by | Purpose |
-|---|---|---|
-| `GITHUB_TOKEN` or `GH_TOKEN` | `varlatch upgrade`, `varlatch self-update` | a GitHub token for reading releases, needed only when they come from a private repository |
-| `VARLATCH_RELEASE_REPO` | `varlatch upgrade`, `varlatch self-update` | the repository releases come from; default `varlatch/varlatch`; `--repo` overrides it |
-| `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE`, `COMPOSE_ENV_FILES` | `varlatch doctor` and the other host commands, through `docker compose` | for a project started with other files or another project name: [Health check](../../infra/compose/README.md#health-check-read-only) |
-| `VARLATCH_KEK_PASSPHRASE` | `admin kek export` and `admin kek restore`, inside `varlatchd` | the escrow passphrase, for non-interactive use; `--passphrase-file` is the alternative |
+`varlatch setup --ingress tailnet` writes these settings too. Give it
+`--public-url` as well: it does not ask for it, and people need an address
+to open. The `varlatch` group does not exist before setup, so make the key
+file readable when the journal says `permission denied`, then restart the
+service.
+
+At its first join `varlatchd` pins the tailnet. If it finds itself in
+another one later, the listener closes until you decide with `sudo
+varlatch tailnet repin`. `sudo varlatch doctor` shows the state, and
+**Installation settings**, then **Tailnet**, in the dashboard.
+
+`varlatchd` takes the node's settings from this file only. It refuses to
+start the node when `TS_AUTHKEY` or another of Tailscale's variables that
+would change them is in its environment.
+
+With a self-hosted control server:
+[Self-hosted tailnet control server (Headscale)](self-hosted-tailnet-control.md).
+
+### `tailnet`
+
+`on` starts the node and its listener. It needs `tailnet_hostname`,
+`tailnet_tags` and `tailnet_port`. With `off`, none of the other `tailnet_`
+settings may be set.
+
+### `tailnet_hostname`
+
+The node's host name, fixed when it joins: lower-case letters, digits and
+hyphens, at most 63 characters.
+
+### `tailnet_tags`
+
+The tags the auth key grants, comma-separated, such as `tag:varlatch`. The
+node is always tagged.
+
+### `tailnet_port`
+
+The tailnet listener's port, on the node's addresses only. Setup writes
+8687. Your tailnet policy must let the devices that use it connect to that
+port.
+
+### `tailnet_control_url`
+
+A self-hosted control server, as `https://<IP address>[:port]`. Unset is
+Tailscale's.
+
+### `tailnet_auth_key_file`
+
+The auth key's file, an absolute path, read only to join the first time.
+Default: the `tailnet-auth-key` credential, when the service has one.
+
+## Tailnet browser endpoint
+
+The dashboard reaches `varlatchd` at `public_url`, where no device is known,
+so it cannot read values that a Tailnet Requirement covers. It shows them as
+"Values: tailnet only". With the browser endpoint, people on approved
+devices can read them in the dashboard, with **Connect to tailnet**. The
+device is checked on every request, as for the CLI.
+
+The endpoint serves HTTPS on the node's tailnet name with the node's own
+Tailscale certificate, so MagicDNS and HTTPS certificates must be on in the
+tailnet. The name, `<tailnet_hostname>.<tailnet>.ts.net`, is published in
+Certificate Transparency logs.
+
+### `tailnet_https_port`
+
+The endpoint's port, different from `tailnet_port`. Unset, the endpoint is
+off. Your tailnet policy must let people's devices connect to it. It cannot
+be used with a self-hosted control server.
+
+### `tailnet_browser_origins`
+
+More dashboards that may use the endpoint: exact origins, comma-separated.
+`public_url`'s origin always may, when it is https or on this machine.
+Wildcards are refused.
+
+## Environment
+
+The service needs no environment variables. systemd gives it
+`CREDENTIALS_DIRECTORY` (the keys) and `STATE_DIRECTORY` (the data
+directory). `SSL_CERT_FILE` changes which certificate authorities it trusts:
+[A private certificate authority](../reference/outbound-policy.md#a-private-certificate-authority).
+
+`VARLATCH_KEK_PASSPHRASE` gives `varlatchd admin kek export` and `kek
+restore` their passphrase on a host, instead of `--passphrase-file`.
+
+## From the variables of 0.23.0
+
+`varlatch migrate` writes `varlatchd.conf` for you. For reading old notes:
+
+| Variable | Now |
+|---|---|
+| <a id="varlatch_public_url"></a>`VARLATCH_PUBLIC_URL` | [`public_url`](#public_url) |
+| <a id="varlatch_trusted_proxies"></a>`VARLATCH_TRUSTED_PROXIES` | [`trusted_proxies`](#trusted_proxies) |
+| <a id="varlatch_outbound_allow"></a>`VARLATCH_OUTBOUND_ALLOW` | [`outbound_allow`](#outbound_allow) |
+| <a id="varlatch_sync"></a>`VARLATCH_SYNC` | [`sync`](#sync) |
+| <a id="varlatch_sync_adapters"></a>`VARLATCH_SYNC_ADAPTERS` | [`sync_adapters`](#sync_adapters) |
+| <a id="varlatch_audit_export"></a>`VARLATCH_AUDIT_EXPORT` | [`audit_export`](#audit_export) |
+| <a id="varlatch_serve_cli"></a>`VARLATCH_SERVE_CLI` | [`serve_cli`](#serve_cli) |
+| <a id="varlatch_public_host"></a><a id="varlatch_http_port-and-varlatch_https_port"></a>`VARLATCH_PUBLIC_HOST`, `VARLATCH_HTTP_PORT`, `VARLATCH_HTTPS_PORT` | [`listen_https`](#listen_https), [`listen_http_redirect`](#listen_http_redirect) |
+| <a id="varlatch_acme_ca"></a>`VARLATCH_ACME_CA` | [`acme_ca`](#acme_ca) |
+| <a id="bind_address"></a><a id="varlatch_web_port"></a><a id="varlatchd_port-and-convex_port"></a>`BIND_ADDRESS`, `VARLATCH_WEB_PORT`, `VARLATCHD_PORT` | [`listen`](#listen) |
+| <a id="ts_authkey_host_path-and-ts_authkey"></a>`TS_AUTHKEY`, `TS_AUTHKEY_HOST_PATH` | [`tailnet_auth_key_file`](#tailnet_auth_key_file) |
+| <a id="varlatch_tailnet_machine"></a>`VARLATCH_TAILNET_MACHINE` | [`tailnet_hostname`](#tailnet_hostname) |
+| <a id="varlatch_tailnet_name"></a>`VARLATCH_TAILNET_NAME` | none: pinned when the node joins |
+| `VARLATCH_TAILNET_HTTPS_PORT`, `VARLATCH_TAILNET_BROWSER_ORIGINS` | [`tailnet_https_port`](#tailnet_https_port), [`tailnet_browser_origins`](#tailnet_browser_origins) |
+| `VARLATCH_KEK_HOST_PATH` | [`root_kek_file`](#root_kek_file) |
+
+Everything else belonged to Docker Compose, PostgreSQL or Convex, which 0.50
+does not use. 0.23.0's settings are in
+[its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/self-hosting/configuration.md).
+
+<a id="how-the-configuration-is-applied"></a>
+<a id="the-managed-env"></a>
+<a id="files-you-do-not-edit"></a>
+<a id="varlatch-installjson"></a>
+<a id="all-variables"></a>
+<a id="public-address"></a>
+<a id="convex_cloud_origin"></a>
+<a id="convex_site_origin"></a>
+<a id="ingress"></a>
+<a id="compose_file"></a>
+<a id="host-ports"></a>
+<a id="internal-addresses"></a>
+<a id="varlatch_jwks_url"></a>
+<a id="varlatch_convex_url"></a>
+<a id="keys-and-passwords"></a>
+<a id="secret-files"></a>
+<a id="secret-variables"></a>
+<a id="what-each-one-is-for"></a>
+<a id="convex_admin_key"></a>
+<a id="client-addresses"></a>
+<a id="fixed-settings"></a>
+<a id="operator-cli-environment"></a>

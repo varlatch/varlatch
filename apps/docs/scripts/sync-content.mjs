@@ -51,12 +51,15 @@ export function dropComments(body) {
 }
 
 /** A page as the content collection reads it. */
-export function toPage({ source, title: override }, text) {
+export function toPage({ source, route, title: override }, text) {
   const { title, body: raw } = splitTitle(source, text);
   const body = dropComments(raw);
   const frontmatter = {
     title: override ?? title.replace(/`/g, ""),
     editUrl: `${REPOSITORY}/edit/main/${source}`,
+    // Astro takes the dots out of a file name for its address
+    // (migrate-to-0.50): the page keeps the one links name.
+    ...(route?.includes(".") ? { slug: route } : {}),
   };
   const yaml = Object.entries(frontmatter)
     .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
