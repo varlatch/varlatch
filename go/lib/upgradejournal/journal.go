@@ -18,9 +18,14 @@
 //	                                       runs now): the next varlatch
 //	                                       upgrade finishes it (Step checked)
 //	                                       or undoes it (any earlier step).
-//	                                       From Stopping on (Holds), until
-//	                                       Checked, no varlatchd may start
-//	                                       but the one Start allows
+//	                                       From Stopping on (Holds) no
+//	                                       varlatchd may start but the one
+//	                                       Start allows, and that one is held:
+//	                                       it opens once the journal is over
+//	                                       (the record of Checked, durable,
+//	                                       comes before that one), or after a
+//	                                       reboot that read Checked back
+//	                                       (Settled)
 //	State failed                           an undo did not complete: Reason
 //	                                       says what is left, and the
 //	                                       pre-upgrade snapshot (Snapshot) is
@@ -88,7 +93,8 @@ const (
 	Swapped Step = "swapped"
 	// Started: the new varlatchd is started.
 	Started Step = "started"
-	// Checked: its health checks passed.
+	// Checked: its health checks passed. Its Start stays, until the upgrade
+	// is over: it says in which boot the record was written.
 	Checked Step = "checked"
 )
 
@@ -114,7 +120,8 @@ var undoSteps = []UndoStep{UndoNone, FilesBack, BinariesBack}
 
 // Start is the one start of varlatchd allowed while the journal holds it
 // (Holds): of this release, in this boot. It is written right before
-// varlatchd is started and checked, and goes with the next record.
+// varlatchd is started and checked, and stays until the upgrade is over or
+// undone.
 type Start struct {
 	Version string `json:"version"`
 	// BootID is the kernel's boot id (/proc/sys/kernel/random/boot_id): a
@@ -197,11 +204,23 @@ type Journal struct {
 // in progress (or interrupted), or an undo that failed.
 func (j *Journal) Pending() bool { return j != nil && (j.State == InProgress || j.State == Failed) }
 
-// Holds is whether no varlatchd may start but the one Start allows: the
-// upgrade is not over, and from the stop on (Stopping) until its checks
-// passed (Checked) the database, or the binaries, may be neither release's
-// to serve.
-func (j *Journal) Holds() bool { return j.Pending() && j.Reached(Stopping) && !j.Reached(Checked) }
+// Holds is whether no varlatchd may start but the one Start allows, held:
+// the upgrade is not over, and from the stop on (Stopping) the database, or
+// the binaries, may be neither release's to serve. Checked is not enough:
+// seen, its record may still be lost to a power cut, and what was served
+// since with it, until the upgrader, having made it durable, writes that the
+// upgrade is done. (In format 1, whose recovery never goes back once the new
+// release may have served, Checked is.)
+func (j *Journal) Holds() bool {
+	return j.Pending() && j.Reached(Stopping) && (j.Format != FormatOne || !j.Reached(Checked))
+}
+
+// Settled is whether the record of Checked is durable for certain: it was
+// read in another boot (bootID) than it was written in. The upgrade is then
+// only ever finished, and its release may serve.
+func (j *Journal) Settled(bootID string) bool {
+	return j.Pending() && j.Reached(Checked) && bootID != "" && j.Start != nil && j.Start.BootID != "" && j.Start.BootID != bootID
+}
 
 // Allows is whether the journal, holding, allows a start of version in the
 // boot bootID.
@@ -257,20 +276,28 @@ func (j *Journal) check() error {
 	return nil
 }
 
-// Write replaces dir's journal with j, durably, readable by anyone. A
-// journal read in format 1 is written in it. An error that is
-// release.ErrNotDurable left the new journal in place, not known to survive
-// a power cut; any other left the one before.
-func Write(dir string, j *Journal) error {
+// Encode is the journal's file. A journal read in format 1 stays in it.
+func (j *Journal) Encode() ([]byte, error) {
 	if j.Format == 0 {
 		j.Format = Format
 	}
 	if err := j.check(); err != nil {
-		return err
+		return nil, err
 	}
 	b, err := json.MarshalIndent(j, "", "  ")
 	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
+// Write replaces dir's journal with j, durably, readable by anyone. An
+// error that is release.ErrNotDurable left the new journal in place, not
+// known to survive a power cut; any other left the one before.
+func Write(dir string, j *Journal) error {
+	b, err := j.Encode()
+	if err != nil {
 		return err
 	}
-	return release.WriteDurably(filepath.Join(dir, File), append(b, '\n'), 0o644)
+	return release.WriteDurably(filepath.Join(dir, File), b, 0o644)
 }

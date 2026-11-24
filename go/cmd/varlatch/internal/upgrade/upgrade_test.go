@@ -477,9 +477,9 @@ func TestAKilledUndoIsUndoneAgain(t *testing.T) {
 // A full disk: while staging (nothing changed, varlatchd never stopped)
 // and while copying the database (after the stop: undone).
 func TestAFullDiskIsUndone(t *testing.T) {
-	for _, c := range []struct{ name, suffix string }{
-		{"staging", filepath.Join(toVersion, "varlatchd")},
-		{"the database copy", filepath.Join("db"+makingDir, "varlatch.db")},
+	for _, c := range []struct{ name, suffix, want string }{
+		{"staging", filepath.Join(toVersion, "."+"varlatchd.new"), "nothing was changed"},
+		{"the database copy", filepath.Join("db"+makingDir, "varlatch.db"), "it was undone"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHost(t)
@@ -493,10 +493,22 @@ func TestAFullDiskIsUndone(t *testing.T) {
 			}
 			j, err := u.Run(context.Background(), inst, h.release(t, "to", safe))
 			var uerr *Error
-			if !errors.As(err, &uerr) || !strings.Contains(err.Error(), "no space left on device") || !strings.Contains(err.Error(), "it was undone") {
+			if !errors.As(err, &uerr) || !strings.Contains(err.Error(), "no space left on device") || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("%v", err)
 			}
-			previousServes(t, h, j)
+			if c.name != "staging" {
+				previousServes(t, h, j)
+				return
+			}
+			// Nothing is recorded before the release is staged, and no part
+			// of it stays.
+			if on, err := journal.Read(filepath.Dir(h.conf)); j != nil || on != nil || err != nil {
+				t.Fatalf("%+v, %+v, %v", j, on, err)
+			}
+			if _, err := os.Stat(filepath.Join(u.Releases(), toVersion)); !os.IsNotExist(err) {
+				t.Fatalf("%v", err)
+			}
+			u.mustServe(t, fromVersion, fromSchema)
 		})
 	}
 }
@@ -623,6 +635,14 @@ func TestNotEnoughSpaceChangesNothing(t *testing.T) {
 	inst := h.inspect(t)
 	defer func(f func(string) (uint64, uint64, error)) { FreeSpace = f }(FreeSpace)
 	FreeSpace = func(path string) (uint64, uint64, error) { return 1 << 20, 7, nil }
+	// An earlier upgrade's, whose time is over: nothing was changed is nothing.
+	old := filepath.Join(h.data, "upgrades", "0011223344556677")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(old, time.Now().Add(-60*24*time.Hour), time.Now().Add(-60*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	_, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe))
 	if err == nil || !strings.Contains(err.Error(), "not enough space on the filesystem of") || !strings.Contains(err.Error(), "nothing was changed") ||
 		!strings.Contains(err.Error(), "a copy of the database and a snapshot, the new binaries and the kept ones, and 64 MiB to spare") {
@@ -633,6 +653,9 @@ func TestNotEnoughSpaceChangesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.upgrader(nil).Releases(), toVersion)); !os.IsNotExist(err) {
 		t.Fatalf("the release was staged: %v", err)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Fatalf("an earlier upgrade's directory was removed: %v", err)
 	}
 	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
 

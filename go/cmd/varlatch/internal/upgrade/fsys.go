@@ -25,7 +25,8 @@ type fsys struct {
 	after func(point string) error
 	// trace is told each change and each sync; nil for none.
 	trace func(fsEvent)
-	// fault fails a write to a path (a full disk); nil for none.
+	// fault fails a write to a path (a full disk), or, for a directory's
+	// path that ends in a separator, its sync; nil for none.
 	fault func(path string) error
 }
 
@@ -156,6 +157,11 @@ func (f fsys) sync(path string) error {
 func (f fsys) syncDir(dir string) error {
 	if runtime.GOOS == "windows" {
 		return nil
+	}
+	if f.fault != nil {
+		if err := f.fault(dir + string(filepath.Separator)); err != nil {
+			return fmt.Errorf("syncing the directory %s: %w", dir, err)
+		}
 	}
 	d, err := os.Open(dir)
 	if err != nil {

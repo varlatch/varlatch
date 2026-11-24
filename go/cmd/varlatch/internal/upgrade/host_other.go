@@ -11,7 +11,7 @@ import (
 )
 
 // lock: an upgrade runs on a Linux host only.
-func lock(string) (func(), error) {
+func lock(string) (*os.File, error) {
 	return nil, errors.New("varlatch upgrade runs on the Linux host of a Go installation")
 }
 

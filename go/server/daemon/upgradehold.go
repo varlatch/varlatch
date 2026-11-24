@@ -23,8 +23,10 @@ import (
 // held: the listeners answer 503 and nothing works in the background, so
 // nothing a client or the server does can be lost by an undo. `admin status`,
 // on the control socket, answers with the real readiness, which is what the
-// upgrade checks. The hold ends when the journal says that the checks passed,
-// or that the upgrade is over.
+// upgrade checks. The hold ends when the journal says that the upgrade is
+// over: the record that the checks passed was made durable before that one, so
+// what is served from then on no power cut takes back. A journal at that
+// record, read in a later boot, is as good.
 
 // upgradeBootID is the kernel's boot id, "" where there is none (a variable
 // for the tests).
@@ -44,7 +46,7 @@ const upgradeHoldEvery = 100 * time.Millisecond
 // version that is about to serve: held, or that it does not start.
 func upgradeStart(configDir, version string) (held bool, err error) {
 	j, err := readUpgrade(configDir)
-	if err != nil || !j.Holds() {
+	if err != nil || !j.Holds() || j.Settled(upgradeBootID()) {
 		return false, err
 	}
 	if j.Allows(version, upgradeBootID()) || startedByFormatOne(j, version) {
@@ -58,7 +60,7 @@ func upgradeStart(configDir, version string) (held bool, err error) {
 // new one), or the one an undo discards.
 func upgradeOver(configDir string) error {
 	j, err := readUpgrade(configDir)
-	if err != nil || !j.Holds() {
+	if err != nil || !j.Holds() || j.Settled(upgradeBootID()) {
 		return err
 	}
 	return upgradeNotOver(j)

@@ -109,6 +109,12 @@ func (r *Run) upgrade() error {
 	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
 	defer cancel()
 	u := &upgrade.Upgrader{BinDir: filepath.Dir(varlatchd), ConfigPath: config, Service: upgradeService(), Log: func(line string) { _ = r.println(line) }}
+	if asRoot() {
+		// Before anything there is run as root.
+		if err := u.Trusted(); err != nil {
+			return Fail("varlatch upgrade: "+err.Error()+". Nothing was changed.", ExitFailure)
+		}
+	}
 	if check {
 		return r.upgradeCheck(ctx, u, version, parsed.Has("--prerelease"), parsed.Has("--json"))
 	}
