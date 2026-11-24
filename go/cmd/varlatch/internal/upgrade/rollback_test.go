@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -87,9 +88,48 @@ func TestARollbackSafeRollbackKeepsEveryChange(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(j.Work, "original")); !os.IsNotExist(err) {
 		t.Fatalf("a rollback that keeps the database copied it: %v", err)
 	}
+	// The release returned to goes on with the newer database: it makes
+	// archives that check and restore, and upgrades again, not to a release
+	// below the database's schema.
+	u := h.upgrader(nil)
+	out, err := u.admin(context.Background(), filepath.Join(h.bin, "varlatchd"), "admin", "backup", "run", "--json")
+	var made struct {
+		Path string `json:"path"`
+	}
+	if err != nil || json.Unmarshal(out, &made) != nil || made.Path == "" {
+		t.Fatalf("a backup after the rollback: %v", err)
+	}
+	if err := h.svc.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.admin(context.Background(), filepath.Join(h.bin, "varlatchd"), "admin", "backup", "restore", "--in", made.Path); err != nil {
+		t.Fatalf("its restore: %v", err)
+	}
+	if err := h.svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	u.mustServe(t, fromVersion, fromSchema)
 	// A second rollback has nothing to roll back.
 	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "the last change was a rollback") {
 		t.Fatalf("a second rollback: %v", err)
+	}
+	inst, err := u.Inspect(context.Background())
+	if err != nil || inst.Version != fromVersion || inst.Schema != fromSchema || inst.Database != toSchema {
+		t.Fatalf("inspect after the rollback: %+v, %v", inst, err)
+	}
+	low := h.release(t, "to", safe)
+	low.Manifest.SchemaVersion = fromSchema
+	if _, err := u.Run(context.Background(), inst, low); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("the database's schema is version %d", toSchema)) || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("an upgrade to a release below the database's schema: %v", err)
+	}
+	u.mustServe(t, fromVersion, fromSchema)
+	if j, err := u.Run(context.Background(), inst, h.release(t, "to", safe)); err != nil || j.State != journal.Done {
+		t.Fatalf("the upgrade again: %+v, %v", j, err)
+	}
+	u.mustServe(t, toVersion, toSchema)
+	// And its rollback again, from a snapshot of the newer database.
+	if plan, err = u.PlanRollback(context.Background()); err != nil || !plan.Safe {
+		t.Fatalf("%+v, %v", plan, err)
 	}
 }
 
