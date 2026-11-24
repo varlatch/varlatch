@@ -292,13 +292,11 @@ Changes since 0.50.0-rc.2, by pull request:
   effect. `install.ps1` was not affected. To update 0.50.0-rc.2, run
   `varlatch self-update`, or this release's `install.sh`: 0.50.0-rc.2's own
   copy still refuses.
-<!-- SLOT #448 (open, head df8c4514; recheck against the merged PR, then remove both markers; or drop) -->
 - **`varlatch self-update` on Windows waits for a held file (#448).** When
   another process holds the old or the new binary (a virus scanner, an
   indexer), the replacement is tried again for up to 5 seconds, with the old
   binary in its place during the waits; before, it failed at once. When the
   old binary cannot be put back, the message says where it is.
-<!-- END SLOT #448 -->
 - **`varlatch migrate --to-image`, refused clearly (#435).** A reference
   without a tag, or otherwise not pinned, was refused with a message whose
   reference was masked. The refusal now names the repository and the digest
@@ -336,6 +334,8 @@ Changes since 0.50.0-rc.2, by pull request:
   lifted last, only while that gate is there.
 - **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
   refuses an earlier one before anything is done.
+<!-- SLOT IMAGE-READONLY (5.1e's: the image with a read-only root has a temporary directory for SQLite; number and text to come) -->
+<!-- END SLOT IMAGE-READONLY -->
 <!-- SLOT #451 (open, head 427f857c, its own text, the same as at 8a182138; recheck against the merged PR) -->
 - **`varlatch setup` on a terminal shows the first administrator's link
   (#451).** In 0.50.0-rc.2 and earlier it showed `/enroll#[redacted]`, so an
@@ -360,7 +360,6 @@ Changes since 0.50.0-rc.2, by pull request:
   seconds of the shipped systemd unit). `infra/coolify/varlatchd.compose.yml`
   gives the service 30 seconds to stop, as the unit does; for `docker run`,
   give `--stop-timeout 30`.
-<!-- SLOT #444 (ready, head b98c8def; text from 5.1e; recheck against the merged PR, then remove both markers) -->
 - **varlatchd's tailnet node starts on no cached network map (#444).** After
   a rename, a node that started again could read its old name and tags from
   a map on its disk: `varlatchd admin tailnet enroll` then refused a node
@@ -378,7 +377,6 @@ Changes since 0.50.0-rc.2, by pull request:
   node no control server ever registered; any other keeps it. The client may
   still write the node's own map while it runs; it is never read, and is
   removed at start and at stop.
-<!-- END SLOT #444 -->
 - **Not-found and error pages in the dashboard (#439).** An address
   without a page shows a not-found page of the dashboard, with its
   navigation and a way back, where the router's developer error page
