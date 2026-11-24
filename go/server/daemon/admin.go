@@ -201,8 +201,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, err.Error())
 		return ExitFailure
 	}
+	if status, started := withRootsOutput(cfg, sub, rest, stdout, stderr); started {
+		return status
+	}
 	if !staysRoot(cfg, sub, rest) {
-		if err := becomeOwner(cfg, func() { keepForOwner(cfg, sub, rest) }); err != nil {
+		if err := becomeOwner(cfg, func() { keepForOwner(cfg, sub, rest) }, stderr); err != nil {
 			fmt.Fprintf(stderr, "varlatchd admin %s: %v\n", sub, err)
 			return ExitConfig
 		}

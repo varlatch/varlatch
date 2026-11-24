@@ -230,8 +230,10 @@ func imageEndToEnd(t *testing.T, user Owner) {
 			t.Fatal(err)
 		}
 	}
-	if err := chownAll(user, data, keys); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{data, keys} {
+		if err := giveDir(d, user); err != nil {
+			t.Fatal(err)
+		}
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

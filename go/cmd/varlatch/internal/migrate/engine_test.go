@@ -1538,9 +1538,16 @@ func TestStageAs(t *testing.T) {
 		if err := os.WriteFile(bundle, []byte("bundle"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		staged, err := e.stage(bundle, dir)
-		if err != nil || filepath.Dir(staged) != dir {
+		staged, done, err := e.stage(ctx, bundle)
+		if err != nil || filepath.Dir(filepath.Dir(staged)) != base || filepath.Dir(staged) == dir {
 			t.Fatalf("%s, %v", staged, err)
+		}
+		done()
+		if _, err := os.Stat(filepath.Dir(staged)); !os.IsNotExist(err) {
+			t.Fatalf("the stage stays: %v", err)
+		}
+		if _, err := os.Stat(bundle); err != nil {
+			t.Fatal(err)
 		}
 	}
 	if asked != 1 {

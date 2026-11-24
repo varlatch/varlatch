@@ -3,13 +3,21 @@
 package daemon
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/preread"
+	"github.com/varlatch/varlatch/go/lib/release"
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
 // A host command run as root works in the data directory as its owner, the
@@ -22,22 +30,168 @@ import (
 // staysRoot are the commands that keep root's identity: those that do not
 // work in the data directory or write nothing there (kek, with the
 // operator's key files; config check; doctor, which reads root's files;
-// outbound check; tailnet reaches, a probe in a temporary directory; schema
-// upgrade of a database elsewhere), and migrate keys, which writes root's
-// key files and nothing in the data directory (runMigrate).
+// outbound check; tailnet reaches, a probe in a temporary directory), and,
+// where only root may change what their paths lead to, the two that write
+// at a path they are given: schema upgrade of another database, and migrate
+// keys, which writes root's key files and nothing in the data directory
+// (runMigrate).
 func staysRoot(cfg *config.Config, sub string, rest []string) bool {
 	switch sub {
 	case "kek", "config", "doctor", "outbound", "conformance-probe", "conformance-fixture":
 		return true
 	case "migrate":
-		return len(rest) > 0 && rest[0] == "keys"
+		return len(rest) > 0 && rest[0] == "keys" && keysAreRoots(cfg)
 	case "tailnet":
 		return len(rest) > 0 && rest[0] == "reaches"
 	case "schema":
 		_, _, database, _ := schemaArguments(rest)
-		return database != "" && !below(cfg.DataDir, database)
+		return database != "" && databaseIsRoots(cfg, database)
 	}
 	return false
+}
+
+// keysAreRoots is whether every key file's directory is root's alone.
+func keysAreRoots(cfg *config.Config) bool {
+	paths := []string{cfg.RootKEKFile, cfg.BackupKeyFile}
+	if cfg.Tailnet != nil {
+		paths = append(paths, cfg.Tailnet.AuthKeyFile)
+	}
+	for _, p := range paths {
+		if p != "" && !rootsAlone(filepath.Dir(p)) {
+			return false
+		}
+	}
+	return true
+}
+
+// databaseIsRoots is whether database is root's own database: a file of root's,
+// with no other name, in a directory that is root's alone, and not the
+// configured one, whatever the path it is given by.
+func databaseIsRoots(cfg *config.Config, database string) bool {
+	info, err := os.Lstat(database)
+	if err != nil || !info.Mode().IsRegular() || !rootsOnlyName(info) || !rootsAlone(filepath.Dir(database)) {
+		return false
+	}
+	live, err := os.Stat(cfg.DatabasePath())
+	return err != nil || !os.SameFile(info, live)
+}
+
+// outputEnv tells a command started by withRootsOutput that descriptors 3
+// and 4 are its output file and that file's directory.
+const outputEnv = "VARLATCHD_ADMIN_OUTPUT"
+
+// withRootsOutput runs `admin migrate export --out <file>` as root over a
+// directory of another user's, into a directory that is root's alone, where
+// that user may make nothing: this process makes the file, and, when the
+// command fails, removes it; the command, this program again, becomes the
+// owner with the file open. started is false for anything else.
+func withRootsOutput(cfg *config.Config, sub string, rest []string, stdout, stderr io.Writer) (status int, started bool) {
+	if sub != "migrate" || rest[0] != "export" || os.Getenv(outputEnv) != "" || !rootOverOwner(cfg.DataDir) {
+		return 0, false
+	}
+	a, _ := parseMigrate(rest)
+	abs, err := filepath.Abs(a.out)
+	if err != nil || a.out == "" || !rootsAlone(filepath.Dir(abs)) {
+		return 0, false
+	}
+	fail := func(err error) (int, bool) {
+		fmt.Fprintf(stderr, "varlatchd admin migrate export: %v (the reverse bundle is a new file); nothing was written\n", err)
+		return ExitFailure, true
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return fail(err)
+	}
+	f, err := createAlone(abs)
+	if err != nil {
+		return fail(err)
+	}
+	defer f.Close()
+	dir, err := os.Open(filepath.Dir(abs))
+	if err != nil {
+		_ = os.Remove(abs)
+		return fail(err)
+	}
+	defer dir.Close()
+	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd.Args[0] = os.Args[0]
+	cmd.Env = append(os.Environ(), outputEnv+"=3")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
+	cmd.ExtraFiles = []*os.File{f, dir}
+	err = cmd.Run()
+	if err == nil {
+		return ExitOK, true
+	}
+	_ = os.Remove(abs)
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() > 0 {
+		return exit.ExitCode(), true // it said why
+	}
+	return fail(err)
+}
+
+// output is a command's output file out: the one withRootsOutput opened, or
+// made now. done ends it: durable, with its name, or, when the
+// command failed, gone.
+func output(out string) (f *os.File, done func(error) error, err error) {
+	kept := false
+	var dir *os.File
+	if os.Getenv(outputEnv) != "" {
+		f, dir, kept = os.NewFile(3, out), os.NewFile(4, filepath.Dir(out)), true
+	} else {
+		if f, err = createAlone(out); err != nil {
+			return nil, nil, err
+		}
+		if dir, err = os.Open(filepath.Dir(out)); err != nil {
+			f.Close()
+			_ = os.Remove(out)
+			return nil, nil, err
+		}
+	}
+	return f, func(err error) error {
+		defer dir.Close()
+		if err == nil {
+			err = f.Sync()
+		}
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err == nil {
+			// Its name in its directory, durable too.
+			err = dir.Sync()
+		}
+		if err != nil && !kept {
+			_ = os.Remove(out)
+		}
+		return err
+	}, nil
+}
+
+// leftovers are the names root-run commands of an earlier release (0.50.0
+// before rc.4) made in the data directory, as path.Match patterns below it,
+// that varlatchd opens or writes again: nothing else of root's there is
+// given to its owner. The directories are varlatchd's own.
+var leftovers = []string{
+	config.DatabaseFile, config.DatabaseFile + "-wal", config.DatabaseFile + "-shm", config.DatabaseFile + ".restore",
+	LockFile, JournalFile, backup.GateFile, release.ReleaseCheckFile, FrozenCopyName("mig_*"),
+	tailnet.PinFile, tailnet.ListenersFile, tailnet.HoldFile, TakeoverFile, IssuanceFile,
+	tailnet.StateDir, tailnet.StateDir + "/*", tailnet.StateDir + "/*/*", tailnet.StateDir + "/*/*/*",
+	backups.Dir, backups.Dir + "/*.vltbak", backups.Dir + "/*.json",
+	backups.Dir + "/.work-*", backups.Dir + "/.work-*/*", backups.Dir + "/.work-*/*/*",
+	backups.Dir + "/.remote-*", backups.Dir + "/.remote-*/*", backups.Dir + "/.remote-*/*/*",
+	backups.Dir + "/.bucket-test-*", backups.Dir + "/.bucket-test-*/*", backups.Dir + "/.bucket-test-*/*/*",
+	".restore-work", ".restore-work/*", ".restore-work/*/*",
+	"upgrades", "upgrades/*", "upgrades/*/snapshot.vltbak",
+	"upgrades/*/db", "upgrades/*/db/" + config.DatabaseFile + "*", "upgrades/*/original", "upgrades/*/original/" + config.DatabaseFile + "*",
+}
+
+// isLeftover is whether a path below the data directory, slash-separated,
+// is one of leftovers.
+func isLeftover(rel string) bool {
+	return slices.ContainsFunc(leftovers, func(p string) bool {
+		ok, _ := path.Match(p, rel)
+		return ok
+	})
 }
 
 // keepForOwner keeps what a command reads outside the data directory open:

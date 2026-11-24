@@ -428,10 +428,11 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 		return e.undoReverse(ctx, j, fmt.Errorf("the TypeScript release's export: %w", err))
 	}
 	defer os.Remove(exported)
-	staged, err := e.stage(exported, dir)
+	staged, done, err := e.stage(ctx, exported)
 	if err != nil {
 		return e.undoReverse(ctx, j, err)
 	}
+	defer done()
 	checks, err := rt.CheckReverse(ctx, staged, keep, runKey)
 	if err != nil {
 		return e.undoReverse(ctx, j, fmt.Errorf("the reverse checks: %w", err))

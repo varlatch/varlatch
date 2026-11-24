@@ -36,7 +36,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -606,10 +605,11 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 		return nil, fmt.Errorf("the dry run's export: %w; nothing was switched", err)
 	}
 	defer os.Remove(exported)
-	bundle, err := e.stage(exported, scratch)
+	bundle, done, err := e.stage(ctx, exported)
 	if err != nil {
 		return nil, err
 	}
+	defer done()
 	exportedAt := e.now()
 	cp, err := e.Target.Import(ctx, bundle, filepath.Join(scratch, "data"))
 	if err != nil {
@@ -638,9 +638,8 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 	return r, e.enter(ctx, j, DryRun)
 }
 
-// scratchDir is a new directory for the dry run's database or a staged
-// bundle: in the work directory, or, with Stage, under the system's
-// temporary directory and given to that user.
+// scratchDir is a new directory for the dry run's database: in the work
+// directory, or, with Stage, in StageBase and given to that user.
 func (e *Engine) scratchDir(ctx context.Context) (string, error) {
 	if err := e.staged(ctx); err != nil {
 		return "", err
@@ -648,16 +647,19 @@ func (e *Engine) scratchDir(ctx context.Context) (string, error) {
 	if e.Options.Stage == nil {
 		return os.MkdirTemp(e.work(), ".dry-run-")
 	}
-	dir, err := os.MkdirTemp(e.Options.StageBase, ".varlatch-migrate-stage-")
+	dir, err := os.MkdirTemp(e.Options.StageBase, stageDirs)
 	if err != nil {
 		return "", err
 	}
-	if err := chownAll(*e.Options.Stage, dir); err != nil {
+	if err := giveDir(dir, *e.Options.Stage); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	return dir, nil
 }
+
+// stageDirs is how the directories of a stage are named.
+const stageDirs = ".varlatch-migrate-stage-"
 
 // staged settles Options.Stage.
 func (e *Engine) staged(ctx context.Context) error {
@@ -673,37 +675,37 @@ func (e *Engine) staged(ctx context.Context) error {
 }
 
 // stage is the bundle as the target's varlatchd reads it: as it is, or,
-// with Stage, a copy in dir given to that user (the export's file is the
-// source container's user's).
-func (e *Engine) stage(bundle, dir string) (string, error) {
+// with Stage, a copy given to that user (the export's file is the source
+// container's user's), in a new directory, which is given last. done
+// removes it.
+func (e *Engine) stage(ctx context.Context, bundle string) (staged string, done func(), err error) {
+	done = func() {}
+	if err := e.staged(ctx); err != nil {
+		return "", done, err
+	}
 	if e.Options.Stage == nil {
-		return bundle, nil
+		return bundle, done, nil
 	}
 	in, err := os.Open(bundle)
 	if err != nil {
-		return "", err
+		return "", done, err
 	}
 	defer in.Close()
+	dir, err := os.MkdirTemp(e.Options.StageBase, stageDirs)
+	if err != nil {
+		return "", done, err
+	}
+	remove := func() { _ = os.RemoveAll(dir) }
 	p := filepath.Join(dir, "bundle.jsonl")
-	out, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return "", err
-	}
-	_, err = io.Copy(out, in)
+	err = makeFor(p, in, *e.Options.Stage)
 	if err == nil {
-		err = out.Sync()
-	}
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = chownAll(*e.Options.Stage, p)
+		err = giveDir(dir, *e.Options.Stage)
 	}
 	if err != nil {
-		_ = os.Remove(p)
-		return "", fmt.Errorf("staging the bundle for the target's user: %w", err)
+		remove()
+		return "", done, fmt.Errorf("staging the bundle for the target's user: %w", err)
 	}
-	return p, nil
+	return p, remove, nil
 }
 
 func (e *Engine) work() string {
@@ -762,20 +764,11 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 		return fmt.Errorf("the export: %w", err)
 	}
 	defer os.Remove(exported)
-	bundle := exported
-	if err := e.staged(ctx); err != nil {
+	bundle, done, err := e.stage(ctx, exported)
+	if err != nil {
 		return err
 	}
-	if e.Options.Stage != nil {
-		dir, err := e.scratchDir(ctx)
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(dir)
-		if bundle, err = e.stage(exported, dir); err != nil {
-			return err
-		}
-	}
+	defer done()
 	cp, err := stepOf(e, "importing it into the target", func() (CopyRecord, error) { return e.Target.Import(ctx, bundle, "") })
 	if err != nil {
 		return fmt.Errorf("the import: %w", err)
