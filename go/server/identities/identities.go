@@ -143,11 +143,18 @@ func Credentials(ctx context.Context, db query.DBTX, identityID string) ([]any, 
 	}
 	out := make([]any, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, jsvalue.Object{
+		o := jsvalue.Object{
 			{Key: "id", Value: r.ID}, {Key: "kind", Value: r.Kind}, {Key: "name", Value: str(r.Name)},
 			{Key: "createdAt", Value: audit.ISOTime(r.CreatedAt)}, {Key: "expiresAt", Value: iso(r.ExpiresAt)},
 			{Key: "revokedAt", Value: iso(r.RevokedAt)}, {Key: "lastUsedAt", Value: iso(r.LastUsedAt)}, {Key: "client", Value: str(r.Client)},
-		})
+		}
+		if r.ExerciseOnly.Valid {
+			o = append(o, jsvalue.Member{Key: "exerciseOnly", Value: true})
+			if r.RunID.Valid {
+				o = append(o, jsvalue.Member{Key: "runId", Value: r.RunID.String})
+			}
+		}
+		out = append(out, o)
 	}
 	return out, nil
 }

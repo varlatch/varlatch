@@ -17,6 +17,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/oidc/limits"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/security"
 	"github.com/varlatch/varlatch/go/server/write"
@@ -34,24 +35,36 @@ import (
 type OIDCBindingInput struct {
 	Issuer, Audience, Subject string
 	Claims                    jsvalue.Object
+	// Limits are what its exchanges are limited to (ADR-0060).
+	Limits limits.Limits
 }
 
 // BindingJS is serializeBinding: the binding as the API gives it, its
-// claims as the jsonb column holds them.
+// claims as the jsonb column holds them, then its limits, if any.
 func BindingJS(b query.OidcBinding) (jsvalue.Object, error) {
 	var claims any
+	var l limits.Limits
 	if b.Claims.Valid {
 		v, err := jsvalue.Parse([]byte(b.Claims.String))
 		if err != nil {
 			return nil, err
 		}
 		claims = v
+		if o, ok := v.(jsvalue.Object); ok {
+			var rest jsvalue.Object
+			if rest, l = limits.Split(o); l.Any() {
+				claims = nil
+				if rest != nil {
+					claims = rest
+				}
+			}
+		}
 	}
-	return jsvalue.Object{
+	return append(jsvalue.Object{
 		{Key: "id", Value: b.ID}, {Key: "identityId", Value: b.IdentityID}, {Key: "issuer", Value: b.Issuer},
 		{Key: "audience", Value: b.Audience}, {Key: "subject", Value: b.Subject}, {Key: "claims", Value: claims},
 		{Key: "createdAt", Value: audit.ISOTime(b.CreatedAt)},
-	}, nil
+	}, l.JS()...), nil
 }
 
 func claimsMap(o jsvalue.Object) map[string]string {
@@ -76,11 +89,20 @@ func oidcBindingCreateBinding(organizationID string, m Machine, in OIDCBindingIn
 	if len(claims) > 0 {
 		changes = append(changes, added("claims", security.QuotedMap(claimsMap(claims))))
 	}
+	body := jsvalue.Object{{Key: "issuer", Value: in.Issuer}, {Key: "audience", Value: in.Audience}, {Key: "subject", Value: in.Subject}, {Key: "claims", Value: claims}}
+	for _, m := range in.Limits.JS() {
+		body = append(body, m)
+		to := "yes"
+		if s, ok := m.Value.(string); ok {
+			to = security.Quoted(s)
+		}
+		changes = append(changes, added(m.Key, to))
+	}
 	org := organizationID
 	return &auth.Binding{
 		Operation: "oidc_binding.create", OrganizationID: &org,
 		Target: map[string]string{"identityId": m.ID}, Query: map[string]string{},
-		Body: jsvalue.Object{{Key: "issuer", Value: in.Issuer}, {Key: "audience", Value: in.Audience}, {Key: "subject", Value: in.Subject}, {Key: "claims", Value: claims}},
+		Body: body,
 		Summary: auth.ApprovalSummary{
 			Title: "Let tokens from " + security.Quoted(in.Issuer) + " with subject " + security.Quoted(in.Subject) + " act as " +
 				security.LabelWithID("", m.Name, m.ID),
@@ -145,7 +167,7 @@ func claimsText(claims jsvalue.Object) (sql.NullString, error) {
 // URL; the outbound policy refuses it (recorded, configuration phase)
 // before anything is held. A protected operation: admin-step-up's
 // oidc_binding.create, bound to the identity and the binding's issuer,
-// audience, subject and claims. The requester and the identity are held
+// audience, subject, claims and limits. The requester and the identity are held
 // shared.
 func CreateOIDCBinding(ctx context.Context, w *write.Writer, approvals *auth.Service, policy *outbound.Policy, req Request, organizationID, identityID string,
 	in OIDCBindingInput, now func() time.Time) (jsvalue.Object, []auth.PendingReport, error) {
@@ -185,6 +207,9 @@ func CreateOIDCBinding(ctx context.Context, w *write.Writer, approvals *auth.Ser
 				if err == nil && m == nil {
 					err = notFound()
 				}
+				if err == nil && in.Limits.ExerciseOnly && m.Kind != "broker" {
+					err = domainerr.New("VALIDATION_FAILED", "exerciseOnly: only a Broker exercises Capabilities")
+				}
 				return err
 			},
 			Binding: func(ctx context.Context, db query.DBTX, _ *int64) (*auth.Binding, error) {
@@ -209,7 +234,7 @@ func CreateOIDCBinding(ctx context.Context, w *write.Writer, approvals *auth.Ser
 				return err
 			}
 		}
-		claims, err := claimsText(in.Claims)
+		claims, err := claimsText(limits.Join(in.Claims, in.Limits))
 		if err != nil {
 			return err
 		}
@@ -228,8 +253,8 @@ func CreateOIDCBinding(ctx context.Context, w *write.Writer, approvals *auth.Ser
 		if _, err := audit.Record(ctx, tx, audit.Event{
 			Type: "oidc_binding.created", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &organizationID, Action: &action,
 			Resource: jsvalue.Object{{Key: "identityId", Value: identityID}, {Key: "oidcBindingId", Value: b.ID}},
-			Metadata: append(jsvalue.Object{{Key: "issuer", Value: in.Issuer}, {Key: "audience", Value: in.Audience}, {Key: "subject", Value: in.Subject}},
-				security.ApprovalMetadata(p.Approval)...),
+			Metadata: append(append(jsvalue.Object{{Key: "issuer", Value: in.Issuer}, {Key: "audience", Value: in.Audience}, {Key: "subject", Value: in.Subject}},
+				in.Limits.JS()...), security.ApprovalMetadata(p.Approval)...),
 		}); err != nil {
 			return err
 		}

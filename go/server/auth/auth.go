@@ -141,6 +141,12 @@ var tokenPrefix = map[string]string{
 	KindOIDC:     "vlt_oidc_",
 }
 
+// ExercisePrefix starts the token_hash of an exercise-only credential
+// (ADR-0060): the limit is part of what a token is matched by, so a server
+// that does not know it (an earlier varlatchd after a rollback, the
+// TypeScript server after a reverse migration) never accepts the token.
+const ExercisePrefix = "exercise:"
+
 // GenerateToken returns a new token of a credential kind: its prefix and
 // 32 random bytes in base64url.
 func GenerateToken(kind string) string {

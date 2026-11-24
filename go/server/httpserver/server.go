@@ -798,9 +798,9 @@ func (s *Server) unknownV1(w http.ResponseWriter, r *http.Request) {
 		// The credential is verified first, as the TypeScript server does:
 		// an invalid, revoked or expired one answers 401 INVALID_CREDENTIAL
 		// (with its authentication.failed audit event), and an agent-run
-		// credential on a method other than GET or HEAD answers 403
-		// PERMISSION_DENIED.
-		if _, ok := s.authenticate(w, r); !ok {
+		// credential on a method other than GET or HEAD, or an
+		// exercise-only one on any, answers 403 PERMISSION_DENIED.
+		if _, ok := s.authenticate(w, r, ""); !ok {
 			return
 		}
 	}

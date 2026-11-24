@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/domainerr"
@@ -174,10 +175,14 @@ func (s *Server) answerError(w http.ResponseWriter, r *http.Request, err error) 
 // AUTHENTICATION_REQUIRED without one; 401 INVALID_CREDENTIAL, with its
 // authentication.failed audit event, for one that is invalid, revoked,
 // expired, exhausted or of a disabled identity; 403 PERMISSION_DENIED for
-// an agent-run credential on anything but GET and HEAD (ADR-0023). A
+// an agent-run credential on anything but GET and HEAD (ADR-0023), and for
+// an exercise-only one on anything but exerciseCapabilityPattern
+// (ADR-0060), with its authorization.denied event. pattern is the
+// operation's route pattern, "" for a route that is none: an operation
+// added later refuses an exercise-only credential without saying so. A
 // machine credential in its last 7 days names its expiry on the response,
 // refusals included.
-func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*auth.Principal, bool) {
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, pattern string) (*auth.Principal, bool) {
 	header := headerValue(r, "Authorization")
 	if !strings.HasPrefix(header, "Bearer ") {
 		writeError(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Provide a Varlatch bearer credential")
@@ -187,9 +192,22 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*auth.Pri
 		writeError(w, r, http.StatusUnauthorized, "INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
 		return nil, false
 	}
-	p, reason, err := s.opts.Auth.Authenticate(r.Context(), strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")))
+	resolve := s.opts.Auth.Authenticate
+	if pattern == exerciseCapabilityPattern {
+		resolve = s.opts.Auth.AuthenticateExercise
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	p, reason, err := resolve(r.Context(), token)
 	if err != nil {
 		s.answerError(w, r, err)
+		return nil, false
+	}
+	if reason == auth.ReasonExerciseOnly {
+		if err := s.recordExerciseOnlyRefusal(r, token, pattern); err != nil {
+			s.answerError(w, r, err)
+			return nil, false
+		}
+		writeError(w, r, http.StatusForbidden, "PERMISSION_DENIED", "Exercise-only credentials exercise Capabilities and nothing else")
 		return nil, false
 	}
 	if p == nil {
@@ -208,6 +226,31 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*auth.Pri
 		return nil, false
 	}
 	return p, true
+}
+
+// recordExerciseOnlyRefusal records the refusal of an operation an
+// exercise-only credential may not call: a Broker asking for one is worth
+// seeing in its Organization's log.
+func (s *Server) recordExerciseOnlyRefusal(r *http.Request, token, pattern string) error {
+	p, _, err := s.opts.Auth.AuthenticateExercise(r.Context(), token)
+	if err != nil || p == nil {
+		return err // ended since: nothing to attribute the refusal to
+	}
+	id, reqID := p.Identity.ID, requestIDOf(r)
+	var route any
+	if pattern != "" {
+		_, path, _ := strings.Cut(pattern, " ")
+		route = path
+	}
+	ctx := withPrincipal(r, p).Context()
+	return s.opts.Auth.Store().Write(ctx, func(tx *storage.Tx) error {
+		_, err := audit.Record(ctx, tx, audit.Event{
+			Type: "authorization.denied", Decision: audit.Deny, ActorIdentityID: &id, CredentialID: audit.Value(p.Credential.ID),
+			OrganizationID: p.Identity.OrganizationID, RequestID: &reqID,
+			Metadata: jsvalue.Object{{Key: "reason", Value: "exercise_only_credential"}, {Key: "method", Value: r.Method}, {Key: "route", Value: route}},
+		})
+		return err
+	})
 }
 
 // withPrincipal runs the rest of the request as the principal: its
@@ -287,7 +330,7 @@ func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.Handler
 		stages.Admitted(r.Context())
 		if !open {
 			m := stages.Start()
-			p, ok := s.authenticate(w, r)
+			p, ok := s.authenticate(w, r, pattern)
 			stages.Since(r.Context(), "authentication", m)
 			if !ok {
 				return

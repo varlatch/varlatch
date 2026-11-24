@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -40,6 +41,17 @@ type Credential struct {
 	// AuthSessionID is the browser session a browser bearer was minted
 	// from, or a browser-handoff CLI credential came from.
 	AuthSessionID *string
+	// ExerciseOnly is set for an exercise-only credential (ADR-0060): it
+	// exercises Capabilities of its Broker and nothing else.
+	ExerciseOnly *ExerciseOnly
+}
+
+// ExerciseOnly is what limits an exercise-only credential.
+type ExerciseOnly struct {
+	// OIDCBindingID is the binding its token was exchanged under.
+	OIDCBindingID string
+	// RunID, when set, is the one run whose Capabilities it exercises.
+	RunID *string
 }
 
 // Principal is who a /v1 request authenticated as.
@@ -57,6 +69,10 @@ const (
 	ReasonExhausted        = "exhausted"
 	ReasonIdentityDisabled = "identity-disabled"
 )
+
+// ReasonExerciseOnly is Authenticate's for a live exercise-only credential:
+// it authenticates, but only for an exercise (AuthenticateExercise).
+const ReasonExerciseOnly = "exercise-only"
 
 // lastUsedEvery throttles the last-used write (ADR-0034): at most one per
 // credential per 60 seconds.
@@ -95,17 +111,50 @@ func ptrInt(n sql.NullInt64) *int64 {
 // credential with a use limit spends one use, in a write job that refuses
 // the use past the limit; a credential not used for a minute records that
 // it was, with its identity's last-seen time.
+//
+// An exercise-only credential (ADR-0060) is refused here, whatever the
+// caller serves: ReasonExerciseOnly, and no principal. Only
+// AuthenticateExercise accepts one.
 func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, string, error) {
+	p, reason, err := s.AuthenticateExercise(ctx, token)
+	if err == nil && p != nil && p.Credential.ExerciseOnly != nil {
+		return nil, ReasonExerciseOnly, nil
+	}
+	return p, reason, err
+}
+
+// AuthenticateExercise is Authenticate for the one operation an
+// exercise-only credential may be used for, the exercise of a Capability;
+// every other credential is resolved as Authenticate resolves it.
+func (s *Service) AuthenticateExercise(ctx context.Context, token string) (*Principal, string, error) {
 	digest := HashToken(token)
-	row, err := query.New(s.store.Reader()).CredentialByTokenHash(ctx, digest)
+	q := query.New(s.store.Reader())
+	row, err := q.CredentialByTokenHash(ctx, digest)
+	prefix := ""
+	if errors.Is(err, sql.ErrNoRows) {
+		prefix = ExercisePrefix
+		row, err = q.CredentialByTokenHash(ctx, ExercisePrefix+digest)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ReasonInvalid, nil
 	}
 	if err != nil {
 		return nil, "", err
 	}
+	var only *ExerciseOnly
+	if prefix != "" {
+		limit, err := q.ExerciseCredential(ctx, row.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Its limits are gone (a migration there and back): not usable.
+			return nil, ReasonInvalid, nil
+		}
+		if err != nil {
+			return nil, "", err
+		}
+		only = &ExerciseOnly{OIDCBindingID: limit.OidcBindingID, RunID: ptrStr(limit.RunID)}
+	}
 	// Defense in depth against lookup-layer surprises.
-	stored, err1 := hex.DecodeString(row.TokenHash)
+	stored, err1 := hex.DecodeString(strings.TrimPrefix(row.TokenHash, prefix))
 	want, _ := hex.DecodeString(digest)
 	if err1 != nil || subtle.ConstantTimeCompare(stored, want) != 1 {
 		return nil, ReasonInvalid, nil
@@ -166,7 +215,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Principal, s
 		Credential: Credential{
 			ID: row.ID, IdentityID: row.IdentityID, Kind: row.Kind, Name: ptrStr(row.Name),
 			ExpiresAt: ptrInt(row.ExpiresAt), MaxUses: ptrInt(row.MaxUses), UseCount: row.UseCount,
-			AuthSessionID: ptrStr(row.AuthSessionID),
+			AuthSessionID: ptrStr(row.AuthSessionID), ExerciseOnly: only,
 		},
 	}, "", nil
 }
@@ -221,6 +270,9 @@ type Issue struct {
 	AuthSessionID *string
 	// Evidence: CLI credentials from device sign-in.
 	Evidence *Evidence
+	// ExerciseOnly limits the credential to exercising Capabilities
+	// (ADR-0060).
+	ExerciseOnly *ExerciseOnly
 }
 
 // Issued is a credential issued: the token is returned once and never
@@ -248,10 +300,24 @@ func IssueCredential(ctx context.Context, tx query.DBTX, now int64, in Issue) (I
 		params.EvidenceUserVerified = sql.NullBool{Bool: in.Evidence.UserVerified, Valid: true}
 		params.EvidencePasskeyID = sql.NullString{String: in.Evidence.PasskeyID, Valid: true}
 	}
+	if in.ExerciseOnly != nil {
+		params.TokenHash = ExercisePrefix + params.TokenHash
+	}
 	if err := query.New(tx).InsertCredential(ctx, params); err != nil {
 		return Issued{}, err
 	}
 	metadata := jsvalue.Object{{Key: "kind", Value: in.Kind}}
+	if x := in.ExerciseOnly; x != nil {
+		if err := query.New(tx).InsertExerciseCredential(ctx, query.InsertExerciseCredentialParams{
+			CredentialID: id, OidcBindingID: x.OIDCBindingID, RunID: nullStr(x.RunID),
+		}); err != nil {
+			return Issued{}, err
+		}
+		metadata = append(metadata, jsvalue.Member{Key: "exerciseOnly", Value: true})
+		if x.RunID != nil {
+			metadata = append(metadata, jsvalue.Member{Key: "runId", Value: *x.RunID})
+		}
+	}
 	if in.ExpiresAt != nil {
 		metadata = append(metadata, jsvalue.Member{Key: "expiresAt", Value: ISO(*in.ExpiresAt)})
 	}
