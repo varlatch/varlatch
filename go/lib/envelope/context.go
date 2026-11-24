@@ -2,6 +2,8 @@
 
 package envelope
 
+import "encoding/json"
+
 // Context is an envelope's associated data before encoding: a purpose and
 // the identifiers the envelope belongs to. It is encoded with CanonicalJSON,
 // so key order never matters. Values are strings or integers.
@@ -32,6 +34,8 @@ const (
 	// ADR-0056, since TypeScript 0.22.0.
 	PurposeAuditExportCredential = "audit-export-credential"
 	PurposeAuditExportDrain      = "audit-export-drain"
+	// ADR-0061, varlatchd's own: the seed of one-time codes, inside a value.
+	PurposeTOTPSeed = "totp-seed"
 )
 
 // OrgKEKContext binds an organization's KEK, wrapped by the Root KEK.
@@ -49,6 +53,12 @@ func DEKContext(organizationID, secretID, versionID string) Context {
 // ValueContext binds a value version's payload, encrypted by its DEK.
 func ValueContext(organizationID, secretID, versionID string) Context {
 	return Context{"purpose": PurposeValue, "organizationId": organizationID, "secretId": secretID, "versionId": versionID}
+}
+
+// TOTPSeedContext binds the seed of one-time codes inside a value version,
+// with what may be read of it (params, as stored).
+func TOTPSeedContext(organizationID, secretID, versionID, params string) Context {
+	return Context{"purpose": PurposeTOTPSeed, "organizationId": organizationID, "secretId": secretID, "versionId": versionID, "params": params}
 }
 
 // WebhookSecretContext binds a webhook's signing secret (org KEK).
@@ -136,6 +146,54 @@ func DecryptValue(orgKEK []byte, organizationID, secretID, versionID string, v E
 		return nil, err
 	}
 	return Open(dek, v.Payload, ValueContext(organizationID, secretID, versionID))
+}
+
+// EncryptSeed encrypts the seed of one-time codes as a value version: sealed
+// as a seed under the version's DEK, and that envelope's JSON sealed as the
+// value, as EncryptValue seals one. Whoever opens the version as a value
+// (an older server, the migration's digests, a row made to look like a
+// value's) finds the inner envelope, never the seed; and the seed opens only
+// with the params it was sealed with.
+func EncryptSeed(orgKEK []byte, organizationID, secretID, versionID, params string, seed []byte) (EncryptedValue, error) {
+	dek := GenerateKey()
+	defer clear(dek)
+	inner, err := Seal(dek, seed, TOTPSeedContext(organizationID, secretID, versionID, params))
+	if err != nil {
+		return EncryptedValue{}, err
+	}
+	plaintext, err := json.Marshal(inner)
+	if err != nil {
+		return EncryptedValue{}, err
+	}
+	payload, err := Seal(dek, plaintext, ValueContext(organizationID, secretID, versionID))
+	if err != nil {
+		return EncryptedValue{}, err
+	}
+	wrapped, err := Seal(orgKEK, dek, DEKContext(organizationID, secretID, versionID))
+	if err != nil {
+		return EncryptedValue{}, err
+	}
+	return EncryptedValue{Payload: payload, WrappedDEK: wrapped}, nil
+}
+
+// DecryptSeed opens what EncryptSeed sealed.
+func DecryptSeed(orgKEK []byte, organizationID, secretID, versionID, params string, v EncryptedValue) ([]byte, error) {
+	dek, err := Open(orgKEK, v.WrappedDEK, DEKContext(organizationID, secretID, versionID))
+	if err != nil {
+		return nil, err
+	}
+	defer clear(dek)
+	plaintext, err := Open(dek, v.Payload, ValueContext(organizationID, secretID, versionID))
+	if err != nil {
+		return nil, err
+	}
+	var inner Envelope
+	err = json.Unmarshal(plaintext, &inner)
+	clear(plaintext)
+	if err != nil {
+		return nil, ErrMalformed
+	}
+	return Open(dek, inner, TOTPSeedContext(organizationID, secretID, versionID, params))
 }
 
 // NewCanary creates the installation's KEK canary: a random value sealed
