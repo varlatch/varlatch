@@ -222,6 +222,14 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			return ExitConfig
 		}
 	}
+	// As the user the command goes on as, and before any command opens the
+	// database (storage.Open refuses, with the reason, when there is no
+	// place; a command that only reads goes on). Not root's files in another
+	// user's data directory: a command that stays root has the place of the
+	// database it opens (storage.Open), if it opens one.
+	if ownDataDir(cfg) {
+		_, _ = storage.PrepareTemp(cfg.DataDir)
+	}
 	switch {
 	case sub == "config":
 		return runConfigCheck(cfg, stdout, stderr)

@@ -634,8 +634,7 @@ func nodeFor(ctx context.Context, env *hostEnv) (*tailnet.TSNode, func(), error)
 	return node, func() { _ = node.Close() }, nil
 }
 
-// reachDirPrefix names a reach probe's state directory in the system's
-// temporary directory.
+// reachDirPrefix names a reach probe's state directory (makeReachDir).
 const reachDirPrefix = "varlatchd-reach-"
 
 // A probe lives at most its --wait (reachMaxWait at most) and its slack
@@ -647,11 +646,47 @@ const (
 	reachSweepAfter = reachMaxWait + reachSlack + 3*time.Minute
 )
 
+// reachTemp is os.MkdirTemp; tests have one that finds no place.
+var reachTemp = os.MkdirTemp
+
+// makeReachDir makes a reach probe's state directory: in the system's
+// temporary directory; in the data directory when that is not writable (a
+// read-only root filesystem, the image's) and TMPDIR names no other. Only
+// then: varlatch migrate sets TMPDIR for its probe, whose directory, left by
+// a kill, would be in the way of an import into the data directory. And
+// never root's in another user's data directory (a command that stays root).
+func makeReachDir(cfg *config.Config) (string, error) {
+	dir, err := reachTemp("", reachDirPrefix)
+	if err == nil || os.Getenv("TMPDIR") != "" || !ownDataDir(cfg) {
+		return dir, err
+	}
+	if in, err := os.MkdirTemp(cfg.DataDir, reachDirPrefix); err == nil {
+		return in, nil
+	}
+	return "", err
+}
+
+// ownDataDir is whether the data directory is this process's user's.
+func ownDataDir(cfg *config.Config) bool {
+	st, err := os.Stat(cfg.DataDir)
+	return err == nil && ownedByMe(st)
+}
+
+// reachParents are the directories a reach probe's state may be in, as far
+// as this process may remove it there.
+func reachParents(cfg *config.Config) []string {
+	parents := []string{os.TempDir()}
+	if ownDataDir(cfg) {
+		parents = append(parents, cfg.DataDir)
+	}
+	return parents
+}
+
 // sweepReachDirs removes the reach probes' state directories a killed
 // probe left before cutoff: this user's own, directories only, never a
 // link.
-func sweepReachDirs(tmp string, cutoff time.Time) {
-	entries, err := os.ReadDir(tmp)
+func sweepReachDirs(parent string, cutoff time.Time) {
+	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return
 	}
@@ -659,7 +694,7 @@ func sweepReachDirs(tmp string, cutoff time.Time) {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), reachDirPrefix) {
 			continue
 		}
-		p := filepath.Join(tmp, e.Name())
+		p := filepath.Join(parent, e.Name())
 		st, err := os.Lstat(p)
 		if err != nil || !st.IsDir() || !ownedByMe(st) || st.ModTime().After(cutoff) {
 			continue
@@ -703,8 +738,10 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	clear(raw)
 	// A probe stopped by a signal logs out and removes its state, as one
 	// that ends; what a killed one left (its node key) is swept here.
-	sweepReachDirs(os.TempDir(), time.Now().Add(-reachSweepAfter))
-	dir, err := os.MkdirTemp("", reachDirPrefix)
+	for _, d := range reachParents(cfg) {
+		sweepReachDirs(d, time.Now().Add(-reachSweepAfter))
+	}
+	dir, err := makeReachDir(cfg)
 	if err != nil {
 		return config("%v", err)
 	}
