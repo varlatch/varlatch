@@ -760,6 +760,9 @@ func (r *Run) valuesList(ctx *clientctx.Context, api *lazyClient) error {
 			}
 			rotating, _ := jsval.Get(item, "rotating")
 			o = append(o, jsjson.Member{Key: "rotating", Value: rotating == true})
+			if connection, ok := jsval.Get(item, "oauth"); ok {
+				o = append(o, jsjson.Member{Key: "oauth", Value: connection})
+			}
 			if code, ok := jsval.Get(item, "totp"); ok {
 				o = append(o, jsjson.Member{Key: "totp", Value: code})
 			}
@@ -777,6 +780,14 @@ func (r *Run) valuesList(ctx *clientctx.Context, api *lazyClient) error {
 		kind := "plain"
 		if jsjson.Truthy(sensitive) {
 			kind = "secret"
+		}
+		if connection, ok := jsval.Get(i, "oauth"); ok {
+			kind = "OAuth connection"
+			for _, key := range []string{"status", "account"} {
+				if s, ok := stringField(connection, key); ok && s != "" {
+					kind += ", " + Printable(strings.ReplaceAll(s, "_", " "))
+				}
+			}
 		}
 		if code, ok := jsval.Get(i, "totp"); ok {
 			kind = "one-time code"

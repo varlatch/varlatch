@@ -155,6 +155,9 @@ func checkAllowances(contractDoc any, allowInherited []string, agentSafe bool) e
 
 // withheldReason is withheldReason.
 func withheldReason(withheld any) string {
+	if jsjson.String(fieldOf(withheld, "reason")) == "oauth-connection" {
+		return "withheld by the server: it is an OAuth connection, whose tokens are delivered to nobody; make it optional in the Contract, and use its access token through a Broker (--agent-safe)"
+	}
 	if jsjson.String(fieldOf(withheld, "reason")) == "one-time-code" {
 		return "withheld by the server: it holds the seed of one-time codes, which is delivered to nobody; make it optional in the Contract, and use its code through a Broker (--agent-safe)"
 	}

@@ -1034,6 +1034,7 @@ it to the recording.
 | Runtime error wording: the code in `Cannot reach the Varlatch server (<code>)` | the first code in the `fetch failed` error's causes that `exitCodes.ts` names, else "network error" | the same codes from Go's errors: refused, reset, timed out, unreachable host or network by their errno; NXDOMAIN `ENOTFOUND`; a temporary DNS failure `EAI_AGAIN`; a connect or TLS handshake timeout `UND_ERR_CONNECT_TIMEOUT`; a connection closed before the answer `UND_ERR_SOCKET`; anything else "network error" | Decision 2: the exit status (69) is the same; the code is Node.js's own wording, mapped where Go can tell |
 | Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
 | `self-update` (slice 6.7a of internal docs/design/go-step6.md) | replaces its `.cjs` with `varlatch-cli-<version>.cjs`; the newest release is GitHub's latest; the signature is checked only when cosign is installed and the release carries one, and `--allow-unverified` (with `--yes`) installs without it; `--repo` and `VARLATCH_RELEASE_REPO` choose another repository | replaces its own binary with the release's `varlatch-<version>-<os>-<arch>[.exe]`, always verifying SHA256SUMS's signature with the embedded verifier first (`--allow-unverified` changes nothing); the newest release is the newest of the Go line (0.50.0 or later), a prerelease only from a prerelease or with `--prerelease`; an older release only with `--allow-downgrade` (64 otherwise); `--repo` and `VARLATCH_RELEASE_REPO` other than `varlatch/varlatch` are refused (64); a Homebrew or winget copy is refused (1) with that package manager's command; `--check --json` reports `install` as `release`, `homebrew` or `winget`; 69 when GitHub cannot be reached, 1 for a release that does not verify | Decision 11: the Go CLI is a native binary from the Go line's releases, and fails closed (Decision 8). Pinned by `internal/selfupdate`'s tests and `TestSelfUpdateReplacesItself`, `TestSelfUpdateRefuses` |
+| `values-oauth` (ADR-0062) | no such items | `values list` names an OAuth connection (`OAuth connection, status, account`, `oauth` in `--json`), `run` says one is not delivered, and a strict run's violation says why | Go only. Pinned by `TestAConnectionIsListedAndNotDelivered` |
 | `values-totp` (ADR-0061) | `values set` and `values rotate` have no `--totp` ("unknown option") | `--totp` takes the seed of one-time codes from a hidden prompt, `--stdin` or `--from-file`, never from the command line nor `--generate`, and sends it as `otpauth`; only a command line with `--totp` prints a usage that names it. `values list` names an item that holds a seed (`one-time code, issuer …, account …`, `totp` in `--json`), `run` says one is not delivered, and a strict run's violation says why | Go only. Pinned by `TestValuesSetTOTP`, `TestValuesSetTOTPRefuses`, `TestASeedIsListedAndNotDelivered` |
 | `self-update-usage` | `varlatch help self-update`, `self-update --help` and `self-update -h` print the TypeScript CLI's form | the Go CLI's: `[<version>] [--check [--json]] [--yes] [--prerelease] [--allow-downgrade]`, with what it checks; `varlatch --help` has it too (`host-usage`) | `self-update`. Transcript cases `help.self-update`, `help.self-update.option` and `help.self-update.short` name it; pinned by `TestHelpIsTheUsageText` |
 | `host-usage` | `varlatch`, `--help`, `-h`, `help`, and an unknown command print the whole usage with a Compose installation's host commands (`admin` with `--dir`, `setup`, `adopt`, `move`, `doctor`, `self-update`, `upgrade`) | the same text, its title without the dash, with a Go installation's in their place (`setup`, `move`, `doctor`, `admin`; `self-update`, `upgrade`, `migrate`), as each command's own help prints them, without `adopt`, and with `tailnet repin`; `varlatch help migrate` prints `migrate`'s | A release whose help names commands it refuses, and not the ones it has, sends people to the wrong ones (the audit of 2026-11-24). Transcript cases of area 5.1a name it; the text is made from the TypeScript one (`hostUsage`), and `TestUsageIsAGoInstallations` holds the rest to it |
@@ -1905,6 +1906,43 @@ may use; it never adds to the Agent's Grants.
     gives the use back, never touching `revoked_at`; any other failure leaves
     it spent. An older server matches no secret against any prefixed hash.
   - `server/capabilities` `delegation_test.go` covers all of it over HTTP.
+- **OAuth connections** (ADR-0062, `server/oauth`, `server/values/connections.go`;
+  Go only, capability `oauth.connections`).
+  - What a connection is (`server/oauth/oauthparams`: the pinned endpoints,
+    the client, the scopes, the hosts) and its client secret are a
+    `value_versions` row, stored as a seed is (below): the secret sealed
+    under the version's DEK for `oauth-client` with the parameters in the
+    associated data, that envelope sealed as a value is, a member `oauth` in
+    `payload`, and an `env_values` row that reads as deleted to a server that
+    does not know connections.
+  - Its tokens are in `oauth_connections` (schema version 3), each sealed
+    under the Organization's KEK with the version, its parameters, the
+    account, the generation and (the access token) its expiry. Changed
+    parameters open neither the secret nor a token. A migration carries no
+    row of it.
+  - A retrieval resolves connections apart (`State.Connections`) and captures
+    no ciphertext of one; only an exercise captures and opens the access
+    token. Nothing in `server/values` opens the refresh token or the client
+    secret but `ConnectionSecret`, for `server/oauth`.
+  - An exercise whose token does not do asks `values.Tokens` (`server/oauth`)
+    after everything else was checked and before anything is recorded, then
+    is decided again from a new snapshot.
+  - Refreshing (`refresh.go`): a flight everyone shares, the Organization's
+    gate (shared) and the connection's (exclusive) across the call, a claim in
+    the row before anything is sent, and one job that stores the answer. The
+    flight outlives the request; a stop waits for it. `CrashAt` ends one at a
+    point, for tests.
+  - Connecting (`connect.go`): the state is deleted in a job of its own, then
+    one external effect (`write.RunEffect`) exchanges the code.
+  - Everything asked of a provider (`provider.go`) goes through the outbound
+    policy's client for the purpose `oauth`, follows no redirect, reads 128
+    KiB in 15 seconds, and keeps of an error only a word of a fixed list.
+  - Its events use the types Platform Connections have
+    (`sync.connection_created`, `_checked`, `_credential_replaced`,
+    `_revoked`; `connection: oauth`), since a reverse migration carries only
+    types the TypeScript server knows.
+  - `server/oauth/oauthtest` is the fake provider; `server/capabilities`
+    `oauth_test.go` covers it over HTTP.
 - **One-time codes** (ADR-0061, `server/values/seeds.go`, `lib/totp`; Go
   only, capability `values.totp`).
   - `lib/totp` (Apache-2.0) reads an `otpauth://` URI, normalizes it and makes
