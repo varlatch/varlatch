@@ -12,8 +12,9 @@ import (
 )
 
 func TestKept(t *testing.T) {
-	t.Cleanup(Forget)
 	dir := t.TempDir()
+	// Before the directory goes: Windows removes no open file.
+	t.Cleanup(Forget)
 	path := filepath.Join(dir, "key")
 	if err := os.WriteFile(path, []byte("first"), 0o600); err != nil {
 		t.Fatal(err)
