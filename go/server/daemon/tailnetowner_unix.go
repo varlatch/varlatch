@@ -22,6 +22,11 @@ func openSecretFile(path string) (*os.File, error) {
 	if f, err, ok := preread.Kept(path); ok {
 		return f, err
 	}
+	return checkedSecretFile(path)
+}
+
+// checkedSecretFile is openSecretFile of a file not kept.
+func checkedSecretFile(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {

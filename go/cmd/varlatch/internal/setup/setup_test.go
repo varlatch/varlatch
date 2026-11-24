@@ -28,11 +28,13 @@ import (
 // recorded, the unit's state kept, the probe's answer and the
 // configuration's check chosen by the test.
 type fakeHost struct {
-	root   string
-	users  map[string][2]int
-	shells map[string]string
-	groups map[string][]string
-	chowns map[string][2]int
+	root string
+	// olderDaemon: a varlatchd whose commands run as root stay root.
+	olderDaemon bool
+	users       map[string][2]int
+	shells      map[string]string
+	groups      map[string][]string
+	chowns      map[string][2]int
 	// leftGroups are groups there without their user.
 	leftGroups map[string]bool
 	// unknownState: is-enabled prints no state (an error on stderr only).
@@ -172,6 +174,9 @@ func (h *fakeHost) CheckConfig(string) (string, error) { return h.checkMsg, nil 
 // once (the operator's browser), unless manualEnroll.
 func (h *fakeHost) Admin(_ context.Context, args ...string) ([]byte, error) {
 	h.adminCalls = append(h.adminCalls, strings.Join(args, " "))
+	if args[0] == "config" && args[1] == "check" {
+		return fmt.Appendf(nil, `{"dataDir":%q,"actsAsOwner":%v}`, DataDir, !h.olderDaemon), nil
+	}
 	if args[0] == "backup" && args[1] == "restore" {
 		// Offline, before the unit: the restored installation's database,
 		// its administrator with a passkey and its attestations.
@@ -1175,6 +1180,26 @@ func operatorKeys(t *testing.T, dir string) (kek, bek string) {
 // before the unit first starts, makes the restored files the unit's, issues
 // no enrollment link (the restored administrator has a passkey), and
 // verifies a first backup; a rerun without --restore continues it.
+// A varlatchd that would leave the restored database root's is not asked to
+// restore.
+func TestRestoreRefusesAnEarlierDaemon(t *testing.T) {
+	skipOffUnix(t)
+	h, said, out := newFakeHost(t), &recorder{}, t.TempDir()
+	h.restoreURL, h.olderDaemon = "http://localhost:8686", true
+	kek, bek := operatorKeys(t, out)
+	o := options(h, said, out)
+	o.RootKEKOut, o.BackupKeyOut = "", ""
+	o.Restore, o.RootKEKIn, o.BackupKeyIn = "/srv/backups/old.vltbak", kek, bek
+	if err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "is of an earlier release") || !strings.Contains(err.Error(), "nothing was restored") {
+		t.Fatal(err)
+	}
+	for _, c := range h.adminCalls {
+		if strings.HasPrefix(c, "backup restore") {
+			t.Fatalf("admin calls %q", h.adminCalls)
+		}
+	}
+}
+
 func TestRestore(t *testing.T) {
 	skipOffUnix(t)
 	h, said, out := newFakeHost(t), &recorder{}, t.TempDir()
@@ -1199,7 +1224,7 @@ func TestRestore(t *testing.T) {
 		}
 	}
 	restoreAt := slices.Index(h.adminCalls, "backup restore --in /srv/backups/old.vltbak --backup-key-file "+BackupKey)
-	if restoreAt != 0 || len(h.links) != 0 || h.backups != 1 || !slices.Contains(h.adminCalls, "bootstrap-status") {
+	if restoreAt != 1 || h.adminCalls[0] != "config check" || len(h.links) != 0 || h.backups != 1 || !slices.Contains(h.adminCalls, "bootstrap-status") {
 		t.Errorf("admin calls %q, links %q, backups %d", h.adminCalls, h.links, h.backups)
 	}
 	// The data directory is the unit's before the restore, which works in it

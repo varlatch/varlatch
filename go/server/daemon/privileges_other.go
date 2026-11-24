@@ -6,8 +6,6 @@ package daemon
 
 import "github.com/varlatch/varlatch/go/server/config"
 
-func giveFiles(int, int, ...string) {}
+func becomeOwner(*config.Config, func()) error { return nil }
 
-func giveDataFiles(string) {}
-
-func becomeOwner(*config.Config, func(uid, gid int)) error { return nil }
+func below(string, string) bool { return false }

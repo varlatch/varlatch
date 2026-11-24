@@ -54,7 +54,10 @@ func TestJournal(t *testing.T) {
 func TestJournalRefuses(t *testing.T) {
 	dir := t.TempDir()
 	for _, c := range []struct{ body, want string }{
-		{`{"format":2,"id":"x","from":"0.50.0","to":"0.50.1","state":"done","step":""}`, "format 2"},
+		{`{"format":3,"id":"x","from":"0.50.0","to":"0.50.1","state":"done","step":""}`, "format 3"},
+		{`{"format":1,"id":"x","from":"0.50.0","to":"0.50.1","state":"done","step":"","undo":"files-back"}`, "a later format"},
+		{`{"format":1,"id":"x","from":"0.50.0","to":"0.50.1","state":"in-progress","step":"kept"}`, "a later format"},
+		{`{"format":2,"id":"x","from":"0.50.0","to":"0.50.1","state":"done","step":"","undo":"x"}`, `undo "x"`},
 		{`{"format":1,"id":"","from":"0.50.0","to":"0.50.1","state":"done","step":""}`, "no upgrade id"},
 		{`{"format":1,"id":"x","from":"0.50","to":"0.50.1","state":"done","step":""}`, "no release version"},
 		{`{"format":1,"id":"x","from":"0.50.0","to":"0.50.1","state":"paused","step":""}`, `state "paused"`},
@@ -70,5 +73,67 @@ func TestJournalRefuses(t *testing.T) {
 	}
 	if err := Write(dir, &Journal{ID: "x", From: "0.50.0", To: "0.50.1", State: "paused"}); err == nil {
 		t.Fatal("a journal in no state was written")
+	}
+}
+
+// Holds and Allows: from the stop until the checks passed, only the start
+// the journal names, in the boot it names.
+func TestJournalHolds(t *testing.T) {
+	for _, c := range []struct {
+		state State
+		step  Step
+		want  bool
+	}{
+		{InProgress, None, false}, {InProgress, Snapshot, false}, {InProgress, Stopping, true}, {InProgress, Kept, true}, {InProgress, Started, true},
+		{InProgress, Checked, false}, {Failed, Swapped, true}, {Failed, Snapshot, false}, {Done, Checked, false}, {Undone, Swapped, false},
+	} {
+		j := &Journal{State: c.state, Step: c.step}
+		if j.Holds() != c.want {
+			t.Errorf("%s at %q: %v", c.state, c.step, !c.want)
+		}
+	}
+	var none *Journal
+	if none.Holds() {
+		t.Error("no journal holds")
+	}
+	j := &Journal{State: InProgress, Step: Swapped}
+	if j.Allows("0.50.0", "a") {
+		t.Error("no start is allowed")
+	}
+	j.Start = &Start{Version: "0.50.0", BootID: "a"}
+	if !j.Allows("0.50.0", "a") || j.Allows("0.50.1", "a") || j.Allows("0.50.0", "b") || j.Allows("0.50.0", "") {
+		t.Error("the start allowed is that release's in that boot")
+	}
+	j.Start.BootID = ""
+	if j.Allows("0.50.0", "") {
+		t.Error("a boot without an identity")
+	}
+}
+
+// A journal of format 1 is read, and written again in it.
+func TestJournalFormatOne(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"format":1,"id":"0011223344556677","from":"0.50.0-rc.2","to":"0.50.0-rc.3","fromSchema":2,"toSchema":2,"rollbackSafe":true,` +
+		`"state":"in-progress","step":"swapped","startedAt":"2026-11-24T10:00:00Z","updatedAt":"2026-11-24T10:01:00Z","binDir":"/usr/local/bin",` +
+		`"releases":"/usr/local/lib/varlatch/releases","dataDir":"/var/lib/varlatch","work":"/var/lib/varlatch/upgrades/0011223344556677","snapshot":"/s.vltbak"}`
+	if err := os.WriteFile(filepath.Join(dir, File), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	j, err := Read(dir)
+	if err != nil || !j.Holds() || j.Reached(Kept) != true || !j.Reached(Prepared) {
+		t.Fatalf("%+v, %v", j, err)
+	}
+	j.State = Undone
+	if err := Write(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, File))
+	for _, later := range []string{`"undo"`, `"start"`, `"binaries"`, `"snapshotSha256"`, `"snapshotAt"`} {
+		if strings.Contains(string(b), later) {
+			t.Errorf("format 1 with %s:\n%s", later, b)
+		}
+	}
+	if j, err := Read(dir); err != nil || j.Format != FormatOne {
+		t.Fatalf("%+v, %v", j, err)
 	}
 }

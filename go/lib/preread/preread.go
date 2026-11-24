@@ -37,11 +37,21 @@ func Keep(path string, open func(string) (*os.File, error)) {
 		open = os.Open
 	}
 	mu.Lock()
-	defer mu.Unlock()
-	if kept[path] != nil {
+	there := kept[path] != nil
+	mu.Unlock()
+	if there {
 		return
 	}
+	// Opened with the lock free: open may ask for a kept file itself.
 	f, err := open(path)
+	mu.Lock()
+	defer mu.Unlock()
+	if kept[path] != nil {
+		if f != nil {
+			f.Close()
+		}
+		return
+	}
 	kept[path] = &entry{f: f, err: err}
 }
 

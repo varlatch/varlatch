@@ -76,7 +76,7 @@ func (h *standHost) run(binary string, args ...string) ([]byte, error) {
 		f := args[len(args)-1]
 		content, log := h.read(f), h.read(f+walSuffix)
 		if log != "" {
-			if !strings.HasPrefix(log, "wal original "+fmt.Sprint(strings.Count(content, "write"))+"\n") {
+			if !strings.HasPrefix(log, walHead(content)) {
 				h.svc.fault("a copy with another's log: %q beside %q", log, content)
 			}
 			content += log[strings.Index(log, "\n")+1:]
@@ -99,9 +99,13 @@ func standStatus(version string, schema int) string {
 
 func newStandHost(t *testing.T, from string, badTo, wal bool) *standHost {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "vl-upgrade-")
+	// In memory where there is one: thousands of syncs.
+	base := "/dev/shm"
+	dir, err := os.MkdirTemp(base, "vl-upgrade-")
 	if err != nil {
-		t.Fatal(err)
+		if dir, err = os.MkdirTemp("", "vl-upgrade-"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	h := &standHost{t: t, dir: dir, bin: filepath.Join(dir, "usr", "bin"), data: filepath.Join(dir, "data"), conf: filepath.Join(dir, "etc", "varlatchd.conf"), from: from, badTo: badTo, boots: 1}
@@ -155,7 +159,7 @@ func (h *standHost) installed() Installed {
 
 func (h *standHost) upgrader(crash func(string) bool) *Upgrader {
 	return &Upgrader{BinDir: h.bin, ConfigPath: h.conf, Service: h.svc, HealthTimeout: time.Nanosecond, Crash: crash,
-		trace: h.shadow.event, run: h.run, boot: func() string { return fmt.Sprint("boot", h.boots) }}
+		trace: h.shadow.event, run: h.run, free: func(string) (uint64, uint64, error) { return 1 << 40, 1, nil }, boot: func() string { return fmt.Sprint("boot", h.boots) }}
 }
 
 func (h *standHost) journal() *journal.Journal {
@@ -223,13 +227,15 @@ func (s *standService) Start(context.Context) error {
 	if !strings.HasPrefix(content, "db original\n") || !strings.HasSuffix(content, "\n") {
 		s.fault("%s started on a database that is not the installation's: %q", version, content)
 	}
-	if log := s.h.read(wal); log != "" && !strings.HasPrefix(log, "wal original "+fmt.Sprint(strings.Count(content, "write"))+"\n") {
+	if log := s.h.read(wal); log != "" && !strings.HasPrefix(log, walHead(content)) {
 		s.fault("%s started on a database with another's log: %q beside %q", version, log, content)
 	}
 	if !strings.Contains(content, fmt.Sprintf("schema %d\n", schema)) {
 		return errors.New("the schema is not this release's")
 	}
 	s.running = version
+	// What a server writes as it starts, held or not.
+	s.log("started " + version + "\n")
 	return nil
 }
 
@@ -239,15 +245,30 @@ func (s *standService) write() {
 		return
 	}
 	s.writes++
+	s.log(fmt.Sprintf("write %d\n", s.writes+1))
+}
+
+// log adds a line to the database's log, whose head says which database it
+// is of.
+func (s *standService) log(line string) {
 	wal := filepath.Join(s.h.data, databaseFile+walSuffix)
 	log := s.h.read(wal)
 	if log == "" {
-		log = fmt.Sprintf("wal original %d\n", strings.Count(s.h.read(filepath.Join(s.h.data, databaseFile)), "write"))
+		log = walHead(s.h.read(filepath.Join(s.h.data, databaseFile)))
 	}
-	s.h.put(wal, log+fmt.Sprintf("write %d\n", s.writes+1), 0o600)
+	s.h.put(wal, log+line, 0o600)
 	if s.h.shadow != nil {
 		s.h.shadow.stored(s.h.data, wal)
 	}
+}
+
+// walHead is the head of the log of a database of this content.
+func walHead(database string) string {
+	schema := "none"
+	if i := strings.Index(database, "schema "); i >= 0 {
+		schema, _, _ = strings.Cut(database[i+len("schema "):], "\n")
+	}
+	return fmt.Sprintf("wal original %d %s\n", strings.Count(database, "\n"), schema)
 }
 
 func (s *standService) Stop(context.Context) error {
@@ -266,7 +287,8 @@ func (s *standService) Stop(context.Context) error {
 		f.Close()
 		_ = os.Remove(wal)
 		if s.h.shadow != nil {
-			s.h.shadow.stored(s.h.data, db)
+			s.h.shadow.keep(db)
+			s.h.shadow.stored(s.h.data, wal)
 		}
 	}
 	return nil
@@ -318,10 +340,13 @@ func (h *standHost) ends(what string) {
 	if j == nil && h.from == oldFrom {
 		return
 	}
+	if j != nil && j.State == journal.Undone && h.from == oldFrom && j.Format != journal.FormatOne {
+		fail("%s's varlatch could not read the journal left", h.from)
+	}
 	if got := h.read(filepath.Join(h.bin, "varlatch")); got != "varlatch "+version {
 		fail("varlatch is %q", got)
 	}
-	for _, name := range []string{copyDir, originalDir, copyDir + makingDir, originalDir + makingDir} {
+	for _, name := range workDirs {
 		if left, _ := filepath.Glob(filepath.Join(h.data, "upgrades", "*", name)); len(left) > 0 {
 			fail("%s is left", left)
 		}
@@ -411,17 +436,16 @@ func (s *shadow) keep(path string) {
 	s.content[s.id(path)] = string(b)
 }
 
-// stored is what a server stored: its files' content, and its names.
+// stored is what a server stored in a file of the data directory: its
+// content, and its name, or that it is gone. Nothing else's name.
 func (s *shadow) stored(dir string, path string) {
 	s.gone()
-	s.keep(path)
 	m := s.dirs[s.id(dir)]
-	for _, name := range []string{databaseFile, databaseFile + walSuffix} {
-		if id := s.id(filepath.Join(dir, name)); id >= 0 {
-			m[name] = id
-		} else {
-			delete(m, name)
-		}
+	if id := s.id(path); id >= 0 {
+		s.keep(path)
+		m[filepath.Base(path)] = id
+	} else {
+		delete(m, filepath.Base(path))
 	}
 }
 
@@ -527,6 +551,8 @@ func TestAnUpgradeInterruptedAnywhere(t *testing.T) {
 		{"undone", standFrom, true, false},
 		{"undone, the servers killed", standFrom, true, true},
 		{"from a release that reads no journal", oldFrom, false, false},
+		{"from one, the old server killed", oldFrom, false, true},
+		{"from one, undone", oldFrom, true, false},
 		{"from one, undone, the servers killed", oldFrom, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -562,7 +588,9 @@ func TestAnUpgradeInterruptedAnywhere(t *testing.T) {
 					os.RemoveAll(h.dir)
 				}
 				if points < 25 {
-					t.Fatalf("%s: only %d points", how.name, points)
+					h := newStandHost(t, c.from, c.badTo, c.wal)
+					_, err := h.upgrader(nil).Run(context.Background(), h.installed(), h.release())
+					t.Fatalf("%s: only %d points; a run: %v", how.name, points, err)
 				}
 			}
 		})
@@ -580,7 +608,7 @@ func TestARecoveryInterruptedAnywhere(t *testing.T) {
 		t.Run(fmt.Sprint(w), func(t *testing.T) {
 			t.Parallel()
 			r := rand.New(rand.NewSource(seed + int64(w)))
-			for range 60 {
+			for range 400 {
 				h := newStandHost(t, []string{standFrom, oldFrom}[r.Intn(2)], r.Intn(2) == 0, r.Intn(2) == 0)
 				var story []string
 				again := func(work func(crash func(string) bool)) bool {
@@ -611,6 +639,263 @@ func TestARecoveryInterruptedAnywhere(t *testing.T) {
 				h.ends(fmt.Sprintf("seed %d, %q", seed+int64(w), story))
 				os.RemoveAll(h.dir)
 			}
+		})
+	}
+}
+
+// Where the file system has no hard links, the original's set is a synced
+// copy, and what is put back too.
+func TestAnUpgradeWithoutHardLinks(t *testing.T) {
+	defer func(f func(fsys, string, string) error) { linkFile = f }(linkFile)
+	linkFile = func(fsys, string, string) error {
+		return &os.LinkError{Op: "link", Err: syscall.EPERM}
+	}
+	for _, c := range []struct {
+		from  string
+		badTo bool
+	}{{standFrom, false}, {standFrom, true}, {oldFrom, false}, {oldFrom, true}} {
+		for n := 1; ; n++ {
+			h := newStandHost(t, c.from, c.badTo, true)
+			at := interrupted(n, func(crash func(string) bool) {
+				_, _ = h.upgrader(crash).Run(context.Background(), h.installed(), h.release())
+			})
+			if at != "" {
+				h.shadow.cut()
+				h.reboot()
+				if _, err := h.upgrader(nil).Recover(context.Background()); err != nil {
+					t.Fatalf("at %s: %v\n%s", at, err, h.tree())
+				}
+			}
+			h.ends("without hard links, cut at " + at)
+			os.RemoveAll(h.dir)
+			if at == "" {
+				break
+			}
+		}
+	}
+}
+
+// The original's set gone when it must be there: nothing is put in its
+// place, nothing is started, and the operator is told; with the set back,
+// the next run undoes.
+func TestAnUndoWithoutItsOriginal(t *testing.T) {
+	h := newStandHost(t, standFrom, true, false)
+	_ = interrupted(1, func(crash func(string) bool) {
+		_, _ = h.upgrader(func(p string) bool { return p == "swapped" }).Run(context.Background(), h.installed(), h.release())
+	})
+	sets, _ := filepath.Glob(filepath.Join(h.data, "upgrades", "*", originalDir))
+	if len(sets) != 1 {
+		t.Fatalf("sets %q", sets)
+	}
+	aside := filepath.Join(h.dir, "aside")
+	if err := os.Rename(sets[0], aside); err != nil {
+		t.Fatal(err)
+	}
+	database := h.read(filepath.Join(h.data, databaseFile))
+	j, err := h.upgrader(nil).Recover(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "Nothing was put in its place") || !strings.Contains(err.Error(), "Put the original database's files back into "+sets[0]) || j.State != journal.Failed {
+		t.Fatalf("%+v, %v", j, err)
+	}
+	if h.svc.running != "" || h.read(filepath.Join(h.data, databaseFile)) != database {
+		t.Fatalf("%s runs", h.svc.running)
+	}
+	h.reboot()
+	if h.svc.running != "" {
+		t.Fatalf("%s started on a database that is not its", h.svc.running)
+	}
+	if err := os.Rename(aside, sets[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(nil).Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.ends("with its original back")
+}
+
+// A restore made since is not undone over: the journal stays, and nothing
+// changes.
+func TestARestoreIsNotUndoneOver(t *testing.T) {
+	for _, point := range []string{"stopped", "kept", "swapped"} {
+		h := newStandHost(t, standFrom, false, false)
+		_, _ = h.upgrader(func(p string) bool { return p == point }).Run(context.Background(), h.installed(), h.release())
+		h.put(filepath.Join(h.data, holdFile), "{}", 0o644)
+		before := h.tree()
+		step := h.journal().Step
+		j, err := h.upgrader(nil).Recover(context.Background())
+		if point == "swapped" && (err == nil || !strings.Contains(err.Error(), "was restored from an archive") || !strings.Contains(err.Error(), "Nothing was changed")) {
+			t.Fatalf("%s: %+v, %v", point, j, err)
+		}
+		if point == "swapped" && (!h.journal().Pending() || h.journal().Step != step || before != h.tree()) {
+			t.Fatalf("%s: something changed:\n%s\n%s", point, before, h.tree())
+		}
+	}
+}
+
+// The start allowed is for its one start: an undo, whatever stopped it,
+// leaves none allowed.
+func TestAStartIsAllowedOnce(t *testing.T) {
+	for point, want := range map[string]bool{"start:" + standTo: true, "started": true, "undo:stopped": false, "undo:files-back": false, "undo:binaries-back": false, "start:" + standFrom: true} {
+		h := newStandHost(t, standFrom, true, false)
+		_, err := h.upgrader(func(p string) bool { return p == point }).Run(context.Background(), h.installed(), h.release())
+		if !errors.Is(err, errKilled) {
+			t.Fatalf("%s: %v", point, err)
+		}
+		j := h.journal()
+		if (j.Start != nil) != want || want && !j.Allows(strings.TrimPrefix(strings.Replace(point, "started", standTo, 1), "start:"), "boot1") {
+			t.Errorf("%s: %+v", point, j.Start)
+		}
+		if j.Allows(standTo, "boot2") || j.Allows(standFrom, "boot2") {
+			t.Errorf("%s: a start after a reboot", point)
+		}
+	}
+}
+
+// Kept binaries that are not the ones recorded are neither run nor put in
+// place; a cached one that is not the release's is replaced when staged.
+func TestKeptBinariesAreTheRecordedOnes(t *testing.T) {
+	h := newStandHost(t, standFrom, true, false)
+	u := h.upgrader(nil)
+	cached := filepath.Join(u.Releases(), standFrom, "varlatchd")
+	if err := os.MkdirAll(filepath.Dir(cached), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.put(cached, "another", 0o755)
+	_, _ = h.upgrader(func(p string) bool { return p == "swapped" }).Run(context.Background(), h.installed(), h.release())
+	if got := h.read(cached); got != standIn(standFrom, 1, standStatus(standFrom, 1)) {
+		t.Fatalf("the cached binary stayed: %q", got)
+	}
+	h.put(cached, "another", 0o755)
+	j, err := h.upgrader(nil).Recover(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "is not the one the upgrade recorded") || j.State != journal.Failed || strings.Contains(h.read(filepath.Join(h.bin, "varlatchd")), "another") {
+		t.Fatalf("%+v, %v", j, err)
+	}
+	if h.svc.running != "" {
+		t.Fatalf("%s runs", h.svc.running)
+	}
+}
+
+// A directory of binaries others may write is refused before anything.
+func TestBinariesOthersMayWriteAreRefused(t *testing.T) {
+	for _, what := range []string{"bin", "releases"} {
+		h := newStandHost(t, standFrom, false, false)
+		dir := h.bin
+		if what == "releases" {
+			dir = h.upgrader(nil).Releases()
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chmod(dir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.upgrader(nil).Run(context.Background(), h.installed(), h.release()); err == nil || !strings.Contains(err.Error(), "may be written by others") || !strings.Contains(err.Error(), "nothing was changed") || h.journal() != nil {
+			t.Fatalf("%s: %v", what, err)
+		}
+	}
+}
+
+// A journal that cannot be made durable is an error; at Checked, whose
+// record is there, the upgrade is finished, never undone.
+func TestAnUpgradeItsEndCannotBeRecorded(t *testing.T) {
+	for _, point := range []string{"started", "checked"} {
+		h := newStandHost(t, standFrom, false, false)
+		armed := false
+		u := h.upgrader(func(p string) bool {
+			armed = armed || p == point
+			return false
+		})
+		u.Fault = func(path string) error {
+			if armed && filepath.Base(path) == journal.File {
+				return &os.PathError{Op: "write", Path: path, Err: syscall.ENOSPC}
+			}
+			return nil
+		}
+		j, err := u.Run(context.Background(), h.installed(), h.release())
+		if point == "checked" {
+			if err == nil || !strings.Contains(err.Error(), "its end could not be recorded") && !strings.Contains(err.Error(), "end could not be recorded") || j.State != journal.InProgress {
+				t.Fatalf("%s: %+v, %v", point, j, err)
+			}
+			if h.svc.running != standTo {
+				t.Fatalf("%s runs", h.svc.running)
+			}
+		}
+		if _, err := h.upgrader(nil).Recover(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		h.ends(point)
+	}
+}
+
+// An upgrade an earlier release's varlatch left pending (format 1), at each
+// place its swap could have stopped, is undone.
+func TestAPendingUpgradeOfFormatOne(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		step journal.Step
+		make func(h *standHost, work string)
+	}{
+		{"stopped", journal.Stopped, func(*standHost, string) {}},
+		{"prepared", journal.Prepared, func(h *standHost, work string) {
+			_ = os.MkdirAll(filepath.Join(work, "db"), 0o700)
+			h.put(filepath.Join(work, "db", databaseFile), "db original\nschema 2\nwrite 1\nwrite 2\n", 0o600)
+		}},
+		{"the database aside, its log not", journal.Prepared, func(h *standHost, work string) {
+			_ = os.MkdirAll(filepath.Join(work, "original"), 0o700)
+			_ = os.Rename(filepath.Join(h.data, databaseFile), filepath.Join(work, "original", databaseFile))
+		}},
+		{"both aside", journal.Prepared, func(h *standHost, work string) {
+			_ = os.MkdirAll(filepath.Join(work, "original"), 0o700)
+			for _, n := range []string{databaseFile, databaseFile + walSuffix} {
+				_ = os.Rename(filepath.Join(h.data, n), filepath.Join(work, "original", n))
+			}
+		}},
+		{"swapped, the new server killed", journal.Started, func(h *standHost, work string) {
+			_ = os.MkdirAll(filepath.Join(work, "original"), 0o700)
+			for _, n := range []string{databaseFile, databaseFile + walSuffix} {
+				_ = os.Rename(filepath.Join(h.data, n), filepath.Join(work, "original", n))
+			}
+			h.put(filepath.Join(h.data, databaseFile), "db original\nschema 2\nwrite 1\nwrite 2\n", 0o600)
+			h.put(filepath.Join(h.data, databaseFile+walSuffix), walHead("db original\nschema 2\nwrite 1\nwrite 2\n")+"write 9\n", 0o600)
+			h.put(filepath.Join(h.bin, "varlatchd"), standIn(standTo, 2, standStatus(standTo, 2)), 0o755)
+		}},
+		{"swapped, the old server stopped cleanly, the new one killed", journal.Started, func(h *standHost, work string) {
+			_ = os.MkdirAll(filepath.Join(work, "original"), 0o700)
+			log := h.read(filepath.Join(h.data, databaseFile+walSuffix))
+			h.put(filepath.Join(work, "original", databaseFile), h.read(filepath.Join(h.data, databaseFile))+log[strings.Index(log, "\n")+1:], 0o600)
+			h.put(filepath.Join(h.data, databaseFile), "db original\nschema 2\nwrite 1\nwrite 2\n", 0o600)
+			h.put(filepath.Join(h.data, databaseFile+walSuffix), walHead("db original\nschema 2\nwrite 1\nwrite 2\n")+"write 9\n", 0o600)
+			h.put(filepath.Join(h.bin, "varlatchd"), standIn(standTo, 2, standStatus(standTo, 2)), 0o755)
+		}},
+		{"an undo stopped after the database", journal.Started, func(h *standHost, work string) {
+			_ = os.MkdirAll(filepath.Join(work, "original"), 0o700)
+			_ = os.Rename(filepath.Join(h.data, databaseFile+walSuffix), filepath.Join(work, "original", databaseFile+walSuffix))
+			h.put(filepath.Join(h.bin, "varlatchd"), standIn(standTo, 2, standStatus(standTo, 2)), 0o755)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newStandHost(t, oldFrom, false, true)
+			_ = h.svc.Stop(context.Background())
+			u := h.upgrader(nil)
+			work := filepath.Join(h.data, "upgrades", "0011223344556677")
+			if err := os.MkdirAll(work, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			kept := filepath.Join(u.Releases(), oldFrom)
+			if err := os.MkdirAll(kept, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			h.put(filepath.Join(kept, "varlatchd"), standIn(oldFrom, 1, standStatus(oldFrom, 1)), 0o755)
+			h.put(filepath.Join(kept, "varlatch"), "varlatch "+oldFrom, 0o755)
+			c.make(h, work)
+			if err := journal.Write(filepath.Dir(h.conf), &journal.Journal{Format: journal.FormatOne, ID: "0011223344556677", From: oldFrom, To: standTo, FromSchema: 1, ToSchema: 2,
+				State: journal.InProgress, Step: c.step, StartedAt: "2026-11-24T10:00:00Z", BinDir: h.bin, Releases: u.Releases(), DataDir: h.data, Work: work}); err != nil {
+				t.Fatal(err)
+			}
+			j, err := u.Recover(context.Background())
+			if err != nil || j.State != journal.Undone || j.Format != journal.FormatOne {
+				t.Fatalf("%+v, %v\n%s", j, err, h.tree())
+			}
+			h.ends(c.name)
 		})
 	}
 }

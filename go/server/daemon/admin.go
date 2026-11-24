@@ -202,9 +202,9 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, err.Error())
 		return ExitFailure
 	}
-	if !staysRoot(sub, rest) {
-		if err := becomeOwner(cfg, func(uid, gid int) { keepForOwner(cfg, sub, rest, uid, gid) }); err != nil {
-			fmt.Fprintf(stderr, "varlatchd admin %s: %v; nothing was sent or written\n", sub, err)
+	if !staysRoot(cfg, sub, rest) {
+		if err := becomeOwner(cfg, func() { keepForOwner(cfg, sub, rest) }); err != nil {
+			fmt.Fprintf(stderr, "varlatchd admin %s: %v\n", sub, err)
 			return ExitConfig
 		}
 	}
@@ -243,10 +243,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		// The live open, and the reverse's barrier: through the running
 		// daemon, whose admission holds the migration's gate; offline, on
 		// the data directory.
-		defer giveDataFiles(cfg.DataDir)
 		return route(cfg, filepath.Dir(path), append([]string{sub}, rest...), stdout, stderr)
 	case sub == "migrate":
-		defer giveDataFiles(cfg.DataDir)
 		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "status":
 		return statusOnline(cfg, rest, stdout, stderr)

@@ -81,6 +81,10 @@ type Options struct {
 	// (this source's), which that user owns.
 	Stage     *Owner
 	StageBase string
+	// StageAs, when Stage is not set, gives them once they are needed (a
+	// target on this host, whose data directory may be made by the run): nil
+	// for a target whose commands run as this user.
+	StageAs func(ctx context.Context) (owner *Owner, base string, err error)
 	// StageKeep is this run's own directory in StageBase (an image's
 	// derived configuration), which the leftovers' cleanup spares.
 	StageKeep string
@@ -480,6 +484,8 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	if err := cleanScratch(e.work()); err != nil {
 		return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
 	}
+	// A target not made yet has no owner to stage for, and left nothing.
+	_ = e.staged(ctx)
 	if e.Options.Stage != nil && e.Options.StageBase != "" {
 		for _, re := range []*regexp.Regexp{leftoverStage, leftoverConf} {
 			if err := removeMatchingExcept(e.Options.StageBase, re, true, e.Options.StageKeep); err != nil {
@@ -589,7 +595,7 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 		return nil, err
 	}
 	defer clear(runKey)
-	scratch, err := e.scratchDir()
+	scratch, err := e.scratchDir(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +641,10 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 // scratchDir is a new directory for the dry run's database or a staged
 // bundle: in the work directory, or, with Stage, under the system's
 // temporary directory and given to that user.
-func (e *Engine) scratchDir() (string, error) {
+func (e *Engine) scratchDir(ctx context.Context) (string, error) {
+	if err := e.staged(ctx); err != nil {
+		return "", err
+	}
 	if e.Options.Stage == nil {
 		return os.MkdirTemp(e.work(), ".dry-run-")
 	}
@@ -648,6 +657,19 @@ func (e *Engine) scratchDir() (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// staged settles Options.Stage.
+func (e *Engine) staged(ctx context.Context) error {
+	if e.Options.Stage != nil || e.Options.StageAs == nil {
+		return nil
+	}
+	owner, base, err := e.Options.StageAs(ctx)
+	if err != nil {
+		return err
+	}
+	e.Options.Stage, e.Options.StageBase, e.Options.StageAs = owner, base, nil
+	return nil
 }
 
 // stage is the bundle as the target's varlatchd reads it: as it is, or,
@@ -741,8 +763,11 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 	}
 	defer os.Remove(exported)
 	bundle := exported
+	if err := e.staged(ctx); err != nil {
+		return err
+	}
 	if e.Options.Stage != nil {
-		dir, err := e.scratchDir()
+		dir, err := e.scratchDir(ctx)
 		if err != nil {
 			return err
 		}
