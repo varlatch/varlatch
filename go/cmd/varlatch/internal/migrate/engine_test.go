@@ -1200,15 +1200,24 @@ func TestCoolifysTransferByHand(t *testing.T) {
 	if !strings.Contains(said, "move the domain of https://vault.example.test") || !strings.Contains(said, "varlatch migrate --resume") {
 		t.Fatalf("the instruction: %s", said)
 	}
+	// Not moved yet: the whole step again, not only how to check it.
+	w.said = nil
 	if j, err = w.eng.Resume(context.Background()); err == nil || !strings.Contains(err.Error(), "once the domain is moved") || j.Phase != Transfer {
 		t.Fatalf("a resume before the move: %+v %v", j, err)
+	}
+	if said := strings.Join(w.said, "\n"); !strings.Contains(said, "by hand, if not done: in Coolify, move the domain of https://vault.example.test from the TypeScript application to the Go one (its domain setting; Save only). "+
+		"Do not Deploy, Restart or Stop the TypeScript application") {
+		t.Fatalf("a resume before the move says: %s", said)
 	}
 	if containsCall(w.src.calls, "release gate-1") {
 		t.Fatal("a resume before the move undid")
 	}
-	w.prober.moved = true
+	w.prober.moved, w.said = true, nil
 	if j, err = w.eng.Resume(context.Background()); err != nil || j.Phase != Open {
 		t.Fatalf("the resume after the move: %+v %v", j, err)
+	}
+	if said := strings.Join(w.said, "\n"); strings.Contains(said, "move the domain of") {
+		t.Fatalf("a move that was seen, asked for again: %s", said)
 	}
 	w.noSecrets(t)
 }

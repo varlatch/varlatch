@@ -143,6 +143,14 @@ fixes.
   `varlatch invite`, `move` and `admin reenroll`, were not affected. In
   assisted mode setup neither asks nor shows anything on the terminal, as
   without one: a coding agent would read the link and the keys.
+- **`varlatch migrate` says what an undo, a rollback and a wait are doing.**
+  Each step says when it starts, every 15 seconds while it lasts (how long
+  so far, and what it waits for) and when it ends, where a minute or more
+  could pass without a line; so do the final copy and `--finish`'s archive.
+  Not with `--json`. A pipe nobody reads holds no step up, and a closed one
+  no longer ends `varlatch migrate` half way. An undo stopped anywhere is
+  finished by `--resume` or `--abort`, as before, and the tests now stop it
+  between its steps.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own
   fresh install included, with "varlatch is installed with Homebrew; update
@@ -565,9 +573,12 @@ Changes since 0.50.0-rc.1, by pull request:
 - **The switch, more robust (#416, #420, #423).** The sidecar is started
   for that step only when `varlatchd` shares its network; the restarted
   `varlatchd` is waited for, at most a minute, before the source is
-  marked; and every stop of the sidecar runs even when the run is
-  interrupted, so the old node never stays on the tailnet until
-  `--resume`. `ps` or `docker compose config` failing is said as such,
+  marked; and a stop of the sidecar is not cut short by a step that ran
+  out of its time. (Corrected: this entry said that the old node never
+  stays on the tailnet after an interrupted run. Ctrl-C or a kill ends
+  `varlatch migrate` at once, wherever it is, so the old node can stay on
+  the tailnet, under its temporary name, until `varlatch migrate --resume`
+  goes on from the journal and stops the sidecar.) `ps` or `docker compose config` failing is said as such,
   without their output, and more than one `varlatchd` container is
   refused.
 - **A migration after a rollback (#414).** After `--rollback` and
