@@ -5,22 +5,13 @@ import type { OAuthAuthorizationOutcome } from "@varlatch/protocol";
 import { Callout, Spinner } from "../../components/ui";
 import { useSession } from "../../lib/session";
 import { errorMessage } from "../../shell/Shell";
+import { takeArrival, takeFromAddress } from "./arrival";
 import { recall, type Pending } from "./model";
-
-/** What a provider sends the browser back with, taken out of the address at once. */
-function takeAnswer() {
-  const { origin, pathname, search } = window.location;
-  const v = new URLSearchParams(search);
-  // Out of the address before anything is loaded from this page: the code is
-  // in no history entry, and in no Referer.
-  window.history.replaceState(null, "", pathname);
-  const one = (k: string) => v.get(k) ?? undefined;
-  return { state: one("state"), code: one("code"), error: one("error"), iss: one("iss"), redirectUri: origin + pathname };
-}
 
 /**
  * Where a provider sends the browser back to (ADR-0062): the dashboard sends
- * the code on, in the person's session, for the connection it was begun for.
+ * the code on (arrival.ts took it out of the address), in the person's
+ * session, for the connection it was begun for.
  * The server decides about all of it.
  */
 export function OAuthCallbackPage() {
@@ -33,10 +24,12 @@ export function OAuthCallbackPage() {
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
-    const { state, code, error: said, iss, redirectUri } = takeAnswer();
-    const p = state ? recall(state) : null;
+    takeFromAddress(); // where the page was come to without a load
+    const answer = takeArrival();
+    const p = answer?.state ? recall(answer.state) : null;
     setPending(p);
-    if (!state || !p) return;
+    if (!answer?.state || !p) return;
+    const { state, code, error: said, iss, redirectUri } = answer;
     api
       .completeOAuthAuthorization(p.org, p.project, p.env, p.item, {
         state,

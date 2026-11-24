@@ -43,10 +43,11 @@ vi.mock("../src/components/Dialog", () => ({
 }));
 vi.mock("react-router-dom", () => ({ Link: ({ to, children, ...p }: { to: string; children: React.ReactNode }) => <a href={to} {...p}>{children}</a> }));
 import { describeEvent, emptyResolver, segmentsText } from "../src/features/audit/describe";
+import { takeArrival, takeFromAddress } from "../src/features/oauth/arrival";
 import { OAuthCallbackPage } from "../src/features/oauth/OAuthCallbackPage";
 import { OAuthDialog } from "../src/features/oauth/OAuthDialog";
 import { OAuthPanel } from "../src/features/oauth/OAuthPanel";
-import { connectionLabel, emptyForm, inputOf, providerOf, providerReady, reasonText, recall, redirectFor, remember, safeToOpen, statusOf } from "../src/features/oauth/model";
+import { connectionLabel, emptyForm, endpointHostsOf, hostOf, unnamedHosts, inputOf, providerOf, providerReady, reasonText, recall, redirectFor, remember, safeToOpen, statusOf } from "../src/features/oauth/model";
 import { useExport } from "../src/features/values/useExport";
 
 /** OAuth connections (ADR-0062): made and connected here, and nothing here ever holds a token. */
@@ -56,7 +57,7 @@ const connection: OAuthConnection = {
   item: "MAIL_TOKEN",
   environmentId: "env_1",
   versionId: "ver_1",
-  provider: { preset: "generic", tokenEndpoint: "https://idp.example/token", tokenEndpointAuthMethod: "client_secret_basic" },
+  provider: { preset: "generic", tokenEndpoint: "https://idp.example/token", endpointHosts: ["idp.example", "api.idp.example"], tokenEndpointAuthMethod: "client_secret_basic" },
   grant: "authorization_code",
   clientId: "client-1",
   hasClientSecret: true,
@@ -142,6 +143,26 @@ describe("the model", () => {
     expect(redirectFor({ ...emptyForm, preset: "generic", byEndpoints: true, tokenEndpoint: "https://T.example:8443/x" }, base)).toBe(`${base}t.example:8443`);
     expect(redirectFor({ ...emptyForm, preset: "generic", byEndpoints: true, tokenEndpoint: "http://t.example" }, base)).toBeNull();
     expect(redirectFor(emptyForm, null)).toBeNull();
+    // With every host of a provider's that has several.
+    expect(redirectFor({ ...emptyForm, preset: "generic", issuer: "https://i.example" }, base, ["t.example", "a.example"])).toBe(`${base}t.example~a.example`);
+    expect(
+      redirectFor({ ...emptyForm, preset: "generic", byEndpoints: true, tokenEndpoint: "https://t.example/x", authorizationEndpoint: "https://z.example", userinfoEndpoint: "https://a.example/me", revocationEndpoint: "https://t.example/r" }, base),
+    ).toBe(`${base}t.example~a.example~z.example`);
+  });
+
+  it("knows every host before a secret is typed, and which nobody typed", () => {
+    const f = { ...emptyForm, preset: "generic" as const };
+    expect(endpointHostsOf(emptyForm, null)![0]).toBe("oauth2.googleapis.com");
+    expect(unnamedHosts(emptyForm, endpointHostsOf(emptyForm, null))).toEqual([]);
+    expect(endpointHostsOf({ ...f, issuer: "https://i.example" }, null)).toBeNull();
+    expect(unnamedHosts({ ...f, issuer: "https://i.example" }, ["t.example", "i.example"])).toEqual(["t.example"]);
+    const by = { ...f, byEndpoints: true, tokenEndpoint: "https://T.example:443/t", authorizationEndpoint: "https://t.example/a", revocationEndpoint: "https://evil.example/r" };
+    expect(endpointHostsOf(by, null)).toEqual(["t.example", "evil.example"]);
+    expect(unnamedHosts(by, endpointHostsOf(by, null))).toEqual(["evil.example"]);
+    expect(endpointHostsOf({ ...by, revocationEndpoint: "http://t.example" }, null)).toBeNull();
+    expect(providerOf({ ...by, confirmedHosts: ["evil.example"], clientSecret: "x" })).toHaveProperty("endpointHosts", ["evil.example"]);
+    expect(providerOf({ ...by, confirmedHosts: ["evil.example"], clientSecret: "x", grant: "client_credentials" })).not.toHaveProperty("endpointHosts");
+    expect(hostOf("https://user:pw@t.example")).toBeNull();
   });
 
   it("names states and reasons in words", () => {
@@ -190,10 +211,45 @@ describe("making one", () => {
     expect(one("confirm-oauth").props.disabled).toBe(true);
   });
 
+  it("shows where the secret goes before it can be typed", async () => {
+    api.listOAuthConnections.mockResolvedValue({ items: [], nextCursor: null, redirectBase: base });
+    api.discoverOAuthProvider.mockResolvedValue({ provider: { ...connection.provider, endpointHosts: ["idp.example", "evil.example"] } });
+    api.createOAuthConnection.mockResolvedValue(connection);
+    await render(<OAuthDialog open org="acme" project="api" env="production" exists={() => false} onClose={() => {}} onSaved={async () => {}} />);
+    expect(one("oauth-secret").props.disabled).toBe(false);
+    expect(text(one("oauth-endpoint-hosts"))).toContain("oauth2.googleapis.com");
+    await act(async () => root!.root.findAll((n) => n.props["data-testid"] === "oauth-preset" && typeof n.props.onChange === "function")[0]!.props.onChange("generic"));
+    expect(one("oauth-secret").props.disabled).toBe(true);
+    await type("oauth-name", "MAIL_TOKEN");
+    await type("oauth-client", "client-1");
+    await type("oauth-issuer", "https://idp.example");
+    await press("oauth-discover");
+    expect(text(one("oauth-endpoint-hosts"))).toBe("idp.exampleevil.example");
+    expect(text(one("oauth-redirect"))).toBe(`${base}idp.example~evil.example`);
+    // Nobody typed the other one: it is confirmed first.
+    expect(one("oauth-secret").props.disabled).toBe(true);
+    const checkbox = () => root!.root.findAll((n) => n.props["data-testid"] === "oauth-confirm-hosts" && typeof n.props.onChange === "function")[0]!;
+    await act(async () => checkbox().props.onChange(true));
+    expect(one("oauth-secret").props.disabled).toBe(false);
+    await type("oauth-secret", "made-up-secret");
+    await press("confirm-oauth");
+    expect(api.createOAuthConnection.mock.calls[0]![3].provider).toEqual({ preset: "generic", issuer: "https://idp.example", endpointHosts: ["evil.example"] });
+  });
+
+  it("takes back the secret and the confirmation with another provider", async () => {
+    api.listOAuthConnections.mockResolvedValue({ items: [], nextCursor: null, redirectBase: base });
+    await render(<OAuthDialog open org="acme" project="api" env="production" exists={() => false} onClose={() => {}} onSaved={async () => {}} />);
+    await type("oauth-secret", "made-up-secret");
+    await act(async () => root!.root.findAll((n) => n.props["data-testid"] === "oauth-preset" && typeof n.props.onChange === "function")[0]!.props.onChange("generic"));
+    expect(one("oauth-secret").props.value).toBe("");
+    expect(one("oauth-secret").props.disabled).toBe(true);
+  });
+
   it("changes one without its provider, and asks for no secret", async () => {
     api.updateOAuthConnection.mockResolvedValue(connection);
     await render(<OAuthDialog open org="acme" project="api" env="production" connection={connection} exists={() => false} onClose={() => {}} onSaved={async () => {}} />);
     expect(all("oauth-preset")).toHaveLength(0);
+    expect(text(one("oauth-endpoint-hosts"))).toBe("idp.exampleapi.idp.example");
     await type("oauth-hosts", "api.example.com *.mail.example");
     await press("confirm-oauth");
     expect(api.updateOAuthConnection).toHaveBeenCalledWith("acme", "api", "production", "MAIL_TOKEN", {
@@ -213,12 +269,17 @@ describe("connecting", () => {
   it("shows whose it is, and goes to the provider", async () => {
     api.getOAuthConnection.mockResolvedValue(connection);
     api.startOAuthAuthorization.mockResolvedValue({ authorizationUrl: "https://idp.example/authorize?x", state: "st", redirectUri: "r", expiresAt: "2099" });
+    confirm.mockResolvedValueOnce(false).mockResolvedValue(true);
     await render(panel);
     expect(text(one("oauth-account"))).toBe("alice@example.com");
+    expect(text(one("oauth-endpoint-hosts"))).toBe("idp.example api.idp.example");
     expect(text(one("oauth-status"))).toBe("Connected");
     expect(text(one("oauth-missing"))).toContain("mail.read");
     await press("oauth-connect");
-    expect(api.startOAuthAuthorization).toHaveBeenCalledWith("acme", "api", "production", "MAIL_TOKEN", {});
+    expect(api.startOAuthAuthorization).not.toHaveBeenCalled();
+    expect(confirm.mock.calls[0]![0].body).toContain("idp.example, api.idp.example");
+    await press("oauth-connect");
+    expect(api.startOAuthAuthorization).toHaveBeenCalledWith("acme", "api", "production", "MAIL_TOKEN", { expectedVersionId: "ver_1" });
     expect(assign).toHaveBeenCalledWith("https://idp.example/authorize?x");
     expect(recall("st")).toEqual({ org: "acme", project: "api", env: "production", item: "MAIL_TOKEN" });
   });
@@ -232,7 +293,7 @@ describe("connecting", () => {
     expect(api.startOAuthAuthorization).not.toHaveBeenCalled();
     confirm.mockResolvedValue(true);
     await press("oauth-another");
-    expect(api.startOAuthAuthorization).toHaveBeenCalledWith("acme", "api", "production", "MAIL_TOKEN", { confirmAccountChange: true });
+    expect(api.startOAuthAuthorization).toHaveBeenCalledWith("acme", "api", "production", "MAIL_TOKEN", { confirmAccountChange: true, expectedVersionId: "ver_1" });
     expect(assign).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalled();
   });
@@ -280,6 +341,21 @@ describe("coming back", () => {
     expect(one("oauth-back").props.href).toBe("/o/acme/p/api/e/production?item=MAIL_TOKEN");
     expect(page()).not.toContain("c0de");
     expect(stored.size).toBe(0);
+  });
+
+  it("has the code out of the address before the page is there", () => {
+    at("/oauth/callback/idp.example", "?code=c0de&state=st");
+    takeFromAddress();
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/oauth/callback/idp.example");
+    expect(takeArrival()).toEqual({ state: "st", code: "c0de", redirectUri: "https://varlatch.example/oauth/callback/idp.example" });
+    expect(takeArrival()).toBeNull();
+    for (const [pathname, search] of [["/", "?code=x"], ["/oauth/callback2/x", "?code=x"], ["/oauth/callback/x", ""]] as const) {
+      replaceState.mockReset();
+      at(pathname, search);
+      takeFromAddress();
+      expect(replaceState).not.toHaveBeenCalled();
+      expect(takeArrival()).toBeNull();
+    }
   });
 
   it("sends nothing on that was not begun in this tab", async () => {
@@ -336,6 +412,7 @@ describe("elsewhere", () => {
     const say = (eventType: string, metadata: Record<string, unknown>) =>
       segmentsText(describeEvent({ eventType, decision: "info", resource: { itemName: "MAIL_TOKEN" }, metadata: { connection: "oauth", ...metadata } } as never, emptyResolver).segments);
     expect(say("sync.connection_created", { account: "alice@example.com" })).toBe("connected MAIL_TOKEN of alice@example.com");
+    expect(say("sync.connection_created", { account: "alice@example.com", endpointHosts: "idp.example,api.idp.example" })).toBe("connected MAIL_TOKEN of alice@example.com, at idp.example, api.idp.example");
     expect(say("sync.connection_credential_replaced", { outcome: "refreshed" })).toBe("refreshed MAIL_TOKEN");
     expect(say("sync.connection_credential_replaced", { outcome: "reconnected", account: "m@e", accountChanged: true })).toContain("to another account");
     expect(say("sync.connection_checked", { outcome: "needs-reconnect", reason: "refresh-answer-lost" })).toContain("refresh answer lost");

@@ -9,12 +9,13 @@ import { Button, Checkbox, Field, Input, Segmented, Select, Textarea } from "../
 import { useSession } from "../../lib/session";
 import { errorMessage } from "../../shell/Shell";
 import { ITEM_NAME_PATTERN } from "../values/model";
-import { PRESETS, emptyForm, inputOf, providerOf, providerReady, redirectFor, type FormState, type Preset } from "./model";
+import { PRESETS, emptyForm, endpointHostsOf, inputOf, providerOf, providerReady, redirectFor, unnamedHosts, type FormState, type Preset } from "./model";
 
 /**
  * Make an OAuth connection (ADR-0062), or change what may be changed of one:
- * its client secret, scopes and hosts. The secret is sent once; nothing on
- * the page keeps it, and no answer holds it.
+ * its client secret, scopes and hosts. Every host it goes to is shown before
+ * the secret can be typed. It is sent once; nothing on the page keeps it, and
+ * no answer holds it.
  */
 export function OAuthDialog({
   open,
@@ -41,9 +42,10 @@ export function OAuthDialog({
   const [f, setForm] = useState<FormState>(emptyForm);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [discovered, setDiscovered] = useState<string | null>(null);
+  const [discovered, setDiscovered] = useState<string[] | null>(null);
+  // Another provider: what was shown, confirmed and typed for this one goes.
   const set = (patch: Partial<FormState>) => {
-    setForm((was) => ({ ...was, ...patch }));
+    setForm((was) => ({ ...was, clientSecret: "", ...patch, confirmedHosts: [] }));
     setDiscovered(null);
   };
   useEffect(() => {
@@ -58,11 +60,14 @@ export function OAuthDialog({
     queryFn: () => api.listOAuthConnections(org, project, env),
     enabled: open && !connection,
   });
-  const redirect = redirectFor(f, list.data?.redirectBase) ?? discovered;
+  const hosts = connection ? connection.provider.endpointHosts : endpointHostsOf(f, discovered);
+  const others = connection ? [] : unnamedHosts(f, hosts);
+  const named = others.every((h) => f.confirmedHosts.includes(h)) && (others.length === 0 || f.grant === "authorization_code");
+  const redirect = redirectFor(f, list.data?.redirectBase, discovered);
   const taken = !connection && name !== "" && exists(name);
   const ready = connection
     ? !busy
-    : ITEM_NAME_PATTERN.test(name) && !taken && providerReady(f) && f.clientId.trim() !== "" && (f.grant === "authorization_code" || f.clientSecret !== "") && !busy;
+    : ITEM_NAME_PATTERN.test(name) && !taken && providerReady(f) && hosts !== null && named && f.clientId.trim() !== "" && (f.grant === "authorization_code" || f.clientSecret !== "") && !busy;
 
   const submit = async () => {
     if (!ready) return;
@@ -94,8 +99,8 @@ export function OAuthDialog({
     setError("");
     setBusy(true);
     try {
-      const found = await api.discoverOAuthProvider(org, project, env, { provider: providerOf({ ...f, clientSecret: "x" }), grant: f.grant });
-      setDiscovered(found.redirectUri ?? null);
+      const found = await api.discoverOAuthProvider(org, project, env, { provider: providerOf({ ...f, clientSecret: "x", confirmedHosts: [] }), grant: f.grant });
+      setDiscovered(found.provider.endpointHosts);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -199,14 +204,14 @@ export function OAuthDialog({
                         <Input id="oauth-authorization" data-testid="oauth-authorization" mono value={f.authorizationEndpoint} placeholder="https://" onChange={(e) => set({ authorizationEndpoint: e.target.value })} />
                       </Field>
                     )}
-                    <Field label="Token endpoint" htmlFor="oauth-token" hint="The client secret and the refresh token go here, and nowhere else.">
+                    <Field label="Token endpoint" htmlFor="oauth-token" hint="The client secret and the refresh token go here.">
                       <Input id="oauth-token" data-testid="oauth-token" mono value={f.tokenEndpoint} placeholder="https://" onChange={(e) => set({ tokenEndpoint: e.target.value })} />
                     </Field>
-                    <Field label="Revocation endpoint" htmlFor="oauth-revocation" hint="Optional. Used to disconnect.">
+                    <Field label="Revocation endpoint" htmlFor="oauth-revocation" hint="Optional. Used to disconnect: the client secret and the tokens go here then.">
                       <Input id="oauth-revocation" data-testid="oauth-revocation" mono value={f.revocationEndpoint} placeholder="https://" onChange={(e) => set({ revocationEndpoint: e.target.value })} />
                     </Field>
                     {f.grant === "authorization_code" && (
-                      <Field label="Userinfo endpoint" htmlFor="oauth-userinfo" hint="Optional. Says whose account it is, so another one does not go unnoticed.">
+                      <Field label="Userinfo endpoint" htmlFor="oauth-userinfo" hint="Optional. Says whose account it is, so another one does not go unnoticed. The access token goes here.">
                         <Input id="oauth-userinfo" data-testid="oauth-userinfo" mono value={f.userinfoEndpoint} placeholder="https://" onChange={(e) => set({ userinfoEndpoint: e.target.value })} />
                       </Field>
                     )}
@@ -236,9 +241,7 @@ export function OAuthDialog({
                 ) : list.data && !list.data.redirectBase ? (
                   <span className="text-xs text-deny">This installation has no public URL over HTTPS, so a provider cannot send a browser back to it.</span>
                 ) : (
-                  <Button size="sm" data-testid="oauth-discover" disabled={!providerReady(f) || busy} onClick={() => void discover()}>
-                    Ask the provider for it
-                  </Button>
+                  <span className="text-xs text-muted">Known once the provider's hosts are.</span>
                 )}
               </Field>
             )}
@@ -247,6 +250,36 @@ export function OAuthDialog({
             </Field>
           </>
         )}
+        <Field label="Where the client secret and the tokens go">
+          {hosts ? (
+            <ul className="space-y-0.5 font-mono text-[12.5px]" data-testid="oauth-endpoint-hosts">
+              {hosts.map((h) => (
+                <li key={h} className="min-w-0 break-all">
+                  {h}
+                </li>
+              ))}
+            </ul>
+          ) : !connection && f.preset === "generic" && !f.byEndpoints ? (
+            <Button size="sm" data-testid="oauth-discover" disabled={!providerReady(f) || busy} onClick={() => void discover()}>
+              Ask the provider
+            </Button>
+          ) : (
+            <span className="text-xs text-muted">Give the endpoints first.</span>
+          )}
+        </Field>
+        {others.length > 0 &&
+          (f.grant === "authorization_code" ? (
+            <Checkbox
+              checked={named}
+              onChange={(yes) => setForm((was) => ({ ...was, confirmedHosts: yes ? others : [] }))}
+              label={`${others.join(", ")} ${others.length === 1 ? "is" : "are"} this provider's own`}
+              data-testid="oauth-confirm-hosts"
+            />
+          ) : (
+            <p className="text-[13px] text-deny" data-testid="oauth-hosts-refused">
+              The endpoints of a client's own connection are all on one host.
+            </p>
+          ))}
         <Field
           label="Client secret"
           htmlFor="oauth-secret"
@@ -258,6 +291,7 @@ export function OAuthDialog({
             type="password"
             autoComplete="new-password"
             mono
+            disabled={hosts === null || !named}
             value={f.clientSecret}
             onChange={(e) => setForm((was) => ({ ...was, clientSecret: e.target.value }))}
           />

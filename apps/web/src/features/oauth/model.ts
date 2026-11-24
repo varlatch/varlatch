@@ -28,6 +28,8 @@ export interface FormState {
   clientSecret: string;
   scopes: string;
   hosts: string;
+  /** The other hosts of the provider's that the person said are its own. */
+  confirmedHosts: string[];
 }
 
 export const emptyForm: FormState = {
@@ -44,15 +46,17 @@ export const emptyForm: FormState = {
   clientSecret: "",
   scopes: "",
   hosts: "",
+  confirmedHosts: [],
 };
 
 const words = (text: string) => text.split(/[\s,]+/).filter(Boolean);
 
 export function providerOf(f: FormState): OAuthProviderInput {
   const none = f.clientSecret === "" ? ({ tokenEndpointAuthMethod: "none" } as const) : {};
+  const named = f.grant === "authorization_code" && f.confirmedHosts.length > 0 ? { endpointHosts: f.confirmedHosts } : {};
   if (f.preset === "google") return { preset: "google", ...none };
   if (f.preset === "microsoft") return { preset: "microsoft", tenant: f.tenant.trim(), ...none };
-  if (!f.byEndpoints) return { preset: "generic", issuer: f.issuer.trim(), ...none };
+  if (!f.byEndpoints) return { preset: "generic", issuer: f.issuer.trim(), ...named, ...none };
   const opt = (k: "authorizationEndpoint" | "revocationEndpoint" | "userinfoEndpoint") => (f[k].trim() ? { [k]: f[k].trim() } : {});
   return {
     preset: "generic",
@@ -60,6 +64,7 @@ export function providerOf(f: FormState): OAuthProviderInput {
     ...(f.grant === "authorization_code" ? opt("authorizationEndpoint") : {}),
     ...opt("revocationEndpoint"),
     ...(f.grant === "authorization_code" ? opt("userinfoEndpoint") : {}),
+    ...named,
     ...none,
   };
 }
@@ -86,18 +91,50 @@ export function providerReady(f: FormState): boolean {
   return /^https:\/\/\S+$/.test(f.tokenEndpoint.trim()) && (f.grant !== "authorization_code" || /^https:\/\/\S+$/.test(f.authorizationEndpoint.trim()));
 }
 
-/** The redirect URI to register, known before anything is asked: presets and given endpoints name the token endpoint's host. */
-export function redirectFor(f: FormState, redirectBase: string | null | undefined): string | null {
-  if (!redirectBase || f.grant !== "authorization_code") return null;
-  if (f.preset === "google") return `${redirectBase}oauth2.googleapis.com`;
-  if (f.preset === "microsoft") return `${redirectBase}login.microsoftonline.com`;
-  if (!f.byEndpoints) return null;
+/** An https address's host, with its port when that is not 443; null for anything else. */
+export function hostOf(url: string): string | null {
   try {
-    const u = new URL(f.tokenEndpoint.trim());
-    return u.protocol === "https:" && u.host ? `${redirectBase}${encodeURIComponent(u.host).replace(/%3A/g, ":")}` : null;
+    const u = new URL(url.trim());
+    return u.protocol === "https:" && u.host !== "" && u.username === "" && u.password === "" ? u.host : null;
   } catch {
     return null;
   }
+}
+
+/** The presets' hosts, as the server has them. */
+const PRESET_HOSTS = {
+  google: ["oauth2.googleapis.com", "accounts.google.com", "openidconnect.googleapis.com", "www.googleapis.com"],
+  microsoft: ["login.microsoftonline.com", "graph.microsoft.com"],
+} as const;
+
+/**
+ * Every host the client secret, a code or a token goes to, or the browser,
+ * the token endpoint's first: what is shown before a secret is typed. Null
+ * while it is not known: an issuer is asked first (discovered).
+ */
+export function endpointHostsOf(f: FormState, discovered: readonly string[] | null): string[] | null {
+  if (f.preset !== "generic") return [...PRESET_HOSTS[f.preset]];
+  if (!f.byEndpoints) return discovered ? [...discovered] : null;
+  const token = hostOf(f.tokenEndpoint);
+  const personal = f.grant === "authorization_code";
+  const others = [personal ? f.authorizationEndpoint : "", f.revocationEndpoint, personal ? f.userinfoEndpoint : ""].filter((u) => u.trim() !== "").map(hostOf);
+  if (token === null || others.includes(null)) return null;
+  return [token, ...[...new Set(others as string[])].filter((h) => h !== token).sort()];
+}
+
+/** The ones among them that nobody typed: each is confirmed, or the connection is not made. */
+export function unnamedHosts(f: FormState, hosts: readonly string[] | null): string[] {
+  if (f.preset !== "generic" || !hosts) return [];
+  const given = f.byEndpoints ? hosts[0] : hostOf(f.issuer);
+  return hosts.filter((h) => h !== given);
+}
+
+/** The redirect URI to register: the token endpoint's host, and a provider's other ones. */
+export function redirectFor(f: FormState, redirectBase: string | null | undefined, discovered: readonly string[] | null = null): string | null {
+  if (!redirectBase || f.grant !== "authorization_code") return null;
+  const hosts = endpointHostsOf(f, discovered);
+  if (!hosts) return null;
+  return redirectBase + (f.preset === "generic" ? hosts : hosts.slice(0, 1)).map((h) => encodeURIComponent(h).replace(/%3A/g, ":")).join("~");
 }
 
 type Tone = "ok" | "warn" | "error" | "muted" | "live";

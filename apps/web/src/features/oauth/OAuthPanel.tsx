@@ -39,6 +39,17 @@ export function OAuthPanel({ org, project, env, item, own, onChanged }: { org: s
 
   const connect = useMutation({
     mutationFn: async ({ c, another }: { c: OAuthConnection; another: boolean }) => {
+      // What it was shown with is what is connected, to nowhere else: the
+      // server refuses another version.
+      if (
+        c.provider.preset === "generic" &&
+        !(await confirm({
+          title: `Connect ${item}`,
+          body: `Your browser goes to the provider. The code it sends you back with, the client secret and the tokens go to ${c.provider.endpointHosts.join(", ")}, and nowhere else. Go on if ${c.provider.endpointHosts.length === 1 ? "that is" : "those are"} the provider you mean.`,
+          confirmLabel: "Connect",
+        }))
+      )
+        return;
       // Never by accident: another account is refused unless this was asked.
       if (
         another &&
@@ -50,7 +61,7 @@ export function OAuthPanel({ org, project, env, item, own, onChanged }: { org: s
         }))
       )
         return;
-      const begun = await api.startOAuthAuthorization(org, project, env, item, another ? { confirmAccountChange: true } : {});
+      const begun = await api.startOAuthAuthorization(org, project, env, item, { expectedVersionId: c.versionId, ...(another ? { confirmAccountChange: true } : {}) });
       if (!safeToOpen(begun.authorizationUrl)) throw new Error("The provider's address is not https.");
       remember(begun.state, { org, project, env, item });
       window.location.assign(begun.authorizationUrl);
@@ -103,6 +114,10 @@ export function OAuthPanel({ org, project, env, item, own, onChanged }: { org: s
       <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1.5 text-[13px]">
         <dt className="text-muted">Account</dt>
         <dd data-testid="oauth-account">{c.account?.label ?? (personal ? "Not known" : "The client's own")}</dd>
+        <dt className="text-muted">Provider's hosts</dt>
+        <dd className="min-w-0 break-words font-mono text-[12.5px]" data-testid="oauth-endpoint-hosts">
+          {c.provider.endpointHosts.join(" ")}
+        </dd>
         <dt className="text-muted">Token endpoint</dt>
         <dd className="min-w-0 break-all font-mono text-[12.5px]">{c.provider.tokenEndpoint}</dd>
         <dt className="text-muted">Client ID</dt>
@@ -141,7 +156,7 @@ export function OAuthPanel({ org, project, env, item, own, onChanged }: { org: s
       {held && personal && !c.hasRefreshToken && (
         <Callout tone="warn">The provider gave no refresh token: it has to be connected again when its access token ends.</Callout>
       )}
-      <p className="text-xs text-muted">A Capability that names this item gives its Broker the access token. The client secret and the refresh token are shown to nobody.</p>
+      <p className="text-xs text-muted">A Capability that names this item gives its Broker the access token. The client secret and the refresh token are shown to nobody, and go to the provider's hosts alone.</p>
       <div className="flex flex-wrap gap-2">
         {personal && (
           <Button size="sm" variant={held ? "secondary" : "primary"} data-testid="oauth-connect" loading={connect.isPending} disabled={busy || c.paused} onClick={() => connect.mutate({ c, another: false })}>

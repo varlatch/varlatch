@@ -717,7 +717,7 @@ export class VarlatchClient {
     project: string,
     environment: string,
     item: string,
-    input: { confirmAccountChange?: boolean } = {},
+    input: { confirmAccountChange?: boolean; expectedVersionId?: string } = {},
   ): Promise<OAuthAuthorization> {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/authorizations`, input);
   }

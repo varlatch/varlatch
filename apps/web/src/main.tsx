@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "./features/oauth/arrive";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { detectBackend } from "./lib/backend";

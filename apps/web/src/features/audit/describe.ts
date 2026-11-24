@@ -236,6 +236,8 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       ...(after ? [after] : []),
     ],
   });
+  // Where its secrets go: named when it is made, changed and connected.
+  const oauthHosts = str(m.endpointHosts) ? `, at ${str(m.endpointHosts)!.split(",").join(", ")}` : "";
   const oauthChecked = () => {
     const why = str(m.reason) ? `: ${str(m.reason)!.replace(/[-_]/g, " ")}` : "";
     switch (str(m.outcome)) {
@@ -259,7 +261,7 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         icon: "pencil",
         // ADR-0061, ADR-0062: a seed of one-time codes, an OAuth connection.
         title: m.oauth === true ? (r.previousVersionId ? "OAuth connection changed" : "OAuth connection added") : m.totp === true ? "One-time code seed set" : r.previousVersionId ? "Value changed" : "Value set",
-        segments: [m.oauth === true ? (r.previousVersionId ? "changed the OAuth connection " : "added the OAuth connection ") : m.totp === true ? "set the seed of " : r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names)],
+        segments: [m.oauth === true ? (r.previousVersionId ? "changed the OAuth connection " : "added the OAuth connection ") : m.totp === true ? "set the seed of " : r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names), ...(m.oauth === true && oauthHosts ? [oauthHosts] : [])],
       };
     case "value.deleted":
       return { icon: "trash", title: "Value removed", segments: ["removed ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names, "from")] };
@@ -550,7 +552,7 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
 
     // ---- integrations
     case "sync.connection_created":
-      if (m.connection === "oauth") return oauthEvent("plug", "OAuth connection connected", "connected ");
+      if (m.connection === "oauth") return oauthEvent("plug", "OAuth connection connected", "connected ", oauthHosts);
       return {
         icon: "plug",
         title: "Connection created",
@@ -594,7 +596,7 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       if (m.connection === "oauth")
         return str(m.outcome) === "refreshed"
           ? oauthEvent("rotate", "OAuth access token refreshed", "refreshed ")
-          : oauthEvent("plug", "OAuth connection connected again", "connected ", m.accountChanged === true ? " to another account" : " again");
+          : oauthEvent("plug", "OAuth connection connected again", "connected ", `${m.accountChanged === true ? " to another account" : " again"}${oauthHosts}`);
       return { icon: "key", title: "Credential replaced", segments: ["replaced the credential of ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.connection_revoked":
       if (m.connection === "oauth") return oauthEvent("trash", "OAuth connection disconnected", "disconnected ", str(m.atProvider) === "revoked" ? ", and revoked its tokens" : "");
