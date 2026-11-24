@@ -1,15 +1,17 @@
 name: Image scan
 
-# Every night, scan the images of the latest release for known
-# vulnerabilities with OSV-Scanner and report what it finds in the job
+# Every night, scan the images of the latest release, and of the last
+# TypeScript release while that is supported, for known vulnerabilities
+# with OSV-Scanner and report what it finds in the job
 # summary. The scan is report-only: findings leave the job green with a
 # warning, and only a scan that could not run (download, checksum, pull,
 # export, or a scanner error) fails it. Nothing calls this workflow,
 # release.yml included, so it never blocks a release.
 #
-# The images scanned are the ones the latest release's varlatch-release.json
-# pins by digest, which is what Compose pulls on an installation, so a tag
-# moved later does not change what is scanned. Each image is scanned for
+# The images scanned are the ones the release itself names by digest, which is
+# what an installation pulls, so a tag moved later does not change what is
+# scanned: varlatchd-image.txt of a Go release (from 0.50), varlatch-release.json
+# of a TypeScript one (scripts/ci-scan-images.mjs). Each image is scanned for
 # linux/amd64; the arm64 image is built from the same sources.
 # The summary records the release, the pinned digest, and the digest of the
 # platform image actually scanned.
@@ -28,26 +30,65 @@ on:
   schedule:
     - cron: "43 4 * * *"
   workflow_dispatch:
+    inputs:
+      release:
+        description: A release to scan in place of the latest, a prerelease too (v0.50.0-rc.4)
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 env:
+  # The last TypeScript release. Remove it, and its download below, once 0.23.0
+  # is no longer supported.
+  TYPESCRIPT_RELEASE: v0.23.0 # go/lib/release/manifest.go's LastTypeScriptRelease
   # Update only to a release published at least 7 days earlier: a malicious
   # release is usually caught and pulled within hours or days.
   OSV_SCANNER_VERSION: v2.7.0
   OSV_SCANNER_SHA256: 160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b # osv-scanner_linux_amd64
 
 jobs:
+  images:
+    name: Find the images
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.images.outputs.images }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+      - name: What the releases attach
+        id: images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          tag=${RELEASE:-$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)}
+          dir="$RUNNER_TEMP/releases"
+          for t in $(printf '%s\n' "$tag" "$TYPESCRIPT_RELEASE" | sort -u); do
+            mkdir -p "$dir/$t"
+            gh release download "$t" --repo "$GITHUB_REPOSITORY" --pattern varlatchd-image.txt --pattern varlatch-release.json --dir "$dir/$t"
+          done
+          images=$(node scripts/ci-scan-images.mjs "$dir")
+          echo "$images"
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+
   scan:
-    name: Scan ${{ matrix.image }}
+    name: Scan ${{ matrix.image }} ${{ matrix.tag }}
+    needs: images
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       # One image's failure must not hide the other image's report.
       fail-fast: false
       matrix:
-        image: [varlatchd, varlatch-web]
+        include: ${{ fromJSON(needs.images.outputs.images) }}
     steps:
       - name: Install OSV-Scanner
         run: |
@@ -60,39 +101,26 @@ jobs:
           chmod +x "$dir/osv-scanner"
           echo "$dir" >> "$GITHUB_PATH"
 
-      - name: Find the latest release's image
+      - name: Find the image for this platform
         id: image
         env:
-          GH_TOKEN: ${{ github.token }}
-          IMAGE: ${{ matrix.image }}
+          PINNED: ${{ matrix.pinned }}
         run: |
           set -euo pipefail
-          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
-          dir="$RUNNER_TEMP/release"
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern varlatch-release.json --dir "$dir" --clobber
-          pinned=$(jq -er --arg name "$IMAGE" '.images[$name].digest' "$dir/varlatch-release.json")
-          if ! [[ "$pinned" =~ ^ghcr\.io/[a-z0-9._-]+/${IMAGE}@sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::varlatch-release.json of $tag pins $IMAGE as '$pinned', not a ghcr.io image by digest"
-            exit 1
-          fi
           # The release pins a multi-platform index. Pull the linux/amd64
           # image it lists by its own digest, so the export below holds
           # exactly one platform whatever image store the runner's Docker
           # uses.
-          platform=$(docker buildx imagetools inspect --raw "$pinned" | jq -er '
+          platform=$(docker buildx imagetools inspect --raw "$PINNED" | jq -er '
             [.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")]
             | if length == 1 then .[0].digest else error("expected one linux/amd64 image, found \(length)") end')
-          {
-            echo "tag=$tag"
-            echo "pinned=$pinned"
-            echo "scanned=${pinned%@*}@$platform"
-          } >> "$GITHUB_OUTPUT"
+          echo "scanned=${PINNED%@*}@$platform" >> "$GITHUB_OUTPUT"
 
       - name: Scan
         env:
           IMAGE: ${{ matrix.image }}
-          TAG: ${{ steps.image.outputs.tag }}
-          PINNED: ${{ steps.image.outputs.pinned }}
+          TAG: ${{ matrix.tag }}
+          PINNED: ${{ matrix.pinned }}
           SCANNED: ${{ steps.image.outputs.scanned }}
         run: |
           set -euo pipefail

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -249,6 +250,21 @@ func TestImportRefusals(t *testing.T) {
 			break
 		}
 	}
+	// An audit event with an earlier one's id, in the middle of the rows a
+	// statement inserts: refused by the table's trigger, its row named.
+	twice := s
+	twice.Rows = maps.Clone(s.Rows)
+	events := slices.Clone(s.Rows["audit_events"])
+	var first any
+	for i, e := range events {
+		switch p, _ := e.Get("event_order"); p {
+		case float64(1):
+			first, _ = e.Get("id")
+		case float64(20):
+			events[i] = slices.Clone(e).Set("id", first)
+		}
+	}
+	twice.Rows["audit_events"] = events
 	used := t.TempDir()
 	if err := os.WriteFile(filepath.Join(used, "notes"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -276,6 +292,7 @@ func TestImportRefusals(t *testing.T) {
 		{"a damaged byte", empty(t), damaged, s.RootKEK, "damaged"},
 		{"a row not in canonical form", empty(t), notCanonical, s.RootKEK, "table installation: row 1: canonical: the row is not in canonical form"},
 		{"a broken foreign key", empty(t), sourceBundle(t, s, map[string][][]any{"org_memberships": {orphan}}, false), s.RootKEK, "foreign keys do not hold: org_memberships"},
+		{"an audit event twice", empty(t), sourceBundle(t, twice, nil, false), s.RootKEK, "table audit_events: row 20: "},
 		{"a sequence", empty(t), sourceBundle(t, s, nil, true), s.RootKEK, "sequences"},
 		{"a reverse bundle", empty(t), rev.Bytes(), s.RootKEK, "a reverse bundle"},
 		{"a session token carried", empty(t), withToken(t, s), s.RootKEK, "session.token holds a value"},
@@ -291,6 +308,46 @@ func TestImportRefusals(t *testing.T) {
 		if left, _ := filepath.Glob(filepath.Join(c.dir, importPrefix+"*")); len(left) != 0 && c.name != "a leftover that is not an import's" {
 			t.Errorf("%s: left %v", c.name, left)
 		}
+	}
+}
+
+// More rows than one statement inserts, and a rest: each row arrives, in its
+// order, as it was.
+func TestImportInStatements(t *testing.T) {
+	s := loadSource(t)
+	path := filepath.Join(t.TempDir(), "bundle")
+	scaleBundle(t, sourceBundle(t, s, nil, false), path, 1000)
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	res, err := importInto(t, dir, src, s.RootKEK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rev bytes.Buffer
+	if _, err := ExportReverse(context.Background(), &rev, Options{DataDir: dir, Release: "0.50.0-test"}); err != nil {
+		t.Fatal(err)
+	}
+	want, got := tablesOf(t, src)["audit_events"], tablesOf(t, rev.Bytes())["audit_events"]
+	if res.PerTable["audit_events"] != 1000 || len(want) != 1000 || len(got) < 1000 || !slices.Equal(got[:1000], want) {
+		t.Fatalf("%d events imported, %d of them back, of %d, or not as they were", res.PerTable["audit_events"], len(got), len(want))
+	}
+}
+
+// A statement is bounded in values and in bytes, whatever a row's size.
+func TestInserterFull(t *testing.T) {
+	in := inserter{names: make([]string, 18)}
+	for !in.full() {
+		in.args = append(in.args, make([]any, 18)...)
+		in.rows, in.bytes = in.rows+1, in.bytes+1000
+	}
+	if in.rows != insertArgs/18 {
+		t.Fatalf("%d rows to a statement, want %d", in.rows, insertArgs/18)
+	}
+	if big := (inserter{names: make([]string, 18), args: make([]any, 18), rows: 1, bytes: insertBytes}); !big.full() {
+		t.Fatal("a row of a statement's bytes is not flushed")
 	}
 }
 

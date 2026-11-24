@@ -136,6 +136,8 @@ type hooks struct {
 	// sync sees the parts a converge engine is made of once they exist
 	// (the g9a build drives its own engine's runs, sync = off).
 	sync func(writer *write.Writer, approvals *auth.Service, policy *outbound.Policy)
+	// beforeSubscribe runs as a dashboard asks for its live updates, admitted.
+	beforeSubscribe func()
 	// tailnetControl replaces the tailnet node's control server (tests: an
 	// in-process one), and tailnetCerts where the browser endpoint's
 	// certificate comes from (tests: a test CA, since a real one needs
@@ -392,7 +394,13 @@ func serve(opts Options, h *hooks) int {
 		defer public.Close()
 	}
 	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public,
-		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready}
+		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready,
+		// Host commands are served before the hub is made.
+		endStreams: func() {
+			if hub := live.Load(); hub != nil {
+				hub.EndStreams()
+			}
+		}}
 	env.backups = newBackups(env)
 	// The tailnet listener (step 4.13b), when tailnet = on: its node starts
 	// now and joins its tailnet in the background; the ordinary listener
@@ -449,7 +457,7 @@ func serve(opts Options, h *hooks) int {
 		accessOut = f
 	}
 
-	hub := realtime.New(realtime.Options{Store: store, Log: log})
+	hub := realtime.New(realtime.Options{Store: store, Log: log, BeforeSubscribe: h.beforeSubscribe})
 	live.Store(hub)
 	hubDone := make(chan struct{})
 	go func() {

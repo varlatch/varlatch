@@ -81,6 +81,17 @@ After every restore, the installation is held: it serves, and what it would
 deliver or destroy on its own waits for `sudo varlatch admin restore resume`
 ([Backup and recovery](docs/operations/backup.md)).
 
+### Security
+
+- **Dependencies with published advisories are updated:** `klauspost/compress`
+  (GO-2026-6865), `andybalholm/brotli` (GO-2026-6888), `golang.org/x/net`
+  (GO-2026-6860, GO-2026-6866) and `golang.org/x/crypto` (GO-2026-5932). The
+  prereleases before this one called the affected code of the first two, in
+  `varlatchd` and in the CLI's Broker; the others were linked and not called.
+  The image's base is distroless on Debian 13, whose certificate authorities and
+  time zones are current. A nightly check now names any advisory that concerns
+  code the programs call.
+
 ### API
 
 - **`GET /v1/installation/listeners` has a new node check reason,
@@ -284,6 +295,30 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
 
 ### Server
 
+- **`varlatch migrate --rollback` with a dashboard open.** The rollback's
+  barrier waited for every request, and an open dashboard's live updates are
+  one that does not end: the rollback was undone, with the new server serving
+  on, for as long as anyone had the dashboard open. The barrier ends them now,
+  and dashboards reconnect by themselves.
+- **The dashboard checks your access again when its live updates come back.**
+  What was signalled while they were down is lost, a change of your own role
+  among it: a secret you had revealed stayed on the page until its five minutes
+  were over. Now what is revealed is masked, and the organizations read again.
+- **Backup archives are compressed** (zstd), before they are sealed. An
+  installation's audit history takes a fraction of the room it took; sealed
+  values little less. `varlatchd` reads the archives 0.50.0-rc.1 to rc.3 and
+  their converter made; those prereleases do not read the new ones ("Unsupported
+  archive format"). `admin backup run` prints both sizes.
+- **An archive's check asks what a restore asks.** A backup's own check,
+  `--verify-remote` and `admin backup restore --check` also read the archive's
+  settings and its database's installation; the last two also make a
+  restore's writes, in a copy they throw away. An archive whose settings
+  could not be read passed them and was then refused. A restore does all of
+  it before it changes the data directory.
+- **An offline backup does not take its time.** `admin backup run` with
+  `varlatchd` stopped, `varlatch migrate --finish`'s final archive, the
+  converter's, and the copy `varlatch migrate --rollback` is made from were
+  paced as if somebody were served meanwhile.
 - **The check of a backup's remote copy checks that it is that archive.**
   `admin backup run --verify-remote`, and with it `varlatch migrate --finish
   --delete-old-data`, accepted any archive sealed with the same keys at the
@@ -375,6 +410,12 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
   exactly that name among the node's certificate domains: before it does, the
   node itself refuses the certificate, so the handoff's three attempts could
   be spent at once.
+- **`varlatch doctor` no longer advises a re-pin for a node that has not
+  joined yet.** Right after `setup` with tailnet ingress, its `tailnet.pin`
+  failed with `not-enrolled` and said to run `varlatch tailnet repin`, though
+  there is no pin yet. It now says that the node has not joined, and to wait.
+  A node that does not know its tailnet now (`tailnet-unknown`) is not sent to
+  re-pin either: there is nothing to compare its pin with.
 
 ### Documentation
 
@@ -415,9 +456,78 @@ unaffected: its images, Compose set and CLI do not change.
   the signature before they install anything.
 
 Changes since 0.50.0-rc.3, by pull request. Most changes were reviewed on
-branches of their own and merged together, by #463 and #332; where a change
-had a pull request of its own, it is named too.
+branches of their own and merged together, by #463, #332, #464 and #465;
+where a change had a pull request of its own, it is named too.
 
+<!-- SLOT #465 (merged d21d284e; reread 2026-11-24 against its head 24769f3b) -->
+- **`varlatch migrate --rollback` with a dashboard open (#465).** The
+  rollback's barrier waited for every request, and an open dashboard's live
+  updates are one that does not end by itself. While anyone had the dashboard
+  open, the rollback ran out of its drain and was undone. The barrier now
+  closes admission first and ends live-update streams while it drains. Behind
+  the barrier new streams are refused as maintenance, and dashboards reconnect
+  by themselves.
+- **The dashboard checks your access again when its live updates come back
+  (#465).** Signals sent while live updates were down are lost, including a
+  change of your own role. A secret revealed on the page stayed visible until
+  its five minutes ended. What is revealed is now masked on reconnect, and the
+  organizations are read again.
+- **Backup archives are compressed (#465).** Format 3 archives are now
+  compressed with zstd before they are sealed, and `admin backup run` prints
+  both the database size and the archive size. An installation's audit history
+  takes a fraction of the space it took; sealed values compress little.
+  `varlatchd` still reads the uncompressed archives that 0.50.0-rc.1 to rc.3
+  and their converter made; those earlier prereleases answer a compressed
+  archive with "Unsupported archive format".
+- **An archive's check asks what a restore asks (#465).** A backup's own
+  check, `--verify-remote` and `admin backup restore --check` now also read
+  the archive's settings and its database's installation. `--verify-remote`
+  and `admin backup restore --check` also run a restore's writes in a
+  temporary copy they throw away. A restore runs all of these checks before
+  it changes the data directory.
+- **Faster offline backups, frozen copies and migration imports (#465).**
+  `admin backup run` with `varlatchd` stopped, `varlatch migrate --finish`'s
+  final archive, the converter, and the copy `varlatch migrate --rollback`
+  makes are no longer paced as if clients were being served. `varlatch
+  migrate` also imports several rows per statement, with a page cache for its
+  indexes.
+- **Documentation and notices (#465).** Updated
+  [backup and recovery](docs/operations/backup.md),
+  [migrating to 0.50](docs/operations/migrate-to-0.50.md),
+  [upgrading](docs/operations/upgrade.md), `go/README.md` and
+  `THIRD-PARTY-NOTICES.md` for compressed archives, the rollback drain and
+  going back by hand to a release before rc.4.
+<!-- END SLOT #465 -->
+<!-- SLOT #464 (merged 902f2a74; reread 2026-11-24 against its head d7db122f) -->
+- **Dependencies with published advisories are updated (#464).** Updated
+  `klauspost/compress` (GO-2026-6865), `andybalholm/brotli` (GO-2026-6888),
+  `golang.org/x/net` (GO-2026-6860, GO-2026-6866), `golang.org/x/crypto`
+  (GO-2026-5932) and the `golang.org/x` modules they need, and regenerated
+  `THIRD-PARTY-NOTICES.md`. Earlier prereleases called the affected code of
+  the first two in `varlatchd` and in the CLI's Broker; the others were linked
+  and not called. The container image now uses distroless on Debian 13, with
+  current certificate authorities and time zones.
+- **`varlatch doctor` no longer advises a re-pin for a node that has not
+  joined (#464).** Right after `setup` with tailnet ingress, `tailnet.pin`
+  failed with `not-enrolled` and advised `varlatch tailnet repin` when no pin
+  existed yet. It now reports that the node has not joined and to wait. A node
+  that does not know its tailnet (`tailnet-unknown`) is not advised to re-pin
+  either.
+- **Upgrading from 0.23.0 documentation (#464).** Documented in
+  [migrating to 0.50](docs/operations/migrate-to-0.50.md) and
+  [install the CLI](docs/reference/install-the-cli.md) what 0.23.0's
+  `self-update`, dashboard and `upgrade` report about 0.50 and what to run
+  instead.
+- **Security scans, tailnet tests and CI (#464).** Added a nightly and manual
+  `govulncheck` job in `go.yml` that fails only on advisories affecting called
+  code. Updated `image-scan.yml` to read the image reference attached to a
+  release (`varlatchd-image.txt` for a Go release, `varlatch-release.json` for
+  a TypeScript release) and scan both the latest release and 0.23.0's images
+  while supported. Added tests for forged tailnet and forwarding headers,
+  PROXY preambles, host listeners and browser endpoint refusals, updated the
+  conformance inventory, and fixed `go/install/test-upgrade.sh` on hosted
+  runners with world-writable `/usr/local/bin`. No change to what is shipped.
+<!-- END SLOT #464 -->
 <!-- SLOT #332 (merged 886c4c3b; reread 2026-11-24 against its head 97a3e9b5) -->
 - **`varlatch upgrade --rollback` (#332)** returns to the release the last
   upgrade came from (0.50.0-rc.4 or later), with that release's kept

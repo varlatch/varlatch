@@ -85,6 +85,9 @@ type hostEnv struct {
 	serving *atomic.Bool
 	// ready is the /readyz checks of a running varlatchd; nil offline.
 	ready func(context.Context) (schema, kek, inst bool)
+	// endStreams ends the dashboards' live updates, in a running varlatchd;
+	// nil offline.
+	endStreams func()
 	// barrier serializes the reverse's barrier and release commands: one
 	// at a time makes, or removes, the frozen copy and its temporary name.
 	barrier sync.Mutex

@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -471,6 +472,230 @@ func TestBrowserEndpoint(t *testing.T) {
 	if res.StatusCode != 403 || !strings.Contains(body, `"code":"TAILNET_CONTEXT_UNAVAILABLE"`) {
 		t.Fatalf("the browser endpoint with tailnet access closed: %d %s", res.StatusCode, body)
 	}
+}
+
+// forgedIdentity is every header a proxy in front of a server might name a
+// caller with: Tailscale Serve's own, and the forwarding ones. A device on
+// the tailnet can send any of them.
+var forgedIdentity = map[string]string{
+	"X-Forwarded-For": "100.64.0.7", "X-Forwarded-Host": "varlatch.example.com", "X-Forwarded-Proto": "https", "X-Forwarded-Port": "443",
+	"X-Forwarded-Server": "varlatch", "X-Forwarded-User": "admin@example.com", "Forwarded": "for=100.64.0.7;host=varlatch.example.com;proto=https",
+	"X-Real-Ip": "100.64.0.7", "X-Client-Ip": "100.64.0.7", "True-Client-Ip": "100.64.0.7", "Via": "1.1 varlatch",
+	"Tailscale-User-Login": "admin@example.com", "Tailscale-User-Name": "Admin", "Tailscale-User-Profile-Pic": "https://example.com/a.png",
+	"Tailscale-App-Capabilities": `{"example.com/cap/varlatch":[{"admin":true}]}`, "Tailscale-Headers-Info": "https://tailscale.com/s/serve-headers",
+	"Tailscale-Funnel-Request": "?1", "Tailscale-Tags": "tag:admin", "Tailscale-Node": "nSOMEONEELSE", "Tailscale-Node-Name": "admin-laptop",
+}
+
+// Both tailnet listeners, the API and the browser endpoint, take a device
+// from the node's own answer about the connection, and from nothing the
+// device sends: no header names another device, another address or another
+// listener, and a PROXY protocol preamble (versions 1 and 2) starts no
+// request. trusted_proxies is set to all of the tailnet, the worst a
+// configuration can do. And neither listener is on the host: their ports
+// exist on the tailnet only.
+func TestForgedIdentityOnTheTailnetListeners(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	control := startTestControl(t)
+	ca, err := tailnettest.NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const apiPort, httpsPort = 18687, 18443
+	in := newInstall(t, fmt.Sprintf("tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = %d\n"+
+		"tailnet_https_port = %d\ntailnet_browser_origins = https://dash.example.com\ntrusted_proxies = 100.64.0.0/10\n", apiPort, httpsPort))
+	r := startWith(t, in, &hooks{tailnetControl: control.BaseURL(), tailnetCerts: ca})
+	defer func() { r.stop(t) }()
+	code, out, errOut := runAdmin(t, "bootstrap", "--cli-credential", "--config", in.conf)
+	m := bootstrapCLI.FindStringSubmatch(out)
+	if code != ExitOK || m == nil {
+		t.Fatalf("bootstrap: %d %q %q", code, out, errOut)
+	}
+	bearer := m[2]
+	waitReport(t, r, bearer, `"checks":{"listener":{"status":"pass"},"browserTls":{"status":"pass"`)
+
+	peer := &tsnet.Server{Dir: t.TempDir(), Hostname: "ci-1", ControlURL: control.BaseURL(), Ephemeral: true, AdvertiseTags: []string{"tag:ci"}, Logf: logger.Discard}
+	t.Cleanup(func() { _ = peer.Close() })
+	if _, err := peer.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	host := varlatchdAddr(t, ctx, peer)
+	apiAddr, httpsAddr := fmt.Sprintf("%s:%d", host, apiPort), fmt.Sprintf("%s:%d", host, httpsPort)
+	tlsConfig := &tls.Config{RootCAs: ca.Pool, ServerName: "varlatch.corp.ts.net"}
+	browser := &http.Client{Transport: &http.Transport{
+		DialContext:     func(ctx context.Context, _, _ string) (net.Conn, error) { return peer.Dial(ctx, "tcp", httpsAddr) },
+		TLSClientConfig: tlsConfig,
+	}}
+	send := func(c *http.Client, method, url, body string, headers map[string]string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		res, err := c.Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, url, err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	apiURL, endpoint := "http://"+apiAddr, fmt.Sprintf("https://varlatch.corp.ts.net:%d", httpsPort)
+
+	// What each listener says the device is, with every header and without.
+	for name, l := range map[string]struct {
+		client *http.Client
+		url    string
+	}{"the API": {peer.HTTPClient(), apiURL + "/v1/me"}, "the browser endpoint": {browser, endpoint + "/v1/tailnet/context"}} {
+		code, honest := send(l.client, "GET", l.url, "", nil)
+		if code != 200 || !strings.Contains(honest, `"nodeName":"ci-1"`) || !strings.Contains(honest, `"tags":["tag:ci"]`) {
+			t.Fatalf("%s: %d %s", name, code, honest)
+		}
+		if code, forged := send(l.client, "GET", l.url, "", forgedIdentity); code != 200 || forged != honest {
+			t.Errorf("%s, every header forged: %d %s\nwithout: %s", name, code, forged, honest)
+		}
+		for k, v := range forgedIdentity {
+			if code, forged := send(l.client, "GET", l.url, "", map[string]string{k: v}); code != 200 || forged != honest {
+				t.Errorf("%s, %s forged: %d %s\nwithout: %s", name, k, code, forged, honest)
+			}
+		}
+	}
+	// A write's audit names this device.
+	if code, body := send(peer.HTTPClient(), "POST", apiURL+"/v1/organizations", `{"name":"Forged","slug":"forged"}`, forgedIdentity); code != 201 {
+		t.Fatalf("a write with forged headers: %d %s", code, body)
+	}
+	if listener, ctxJSON := tailnetAuditOf(t, r, bearer, "forged"); listener != "tailnet" || !strings.Contains(ctxJSON, `"nodeName":"ci-1"`) || !strings.Contains(ctxJSON, `"tags":["tag:ci"]`) ||
+		strings.Contains(ctxJSON, "admin") || strings.Contains(ctxJSON, "nSOMEONEELSE") {
+		t.Errorf("the audit of a write with forged headers: %s %s", listener, ctxJSON)
+	}
+	// On the ordinary listener they make no device either.
+	if code, body := send(http.DefaultClient, "GET", "http://"+r.addr+"/v1/me", "", forgedIdentity); code != 200 || strings.Contains(body, "ci-1") || strings.Contains(body, `"recognized":true`) || !strings.Contains(body, `"listener":"ordinary"`) {
+		t.Errorf("the ordinary listener with forged headers: %d %s", code, body)
+	}
+	// The access log's client is the connection's peer, whatever trusted_proxies says.
+	ip4, _ := peer.TailscaleIPs()
+	const want = 5 // the two "every header" reads, the two of the header alone, and the write
+	fromPeer := 0
+	var logged []byte
+	for deadline := time.Now().Add(10 * time.Second); fromPeer < want && time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if logged, err = os.ReadFile(in.accessLog); err != nil {
+			t.Fatal(err)
+		}
+		fromPeer = 0
+		for _, line := range strings.Split(strings.TrimSpace(string(logged)), "\n") {
+			var e struct {
+				Client       string
+				ForwardedFor *string
+			}
+			if json.Unmarshal([]byte(line), &e) != nil || e.ForwardedFor == nil || *e.ForwardedFor != "100.64.0.7" {
+				continue
+			}
+			if e.Client == "100.64.0.7" {
+				t.Fatalf("a forged X-Forwarded-For is the client in the access log: %s", line)
+			}
+			if e.Client == ip4.String() {
+				fromPeer++
+			}
+		}
+	}
+	if fromPeer < want {
+		t.Errorf("%d requests logged from %s with the forged header, want %d:\n%s", fromPeer, ip4, want, logged)
+	}
+
+	// A PROXY preamble, and a request behind it.
+	v2 := "\r\n\r\n\x00\r\nQUIT\n" + "\x21\x11\x00\x0c" + "\x64\x40\x00\x07" + "\x7f\x00\x00\x01" + "\xc7\x38" + "\x48\xff"
+	for name, preamble := range map[string]string{"v1": fmt.Sprintf("PROXY TCP4 100.64.0.7 127.0.0.1 51000 %d\r\n", apiPort), "v2": v2} {
+		for where, addr := range map[string]string{"the API": apiAddr, "the browser endpoint": httpsAddr} {
+			slug := "proxy-" + name + "-" + strings.ReplaceAll(strings.TrimPrefix(where, "the "), " ", "-")
+			slug = strings.ToLower(slug)
+			body := `{"name":"Proxied","slug":"` + slug + `"}`
+			request := "POST /v1/organizations HTTP/1.1\r\nHost: varlatch.corp.ts.net\r\nAuthorization: Bearer " + bearer +
+				"\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " + strconv.Itoa(len(body)) + "\r\n\r\n" + body
+			c, err := peer.Dial(ctx, "tcp", addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = c.SetDeadline(time.Now().Add(20 * time.Second))
+			if where == "the API" {
+				_, err = io.WriteString(c, preamble+request)
+			} else if _, err = io.WriteString(c, preamble); err == nil {
+				// Over TLS, as a proxy would: the preamble in front of the handshake.
+				tc := tls.Client(c, tlsConfig)
+				if tc.Handshake() == nil {
+					t.Errorf("%s, a PROXY %s preamble: the handshake behind it was served", where, name)
+				}
+				continue
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			answer, _ := io.ReadAll(c)
+			_ = c.Close()
+			if status := string(answer); !strings.HasPrefix(status, "HTTP/1.1 400 ") {
+				t.Errorf("%s, a PROXY %s preamble: %q", where, name, status)
+			}
+			if code := do(t, http.DefaultClient, "GET", "http://"+r.addr+"/v1/organizations/"+slug, bearer, "", nil); code != 404 {
+				t.Errorf("%s, a PROXY %s preamble: the request behind it was served (%d)", where, name, code)
+			}
+		}
+	}
+
+	// Nothing of this process listens on the host at the tailnet's ports: a
+	// neighbour of the host or of the container has no way in but the
+	// ordinary listener.
+	if ports, ok := listeningPorts(t); ok {
+		_, p, _ := net.SplitHostPort(r.addr)
+		if ordinary, _ := strconv.Atoi(p); !ports[ordinary] {
+			t.Fatalf("the ordinary listener's port %d is not among this process's: %v", ordinary, ports)
+		}
+		if ports[apiPort] || ports[httpsPort] {
+			t.Errorf("a tailnet port listens on the host: %v", ports)
+		}
+	}
+}
+
+// listeningPorts are the TCP ports this process listens on, on the host
+// (Linux: its sockets in /proc); false where that cannot be read.
+func listeningPorts(t *testing.T) (map[int]bool, bool) {
+	t.Helper()
+	fds, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return nil, false
+	}
+	mine := map[string]bool{}
+	for _, fd := range fds {
+		if target, err := os.Readlink("/proc/self/fd/" + fd.Name()); err == nil && strings.HasPrefix(target, "socket:[") {
+			mine[strings.TrimSuffix(strings.TrimPrefix(target, "socket:["), "]")] = true
+		}
+	}
+	ports := map[int]bool{}
+	for _, f := range []string{"/proc/self/net/tcp", "/proc/self/net/tcp6"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return nil, false
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			w := strings.Fields(line)
+			// sl, local address, remote address, state (0A: listening), ..., inode.
+			if len(w) < 10 || w[3] != "0A" || !mine[w[9]] {
+				continue
+			}
+			_, hexPort, _ := strings.Cut(w[1], ":")
+			port, err := strconv.ParseInt(hexPort, 16, 32)
+			if err != nil {
+				t.Fatalf("%s: %q", f, line)
+			}
+			ports[int(port)] = true
+		}
+	}
+	return ports, true
 }
 
 // repinnedEvents counts the tailnet.repinned events in in's database.

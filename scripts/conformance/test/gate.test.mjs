@@ -361,18 +361,21 @@ test("a gate run needs its own implementation fingerprint", () => {
   assert.match(verdict.problems.join(), /recorded no implementation fingerprint/);
 });
 
-test("today no target can pass the gate: doctor's pending-upgrade check and the lifecycle replacements are open", () => {
+test("today no target can pass the gate: the lifecycle suites that wait for the rehearsals and the real tailnet are open", () => {
   const open = replacements(inventory).filter((r) => r.replacement && typeof r.replacement === "object" && "open" in r.replacement);
-  // Doctor's checks are the Go installation's (step 6.5), but for its
-  // pending upgrade (step 6.6's journal); each lifecycle and installer
-  // suite is written in the step its Go counterpart lands. The Convex realtime checks' are
+  // Every check is replaced or has its Go counterpart named: doctor's are
+  // the Go installation's (step 6.5), its pending upgrade the CLI's own
+  // (step 6.6's journal), which the runner's doctor does not ask. Each
+  // lifecycle and installer suite is written in the step its Go counterpart
+  // lands. The Convex realtime checks' are
   // written (step 3.5): the degraded-state checks, which run on every
   // target.
   assert.ok(!open.some((r) => r.of.startsWith("realtime.")));
   for (const [id, c] of Object.entries(inventory.checks)) {
     if (id.startsWith("realtime.") && typeof c.replacement === "string") assert.match(c.replacement, /^(realtime-degraded|dashboard)\./, id);
   }
-  assert.ok(open.some((r) => r.of.startsWith("doctor.") && /step 6/.test(r.replacement.open)));
+  assert.deepEqual(open.filter((r) => inventory.checks[r.of]).map((r) => r.of), []);
+  assert.match(inventory.checks["doctor.release-pending-upgrade"].replacement.none, /go\.yml.*TestDoctorReadsTheUpgradeJournal/);
   // An external suite is open until its Go counterpart lands; the backup
   // suites', the Compose recovery gate's (the image test, step 6.10a), the
   // move's (step 6.9), setup's and its public ingress' (step 6.4a, with 6.3's
@@ -383,6 +386,8 @@ test("today no target can pass the gate: doctor's pending-upgrade check and the 
     // The Coolify live checks' Go counterparts are manual too (step 4.9e:
     // build tag coolifylive, run by hand on the lab, with their evidence).
     else if (["coolify-live", "coolify-live-expands"].includes(name)) assert.match(suite.replacement.none, /TestCoolifyLive\w+ \(build tag coolifylive/, name);
+    // The Go CLI has no adopt: there is nothing to run.
+    else if (name === "adopt") assert.match(suite.replacement.none, /never manages a Compose installation/);
     else assert.ok(open.some((r) => r.of.startsWith(`${name} (`)), name);
   }
 

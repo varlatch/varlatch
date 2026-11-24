@@ -80,7 +80,8 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 		if err != nil {
 			return res, err
 		}
-		_, err = live.Snapshot(ctx, snap, storage.SnapshotOptions{})
+		// The caller holds the data directory: nobody is served from it.
+		_, err = live.Snapshot(ctx, snap, storage.Unpaced)
 		if cerr := live.Close(); err == nil {
 			err = cerr
 		}

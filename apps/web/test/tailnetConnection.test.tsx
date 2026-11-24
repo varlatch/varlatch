@@ -180,6 +180,25 @@ describe("the tailnet browser endpoint, from the dashboard", () => {
     expect(shown).toContain("shared into the tailnet from another one");
   });
 
+  it("connected, but this device does not meet the requirements: it says so, and claims no read", async () => {
+    const connection = { status: "connected", endpoint: ENDPOINT, device: DEVICE, checkedAt: Date.now() } as unknown as typeof state.connection;
+    const render = async (deviceRefused: boolean) => {
+      let shown!: ReactTestRenderer;
+      await act(async () => {
+        shown = create(<TailnetConnectStatus connection={connection} connect={() => {}} deviceRefused={deviceRefused} />);
+      });
+      const status = shown.root.find((n) => n.type === "span" && n.props["data-testid"] === "tailnet-connect-status");
+      const seen = { status: status.props["data-status"], text: status.children.join("") };
+      await act(async () => shown.unmount());
+      return seen;
+    };
+    expect(await render(true)).toEqual({
+      status: "refused",
+      text: "Connected from this browser as laptop, but this device does not meet the requirements here (checked by Varlatch).",
+    });
+    expect(await render(false)).toMatchObject({ status: "connected", text: expect.stringContaining("Reading values through the tailnet.") });
+  });
+
   it("never sends a disclosure again when the endpoint stops answering, and checks the connection instead", async () => {
     endpoint = async () => Response.json(DEVICE);
     await mount();

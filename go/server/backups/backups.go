@@ -16,9 +16,9 @@
 //     version and canary, and the schema version. It refuses a snapshot
 //     taken during an incomplete Root KEK rotation, and one whose canary
 //     the loaded Root KEK does not open;
-//  4. hashes the components for the manifest and seals the snapshot and
-//     the non-key configuration into a format-3 archive, staged in the
-//     run's work directory;
+//  4. hashes the components for the manifest, then compresses and seals the
+//     snapshot and the non-key configuration into a format-3 archive,
+//     staged in the run's work directory;
 //  5. opens it again (integrity, compatibility with this release, the Root
 //     KEK match). Steps 4 and 5 each go at SealRate (pace), and derive the
 //     archive key (scrypt) once between them (a KeyCache, zeroed when the
@@ -91,8 +91,9 @@ type Options struct {
 	// Now is the clock (time.Now).
 	Now func() time.Time
 	// SealRate is the backup's pace after the snapshot, in bytes per
-	// second: the manifest's hashing, the sealing and the archive's check
-	// each go at it (pace). 0 is DefaultSealRate, below 0 unpaced (tests).
+	// second, before compression: the manifest's hashing, the sealing and
+	// the archive's check each go at it (pace). 0 is DefaultSealRate, below 0 unpaced (an
+	// offline run, tests).
 	SealRate int64
 	// Snapshot paces the snapshot (zero: lib/storage's defaults).
 	Snapshot storage.SnapshotOptions
@@ -253,7 +254,9 @@ const spaceMargin = 64 << 20
 // RequiredSpace is the free space a run needs beside a database of
 // dbBytes (the file and its WAL): the snapshot, a temporary file the size
 // of the database, then the archive and, while it is checked, its
-// unpacked copy, plus a margin. Setup and doctor (step 6) count it too.
+// unpacked copy, plus a margin. The archive counts as the database's size:
+// it is compressed, but what a database holds sealed compresses little.
+// (doctor's disk.free counts the snapshot only.)
 func RequiredSpace(dbBytes int64) int64 { return 3*dbBytes + spaceMargin }
 
 // Run takes one backup now.
@@ -347,7 +350,7 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	// The snapshot is not needed any more: free its room before the check.
 	_ = os.Remove(snapshot)
 
-	verification, err := s.verify(ctx, id, staged, bek, work, keys)
+	verification, err := s.verify(ctx, id, staged, bek, work, keys, false)
 	if testHooks.verified != nil {
 		testHooks.verified()
 	}
@@ -680,9 +683,15 @@ func schemaOf(ctx context.Context, path string) (version, compatibleFrom int64, 
 
 // verify opens the archive again (its integrity: it opens, and is the
 // archive id and not another one sealed under the same key, such as an
-// older copy at its key in the bucket), and checks this release restores it
-// and the Root KEK opens its canaries.
-func (s *Service) verify(ctx context.Context, id, archive string, bek backup.BEK, scratch string, keys *backup.KeyCache) (backup.Verification, error) {
+// older copy at its key in the bucket, and holds what a restore reads of
+// it: contents), and checks this release restores it and the Root KEK opens
+// its canaries. With writes it makes a restore's writes too (reconcile), in
+// the copy it unpacks. Not for a run's own check: the snapshot is of the
+// database this server writes audit events to all the time, and the copy,
+// the database's size, would go to the disk at once, the one the server's
+// commits wait for. VerifyRemote's is asked for, and is the copy
+// `varlatch migrate --finish` trusts when it discards the database.
+func (s *Service) verify(ctx context.Context, id, archive string, bek backup.BEK, scratch string, keys *backup.KeyCache, writes bool) (backup.Verification, error) {
 	v := backup.Verification{TargetRelease: buildinfo.Version}
 	// Every check of an unpaced Open, paced like the sealing, with the key
 	// the sealing derived.
@@ -696,8 +705,22 @@ func (s *Service) verify(ctx context.Context, id, archive string, bek backup.BEK
 		s.o.Log.Warn("backup: the archive is another one", "archive", archive, "archiveId", id, "found", o.Manifest.ArchiveID)
 		_ = o.Close()
 	} else {
-		v.Integrity = true
+		// The archive, and what a restore of it reads: the settings, and
+		// the database's installation.
+		if _, err := contents(ctx, o, s.o.RootKEK); err != nil {
+			s.o.Log.Warn("backup: the archive opens, but a restore would refuse it", "archive", archive, "error", err)
+		} else {
+			v.Integrity = true
+		}
+		// This release restores it: its schema, then, asked to, a restore's
+		// own writes, made in the copy unpacked here, which is thrown away.
 		v.Compatibility = Compatible(ctx, o.Manifest, o.Path(backup.ComponentDatabase))
+		if writes && v.Compatibility && v.Integrity {
+			if err := reconcile(ctx, o, s.o.RootKEK, s.o.Now()); err != nil {
+				s.o.Log.Warn("backup: the archive opens, but a restore would fail on it", "archive", archive, "error", err)
+				v.Compatibility = false
+			}
+		}
 		candidates := map[int][]byte{}
 		for _, version := range o.Manifest.RequiredKeyVersions {
 			candidates[version] = s.o.RootKEK
@@ -803,7 +826,7 @@ func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verificat
 	if _, err := client.Download(ctx, key, downloaded); err != nil {
 		return backup.Verification{}, err
 	}
-	v, err := s.verify(ctx, id, downloaded, bek, work, &backup.KeyCache{})
+	v, err := s.verify(ctx, id, downloaded, bek, work, &backup.KeyCache{}, true)
 	if err != nil {
 		return v, err
 	}

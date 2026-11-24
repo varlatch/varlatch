@@ -5,6 +5,7 @@ package tailnet_test
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/api/openapicheck"
@@ -62,6 +64,49 @@ var listeners = map[string]struct {
 // the file's rows: the ordinary one, and a tailnet listener per name with
 // the same stand-in device check.
 func TestTypeScriptFixture(t *testing.T) {
+	fx := newFixtureServer(t)
+	f, store, server := fx.f, fx.store, fx.server
+	handlers := map[string]http.Handler{}
+	for name, l := range listeners {
+		handlers[name] = server(nil, fx.listener(l.res, l.browser))
+	}
+	cap := ""
+	for _, c := range f.Rows["capabilities"] {
+		if c["run_id"] == "known-tailnet" {
+			cap, _ = c["id"].(string)
+		}
+	}
+	paritytest.Replay(t, paritytest.Target{
+		Handler: server(fx.public, nil), Listeners: handlers, Store: store, Settled: fx.settled, Now: fx.now,
+		Path: strings.NewReplacer("{cap}", cap).Replace,
+		Check: func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder) {
+			openapicheck.Recorder{T: t}.Exchange(req, body, rec)
+		},
+	}, f)
+}
+
+// fixtureServer builds varlatchd's handlers on the fixture's rows.
+type fixtureServer struct {
+	f       paritytest.Fixture
+	store   *storage.DB
+	public  *url.URL
+	settled func()
+	now     func() time.Time
+	server  func(publicURL *url.URL, tl *httpserver.TailnetListener) http.Handler
+}
+
+// listener is a tailnet listener whose device check answers res: the
+// browser endpoint's with browserEndpoint, else the API's.
+func (fixtureServer) listener(res tailnet.Resolution, browserEndpoint bool) *httpserver.TailnetListener {
+	tl := &httpserver.TailnetListener{Resolve: func(context.Context, string) tailnet.Resolution { return res }}
+	if browserEndpoint {
+		tl.Browser = browser
+	}
+	return tl
+}
+
+func newFixtureServer(t *testing.T) fixtureServer {
+	t.Helper()
 	f, err := paritytest.Read(paritytest.Path("tailnet-v0.22.0.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -100,26 +145,57 @@ func TestTypeScriptFixture(t *testing.T) {
 		}
 		return h
 	}
-	handlers := map[string]http.Handler{}
-	for name, l := range listeners {
-		res := l.res
-		tl := &httpserver.TailnetListener{Resolve: func(context.Context, string) tailnet.Resolution { return res }}
-		if l.browser {
-			tl.Browser = browser
-		}
-		handlers[name] = server(nil, tl)
+	return fixtureServer{f: f, store: store, public: public, settled: vs.Settled, now: now, server: server}
+}
+
+// What a Requirement refuses on the API's listener it refuses on the browser
+// endpoint, with the same codes and the same record, as a page of the
+// dashboard asks for it: a device that does not meet it (the dashboard says
+// so), and any device while the node cannot say whose a connection is. The
+// names and states stay readable.
+func TestTheBrowserEndpointRefusesADeviceThatDoesNotMeetTheRequirement(t *testing.T) {
+	const env = "/v1/organizations/tn/projects/api/environments/production"
+	for name, c := range map[string]struct {
+		res            tailnet.Resolution
+		code, recorded string
+	}{
+		"a device the Requirement does not name": {device("corp.ts.net", "nCi1CNTRL", "ci-1", []string{"tag:ci"}, ""), "TAILNET_CONTEXT_UNAVAILABLE", `"nodeId":"nCi1CNTRL"`},
+		"the node cannot say whose device it is": {tailnet.Refusal(tailnet.ResolverUnavailable), "TAILNET_CONTEXT_REQUIRED", `"refused":"resolver-unavailable"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fx := newFixtureServer(t)
+			h := fx.server(nil, fx.listener(c.res, true))
+			send := func(method, path, body string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(method, path, strings.NewReader(body))
+				req.Host = "varlatch.corp.ts.net:8443"
+				req.Header.Set("Origin", "https://dash.example.com")
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+fx.f.Tokens["alice"])
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				return rec
+			}
+			denied := func() int { return len(paritytest.PGAudit(t, fx.store, "authorization.denied")) }
+			before := denied()
+			for n, r := range []*httptest.ResponseRecorder{
+				send("POST", env+"/disclosures", `{"items":["SECRET"]}`),
+				send("GET", env+"/effective-configuration?include=values", ""),
+			} {
+				if r.Code != 403 || !strings.Contains(r.Body.String(), `"code":"`+c.code+`"`) {
+					t.Errorf("request %d: %d %s", n, r.Code, r.Body)
+				}
+			}
+			if got := denied(); got != before+2 {
+				t.Fatalf("%d denials recorded, want 2", got-before)
+			}
+			for _, e := range paritytest.PGAudit(t, fx.store, "authorization.denied")[before:] {
+				if got, _ := json.Marshal(e["tailnet"]); !strings.Contains(string(got), c.recorded) {
+					t.Errorf("recorded %s, want %s", got, c.recorded)
+				}
+			}
+			if r := send("GET", env+"/effective-configuration", ""); r.Code != 200 || !strings.Contains(r.Body.String(), `"SECRET"`) {
+				t.Errorf("the names and states: %d %s", r.Code, r.Body)
+			}
+		})
 	}
-	cap := ""
-	for _, c := range f.Rows["capabilities"] {
-		if c["run_id"] == "known-tailnet" {
-			cap, _ = c["id"].(string)
-		}
-	}
-	paritytest.Replay(t, paritytest.Target{
-		Handler: server(public, nil), Listeners: handlers, Store: store, Settled: vs.Settled, Now: now,
-		Path: strings.NewReplacer("{cap}", cap).Replace,
-		Check: func(t testing.TB, req *http.Request, body []byte, rec *httptest.ResponseRecorder) {
-			openapicheck.Recorder{T: t}.Exchange(req, body, rec)
-		},
-	}, f)
 }

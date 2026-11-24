@@ -21,6 +21,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
+	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/freeze"
@@ -427,6 +428,9 @@ func openOffline(cfg *config.Config, what string, stderr io.Writer) (*hostEnv, i
 		return fail(ExitConfig, "the configured Root KEK does not open this installation's canary")
 	}
 	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: write.NewGates(), admission: maintenance.Open(cfg.DataDir, nil), log: slog.New(slog.NewTextHandler(stderr, nil))}
+	// No varlatchd runs (this process holds the data directory), so no
+	// request waits behind a backup: it is not paced.
+	env.tune = func(o *backups.Options) { o.SealRate, o.Snapshot = -1, storage.Unpaced }
 	env.backups = newBackups(env)
 	return env, ExitOK
 }

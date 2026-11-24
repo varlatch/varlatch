@@ -40,6 +40,31 @@ rules.
 
 ## Before you start
 
+### What 0.23.0 says about 0.50
+
+Once 0.50.0 is the latest release, 0.23.0 and earlier notice it, but look in it
+for files that a 0.50 release does not have. Nothing is changed or installed,
+and the words mislead:
+
+- **The CLI's `varlatch self-update`** refuses: `Release 0.50.0 has no
+  varlatch-cli-0.50.0.cjs with SHA256SUMS; releases before 0.9.0 predate the
+  single-file CLI.` Its `--check` names 0.50.0. Install the new CLI with
+  `install.sh` or `install.ps1`, which replace the old one, or with
+  `brew upgrade varlatch` where Homebrew installed it: [Install the
+  CLI](../reference/install-the-cli.md). Either CLI works with either server,
+  so people can do that before or after the migration. The desktop apps
+  that offer `varlatch self-update` mean the same.
+- **The dashboard's Release page** shows `varlatch upgrade 0.50.0`, for the
+  host. That command refuses too: `Release v0.50.0 has no varlatch-release.json
+  asset`, and that it "predates the release-set tooling". `varlatch upgrade
+  --check` ends the same way, with exit status 1, after it has recorded the
+  release for the dashboard; the host backup's nightly check logs it and goes
+  on. Follow this guide instead: 0.50 is not an upgrade of a Compose
+  installation.
+
+On the installation's host, keep the 0.23.0 CLI: its host commands are the
+Compose installation's (below).
+
 ### Upgrade to the last TypeScript release first
 
 `varlatch migrate` takes exactly one source: a Compose installation of the
@@ -674,7 +699,14 @@ sudo varlatch migrate --rollback --config /etc/varlatch/varlatchd.conf
 until the address moves back:
 
 1. The new server takes a barrier and freezes its state; it keeps running,
-   isolated.
+   isolated. Open dashboards lose their live updates at once, show maintenance
+   as soon as they ask the server for something, and come back by themselves.
+   Other requests and deliveries finish within `--drain` (60 seconds by
+   default). One that does not (a running backup, which takes several minutes
+   for a large database; a large audit export or CLI download that a client
+   reads slowly) undoes the rollback: the new server serves on and the message
+   says so. Run it again once that has ended. The copy of the frozen state is
+   made at full speed: nobody is served meanwhile.
 2. Its state is exported for the TypeScript release, with the same two
    changes as the forward migration: browser sessions end, and the audit
    log records the migration.
@@ -808,7 +840,8 @@ On a Tailscale topology (`varlatchd` with `network_mode: service:tailscale`):
 
 ### Archives made during the window
 
-The TypeScript release cannot read the 0.50 server's archives (format 3).
+The TypeScript release cannot read the 0.50 server's archives (format 3,
+compressed).
 The rollback's report lists every one made since the switch:
 
 ```text

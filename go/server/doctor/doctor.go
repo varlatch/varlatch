@@ -771,6 +771,15 @@ func tailnetPin(live *Live) Check {
 		default:
 			c.Remedy = "Check the auth key (expired, used or revoked?) and the control server's own log, put it right, then restart varlatchd. " + state
 		}
+	case live.TailnetClosed == closed.NotEnrolled:
+		// The first moments of a new node, as at setup's end: no pin yet, so
+		// nothing to re-pin.
+		c.Status, c.Detail = Fail, "tailnet access is closed: the node has not joined its tailnet yet (its pin is recorded when it does)"
+		c.Remedy = "Wait a moment, then run doctor again: the listener opens by itself when the node joins. A node that does not join says why here and in varlatchd's log"
+	case live.TailnetClosed == closed.PinUnknown:
+		// Nothing observed to compare the pin with: a re-pin offers nothing.
+		c.Status, c.Detail = Fail, "tailnet access is closed: the node does not know its tailnet now, so its pin cannot be checked"
+		c.Remedy = "Check that this host reaches the tailnet's control server, and varlatchd's log; access reopens by itself once the node is on its pinned tailnet again"
 	case live.TailnetClosed != "":
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetClosed
 		c.Remedy = "Run `sudo varlatch tailnet repin` on this host: it shows the pinned and the observed tailnet, and offers what can be re-pinned"

@@ -261,6 +261,20 @@ func TestLatestRelease(t *testing.T) {
 	}
 }
 
+// A node that has not joined, or that does not know its tailnet now, shows
+// nothing to compare a pin with: doctor never sends its operator to re-pin,
+// which is for a tailnet that changed.
+func TestNothingToRepinWithoutAnObservedTailnet(t *testing.T) {
+	for _, why := range []string{"not-enrolled", "tailnet-unknown", "waiting-for-control", "login-needed", "join-refused"} {
+		if c := tailnetPin(&Live{Tailnet: true, TailnetClosed: why}); c.Status != Fail || c.Remedy == "" || strings.Contains(c.Remedy, "repin") {
+			t.Errorf("%s: %+v", why, c)
+		}
+	}
+	if c := tailnetPin(&Live{Tailnet: true, TailnetClosed: "suffix-changed"}); !strings.Contains(c.Remedy, "varlatch tailnet repin") {
+		t.Errorf("a changed tailnet: %+v", c)
+	}
+}
+
 // TestFailingChecks: each failing check, with its status, class, what it
 // says and its remedy (step 6.5's acceptance list).
 func TestFailingChecks(t *testing.T) {
@@ -325,6 +339,12 @@ func TestFailingChecks(t *testing.T) {
 		{"a closed tailnet pin", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
 			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "suffix-changed"
 		}, "tailnet access is closed: suffix-changed", "varlatch tailnet repin"},
+		{"a node that has not joined yet", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
+			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "not-enrolled"
+		}, "the node has not joined its tailnet yet", "run doctor again"},
+		{"a node that does not know its tailnet", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
+			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "tailnet-unknown"
+		}, "does not know its tailnet now", "reaches the tailnet's control server"},
 		{"the node's tags not tailnet_tags", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://192.0.2.10\n", func(f *fixture) {
 			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "tags-differ"
 			f.in.Live.TailnetDetail = "The node's tags (none) are not tailnet_tags (tag:varlatch): on a self-hosted control server they are its pre-auth key's."

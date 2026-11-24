@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React from "react";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Grant, MemberReview } from "@varlatch/protocol";
@@ -17,13 +17,18 @@ const fake = vi.hoisted(() => ({
   navigate: vi.fn(),
   accessChanged: vi.fn(),
   toasts: [] as string[],
+  signal: () => {},
+  back: () => {},
 }));
 vi.hoisted(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { setInterval: globalThis.setInterval.bind(globalThis), clearInterval: globalThis.clearInterval.bind(globalThis) });
 });
 vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api, accessChanged: fake.accessChanged }) }));
-vi.mock("../src/lib/realtime", () => ({ useMeSignal: () => {} }));
+vi.mock("../src/lib/realtime", () => ({
+  useMeSignal: (_domains: string[], fn: () => void) => void (fake.signal = fn),
+  useLiveUpdatesBack: (fn: () => void) => void (fake.back = fn),
+}));
 vi.mock("../src/shell/Shell", () => ({ errorMessage: (err: unknown) => (err instanceof Error ? err.message : String(err)) }));
 vi.mock("../src/components/Toast", () => ({
   useToast: () => ({ success: (t: string) => fake.toasts.push(t), error: (t: string) => fake.toasts.push(t) }),
@@ -44,7 +49,7 @@ vi.mock("../src/components/Dialog", () => ({
     ) : null,
 }));
 
-import { dropLostOrganizations, lostOrganizations, mentionsOrganization } from "../src/lib/membership";
+import { dropLostOrganizations, lostOrganizations, mentionsOrganization, useMembershipWatcher } from "../src/lib/membership";
 import { DemoteDialog, RemoveMemberDialog, reviewCount } from "../src/features/access/MemberDialogs";
 import type { Names } from "../src/features/access/model";
 
@@ -149,6 +154,40 @@ describe("losing an organization", () => {
     const lost = await dropLostOrganizations(qc, async () => ({ items: [other] }), "acme");
     expect(lost.map((o) => o.slug)).toEqual(["acme"]);
     expect(qc.getQueryData(["grants", "acme"])).toBeUndefined();
+  });
+
+  it.each([
+    ["the membership signal", () => fake.signal()],
+    ["live updates back after a gap, which may have lost that signal", () => fake.back()],
+  ])("on %s: masks what is revealed, reads the organizations again and leaves a lost one", async (_why, happens) => {
+    fake.accessChanged.mockClear();
+    fake.navigate.mockClear();
+    fake.toasts.length = 0;
+    const lists = vi.fn().mockResolvedValue({ items: [other] });
+    fake.api = { listOrganizations: lists };
+    function Watcher() {
+      useMembershipWatcher();
+      return null;
+    }
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => {
+      root = create(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={["/o/acme/projects"]}>
+            <Routes>
+              <Route path="/o/:org/*" element={<Watcher />} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    expect(lists).not.toHaveBeenCalled();
+    await act(async () => happens());
+    await settle();
+    expect(fake.accessChanged).toHaveBeenCalledOnce();
+    expect(lists).toHaveBeenCalledOnce();
+    expect(fake.navigate).toHaveBeenCalledExactlyOnceWith("/", { replace: true });
+    expect(fake.toasts).toEqual(["You no longer have access to acme"]);
   });
 });
 

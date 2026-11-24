@@ -26,7 +26,7 @@
 FROM --platform=$BUILDPLATFORM busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec AS dirs
 RUN mkdir -p /out/data /out/conf /out/keys
 
-FROM gcr.io/distroless/static-debian12@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+FROM gcr.io/distroless/static-debian13@sha256:8ce6dd87e9823c5b48dcfb2c8604714ccb351ce59607327bcc4957448da279b5
 ARG VERSION
 ARG TARGETARCH
 COPY --from=assets --chmod=0555 varlatchd-${VERSION}-linux-${TARGETARCH} /opt/varlatch/varlatchd

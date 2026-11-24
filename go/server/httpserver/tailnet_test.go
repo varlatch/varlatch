@@ -173,7 +173,7 @@ func TestPrivateNetworkPreflight(t *testing.T) {
 		t.Errorf("another origin's preflight: %d %v", w.Code, w.Header())
 	}
 	for name, s := range map[string]http.Handler{"the plain tailnet listener": plainTailnet, "the ordinary listener": ordinary} {
-		if w := do(s, "OPTIONS", url, "", preflight(allowed)); w.Header().Get("Access-Control-Allow-Private-Network") != "" {
+		if w := do(s, "OPTIONS", url, "", preflight(allowed)); w.Header().Get("Access-Control-Allow-Private-Network") != "" || w.Header().Get("Access-Control-Allow-Origin") != "" {
 			t.Errorf("%s: %d %v", name, w.Code, w.Header())
 		}
 	}

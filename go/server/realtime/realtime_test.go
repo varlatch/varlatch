@@ -592,6 +592,19 @@ func TestCloseEndsEveryStream(t *testing.T) {
 	}
 }
 
+// EndStreams ends what is open, and only that: the hub takes streams after.
+func TestEndStreamsEndsTheOpenOnes(t *testing.T) {
+	w := newWorld(t, Options{})
+	a, b := w.subscribe("alice", w.session("alice")), w.subscribe("bob", w.session("bob"))
+	w.hub.EndStreams()
+	if ended(a) != ReasonShutdown || ended(b) != ReasonShutdown {
+		t.Fatalf("ended: %q %q", ended(a), ended(b))
+	}
+	if c := w.subscribe("alice", w.session("alice")); ended(c) != "" {
+		t.Fatalf("a stream opened after: %q", ended(c))
+	}
+}
+
 // Run publishes on Notify and, for another process's commits, on its poll;
 // it starts after the events committed before it.
 func TestRunPublishesAfterCommits(t *testing.T) {

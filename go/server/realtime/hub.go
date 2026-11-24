@@ -69,6 +69,8 @@ type Options struct {
 	Validate   time.Duration
 	Buffer     int
 	PerSession int
+	// BeforeSubscribe runs, in tests, as a stream is asked for.
+	BeforeSubscribe func()
 }
 
 // Hub reads the committed audit events, works out their signals and sends
@@ -473,6 +475,9 @@ func (h *Hub) startCursor(ctx context.Context) (int64, error) {
 // response ends. The hub's starting point is fixed before the stream
 // exists, so whatever commits after Subscribe returns reaches it.
 func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream, error) {
+	if h.opts.BeforeSubscribe != nil {
+		h.opts.BeforeSubscribe()
+	}
 	ok, err := h.live(ctx, query.New(h.opts.Store.Reader()), session, identity)
 	if err != nil {
 		return nil, err
@@ -536,12 +541,15 @@ func (h *Hub) Unsubscribe(s *Stream) {
 func (h *Hub) Close() {
 	h.mu.Lock()
 	h.closed = true
-	all := make([]*Stream, 0, len(h.streams))
-	for s := range h.streams {
-		all = append(all, s)
-	}
 	h.mu.Unlock()
-	for _, s := range all {
+	h.EndStreams()
+}
+
+// EndStreams closes every stream open now, as Close does, and takes new ones
+// after: for a gate that isolates the server, whose admission is closed first
+// (a stream is a request admitted before it, and never ends by itself).
+func (h *Hub) EndStreams() {
+	for _, s := range h.snapshot() {
 		s.close(ReasonShutdown)
 	}
 }
