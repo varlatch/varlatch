@@ -206,7 +206,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return status
 	}
 	if !staysRoot(cfg, sub, rest) {
-		if err := becomeOwner(cfg, func() { keepForOwner(cfg, sub, rest) }, stderr); err != nil {
+		if err := becomeOwner(cfg, func() { keepForOwner(cfg, filepath.Dir(path), sub, rest) }, stderr); err != nil {
 			fmt.Fprintf(stderr, "varlatchd admin %s: %v\n", sub, err)
 			return ExitConfig
 		}

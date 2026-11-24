@@ -15,6 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/release"
+	"github.com/varlatch/varlatch/go/lib/upgradejournal"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/tailnet"
@@ -195,10 +196,11 @@ func isLeftover(rel string) bool {
 }
 
 // keepForOwner keeps what a command reads outside the data directory open:
-// the two keys, a backup's destination, a restore's archive and key, a
+// the upgrade journal, the two keys, a backup's destination, a restore's archive and key, a
 // migration's bundle, the tailnet's key and a name takeover's authority. One
 // that cannot be opened is refused where it is used, as it would have been.
-func keepForOwner(cfg *config.Config, sub string, rest []string) {
+func keepForOwner(cfg *config.Config, configDir, sub string, rest []string) {
+	preread.Keep(filepath.Join(configDir, upgradejournal.File), nil)
 	preread.Keep(cfg.RootKEKFile, nil)
 	preread.Keep(cfg.BackupKeyFile, nil)
 	if cfg.Tailnet != nil && slices.Contains([]string{"tailnet", "migrate"}, sub) {

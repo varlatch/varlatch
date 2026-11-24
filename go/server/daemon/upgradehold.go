@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/upgradejournal"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 )
@@ -67,7 +68,9 @@ func upgradeOver(configDir string) error {
 }
 
 func readUpgrade(configDir string) (*upgradejournal.Journal, error) {
-	j, err := upgradejournal.Read(configDir)
+	// A host command run as root has it open: its directory may be root's
+	// alone.
+	j, err := upgradejournal.ReadWith(preread.ReadFile, configDir)
 	if err != nil {
 		return nil, fmt.Errorf("the upgrade journal %s cannot be read (%w), so it is not known whether an upgrade is half done: run sudo varlatch upgrade, of the newest release that was installed on this host, which finishes or undoes it",
 			filepath.Join(configDir, upgradejournal.File), err)
