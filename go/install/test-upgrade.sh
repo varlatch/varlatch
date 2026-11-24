@@ -263,11 +263,15 @@ must "the releases are served" [ -s "$work/source/source.json" ]
 
 curl -fsSL --retry 5 -o "$work/install.sh" "https://github.com/varlatch/varlatch/releases/download/v$FROM/install.sh"
 must "$FROM's install.sh is the published one" [ "$(sha256sum "$work/install.sh" | cut -d' ' -f1)" = "$FROM_INSTALL" ]
-must "$FROM: installed by its install.sh and set up" set_up sh "$work/install.sh" --server --
-must "$FROM serves" serves "$FROM"
-must "$FROM: a CLI credential" sign_in
-must "$FROM: data" make_data
-must "$FROM: the data is read back" has FIRST
+install_from() {
+  rm -f "$work/link" "$work/root-kek" "$work/backup-key"
+  must "$FROM: installed by its install.sh and set up" set_up sh "$work/install.sh" --server --
+  must "$FROM serves" serves "$FROM"
+  must "$FROM: a CLI credential" sign_in
+  must "$FROM: data" make_data
+  must "$FROM: the data is read back" has FIRST
+}
+install_from
 
 # --- 2. to the candidate ---
 
@@ -335,6 +339,7 @@ for step in stopped swapped started; do
   kill -KILL "$engine" 2>/dev/null || true
   wait "$engine" 2>/dev/null || true
   check "$name: killed on the way" journal_says in-progress
+  at=$(journal_step)
   echo "      at $at, $("$VARLATCH" --version) installed"
   restarted
   upgrade "$name-again" "$VARLATCH"
@@ -343,14 +348,24 @@ for step in stopped swapped started; do
   if journal_says undone; then
     check "$name: undone: $FROM serves" serves "$FROM"
   else
-    # It got through its checks before the kill.
+    # The candidate stood in the database's place, and serves it.
+    case "$at" in verified | snapshot | stopping | stopped) fail "$name: finished, and the database was not swapped" ;; esac
     check "$name: finished: $CANDIDATE serves" serves "$CANDIDATE"
+    check "$name: the journal says done" journal_says "done"
   fi
   check "$name: the data is there" has FIRST
   check "$name: the data directory is varlatch's" data_is_varlatchs
-  if [ "$failures" -gt 0 ] || ! journal_says undone; then break; fi
+  check "$name: the keys are root's" keys_are_roots
+  check "$name: varlatch doctor passes" doctor
+  if [ "$failures" -gt 0 ]; then finish; fi
+  if ! journal_says undone; then
+    rm -f "$tool"
+    uninstall
+    must "$name: uninstalled" host_is_empty
+    install_from
+    install -m 755 "$built/from/varlatch" "$tool"
+  fi
 done
-if [ "$failures" -gt 0 ]; then finish; fi
 must "from-kill: $FROM serves, to go on from" serves "$FROM"
 # And the candidate's varlatch, finished by the one it installed.
 install -m 755 "$client_bin" "$tool"
