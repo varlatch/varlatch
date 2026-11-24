@@ -1907,6 +1907,21 @@ may use; it never adds to the Agent's Grants.
     gives the use back, never touching `revoked_at`; any other failure leaves
     it spent. An older server matches no secret against any prefixed hash.
   - `server/capabilities` `delegation_test.go` covers all of it over HTTP.
+- **Pages, applications and pipes** (ADR-0064, `server/authz/place.go`,
+  `lib/targets`; Go only, capabilities `capabilities.destination-kinds` and
+  `capabilities.target-kinds`).
+  - `authz.ParsePlace` reads a Capability's destination: a `web:` or `app:`
+    selector, and else a host's as `ParseDestinationSelector` always read it
+    ("web:443" is the host named web). Neither the TypeScript server nor an
+    earlier varlatchd reads a new one, so such a row matches nothing there.
+  - `authz.Reported` is what a Broker says, and `Reading` what is compared and
+    recorded. A host's events keep their bytes.
+  - `capabilities.checkPlaces` refuses what does not go together at issuing:
+    hosts beside the other kinds (an older server would match the host alone,
+    for targets that are not a host's), another machine's application, a target
+    nothing takes. `authz.Takes` decides the last again at exercise.
+  - `targets.ParseAny` takes `pipe:` and `field:`; `targets.Parse`, which the
+    CLI's Broker uses, refuses them: it sends requests alone.
 - **Entry links** (ADR-0063, `server/entry`, `server/values/entry.go`,
   `httpserver/entry.go`; Go only, capability `values.entry-links`).
   - A row of `entry_links` (schema version 7): the hash of the link's secret,

@@ -135,6 +135,30 @@ fixes.
     and cancel links.
   - The database schema is version 7 (one new table). An earlier release
     ignores it, and a reverse migration carries none of it.
+- **Destinations and targets for brokers that type (#419, the Go server
+  only).** A Capability can name pages (`web:https://portal.example.com/login`)
+  and desktop applications on the broker's machine (`app:CRM Client@idn_…`) as
+  destinations, and `pipe:` (a JSON document over a pipe) and `field:` (typed
+  into a field) as targets. Hosts and the targets of a request are unchanged.
+  `/v1/meta` lists `capabilities.destination-kinds` and
+  `capabilities.target-kinds`.
+  [Pages, applications and pipes](docs/reference/typed-destinations.md) says
+  how they are compared, and what a broker can still do: Varlatch compares what
+  the broker reports.
+  - An exercise's `destination` is `{ host, port }`, `{ url, topUrl? }` or
+    `{ app, window? }`. An address that could be read two ways matches nothing;
+    queries and fragments are neither compared nor recorded.
+  - Issuing refuses hosts beside pages or applications (`mixed-destinations`),
+    an application on another machine than the broker's (`app-machine`), and a
+    target no destination takes (`target-without-destination`). An exercise
+    refuses a placement its destination does not take
+    (`placement-not-for-destination`).
+  - Audit events gain `destinationKind`, `selector`, `topDestination` and
+    `window` for these kinds.
+  - An OAuth connection's hosts bind pages too, and a connection that names
+    hosts goes to no application.
+  - No schema change. On an earlier release, as after a reverse migration to
+    0.23, such a Capability matches nothing.
 
 ### Server
 

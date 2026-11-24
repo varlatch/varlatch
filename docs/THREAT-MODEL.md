@@ -124,6 +124,8 @@ replay or a suite named here does not exist.
 | These limits fail closed on a server that does not know them (an earlier release after a rollback, the TypeScript server after a reverse migration): it accepts neither the credential, nor an exchange under the binding, nor the Capability | **SHIPPED GUARANTEE** | `server/capabilities.TestLimitsFailClosedOnAnOlderServer`; `server/migration/check.TestTheReverseChecksWithLimits` |
 | Reference expansion at exercise is strict and capability-bound: referenced Secrets must be named in the Capability, non-sensitive pull-ins require the Agent's `config.value.read` and are audited before use, and any unresolvable reference denies the exercise rather than sending literal `${NAME}` upstream | **SHIPPED GUARANTEE** | replay `capabilities`; `server/values.TestExpandReferences`; suite `broker` |
 | Destination constraints are canonical host+port; wildcards never match the apex; every hop is independently checked and successful exercise is audited (host+port + `item@versionId`) before decryption | **SHIPPED GUARANTEE** | `server/authz.TestDestinationVectors`; replay `capabilities`; suite `broker` |
+| For a Broker that types (Go server), a Capability's destinations are pages (scheme, host, port, path prefix of whole segments) or applications on the Broker's own machine. What the Broker reports is compared and recorded, refusals included; an address that could be read two ways (credentials, dot segments, encoded or doubly encoded separators, backslashes, control characters, another scheme) matches nothing; queries and fragments are neither compared nor recorded; a frame's page and the page around it both have to be named; the machine of an application is the authenticated Broker. Issuing never mixes these with hosts, and a value is released only for a target that its destination takes. **The report is the Broker's word: this is not containment** (§6) | **SHIPPED GUARANTEE** | `server/authz.TestParsePlace`, `server/authz.TestPagesMatch`, `server/authz.TestApplicationsMatch`, `FuzzPageMatch`, `FuzzPlace`; `go/server/capabilities` `places_test.go` |
+| On a server that does not know pages and applications, a Capability for them is neither issued nor exercised | **SHIPPED GUARANTEE** | `server/capabilities.TestAnOlderServerMatchesNoPage`; `server/authz.TestHostsMatch`, `FuzzPlace`; `server/migration/check.TestTheReverseChecksWithPlaces` |
 | In agent-safe runs the Agent Run's environment holds opaque placeholders and no reusable Varlatch credential; substitution happens only in broker-originated, TLS-verified requests to allowlisted destinations, at the Substitution Targets recorded on the Capability; redirects are relayed, never followed with substituted material; CONNECT to secret-using destinations is refused (no MITM) | **SHIPPED GUARANTEE** | `cmd/varlatch/internal/broker.TestBrokerScenarios`, `cmd/varlatch/internal/broker.TestWireVectors`, `cmd/varlatch/internal/broker.TestWrongCredentialReachesNothing`; suite `broker` (real TLS upstream, redirect and decoy targets) |
 | Substitution targets: a Placeholder is substituted only at a target the operator gave on the command line and varlatchd recorded on the Capability (a named header, query parameter, JSON pointer, or form field; never a transport-owned header), at most once per target; the Agent cannot add or widen a target. A secret-bearing agent-safe run without a target or `--omit` for every stored Secret does not start, and varlatchd refuses both issuance and exercise of a Capability without targets, including one issued before the upgrade. Ambiguity in a targeted surface blocks the request (stray or repeated Placeholders, repeated or folded headers, repeated names under any spelling, encoded Placeholders, duplicate JSON keys, mismatched content types, coded bodies). A request the Broker refuses before forwarding (a target, ambiguity, issuance, exercise or connection check that fails) sends zero bytes of it to the destination: before exercise nothing is decrypted, after exercise the value is dropped. A failure after forwarding began (a lost connection, an idle cutoff, a response the Broker will not relay) reaches the Agent as a `502` although the destination may have received and acted on the request. Exercise returns only the placed Secrets, and every version it decrypts, reference dependencies included, is named by a committed audit event first. Stored and Contract Secrets inherited from the operator's shell never reach the Agent, and with an active Contract the run needs `contract.read` | **SHIPPED GUARANTEE** | `cmd/varlatch/internal/broker.TestPlacementVectors`, `cmd/varlatch/internal/broker.TestSameTargetsVectors`, `cmd/varlatch/internal/broker.TestBrokerScenarios`; replay `capabilities`; suites `broker` and `strict-run` |
 | Response scrubbing (defense in depth, never part of the confidentiality guarantee): in the response to a Broker-substituted request, every value of 8 bytes or more exercised for that request (and a rotating item's retiring value; a shorter one is not scrubbed and is named, never shown) is replaced, where it appears complete, with a Placeholder in the status line, every header, and every body byte, as written, JSON-escaped, percent-encoded, and in base64/base64url at every alignment; an overlap region becomes one Placeholder and no byte of any match survives, at every chunking; framing is decided before any header is sent (a small identity body is read whole and relayed exactly when nothing matched; anything else is decoded from `gzip`/`deflate`/`br` and streamed; any other coding is a `502`); a failure after headers aborts without a terminating chunk; held bytes are never released on a timer or an error; substituted responses are bounded at 64 MiB of decoded content and 120 seconds idle; no value is held after a response ends | **SHIPPED GUARANTEE** | `cmd/varlatch/internal/matcher.TestStreamVectors` (every split, against the TypeScript output), `cmd/varlatch/internal/broker.TestBrokerScenarios`, `cmd/varlatch/internal/broker.TestWireVectors`, `cmd/varlatch/internal/broker.TestLimitsKeepTheirDefaults`; suite `broker` |
@@ -314,6 +316,37 @@ boundary. The limits:
   provider decides about, or delete one.
 - **The provider's account** is outside Varlatch: consent withdrawn there, a
   changed password or an administrator's policy ends a connection.
+
+**Destinations of a Broker that types** (the Go server: pages, applications)
+are compared with what the Broker *reports*. The limits:
+
+- **A Broker that lies** has the value once it is exercised, and can put it
+  anywhere: report the portal and type into a form of its own, or send it. No
+  destination of any kind contains such a Broker; Varlatch sees neither its
+  network nor its screen. What limits it is how many live Capabilities it was
+  given the secret of, how long they live, whether they work once, and what a
+  value is worth elsewhere (a one-time code or an access token ends by itself).
+- **A partly compromised Broker**, whose exercising part reports what the
+  browser or the window system says while something else drives the screen (a
+  model, a script, a person's remote session), is held to the rule: a page, an
+  application or a field the Capability does not name gets no value, and the
+  attempt is recorded with what was there. That is what this is for, and it
+  holds only while the report does not come from what drives the screen.
+- **Between the report and the typing** the page may navigate, a window may
+  come in front, an overlay may cover the field. Varlatch cannot see that; the
+  Broker has to look again after the answer.
+- **An application's name is a name.** Anything on the machine can show a
+  window called the same. The machine is not in question: it is the Broker that
+  authenticated, as far as each machine has an identity of its own.
+- **A page under the right address** can be the attacker's: a path the site lets
+  its users write to, a script injected there, a certificate the machine was
+  made to trust, a hosts file. A longer path prefix and an exact host narrow
+  it. `http:` pages are whoever is on the network's.
+- **An orchestrator** holding `capability.issue` chooses destinations, as it
+  does for hosts.
+- **The audit log** has the page's path and, when the Broker reports it, the
+  window's title; never a query, a fragment, or a value. A path or a title can
+  say something about a person: shorten what is reported.
 
 **Entry links** (the Go server) let somebody write one value without being
 given the right. What is entered is never a reference (`${NAME}`), so it draws

@@ -173,6 +173,11 @@ unlimited one after a rollback), no token of that issuer exchanges as that
 identity (`mixed-bindings` in the audit log) until the bindings of one kind
 are revoked.
 
+A machine that types a value into a page or a desktop application, or hands
+it to a process over a pipe, says so the same way: the Capability names
+[pages, applications and pipes](typed-destinations.md), and the broker reports
+where it types.
+
 An application that needs a person's API key does not have to handle it: it
 makes an [entry link](entry-links.md), the person enters the key in Varlatch,
 and a Capability uses it. A pending link ends when the credential that made it
