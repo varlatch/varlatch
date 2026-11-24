@@ -380,6 +380,9 @@ func (h *standHost) byHand(lines []string) {
 // reboot is the power coming back: nothing runs, and the enabled unit
 // starts what it may.
 func (h *standHost) reboot() {
+	// What is read after it is what the disk has, cut or not.
+	h.shadow.gone()
+	h.shadow.absorb()
 	h.boots++
 	h.svc.running = ""
 	_ = h.svc.Start(context.Background())
