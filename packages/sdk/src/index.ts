@@ -29,6 +29,9 @@ import type {
   ApiError,
   CapabilityExercise,
   OneTimeCode,
+  CreatedEntryLink,
+  EntryLink,
+  EntryLinkInput,
   OAuthAuthorization,
   OAuthAuthorizationAnswer,
   OAuthAuthorizationOutcome,
@@ -672,6 +675,29 @@ export class VarlatchClient {
       "DELETE",
       `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}`,
     );
+  }
+
+  /**
+   * Make a link a person enters one Secret's value with, once (capability
+   * values.entry-links, ADR-0063). The address is in this answer only.
+   */
+  createEntryLink(org: string, project: string, environment: string, input: EntryLinkInput): Promise<CreatedEntryLink> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/entry-links`, input);
+  }
+
+  /** The environment's entry links: a machine's own, a person's all (config.value.write). */
+  listEntryLinks(org: string, project: string, environment: string): Promise<Page<EntryLink>> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/entry-links`);
+  }
+
+  /** One entry link: its status says whether the value was entered. */
+  getEntryLink(org: string, project: string, environment: string, entryLinkId: string): Promise<EntryLink> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/entry-links/${encodeURIComponent(entryLinkId)}`);
+  }
+
+  /** Cancel a pending entry link. */
+  cancelEntryLink(org: string, project: string, environment: string, entryLinkId: string): Promise<void> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/entry-links/${encodeURIComponent(entryLinkId)}`);
   }
 
   /** The environment's own OAuth connections (capability oauth.connections, ADR-0062): no secret and no token of them. */

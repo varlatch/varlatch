@@ -120,6 +120,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "secret.reveal": "Reveal secrets",
   "secret.use": "Use secrets",
   "capability.issue": "Issue capabilities for brokers",
+  "entry-link.create": "Ask for values",
+  "entry-link.create-open": "Ask anyone for values",
   "contract.read": "View the contract",
   "contract.submit": "Push contract revisions",
   "contract.activate": "Activate contract revisions",
@@ -261,7 +263,7 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         icon: "pencil",
         // ADR-0061, ADR-0062: a seed of one-time codes, an OAuth connection.
         title: m.oauth === true ? (r.previousVersionId ? "OAuth connection changed" : "OAuth connection added") : m.totp === true ? "One-time code seed set" : r.previousVersionId ? "Value changed" : "Value set",
-        segments: [m.oauth === true ? (r.previousVersionId ? "changed the OAuth connection " : "added the OAuth connection ") : m.totp === true ? "set the seed of " : r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names), ...(m.oauth === true && oauthHosts ? [oauthHosts] : [])],
+        segments: [m.oauth === true ? (r.previousVersionId ? "changed the OAuth connection " : "added the OAuth connection ") : m.totp === true ? "set the seed of " : r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...(str(m.entryLinkId) ? [" with a link"] : []), ...inPlace(r, names), ...(m.oauth === true && oauthHosts ? [oauthHosts] : [])],
       };
     case "value.deleted":
       return { icon: "trash", title: "Value removed", segments: ["removed ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names, "from")] };
@@ -352,6 +354,20 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         ],
       };
     case "capability.issued":
+      // A link to enter a value with (ADR-0063).
+      if (str(r.entryLinkId)) {
+        return {
+          icon: "key",
+          title: "Entry link made",
+          segments: [
+            "asked ",
+            str(m.identityId) ? who(m.identityId, names, "a person") : m.entryLink === "anyone" ? "anyone with a link" : "a member",
+            m.replace === true ? " to replace " : " for ",
+            { kind: "mono", text: item ?? "a secret" },
+            ...inPlace(r, names),
+          ],
+        };
+      }
       return {
         icon: "key",
         title: "Capability issued",
@@ -373,8 +389,14 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         segments: [typeof m.oauthTokens === "string" ? "got an access token, using " : typeof m.oneTimeCodes === "string" ? "got a one-time code, using " : "used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...inPlace(r, names)],
       };
     case "capability.denied":
+      if (str(r.entryLinkId)) {
+        return { icon: "shield", title: "Entry refused", segments: ["was refused to enter ", { kind: "mono", text: item ?? "a secret" }, " with a link", ...inPlace(r, names)] };
+      }
       return { icon: "shield", title: "Capability refused", segments: ["was refused a capability use", ...inPlace(r, names)] };
     case "capability.revoked":
+      if (str(r.entryLinkId)) {
+        return { icon: "trash", title: "Entry link cancelled", segments: ["cancelled the link to enter ", { kind: "mono", text: item ?? "a secret" }, ...inPlace(r, names)] };
+      }
       return { icon: "trash", title: "Capability revoked", segments: ["revoked a capability", ...inPlace(r, names)] };
     case "credential.issued": {
       const kind = str(m.kind);

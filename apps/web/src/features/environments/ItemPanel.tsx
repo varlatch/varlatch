@@ -25,6 +25,7 @@ import type { Disclosed } from "../values/useDisclosure";
 import { CodeValue, ConnectionValue, DraftMarker, SecretMask } from "../values/bits";
 import { OAuthPanel } from "../oauth/OAuthPanel";
 import { connectionLabel } from "../oauth/model";
+import { EntryLinksPanel } from "../entry/EntryLinksPanel";
 import { itemLedgerEntry, syncTargetItemStatus, targetLabel, targetPlatform } from "../sync/syncStatus";
 
 export type PanelActions = {
@@ -88,6 +89,7 @@ export function ItemPanelBody({
   const disclosed = tailnetOnly ? undefined : revealed;
   const kind = draftKind(draft, server);
   const own = server?.source === "self";
+  const entryLinks = useCapability("values.entry-links");
   return (
     <>
       {contract?.description ? (
@@ -276,6 +278,12 @@ export function ItemPanelBody({
               </Button>
             </div>
           )}
+        </PanelSection>
+      )}
+
+      {entryLinks && sensitive && !server?.oauth && !server?.rotating && !draft && (
+        <PanelSection title="Entry link">
+          <EntryLinksPanel org={org} project={project} env={env.name} item={name} has={server !== undefined} seed={Boolean(server?.totp)} />
         </PanelSection>
       )}
 

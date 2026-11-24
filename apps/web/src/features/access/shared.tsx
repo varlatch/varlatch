@@ -91,6 +91,8 @@ export const ALL_ACTIONS = [
   "contract.activate",
   "secret.use",
   "capability.issue",
+  "entry-link.create",
+  "entry-link.create-open",
   "secret.reveal",
   "identity.read",
   "identity.manage",
