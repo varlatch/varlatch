@@ -47,7 +47,7 @@ for v in "$CANDIDATE" "$NEXT" "$UNSAFE"; do
   build "$v" ./cmd/varlatchd "varlatchd-$v-linux-$arch"
 done
 mkdir "$out/from/source"
-git -C "$go" archive "v$from" go | tar -x -C "$out/from/source"
+git -C "$go/.." archive "v$from" go | tar -x -C "$out/from/source"
 (cd "$out/from/source/go" && CGO_ENABLED=0 go build -trimpath -tags selfupdatetest -ldflags "-X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$from" -o "$out/from/varlatch" ./cmd/varlatch)
 rm -r "$out/from/source"
 manifest "$CANDIDATE" "$from"
