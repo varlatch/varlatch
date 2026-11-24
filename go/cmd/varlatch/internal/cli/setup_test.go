@@ -113,6 +113,45 @@ func TestSetupFlagValueForms(t *testing.T) {
 	}
 }
 
+// TestEnrollLinkShown: the first administrator's link is shown whole, from
+// a bootstrap and from a recovery; nothing but its own token passes the
+// fail-safe; a line that is no such link is not printed.
+func TestEnrollLinkShown(t *testing.T) {
+	show := func(link, expires string, held ...string) (string, error) {
+		var stdout strings.Builder
+		r := &Run{IO: IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &strings.Builder{}}, Env: MapEnv{}, Secrets: &Secrets{}, inFlight: held}
+		err := r.showEnrollLink(link, expires)
+		return stdout.String(), err
+	}
+	const tail = "AbCdEfGhIjKlMnOp-_0123456789"
+	for _, link := range []string{
+		"https://vault.example.com/enroll#vlt_setup_" + tail,
+		"http://localhost:8686/enroll#vlt_recover_" + tail,
+		"https://vault.example.com:8443/enroll#vlt_setup_" + tail,
+	} {
+		out, err := show(link, "2026-11-24T06:43:20.527Z")
+		if err != nil || !strings.Contains(out, "\n  "+link+"\n") || strings.Contains(out, Redacted) || !strings.Contains(out, "expires 2026-11-24T06:43:20.527Z;") {
+			t.Errorf("%s: %v %q", link, err, out)
+		}
+	}
+	// Any other token stays redacted, and a value in flight.
+	if out, err := show("https://vault.example.com/enroll#vlt_setup_"+tail, "vlt_cli_"+tail); err != nil || strings.Contains(out, "vlt_cli_") || !strings.Contains(out, "vlt_setup_"+tail) {
+		t.Errorf("another token: %v %q", err, out)
+	}
+	if out, err := show("https://vault.example.com/enroll#vlt_setup_"+tail, "soon", tail); err != nil || strings.Contains(out, tail) {
+		t.Errorf("a value in flight: %v %q", err, out)
+	}
+	for _, link := range []string{
+		"", "https://vault.example.com/enroll#[redacted]", "https://vault.example.com/enroll#vlt_cli_" + tail,
+		"https://vault.example.com/enroll#vlt_setup_" + tail + " vlt_cli_" + tail, "https://vault.example.com/other#vlt_setup_" + tail,
+		"ftp://vault.example.com/enroll#vlt_setup_" + tail, "https://vault.example.com/enroll#vlt_setup_" + tail + "\x1b[2K",
+	} {
+		if out, err := show(link, "soon"); err == nil || out != "" {
+			t.Errorf("%q: %v %q", link, err, out)
+		}
+	}
+}
+
 func runSetupCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr strings.Builder

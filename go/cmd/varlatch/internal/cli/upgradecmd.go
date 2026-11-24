@@ -47,6 +47,9 @@ const UpgradeHelp = upgradeUsage
 // --server installs. Only the tests replace it.
 var upgradeService = func() upgrade.Service { return upgrade.Systemd{Unit: "varlatchd"} }
 
+// upgradeSeam is set by the test builds only (the self-update seam's file).
+var upgradeSeam func(*Run, *upgrade.Upgrader)
+
 // upgradeTimeout bounds a whole upgrade, the prompt aside.
 const upgradeTimeout = 30 * time.Minute
 
@@ -120,6 +123,9 @@ func (r *Run) upgrade() error {
 	ctx, cancel := context.WithTimeout(context.Background(), upgradeTimeout)
 	defer cancel()
 	u := &upgrade.Upgrader{BinDir: filepath.Dir(varlatchd), ConfigPath: config, Service: upgradeService(), Log: func(line string) { _ = r.println(line) }}
+	if upgradeSeam != nil {
+		upgradeSeam(r, u)
+	}
 	if check {
 		return r.upgradeCheck(ctx, u, version, parsed.Has("--prerelease"), parsed.Has("--json"))
 	}

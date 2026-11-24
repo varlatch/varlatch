@@ -300,15 +300,18 @@ func TestSeamIsTestOnly(t *testing.T) {
 	if crlf := buildConstraint(t, bytes.ReplaceAll(seam, []byte("\n"), []byte("\r\n"))); crlf.String() != expr.String() {
 		t.Fatalf("with CRLF line endings the constraint reads %s, not %s", crlf, expr)
 	}
-	const variable = "VARLATCH_TEST_SELFUPDATE_SOURCE"
-	for _, dir := range []string{"internal/cli", "internal/selfupdate", "."} {
+	variables := []string{"VARLATCH_TEST_SELFUPDATE_SOURCE", "VARLATCH_TEST_UPGRADE_KILL"}
+	for _, dir := range []string{"internal/cli", "internal/selfupdate", "internal/upgrade", "."} {
 		files, _ := filepath.Glob(filepath.Join(dir, "*.go"))
 		for _, f := range files {
 			if strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, "selfupdate_testseam.go") {
 				continue
 			}
-			if b, _ := os.ReadFile(f); bytes.Contains(b, []byte(variable)) || bytes.Contains(b, []byte("selfupdatetest")) {
-				t.Errorf("%s names the test seam", f)
+			b, _ := os.ReadFile(f)
+			for _, name := range append(variables, "selfupdatetest") {
+				if bytes.Contains(b, []byte(name)) {
+					t.Errorf("%s names the test seam", f)
+				}
 			}
 		}
 	}
