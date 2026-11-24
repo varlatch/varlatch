@@ -234,7 +234,7 @@ TypeScript server its keys back. Whether it goes is step 7's decision.
 | SQLite | Why |
 | --- | --- |
 | table `schema_version` | The schema's version (`db.go`). |
-| tables `exercise_credentials`, `oidc_token_uses` | What limits an exercise-only credential, and the tokens exchanged once (ADR-0060, schema version 4). The limits that must survive elsewhere are in columns PostgreSQL has, in a form an older server matches nothing against: `credentials.token_hash` (`exercise:` and the hash), `capabilities.secret_hash` (`once:` or `used:` and the hash), `oidc_bindings.claims` (the reserved claim `varlatch:limits`). |
+| tables `exercise_credentials`, `oidc_token_uses` | What limits an exercise-only credential, and the tokens exchanged once (ADR-0060, schema version 4). The limits that must survive elsewhere are in columns PostgreSQL has, in a form an older server matches nothing against: `credentials.token_hash` (`exercise:` and the hash), `capabilities.secret_hash` (`for:`, `once:`, `used:` and their combinations with the hash), `oidc_bindings.claims` (the reserved claim `varlatch:limits`). |
 | triggers `audit_events_no_update`, `audit_events_no_delete` | Audit events are append-only. PostgreSQL withheld `UPDATE` and `DELETE` on `audit_events` from the runtime role (migration 0003); SQLite has no roles. |
 | triggers `*_no_replace_insert`, `*_no_replace_update` | REPLACE guards (above). |
 | triggers `*_text_arrays_insert`, `*_text_arrays_update` | Array elements (above). |

@@ -216,7 +216,7 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 			ID: id, OrganizationID: s.OrganizationID, BrokerIdentityID: broker, AgentIdentityID: agent.ID,
 			ProjectID: s.ProjectID, EnvironmentID: s.EnvironmentID, Items: list(in.Items), Destinations: list(selectors),
 			Targets:    sql.NullString{String: string(jsvalue.Stringify(jsvalue.Jsonb(targetsObj))), Valid: true},
-			SecretHash: values.StoredSecret(secret, in.SingleUse), RunID: run, ExpiresAt: expires, CreatedBy: issuer, CreatedAt: at.UnixMicro(),
+			SecretHash: values.StoredSecret(secret, delegated, in.SingleUse), RunID: run, ExpiresAt: expires, CreatedBy: issuer, CreatedAt: at.UnixMicro(),
 		}); err != nil {
 			return err
 		}
@@ -345,7 +345,7 @@ func List(ctx context.Context, db query.DBTX, organizationID, environmentID, own
 		if r.CreatedBy != r.BrokerIdentityID {
 			o = append(o, jsvalue.Member{Key: "issuedByIdentityId", Value: r.CreatedBy})
 		}
-		if _, singleUse, used := values.SecretState(r.SecretHash); singleUse {
+		if _, _, singleUse, used := values.SecretState(r.SecretHash); singleUse {
 			o = append(o, jsvalue.Member{Key: "singleUse", Value: true}, jsvalue.Member{Key: "used", Value: used})
 		}
 		items[i] = o

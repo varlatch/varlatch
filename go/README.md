@@ -1885,12 +1885,13 @@ may use; it never adds to the Agent's Grants.
     `capability.issue` there, else `issuer-not-allowed`.
   - The issuer lists what it issued and revokes it, the latter with or
     without its Grant.
-  - A single-use Capability's `secret_hash` is `once:` and the hash, `used:`
-    once spent: in `capability.exercised`'s own job, so of several exercises
-    at once one is granted. A refusal after that event (an unresolved
-    reference) gives the use back, never touching `revoked_at`; any other
-    failure leaves it spent. An older server matches no secret against
-    either.
+  - A delegated Capability's `secret_hash` carries `for:`, and a single-use
+    Capability's carries `once:` (`used:` once spent); they combine as
+    `for:once:` / `for:used:`. The single use is spent in
+    `capability.exercised`'s own job, so of several exercises at once one is
+    granted. A refusal after that event (an unresolved reference) gives the
+    use back, never touching `revoked_at`; any other failure leaves it spent.
+    An older server matches no secret against any prefixed hash.
   - `server/capabilities` `delegation_test.go` covers all of it over HTTP.
 - **Parity.** `capabilities-v0.22.0.json`
   (go-capabilities-fixture.test.ts) replays 154 requests: issuance in

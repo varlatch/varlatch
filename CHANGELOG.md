@@ -150,8 +150,8 @@ are part of this release.
     earlier document that rejects unknown values needs regenerating.
   - The database schema is version 3 (two new tables). It is rollback-safe:
     on an earlier release, as after a reverse migration to 0.23, an
-    exercise-only credential, a limited binding and a single-use Capability
-    are refused, never unlimited.
+    exercise-only credential, a limited binding, a delegated Capability and a
+    single-use Capability are refused, never unlimited.
 
 ## 0.50.0 (2026-11-25)
 

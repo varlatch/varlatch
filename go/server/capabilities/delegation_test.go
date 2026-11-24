@@ -1004,9 +1004,10 @@ func TestLimitsOfSeveralBindings(t *testing.T) {
 
 // A server that does not know the limits (an earlier varlatchd after a
 // rollback, the TypeScript server after a reverse migration) reads the same
-// rows: what is limited is inert there, never unlimited.
+// rows: what is limited or delegated is inert there, never unlimited.
 func TestLimitsFailClosedOnAnOlderServer(t *testing.T) {
 	w := newWorld(t)
+	w.grant("svc", "development")
 	w.want("bind", w.bind("broker", with{"exerciseOnly": true, "claims": map[string]string{"team": "a"}}), 201, "")
 	token := w.token(map[string]any{"team": "a"})
 	cred := w.exchanged(token)
@@ -1026,14 +1027,47 @@ func TestLimitsFailClosedOnAnOlderServer(t *testing.T) {
 	if oidc.Matches(claims.(jsvalue.Object), "varlatch", "machine:m1", row.(jsvalue.Object)) {
 		t.Error("an older server exchanges a limited binding's token")
 	}
-	// Its comparison is of the secret's hash with the row's.
+	// Its comparison is of the secret's hash with the row's: single-use,
+	// delegated, and delegated+single-use Capabilities all carry prefixes.
 	c := w.issue("broker", with{"singleUse": true})
-	stored := func() string { return w.text("SELECT secret_hash FROM capabilities WHERE id = ?", c.id) }
-	if stored() == values.HashSecret(c.secret) {
+	stored := func(id string) string { return w.text("SELECT secret_hash FROM capabilities WHERE id = ?", id) }
+	if stored(c.id) == values.HashSecret(c.secret) {
 		t.Error("an older server exercises a single-use Capability")
 	}
 	w.wantValue("here", w.exercise("broker", c, nil))
-	if stored() == values.HashSecret(c.secret) {
+	if stored(c.id) == values.HashSecret(c.secret) {
 		t.Error("an older server exercises a used Capability")
+	}
+	// Delegated (multi-use) Capability: prefixed with "for:", so an older
+	// server without issuer checks refuses it even after the issuer's grant is removed.
+	del := w.issue("svc", with{"brokerIdentityId": w.idn("broker")})
+	if got := stored(del.id); got == values.HashSecret(del.secret) || !strings.HasPrefix(got, "for:") {
+		t.Errorf("delegated secret_hash = %q, want for:<hash>", got)
+	}
+	w.wantValue("delegated here", w.exercise("broker", del, nil))
+	// Delegated + single-use: combinable, releases cleanly on refusal, spent on grant,
+	// and never matches raw HashSecret on an older server.
+	delOnce := w.issue("svc", with{
+		"brokerIdentityId": w.idn("broker"),
+		"singleUse":        true,
+		"items":            []string{"SECRET_A", "SECRET_MISS"},
+		"targets":          map[string]any{"SECRET_A": []string{"header:authorization"}, "SECRET_MISS": []string{"header:x-miss"}},
+	})
+	if got := stored(delOnce.id); got == values.HashSecret(delOnce.secret) || !strings.HasPrefix(got, "for:once:") {
+		t.Errorf("delegated single-use secret_hash = %q, want for:once:<hash>", got)
+	}
+	w.want("refused delegated single-use", w.exercise("broker", delOnce, with{"placements": []any{map[string]any{"item": "SECRET_MISS", "target": "header:x-miss"}}}), 403, "PERMISSION_DENIED")
+	if got := stored(delOnce.id); !strings.HasPrefix(got, "for:once:") {
+		t.Errorf("after refusal secret_hash = %q, want for:once:<hash>", got)
+	}
+	w.wantValue("granted delegated single-use", w.exercise("broker", delOnce, nil))
+	if got := stored(delOnce.id); got == values.HashSecret(delOnce.secret) || !strings.HasPrefix(got, "for:used:") {
+		t.Errorf("after use secret_hash = %q, want for:used:<hash>", got)
+	}
+	w.want("used delegated single-use", w.exercise("broker", delOnce, nil), 403, "PERMISSION_DENIED")
+	// Broker's own multi-use Capability stays unprefixed for older servers.
+	own := w.issue("broker", nil)
+	if got := stored(own.id); got != values.HashSecret(own.secret) {
+		t.Errorf("broker's own secret_hash = %q, want raw hash", got)
 	}
 }

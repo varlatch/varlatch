@@ -47,34 +47,56 @@ func HashSecret(secret string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// How a single-use Capability's secret is stored (ADR-0060): its hash
-// behind one of these, so whether it is spent is part of what a secret is
-// matched by. A server that does not know them (an earlier varlatchd after
-// a rollback, the TypeScript server after a reverse migration) matches no
-// secret against either, and refuses the exercise.
+// How a delegated or single-use Capability's secret is stored (ADR-0060):
+// its hash behind prefixes, so whether it is delegated and whether its single
+// use is spent are part of what a secret is matched by. A server that does
+// not know them (an earlier varlatchd after a rollback, the TypeScript server
+// after a reverse migration) matches no secret against any prefixed value,
+// and refuses the exercise.
 const (
+	delegatedPrefix = "for:"
 	singleUseUnused = "once:"
 	singleUseUsed   = "used:"
 )
 
 // StoredSecret is what a Capability's row keeps of its secret.
-func StoredSecret(secret string, singleUse bool) string {
+func StoredSecret(secret string, delegated, singleUse bool) string {
+	h := HashSecret(secret)
 	if singleUse {
-		return singleUseUnused + HashSecret(secret)
+		h = singleUseUnused + h
 	}
-	return HashSecret(secret)
+	if delegated {
+		h = delegatedPrefix + h
+	}
+	return h
 }
 
 // SecretState reads a stored secret: its hash, whether the Capability is
-// single-use, and whether that use is spent.
-func SecretState(stored string) (hash string, singleUse, used bool) {
-	if h, ok := strings.CutPrefix(stored, singleUseUnused); ok {
-		return h, true, false
+// delegated, whether it is single-use, and whether that use is spent.
+func SecretState(stored string) (hash string, delegated, singleUse, used bool) {
+	rest := stored
+	if h, ok := strings.CutPrefix(rest, delegatedPrefix); ok {
+		delegated = true
+		rest = h
 	}
-	if h, ok := strings.CutPrefix(stored, singleUseUsed); ok {
-		return h, true, true
+	if h, ok := strings.CutPrefix(rest, singleUseUnused); ok {
+		return h, delegated, true, false
 	}
-	return stored, false, false
+	if h, ok := strings.CutPrefix(rest, singleUseUsed); ok {
+		return h, delegated, true, true
+	}
+	return rest, delegated, false, false
+}
+
+func singleUseStored(hash string, delegated, used bool) string {
+	prefix := singleUseUnused
+	if used {
+		prefix = singleUseUsed
+	}
+	if delegated {
+		prefix = delegatedPrefix + prefix
+	}
+	return prefix + hash
 }
 
 // errCapabilityEnded is a single-use Capability another exercise or a
@@ -324,8 +346,12 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		if err := s.store.Write(ctx, func(tx *storage.Tx) error {
 			if spent {
 				// Refused after all: the use is not spent.
-				hash, _, _ := SecretState(row.SecretHash)
-				if err := query.New(tx).ReleaseCapability(ctx, query.ReleaseCapabilityParams{ID: row.ID, Used: singleUseUsed + hash, Unused: singleUseUnused + hash}); err != nil {
+				hash, delegated, _, _ := SecretState(row.SecretHash)
+				if err := query.New(tx).ReleaseCapability(ctx, query.ReleaseCapabilityParams{
+					ID:     row.ID,
+					Used:   singleUseStored(hash, delegated, true),
+					Unused: singleUseStored(hash, delegated, false),
+				}); err != nil {
 					return err
 				}
 			}
@@ -348,7 +374,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	if x := req.Principal.Credential.ExerciseOnly; x != nil && x.RunID != nil && (!row.RunID.Valid || row.RunID.String != *x.RunID) {
 		return nil, deny("wrong-run")
 	}
-	hash, singleUse, used := SecretState(row.SecretHash)
+	hash, delegated, singleUse, used := SecretState(row.SecretHash)
 	if subtle.ConstantTimeCompare([]byte(HashSecret(in.Secret)), []byte(hash)) != 1 {
 		return nil, deny("bad-secret")
 	}
@@ -466,7 +492,11 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		// spent, whatever becomes of the answer, unless deny takes it back.
 		spend = func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error) {
 			q := query.New(tx)
-			n, err := q.UseCapability(ctx, query.UseCapabilityParams{ID: row.ID, Unused: singleUseUnused + hash, Used: singleUseUsed + hash})
+			n, err := q.UseCapability(ctx, query.UseCapabilityParams{
+				ID:     row.ID,
+				Unused: singleUseStored(hash, delegated, false),
+				Used:   singleUseStored(hash, delegated, true),
+			})
 			if err != nil || n == 1 {
 				return nil, err
 			}
