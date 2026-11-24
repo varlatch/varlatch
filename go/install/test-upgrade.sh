@@ -438,7 +438,7 @@ for point in $UNDOS; do
   restarted
   item=UNDO_$(echo "$point" | tr -c 'A-Za-z0-9\n' _ | tr '[:lower:]' '[:upper:]')
   written=no
-  for _ in 1 2 3 4 5; do
+  for _ in 1 2; do
     if put "$item"; then written=yes; break; fi
     sleep 1
   done
