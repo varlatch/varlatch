@@ -182,14 +182,13 @@ type answer struct {
 	raw    string
 }
 
-// call sends a request with a credential by name (the fixture's) or as it
-// is, and checks the exchange against the OpenAPI document.
-func (w *world) call(method, path, credential string, body any) answer {
+// callCtx is call with an explicit context (for read hooks in tests).
+func (w *world) callCtx(ctx context.Context, method, path, credential string, body any) answer {
 	var b []byte
 	if body != nil {
 		b, _ = json.Marshal(body)
 	}
-	req := httptest.NewRequest(method, path, bytes.NewReader(b))
+	req := httptest.NewRequest(method, path, bytes.NewReader(b)).WithContext(ctx)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -207,6 +206,12 @@ func (w *world) call(method, path, credential string, body any) answer {
 	a := answer{status: rec.Code, raw: rec.Body.String()}
 	_ = json.Unmarshal(rec.Body.Bytes(), &a.body)
 	return a
+}
+
+// call sends a request with a credential by name (the fixture's) or as it
+// is, and checks the exchange against the OpenAPI document.
+func (w *world) call(method, path, credential string, body any) answer {
+	return w.callCtx(context.Background(), method, path, credential, body)
 }
 
 func (a answer) err() string {
@@ -1237,4 +1242,107 @@ func TestLimitsFailClosedOnAnOlderServer(t *testing.T) {
 	if got := stored(own.id); got != values.HashSecret(own.secret) {
 		t.Errorf("broker's own secret_hash = %q, want raw hash", got)
 	}
+}
+
+// Guards the in-job capability.issue check: when the issuer's grant is revoked
+// after the HTTP handler's pre-check (during CheckPrecondition) and before the
+// issuing write job runs, the job refuses issuance and inserts no row.
+func TestInJobCapabilityIssueDecision(t *testing.T) {
+	w := newWorld(t)
+	grant := w.grant("svc", "development")
+	// Obtain a valid precondition from a strict retrieval by alice.
+	strict := w.want("strict", w.call("POST", "/v1/organizations/cap/projects/api/environments/development/retrievals", "alice", map[string]any{"mode": "strict"}), 200, "")
+	manifest := strict.body["manifest"].(map[string]any)
+	env := manifest["environment"].(map[string]any)
+	pre := map[string]any{
+		"projectId":     manifest["projectId"],
+		"environmentId": env["id"],
+		"stateDigest":   strict.body["stateDigest"],
+		"stateDigests":  strict.body["stateDigests"],
+	}
+	before := w.text("SELECT count(*) FROM capabilities")
+	var once sync.Once
+	ctx := values.WithReadHook(context.Background(), func(point string) {
+		if point == "between the environment's values and its parent's" {
+			once.Do(func() {
+				w.want("revoke grant mid-request", w.call("DELETE", "/v1/organizations/cap/grants/"+grant, "alice", nil), 204, "")
+			})
+		}
+	})
+	a := w.callCtx(ctx, "POST", capsPath, "svc", w.issueBody(with{"brokerIdentityId": w.idn("broker"), "precondition": pre}))
+	w.want("in-job denial", a, 404, "RESOURCE_NOT_FOUND")
+	if after := w.text("SELECT count(*) FROM capabilities"); after != before {
+		t.Fatalf("capability row inserted despite grant revocation before write job: %s -> %s", before, after)
+	}
+	w.wantEvent("authorization.denied", "svc", map[string]any{"environmentId": w.env("development")}, nil)
+}
+
+// Guards `revoked_at IS NULL` in UseCapability on the granted path: a single-use
+// Capability revoked after the exercise's snapshot read it as live and before
+// UseCapability commits must be refused, never granted.
+func TestSingleUseRevocationDuringGrantedExercise(t *testing.T) {
+	w := newWorld(t)
+	c := w.issue("broker", with{"singleUse": true})
+	var once sync.Once
+	ctx := values.WithReadHook(context.Background(), func(point string) {
+		if point == "between the environment's values and its parent's" {
+			once.Do(func() {
+				w.want("revoke mid-exercise", w.call("DELETE", capsPath+"/"+c.id, "broker", nil), 204, "")
+			})
+		}
+	})
+	body := map[string]any{
+		"capabilitySecret": c.secret,
+		"destination":      map[string]any{"host": "api.example.com", "port": 443},
+		"placements":       []any{map[string]any{"item": "SECRET_A", "target": "header:authorization"}},
+	}
+	a := w.callCtx(ctx, "POST", capsPath+"/"+c.id+"/exercises", "broker", body)
+	w.want("revoked before UseCapability", a, 403, "PERMISSION_DENIED")
+	if !strings.Contains(a.raw, `"reason":"revoked"`) {
+		t.Errorf("expected reason revoked, got %s", a.raw)
+	}
+	if n := w.text("SELECT count(*) FROM audit_events WHERE event_type = 'capability.exercised' AND json_extract(resource, '$.capabilityId') = ?", c.id); n != "0" {
+		t.Errorf("capability.exercised recorded for revoked capability: %s", n)
+	}
+}
+
+// Guards the issuer in the jti deduplication key: two different issuers using
+// the same jti must not collide.
+func TestJTIKeyIsScopedByIssuer(t *testing.T) {
+	w := newWorld(t)
+	w.want("bind issuer 1", w.bind("svc", with{"issuer": testIssuer, "singleExchange": true}), 201, "")
+	w.want("bind issuer 2", w.bind("svc", with{"issuer": testIssuer2, "singleExchange": true}), 201, "")
+	tok1 := w.token(map[string]any{"iss": testIssuer, "jti": "shared-jti"})
+	tok2 := w.token(map[string]any{"iss": testIssuer2, "jti": "shared-jti"})
+	w.exchanged(tok1)
+	w.exchanged(tok2)
+	w.want("replay issuer 2", w.exchange(tok2), 401, "INVALID_CREDENTIAL")
+}
+
+// Guards the issuer's kind and organization checks in issuerMayIssue at exercise.
+func TestIssuerKindAndOrganizationCheckedAtExercise(t *testing.T) {
+	w := newWorld(t)
+	w.grant("svc", "development")
+	c := w.issue("svc", with{"brokerIdentityId": w.idn("broker")})
+	w.wantValue("initially allowed", w.exercise("broker", c, nil))
+
+	// Kind changed to agent while grant stays live and disabled = 0.
+	w.exec("UPDATE identities SET kind = 'agent' WHERE id = ?", w.idn("svc"))
+	a := w.want("issuer kind changed to agent", w.exercise("broker", c, nil), 403, "PERMISSION_DENIED")
+	if !strings.Contains(a.raw, `"reason":"issuer-not-allowed"`) {
+		t.Errorf("kind check: %s", a.raw)
+	}
+	w.exec("UPDATE identities SET kind = 'service' WHERE id = ?", w.idn("svc"))
+	w.wantValue("kind restored", w.exercise("broker", c, nil))
+
+	// Organization changed to another org while grant in cap stays live and disabled = 0.
+	origOrg := w.text("SELECT organization_id FROM identities WHERE id = ?", w.idn("svc"))
+	otherOrg := w.text("SELECT id FROM organizations WHERE slug = 'other'")
+	w.exec("UPDATE identities SET organization_id = ? WHERE id = ?", otherOrg, w.idn("svc"))
+	a = w.want("issuer moved to another org", w.exercise("broker", c, nil), 403, "PERMISSION_DENIED")
+	if !strings.Contains(a.raw, `"reason":"issuer-not-allowed"`) {
+		t.Errorf("org check: %s", a.raw)
+	}
+	w.exec("UPDATE identities SET organization_id = ? WHERE id = ?", origOrg, w.idn("svc"))
+	w.wantValue("org restored", w.exercise("broker", c, nil))
 }
