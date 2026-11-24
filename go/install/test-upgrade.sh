@@ -323,26 +323,29 @@ if has_rollback; then
   before=$(sha256sum /etc/varlatch/upgrade.json "$VARLATCH" "$VARLATCHD")
   upgrade by-hand "$tool" --rollback --yes --accept-data-loss
   check "by-hand: a rollback to $FROM is refused" [ "$status" != 0 ]
-  check "by-hand: it gives the steps" says by-hand "To go back by hand: stop varlatchd"
+  check "by-hand: it gives the steps" says by-hand "By hand, losing every change made since the upgrade:"
   check "by-hand: nothing changed" [ "$before" = "$(sha256sum /etc/varlatch/upgrade.json "$VARLATCH" "$VARLATCHD")" ]
   check "by-hand: $CANDIDATE still serves" serves "$CANDIDATE"
-  # The steps, from what it printed and nothing else.
-  snapshot=$(sed -n 's/.*admin backup restore --in \([^ ]*\).*/\1/p' "$work/by-hand.out" | head -n 1)
-  kept=$(sed -n 's/.*put varlatch and varlatchd from \([^ ]*\) in .*/\1/p' "$work/by-hand.out" | head -n 1)
-  systemctl stop varlatchd
-  if [ -f "$snapshot" ] && install -m 755 "$kept/varlatch" "$kept/varlatchd" /usr/local/bin/ &&
-     "$VARLATCHD" admin backup restore --in "$snapshot" --config "$CONF" >"$work/by-hand-restore.out" 2>&1; then
-    systemctl start varlatchd
+  # The steps as printed, one command each, and nothing else.
+  sed -n 's/^  sudo //p' "$work/by-hand.out" >"$work/by-hand.sh"
+  check "by-hand: the steps stop varlatchd first and start it last" [ "$(sed -n '1p;$p' "$work/by-hand.sh" | tr '\n' ' ')" = 'systemctl stop varlatchd systemctl start varlatchd ' ]
+  if sh -e "$work/by-hand.sh" >"$work/by-hand-steps.out" 2>&1; then
     check "by-hand: $FROM serves again" serves "$FROM"
     check "by-hand: the data from before the upgrade is there" has FIRST
     check "by-hand: what changed since is lost, as it says" has_not SECOND
     check "by-hand: the data directory is varlatch's" data_is_varlatchs
+    check "by-hand: varlatch doctor passes" doctor
   else
-    fail "by-hand: the steps: $(tail -n 4 "$work/by-hand-restore.out" 2>/dev/null)"
+    fail "by-hand: a step: $(tail -n 4 "$work/by-hand-steps.out")"
   fi
   if [ "$failures" -gt 0 ]; then finish; fi
+  touch "$work/now"
   upgrade to-candidate-again "$tool" "$CANDIDATE" --yes
   upgraded to-candidate-again "$CANDIDATE"
+  # The new engine's snapshot is root's, out of varlatchd's reach.
+  check "snapshot: root's, in a directory of its own" [ "$(find /usr/local/lib/varlatch/snapshots -name snapshot.vltbak -newer "$work/now" -exec stat -c '%a %U' {} +)" = '600 root' ]
+  check "snapshot: the directories are root's alone" [ "$(find /usr/local/lib/varlatch/snapshots -type d -exec stat -c '%a %U' {} + | sort -u)" = '700 root' ]
+  check "snapshot: none in the data directory" [ -z "$(find /var/lib/varlatch/upgrades -name 'snapshot*' -newer "$work/now" -print -quit)" ]
   put SECOND
 else
   echo "SKIP  by-hand: this candidate has no upgrade --rollback"
@@ -460,11 +463,55 @@ done
 
 # --- 5. the rollback ---
 
+# killed_rollback <name> <point> <arguments...>: a rollback killed there, then
+# a restart; what it left, and what it goes to, in $left and $to. Run again,
+# it is undone, or finished once it is checked.
+killed_rollback() {
+  name=$1 point=$2
+  shift 2
+  export VARLATCH_TEST_UPGRADE_KILL="$point"
+  upgrade "$name" "$VARLATCH" --rollback "$@"
+  unset VARLATCH_TEST_UPGRADE_KILL
+  case "$point" in
+    data:*) check "$name: killed there" [ "$status" = 1 ] ;;
+    *) check "$name: killed there" [ "$status" = 137 ] ;;
+  esac
+  check "$name: the journal says in progress" journal_says in-progress
+  restarted
+  step=$(sed -n 's/.*"step": *"\([^"]*\)".*/\1/p' /etc/varlatch/upgrade.json | head -n 1)
+  if [ "$step" != checked ]; then
+    check "$name: varlatchd serves nothing until the rollback is over" not_answering
+  fi
+  upgrade "$name-again" "$VARLATCH"
+  if [ "$status" != 0 ]; then tail -n 8 "$work/$name-again.out" >&2; fi
+  check "$name: run again, it exits 0" [ "$status" = 0 ]
+  if [ "$step" = checked ]; then
+    check "$name: finished: $to serves" serves "$to"
+    check "$name: the journal is the rollback's" grep -q '"kind": *"rollback"' /etc/varlatch/upgrade.json
+  else
+    check "$name: undone: $left serves" serves "$left"
+    check "$name: the journal is the upgrade's again" sh -c '! grep -q "^  \"kind\": *\"rollback\"" "$1" && grep -q "\"lastRollback\"" "$1"' sh /etc/varlatch/upgrade.json
+  fi
+  check "$name: the journal says done" journal_says "done"
+  check "$name: the data is there" has THIRD
+  check "$name: the data directory is varlatch's" data_is_varlatchs
+  check "$name: the keys are root's" keys_are_roots
+  check "$name: varlatch doctor passes" doctor
+  if [ "$failures" -gt 0 ]; then finish; fi
+}
+
 if has_rollback; then
   put THIRD
+  left=$NEXT to=$CANDIDATE
+  for at_point in stopping stop:done stopped prepared "install:$CANDIDATE:varlatchd" "install:$CANDIDATE:varlatch" installed swapped "start:$CANDIDATE" started checked; do
+    killed_rollback "$(echo "rollback-$at_point" | tr ':' '-')" "$at_point" --yes
+  done
+  check "rollback: the binaries alone: a change made since is kept" has THIRD
+  upgrade to-next-again "$VARLATCH" "$NEXT" --yes
+  upgraded to-next-again "$NEXT"
   upgrade rollback "$VARLATCH" --rollback --yes
   upgraded rollback "$CANDIDATE"
-  check "rollback: the binaries alone: a change made since is kept" has THIRD
+  check "rollback: not killed: a change made since is kept" has THIRD
   upgrade unsafe-refused "$VARLATCH" "$UNSAFE" --yes
   check "unsafe: refused unless accepted" [ "$status" != 0 ]
   upgrade unsafe "$VARLATCH" "$UNSAFE" --yes --accept-not-rollback-safe
@@ -474,13 +521,18 @@ if has_rollback; then
   check "snapshot: refused without --accept-data-loss" [ "$status" != 0 ]
   check "snapshot: $UNSAFE still serves" serves "$UNSAFE"
   check "snapshot: the change is still there" has FOURTH
-  upgrade loss "$VARLATCH" --rollback --yes --accept-data-loss
-  upgraded loss "$CANDIDATE"
+  left=$UNSAFE
+  for at_point in stopping stop:done stopped prepared data:keep-original:link:varlatch.db kept "install:$CANDIDATE:varlatchd" "install:$CANDIDATE:varlatch" installed rollback:restored swapped "start:$CANDIDATE" started checked; do
+    # Off a terminal --accept-data-loss is enough.
+    killed_rollback "$(echo "loss-$at_point" | tr ':' '-')" "$at_point" --accept-data-loss
+    if [ "$at_point" != checked ]; then check "loss-$at_point: the change is still there" has FOURTH; fi
+  done
   check "snapshot: what was there before the upgrade is there" has THIRD
   check "snapshot: what changed since is lost, as it says" has_not FOURTH
-  if has_hold && held; then
+  if has_hold; then
     # It is a restore too.
-    check "snapshot: held until it is resumed" "$VARLATCH" admin restore resume --config "$CONF"
+    check "snapshot: held until it is resumed" held
+    check "snapshot: resumed" "$VARLATCH" admin restore resume --config "$CONF"
   fi
   upgrade after-loss "$VARLATCH" "$NEXT" --yes
   upgraded after-loss "$NEXT"
