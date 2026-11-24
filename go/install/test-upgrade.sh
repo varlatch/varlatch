@@ -62,6 +62,7 @@ FROM='' CANDIDATE='' NEXT='' UNSAFE='' BROKEN=''
 # its signed SHA256SUMS. install.sh checks the rest itself.
 case "$FROM" in
   0.50.0-rc.2) FROM_INSTALL=82ca234af771ada287d7074077afc759d3204180665edb6765ed087dd6068ed7 ;;
+  0.50.0-rc.3) FROM_INSTALL=d232caa78826a42f7b90a6ef1127fe008eff5f89412a8662d4cd50c7124927fe ;;
   *) echo "refusing: this script has no hash of $FROM's install.sh" >&2; exit 2 ;;
 esac
 # The same for an upgrade from $FROM with the candidate's varlatch, run from
