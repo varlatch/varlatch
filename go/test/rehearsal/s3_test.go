@@ -27,8 +27,13 @@ func startS3(t *testing.T) *s3Server {
 	t.Helper()
 	s := &s3Server{name: "vl-rh-" + runID + "-minio", user: "rh" + hexBytes(6), secret: hexBytes(20)}
 	port := freePort(t)
-	must(t, run("", nil, nil, "docker", "run", "-d", "--name", s.name, "-p", "127.0.0.1:"+port+":9000",
-		"-e", "MINIO_ROOT_USER="+s.user, "-e", "MINIO_ROOT_PASSWORD="+s.secret, minioImage, "server", "/data"), "start MinIO")
+	args := []string{"run", "-d", "--name", s.name, "-p", "127.0.0.1:" + port + ":9000",
+		"-e", "MINIO_ROOT_USER=" + s.user, "-e", "MINIO_ROOT_PASSWORD=" + s.secret}
+	if prof.memory {
+		// The run's archives: in memory, as the copy they are of.
+		args = append(args, "--tmpfs", "/data", "--tmpfs", "/tmp")
+	}
+	must(t, run("", nil, nil, "docker", append(args, minioImage, "server", "/data")...), "start MinIO")
 	t.Cleanup(func() {
 		if os.Getenv("VL_RH_KEEP") != "1" {
 			run("", nil, nil, "docker", "rm", "-fv", s.name)
