@@ -42,8 +42,8 @@ sudo varlatch admin backup status   # every archive, and the warnings
 ```
 
 `run` prints the archive's path, what each check found, how long the
-database snapshot was held, and the size of the database and of its archive. Every archive, scheduled or not, is checked
-before it counts:
+database snapshot was held, and the size of the database and of its archive.
+Every archive, scheduled or not, is checked before it counts:
 
 - **integrity:** the archive opens with the backup key, whole, and its
   settings and its installation are what a restore reads;
@@ -53,10 +53,9 @@ before it counts:
 A backup pauses nothing: people and applications go on working while it
 runs. It takes a consistent snapshot of the database, compresses it, seals
 it with the backup key, and puts it in `/var/lib/varlatch/backups` (mode
-0600). The
-archive holds the database and the settings of `varlatchd.conf`, never a
-key. It does not run during maintenance, and
-`backup run` then says so.
+0600). The archive holds the database and the settings of `varlatchd.conf`,
+never a key. It does not run during maintenance, and `backup run` then says
+so.
 
 ### The schedule
 

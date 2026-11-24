@@ -701,11 +701,12 @@ until the address moves back:
 1. The new server takes a barrier and freezes its state; it keeps running,
    isolated. Open dashboards lose their live updates at once, show maintenance
    as soon as they ask the server for something, and come back by themselves.
-   Other requests
-   and deliveries finish within `--drain` (60 seconds by default). One that
-   does not (a backup being uploaded, a large audit export or CLI download
-   that a client reads slowly) undoes the rollback: the new server serves on
-   and the message says so. Run it again once that has ended.
+   Other requests and deliveries finish within `--drain` (60 seconds by
+   default). One that does not (a running backup, which takes several minutes
+   for a large database; a large audit export or CLI download that a client
+   reads slowly) undoes the rollback: the new server serves on and the message
+   says so. Run it again once that has ended. The copy of the frozen state is
+   made at full speed: nobody is served meanwhile.
 2. Its state is exported for the TypeScript release, with the same two
    changes as the forward migration: browser sessions end, and the audit
    log records the migration.
@@ -839,7 +840,8 @@ On a Tailscale topology (`varlatchd` with `network_mode: service:tailscale`):
 
 ### Archives made during the window
 
-The TypeScript release cannot read the 0.50 server's archives (format 3).
+The TypeScript release cannot read the 0.50 server's archives (format 3,
+compressed).
 The rollback's report lists every one made since the switch:
 
 ```text
