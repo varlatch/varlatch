@@ -27,9 +27,9 @@ const HELP_TOPICS = [
  * `admin`'s, `doctor`'s, `move`'s, `setup`'s and `upgrade`'s help are a Go
  * installation's in the Go CLI (go/README.md, the accepted differences
  * `admin-usage`, `doctor-usage`, `move-usage`, `setup-usage` and
- * `upgrade-usage`), and `self-update`'s is the Go CLI's own forms (the
- * accepted difference `self-update-usage`); these recordings are the
- * TypeScript CLI's.
+ * `upgrade-usage`), `self-update`'s is the Go CLI's own forms (the
+ * accepted difference `self-update-usage`), and `tailnet`'s has `repin` too
+ * (`tailnet-usage`); these recordings are the TypeScript CLI's.
  */
 const HELP_DIFFERENCES: Record<string, string> = {
   admin: "admin-usage",
@@ -37,32 +37,33 @@ const HELP_DIFFERENCES: Record<string, string> = {
   move: "move-usage",
   setup: "setup-usage",
   "self-update": "self-update-usage",
+  tailnet: "tailnet-usage",
   upgrade: "upgrade-usage",
 };
 const helpDifferences = (topic: string): { differences?: string[] } =>
   HELP_DIFFERENCES[topic] ? { differences: [HELP_DIFFERENCES[topic]] } : {};
 
 const framework: TranscriptCase[] = [
-  { id: "usage.no-command", title: "no command prints the usage on stdout, status 0", args: [] },
-  { id: "usage.help", title: "--help prints the usage", args: ["--help"] },
-  { id: "usage.h", title: "-h prints the usage", args: ["-h"] },
-  { id: "usage.help-command", title: "help prints the usage", args: ["help"] },
-  { id: "usage.unknown-command", title: "an unknown command is a usage error (64) with the usage on stderr", args: ["nosuch"] },
-  { id: "usage.unknown-option-as-command", title: "an option where the command goes is an unknown command", args: ["--nosuch"] },
-  { id: "usage.separator-as-command", title: "-- where the command goes is an unknown command", args: ["--", "--help"] },
-  { id: "usage.help-unknown-topic", title: "help for a word that is not a command is a usage error", args: ["help", "nosuch"] },
+  { id: "usage.no-command", title: "no command prints the usage on stdout, status 0", args: [], differences: ["host-usage"] },
+  { id: "usage.help", title: "--help prints the usage", args: ["--help"], differences: ["host-usage"] },
+  { id: "usage.h", title: "-h prints the usage", args: ["-h"], differences: ["host-usage"] },
+  { id: "usage.help-command", title: "help prints the usage", args: ["help"], differences: ["host-usage"] },
+  { id: "usage.unknown-command", title: "an unknown command is a usage error (64) with the usage on stderr", args: ["nosuch"], differences: ["host-usage"] },
+  { id: "usage.unknown-option-as-command", title: "an option where the command goes is an unknown command", args: ["--nosuch"], differences: ["host-usage"] },
+  { id: "usage.separator-as-command", title: "-- where the command goes is an unknown command", args: ["--", "--help"], differences: ["host-usage"] },
+  { id: "usage.help-unknown-topic", title: "help for a word that is not a command is a usage error", args: ["help", "nosuch"], differences: ["host-usage"] },
   { id: "usage.help-extra-words", title: "help reads only its first word", args: ["help", "run", "values"] },
   { id: "usage.help-topic-version", title: "help --version prints that entry", args: ["help", "--version"] },
   { id: "usage.help-topic-approval", title: "help --approval: the global option is taken first, so the topic is missing", args: ["help", "--approval"] },
-  { id: "usage.help-topic-assisted", title: "help --assisted: --assisted is taken first, so the whole usage prints", args: ["help", "--assisted"] },
+  { id: "usage.help-topic-assisted", title: "help --assisted: --assisted is taken first, so the whole usage prints", args: ["help", "--assisted"], differences: ["host-usage"] },
   { id: "usage.version-help", title: "--version --help prints --version's entry", args: ["--version", "--help"] },
   { id: "version.long", title: "--version", args: ["--version"], differences: ["version"] },
   { id: "version.word", title: "version", args: ["version"], differences: ["version"] },
   { id: "version.ignores-arguments", title: "version ignores what follows it", args: ["version", "--json"], differences: ["version"] },
-  { id: "assisted.option-then-help", title: "--assisted before help changes nothing about help", args: ["--assisted", "--help"] },
-  { id: "assisted.option-alone", title: "--assisted alone prints the usage", args: ["--assisted"] },
-  { id: "assisted.option-twice", title: "--assisted twice is still one option", args: ["--assisted", "--assisted"] },
-  { id: "assisted.marker-help", title: "a coding agent's marker changes nothing about help", args: ["--help"], env: { CLAUDECODE: "1" } },
+  { id: "assisted.option-then-help", title: "--assisted before help changes nothing about help", args: ["--assisted", "--help"], differences: ["host-usage"] },
+  { id: "assisted.option-alone", title: "--assisted alone prints the usage", args: ["--assisted"], differences: ["host-usage"] },
+  { id: "assisted.option-twice", title: "--assisted twice is still one option", args: ["--assisted", "--assisted"], differences: ["host-usage"] },
+  { id: "assisted.marker-help", title: "a coding agent's marker changes nothing about help", args: ["--help"], env: { CLAUDECODE: "1" }, differences: ["host-usage"] },
   { id: "assisted.option-after-command-help", title: "--assisted after the command is still the global option", args: ["status", "--assisted", "--help"] },
   { id: "approval.missing-id", title: "--approval without an id is a usage error", args: ["--approval"] },
   { id: "approval.option-as-id", title: "--approval followed by an option is a usage error", args: ["--approval", "--help"] },
@@ -70,15 +71,15 @@ const framework: TranscriptCase[] = [
   { id: "approval.malformed-id", title: "--approval with an id the server never gives is a usage error", args: ["--approval", "apr.1", "status"] },
   { id: "approval.long-id", title: "--approval with an id over 100 characters is a usage error", args: ["--approval", "a".repeat(101), "status"] },
   { id: "approval.control-in-id", title: "a control character in a refused id is printed as it was given", args: ["--approval", "a\u001bb", "status"] },
-  { id: "approval.no-command", title: "--approval with an id and no command prints the usage", args: ["--approval", "apr_1"] },
-  { id: "approval.then-help", title: "--approval with an id, then --help", args: ["--approval", "apr_1", "--help"] },
-  { id: "approval.after-separator", title: "--approval after -- belongs to the command, not the CLI", args: ["nosuch", "--", "--approval"] },
+  { id: "approval.no-command", title: "--approval with an id and no command prints the usage", args: ["--approval", "apr_1"], differences: ["host-usage"] },
+  { id: "approval.then-help", title: "--approval with an id, then --help", args: ["--approval", "apr_1", "--help"], differences: ["host-usage"] },
+  { id: "approval.after-separator", title: "--approval after -- belongs to the command, not the CLI", args: ["nosuch", "--", "--approval"], differences: ["host-usage"] },
   ...HELP_TOPICS.flatMap((topic): TranscriptCase[] => [
     { id: `help.${topic}`, title: `help ${topic}`, args: ["help", topic], ...helpDifferences(topic) },
     { id: `help.${topic}.option`, title: `${topic} --help`, args: [topic, "--help"], ...helpDifferences(topic) },
     { id: `help.${topic}.short`, title: `${topic} -h`, args: [topic, "-h"], ...helpDifferences(topic) },
   ]),
-  { id: "help.after-separator", title: "--help after -- belongs to the command run starts", args: ["nosuch", "--", "--help"] },
+  { id: "help.after-separator", title: "--help after -- belongs to the command run starts", args: ["nosuch", "--", "--help"], differences: ["host-usage"] },
   { id: "help.after-arguments", title: "--help anywhere before -- asks for the command's help", args: ["values", "set", "API_KEY", "--help"] },
 ];
 

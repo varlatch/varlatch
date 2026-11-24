@@ -45,7 +45,8 @@ function commands(files: Record<string, string>): Command[] {
       prose = prose.replace(m[0], "");
       for (const line of (m[2] as string).split("\n")) {
         // A command after a pipe is a command too: `... | varlatch --assisted values set X --stdin`.
-        const at = line.search(/(^|\|\s*)varlatch\b/);
+        // On a server's host a human's command may start with sudo, or run in the container.
+        const at = line.search(/(^|\|\s*|^sudo |^docker exec \S+ )varlatch\b/);
         if (at < 0) continue;
         out.push({ file, text: line.slice(line.indexOf("varlatch", at)).trim(), agent: m[1] !== "text", inline: false });
       }
@@ -64,10 +65,18 @@ function missingAssisted(files: Record<string, string>): string[] {
     .map((c) => `${c.file}: ${c.text}`);
 }
 
+/**
+ * A Go installation's host commands: `setup`, `upgrade`, `migrate` and the
+ * rest are the Go CLI's own, whose test checks them against its help
+ * (go/cmd/varlatch/internal/cli, TestTheSkillsHostCommandsAreThisCLIs).
+ */
+const HOST_REFERENCE = "references/self-hosting.md";
+
 /** Commands whose command word or options the CLI's usage does not have. */
 function unknownOptions(files: Record<string, string>): string[] {
   const problems: string[] = [];
   for (const c of commands(files)) {
+    if (c.file === HOST_REFERENCE) continue;
     const words = c.text.split(/\s+/).slice(1);
     if (words[0] === "--assisted") words.shift();
     const command = words[0];

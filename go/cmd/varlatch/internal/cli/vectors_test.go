@@ -104,7 +104,7 @@ func loadFramework(t *testing.T) (*frameworkFile, []byte) {
 
 func TestUsageIsTypeScripts(t *testing.T) {
 	f, _ := loadFramework(t)
-	if Usage != f.Usage {
+	if TypeScriptUsage != f.Usage {
 		t.Fatal("usage.txt differs from the TypeScript CLI's USAGE: copy it from framework.json's usage")
 	}
 	for _, c := range f.CommandHelp {
