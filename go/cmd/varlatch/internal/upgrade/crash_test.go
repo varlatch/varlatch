@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -45,9 +46,15 @@ type standHost struct {
 	conf           string
 	from           string
 	badTo          bool // To fails its health checks
-	svc            *standService
-	boots          int
-	shadow         *shadow
+	badFrom        bool // From does, once it is not the first installed
+	keeps          bool // To is rollback-safe: From opens its database
+	crash          func(string) bool
+	// The writes the pre-upgrade snapshot holds, and those made when a
+	// rollback began.
+	snapshot, rolled int
+	svc              *standService
+	boots            int
+	shadow           *shadow
 }
 
 // standIn is a release's varlatchd: its version and schema, and what it
@@ -70,8 +77,19 @@ func (h *standHost) run(binary string, args ...string) ([]byte, error) {
 		if err := os.MkdirAll(filepath.Dir(archive), 0o700); err != nil {
 			return nil, err
 		}
-		h.put(archive, h.read(filepath.Join(h.data, databaseFile)), 0o600)
-		return fmt.Appendf(nil, `{"path":%q,"createdAt":"2026-11-24T00:00:00Z"}`, archive), nil
+		h.put(archive, h.database(), 0o600)
+		return fmt.Appendf(nil, `{"path":%q,"createdAt":"2026-11-24T00:00:00Z","archiveId":"archive-1","capture":{"dumpBytes":100}}`, archive), nil
+	case "backup restore":
+		return nil, h.restore(args)
+	case "changes --since":
+		return fmt.Appendf(nil, `{"since":%q,"total":%d,"byType":{},"latest":[],"revocationsTotal":0,"revocations":[]}`, args[3], strings.Count(h.database(), "write ")), nil
+	case "schema status":
+		content, database := h.database(), "null"
+		n := 0
+		if _, err := fmt.Sscanf(content, "db original\nschema %d\n", &n); err == nil {
+			database = fmt.Sprintf(`{"schemaVersion":%d}`, n)
+		}
+		return fmt.Appendf(nil, `{"opens":%v,"dataDir":%q,"database":%s}`, n == schema || h.keeps || n == 0, h.data, database), nil
 	case "schema upgrade":
 		f := args[len(args)-1]
 		content, log := h.read(f), h.read(f+walSuffix)
@@ -93,6 +111,72 @@ func (h *standHost) run(binary string, args ...string) ([]byte, error) {
 	return nil, fmt.Errorf("no stand-in for %q", args)
 }
 
+// database is the database with what its log holds.
+func (h *standHost) database() string {
+	content, log := h.read(filepath.Join(h.data, databaseFile)), h.read(filepath.Join(h.data, databaseFile+walSuffix))
+	return content + log[strings.Index(log, "\n")+1:]
+}
+
+// restore is `admin backup restore` as varlatchd does it: a gate, the log
+// removed, the database replaced by one rename, the hold, the gate removed;
+// killed and cut at each.
+func (h *standHost) restore(args []string) error {
+	archive := h.read(args[len(args)-1])
+	if !strings.HasPrefix(archive, "db original\n") {
+		return fmt.Errorf("not an archive: %q", archive)
+	}
+	if slices.Contains(args, "--check") {
+		return nil
+	}
+	if h.svc.running != "" {
+		return errors.New("varlatchd is running")
+	}
+	db := filepath.Join(h.data, databaseFile)
+	for _, step := range []struct {
+		name string
+		do   func()
+	}{
+		{"gate", func() {
+			h.put(filepath.Join(h.data, "maintenance.json"), `{"id":"x","kind":"restore","phase":"paused","archiveId":"archive-1"}`, 0o600)
+			h.shadow.stored(h.data, filepath.Join(h.data, "maintenance.json"))
+		}},
+		{"opened", func() {
+			_ = os.Mkdir(filepath.Join(h.data, ".restore-work"), 0o700)
+			h.put(filepath.Join(h.data, ".restore-work", "database"), archive, 0o600)
+			h.shadow.entries(h.data)
+		}},
+		{"staged", func() {
+			h.put(db+".restore", archive, 0o600)
+			h.shadow.stored(h.data, db+".restore")
+		}},
+		{"log", func() {
+			_ = os.Remove(db + walSuffix)
+			h.shadow.stored(h.data, db+walSuffix)
+		}},
+		{"renamed", func() {
+			_ = os.Rename(db+".restore", db)
+			h.shadow.stored(h.data, db)
+			h.shadow.stored(h.data, db+".restore")
+		}},
+		{"reconciled", func() { h.svc.log("restored\n") }},
+		{"held", func() {
+			h.put(filepath.Join(h.data, holdFile), `{"archiveId":"archive-1","restoredAt":"t"}`, 0o600)
+			h.shadow.stored(h.data, filepath.Join(h.data, holdFile))
+		}},
+		{"done", func() {
+			_ = os.RemoveAll(filepath.Join(h.data, ".restore-work"))
+			_ = os.Remove(filepath.Join(h.data, "maintenance.json"))
+			h.shadow.entries(h.data)
+		}},
+	} {
+		step.do()
+		if h.crash != nil && h.crash("restore:"+step.name) {
+			return errKilled
+		}
+	}
+	return nil
+}
+
 func standStatus(version string, schema int) string {
 	return fmt.Sprintf(`{"version":"%s","schemaVersion":%d,"serving":true,"ready":{"schema":true,"rootKek":true,"installation":true}}`, version, schema)
 }
@@ -108,7 +192,7 @@ func newStandHost(t *testing.T, from string, badTo, wal bool) *standHost {
 		}
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	h := &standHost{t: t, dir: dir, bin: filepath.Join(dir, "usr", "bin"), data: filepath.Join(dir, "data"), conf: filepath.Join(dir, "etc", "varlatchd.conf"), from: from, badTo: badTo, boots: 1}
+	h := &standHost{t: t, keeps: true, dir: dir, bin: filepath.Join(dir, "usr", "bin"), data: filepath.Join(dir, "data"), conf: filepath.Join(dir, "etc", "varlatchd.conf"), from: from, badTo: badTo, boots: 1}
 	for _, d := range []string{h.bin, h.data, filepath.Dir(h.conf)} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
@@ -141,8 +225,11 @@ func (h *standHost) read(path string) string {
 }
 
 func (h *standHost) release() Release {
-	m, err := release.NewManifest(standTo, release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true,
-		Previous: &release.Previous{Version: h.from, SchemaVersion: 1}, ReversibleTo: &reversible})
+	d := release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, Previous: &release.Previous{Version: h.from, SchemaVersion: 1}, ReversibleTo: &reversible}
+	if h.keeps {
+		d.CompatibleFrom, d.RollbackSafe = 1, true
+	}
+	m, err := release.NewManifest(standTo, d)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -158,6 +245,7 @@ func (h *standHost) installed() Installed {
 }
 
 func (h *standHost) upgrader(crash func(string) bool) *Upgrader {
+	h.crash = crash
 	return &Upgrader{BinDir: h.bin, ConfigPath: h.conf, Service: h.svc, HealthTimeout: time.Nanosecond, Crash: crash,
 		trace: h.shadow.event, run: h.run, free: func(string) (uint64, uint64, error) { return 1 << 40, 1, nil }, boot: func() string { return fmt.Sprint("boot", h.boots) }}
 }
@@ -230,7 +318,7 @@ func (s *standService) Start(context.Context) error {
 	if log := s.h.read(wal); log != "" && !strings.HasPrefix(log, walHead(content)) {
 		s.fault("%s started on a database with another's log: %q beside %q", version, log, content)
 	}
-	if !strings.Contains(content, fmt.Sprintf("schema %d\n", schema)) {
+	if !strings.Contains(content, fmt.Sprintf("schema %d\n", schema)) && !(schema == 1 && s.h.keeps) {
 		return errors.New("the schema is not this release's")
 	}
 	s.running = version
@@ -317,11 +405,29 @@ func (h *standHost) ends(what string) {
 	h.svc.write()
 	j := h.journal()
 	version, schema := h.from, 1
-	if j != nil && j.State == journal.Done {
+	if j != nil && j.State == journal.Done && j.Kind == journal.Upgrade || j != nil && j.State == journal.Done && j.RollbackSafe {
 		version, schema = standTo, 2
+	}
+	// What a rollback that restored the snapshot lost.
+	lost := func(int) bool { return false }
+	if j != nil && j.Kind == journal.Rollback {
+		version = j.To
+		if !j.RollbackSafe {
+			lost = func(n int) bool { return n > h.snapshot && n <= h.rolled }
+		}
+		if got := exists(filepath.Join(h.data, holdFile)); got == j.RollbackSafe {
+			fail("held: %v", got)
+		}
+	} else if exists(filepath.Join(h.data, holdFile)) {
+		fail("held")
 	}
 	if j.Pending() {
 		fail("not over")
+	}
+	for _, name := range []string{"maintenance.json", ".restore-work", databaseFile + ".restore"} {
+		if exists(filepath.Join(h.data, name)) {
+			fail("%s is left", name)
+		}
 	}
 	if h.svc.running != version {
 		fail("%q serves, not %s", h.svc.running, version)
@@ -331,7 +437,7 @@ func (h *standHost) ends(what string) {
 		fail("the database is %q", content)
 	}
 	for n := 1; n <= h.svc.writes+1; n++ {
-		if strings.Count(content, fmt.Sprintf("write %d\n", n)) != 1 {
+		if want := map[bool]int{false: 1}[lost(n)]; strings.Count(content, fmt.Sprintf("write %d\n", n)) != want {
 			fail("write %d of %d is not there once: %q", n, h.svc.writes+1, content)
 		}
 	}
@@ -347,7 +453,15 @@ func (h *standHost) ends(what string) {
 		fail("varlatch is %q", got)
 	}
 	for _, name := range workDirs {
-		if left, _ := filepath.Glob(filepath.Join(h.data, "upgrades", "*", name)); len(left) > 0 {
+		left, _ := filepath.Glob(filepath.Join(h.data, "upgrades", "*", name))
+		if j != nil && j.Kind == journal.Rollback && !j.RollbackSafe && name == originalDir {
+			// The database it replaced.
+			if len(left) != 1 || left[0] != filepath.Join(j.Work, originalDir) {
+				fail("kept: %q", left)
+			}
+			continue
+		}
+		if len(left) > 0 {
 			fail("%s is left", left)
 		}
 	}
@@ -896,6 +1010,150 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 				t.Fatalf("%+v, %v\n%s", j, err, h.tree())
 			}
 			h.ends(c.name)
+		})
+	}
+}
+
+// newUpgradedHost is a host upgraded from standFrom to standTo, with a
+// write after it.
+func newUpgradedHost(t *testing.T, keeps, badFrom, wal bool) *standHost {
+	t.Helper()
+	h := newStandHost(t, standFrom, false, wal)
+	h.keeps = keeps
+	h.snapshot = h.svc.writes + 1
+	if badFrom {
+		// What it answers is asked for the first time after its rollback.
+		_ = h.svc.Stop(context.Background())
+		h.put(filepath.Join(h.bin, "varlatchd"), standIn(standFrom, 1, strings.Replace(standStatus(standFrom, 1), `"rootKek":true`, `"rootKek":false`, 1)), 0o755)
+		_ = h.svc.Start(context.Background())
+		h.shadow.absorb()
+	}
+	if j, err := h.upgrader(nil).Run(context.Background(), h.installed(), h.release()); err != nil || j.State != journal.Done {
+		t.Fatalf("the upgrade: %+v, %v\n%s", j, err, h.tree())
+	}
+	h.svc.write()
+	// Long ago, to a power cut now.
+	h.shadow.absorb()
+	h.rolled = h.svc.writes + 1
+	return h
+}
+
+// rollback plans and runs a rollback.
+func (h *standHost) rollback(crash func(string) bool) (*journal.Journal, error) {
+	plan, err := h.upgrader(nil).PlanRollback(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if plan.Safe != h.keeps {
+		h.t.Fatalf("plan %+v", plan)
+	}
+	h.rolled = h.svc.writes + 1
+	return h.upgrader(crash).Rollback(context.Background(), plan, nil)
+}
+
+// Every point of a rollback, and of its undo, killed and cut, with the
+// reboot before the next run and without: the next run finishes or undoes
+// it, and an undone one can be run again.
+func TestARollbackInterruptedAnywhere(t *testing.T) {
+	for _, c := range []struct {
+		name                string
+		keeps, badFrom, wal bool
+	}{
+		{"the database kept", true, false, false},
+		{"the database kept, the servers killed", true, false, true},
+		{"the database kept, undone", true, true, true},
+		{"the snapshot restored", false, false, false},
+		{"the snapshot restored, the servers killed", false, false, true},
+		{"the snapshot restored, undone", false, true, false},
+		{"the snapshot restored, undone, the servers killed", false, true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			for _, how := range []struct {
+				name        string
+				cut, reboot bool
+			}{{"killed", false, false}, {"killed, rebooted", false, true}, {"cut", true, true}} {
+				points := 0
+				for n := 1; ; n++ {
+					h := newUpgradedHost(t, c.keeps, c.badFrom, c.wal)
+					at := interrupted(n, func(crash func(string) bool) {
+						if j, err := h.rollback(crash); err != nil && !errors.Is(err, errKilled) && !c.badFrom {
+							t.Fatalf("%+v, %v\n%s", j, err, h.tree())
+						}
+					})
+					if at == "" {
+						h.ends(how.name + ", not interrupted")
+						break
+					}
+					points++
+					what := fmt.Sprintf("%s at point %d (%s)", how.name, n, at)
+					h.svc.write()
+					if how.cut {
+						h.shadow.cut()
+					}
+					if how.reboot {
+						h.reboot()
+					}
+					if _, err := h.upgrader(nil).Recover(context.Background()); err != nil {
+						t.Fatalf("%s: %v\nfaults %q\n%s", what, err, h.svc.faults, h.tree())
+					}
+					h.ends(what)
+					if j := h.journal(); j.Kind == journal.Upgrade && !c.badFrom {
+						if j, err := h.rollback(nil); err != nil || j.State != journal.Done {
+							t.Fatalf("%s: again: %+v, %v\n%s", what, j, err, h.tree())
+						}
+						h.ends(what + ", again")
+					}
+					os.RemoveAll(h.dir)
+				}
+				if least := map[bool]int{true: 12, false: 26}[c.keeps]; points < least {
+					t.Fatalf("%s: only %d points", how.name, points)
+				}
+			}
+		})
+	}
+}
+
+// Interrupted, and the recovery interrupted too, at random points, then
+// rolled back again.
+func TestARollbacksRecoveryInterruptedAnywhere(t *testing.T) {
+	seed := time.Now().UnixNano()
+	if testing.Short() {
+		seed = 1
+	}
+	for w := range 4 {
+		t.Run(fmt.Sprint(w), func(t *testing.T) {
+			t.Parallel()
+			r := rand.New(rand.NewSource(seed + int64(w)))
+			for range 300 {
+				bad := r.Intn(2) == 0
+				h := newUpgradedHost(t, r.Intn(3) == 0, bad, r.Intn(2) == 0)
+				var story []string
+				for i := 0; i < 4; i++ {
+					at := interrupted(1+r.Intn(50), func(crash func(string) bool) {
+						if j := h.journal(); j.Kind == journal.Upgrade && j.State == journal.Done {
+							_, _ = h.rollback(crash)
+						} else {
+							_, _ = h.upgrader(crash).Recover(context.Background())
+						}
+					})
+					story = append(story, at)
+					h.svc.write()
+					if at != "" && r.Intn(2) == 0 {
+						story = append(story, "cut")
+						h.shadow.cut()
+						h.reboot()
+					} else if at != "" && r.Intn(2) == 0 {
+						story = append(story, "reboot")
+						h.reboot()
+					}
+				}
+				if _, err := h.upgrader(nil).Recover(context.Background()); err != nil {
+					t.Fatalf("seed %d, %q: %v\nfaults %q\n%s", seed+int64(w), story, err, h.svc.faults, h.tree())
+				}
+				h.ends(fmt.Sprintf("seed %d, %q", seed+int64(w), story))
+				os.RemoveAll(h.dir)
+			}
 		})
 	}
 }

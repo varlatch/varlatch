@@ -428,7 +428,10 @@ func (o dataOp) clean(f fsys) error {
 			return err
 		}
 	}
-	return nil
+	if !exists(o.work()) {
+		return nil
+	}
+	return f.syncDir(o.work())
 }
 
 // prune removes upgrades' directories last changed before o.Before, but

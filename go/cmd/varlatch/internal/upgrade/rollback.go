@@ -354,6 +354,11 @@ func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan, grown func(*
 	if now, err := journal.Read(u.configDir()); err != nil || now == nil || now.ID != last.ID || now.State != journal.Done || now.Kind != journal.Upgrade {
 		return refuse(errors.New("the upgrade journal changed since the rollback was planned"))
 	}
+	// What a rollback undone before left is forgotten once another is
+	// recorded.
+	if err := u.tidyAfter(ctx, last); err != nil {
+		return last, err
+	}
 	// Again, now that it begins: the prompt may have waited.
 	if _, err := rollbackHost(last, u.now()); err != nil {
 		return refuse(err)

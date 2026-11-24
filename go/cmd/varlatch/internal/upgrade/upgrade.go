@@ -864,7 +864,7 @@ func (u *Upgrader) tidyAfter(ctx context.Context, j *journal.Journal) error {
 	}
 	if r := j.LastRollback; r != nil {
 		back := &journal.Journal{ID: r.ID, Kind: journal.Rollback, State: journal.Undone, DataDir: j.DataDir, Work: filepath.Join(j.DataDir, "upgrades", r.ID)}
-		if leftBehind(back) {
+		if exists(back.Work) {
 			return u.tidy(ctx, back)
 		}
 	}

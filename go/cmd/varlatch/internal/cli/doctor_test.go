@@ -231,7 +231,11 @@ func TestDoctorReadsTheUpgradeJournal(t *testing.T) {
 		{"interrupted", func(*journal.Journal) {}, "fail", "upgrading from 0.50.0-rc.3 to 0.50.0-rc.4 is under way, or was interrupted (after step stopped)", "Run sudo varlatch upgrade to finish or undo it"},
 		{"at its start", func(j *journal.Journal) { j.Step = journal.None }, "fail", "(before its first step)", "Run sudo varlatch upgrade"},
 		{"failed", func(j *journal.Journal) { j.State, j.Reason = journal.Failed, "a disk is full" }, "fail", "failed, and its undo did not complete: a disk is full", "finish or undo it; the pre-upgrade snapshot is /data/upgrades/x/snapshot.vltbak"},
-		{"a rollback", func(j *journal.Journal) { j.Kind, j.From, j.To = journal.Rollback, j.To, j.From }, "fail", "rolling back from 0.50.0-rc.4 to 0.50.0-rc.3", "Run sudo varlatch upgrade"},
+		{"a rollback", func(j *journal.Journal) {
+			u := *j
+			u.Format, u.State = journal.Format, journal.Done
+			j.Kind, j.Upgraded, j.From, j.To = journal.Rollback, &u, j.To, j.From
+		}, "fail", "rolling back from 0.50.0-rc.4 to 0.50.0-rc.3", "Run sudo varlatch upgrade"},
 		{"done", func(j *journal.Journal) { j.State = journal.Done }, "pass", "both are " + buildinfo.Version, ""},
 		{"undone", func(j *journal.Journal) { j.State = journal.Undone }, "pass", "both are " + buildinfo.Version, ""},
 	} {

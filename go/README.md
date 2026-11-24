@@ -1175,7 +1175,7 @@ daemon's maintenance admission and its one backup at a time.
     varlatchd admin backup run [--json]
     varlatchd admin backup status
     varlatchd admin backup test-bucket [--json]
-    varlatchd admin backup restore --in <archive> [--backup-key-file <file>]
+    varlatchd admin backup restore --in <archive> [--backup-key-file <file>] [--check]
     varlatchd admin maintenance begin --ttl <duration>
     varlatchd admin maintenance end <lease id>
     varlatchd admin maintenance status
