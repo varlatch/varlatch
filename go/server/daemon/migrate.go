@@ -349,6 +349,9 @@ func importableDataDir(dataDir string) error {
 	if err := enrolledNode(dataDir); err != nil {
 		return err
 	}
+	if h, err := backup.ReadHold(dataDir); err != nil || h != nil {
+		return fmt.Errorf("the data directory %s holds a restore's hold (%s): `varlatchd admin restore resume`, with varlatchd stopped, removes it; an import builds a fresh database only", dataDir, backup.HoldFile)
+	}
 	return migrate.CheckFresh(dataDir, importIgnore, importKeep)
 }
 

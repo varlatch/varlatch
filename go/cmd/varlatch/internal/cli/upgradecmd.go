@@ -114,6 +114,18 @@ func (r *Run) upgrade() error {
 		return r.upgradeCheck(ctx, u, version, parsed.Has("--prerelease"), parsed.Has("--json"))
 	}
 
+	// Held after a restore while an upgrade is pending: undoing it would put
+	// the database it set aside in the restored one's place.
+	if j, err := u.Pending(); err != nil {
+		return Fail("varlatch upgrade: "+err.Error()+". Nothing was changed.", ExitFailure)
+	} else if j != nil {
+		if h, err := backup.ReadHold(j.DataDir); err != nil || h != nil {
+			file := filepath.Join(filepath.Dir(config), journal.File)
+			return Fail("varlatch upgrade: this installation was restored from an archive and is held, and an upgrade from "+j.From+" to "+j.To+" is still pending: finishing or undoing it would replace the restored database. "+
+				"Put right what changed since the archive and run varlatch admin restore resume; move "+file+" away, which closes that upgrade (its files stay in "+j.Work+"); then run varlatch upgrade. Nothing was changed.", ExitFailure)
+		}
+	}
+
 	// An upgrade left pending is finished or undone first, and nothing else.
 	if j, err := u.Recover(ctx); err != nil {
 		return upgradeFailure(err)

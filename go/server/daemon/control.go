@@ -254,6 +254,11 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 			return ExitFailure
 		}
 	}
+	if args[0] == "restore" {
+		if _, err := os.Lstat(cfg.DatabasePath()); errors.Is(err, os.ErrNotExist) {
+			return clearStaleHold(cfg.DataDir, stdout, stderr)
+		}
+	}
 	env, status := openOffline(cfg, what, stderr)
 	if env == nil {
 		return status

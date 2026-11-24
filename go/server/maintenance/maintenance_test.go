@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -156,7 +157,7 @@ func TestRestoreHold(t *testing.T) {
 	} else {
 		leave()
 	}
-	if err := a.Resume(func(*backup.Hold) error { t.Error("recorded"); return nil }); !errors.Is(err, ErrNotHeld) {
+	if _, err := a.Resume(func(*backup.Hold) error { t.Error("recorded"); return nil }); !errors.Is(err, ErrNotHeld) {
 		t.Errorf("resume without a hold: %v", err)
 	}
 	if err := backup.WriteHold(dir, backup.Hold{ArchiveID: "archive-1", RestoredAt: "2026-11-24T08:00:00.000Z"}); err != nil {
@@ -192,18 +193,35 @@ func TestRestoreHold(t *testing.T) {
 	}
 	// Not recorded, not resumed.
 	failed := errors.New("no event")
-	if err := a.Resume(func(*backup.Hold) error { return failed }); !errors.Is(err, failed) || !a.Held() || !Open(dir, nil).Held() {
+	if _, err := a.Resume(func(*backup.Hold) error { return failed }); !errors.Is(err, failed) || !a.Held() || !Open(dir, nil).Held() {
 		t.Errorf("a resume whose event failed: %v, held %v", err, a.Held())
 	}
-	recorded := ""
-	if err := a.Resume(func(h *backup.Hold) error {
-		recorded = h.ArchiveID
-		if !a.Held() {
-			t.Error("resumed before the event")
-		}
-		return nil
-	}); err != nil || recorded != "archive-1" || a.Held() || Open(dir, nil).Held() {
-		t.Errorf("resume: %v, %q, held %v", err, recorded, a.Held())
+	// Resumes at once: one records and ends it, the others find nothing.
+	var recorded, resumed, notHeld atomic.Int32
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			what, err := a.Resume(func(h *backup.Hold) error {
+				recorded.Add(1)
+				if !a.Held() || h.ArchiveID != "archive-1" {
+					t.Error("resumed before the event")
+				}
+				time.Sleep(10 * time.Millisecond)
+				return nil
+			})
+			switch {
+			case err == nil && what == "the hold's file":
+				resumed.Add(1)
+			case errors.Is(err, ErrNotHeld):
+				notHeld.Add(1)
+			default:
+				t.Errorf("resume: %q %v", what, err)
+			}
+		})
+	}
+	wg.Wait()
+	if recorded.Load() != 1 || resumed.Load() != 1 || notHeld.Load() != 7 || a.Held() || Open(dir, nil).Held() {
+		t.Errorf("%d recorded, %d resumed, %d not held, held %v", recorded.Load(), resumed.Load(), notHeld.Load(), a.Held())
 	}
 	if leave, ok := a.EnterWork(); !ok {
 		t.Error("work refused once resumed")
@@ -221,7 +239,7 @@ func TestRestoreHold(t *testing.T) {
 	if _, err := a.Hold(); !errors.Is(err, backup.ErrHoldUnreadable) {
 		t.Errorf("an unreadable hold: %v", err)
 	}
-	if err := a.Resume(func(h *backup.Hold) error {
+	if _, err := a.Resume(func(h *backup.Hold) error {
 		if h != nil {
 			t.Errorf("%+v", h)
 		}

@@ -393,6 +393,46 @@ func TestRestoreHoldsWork(t *testing.T) {
 	r.stop(t)
 }
 
+// A restore's hold in a data directory without a database: an import is
+// refused, naming it and how to clear it, and `restore resume` removes it
+// without making a database; a dangling link is cleared the same way.
+func TestStaleHold(t *testing.T) {
+	in := newInstall(t, "")
+	path := filepath.Join(in.data, backup.HoldFile)
+	for _, c := range []struct {
+		make func() error
+		what string
+	}{
+		{func() error { return backup.WriteHold(in.data, backup.Hold{ArchiveID: "a", RestoredAt: "t"}) }, "the hold's file"},
+		{func() error { return os.Symlink(filepath.Join(in.dir, "missing"), path) }, "a symbolic link"},
+	} {
+		if err := c.make(); err != nil {
+			t.Fatal(err)
+		}
+		if err := importableDataDir(in.data); err == nil || !strings.Contains(err.Error(), backup.HoldFile) || !strings.Contains(err.Error(), "varlatchd admin restore resume") {
+			t.Errorf("an import beside a hold: %v", err)
+		}
+		if code, out, _ := runAdmin(t, "restore", "status", "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, `{"held":true`) {
+			t.Errorf("status: %d %q", code, out)
+		}
+		if code, out, errOut := runAdmin(t, "restore", "resume", "--config", in.conf); code != ExitOK || !strings.Contains(out, "Removed the stale "+backup.HoldFile+" ("+c.what+")") {
+			t.Errorf("resume: %d %q %q", code, out, errOut)
+		}
+		if _, err := os.Lstat(filepath.Join(in.data, config.DatabaseFile)); !os.IsNotExist(err) {
+			t.Fatalf("a database was made: %v", err)
+		}
+		if err := importableDataDir(in.data); err != nil {
+			t.Errorf("an import afterwards: %v", err)
+		}
+	}
+	if code, _, errOut := runAdmin(t, "restore", "resume", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "not held") {
+		t.Errorf("nothing to clear: %d %q", code, errOut)
+	}
+	if _, err := os.Lstat(filepath.Join(in.data, config.DatabaseFile)); !os.IsNotExist(err) {
+		t.Fatalf("a database was made: %v", err)
+	}
+}
+
 // G7 during a backup: varlatchd (this test binary, serving) is killed with
 // SIGKILL in the middle of a backup, once during the snapshot and once
 // during the sealing, while clients ask for disclosures. Nothing committed

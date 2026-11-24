@@ -943,7 +943,7 @@ func TestHeldKeepsEveryArchive(t *testing.T) {
 			t.Fatalf("removed %v while held", removed)
 		}
 	}
-	if err := admission.Resume(func(*backup.Hold) error { return nil }); err != nil {
+	if _, err := admission.Resume(func(*backup.Hold) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if removed := run(); len(removed) != 3 {

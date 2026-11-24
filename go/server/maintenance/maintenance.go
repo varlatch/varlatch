@@ -45,6 +45,8 @@ type Admission struct {
 	// read (holdUnreadable), until Resume.
 	hold           *backup.Hold
 	holdUnreadable bool
+	// resuming serializes Resume: its event is committed outside mu.
+	resuming sync.Mutex
 }
 
 // Open reads the gate in dir, the data directory.
@@ -285,7 +287,7 @@ func (a *Admission) End(id string) error {
 }
 
 // The restore hold (backup.Hold). Requests and host commands are admitted
-// while it stands; background work that leaves the host or destroys is not.
+// while it stands; background work that delivers or destroys is not.
 
 // ErrHeld refuses what a held installation must not do.
 var ErrHeld = errors.New("the installation was restored from an archive and is held: put right what changed since, then run `varlatchd admin restore resume`")
@@ -317,8 +319,8 @@ func (a *Admission) Hold() (*backup.Hold, error) {
 	return &h, nil
 }
 
-// EnterWork is Enter for background work that leaves the host or destroys:
-// refused while a restore's hold stands.
+// EnterWork is Enter for background work that delivers or destroys: refused
+// while a restore's hold stands.
 func (a *Admission) EnterWork() (leave func(), ok bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -328,21 +330,26 @@ func (a *Admission) EnterWork() (leave func(), ok bool) {
 	return a.enter()
 }
 
-// Resume ends the hold, once record (its audit event) has committed: killed
-// in between, the hold stands and Resume again records and ends it.
-func (a *Admission) Resume(record func(*backup.Hold) error) error {
+// Resume ends the hold, once record (its audit event) has committed, and
+// says what it removed (backup.RemoveHold). One resume at a time: the
+// second finds nothing to resume. Killed between the event and the removal,
+// the hold stands, and resuming again records the event again.
+func (a *Admission) Resume(record func(*backup.Hold) error) (string, error) {
+	a.resuming.Lock()
+	defer a.resuming.Unlock()
 	h, err := a.Hold()
 	if h == nil && err == nil {
-		return ErrNotHeld
+		return "", ErrNotHeld
 	}
 	if err := record(h); err != nil {
-		return err
+		return "", err
+	}
+	what, err := backup.RemoveHold(a.dir)
+	if err != nil {
+		return "", err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if err := backup.RemoveHold(a.dir); err != nil {
-		return err
-	}
 	a.hold, a.holdUnreadable = nil, false
-	return nil
+	return what, nil
 }

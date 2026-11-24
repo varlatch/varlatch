@@ -338,7 +338,7 @@ func serve(opts Options, h *hooks) int {
 	// A restore's hold (backup.Hold): the workers that deliver or destroy
 	// (below, admission.EnterWork) wait until the host operator resumes.
 	if admission.Held() {
-		log.Warn("the installation was restored from an archive and is held: no sync, webhook, audit export or organization deletion runs until varlatchd admin restore resume", "file", filepath.Join(cfg.DataDir, backup.HoldFile))
+		log.Warn("the installation was restored from an archive and is held: its background work (sync, webhooks, audit export, organization deletion) does not run until varlatchd admin restore resume", "file", filepath.Join(cfg.DataDir, backup.HoldFile))
 	}
 	// Public HTTPS (step 6's decision 4), when listen_https is set: the
 	// certificate manager first, so the listeners report can show it.

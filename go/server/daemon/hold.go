@@ -12,6 +12,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -23,8 +24,9 @@ import (
 //
 // status prints JSON. resume records installation.restore_resumed, then
 // ends the hold: in the running varlatchd, whose workers go on at their
-// next pass, or, with varlatchd stopped, on the data directory. Both are
-// the host operator's; neither opens anything.
+// next pass, or, with varlatchd stopped, on the data directory. A crash
+// between the event and the hold's removal leaves it held; resuming again
+// records the event again. Both commands are the host operator's.
 const holdUsage = "Usage: varlatchd admin restore status | varlatchd admin restore resume"
 
 type holdStatus struct {
@@ -62,7 +64,7 @@ func runHold(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io
 	}
 	defer leave()
 	w := &write.Writer{Store: env.store, Gates: env.gates}
-	err := env.admission.Resume(func(h *backup.Hold) error {
+	what, err := env.admission.Resume(func(h *backup.Hold) error {
 		meta := jsvalue.Object{{Key: "archiveId", Value: nil}, {Key: "restoredAt", Value: nil}}
 		if h != nil {
 			meta = jsvalue.Object{{Key: "archiveId", Value: h.ArchiveID}, {Key: "restoredAt", Value: h.RestoredAt}}
@@ -75,6 +77,23 @@ func runHold(ctx context.Context, env *hostEnv, rest []string, stdout, stderr io
 	if err != nil {
 		return fail(err)
 	}
-	fmt.Fprintln(stdout, "Resumed: the installation is no longer held. Sync Targets, webhooks, audit exports and organization deletions go on.")
+	fmt.Fprintf(stdout, "Resumed: the installation is no longer held (removed %s, %s). Its background work goes on: sync, webhooks, audit export, organization deletion. What came due meanwhile is done now.\n", backup.HoldFile, what)
+	return ExitOK
+}
+
+// clearStaleHold is `restore resume` on a stopped varlatchd's data
+// directory that holds no database: there is nothing to resume and nowhere
+// to record it, and nothing is made. The caller holds the directory's lock.
+func clearStaleHold(dir string, stdout, stderr io.Writer) int {
+	what, err := backup.RemoveHold(dir)
+	switch {
+	case err != nil:
+		fmt.Fprintf(stderr, "varlatchd admin restore resume: %v\n", err)
+		return ExitFailure
+	case what == "":
+		fmt.Fprintf(stderr, "varlatchd admin restore resume: %v\n", maintenance.ErrNotHeld)
+		return ExitFailure
+	}
+	fmt.Fprintf(stdout, "The data directory has no database: there was nothing to resume. Removed the stale %s (%s).\n", backup.HoldFile, what)
 	return ExitOK
 }

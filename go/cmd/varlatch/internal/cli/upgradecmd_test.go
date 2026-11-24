@@ -25,6 +25,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/release"
+	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
 func runUpgrade(t *testing.T, env MapEnv, args ...string) (int, string, string) {
@@ -126,7 +127,24 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	if code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--accept-not-rollback-safe", "--config", h.conf); code != ExitFailure || out != "" || !strings.Contains(errs, "run varlatch admin restore resume, then upgrade. Nothing was changed.") {
 		t.Fatalf("held: %d %q %q", code, out, errs)
 	}
-	if err := backup.RemoveHold(h.data); err != nil {
+	// And before a pending upgrade is undone over the restored database.
+	pending := &journal.Journal{Format: journal.Format, ID: "0123456789abcdef", State: journal.InProgress, Step: journal.Swapped, From: "0.50.0-rc.1", To: "0.50.0-rc.2",
+		DataDir: h.data, Work: filepath.Join(h.data, "upgrades", "0123456789abcdef"), BinDir: h.bin, Releases: h.bin}
+	if err := journal.Write(filepath.Dir(h.conf), pending); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(filepath.Join(filepath.Dir(h.conf), journal.File))
+	if code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf); code != ExitFailure || out != "" || !strings.Contains(errs, "is still pending") ||
+		!strings.Contains(errs, "move "+filepath.Join(filepath.Dir(h.conf), journal.File)+" away") || !strings.Contains(errs, "restore resume") {
+		t.Fatalf("held with an upgrade pending: %d %q %q", code, out, errs)
+	}
+	if after, _ := os.ReadFile(filepath.Join(filepath.Dir(h.conf), journal.File)); string(after) != string(before) {
+		t.Error("the refused upgrade changed the journal")
+	}
+	if err := os.Remove(filepath.Join(filepath.Dir(h.conf), journal.File)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backup.RemoveHold(h.data); err != nil {
 		t.Fatal(err)
 	}
 	code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
