@@ -89,11 +89,20 @@ after it count on it.
   Put right what the message names, a full disk for example, and run the
   command again.
 - **The record is damaged.** If a newer `varlatch` wrote it, run that one's
-  `upgrade` instead. Otherwise the command prints both ways: going on with the
-  database in place, and going back to a database it found beside it. Check
-  first which database is the right one, and which release it belongs to: what
-  it found may be the one an earlier rollback replaced. Replace nothing until
-  you know.
+  `upgrade` instead. Otherwise the command prints what there is, in this order:
+
+  1. commands that say whose each database is, how far its history goes, and
+     which release last changed its schema;
+  2. the way on with the database in place;
+  3. for each database kept beside it, with its date, the way back to it and
+     its release.
+
+  Run the first ones, and replace nothing until you know which database is the
+  right one. A kept one may be an old copy, and a longer history alone does not
+  make it right: a rollback replaces such a one on purpose. Where a command has
+  `<release>`, put in the release that database is of. Nothing is overwritten:
+  what stood in place is moved beside the kept one. With no database in place,
+  start no `varlatchd` until one is back: it would make an empty one.
 - **`varlatchd` is held and the record is gone.** Once no `varlatch upgrade`
   runs, `sudo systemctl restart varlatchd` serves the database in place.
 - **The upgrade began with 0.50.0-rc.2 or rc.3** and its database was already
