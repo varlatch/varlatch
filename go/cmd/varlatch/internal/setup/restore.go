@@ -491,7 +491,7 @@ func (r *run) nameCheck(ctx context.Context) error {
 	}
 	if !res.Reusable {
 		return fmt.Errorf("setup: the auth key in %s joined once only, so it is single-use and the probe has spent it (a restore checks the name with the key before enrolling with it). Create a reusable auth key tagged %s (Tailscale's admin console: Settings, Keys, Generate auth key, Reusable, with those tags), put it in %s, and run setup again; revoke it once the restore is done",
-			a.TailnetAuthKeyFile, a.TailnetTags, a.TailnetAuthKeyFile)
+			r.configValue("tailnet_auth_key_file"), a.TailnetTags, r.configValue("tailnet_auth_key_file"))
 	}
 	return r.o.Say("No node named " + a.TailnetHostname + " is visible to the probe. The tailnet's access rules may hide some: varlatchd reads its name back after enrolling, and keeps tailnet access closed if the control plane added a suffix.")
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/release"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
@@ -286,7 +287,11 @@ func (r *Run) upgradeCheck(ctx context.Context, u *upgrade.Upgrader, version str
 		})
 	}
 	if plan.UpdateAvailable {
-		return r.println("varlatchd " + plan.Latest + " is available (this host runs " + plan.Current + "): " + plan.ReleaseURL + ". Upgrade with sudo varlatch upgrade.")
+		how, what := "Upgrade with sudo varlatch upgrade.", "this host runs "
+		if r.Getenv(keyenv.ImageMarker) != "" {
+			how, what = "Upgrade by deploying its image, by the digest the release names.", "this image is "
+		}
+		return r.println("varlatchd " + plan.Latest + " is available (" + what + plan.Current + "): " + plan.ReleaseURL + ". " + how)
 	}
 	return r.println("varlatchd " + plan.Current + " is up to date.")
 }

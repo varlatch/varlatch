@@ -119,7 +119,7 @@ paths:
       operationId: getInstallationOutbound
       summary: Installation Admin only, the host's outbound allow list and the destinations it refuses
       description: >
-        VARLATCH_OUTBOUND_ALLOW as varlatchd parsed it at startup, with the
+        outbound_allow as varlatchd parsed it at startup, with the
         warnings `varlatchd admin doctor` gives, and every live destination
         an Organization configured that the outbound policy refuses (ADR-0057
         Decision 8), by Organization, with the allow list value that would
@@ -1532,7 +1532,7 @@ paths:
         OIDC issuers, each with its kind, name, host, port and reason, and
         since when refusals of it are recorded. Checked when asked, with
         DNS lookups only. Private destinations are allowed by the host
-        operator (VARLATCH_OUTBOUND_ALLOW on the host), never through the
+        operator (outbound_allow on the host), never through the
         API. Nothing waiting is lost: deliveries catch up once the host
         allows the destination. `unresolved` counts destinations whose
         names did not resolve, which could not be checked. A check is
@@ -1640,7 +1640,7 @@ paths:
         else null, with its status (lag, last write and error, failing since,
         the destination's checks, Object Lock "verified" or "accepted"), and
         whether the host operator left audit export on
-        (VARLATCH_AUDIT_EXPORT; enabled false: nothing is delivered and no
+        (audit_export; enabled false: nothing is delivered and no
         export can be created). Never the key. Needs organization.manage.
         Allowed while the Organization is frozen for an incident.
       parameters:
@@ -7456,7 +7456,7 @@ components:
           description: How many configured destinations the check looked at, in every Organization.
         allow:
           type: array
-          description: VARLATCH_OUTBOUND_ALLOW as parsed at startup, one entry each; empty when it is not set.
+          description: outbound_allow as parsed at startup, one entry each; empty when it is not set.
           items: { type: string }
         warnings:
           type: array
@@ -7468,7 +7468,7 @@ components:
           items: { $ref: "#/components/schemas/InstallationRefusedDestination" }
         suggested:
           type: [string, "null"]
-          description: The VARLATCH_OUTBOUND_ALLOW value that would allow the refused names (the current entries plus new ones); null when none would help.
+          description: The outbound_allow value that would allow the refused names (the current entries plus new ones); null when none would help.
         unresolved:
           type: integer
           description: Destinations whose names did not resolve; not refusals, checked again when they connect.
@@ -7810,7 +7810,7 @@ components:
       type: object
       required: [enabled, export]
       properties:
-        enabled: { type: boolean, description: "False when the host operator turned audit export off (VARLATCH_AUDIT_EXPORT=off)." }
+        enabled: { type: boolean, description: "False when the host operator turned audit export off (audit_export = off)." }
         export:
           oneOf:
             - $ref: "#/components/schemas/AuditExport"

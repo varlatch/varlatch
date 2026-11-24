@@ -5953,7 +5953,8 @@
         }
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "host-settings"
       ],
       "expect": {
         "status": 0,
@@ -10665,7 +10666,8 @@
         }
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "host-settings"
       ],
       "expect": {
         "status": 0,
@@ -11498,7 +11500,8 @@
         }
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "host-settings"
       ],
       "expect": {
         "status": 0,

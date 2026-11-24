@@ -21,12 +21,12 @@ const RefusedCode = "VARLATCH_OUTBOUND_REFUSED"
 var (
 	// Sentences is OUTBOUND_REFUSAL_MESSAGES.
 	Sentences = map[Reason]string{
-		PrivateAddress:  "This address is on a private network, which this installation does not let Organizations reach. The host operator can allow it with VARLATCH_OUTBOUND_ALLOW.",
+		PrivateAddress:  "This address is on a private network, which this installation does not let Organizations reach. The host operator can allow it with outbound_allow in varlatchd.conf.",
 		HostOnlyAddress: "This address is a loopback or link-local address, which Organizations cannot use.",
 		NeverAddress:    "This address is unspecified, multicast or reserved, and can never be used.",
 		MixedAnswers:    "This name has several addresses and one of them is not allowed.",
 		Scheme:          "Plain http is allowed only to destinations the host operator allowed. Use https.",
-		PortReason:      "The host operator allowed this destination on another port only. The host operator can allow this port with VARLATCH_OUTBOUND_ALLOW.",
+		PortReason:      "The host operator allowed this destination on another port only. The host operator can allow this port with outbound_allow in varlatchd.conf.",
 	}
 	// Labels is OUTBOUND_REFUSAL_LABELS.
 	Labels = map[Reason]string{
@@ -42,10 +42,10 @@ var (
 // RefusedGeneric is OUTBOUND_REFUSED_GENERIC: for a stored refusal without
 // a reason (a webhook's last_status).
 const RefusedGeneric = "This installation's outbound policy refuses this destination, so deliveries wait. " +
-	"Depending on the address, the host operator may be able to allow it with VARLATCH_OUTBOUND_ALLOW; some addresses can never be used."
+	"Depending on the address, the host operator may be able to allow it with outbound_allow in varlatchd.conf; some addresses can never be used."
 
 // HostNote is OUTBOUND_HOST_NOTE.
-const HostNote = "Private destinations are allowed by the host operator, with VARLATCH_OUTBOUND_ALLOW on the host, not in Varlatch. " +
+const HostNote = "Private destinations are allowed by the host operator, with outbound_allow in varlatchd.conf on the host, not in Varlatch. " +
 	"Nothing waiting is lost: once the host operator allows a destination and restarts varlatchd, what waited for it is delivered."
 
 // Message is outboundRefusalMessage: the sentence and the docs link.

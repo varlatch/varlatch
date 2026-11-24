@@ -36,6 +36,8 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/diskprobe"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/custody"
@@ -243,8 +245,7 @@ func Run(ctx context.Context, in Inputs) Report {
 	add(custodyCheck(in))
 	add(Check{ID: "realtime.browser", Title: "Live updates reach browsers", Status: Unknown, Class: Mandatory,
 		Detail: "only a browser sees whether live updates reach it: open the dashboard and watch a change arrive"})
-	add(Check{ID: "release.latest", Title: "Newer release check", Status: Unknown, Class: Advisory,
-		Detail: "no release check is recorded: `varlatch upgrade --check` comes with step 6.6"})
+	add(latestRelease(in))
 	// What a CA, a network error or a file said may name a URL: never its
 	// user name and password.
 	for i := range r.Checks {
@@ -259,6 +260,61 @@ var userinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/?#@\s]*@`)
 
 // maskUserinfo masks every URL's user name and password in s.
 func maskUserinfo(s string) string { return userinfo.ReplaceAllString(s, "${1}[redacted]@") }
+
+// releaseCheckMaxAge is how long a check that found no newer release is
+// taken as current (the TypeScript line's RELEASE_CHECK_MAX_AGE_MS).
+const releaseCheckMaxAge = 14 * 24 * time.Hour
+
+// latestRelease is whether a newer release is known (ADR-0049), from what
+// the host's `varlatch upgrade --check` recorded in the data directory; it
+// contacts nobody. A known newer release fails it however old the check;
+// "none newer" passes only while the check is recent.
+func latestRelease(in Inputs) Check {
+	c := Check{ID: "release.latest", Title: "Newer release check", Status: Unknown, Class: Advisory,
+		Remedy: "Run sudo varlatch upgrade --check, and schedule it (a systemd timer or cron)"}
+	upgradeBy := "Upgrade with sudo varlatch upgrade"
+	if os.Getenv(keyenv.ImageMarker) != "" {
+		c.Remedy = "Run varlatch upgrade --check in the container, and schedule it on the host"
+		upgradeBy = "Deploy the new release's image, by its digest"
+	}
+	rc, err := release.ReadReleaseCheck(in.Config.DataDir)
+	switch {
+	case errors.Is(err, fs.ErrPermission):
+		c.Detail, c.Remedy = "the release check's record cannot be read as this user", runAs
+		return c
+	case err != nil:
+		c.Detail = "the release check's record is unreadable"
+		return c
+	case rc == nil:
+		c.Detail = "no release check is recorded"
+		return c
+	}
+	failed := ""
+	if rc.LastAttempt.Failed != nil {
+		failed = "; the last check failed (" + *rc.LastAttempt.Failed + ") at " + rc.LastAttempt.CheckedAt
+	}
+	s := rc.LastSuccess
+	if s == nil {
+		c.Detail = "no successful release check is recorded" + failed
+		return c
+	}
+	if order, ok := release.CompareVersions(s.Latest.Version, buildinfo.Version); !ok {
+		c.Detail = "this varlatchd's version, " + buildinfo.Version + ", cannot be compared with " + s.Latest.Version
+		return c
+	} else if order > 0 {
+		c.Status, c.Remedy = Fail, upgradeBy
+		c.Detail = s.Latest.Version + " is available, " + buildinfo.Version + " is running (checked " + s.CheckedAt + failed + ")"
+		return c
+	}
+	checked, err := time.Parse(time.RFC3339, s.CheckedAt)
+	if err != nil || in.Now().Sub(checked) > releaseCheckMaxAge {
+		c.Detail = "the last successful release check is older than 14 days (" + s.CheckedAt + ")" + failed
+		return c
+	}
+	c.Status, c.Remedy = Pass, ""
+	c.Detail = "no release newer than " + buildinfo.Version + " as of " + s.CheckedAt + failed
+	return c
+}
 
 func facts(cfg *config.Config, live *Live) Facts {
 	f := Facts{ServerVersion: buildinfo.Version, SchemaVersion: db.SchemaVersion, DataDir: cfg.DataDir, Listeners: Listeners{Plain: cfg.Listen}}
@@ -520,12 +576,12 @@ func fsyncProbe(ctx context.Context, in Inputs) Check {
 		// A disk that cannot sync 100 times of each kind in the probe's
 		// time is slow by any measure.
 		c.Status, c.Detail = Fail, oneLine(err.Error())
-		c.Remedy = "Every write waits for this disk's fsync: put the data directory on a local disk (network block storage is not supported until G9a passes on it), or expect slow writes"
+		c.Remedy = "Every write waits for this disk's fsync: put the data directory on a local disk (network block storage is not supported), or expect slow writes"
 	case err != nil:
 		c.Status, c.Detail = Unknown, "the fsync probe did not run: "+err.Error()
 	case !res.Pass:
 		c.Status, c.Detail = Fail, res.String()
-		c.Remedy = "Every write waits for this disk's fsync: put the data directory on a local disk (network block storage is not supported until G9a passes on it), or expect slow writes"
+		c.Remedy = "Every write waits for this disk's fsync: put the data directory on a local disk (network block storage is not supported), or expect slow writes"
 	default:
 		c.Status, c.Detail = Pass, res.String()
 	}

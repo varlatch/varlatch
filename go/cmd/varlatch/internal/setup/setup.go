@@ -42,11 +42,13 @@ const (
 	ConfigFile = "/etc/varlatch/varlatchd.conf"
 	RootKEK    = "/etc/varlatch/root-kek"
 	BackupKey  = "/etc/varlatch/backup-key"
-	Journal    = "/etc/varlatch/setup.json"
-	DataDir    = "/var/lib/varlatch"
-	UnitFile   = "/etc/systemd/system/varlatchd.service"
-	Unit       = "varlatchd.service"
-	User       = "varlatch"
+	// TailnetAuthKey is varlatchd's copy of the tailnet auth key.
+	TailnetAuthKey = "/etc/varlatch/tailnet-auth-key"
+	Journal        = "/etc/varlatch/setup.json"
+	DataDir        = "/var/lib/varlatch"
+	UnitFile       = "/etc/systemd/system/varlatchd.service"
+	Unit           = "varlatchd.service"
+	User           = "varlatch"
 )
 
 // Steps, in order. The journal records each once it is done.
@@ -363,7 +365,7 @@ func (r *run) answers() error {
 		return &UsageError{"setup: --tailnet-control-url goes with --restore for now: setup does not yet set up a fresh installation on a self-hosted control server"}
 	}
 	for {
-		missing := a.Missing()
+		missing := a.missing(r.j.Done["answers"] != "")
 		if missing == "" {
 			break
 		}
@@ -392,8 +394,73 @@ func (r *run) answers() error {
 			return &UsageError{"setup: --" + f.flag + ": " + err.Error() + "; nothing was changed"}
 		}
 	}
+	if a.Ingress == Tailnet && r.j.Done["config"] == "" {
+		if _, err := os.Lstat(r.path(TailnetAuthKey)); errors.Is(err, fs.ErrNotExist) {
+			if err := authKeyFileMode(r.path(a.TailnetAuthKeyFile)); err != nil {
+				return &UsageError{"setup: --tailnet-auth-key-file: " + err.Error() + "; nothing was changed"}
+			}
+		}
+	}
 	r.j.Answers = a
 	return nil
+}
+
+// authKeyFileMode checks the operator's tailnet auth key file: a regular
+// file and no symbolic link, not open to everyone.
+func authKeyFileMode(p string) error {
+	st, err := os.Lstat(p)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("%s does not exist", p)
+	case err != nil:
+		return err
+	case !st.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file (give the file itself, not a symbolic link)", p)
+	case st.Mode().Perm()&0o007 != 0:
+		return fmt.Errorf("%s has mode %04o (open to everyone): chmod 600 it", p, st.Mode().Perm())
+	}
+	return nil
+}
+
+// tailnetKey gives varlatchd its copy of the tailnet auth key, in
+// /etc/varlatch (root:varlatch, 0640): the operator's own file is wherever
+// they keep it, often where the service's user cannot look, and that user
+// and its group did not exist when it was written. A copy is made once, and
+// never over another key.
+func (r *run) tailnetKey(gid int) error {
+	a, dest := r.j.Answers, r.path(TailnetAuthKey)
+	if a.Ingress != Tailnet || r.j.Done["config"] != "" {
+		return nil
+	}
+	if filepath.Clean(a.TailnetAuthKeyFile) != TailnetAuthKey {
+		key, err := os.ReadFile(r.path(a.TailnetAuthKeyFile))
+		defer clear(key)
+		have, herr := os.ReadFile(dest)
+		defer clear(have)
+		switch {
+		case herr == nil && errors.Is(err, fs.ErrNotExist):
+			// Copied by an earlier run, and the operator's removed since.
+		case err != nil:
+			return fmt.Errorf("setup: the tailnet auth key: %w", err)
+		case len(bytes.TrimSpace(key)) == 0:
+			return &UsageError{"setup: --tailnet-auth-key-file: " + a.TailnetAuthKeyFile + " is empty"}
+		case herr == nil && !bytes.Equal(bytes.TrimSpace(have), bytes.TrimSpace(key)):
+			return &UsageError{"setup: " + TailnetAuthKey + " holds another key than " + a.TailnetAuthKeyFile + ": remove the one that is not this node's, then run setup again"}
+		case herr != nil && !errors.Is(herr, fs.ErrNotExist):
+			return herr
+		case herr != nil:
+			if err := createPrivate(dest, key); err != nil {
+				return fmt.Errorf("setup: writing %s: %w", TailnetAuthKey, err)
+			}
+			if err := r.o.Say("Copied the tailnet auth key to " + TailnetAuthKey + " (root:" + User + ", 0640); your own file is no longer needed."); err != nil {
+				return err
+			}
+		}
+	}
+	if err := r.h.Chown(dest, 0, gid); err != nil {
+		return err
+	}
+	return os.Chmod(dest, 0o640)
 }
 
 // secretFileMode checks a credential file as varlatchd reads one, without
@@ -448,17 +515,33 @@ func (r *run) ask(a *Answers, question string) error {
 			a.ACMEEmail = email
 		}
 	case "public-url":
-		v, err := r.o.Ask.Text("The address people open, such as https://varlatch.example.com", "")
+		what := "The address people open, such as https://varlatch.example.com"
+		if a.Ingress == Tailnet {
+			if err := r.o.Say("People open the dashboard through a proxy of yours in front of " + DefaultListen + " (tailscale serve is one), or through a tunnel to it as http://localhost:8686; the tailnet node serves the API."); err != nil {
+				return err
+			}
+			what = "The address people open, such as https://varlatch.<your tailnet>.ts.net"
+		}
+		v, err := r.o.Ask.Text(what, "")
 		if err != nil {
 			return err
 		}
 		a.PublicURL = strings.TrimRight(v, "/")
 	case "tailnet-auth-key-file":
-		v, err := r.o.Ask.Text("The file holding a tailnet auth key for the node (it is read by varlatchd, never shown)", "")
+		v, err := r.o.Ask.Text("The file holding a tailnet auth key for the node (copied to "+TailnetAuthKey+" for varlatchd, never shown)", "")
 		if err != nil {
 			return err
 		}
 		a.TailnetAuthKeyFile = v
+		if a.TailnetControlURL == "" && a.TailnetHTTPSPort == "" {
+			on, err := r.o.Ask.Confirm("Let the dashboard read tailnet-protected values, over HTTPS on the tailnet (port "+DefaultTailnetHTTPSPort+")?", false)
+			if err != nil {
+				return err
+			}
+			if on {
+				a.TailnetHTTPSPort = DefaultTailnetHTTPSPort
+			}
+		}
 	case "backups":
 		if err := r.o.Say("Varlatch's hosted backups are not available yet."); err != nil {
 			return err
@@ -585,7 +668,7 @@ func (r *run) probe(ctx context.Context) error {
 	if slow {
 		measure = err.Error()
 	}
-	if err := r.o.Say("The data directory's disk is slow: " + measure + ". Every write waits for its fsync; network block storage is not supported until G9a passes on it."); err != nil {
+	if err := r.o.Say("The data directory's disk is slow: " + measure + ". Every write waits for its fsync; network block storage is not supported."); err != nil {
 		return err
 	}
 	accepted := r.o.AcceptSlowDisk
@@ -764,6 +847,7 @@ func RenderConfig(a Answers) []byte {
 		set("tailnet_port", a.TailnetPort)
 		set("tailnet_auth_key_file", a.TailnetAuthKeyFile)
 		set("tailnet_control_url", a.TailnetControlURL)
+		set("tailnet_https_port", a.TailnetHTTPSPort)
 	}
 	if a.Backups == "bucket" {
 		set("backup_destinations_file", a.BackupDestinationsFile)
@@ -791,7 +875,14 @@ func (r *run) config() error {
 			return err
 		}
 	}
-	want := append(RenderConfig(r.j.Answers), r.configExtra...)
+	if err := r.tailnetKey(gid); err != nil {
+		return err
+	}
+	answers := r.j.Answers
+	if _, err := os.Lstat(r.path(TailnetAuthKey)); err == nil && answers.Ingress == Tailnet {
+		answers.TailnetAuthKeyFile = TailnetAuthKey
+	}
+	want := append(RenderConfig(answers), r.configExtra...)
 	p := r.path(ConfigFile)
 	got, err := os.ReadFile(p)
 	switch {

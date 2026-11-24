@@ -251,6 +251,16 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = cli.SetupHelp + "\n"
 		}
 	},
+	// A host operator's setting is named as a Go installation's, in
+	// varlatchd.conf; the TypeScript CLI names its environment variable.
+	"host-settings": func(o *transcript.Outcome, _ transcript.Outcome) {
+		for _, n := range [][2]string{
+			{"VARLATCH_OUTBOUND_ALLOW on the host", "outbound_allow in varlatchd.conf on the host"},
+			{"(VARLATCH_AUDIT_EXPORT=off)", "(audit_export = off in varlatchd.conf)"},
+		} {
+			o.Stdout = strings.ReplaceAll(o.Stdout, n[0], n[1])
+		}
+	},
 	// `varlatch help move` (and `move --help`, `move -h`) prints a Go
 	// installation's move (slice 6.9); the TypeScript usage is a Compose
 	// installation's. The recording's usage becomes the Go one.

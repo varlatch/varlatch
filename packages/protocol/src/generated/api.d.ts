@@ -70,7 +70,7 @@ export interface paths {
         };
         /**
          * Installation Admin only, the host's outbound allow list and the destinations it refuses
-         * @description VARLATCH_OUTBOUND_ALLOW as varlatchd parsed it at startup, with the warnings `varlatchd admin doctor` gives, and every live destination an Organization configured that the outbound policy refuses (ADR-0057 Decision 8), by Organization, with the allow list value that would allow the refused names. Read-only: the allow list is set on the host, never through the API. The same check as `varlatchd admin outbound check`, run when asked: DNS lookups only, never a request to a destination; shared by concurrent requests and reused for up to 30 seconds. Never a resolved address, a path, a query or a credential. Requires capability `installation.outbound`.
+         * @description outbound_allow as varlatchd parsed it at startup, with the warnings `varlatchd admin doctor` gives, and every live destination an Organization configured that the outbound policy refuses (ADR-0057 Decision 8), by Organization, with the allow list value that would allow the refused names. Read-only: the allow list is set on the host, never through the API. The same check as `varlatchd admin outbound check`, run when asked: DNS lookups only, never a request to a destination; shared by concurrent requests and reused for up to 30 seconds. Never a resolved address, a path, a query or a credential. Requires capability `installation.outbound`.
          */
         get: operations["getInstallationOutbound"];
         put?: never;
@@ -629,7 +629,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The Organization's configured destinations that this installation's outbound policy refuses (capability security.refused-destinations, ADR-0057 Decision 8): webhooks, Coolify and Convex Connections and OIDC issuers, each with its kind, name, host, port and reason, and since when refusals of it are recorded. Checked when asked, with DNS lookups only. Private destinations are allowed by the host operator (VARLATCH_OUTBOUND_ALLOW on the host), never through the API. Nothing waiting is lost: deliveries catch up once the host allows the destination. `unresolved` counts destinations whose names did not resolve, which could not be checked. A check is shared by concurrent requests and reused for up to 30 seconds. Never a resolved address, a path, a query or a credential, and never the host's allow list. Needs organization.manage; existence-hiding. Never cached. */
+        /** The Organization's configured destinations that this installation's outbound policy refuses (capability security.refused-destinations, ADR-0057 Decision 8): webhooks, Coolify and Convex Connections and OIDC issuers, each with its kind, name, host, port and reason, and since when refusals of it are recorded. Checked when asked, with DNS lookups only. Private destinations are allowed by the host operator (outbound_allow on the host), never through the API. Nothing waiting is lost: deliveries catch up once the host allows the destination. `unresolved` counts destinations whose names did not resolve, which could not be checked. A check is shared by concurrent requests and reused for up to 30 seconds. Never a resolved address, a path, a query or a credential, and never the host's allow list. Needs organization.manage; existence-hiding. Never cached. */
         get: operations["refusedDestinations"];
         put?: never;
         post?: never;
@@ -680,7 +680,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The Organization's audit export to object storage (capability audit.storage-export, ADR-0056): the live one, else the most recent, else null, with its status (lag, last write and error, failing since, the destination's checks, Object Lock "verified" or "accepted"), and whether the host operator left audit export on (VARLATCH_AUDIT_EXPORT; enabled false: nothing is delivered and no export can be created). Never the key. Needs organization.manage. Allowed while the Organization is frozen for an incident. */
+        /** The Organization's audit export to object storage (capability audit.storage-export, ADR-0056): the live one, else the most recent, else null, with its status (lag, last write and error, failing since, the destination's checks, Object Lock "verified" or "accepted"), and whether the host operator left audit export on (audit_export; enabled false: nothing is delivered and no export can be created). Never the key. Needs organization.manage. Allowed while the Organization is frozen for an incident. */
         get: operations["getAuditExport"];
         put?: never;
         /** Create the Organization's audit export (ADR-0056 Decisions 1, 6 and 9): every audit event of the Organization, in order, copied to an S3-compatible bucket with conditional writes and optional Object Lock retention. Before saving, a probe writes a test object under the prefix, checks that a second write of its name is refused (If-None-Match), and reads it and its retention back where the key may; a failing probe is VALIDATION_FAILED with fixed wording and saves nothing. The endpoint is checked against the outbound policy first. from "beginning" (the default) backfills the whole log; "now" starts at the creation event. At most one live export per Organization. Needs no approval: creating only adds protection. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Refused with PERMISSION_DENIED (details.reason audit-export-off) when the host operator turned audit export off. Records audit_export.created and audit_export.stream_started. */
@@ -3572,13 +3572,13 @@ export interface components {
             generatedAt: string;
             /** @description How many configured destinations the check looked at, in every Organization. */
             checked: number;
-            /** @description VARLATCH_OUTBOUND_ALLOW as parsed at startup, one entry each; empty when it is not set. */
+            /** @description outbound_allow as parsed at startup, one entry each; empty when it is not set. */
             allow: string[];
             /** @description Entries that add nothing or open host-only ranges, as `varlatchd admin doctor` words them. */
             warnings: string[];
             /** @description Every refused destination, by Organization. */
             refused: components["schemas"]["InstallationRefusedDestination"][];
-            /** @description The VARLATCH_OUTBOUND_ALLOW value that would allow the refused names (the current entries plus new ones); null when none would help. */
+            /** @description The outbound_allow value that would allow the refused names (the current entries plus new ones); null when none would help. */
             suggested: string | null;
             /** @description Destinations whose names did not resolve; not refusals, checked again when they connect. */
             unresolved: number;
@@ -3816,7 +3816,7 @@ export interface components {
             unsupportedPlanFormat: number | null;
         };
         AuditExportStatus: {
-            /** @description False when the host operator turned audit export off (VARLATCH_AUDIT_EXPORT=off). */
+            /** @description False when the host operator turned audit export off (audit_export = off). */
             enabled: boolean;
             export: components["schemas"]["AuditExport"] | null;
         };
