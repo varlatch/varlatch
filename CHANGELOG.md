@@ -81,6 +81,17 @@ fixes.
   TypeScript CLI's formula's wrapper script, which says it is Homebrew's.
   `install.ps1` was not affected.
 
+### Server
+
+- **A stop during a certificate issuance ends `varlatchd`.** With
+  `listen_https`, the Go server kept trying again without end after a stop
+  interrupted an issuance or a renewal, until it was killed (after the 30
+  seconds of the shipped systemd unit). It no longer does.
+- **The image gets 30 seconds to stop on Coolify.**
+  `infra/coolify/varlatchd.compose.yml` sets `stop_grace_period: 30s`, as
+  the systemd unit has it; Docker's default, 10 seconds, can cut off
+  requests in flight. For `docker run`, give `--stop-timeout 30`.
+
 ### Tailnet
 
 - **varlatchd's tailnet node no longer starts on a cached network map.**
@@ -99,9 +110,9 @@ fixes.
   node is and what it must be, when it does not: `admin tailnet enroll` for
   the node's name (and, on a self-hosted control server, its tags), and
   `admin tailnet certificate obtain` and `take-name` for the name a
-  certificate is asked for. Right after a rename, a certificate asked for at
-  once was refused by the node itself, and the handoff's three attempts were
-  spent before the name had reached it.
+  certificate is asked for. Right after a rename, the node itself refuses a
+  certificate for a name that has not reached it, so the handoff's three
+  attempts could be spent at once.
 
 ### Documentation
 

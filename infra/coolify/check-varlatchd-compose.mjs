@@ -6,7 +6,8 @@
  *
  *   - `docker compose config` renders with VARLATCH_VARLATCHD_DIGEST set,
  *     default and custom VARLATCH_IMAGE_REGISTRY, user 65532:65532, read-only
- *     root filesystem, unless-stopped restart policy, no published host ports,
+ *     root filesystem, unless-stopped restart policy, a 30 s stop grace period
+ *     (as the systemd unit's TimeoutStopSec), no published host ports,
  *     no container healthcheck (distroless), no environment block, and the
  *     three bind mounts `varlatch migrate` expects (/var/lib/varlatch, /keys,
  *     /etc/varlatch/varlatchd.conf);
@@ -67,6 +68,7 @@ for (const registry of [undefined, "registry.pins.test/fork"]) {
   if (svc.user !== "65532:65532") problems.push(`${FILE}: user is ${svc.user}, expected 65532:65532`);
   if (svc.read_only !== true) problems.push(`${FILE}: read_only must be true`);
   if (svc.restart !== "unless-stopped") problems.push(`${FILE}: restart is ${svc.restart}, expected unless-stopped`);
+  if (svc.stop_grace_period !== "30s") problems.push(`${FILE}: stop_grace_period is ${svc.stop_grace_period}, expected 30s (varlatchd's stop takes up to 20 s; Docker's default is 10 s)`);
   if ((svc.ports ?? []).length > 0) problems.push(`${FILE}: must not publish host ports by default`);
   if (svc.healthcheck) problems.push(`${FILE}: distroless image must omit container healthcheck`);
   if (svc.environment && Object.keys(svc.environment).length > 0) {
