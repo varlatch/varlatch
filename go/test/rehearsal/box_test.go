@@ -640,7 +640,8 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	s3.writeCredentials(t, readCreds)
 	pause(t, "source-app",
 		"In the lab Coolify (never production's), in a throwaway project, create a Docker Compose app from",
-		"the 0.23.0 candidate's checkout, Docker Compose Location /infra/compose/docker-compose.coolify.yml,",
+		"the 0.23.0 candidate's checkout, Base Directory /infra/compose, Docker Compose Location /docker-compose.coolify.yml,",
+		"Preserve Repository on (production's layout: Coolify's docker-compose.yaml beside the repository's docker-compose.yml),",
 		"its domain https://"+prof.publicName+" on varlatch-web port 80, and these variables (the run's images):",
 		strings.TrimSpace(string(digests)),
 		"the secrets as host files (paths only):",
@@ -702,8 +703,14 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 			if r.code != 75 {
 				return r
 			}
-			pause(t, fmt.Sprintf("%s-%d", what, step), "varlatch migrate stopped for your step (exit 75):", redact(lastLines(r.stdout+"\n"+r.stderr, 12)))
+			out := r.stdout + "\n" + r.stderr
+			pause(t, fmt.Sprintf("%s-%d", what, step), "varlatch migrate stopped for your step (exit 75):", redact(lastLines(out, 40)))
 			a = append(slices.Clone(args), "--resume")
+			if strings.Contains(out, "run varlatch migrate --rollback again") {
+				// The route back asked for first: nothing of a reverse is
+				// begun, so there is none to resume.
+				a = slices.Clone(first)
+			}
 		}
 	}
 	r := migrateUntilDone("migrate", args)

@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,12 +42,15 @@ import (
 //
 // Stood in, the docker stand-in extended (fakeDockerReverse), for the last
 // TypeScript release's Compose installation:
+//   - the host's Compose containers, with the labels and mounts migrate
+//     reads; every compose command must name the project, its directory
+//     and its files (compose.go), and one that does not is refused;
 //   - Compose's services stopped, started and made (`compose stop|start|up
-//     -d`), a state file each; Postgres's volume is the one the
-//     installation's Compose files name now (COMPOSE_FILE in .env, and
-//     migrate's docker-compose.varlatch-rollback.yml): source.json is the
-//     retained pre-migration volume's database, db-<volume>.json a fresh
-//     volume's;
+//     -d`), a state file each; Postgres and Convex are on the volume their
+//     container was made with (up, from the files that command names:
+//     migrate's docker-compose.varlatch-rollback.yml or not): source.json
+//     is the retained pre-migration volume's database, db-<volume>.json a
+//     fresh volume's;
 //   - the import's one-off service (`compose --profile varlatch-rollback
 //     run ... varlatch-reverse-import ... admin migration import`), as 7.2c
 //     does it: refused unless Postgres's volume is fresh (an empty
@@ -88,26 +90,11 @@ func setStopped(svc string, yes bool) error {
 	return nil
 }
 
-// postgresVolume is the volume the installation's Compose files give
-// Postgres now: migrate's file's, when COMPOSE_FILE names it (the stand-in
-// runs in the installation's directory), else the installation's own.
+// postgresVolume is the volume Postgres's container is on: "postgres-data"
+// for the installation's own.
 func postgresVolume() string {
-	env, _ := os.ReadFile(".env")
-	for _, l := range strings.Split(string(env), "\n") {
-		if v, ok := strings.CutPrefix(l, "COMPOSE_FILE="); ok && strings.Contains(v, "docker-compose.varlatch-rollback.yml") {
-			b, err := os.ReadFile("docker-compose.varlatch-rollback.yml")
-			if err != nil {
-				return "missing-override"
-			}
-			lines := strings.Split(string(b), "\n")
-			for i, l := range lines {
-				if strings.TrimSpace(l) == "postgres-data:" && i+1 < len(lines) {
-					if n, ok := strings.CutPrefix(strings.TrimSpace(lines[i+1]), "name: "); ok {
-						return n
-					}
-				}
-			}
-		}
+	if v := mounted("postgres"); v != ownVolume("postgres") {
+		return v
 	}
 	return "postgres-data"
 }
@@ -158,33 +145,6 @@ func logCall(j string) {
 		fmt.Fprintln(f, j)
 		f.Close()
 	}
-}
-
-// composeProject is the stand-in's project as Compose resolves it: the
-// file's name:, else the directory's.
-func composeProject() string {
-	if b, err := os.ReadFile("docker-compose.yml"); err == nil {
-		for _, l := range strings.Split(string(b), "\n") {
-			if v, ok := strings.CutPrefix(l, "name: "); ok {
-				return strings.TrimSpace(v)
-			}
-		}
-	}
-	cwd, _ := os.Getwd()
-	return filepath.Base(cwd)
-}
-
-// volumeThere is the stand-in's Docker volumes: the project's own (its
-// data, varlatch-state, Tailscale's and Caddy's), until removed, and the
-// reverse's fresh ones, once made. Another project's are not there.
-func volumeThere(name string) bool {
-	if vols, _ := os.ReadFile(state("volumes")); slices.Contains(strings.Fields(string(vols)), name) {
-		return true
-	}
-	removed, _ := os.ReadFile(state("removed-volumes"))
-	base, ok := strings.CutPrefix(name, composeProject()+"_")
-	return ok && !slices.Contains(strings.Fields(string(removed)), name) &&
-		slices.Contains([]string{"postgres-data", "convex-data", "varlatch-state", "tailscale-state", "tailscale-socket", "caddy-data", "caddy-config"}, base)
 }
 
 // webLate: as a real dashboard, started it listens a little later
@@ -241,7 +201,7 @@ func sharedNetworkDown(args []string) bool {
 	if !sharedNamespace() || !stopped("tailscale") || len(args) < 3 || args[0] != "compose" || !slices.Contains(args, "--no-deps") {
 		return false
 	}
-	return (args[1] == "run" || args[1] == "up") && slices.Contains(args, "varlatchd")
+	return (args[1] == "run" || args[1] == "up" && !slices.Contains(args, "--no-start")) && slices.Contains(args, "varlatchd")
 }
 
 // fakeDockerReverse answers the commands a reverse migration gives; ok is
@@ -250,6 +210,9 @@ func fakeDockerReverse(args []string) (int, bool) {
 	fail := func(f string, a ...any) (int, bool) { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1, true }
 	j := strings.Join(args, " ")
 	logCall(j)
+	if code, ok := dockerByID(args); ok {
+		return code, true
+	}
 	if sharedNetworkDown(args) {
 		// As Docker: a container in a stopped container's network
 		// namespace does not start.
@@ -264,10 +227,55 @@ func fakeDockerReverse(args []string) (int, bool) {
 		// does not start (run r8 of the 7.8b rehearsal).
 		return fail("Migration refused during installation maintenance\nOperator command failed; check configuration and maintenance status.\n" +
 			"service \"varlatch-migrate\" didn't complete successfully: exit 1")
+	case len(args) == 3 && args[0] == "compose" && args[1] == "restart" && args[2] != "tailscale":
+		if containerGone(args[2]) {
+			return fail("no container to restart: %s", args[2])
+		}
+		if err := setStopped(args[2], false); err != nil {
+			return fail("%v", err)
+		}
+		return okOr(readdress(args[2])), true
+	case len(args) >= 5 && args[0] == "compose" && args[1] == "up" && args[2] == "--no-start" && args[len(args)-1] == "varlatchd":
+		// As Compose: a volume that is not there is made, empty; a container
+		// that is there, and did not change, is left as it is.
+		if err := makeVolume(ownVolume("varlatchd"), nil); err != nil {
+			return fail("%v", err)
+		}
+		_ = os.Remove(state("sidecar-remade"))
+		if stopped("varlatchd") && containerGone("varlatchd") {
+			_ = os.Remove(state("gone-varlatchd"))
+			return okOr(os.WriteFile(state("created-varlatchd"), nil, 0o600)), true
+		}
+		return 0, true
+	case len(args) >= 19 && args[0] == "run":
+		return ownRun(args), true
+	case j == "compose --profile deploy config --images":
+		fmt.Println("postgres:17.6\nghcr.io/x/varlatch-web@sha256:bb\npostgres:17.6")
+		return 0, true
+	case len(args) == 5 && args[0] == "image" && args[1] == "inspect" && args[3] == "{{.Id}}":
+		if _, err := os.Stat(state("images-gone")); err == nil {
+			return fail("Error response from daemon: No such image: %s", args[4])
+		}
+		fmt.Println("sha256:x")
+		return 0, true
+	case len(args) == 3 && args[0] == "pull" && args[1] == "-q":
+		if _, err := os.Stat(state("pull-fails")); err == nil {
+			return fail("Error response from daemon: denied")
+		}
+		return 0, true
+	case len(args) == 3 && args[0] == "compose" && args[1] == "start" && containerGone(args[2]):
+		// As Compose: nothing to start, exit 0.
+		fmt.Fprintf(os.Stderr, "service %q has no container to start\n", args[2])
+		return 0, true
 	case len(args) >= 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start"):
 		for _, svc := range args[2:] {
 			if err := setStopped(svc, args[1] == "stop"); err != nil {
 				return fail("%v", err)
+			}
+			if args[1] == "start" {
+				if err := readdress(svc); err != nil {
+					return fail("%v", err)
+				}
 			}
 			// `start` reuses the stopped container: one a failed start
 			// left without a network (web-netless) stays so.
@@ -279,26 +287,38 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		return 0, true
 	case len(args) >= 4 && args[0] == "compose" && args[1] == "up" && args[2] == "-d":
+		if err := mountAsConfigured(args[3:]); err != nil {
+			return fail("%v", err)
+		}
 		for _, svc := range args[3:] {
 			if strings.HasPrefix(svc, "--") {
 				continue
 			}
 			if svc == "postgres" {
 				// A fresh volume is made empty: no database file yet.
-				vols, _ := os.ReadFile(state("volumes"))
-				if v := postgresVolume(); v != "postgres-data" && !bytes.Contains(vols, []byte(v+"\n")) {
-					f, err := os.OpenFile(state("volumes"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-					if err != nil {
-						return fail("%v", err)
+				for _, s := range []string{"postgres", "convex-backend"} {
+					if v := configuredVolume(s); v != ownVolume(s) {
+						if err := makeVolume(v, nil); err != nil {
+							return fail("%v", err)
+						}
 					}
-					// Convex's fresh volume beside it.
-					fmt.Fprintln(f, v)
-					fmt.Fprintln(f, strings.Replace(v, "_postgres-data-", "_convex-data-", 1))
-					f.Close()
 				}
 			}
+			if svc == "varlatchd" {
+				// As Compose: a volume that is not there is made, empty.
+				if err := makeVolume(ownVolume(svc), nil); err != nil {
+					return fail("%v", err)
+				}
+			}
+			// A container that runs, and did not change, is left as it is.
+			again := stopped(svc) || slices.Contains(args, "--force-recreate") || svc == "varlatchd"
 			if err := setStopped(svc, false); err != nil {
 				return fail("%v", err)
+			}
+			if again {
+				if err := readdress(svc); err != nil {
+					return fail("%v", err)
+				}
 			}
 			if slices.Contains(args, "--force-recreate") {
 				// A new container: its network attached again, its crash
@@ -323,11 +343,32 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 		}
 		return okOr(os.WriteFile(state("down"), nil, 0o600)), true
-	case len(args) == 5 && args[0] == "volume" && args[1] == "inspect" && args[2] == "--format" && args[3] == "{{.Name}}":
+	case len(args) == 5 && args[0] == "volume" && args[1] == "inspect" && args[2] == "--format" && args[3] == volumeFormat:
 		if !volumeThere(args[4]) {
 			return fail("Error response from daemon: get %s: no such volume", args[4])
 		}
-		fmt.Println(args[4])
+		printVolume(args[4])
+		return 0, true
+	case (len(args) == 9 || len(args) == 7) && args[0] == "volume" && args[1] == "create":
+		name := args[len(args)-1]
+		if err := makeVolume(name, args[2:len(args)-1]); err != nil {
+			return fail("%v", err)
+		}
+		fmt.Println(name)
+		return 0, true
+	case j == "ps -a -q --no-trunc --filter label=com.docker.compose.project":
+		for _, c := range containers() {
+			fmt.Println(c.id)
+		}
+		return 0, true
+	case len(args) > 5 && args[0] == "inspect" && args[1] == "--type" && args[2] == "container" && args[3] == "--format" && args[4] == containersFormat:
+		for _, id := range args[5:] {
+			i := slices.IndexFunc(containers(), func(c container) bool { return c.id == id })
+			if i < 0 {
+				return fail("Error response from daemon: No such container: %s", id)
+			}
+			containers()[i].print()
+		}
 		return 0, true
 	case len(args) == 3 && args[0] == "volume" && args[1] == "rm", len(args) == 4 && args[0] == "volume" && args[1] == "rm" && args[2] == "-f":
 		// rm -f is quiet of a volume not there; rm is not.
@@ -338,8 +379,7 @@ func fakeDockerReverse(args []string) (int, bool) {
 			}
 			return fail("Error response from daemon: get %s: no such volume", name)
 		}
-		inUse := postgresVolume() == name || postgresVolume() == "postgres-data" && name == composeProject()+"_postgres-data"
-		if inUse && !stopped("postgres") {
+		if len(volumeUsers(name)) > 0 {
 			return fail("Error response from daemon: remove %s: volume is in use", name)
 		}
 		if f, err := os.OpenFile(state("removed-volumes"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
@@ -353,11 +393,11 @@ func fakeDockerReverse(args []string) (int, bool) {
 		_ = os.WriteFile(state("volumes"), bytes.ReplaceAll(vols, []byte(name+"\n"), nil), 0o600)
 		return 0, true
 	case len(args) == 6 && args[0] == "ps" && args[1] == "-a" && args[2] == "--filter" && strings.HasPrefix(args[3], "volume=") && args[4] == "--format":
-		// The containers using a volume: Postgres's, on the volume its
-		// Compose files name now (a stopped container keeps its volume).
+		// The containers using a volume (a stopped container keeps its
+		// volume).
 		v := strings.TrimPrefix(args[3], "volume=")
-		if v == postgresVolume() {
-			fmt.Println("g5-postgres-1")
+		for _, c := range volumeUsers(v) {
+			fmt.Println(c)
 		}
 		// A container of the test's still holding a reverse's fresh volume.
 		if vols, _ := os.ReadFile(state("volumes")); v != postgresVolume() && slices.Contains(strings.Fields(string(vols)), v) {
@@ -405,12 +445,11 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		return 0, true
 	case j == "compose config --no-interpolate --format json":
-		services := map[string]any{"varlatchd": map[string]any{}}
+		varlatchd := map[string]any{}
 		if os.Getenv("G5_SHARED_NAMESPACE") != "" {
-			services["varlatchd"] = map[string]any{"network_mode": "service:tailscale"}
+			varlatchd["network_mode"] = "service:tailscale"
 		}
-		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": services})
-		fmt.Println(string(out))
+		printConfig(map[string]map[string]any{"varlatchd": varlatchd})
 		return 0, true
 	case j == "compose --profile deploy run --rm -T convex-deploy":
 		if stopped("convex-backend") {
@@ -517,6 +556,9 @@ func migratedWorld(t *testing.T, image, coolify bool) *world {
 	t.Helper()
 	w := newWorld(t, image)
 	w.coolify = coolify
+	if coolify {
+		w.coolifyLayout()
+	}
 	w.useState()
 	code := w.run("")
 	if image && code == 75 {
@@ -524,10 +566,8 @@ func migratedWorld(t *testing.T, image, coolify bool) *world {
 		code = w.run("", "--resume")
 	}
 	if coolify && code == 75 {
-		// The operator moves the domain to Go.
-		if err := os.WriteFile(filepath.Join(w.stateDir, "web-stopped"), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		// The operator sets the domain on the Go application, and deploys it.
+		w.domainToGo()
 		code = w.run("", "--resume")
 	}
 	if code != 0 {
@@ -843,7 +883,7 @@ func TestG5RollbackWhole(t *testing.T) {
 		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone: Go serves again") {
 			t.Fatalf("--rollback with a faulty import: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
-		if !slices.Contains(w.calls("docker-calls"), "compose up -d --no-deps varlatchd") {
+		if !slices.Contains(w.calls("docker-calls"), "compose up --no-start --no-deps varlatchd") || !slices.Contains(w.calls("docker-calls"), "start g5-varlatchd-1") {
 			t.Errorf("the TypeScript varlatchd was not started without its dependencies: %v", w.calls("docker-calls"))
 		}
 		w.expectReverse("undone", undoneState)
@@ -858,7 +898,7 @@ func TestG5RollbackWhole(t *testing.T) {
 		before := len(w.calls("docker-calls"))
 		code := w.rollback("", "--rollback")
 		out := string(w.outputs[len(w.outputs)-1])
-		if code != 1 || !strings.Contains(out, "start it by hand (docker compose up -d --no-deps tailscale") || !strings.Contains(out, "then varlatch migrate --rollback again") {
+		if code != 1 || !strings.Contains(out, "start it by hand (docker compose ") || !strings.Contains(out, " up -d --no-deps tailscale") || !strings.Contains(out, "then varlatch migrate --rollback again") {
 			t.Fatalf("--rollback with the sidecar stopped: %d\n%s", code, out)
 		}
 		for _, c := range w.calls("docker-calls")[before:] {
@@ -873,8 +913,9 @@ func TestG5RollbackWhole(t *testing.T) {
 	})
 	// The undo puts the installation back on its own volumes, then asks
 	// Docker who uses each fresh one: a container still holding one (not
-	// the installation's) leaves it, refused, and --resume finishes the
-	// undo once it is free.
+	// the installation's) leaves it, said, and Go serves meanwhile (its
+	// outage does not wait for that); --resume finishes the undo once it is
+	// free.
 	t.Run("fresh volume in use", func(t *testing.T) {
 		w := migratedWorld(t, false, false)
 		for _, m := range []string{"corrupt-import", "fresh-in-use"} {
@@ -890,11 +931,13 @@ func TestG5RollbackWhole(t *testing.T) {
 		if len(strings.Fields(string(fresh))) == 0 || len(strings.TrimSpace(string(removed))) != 0 {
 			t.Fatalf("the fresh volume: kept %q, removed %q", fresh, removed)
 		}
+		if s, d := w.phases(); s != "open" || d != "open" || !w.goRuns() || !w.stopped("varlatchd") || w.answers() != "target-open" {
+			t.Fatalf("meanwhile: the journals %s / %s, Go runs %v, varlatchd stopped %v, the address answers %s", s, d, w.goRuns(), w.stopped("varlatchd"), w.answers())
+		}
 		if err := os.Remove(filepath.Join(w.stateDir, "fresh-in-use")); err != nil {
 			t.Fatal(err)
 		}
-		// A resumed undo ends with its cause (exit 1), the undo done.
-		if code := w.rollback("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone: Go serves again") {
+		if code := w.rollback("", "--resume"); code != 0 {
 			t.Fatalf("--resume once the volume is free: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
 		w.expectReverse("undone", undoneState)
@@ -1032,46 +1075,90 @@ func TestG5RollbackImage(t *testing.T) {
 	})
 }
 
-// The Coolify shape: the TypeScript release starts, migrate stops (exit
-// 75) for the operator's domain move back, Go running and isolated; once
-// the public URL answers from the TypeScript release, Go stops and the
-// reverse finishes.
+// The Coolify shape: nothing begins until the operator's route leads the
+// name to the TypeScript installation (exit 75, Go serving); with it the
+// reverse runs to its end, Go stopping once the TypeScript release answers
+// at the address.
 func TestG5RollbackCoolify(t *testing.T) {
 	w := migratedWorld(t, false, true)
-	if code := w.rollback("", "--rollback"); code != 75 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "in Coolify, move the domain of "+w.origin) {
-		t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	for range 2 {
+		before := len(w.calls("docker-calls"))
+		code := w.rollback("", "--rollback")
+		out := string(w.outputs[len(w.outputs)-1])
+		if code != 75 || !strings.Contains(out, "the address answers by no route of this migration") || !strings.Contains(out, "/data/coolify/proxy/dynamic/varlatch-rollback.yaml") ||
+			!strings.Contains(out, "url: \"http://g5-varlatch-web-1:80\"") || !strings.Contains(out, "X-Varlatch-Rollback: \"mig_") || !strings.Contains(out, "do not Deploy, Restart or Stop the TypeScript application") {
+			t.Fatalf("--rollback without a route: %d\n%s", code, out)
+		}
+		for _, c := range w.calls("docker-calls")[before:] {
+			if strings.HasPrefix(c, "compose up") || strings.HasPrefix(c, "compose run") || strings.HasPrefix(c, "volume create") {
+				t.Errorf("ran %q", c)
+			}
+		}
+		w.expectReverse("no route", undoneState)
 	}
-	w.expectReverse("waiting for the move", rbState{"rollback-transfer", "rollback-transfer", "target-gated", "", true, true, true})
-	if code := w.rollback("", "--resume", "--transfer-timeout", "3s"); code != 1 {
-		t.Fatalf("--resume before the move: %d", code)
-	}
-	w.expectReverse("still waiting", rbState{"rollback-transfer", "rollback-transfer", "target-gated", "", true, true, true})
-	// The operator moves the domain back.
-	if err := os.Remove(filepath.Join(w.stateDir, "web-stopped")); err != nil {
-		t.Fatal(err)
-	}
-	if code := w.rollback("", "--resume"); code != 0 {
-		t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	w.routeBack()
+	if code := w.rollback("", "--rollback"); code != 0 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the way back works") {
+		t.Fatalf("--rollback with the route: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
 	w.expectReverse("rolled back", rolledBackState)
-	res, err := http.Get(w.origin + "/v1/meta")
-	if err == nil {
-		res.Body.Close()
-	}
+	// The route is not needed any more.
+	w.routeAway()
+	w.expectReverse("the route removed", rolledBackState)
 	w.noSecrets()
 
-	// Aborted while waiting for the move: the operator is told to move the
-	// domain back to Go, and Go serves again (the domain still Go's).
+	// Aborted, or interrupted: the dashboard stops again, the operator is
+	// told to remove the route, and Go serves.
+	for _, how := range []string{"--abort", "--resume"} {
+		w = migratedWorld(t, false, true)
+		w.routeBack()
+		if code := w.rollback("entered rollback-checked", "--rollback"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if code := w.rollback("", how); (how == "--abort") != (code == 0) {
+			t.Fatalf("%s: %d\n%s", how, code, w.outputs[len(w.outputs)-1])
+		}
+		if !strings.Contains(string(w.outputs[len(w.outputs)-1]), "remove the route put in the proxy before the reverse") || !w.has("web-stopped") {
+			t.Errorf("%s: the dashboard stopped %v:\n%s", how, w.has("web-stopped"), w.outputs[len(w.outputs)-1])
+		}
+		w.routeAway()
+		w.expectReverse("undone by "+how, undoneState)
+	}
+	// Volumes of the names the reverse planned, made by another while it was
+	// killed before it made its own: its undo leaves them.
 	w = migratedWorld(t, false, true)
-	if code := w.rollback("", "--rollback"); code != 75 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "move the domain back to Go first") {
-		t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	w.routeBack()
+	if code := w.rollback("entered rollback-exported", "--rollback"); code != -1 {
+		t.Fatalf("not killed: %d", code)
 	}
 	if code := w.rollback("", "--abort"); code != 0 {
-		t.Fatalf("--abort during the transfer: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
-	if !strings.Contains(string(w.outputs[len(w.outputs)-1]), "in Coolify, move the domain of "+w.origin+" back to the Go application") {
-		t.Errorf("no move back to Go:\n%s", w.outputs[len(w.outputs)-1])
+	if code := w.rollback("rollback volumes made", "--rollback"); code != -1 {
+		t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
-	w.expectReverse("aborted", undoneState)
+	b, _ := os.ReadFile(filepath.Join(w.stateDir, "volumes"))
+	fresh := strings.Fields(string(b))
+	if len(fresh) != 2 {
+		t.Fatalf("the volumes made: %q", b)
+	}
+	// One is another's now; the killed run's own other one goes.
+	if err := os.WriteFile(filepath.Join(w.stateDir, "owner-"+fresh[0]), []byte("mig_another"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.rollback("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone") {
+		t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if b, _ := os.ReadFile(filepath.Join(w.stateDir, "volumes")); strings.TrimSpace(string(b)) != fresh[0] {
+		t.Errorf("volumes left: %q, want %s", b, fresh[0])
+	}
+	// And the next reverse takes another name.
+	w.routeAway()
+	w.routeBack()
+	if code := w.rollback("", "--rollback"); code != 0 {
+		t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	if v, _ := w.volume(); v == fresh[0] || !strings.HasPrefix(v, coolifyApp+"_postgres-data-") {
+		t.Errorf("the reverse took %s", v)
+	}
 	w.noSecrets()
 }

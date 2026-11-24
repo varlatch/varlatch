@@ -143,7 +143,7 @@ func TestTheImagesSteps(t *testing.T) {
 	w.tgt.human = true
 	j, err := w.eng.Run(context.Background(), false)
 	said := strings.Join(w.said, "\n")
-	if !errors.Is(err, ErrAwaitingOperator) || j.Phase != Transfer || !strings.Contains(said, "step 1: Start the Go service") || !strings.Contains(said, "step 2: in Coolify, move the domain") {
+	if !errors.Is(err, ErrAwaitingOperator) || j.Phase != Transfer || !strings.Contains(said, "step 1: in Coolify, move the domain") || !strings.Contains(said, "step 2: Start the Go service") {
 		t.Fatalf("the stop: %+v %v\n%s", j, err, said)
 	}
 	// Not started yet: the same stop again.

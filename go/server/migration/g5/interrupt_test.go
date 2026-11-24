@@ -225,6 +225,14 @@ func writeGate(g *gateDoc) error {
 // fakeDocker answers as Docker and the TypeScript CLI in its container.
 func fakeDocker(args []string) int {
 	fail := func(f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1 }
+	if strings.Join(args, " ") == "compose version --short" {
+		fmt.Println(composeVersion())
+		return 0
+	}
+	args, err := composeArgs(args)
+	if err != nil {
+		return fail("docker: %v", err)
+	}
 	if os.Getenv("G5_TAILNET") != "" {
 		if code, ok := fakeDockerTailnet(args); ok {
 			return code
@@ -265,7 +273,7 @@ func fakeDocker(args []string) int {
 			fmt.Println(string(out))
 			return 0
 		}
-		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{"varlatchd": map[string]any{"environment": map[string]string{"VARLATCH_OUTBOUND_ALLOW": allow}}}})
+		out, _ := json.Marshal(map[string]any{"name": shape().Project, "services": map[string]any{"varlatchd": map[string]any{"environment": map[string]string{"VARLATCH_OUTBOUND_ALLOW": allow}}}})
 		fmt.Println(string(out))
 		return 0
 	case len(args) == 3 && args[0] == "compose" && (args[1] == "stop" || args[1] == "start") && args[2] == "varlatch-web":
@@ -304,7 +312,7 @@ func tsMigration(verb string, rest []string) int {
 		if g == nil {
 			id := make([]byte, 8)
 			_, _ = rand.Read(id)
-			g = &gateDoc{Kind: "migration", ID: "gate-" + hex.EncodeToString(id), Phase: "frozen"}
+			g = &gateDoc{Kind: "migration", ID: "gate-" + hex.EncodeToString(id), Phase: "paused"}
 			if err := writeGate(g); err != nil {
 				return fail("%v", err)
 			}
@@ -326,7 +334,7 @@ func tsMigration(verb string, rest []string) int {
 			}
 			fmt.Println(`{"released":true}`)
 		} else {
-			g.Kind, g.Phase = "migrated-out", "final"
+			g.Kind, g.Phase = "migrated-out", "paused"
 			if err := writeGate(g); err != nil {
 				return fail("%v", err)
 			}
@@ -928,6 +936,7 @@ func newWorld(t *testing.T, image bool) *world {
 			t.Fatal(err)
 		}
 	}
+	w.writeShape(composeShape{Project: "g5-installation", Dir: w.compose, Files: []string{"docker-compose.yml"}})
 	w.installationID = rowValue(shared.source.Rows["installation"][0], "id")
 	t.Cleanup(func() {
 		_ = os.Setenv("G5_STATE", w.stateDir)
@@ -945,7 +954,25 @@ func rowValue(o jsvalue.Object, k string) string {
 // serveOrigin is the public URL: the TypeScript side's /v1/meta while its
 // dashboard runs (503 behind a gate), the target's listen once it stopped.
 func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
-	if _, err := os.Stat(filepath.Join(w.stateDir, "web-stopped")); err == nil {
+	toGo := w.has("web-stopped")
+	if w.coolify {
+		// Coolify's proxy: the operator's route, else whichever container's
+		// router there is (the dashboard's, while it runs).
+		switch {
+		case w.has("route-ts"):
+			id, _ := os.ReadFile(filepath.Join(w.stateDir, "route-ts"))
+			rw.Header().Set("X-Varlatch-Rollback", string(id))
+			if w.has("web-stopped") || w.has("route-elsewhere") {
+				rw.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			toGo = false
+		case w.has("web-stopped") && !w.has("go-domain"):
+			rw.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+	}
+	if toGo {
 		u, _ := url.Parse("http://" + w.listen)
 		httputil.NewSingleHostReverseProxy(u).ServeHTTP(rw, r)
 		return
@@ -958,6 +985,11 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 	// A container a failed start left without a network (web-netless): its
 	// nginx cannot resolve varlatchd, 502 until it is recreated.
 	if _, err := os.Stat(filepath.Join(w.stateDir, "web-netless")); err == nil {
+		rw.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	// It resolved varlatchd before that started again: 502.
+	if w.staleUpstream() {
 		rw.WriteHeader(http.StatusBadGateway)
 		return
 	}
@@ -977,6 +1009,11 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 	b, _ := os.ReadFile(filepath.Join(w.stateDir, "gate.json"))
 	if len(b) > 0 {
 		rw.WriteHeader(http.StatusServiceUnavailable)
+		var g gateDoc
+		if r.URL.Path == "/readyz" && json.Unmarshal(b, &g) == nil {
+			fmt.Fprintf(rw, `{"ready":false,"checks":{"maintenance":false},"state":%q}`, g.Kind)
+			return
+		}
 		_, _ = rw.Write([]byte(`{"error":{"code":"MAINTENANCE"}}`))
 		return
 	}
@@ -1484,6 +1521,7 @@ func TestG5InterruptionsImage(t *testing.T) {
 func TestG5InterruptionsCoolify(t *testing.T) {
 	w := newWorld(t, false)
 	w.coolify = true
+	w.coolifyLayout()
 	w.useState()
 	before := w.sourceHash()
 	if code := w.run(""); code != 75 {
@@ -1492,16 +1530,14 @@ func TestG5InterruptionsCoolify(t *testing.T) {
 	if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "in Coolify, move the domain of "+w.origin) {
 		t.Fatalf("no domain move:\n%s", out)
 	}
-	w.expect("waiting for the move", "transfer", "transfer", "source-barrier", "migration")
+	w.expect("waiting for the move", "transfer", "transfer", "none", "migration")
 	// Before the move: still waiting, nothing undone.
 	if code := w.run("", "--resume", "--transfer-timeout", "3s"); code != 1 {
 		t.Fatalf("--resume before the move: %d", code)
 	}
-	w.expect("still waiting", "transfer", "transfer", "source-barrier", "migration")
+	w.expect("still waiting", "transfer", "transfer", "none", "migration")
 	// The operator moves the domain: the public URL leads to the target.
-	if err := os.WriteFile(filepath.Join(w.stateDir, "web-stopped"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	w.domainToGo()
 	if code := w.run("entered switched", "--resume"); code != -1 {
 		t.Fatalf("not killed at the switch: %d", code)
 	}

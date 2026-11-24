@@ -73,6 +73,18 @@ the Linux host of the installation it migrates`):
   programs: it opens neither database itself.
 - **The TypeScript CLI** of 0.23.0, as `varlatch-ts` on the `PATH` (or name
   it with `--ts-cli`). The preflight makes its backup with it.
+- **The stock layout of the server's state.** `varlatchd`'s `/var/lib/varlatch`
+  is on a named volume of its own, the whole of it, as the stock and Coolify
+  Compose files have it (`varlatch-state`). The marks the migration leaves
+  the old server behind are in it, so a bind mount, a part of a volume, or
+  something mounted inside it is refused in the preflight, before the backup
+  and the barrier.
+- **Docker Compose 2.32.0 or later** (`docker compose version`). An earlier
+  one does not make PostgreSQL's container again when a rollback gives it a
+  fresh volume, so `varlatch migrate` and `varlatch migrate --rollback`
+  refuse it before anything is done: `Docker Compose <version> is too old:
+  varlatch migrate needs 2.32.0 or later`. An undo (`--resume`, `--abort`)
+  works with an earlier one too.
 - **The Backup Encryption Key** (`--bek-file`) and, when the Root KEK is not
   where the installation's `.env` says, its file (`--kek-file`). The new
   server uses the same two keys, so every archive, old and new, opens with
@@ -280,8 +292,8 @@ reverse order:
 3. The barrier is lifted.
 4. The address goes back: the old ingress (Caddy or the dashboard) starts
    again. It is recreated when its container does not serve, for example
-   one that a failed start left without a network. On Coolify, you move
-   the domain back when asked.
+   one that a failed start left without a network. On Coolify too: the
+   dashboard's container still routes the domain.
 5. The undo reports the old installation reopened only once it answers at
    its address, as itself, within `--transfer-timeout`. If it does not,
    the undo stays resumable: `--resume` (or `--abort`) starts the ingress
@@ -324,34 +336,96 @@ If it does not, the address goes back and the migration is undone.
 `varlatch migrate` does not change anything in Coolify: you make each step
 it asks for, then run it again with `--resume`.
 
+`--from` is the directory Coolify deploys the TypeScript application from,
+`/data/coolify/applications/<uuid>`. It can hold several Compose files:
+Coolify's own `docker-compose.yaml`, and, with **Preserve Repository** on,
+the repository's `docker-compose.yml`, which names another project. Plain
+`docker compose` there can read the wrong one, so `varlatch migrate` takes
+the project from the labels of the application's containers
+(`com.docker.compose.project`, its `config_files` and its `working_dir`),
+names it in every `docker compose` command, and keeps it in the journal. It
+refuses, naming both, when:
+
+- the directory holds the containers of two projects, or another
+  directory's container, anywhere on the host, is of the same project (also
+  when `--from` has no containers of its own);
+- a container of the project was made from another list of files, or the
+  same files in another order (a file added to `COMPOSE_FILE` later leaves
+  the containers it did not change on the old list: make them again with
+  `docker compose up -d --force-recreate`, in a maintenance moment, first);
+- a file the labels name is not there;
+- `COMPOSE_FILE` or `COMPOSE_PROJECT_NAME`, in your shell or in `.env`,
+  names another, or your shell's `COMPOSE_PATH_SEPARATOR` is not the one
+  `.env` is read with;
+- `--resume`, `--abort`, `--rollback` or `--finish` finds the installation
+  started another way than the journal records.
+
+It reads the containers again before every command that changes something,
+so an installation that changed meanwhile is left as it is. Before the
+barrier, `--abort` ends such a migration, and a new one takes the
+installation as it is.
+
+If it says that `.env` names other files than the containers were made
+from, set `COMPOSE_FILE` in `.env` to the files it prints: that makes no
+container again. `docker compose up -d` does, with whatever files it reads.
+
+With no containers, it takes the directory's only Compose file (and its
+override), and refuses several unless `COMPOSE_FILE` names them.
+
 1. Create the 0.50 application in Coolify as a **Docker Compose** resource
    pointing at `infra/coolify/varlatchd.compose.yml` (see
    [its Coolify setup](../../infra/coolify/README.md#single-container-go-service-050)
    and [The image target](#the-image-target)),
    with `VARLATCH_VARLATCHD_DIGEST` set to the release's verified digest,
    in setup mode with nothing listening (do not click **Deploy** yet):
-   - create the host configuration file (`/srv/varlatch/varlatchd.conf`, or
-     `VARLATCH_CONFIG_FILE`) as a regular file before clicking **Deploy**,
-     otherwise Docker creates an empty directory there and `varlatchd`
-     fails with `EISDIR`;
+   - create the host configuration file (`/srv/varlatch/varlatchd.conf`) as
+     a regular file before clicking **Deploy**, otherwise Docker creates an
+     empty directory there and `varlatchd` fails with `EISDIR`;
+   - use the default paths: Coolify mounts `/srv/varlatch/data`,
+     `/srv/varlatch/keys` and `/srv/varlatch/varlatchd.conf` whatever
+     `VARLATCH_DATA_DIR`, `VARLATCH_KEYS_DIR` and `VARLATCH_CONFIG_FILE` are
+     set to;
    - set `listen = 0.0.0.0:8686` and `trusted_proxies = coolify-proxy` in
      `varlatchd.conf`, and leave `listen_https` unset (Coolify's proxy
      terminates TLS; setting `listen_https` with `listen = 0.0.0.0:8686`
      makes `varlatchd` refuse to start with exit `78` and crash-loop).
 2. Run the migration with `--ingress coolify` and the image target's
-   options. After the final copy it stops (exit status 75) and says, step
-   by step, what to do:
-   - start the 0.50 service: in Coolify, **Deploy** it (it starts isolated
-     behind the migration's gate);
-   - move the domain: in Coolify, move the installation's domain from the
-     TypeScript application to the 0.50 `varlatchd` service on port `8686`,
-     and redeploy the proxy if Coolify asks.
-3. Run `varlatch migrate --resume` with the same options. It checks
-   `/v1/meta` through the public URL, then switches and opens.
+   options. After the final copy it stops the TypeScript dashboard's
+   container (`varlatch-web`), then stops itself (exit status 75) and says,
+   step by step, what to do. Keep this order:
+   1. Move the domain: in Coolify, remove the installation's domain from the
+      TypeScript application and set it on the 0.50 application's
+      `varlatchd` service, port `8686`. **Save** only. Do not **Deploy**,
+      **Restart** or **Stop** the TypeScript application: its containers are
+      the way back.
+   2. Start the 0.50 service: **Deploy** it. It starts isolated behind the
+      migration's gate, with the domain in its labels.
+3. Check by hand that `https://<domain>/v1/meta` answers, then run
+   `varlatch migrate --resume` with the same options. It checks `/v1/meta`
+   through the public URL, then switches and opens.
 
 If the check fails, `--resume` checks again once you have fixed the
-domain. `--abort` undoes the migration: it tells you to move the domain
-back to the TypeScript application first.
+domain. `--abort` undoes the migration: once the 0.50 service is stopped
+(when asked), it starts the TypeScript dashboard again and waits until the
+old installation answers at its address; then set the domain back in
+Coolify (**Save** only).
+
+#### How Coolify routes a domain
+
+Measured on Coolify 4.7.6 with its Traefik proxy (3.6), on throwaway
+applications:
+
+| What you do | What happens |
+| --- | --- |
+| Change an application's domain, without a deploy | Nothing on the host changes: containers, labels and files stay as they are, and the old container goes on serving the domain. Setting it on a second application is refused until you remove it from the first (or force it) |
+| **Deploy** only the second application | Both containers carry a router for the domain. The proxy picks either one, and picks again each time a labelled container on the host starts or stops |
+| Stop the old application's routed container (`docker compose stop varlatch-web`) | The new one serves, always. Starting it again (`up -d --no-deps varlatch-web`) brings the same router back |
+| **Restart** or **Deploy** a Compose application, also with nothing changed | Every container is made again, from Coolify's own Compose file, and `.env` is written again without lines of yours (`COMPOSE_FILE` among them). Other files in the directory stay |
+| **Stop** an application | Its containers and networks are removed; its volumes stay |
+| A route of your own in the proxy's dynamic configuration, with a higher priority | It wins over both containers at once, and needs no deploy of either |
+
+With Coolify's other proxy (Caddy), this is not tested: check the domain
+move and the way back on throwaway applications first.
 
 ### The tailnet
 
@@ -482,7 +556,11 @@ sudo varlatch migrate --ingress coolify \
   Its data directory, keys directory and configuration are bind paths on
   this host, owned by the image's user (`65532:65532`) and not writable by
   others. The migration says the `chown` and `chmod` to run when they are
-  not. On Coolify, `infra/coolify/varlatchd.compose.yml`'s default bind
+  not. Its `varlatchd` runs as that user with a temporary directory and a
+  home of its own, which the migration makes under its own `TMPDIR` and
+  checks at once: when that user cannot write there (a `TMPDIR` closed to
+  other users), it refuses before anything is done. On Coolify,
+  `infra/coolify/varlatchd.compose.yml`'s default bind
   paths and service name match `--to-data /srv/varlatch/data`,
   `--to-keys /srv/varlatch/keys`, `--to-config /srv/varlatch/varlatchd.conf`
   and `--to-service varlatchd`, and its `VARLATCH_VARLATCHD_DIGEST`
@@ -545,18 +623,114 @@ until the address moves back:
    log records the migration.
 3. The TypeScript release starts on a **fresh** database: new PostgreSQL
    and Convex volumes. The volumes from before the migration are kept as
-   they are.
+   they are. Before PostgreSQL starts, its Compose configuration must name
+   the new volumes, and before the import, the running container must be on
+   its new one: otherwise the rollback refuses, naming both, and is undone.
+   The same is checked again before the address moves, before the new
+   server stops, before the rollback is recorded, and on each `--resume`
+   until it is recorded in both journals.
 4. The rebuilt database is checked against the new server's copy.
 5. The address moves back: the new server stops serving it, and the
-   TypeScript release and its ingress start on it. On Coolify, move the
-   domain back to the TypeScript application when asked, then run
-   `--resume`.
+   TypeScript release and its ingress start on it.
+
+   On Coolify, from here on, do not **Deploy** or **Redeploy** the
+   TypeScript application: Coolify starts it from its own Compose file,
+   which names the volumes from before the migration, without what was
+   written since. It would answer as the same installation and release.
+   Restarting its containers (`docker restart`) is fine.
+
+   The address moves by the route you put in before (see
+   [the way back on Coolify](#the-way-back-on-coolify)): the TypeScript
+   release must answer `/v1/meta` through it, as this installation, before
+   the new server stops. If the application was deployed again before that,
+   `--resume` refuses, the new server goes on as it was, and it prints how
+   to run the application on the new volumes again: the `COMPOSE_FILE` to
+   set in `.env`, then one `docker compose up -d --no-deps` command.
 6. Rolled back: the new server never starts on that data directory again.
 
 Until the address moves, an interruption, a failed check or `--abort`
 undoes the rollback, and the new server goes on serving. During the
 transfer, `--resume` checks again and `--abort` gives the address back to
 the new server first. People sign in again after a rollback too.
+
+#### The way back on Coolify
+
+On Coolify, `--rollback` begins nothing until the way back works, because a
+domain set back in Coolify would need a deploy of the TypeScript
+application:
+
+1. The first `varlatch migrate --rollback` prints a small file and where to
+   put it, `/data/coolify/proxy/dynamic/varlatch-rollback.yaml` on the host
+   (or in Coolify: the server, **Proxy**, **Dynamic Configurations**), and
+   stops (exit status 75). It routes the domain to the TypeScript
+   dashboard's container, above the containers' own routers, and puts the
+   migration's id on each answer (`X-Varlatch-Rollback`), so that
+   `varlatch migrate` knows which router answered. The migration is still
+   open.
+2. Put the file there. From then on the domain does not lead to the new
+   server. To change your mind, remove the file.
+3. Run `varlatch migrate --rollback` again. The rollback begins here: it is
+   recorded in the journal, and the TypeScript installation's services start
+   behind its migrated-out gate (with the old Tailscale sidecar, when the
+   migration stopped it: its node comes up under its temporary name), then
+   its dashboard. The new server goes on as it was: its barrier waits until
+   the domain reaches the TypeScript installation by the route. Its
+   `/readyz` must answer there itself (a redirect to another address is not
+   followed), with 503, not ready, in the state migrated-out. If it does
+   not, or the run is interrupted, the rollback is undone (`--resume` or
+   `--abort` does it after an interruption): the dashboard, the sidecar and
+   the services this run started are stopped again, and no others.
+4. The rollback runs to its end. With the image target it stops once (exit
+   status 75) for you to stop the 0.50 service, when the domain already
+   answers from the TypeScript release.
+5. Afterwards: in Coolify, set the domain back on the TypeScript application
+   (**Save** only, do not deploy), remove the file, and check that the
+   domain still answers. The dashboard's container routes it itself, and the
+   new server's is stopped.
+
+An undone rollback stops the dashboard again. Remove the file then, and the
+new server serves the domain as before: check it yourself, `varlatch
+migrate` does not.
+
+The old installation's containers and images may be gone by then (a prune).
+`--rollback` pulls the images it needs before anything else, and makes the
+containers again: the journal, the Compose files and the volumes the
+migration recorded are enough. It refuses, before anything is done, when a
+volume is not the recorded one.
+
+The TypeScript installation's migrated-out gate is a file in its state
+volume (`<project>_varlatch-state`, `maintenance.json`). A TypeScript server
+that does not find it takes requests again, on the database from before the
+migration. So the rollback on Coolify, and `--finish --delete-old-data`,
+read it first, without starting anything: the volume must be the one the
+migration recorded in its preflight, and the gate the migration's own, by its
+id (a migration that an earlier 0.50 pre-release began recorded no volume:
+then only the gate is checked). The server's container is made, its gate read
+through its own mounts, and that very container started. Otherwise they
+refuse, nothing is started, and the new server serves on. Do not start the
+TypeScript installation then. Keep that volume during the rollback window, as
+you keep its PostgreSQL and Convex volumes.
+
+An undo of the rollback puts that gate back first, before it starts or
+changes anything else, and lifts the new server's barrier last, only while
+the gate is there: the two servers never both take requests, whoever starts
+the old containers (Docker after a restart, or a Coolify deploy).
+
+- **The gate cannot be put back, or held** (its volume is another project's,
+  another operation's gate is in it, or the Compose files now give the server
+  another volume, say): the undo stops. The new server stays behind its barrier, so the outage goes on
+  and no data is lost. The message says what is not as it should be and what
+  to do; then `--resume` or `--abort` tries again.
+- **The gate is back, the rest is not** (a database volume is gone or still
+  in use, say): the old server is held stopped behind its gate, the message
+  says so, and the new server takes requests again. Do not start the old
+  installation then. `varlatch migrate --resume` puts it back once the cause
+  is gone, and until then neither `--rollback` nor `--finish` begins.
+
+Coolify 4.7.6's own Docker cleanup leaves an
+application's stopped containers, and the images they use; with **Delete
+Unused Volumes** on, it would remove volumes no container uses, so leave
+that off, and do not upgrade Coolify during the rollback window.
 
 On a Tailscale topology (`varlatchd` with `network_mode: service:tailscale`):
 
@@ -737,22 +911,33 @@ sudo varlatch migrate --finish --delete-old-data \
   to the destination, then downloaded back and verified. The backup
   options are this archive's. The TypeScript release takes a backup while
   it is marked migrated out (for this archive), never behind the
-  transfer's barrier.
+  transfer's barrier. Its stopped services are started for it only while
+  that gate is in its state volume.
 - Only once the journal records the verified archive are the old
   PostgreSQL and Convex volumes removed, with the TypeScript
-  installation's `<project>_varlatch-state` volume.
+  installation's `<project>_varlatch-state` volume. They are the volumes
+  its containers were on when `--finish` began, recorded then: the Compose
+  files must still name them before the archive, and each must be the same
+  volume, of the installation's project and unused, right before it is
+  removed. Otherwise nothing is removed.
 - After that, the old data can be restored only through that final
   archive (with the [converter](#old-archives-the-converter)).
 
 **After a rollback**, the TypeScript release runs again, and `--finish`
 closes the window on the 0.50 side. Without `--delete-old-data`, the 0.50
 server's copy is kept as it is. With it, a final archive of that copy is
-made and verified (format 3, restorable with `setup --restore`), then the
-copy is discarded and the volumes from before the migration, unused since
-the rollback rebuilt the database, are removed.
+made and verified (format 3, restorable with `setup --restore`). Then the
+volumes from before the migration, unused since the rollback rebuilt the
+database, are removed, and after them the copy is discarded. Before the
+archive and again before the removal, the TypeScript release must run on
+the rebuilt volumes, and each volume removed must be the one the journal
+recorded when the rollback began, be the installation's project's, and be
+mounted by no container. Otherwise nothing is removed and the copy is kept.
 
-On Coolify, the removals are yours: `--finish` names each resource to
-delete in Coolify, and does not reach Coolify itself.
+On Coolify, the removals after a migration are yours: `--finish` names each
+resource to delete in Coolify, and does not reach Coolify itself. After a
+rollback it removes the two volumes from before the migration itself, there
+too.
 
 After a migration that moved the tailnet name, the old node stays in the
 control plane under its `<name>-vl-<op>-o` name: `--finish` removes its
@@ -762,9 +947,11 @@ yourself, in the tailnet's admin console on Tailscale, or with
 
 In the tailnet shape (varlatchd with `network_mode: service:tailscale`),
 run `--finish --delete-old-data` straight away rather than a plain
-`--finish` first. After a plain `--finish`, `--delete-old-data` is
+`--finish` first. After a plain `--finish`, or after a migration that moved
+the tailnet name (which stopped the sidecar), `--delete-old-data` is
 refused, because its final archive would need the old Tailscale node
-running beside Go's; the data volumes are then removed by hand:
+running beside Go's; the data volumes are then removed by hand (on Coolify,
+delete the TypeScript application with its volumes instead of step 2):
 
 1. Back them up by your own means, and test that the backup restores,
    before you remove anything.

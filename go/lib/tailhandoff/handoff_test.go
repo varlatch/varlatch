@@ -223,6 +223,8 @@ type fakeResolver struct {
 	cp        tailcontrol.ControlPlane
 	propagate time.Duration
 	never     atomic.Bool
+	fails     error
+	checks    atomic.Int32
 	onCheck   func()
 	mu        sync.Mutex
 	seen      map[string]time.Time
@@ -231,6 +233,10 @@ type fakeResolver struct {
 func (r *fakeResolver) Reaches(ctx context.Context, name, nodeID string) (bool, error) {
 	if r.onCheck != nil {
 		r.onCheck()
+	}
+	r.checks.Add(1)
+	if r.fails != nil {
+		return false, r.fails
 	}
 	if r.never.Load() {
 		return false, nil
@@ -537,6 +543,34 @@ func TestAFailureAfterEachStepIsUndone(t *testing.T) {
 				t.Errorf("%v; want %q", err, c.want)
 			}
 		})
+	}
+}
+
+// A reach check that cannot be made on this host (its program, or what it
+// needs) is not tried again: undone at once, saying why. Any other failure
+// is, until the deadline.
+func TestAPermanentReachFailureIsUndoneAtOnce(t *testing.T) {
+	for _, permanent := range []bool{true, false} {
+		r := newRig(t)
+		if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
+			t.Fatal(err)
+		}
+		r.engine.Deadline, r.engine.RetryEvery = 30*time.Second, 20*time.Millisecond
+		r.r.fails = errors.New("mkdir /tmp/user/0/x: permission denied")
+		if permanent {
+			r.r.fails = fmt.Errorf("the probe: %w", &tailhandoff.PermanentError{Err: r.r.fails})
+		} else {
+			r.engine.Deadline = 400 * time.Millisecond
+		}
+		start := time.Now()
+		s, err := r.engine.Switch(ctx, op)
+		assertUndone(t, r, s, err)
+		if !strings.Contains(err.Error(), "does not reach the incoming node") || !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("%v", err)
+		}
+		if n := r.r.checks.Load(); permanent != (n == 1) || permanent && time.Since(start) > 10*time.Second {
+			t.Errorf("permanent %v: checked %d times in %s", permanent, n, time.Since(start))
+		}
 	}
 }
 

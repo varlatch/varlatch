@@ -111,6 +111,9 @@ type Journal struct {
 	Ingress Ingress `json:"ingress"`
 	// Transfer is the address transfer's record.
 	Transfer *TransferRecord `json:"transfer,omitempty"`
+	// SourceGate is the source's migrated-out gate now, when an undo found
+	// another than Barrier's ("": Barrier's).
+	SourceGate string `json:"sourceGate,omitempty"`
 	// Rollback is the reverse migration's record (the last one begun).
 	Rollback *RollbackRecord `json:"rollback,omitempty"`
 	// Finish is --finish's record.
@@ -155,9 +158,16 @@ type RollbackRecord struct {
 	// Archives are the Go (format 3) archives made since the switch,
 	// listed in the report and never deleted (decision 17).
 	Archives []ArchiveInfo `json:"archives,omitempty"`
-	Undoing  bool          `json:"undoing,omitempty"`
-	Undone   *UndoneRecord `json:"undone,omitempty"`
-	DoneAt   string        `json:"doneAt,omitempty"`
+	// Started are the services the route's check started, each recorded
+	// before it was: an undo before the rebuild stops them.
+	Started []string      `json:"started,omitempty"`
+	Undoing bool          `json:"undoing,omitempty"`
+	Undone  *UndoneRecord `json:"undone,omitempty"`
+	// Unrestored is why an undo could not put the source back, its server
+	// held to be stopped: Go was opened again all the same, and --resume
+	// puts it back.
+	Unrestored string `json:"unrestored,omitempty"`
+	DoneAt     string `json:"doneAt,omitempty"`
 }
 
 // RebuildRecord is the TypeScript side's fresh database: the Compose file
@@ -168,6 +178,37 @@ type RebuildRecord struct {
 	Volumes     []string `json:"volumes"`
 	ComposeFile *string  `json:"composeFile"`
 	Image       string   `json:"image"`
+	// Keys are the Compose files' names of the Postgres, Convex and state
+	// volumes, and Networks the import's, where they are not the stock
+	// installation's (Coolify's rendered file).
+	Keys     []string `json:"keys,omitempty"`
+	Networks []string `json:"networks,omitempty"`
+	// ComposeFileLine is .env's COMPOSE_FILE line as it was, put back by an
+	// undo.
+	ComposeFileLine string `json:"composeFileLine,omitempty"`
+	// OverrideWas is the file beside Override that keeps an earlier
+	// reverse's, which an undo puts back.
+	OverrideWas string `json:"overrideWas,omitempty"`
+	// Owner is the migration's id, the label on the fresh volumes it makes;
+	// Made are those, once made. An undo removes only what matches both.
+	Owner string         `json:"owner,omitempty"`
+	Made  []VolumeRecord `json:"made,omitempty"`
+	// Retained are the Postgres and the Convex volume the installation ran
+	// on before the reverse, as they were then: --finish --delete-old-data
+	// removes these, and nothing by a name it makes up.
+	Retained []VolumeRecord `json:"retained,omitempty"`
+}
+
+// VolumeRecord is a volume's identity: its name, when it was made, where
+// it is, and what its labels say: Compose's project and key, and the
+// migration that made it ("" for none).
+type VolumeRecord struct {
+	Name       string `json:"name"`
+	CreatedAt  string `json:"createdAt"`
+	Mountpoint string `json:"mountpoint"`
+	Project    string `json:"project"`
+	Key        string `json:"key,omitempty"`
+	Owner      string `json:"owner,omitempty"`
 }
 
 // TSImportRecord is the TypeScript release's `admin migration import`.

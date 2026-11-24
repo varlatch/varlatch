@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -21,8 +20,8 @@ import (
 )
 
 // Compose is a Compose installation of the last TypeScript release, the
-// migration's source (go-step7 decision 20): found by its
-// docker-compose.yml in Directory; driven with `docker compose exec` into its
+// migration's source (go-step7 decision 20): found by its containers'
+// labels, else its Compose files in Directory (compose_project.go); driven with `docker compose exec` into its
 // varlatchd service (the image's `node dist/cli.js admin migration ...`,
 // slices 7.2a and 7.2b) and with the TypeScript host CLI for its backup.
 type Compose struct {
@@ -30,6 +29,9 @@ type Compose struct {
 	Directory string
 	// Run runs docker and the TypeScript CLI.
 	Run Runner
+	// Env is the environment docker runs in (Run's): a COMPOSE_FILE or
+	// COMPOSE_PROJECT_NAME there must agree with the containers.
+	Env []string
 	// Docker is the docker program ("docker").
 	Docker string
 	// TSCLI is the TypeScript host CLI ("varlatch-ts").
@@ -45,6 +47,12 @@ type Compose struct {
 	Destination         string
 	DestinationsFile    string
 	ReadCredentialsFile string
+
+	// kept is the project the migration's journal records (KeepProject);
+	// resolved the one in use, once resolved.
+	kept, resolved *ComposeProject
+	// reversed: a journal records a reverse of the installation.
+	reversed bool
 }
 
 // service is the source's varlatchd service in its Compose file.
@@ -53,7 +61,11 @@ const service = "varlatchd"
 func (c *Compose) Dir() string { return c.Directory }
 
 func (c *Compose) docker(ctx context.Context, args []string, stdin []byte) (Ran, error) {
-	return c.Run.Run(ctx, c.Directory, c.dockerName(), args, stdin)
+	full, err := c.argv(ctx, args)
+	if err != nil {
+		return Ran{}, err
+	}
+	return c.Run.Run(ctx, c.Directory, c.dockerName(), full, stdin)
 }
 
 func (c *Compose) dockerName() string {
@@ -71,7 +83,11 @@ func (c *Compose) stream(ctx context.Context, args []string, in io.Reader, out i
 	if !ok {
 		return Ran{}, errors.New("this runner cannot stream a bundle")
 	}
-	return s.Stream(ctx, c.Directory, c.dockerName(), args, in, out)
+	full, err := c.argv(ctx, args)
+	if err != nil {
+		return Ran{}, err
+	}
+	return s.Stream(ctx, c.Directory, c.dockerName(), full, in, out)
 }
 
 // admin runs the source's `admin migration` (or another admin command)
@@ -81,14 +97,19 @@ func (c *Compose) admin(ctx context.Context, args []string, stdin []byte) (Ran, 
 	return c.docker(ctx, full, stdin)
 }
 
-// Discover finds the installation: its docker-compose.yml, and its
-// varlatchd service's image, by its release (the image's version label,
-// else its tag) and its digest (the registry's, which a published release
-// has).
+// Discover finds the installation: its Compose project (compose_project.go;
+// the journal's, when a migration goes on), and its varlatchd
+// service's image, by its release (the image's version label, else its
+// tag) and its digest (the registry's, which a published release has).
 func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 	info := SourceInfo{Kind: "compose", Dir: c.Directory}
-	if st, err := os.Stat(filepath.Join(c.Directory, "docker-compose.yml")); err != nil || !st.Mode().IsRegular() {
-		return info, fmt.Errorf("%s holds no docker-compose.yml: --from names a Compose installation's directory", c.Directory)
+	p, _, err := c.verified(ctx)
+	if err != nil {
+		return info, err
+	}
+	info.Project = p
+	if err := c.checkVersion(ctx); err != nil {
+		return info, err
 	}
 	r, err := c.docker(ctx, []string{"compose", "images", "--format", "json", service}, nil)
 	if err != nil {
@@ -128,6 +149,14 @@ func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 		info.Release = strings.TrimPrefix(img.Tag, "v")
 	}
 	info.Digest, info.DigestRepository = repoDigest(inspect.RepoDigests, img.Repository, releasePin())
+	// One that cannot be told (a bind mount) is no obstacle to a migration;
+	// what needs it says so.
+	if vols, _, err := c.MountedVolumes(ctx, nil); err == nil {
+		info.Volumes = vols
+	}
+	if v, err := c.CheckState(ctx); err == nil {
+		info.State = v
+	}
 	return info, nil
 }
 
@@ -188,35 +217,6 @@ func lastLine(b []byte) []byte {
 	return b
 }
 
-// envFile is the installation's .env as Compose reads it: NAME=value
-// lines, the last of a name wins, quotes around a value taken off.
-func (c *Compose) envFile() (map[string]string, error) {
-	env, err := os.ReadFile(filepath.Join(c.Directory, ".env"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-	out := map[string]string{}
-	// Split on newlines, not scanned: a line of any length is read whole
-	// (a scanner's token limit would stop at a long one and read on as if
-	// the file ended there).
-	for _, raw := range bytes.Split(env, []byte("\n")) {
-		line := strings.TrimSpace(string(raw))
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		name, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		v = strings.TrimSpace(v)
-		if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
-			v = v[1 : len(v)-1]
-		}
-		out[strings.TrimSpace(name)] = v
-	}
-	return out, nil
-}
-
 // outboundEnv is the source's outbound allow list's variable.
 const outboundEnv = "VARLATCH_OUTBOUND_ALLOW"
 
@@ -262,10 +262,10 @@ func (c *Compose) outboundAllow(ctx context.Context) (value string, fromConfig b
 	if r.Code != 0 {
 		// Its output is not said: with the variables resolved, it can
 		// hold any value of the installation's.
-		hint := "run docker compose config in " + c.Directory + " to see why"
+		hint := "run " + c.byHand("config") + " in " + c.Directory + " to see why"
 		if said := strings.ToLower(string(r.Said)); strings.Contains(said, "variable") &&
 			(strings.Contains(said, "not set") || strings.Contains(said, "missing a value") || strings.Contains(said, "required")) {
-			hint = "a variable the Compose files need is unset (docker compose config in " + c.Directory + " names it)"
+			hint = "a variable the Compose files need is unset (" + c.byHand("config") + " in " + c.Directory + " names it)"
 		}
 		return "", true, fmt.Errorf("docker compose config failed (exit %d; %s), with the source's %s not running: its %s cannot be read", r.Code, hint, service, outboundEnv)
 	}
@@ -301,8 +301,8 @@ func (c *Compose) kekPath() (string, error) {
 }
 
 // Ingress reads the installation's .env as its Compose files do: the
-// public URL (VARLATCH_PUBLIC_URL), the Caddy overlay in COMPOSE_FILE
-// (public ingress), the dashboard's published address
+// public URL (VARLATCH_PUBLIC_URL), the Caddy overlay among the project's
+// files (public ingress), the dashboard's published address
 // (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default); and the
 // outbound allow list as varlatchd has it (outboundAllow).
 func (c *Compose) Ingress(ctx context.Context) (IngressInfo, error) {
@@ -314,8 +314,12 @@ func (c *Compose) Ingress(ctx context.Context) (IngressInfo, error) {
 	if info.OutboundAllow, info.OutboundAllowFromConfig, err = c.outboundAllow(ctx); err != nil {
 		return IngressInfo{}, err
 	}
-	for _, f := range strings.Split(env["COMPOSE_FILE"], string(os.PathListSeparator)) {
-		if filepath.Base(strings.TrimSpace(f)) == "docker-compose.caddy.yml" {
+	p, err := c.project(ctx)
+	if err != nil {
+		return IngressInfo{}, err
+	}
+	for _, f := range p.Files {
+		if filepath.Base(f) == "docker-compose.caddy.yml" {
 			info.Caddy = true
 		}
 	}
@@ -334,6 +338,9 @@ func (c *Compose) Ingress(ctx context.Context) (IngressInfo, error) {
 // shape: Caddy for public ingress, the dashboard for an own proxy.
 func ingressService(kind Ingress) (string, error) {
 	switch kind {
+	case Coolify:
+		// Its container's labels are the proxy's router for the domain.
+		return dashboardService, nil
 	case Public:
 		return "caddy", nil
 	case Proxy:
@@ -464,7 +471,7 @@ func (c *Compose) Backup(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	r, err := c.Run.Run(ctx, c.Directory, c.tsCLI(), args, nil)
+	r, err := c.runTS(ctx, args)
 	if err != nil {
 		return "", err
 	}
@@ -489,7 +496,7 @@ func (c *Compose) VerifyBackup(ctx context.Context, archive string) error {
 		return err
 	}
 	args = append(args, "--archive", archive, "--read-credentials-file", c.ReadCredentialsFile, "--record")
-	r, err := c.Run.Run(ctx, c.Directory, c.tsCLI(), args, nil)
+	r, err := c.runTS(ctx, args)
 	if err != nil {
 		return err
 	}
