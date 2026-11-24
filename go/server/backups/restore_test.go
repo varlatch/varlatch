@@ -407,7 +407,7 @@ func TestRestoreChecksTheArchivesSchema(t *testing.T) {
 			if after, err := os.ReadFile(cfg.DatabasePath()); err != nil || !bytes.Equal(before, after) {
 				t.Errorf("the database was changed (%v)", err)
 			}
-			if l := listing(t, cfg.DataDir); l != "varlatch.db" {
+			if l := listing(t, cfg.DataDir); l != backup.HoldFile+" varlatch.db" {
 				t.Errorf("the data directory holds %q", l)
 			}
 		})
