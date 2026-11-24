@@ -110,6 +110,7 @@ func (s *scripted) Run(_ context.Context, dir, name string, args []string, stdin
 		if host == nil {
 			host = &labelled{}
 		}
+		host.stdin = stdin
 		if r, ok := host.answer(args); ok {
 			if slices.Contains([]string{"start", "restart", "stop", "rm"}, args[0]) {
 				s.ran = append(s.ran, "docker "+strings.Join(args, " "))

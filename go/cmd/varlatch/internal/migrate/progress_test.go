@@ -204,7 +204,9 @@ func TestTheRollbackSaysItsSteps(t *testing.T) {
 	}
 	var want []string
 	for _, s := range []string{"having the images the rollback starts on this host", "Go's barrier", "writing the reverse bundle", "making the fresh volumes",
-		"starting Postgres on its fresh volume", "importing the reverse bundle", "putting the TypeScript installation back on its own volumes", "lifting Go's barrier"} {
+		"starting Postgres on its fresh volume", "importing the reverse bundle", "having the TypeScript installation's gate stand",
+		"putting the TypeScript installation back on its own volumes", "checking that the TypeScript installation is held behind its gate",
+		"checking that the TypeScript installation is held behind its gate", "lifting Go's barrier"} {
 		end := "Done in 0s: "
 		if strings.HasPrefix(s, "importing") {
 			end = "Failed after 0s: "
@@ -237,7 +239,7 @@ func TestTheRouteWaitIsSaid(t *testing.T) {
 	}
 	wait := "waiting for https://vault.example.test to answer from the TypeScript installation's gate, by the operator's route (at most 3m0s)."
 	for _, want := range []string{"Step: stopping the source's dashboard.", "Done in 0s: reading the TypeScript installation's gate.", "Step: starting the TypeScript installation behind its migrated-out gate.",
-		"Done in 0s: starting the TypeScript dashboard.", "Still going after 15s: " + wait, "Done in 18s: " + wait, "Step: stopping the TypeScript release's dashboard."} {
+		"Done in 0s: starting the TypeScript dashboard.", "Still going after 15s: " + wait, "Done in 18s: " + wait, "Step: having the TypeScript installation's gate stand.", "Step: stopping what serves the TypeScript release's address."} {
 		if !slices.Contains(c.all(), want) {
 			t.Errorf("no %q in:\n%s", want, strings.Join(c.all(), "\n"))
 		}

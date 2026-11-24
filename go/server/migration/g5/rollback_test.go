@@ -243,11 +243,12 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		_ = os.Remove(state("sidecar-remade"))
 		if stopped("varlatchd") && containerGone("varlatchd") {
+			_ = os.Remove(state("gone-varlatchd"))
 			return okOr(os.WriteFile(state("created-varlatchd"), nil, 0o600)), true
 		}
 		return 0, true
-	case len(args) == 17 && args[0] == "run":
-		return readGateFile(args), true
+	case len(args) >= 19 && args[0] == "run":
+		return ownRun(args), true
 	case j == "compose --profile deploy config --images":
 		fmt.Println("postgres:17.6\nghcr.io/x/varlatch-web@sha256:bb\npostgres:17.6")
 		return 0, true
@@ -348,11 +349,12 @@ func fakeDockerReverse(args []string) (int, bool) {
 		}
 		printVolume(args[4])
 		return 0, true
-	case len(args) == 9 && args[0] == "volume" && args[1] == "create":
-		if err := makeVolume(args[8], []string{args[3], args[5], args[7]}); err != nil {
+	case (len(args) == 9 || len(args) == 7) && args[0] == "volume" && args[1] == "create":
+		name := args[len(args)-1]
+		if err := makeVolume(name, args[2:len(args)-1]); err != nil {
 			return fail("%v", err)
 		}
-		fmt.Println(args[8])
+		fmt.Println(name)
 		return 0, true
 	case j == "ps -a -q --no-trunc --filter label=com.docker.compose.project":
 		for _, c := range containers() {

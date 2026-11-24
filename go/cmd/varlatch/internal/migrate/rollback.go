@@ -153,6 +153,13 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("removing what an interrupted run left: %w", err)
 	}
 	e.cleanReverseScratch()
+	if j.Ingress == Coolify {
+		// Its containers start again before Go's barrier (checkRoute), on the
+		// database they left: behind the migration's gate only.
+		if err := rs.CheckGate(ctx, sourceGate(j)); err != nil {
+			return j, gateLost(j, err)
+		}
+	}
 	// What the rebuild would stand on, told before Go's barrier (it is read
 	// again after it).
 	if _, err := rs.RebuildPlan(ctx, j); err != nil {
@@ -163,11 +170,6 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("%w; nothing was done", err)
 	}
 	if j.Ingress == Coolify {
-		// Its containers start again before Go's barrier (checkRoute), on the
-		// database they left: behind the migration's gate only.
-		if err := rs.CheckGate(ctx, sourceGate(j)); err != nil {
-			return j, gateLost(j, err)
-		}
 		if err := e.askRoute(ctx, j); err != nil {
 			return j, err
 		}
@@ -695,15 +697,34 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 			return fmt.Errorf("%w; undoing could not start: %v", cause, err)
 		}
 	}
+	// Before anything of the TypeScript side is started, stopped or put back:
+	// its gate, which the import lifted, stands again. From here whatever
+	// starts its server (Docker, a deploy) starts it behind the gate.
+	if err := e.holdSource(ctx, j, rs, func() error { return e.save(ctx, j) }); err != nil {
+		// Its server stopped is the safer side, but in the transfer, where
+		// the address may be its own.
+		held := "nothing of it was started"
+		if from != RollbackTransfer {
+			if serr := rs.StopServers(ctx); serr == nil {
+				held += ", and its server is stopped"
+			}
+			if j.Ingress == Coolify {
+				_ = rs.StopFront(ctx, Coolify)
+			}
+		}
+		return notHeld(cause, j, held, err)
+	}
+	crashPoint("rollback undo gate held")
+	// Each step's failure counts by what it left, once everything is done.
 	var problems []error
+	front := from == RollbackTransfer || j.Ingress == Coolify
 	if from == RollbackTransfer {
 		// The tailnet name back to Go's node first, then the address.
 		if err := e.unwindRollbackTailnet(ctx, j); err != nil {
 			return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, err)
 		}
-		if err := rs.StopServing(ctx, j.Ingress); err != nil {
-			problems = append(problems, fmt.Errorf("stopping the TypeScript release: %w", err))
-		}
+		// Asked again below, when it could not.
+		_ = rs.StopServing(ctx, j.Ingress)
 		if err := e.step("starting Go again", func() error { return e.Target.Start(ctx) }); err != nil {
 			var human *HumanStep
 			if errors.As(err, &human) {
@@ -715,24 +736,15 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		}
 	}
 	if j.Ingress == Coolify {
-		// routeBack started it: while it runs, its router names the domain
+		// checkRoute started it: while it runs, its router names the domain
 		// beside Go's.
-		if err := e.step("stopping the TypeScript release's dashboard", func() error { return e.Source.StopIngress(ctx, Coolify) }); err != nil {
-			problems = append(problems, fmt.Errorf("stopping the TypeScript release's dashboard: %w", err))
-		}
+		_ = rs.StopFront(ctx, Coolify)
 		e.say("The address goes back by hand: remove the route put in the proxy before the reverse, then check that %s/v1/meta answers from Go (its container routes it itself; migrate does not check it here).", originOf(j))
 	}
 	unrestored := ""
 	if j.Rollback.Rebuild != nil {
-		if err := e.restoreSource(ctx, j, rs, func() error { return e.save(ctx, j) }); err != nil {
-			err = fmt.Errorf("putting the TypeScript installation back: %w", err)
-			// Go's outage does not wait for it, once its server is held to
-			// be stopped (without its gate it would take requests).
-			if serr := rs.StopServers(ctx); serr != nil {
-				problems = append(problems, err, fmt.Errorf("stopping its server: %w", serr))
-			} else {
-				unrestored = err.Error()
-			}
+		if err := e.restoreSource(ctx, j, rs); err != nil {
+			unrestored = fmt.Errorf("putting the TypeScript installation back: %w", err).Error()
 		}
 	} else if len(j.Rollback.Started) > 0 {
 		// What the route's check started, and nothing else: the forward
@@ -741,19 +753,40 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 			problems = append(problems, fmt.Errorf("stopping what the route's check started: %w", err))
 		}
 	}
+	crashPoint("rollback undo restored")
 	// The TypeScript side as the forward migration left it: the reverse
-	// started its tailnet sidecar for its one-off commands
-	// (StartNetworkOwner, before Rebuild and again before UndoRebuild),
-	// and starting its varlatchd needs it (they share its network); the
-	// name is Go's node's, so the old node is stopped again (not logged
-	// out), its state kept for the window.
+	// started its tailnet sidecar for its one-off commands and, on Coolify,
+	// for the route's check; the name is Go's node's, so the old node is
+	// stopped again (not logged out), its state kept for the window.
 	if ts, ok := e.Source.(TailnetSource); ok && sidecarOwned(j) {
 		if err := e.step("stopping the TypeScript release's tailnet sidecar", func() error { return stopSidecar(ctx, ts) }); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", err))
 		}
 	}
+	// What serves its address, stopped by now, whatever an earlier step said.
+	if front {
+		if err := rs.StopFront(ctx, j.Ingress); err != nil {
+			problems = append(problems, fmt.Errorf("stopping what serves the TypeScript release's address: %w", err))
+		}
+	}
+	if unrestored != "" {
+		// Not needed to be safe (the gate is held), and so not a condition.
+		_ = rs.StopServers(ctx)
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%w; undoing did not finish (%v): varlatch migrate --resume tries again", cause, errors.Join(problems...))
+	}
+	// Go takes requests again only while the TypeScript side cannot.
+	if err := rs.CheckHeld(ctx, sourceGate(j)); err != nil {
+		return notHeld(cause, j, "what could be put back is", err)
+	}
+	if unrestored != "" {
+		// Journalled, then said, before Go opens.
+		j.Rollback.Unrestored = unrestored
+		if err := e.save(ctx, j); err != nil {
+			return fmt.Errorf("%w; undoing could not go on: %v; varlatch migrate --resume tries again", cause, err)
+		}
+		e.say("The TypeScript installation is not put back (%s). It is behind its gate, and its server is stopped: do not start it, and start no containers of it (docker compose up, or Coolify's Deploy); varlatch migrate --resume puts it back. Go is opened again now: its outage does not wait for that.", unrestored)
 	}
 	_ = e.Source.CleanLeftovers()
 	e.cleanReverseScratch()
@@ -764,9 +797,12 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	// barrier lifted: an interruption between leaves Go open behind its
 	// barrier, which --resume lifts (finishOpen).
 	if err := e.enter(ctx, j, Open); err != nil {
-		return fmt.Errorf("%w; the TypeScript side is back as it was, but a journal could not say open: %v; varlatch migrate --resume finishes it", cause, err)
+		return fmt.Errorf("%w; the reverse was undone but for Go's barrier, which stands: a journal could not say open: %v; varlatch migrate --resume finishes it", cause, err)
 	}
 	crashPoint("rollback undone open")
+	if err := rs.CheckHeld(ctx, sourceGate(j)); err != nil {
+		return notHeld(cause, j, "Go's journal says open, its barrier stands", err)
+	}
 	if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
 		return fmt.Errorf("%w; the reverse was undone, but Go's barrier could not be lifted: %v; varlatch migrate --resume lifts it", cause, err)
 	}
@@ -783,28 +819,65 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		if j.Ingress == Coolify {
 			at = "Go runs and takes requests again, and the address reaches it once the route is out of the proxy"
 		}
-		return fmt.Errorf("%w; the reverse was undone: %s. The TypeScript installation is not put back (%s): its server is stopped. Do not start it (it may have no gate), and start no containers of it (docker compose up, or Coolify's Deploy): varlatch migrate --resume puts it back, and no other --rollback or --finish begins before", cause, at, unrestored)
+		return fmt.Errorf("%w; the reverse was undone: %s. The TypeScript installation is not put back (%s): it is behind its gate, and its server is stopped. Do not start it, and start no containers of it (docker compose up, or Coolify's Deploy): varlatch migrate --resume puts it back, and no other --rollback or --finish begins before", cause, at, unrestored)
 	}
 	if j.Ingress == Coolify {
-		return fmt.Errorf("%w; the reverse was undone: Go runs and takes requests again, and the address reaches it once the route is out of the proxy; the TypeScript installation is as the migration left it", cause)
+		return undoneError{fmt.Errorf("%w; the reverse was undone: Go runs and takes requests again, and the address reaches it once the route is out of the proxy; the TypeScript installation is as the migration left it", cause)}
 	}
-	return fmt.Errorf("%w; the reverse was undone: Go serves again, the TypeScript installation is as the migration left it", cause)
+	return undoneError{fmt.Errorf("%w; the reverse was undone: Go serves again, the TypeScript installation is as the migration left it", cause)}
 }
 
-// restoreSource puts the rebuilt source back, as the forward migration left
-// it. A sidecar the forward handoff stopped is started for its one-off
-// commands (the caller stops it again).
-func (e *Engine) restoreSource(ctx context.Context, j *Journal, rs ReverseSource, save func() error) error {
-	var owner error
-	if sidecarOwned(j) {
-		if owner = rs.StartNetworkOwner(ctx); owner != nil {
-			owner = fmt.Errorf("starting the TypeScript release's tailnet sidecar: %w", owner)
+// notHeld is an undo that stops: the TypeScript installation is not held
+// behind its gate, so Go's barrier is not lifted.
+func notHeld(cause error, j *Journal, done string, err error) error {
+	barrier := "Go goes on as it was (it has no barrier)"
+	if j.Rollback.Barrier != nil {
+		barrier = "Go stays behind its barrier: the outage goes on, and no data is lost"
+	}
+	return fmt.Errorf("%w; undoing stopped: the TypeScript installation is not held behind its gate (%w); %s. %s. Do not start the TypeScript installation by any means (docker, or Coolify's Deploy, Restart or Start). "+
+		"By hand: have its state volume and its varlatchd container as the migration left them (docker volume inspect, docker inspect; the message says what is not), then varlatch migrate --resume, or --abort, tries again", cause, err, done, barrier)
+}
+
+// holdSource is HoldGate, journalled.
+func (e *Engine) holdSource(ctx context.Context, j *Journal, rs ReverseSource, save func() error) error {
+	position := ""
+	if j.Barrier != nil {
+		position = j.Barrier.AuditPosition
+	}
+	was := sourceGate(j)
+	g, err := rs.HoldGate(ctx, was, position)
+	if err != nil {
+		return err
+	}
+	if g.ID == was.ID && (g.State == nil || was.State != nil && *g.State == *was.State) {
+		return nil
+	}
+	j.SourceGate, j.Source.State = g.ID, g.State
+	return save()
+}
+
+// checkHeld is CheckHeld once Go's journal says open: an earlier build's
+// journal, which records no volume, is given it first (the source's journal
+// only, beside a Go that may run).
+func (e *Engine) checkHeld(ctx context.Context, j *Journal, rs ReverseSource) error {
+	if j.Source.State == nil {
+		if err := e.holdSource(ctx, j, rs, func() error { return writeJournal(e.Source.Dir(), j) }); err != nil {
+			return err
 		}
 	}
-	return errors.Join(owner, rs.UndoRebuild(ctx, *j.Rollback.Rebuild, sourceGate(j), func(id string) error {
-		j.SourceGate = id
-		return save()
-	}))
+	return rs.CheckHeld(ctx, sourceGate(j))
+}
+
+// undoneError is an undo that is done, its cause with it.
+type undoneError struct{ error }
+
+func (e undoneError) Unwrap() error { return e.error }
+
+// restoreSource puts the rebuilt source back, as the forward migration left
+// it: its server started again, but where a sidecar that the forward handoff
+// stopped has its network.
+func (e *Engine) restoreSource(ctx context.Context, j *Journal, rs ReverseSource) error {
+	return rs.UndoRebuild(ctx, *j.Rollback.Rebuild, sourceGate(j), !sidecarOwned(j))
 }
 
 // finishRestore puts back a source that an undone reverse could not
@@ -822,19 +895,11 @@ func (e *Engine) finishRestore(ctx context.Context, j *Journal) error {
 		return err
 	}
 	e.say("The TypeScript installation, which an undone reverse left (%s), is put back.", j.Rollback.Unrestored)
-	err = e.restoreSource(ctx, j, rs, func() error { return writeJournal(e.Source.Dir(), j) })
-	if err != nil {
-		if serr := rs.StopServers(ctx); serr != nil {
-			err = fmt.Errorf("%w; stopping its server: %v", err, serr)
-		}
+	if err := e.checkHeld(ctx, j, rs); err != nil {
+		return fmt.Errorf("the TypeScript installation is not held behind its gate: %w; nothing of it was started. Go serves: do not start the TypeScript installation", err)
 	}
-	if ts, ok := e.Source.(TailnetSource); ok && sidecarOwned(j) {
-		if serr := e.step("stopping the TypeScript release's tailnet sidecar", func() error { return stopSidecar(ctx, ts) }); serr != nil {
-			err = errors.Join(err, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", serr))
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("the TypeScript installation is still not put back: %w; Go serves; varlatch migrate --resume tries again", err)
+	if err := e.restoreSource(ctx, j, rs); err != nil {
+		return fmt.Errorf("the TypeScript installation is still not put back: %w; Go serves; varlatch migrate --resume tries again", errors.Join(err, rs.StopServers(ctx)))
 	}
 	j.Rollback.Unrestored = ""
 	return writeJournal(e.Source.Dir(), j)

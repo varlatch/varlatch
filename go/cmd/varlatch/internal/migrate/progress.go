@@ -192,8 +192,20 @@ func (s steppedSource) StopServing(ctx context.Context, kind Ingress) error {
 	return s.e.step("stopping the TypeScript release", func() error { return s.ReverseSource.StopServing(ctx, kind) })
 }
 
-func (s steppedSource) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, gated func(id string) error) error {
-	return s.e.step("putting the TypeScript installation back on its own volumes", func() error { return s.ReverseSource.UndoRebuild(ctx, plan, gate, gated) })
+func (s steppedSource) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, start bool) error {
+	return s.e.step("putting the TypeScript installation back on its own volumes", func() error { return s.ReverseSource.UndoRebuild(ctx, plan, gate, start) })
+}
+
+func (s steppedSource) HoldGate(ctx context.Context, g GateRef, position string) (GateRef, error) {
+	return stepOf(s.e, "having the TypeScript installation's gate stand", func() (GateRef, error) { return s.ReverseSource.HoldGate(ctx, g, position) })
+}
+
+func (s steppedSource) CheckHeld(ctx context.Context, g GateRef) error {
+	return s.e.step("checking that the TypeScript installation is held behind its gate", func() error { return s.ReverseSource.CheckHeld(ctx, g) })
+}
+
+func (s steppedSource) StopFront(ctx context.Context, kind Ingress) error {
+	return s.e.step("stopping what serves the TypeScript release's address", func() error { return s.ReverseSource.StopFront(ctx, kind) })
 }
 
 func (s steppedSource) CheckGate(ctx context.Context, g GateRef) error {

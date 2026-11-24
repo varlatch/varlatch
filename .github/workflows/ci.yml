@@ -275,6 +275,16 @@ jobs:
         if: steps.select.outputs.run == 'true'
         run: pnpm build
 
+      # The audit export's tests start it.
+      - name: MinIO's image
+        if: steps.select.outputs.run == 'true'
+        uses: ./.github/actions/minio-image
+      - name: What the tests start
+        if: steps.select.outputs.run == 'true'
+        run: |
+          image=$(scripts/ci-pull-image.sh cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b)
+          echo "VARLATCH_TEST_MINIO_IMAGE=$image" >> "$GITHUB_ENV"
+
       - name: Test the server
         if: steps.select.outputs.run == 'true'
         env:
@@ -487,6 +497,8 @@ jobs:
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - name: Install Chromium
         run: scripts/ci-install-chromium.sh
+      - name: MinIO's image
+        uses: ./.github/actions/minio-image
       - name: Run clean-room E2E suites
         env:
           SHARD: ${{ matrix.shard }}
@@ -527,6 +539,8 @@ jobs:
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
       - name: Install Chromium
         run: scripts/ci-install-chromium.sh
+      - name: MinIO's image
+        uses: ./.github/actions/minio-image
       - name: Run the conformance suites with CLI 0.22.0
         run: node scripts/conformance/run.mjs --target ts-source --cli 0.22.0
 
@@ -632,7 +646,7 @@ jobs:
             [installers]='^\.github/workflows/ci\.yml$|^services/varlatchd/src/http/cliDownload\.ts$|^scripts/test-installers\.mjs$'
             # The conformance harness, its suites, and ci-e2e.sh: the run with a
             # released CLI (e2e-cli) checks the harness before merge.
-            [conformance]='^\.github/workflows/ci\.yml$|^scripts/conformance/|^scripts/ci-e2e\.sh$|^apps/web/scripts/e2e-[^/]*\.mjs$|^services/varlatchd/scripts/e2e-[^/]*\.mjs$'
+            [conformance]='^\.github/workflows/ci\.yml$|^\.github/actions/minio-image/|^scripts/ci-pull-image\.sh$|^scripts/conformance/|^scripts/ci-e2e\.sh$|^apps/web/scripts/e2e-[^/]*\.mjs$|^services/varlatchd/scripts/e2e-[^/]*\.mjs$'
             [lifecycle]="$shared|^services/varlatchd/src/(tailnet|enroll)/|^services/varlatchd/src/(control-entry|config|netns-watchdog)\.ts$|^services/varlatchd/src/(domain/bootstrap|auth/humanauth|cli)\.ts$|^apps/cli/src/(setup|adopt|upgrade|doctor|move|moveState)\.ts$|^infra/|^scripts/(test-backup-upgrade|test-prod-shape|test-adopt|test-sidecar-restart|test-ingress|test-setup|test-move|fixtures/)"
           )
           for t in $tiers; do

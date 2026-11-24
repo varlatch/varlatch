@@ -116,9 +116,15 @@ fixes.
   earlier one before anything is done. An earlier one left PostgreSQL on its
   old volume when a rollback gave it a fresh one, which the rollback
   noticed, and undid, only then. An undo does not depend on it.
-- **An undone rollback ends the outage of 0.50 also when the TypeScript
-  installation cannot be put back.** Its server is held stopped, Go takes
-  requests again, and `varlatch migrate --resume` puts it back later.
+- **An undone rollback never leaves both servers taking requests.** It puts
+  the TypeScript installation's gate back before anything else, and lifts Go's
+  barrier last, only while that gate is there. With the gate back, Go takes
+  requests again also when the rest of the TypeScript installation cannot be
+  put back yet (`varlatch migrate --resume` does, later); without it, Go stays
+  behind its barrier and the message says what to do.
+- **`varlatch migrate --rollback` and the tailnet certificate.** The old node
+  is asked for a certificate only once it has heard of its name again, not
+  three times in a row right after the rename.
 - **`varlatch migrate` into the image: no surprises in the downtime.** The
   image's user's programs get an environment of their own (a temporary
   directory it can write in, checked before anything), and the tailnet's

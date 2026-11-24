@@ -1264,6 +1264,11 @@ func (e *Engine) finishOpen(ctx context.Context, j *Journal) error {
 		// lifted now, through the running varlatchd or, stopped, on its
 		// data directory (varlatchd's release works offline too).
 		if rt, ok := e.Target.(ReverseTarget); ok {
+			if rs, ok := e.Source.(ReverseSource); ok {
+				if err := e.checkHeld(ctx, j, rs); err != nil {
+					return notHeld(fmt.Errorf("the reverse of the migration %s was undone, but Go's barrier stands", j.ID), j, "it is not lifted", err)
+				}
+			}
 			e.say("The reverse of the migration %s was undone, but Go's barrier stands: it is lifted.", j.ID)
 			if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
 				return err
@@ -1370,7 +1375,10 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 			return j, fmt.Errorf("the migration %s is in phase %s, but its journal records no reverse", j.ID, j.Phase)
 		}
 		err := e.undoReverse(ctx, j, errors.New("aborted by the operator"))
-		if j.Phase == Open && j.Rollback.Undone != nil && j.Rollback.Unrestored == "" {
+		// Only an undo that is done, Go's barrier lifted and journalled so,
+		// is what was asked for.
+		var done undoneError
+		if errors.As(err, &done) {
 			return j, nil
 		}
 		return j, err
@@ -1378,7 +1386,7 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves; going to Go again is a new migration (after varlatch migrate --finish)", j.ID)
 	case j.Phase == Finished:
 		return j, fmt.Errorf("the migration %s is finished: its rollback window is closed, and nothing of it is undone", j.ID)
-	case j.Phase == Open && j.Rollback != nil && j.Rollback.Unrestored != "":
+	case j.Phase == Open && j.Rollback != nil && (j.Rollback.Unrestored != "" || j.Rollback.Undone != nil && !j.Rollback.Undone.Released):
 		if err := e.finishOpen(ctx, j); err != nil {
 			return j, err
 		}

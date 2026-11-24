@@ -131,8 +131,14 @@ func dataKey(svc string) string {
 	return map[string]string{"postgres": "postgres-data", "convex-backend": "convex-data", "varlatchd": "varlatch-state"}[svc]
 }
 
-// ownVolume is the volume the installation's own Compose files give svc.
-func ownVolume(svc string) string { return shape().Project + "_" + dataKey(svc) }
+// ownVolume is the volume the installation's own Compose files give svc
+// (an external state volume: external-state's name).
+func ownVolume(svc string) string {
+	if b, err := os.ReadFile(state("external-state")); err == nil && svc == "varlatchd" {
+		return string(b)
+	}
+	return shape().Project + "_" + dataKey(svc)
+}
 
 // configuredVolume is the one this command's files give it: migrate's
 // file's, when they name it.
@@ -304,28 +310,55 @@ func volumeUsers(name string) []string {
 	return out
 }
 
-// readGateFile is the one-off container that reads the state volume's gate,
-// asked for exactly so: never pulled, no network, the volume read only (as
-// Docker, one that is not there is made, empty).
-func readGateFile(args []string) int {
-	volume, ok := strings.CutPrefix(args[12], "type=volume,source=")
-	volume, ro := strings.CutSuffix(volume, ",target=/state,readonly,volume-nocopy")
-	want := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--mount", args[12], "--entrypoint", "cat", args[15], "/state/maintenance.json"}
-	if !ok || !ro || !slices.Equal(args, want) || args[15] != os.Getenv("VARLATCH_MIGRATE_PIN") {
-		fmt.Fprintf(os.Stderr, "docker: unexpected %q\n", args)
-		return 125
+// ownRun is a container of migrate's own on the state volume, asked for
+// exactly so: never pulled, no network, nothing but the volume; it reads the
+// gate, the volume read only, or makes it (as Docker, a volume that is not
+// there is made, empty).
+func ownRun(args []string) int {
+	fail := func(code int, f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return code }
+	want := []string{"run", "--rm", "-i", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--mount", args[13], "--entrypoint", "sh", os.Getenv("VARLATCH_MIGRATE_PIN"), "-c"}
+	mount, ok := strings.CutPrefix(args[13], "type=volume,source=")
+	if !ok || !slices.Equal(args[:18], want) {
+		return fail(125, "docker: unexpected %q", args)
 	}
-	there := volumeThere(volume)
-	if !there {
+	volume, read := strings.CutSuffix(mount, ",target=/state,readonly,volume-nocopy")
+	if !read {
+		if volume, ok = strings.CutSuffix(mount, ",target=/var/lib/varlatch"); !ok {
+			return fail(125, "docker: unexpected %q", args)
+		}
+	}
+	if !volumeThere(volume) {
 		_ = makeVolume(volume, nil)
+		_ = writeGate(nil)
+	}
+	if volume != ownVolume("varlatchd") {
+		return fail(125, "docker: not the state volume: %s", volume)
 	}
 	g := readGate()
-	if !there || g == nil || volume != ownVolume("varlatchd") {
-		fmt.Fprintln(os.Stderr, "cat: /state/maintenance.json: No such file or directory")
-		return 1
+	if read {
+		if len(args) != 19 || !strings.Contains(args[18], "/state/maintenance.json") {
+			return fail(125, "docker: unexpected %q", args)
+		}
+		if g == nil {
+			return 3
+		}
+		_, _ = os.Stdout.Write(gateText(g))
+		return 0
 	}
-	fmt.Print(string(gateText(g)))
-	return 0
+	if len(args) != 21 && len(args) != 22 || !strings.Contains(args[18], "maintenance.json.migrate") && !strings.Contains(args[18], "t=.maintenance.json") {
+		return fail(125, "docker: unexpected %q", args)
+	}
+	if _, err := os.Stat(state("gate-write-fails")); err == nil {
+		return fail(1, "sh: write error: No space left on device")
+	}
+	if g != nil && args[20] == "new" {
+		return fail(1, "ln: failed to create hard link 'maintenance.json': File exists")
+	}
+	var made gateDoc
+	if err := json.NewDecoder(os.Stdin).Decode(&made); err != nil {
+		return fail(1, "%v", err)
+	}
+	return okOr(writeGate(&made))
 }
 
 // printVolume is `docker volume inspect`'s answer (a volume made again by
@@ -338,7 +371,11 @@ func printVolume(name string) {
 	if _, err := os.Stat(state("another-" + name)); err == nil {
 		at = "2026-11-01T00:00:00Z"
 	}
-	for _, v := range []string{name, at, "/volumes/" + name, s.Project, key, string(owner)} {
+	project := s.Project
+	if ext, err := os.ReadFile(state("external-state")); err == nil && string(ext) == name {
+		project, key = "", ""
+	}
+	for _, v := range []string{name, at, "/volumes/" + name, project, key, string(owner)} {
 		b, _ := json.Marshal(v)
 		fmt.Print(string(b), " ")
 	}
@@ -372,6 +409,9 @@ func volumeThere(name string) bool {
 		return true
 	}
 	removed, _ := os.ReadFile(state("removed-volumes"))
+	if ext, err := os.ReadFile(state("external-state")); err == nil && string(ext) == name {
+		return !slices.Contains(strings.Fields(string(removed)), name)
+	}
 	base, ok := strings.CutPrefix(name, shape().Project+"_")
 	return ok && !slices.Contains(strings.Fields(string(removed)), name) &&
 		slices.Contains([]string{"postgres-data", "convex-data", "varlatch-state", "tailscale-state", "tailscale-socket", "caddy-data", "caddy-config"}, base)
@@ -1104,8 +1144,8 @@ func TestG5TheGateLost(t *testing.T) {
 	}
 }
 
-// The gate an undone reverse made (its import had lifted the migration's)
-// is the one the next reverse asks for.
+// The gate an undone reverse makes again (its import had lifted it) is the
+// migration's own, which the next reverse asks for.
 func TestG5TheGateOfAnUndo(t *testing.T) {
 	w := migratedWorld(t, false, true)
 	w.useState()
@@ -1118,19 +1158,8 @@ func TestG5TheGateOfAnUndo(t *testing.T) {
 		t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
 	w.useState()
-	if g := readGate(); g == nil || g.Kind != "migrated-out" || g.ID == first {
+	if g := readGate(); g == nil || g.Kind != "migrated-out" || g.ID != first {
 		t.Fatalf("the gate after the undo: %+v, the migration's %s", g, first)
-	}
-	// Not the migration's own any more.
-	made := mustRead(t, filepath.Join(w.stateDir, "gate.json"))
-	if err := os.WriteFile(filepath.Join(w.stateDir, "gate.json"), []byte(strings.Replace(string(made), readGate().ID, first, 1)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "nothing was started") {
-		t.Fatalf("the first gate: %d\n%s", code, w.outputs[len(w.outputs)-1])
-	}
-	if err := os.WriteFile(filepath.Join(w.stateDir, "gate.json"), made, 0o600); err != nil {
-		t.Fatal(err)
 	}
 	if code := w.rollback("", "--rollback"); code != 0 {
 		t.Fatalf("--rollback again: %d\n%s", code, w.outputs[len(w.outputs)-1])
@@ -1182,7 +1211,7 @@ func TestG5TheComposeVersion(t *testing.T) {
 // installation back on its own volumes, Go open.
 func TestG5AnOldComposeAtTheUndo(t *testing.T) {
 	for _, coolify := range []bool{false, true} {
-		for _, point := range []string{"rollback rebuilt", "entered rollback-imported", "entered rollback-checked", "entered rollback-transfer"} {
+		for _, point := range []string{"rollback rebuilt", "entered rollback-transfer"} {
 			for _, how := range []string{"--resume", "--abort"} {
 				if point == "entered rollback-transfer" && how == "--resume" {
 					continue // it goes on
@@ -1349,5 +1378,309 @@ func TestG5TheStateDirectory(t *testing.T) {
 			t.Fatalf("not undone: %s, gate %+v", s, readGate())
 		}
 		w.noSecrets()
+	}
+}
+
+// barrier is Go's barrier ("" for none), as varlatchd says it.
+func (w *world) barrier() string {
+	w.t.Helper()
+	conf := w.conf
+	cmd := exec.Command(filepath.Join(filepath.Dir(shared.varlatch), "varlatchd"), "admin", "migrate", "state", "--config", conf)
+	out, err := cmd.Output()
+	var s struct {
+		Barrier string `json:"barrier"`
+	}
+	if err != nil || json.Unmarshal(out, &s) != nil {
+		w.t.Fatalf("admin migrate state: %v %s", err, out)
+	}
+	return s.Barrier
+}
+
+// oneWriter: Go takes requests only while the TypeScript side, whoever
+// starts its server, is behind its migrated-out gate.
+func (w *world) oneWriter(when string) {
+	w.t.Helper()
+	w.useState()
+	if b, g := w.barrier(), readGate(); b == "" && (g == nil || g.Kind != "migrated-out" || g.Phase != "paused") {
+		w.t.Errorf("%s: Go has no barrier, and the TypeScript side's gate is %+v: both could take requests", when, g)
+	}
+}
+
+// restarts is Docker starting every container of the installation again
+// (its daemon restarted, the host), as they are.
+func (w *world) restarts() {
+	w.t.Helper()
+	w.useState()
+	for _, c := range containers() {
+		if c.service == "caddy" || c.service == "tailscale" {
+			continue
+		}
+		if err := setStopped(c.service, false); err != nil {
+			w.t.Fatal(err)
+		}
+	}
+}
+
+// An undo of a reverse whose import lifted the gate: the gate stands again
+// before anything else, Go's barrier is lifted last. Killed at each of its
+// steps, then every container of the old installation started by Docker, or
+// the application deployed again by Coolify, at no moment can both take
+// requests; --resume and --abort end it.
+func TestG5TheUndoHoldsTheGateFirst(t *testing.T) {
+	undoHoldsTheGateFirst(t, "")
+}
+
+// The same with an external state volume, which Compose did not label: the
+// recorded one, unchanged, is the installation's; a whole rollback too.
+func TestG5AnExternalStateVolume(t *testing.T) {
+	for _, coolify := range []bool{false, true} {
+		w := externalWorld(t, coolify, "the-operators-state")
+		if coolify {
+			w.routeBack()
+		}
+		if code := w.rollback("", "--rollback"); code != 0 {
+			t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.expectReverse("rolled back", rolledBackState)
+		// Not a volume of the project's: refused where it matters, early.
+		w = externalWorld(t, coolify, "the-operators-state")
+		if coolify {
+			w.routeBack()
+		}
+		w.flag("another-the-operators-state")
+		before := len(w.calls("docker-calls"))
+		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "is not the one that carried the gate") {
+			t.Fatalf("--rollback, another volume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.startedNothing("another volume", before)
+		if w.barrier() != "" {
+			t.Errorf("Go's barrier is %q", w.barrier())
+		}
+	}
+	undoHoldsTheGateFirst(t, "the-operators-state")
+}
+
+// externalWorld is a migrated world whose state volume is external, when
+// named.
+func externalWorld(t *testing.T, coolify bool, external string) *world {
+	t.Helper()
+	if external == "" {
+		return migratedWorld(t, false, coolify)
+	}
+	w := newWorld(t, false)
+	w.coolify = coolify
+	if coolify {
+		w.coolifyLayout()
+	}
+	if err := os.WriteFile(filepath.Join(w.stateDir, "external-state"), []byte(external), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code := w.run("")
+	if coolify && code == 75 {
+		w.domainToGo()
+		code = w.run("", "--resume")
+	}
+	if code != 0 {
+		t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+	}
+	return w
+}
+
+func undoHoldsTheGateFirst(t *testing.T, external string) {
+	for _, coolify := range []bool{false, true} {
+		for _, from := range []string{"entered rollback-imported", "entered rollback-transfer"} {
+			for _, step := range []string{"rollback undo gate held", "rollback undo restored", "rollback undone open", "rollback undone released"} {
+				for _, by := range []string{"docker", "deploy"} {
+					if by == "deploy" && !coolify || external != "" && (by == "deploy" || from != "entered rollback-imported") {
+						continue
+					}
+					t.Run(fmt.Sprintf("coolify %v, %s, %s, %s", coolify, from, step, by), func(t *testing.T) {
+						w := externalWorld(t, coolify, external)
+						if coolify {
+							w.routeBack()
+						}
+						if code := w.rollback(from, "--rollback"); code != -1 {
+							t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+						}
+						w.useState()
+						if readGate() != nil {
+							t.Fatal("the import did not lift the gate")
+						}
+						w.oneWriter("killed at " + from)
+						if code := w.rollback(step, "--abort"); code != -1 {
+							t.Fatalf("not killed at %s: %d\n%s", step, code, w.outputs[len(w.outputs)-1])
+						}
+						w.oneWriter("killed at " + step)
+						if g := readGate(); g == nil || g.Kind != "migrated-out" {
+							t.Errorf("killed at %s: the gate is %+v", step, g)
+						}
+						if by == "deploy" {
+							w.redeploy()
+						} else {
+							w.restarts()
+						}
+						w.oneWriter("started again at " + step)
+						for _, how := range []string{"--resume", "--abort", "--resume"} {
+							_ = w.rollback("", how)
+							w.oneWriter(how + " after " + step)
+						}
+						if s, d := w.phases(); s != "open" || d != "open" || !w.goRuns() || w.barrier() != "" {
+							t.Errorf("at the end: the journals %s / %s, Go runs %v, its barrier %q\n%s", s, d, w.goRuns(), w.barrier(), w.outputs[len(w.outputs)-1])
+						}
+						w.useState()
+						if mounted("postgres") != ownVolume("postgres") || mounted("convex-backend") != ownVolume("convex-backend") {
+							t.Errorf("postgres on %s, convex on %s", mounted("postgres"), mounted("convex-backend"))
+						}
+						w.noSecrets()
+					})
+				}
+			}
+		}
+	}
+}
+
+// A gate that cannot be made again: nothing of the old installation is
+// started or put back, Go's barrier stands, and what is held and what to do
+// is said; nor does a fresh volume still in use lift it without the gate.
+// Once it can, --resume (or --abort) ends it.
+func TestG5TheUndoWithoutTheGate(t *testing.T) {
+	for _, coolify := range []bool{false, true} {
+		for _, how := range []string{"--resume", "--abort"} {
+			t.Run(fmt.Sprintf("coolify %v, %s", coolify, how), func(t *testing.T) {
+				w := migratedWorld(t, false, coolify)
+				if coolify {
+					w.routeBack()
+				}
+				if code := w.rollback("entered rollback-imported", "--rollback"); code != -1 {
+					t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.flag("gate-write-fails")
+				w.flag("fresh-in-use")
+				for _, again := range []string{how, "--resume", "--abort"} {
+					before := len(w.calls("docker-calls"))
+					code := w.rollback("", again)
+					out := string(w.outputs[len(w.outputs)-1])
+					if code != 1 || !strings.Contains(out, "No space left on device") || !strings.Contains(out, "Go stays behind its barrier") || !strings.Contains(out, "By hand: ") {
+						t.Fatalf("%s: %d\n%s", again, code, out)
+					}
+					w.startedNothing(again, before)
+					if w.barrier() == "" {
+						t.Fatalf("%s: Go's barrier is lifted", again)
+					}
+					w.restarts()
+					w.oneWriter(again)
+				}
+				if err := os.Remove(filepath.Join(w.stateDir, "gate-write-fails")); err != nil {
+					t.Fatal(err)
+				}
+				// The gate held, the fresh volume still in use: Go opens.
+				if code := w.rollback("", how); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "is not put back") {
+					t.Fatalf("%s: %d\n%s", how, code, w.outputs[len(w.outputs)-1])
+				}
+				if w.barrier() != "" || !w.goRuns() {
+					t.Errorf("Go's barrier %q, Go runs %v", w.barrier(), w.goRuns())
+				}
+				w.oneWriter("not put back")
+				w.restarts()
+				w.oneWriter("not put back, started again")
+				if coolify {
+					w.redeploy()
+					w.oneWriter("not put back, deployed again")
+				}
+				if err := os.Remove(filepath.Join(w.stateDir, "fresh-in-use")); err != nil {
+					t.Fatal(err)
+				}
+				if code := w.rollback("", how); code != 0 {
+					t.Fatalf("%s: %d\n%s", how, code, w.outputs[len(w.outputs)-1])
+				}
+				w.oneWriter("put back")
+				w.noSecrets()
+			})
+		}
+	}
+}
+
+// The reverse's Compose file gone during its transfer, while .env names it:
+// every docker compose command refuses, the undo goes by what is so, and
+// ends with Go's barrier lifted.
+func TestG5TheOverrideGoneAtTheUndo(t *testing.T) {
+	for _, coolify := range []bool{false, true} {
+		t.Run(fmt.Sprintf("coolify %v", coolify), func(t *testing.T) {
+			w := migratedWorld(t, false, coolify)
+			if coolify {
+				w.routeBack()
+			}
+			if code := w.rollback("rollback transfer started", "--rollback"); code != -1 {
+				t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			if err := os.Remove(filepath.Join(w.compose, overrideFile)); err != nil {
+				t.Fatal(err)
+			}
+			if code := w.rollback("", "--abort"); code != 0 {
+				t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			if coolify {
+				w.routeAway()
+			}
+			if w.barrier() != "" {
+				t.Errorf("Go's barrier is %q", w.barrier())
+			}
+			w.oneWriter("--abort")
+			w.expectReverse("undone", undoneState)
+			w.noSecrets()
+		})
+	}
+}
+
+// A deploy that failed half way: varlatchd's container gone, and the Compose
+// files giving its state another volume, which holds no gate. The undo
+// holds the gate where it was and does not lift Go's barrier: the next
+// deploy would be ungated. Put back, --resume and --abort lift it.
+func TestG5TheNextContainersVolume(t *testing.T) {
+	for _, coolify := range []bool{false, true} {
+		for _, how := range []string{"--resume", "--abort"} {
+			t.Run(fmt.Sprintf("coolify %v, %s", coolify, how), func(t *testing.T) {
+				w := migratedWorld(t, false, coolify)
+				if coolify {
+					w.routeBack()
+				}
+				if code := w.rollback("entered rollback-imported", "--rollback"); code != -1 {
+					t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.useState()
+				if err := setStopped("varlatchd", true); err != nil {
+					t.Fatal(err)
+				}
+				w.flag("gone-varlatchd")
+				renamed := filepath.Join(w.stateDir, "renamed-varlatchd")
+				if err := os.WriteFile(renamed, []byte(shape().Project+"_caddy-data"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				for _, again := range []string{how, "--resume", "--abort"} {
+					code := w.rollback("", again)
+					out := string(w.outputs[len(w.outputs)-1])
+					if code != 1 || !strings.Contains(out, "put them back as the migration left them") || !strings.Contains(out, "Go stays behind its barrier") {
+						t.Fatalf("%s: %d\n%s", again, code, out)
+					}
+					if w.barrier() == "" {
+						t.Fatalf("%s: Go's barrier is lifted", again)
+					}
+					if g := readGate(); g == nil || g.Kind != "migrated-out" {
+						t.Errorf("%s: the gate is %+v", again, g)
+					}
+				}
+				if err := os.Remove(renamed); err != nil {
+					t.Fatal(err)
+				}
+				if code := w.rollback("", how); (how == "--abort") != (code == 0) {
+					t.Fatalf("%s, put back: %d\n%s", how, code, w.outputs[len(w.outputs)-1])
+				}
+				if w.barrier() != "" || !w.goRuns() {
+					t.Errorf("Go's barrier %q, Go runs %v", w.barrier(), w.goRuns())
+				}
+				w.oneWriter("put back")
+				w.noSecrets()
+			})
+		}
 	}
 }

@@ -40,6 +40,8 @@ type GateRef struct {
 	Image string
 	// Barrier also takes the gate before it is migrated out: the barrier.
 	Barrier bool
+	// Was is the id it had before, when the journal records another too.
+	Was string
 }
 
 // gateChecker is a source whose gate is read, and whose state is held to be
@@ -66,8 +68,12 @@ type GatedStart struct {
 // sourceGate is the migrated-out gate j's source is behind.
 func sourceGate(j *Journal) GateRef {
 	g := GateRef{ID: j.SourceGate, State: j.Source.State, Image: j.Source.DigestRepository + "@" + j.Source.Digest}
-	if g.ID == "" && j.Barrier != nil {
-		g.ID = j.Barrier.GateID
+	if j.Barrier != nil {
+		if g.ID == "" {
+			g.ID = j.Barrier.GateID
+		} else if g.ID != j.Barrier.GateID {
+			g.Was = j.Barrier.GateID
+		}
 	}
 	return g
 }
@@ -170,29 +176,250 @@ func (c *Compose) CheckGate(ctx context.Context, g GateRef) error {
 	if err != nil {
 		return err
 	}
+	if err := g.in(v); err != nil {
+		return err
+	}
+	if daemon != nil {
+		return c.containerGate(ctx, daemon.id, v.Name, g)
+	}
+	text, there, err := c.volumeGate(ctx, g.Image, v.Name)
+	if err != nil {
+		return err
+	}
+	if !there {
+		return noGate(v.Name)
+	}
+	return g.matches(v.Name, text)
+}
+
+// volumeGate is the gate's file in volume, read in a container of migrate's
+// own, the volume read only: a plain file of its own, links not followed.
+func (c *Compose) volumeGate(ctx context.Context, image, volume string) (text []byte, there bool, err error) {
+	if err := c.ensureImage(ctx, image); err != nil {
+		return nil, false, err
+	}
+	r, err := c.docker(ctx, append(ownRun("type=volume,source="+volume+",target=/state,readonly,volume-nocopy"), image, "-c", readGateScript), nil)
+	if err != nil {
+		return nil, false, err
+	}
+	switch r.Code {
+	case 0:
+		return r.Answer, true, nil
+	case gateNone:
+		return nil, false, nil
+	case gateNotPlain:
+		return nil, false, fmt.Errorf("the gate in the volume %s (%s) is not a plain file of its own", volume, gateFile)
+	}
+	return nil, false, failure("reading the TypeScript installation's gate", r)
+}
+
+// ownRun is docker's arguments for a shell in a container of migrate's own
+// with mount, and nothing else: no network, nothing pulled.
+func ownRun(mount string) []string {
+	return []string{"run", "--rm", "-i", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+		"--mount", mount, "--entrypoint", "sh"}
+}
+
+// The scripts of migrate's own containers. The gate's file is made as the
+// release makes it (durableJson): a temporary name, synced, then linked
+// (never over another) or renamed, and its directory synced.
+const (
+	gateNone, gateNotPlain = 3, 4
+
+	readGateScript = `f=/state/` + gateFile + `; [ -e "$f" ] || [ -L "$f" ] || exit 3; [ -f "$f" ] && [ ! -L "$f" ] || exit 4; cat "$f"`
+
+	writeGateScript = `set -eu; umask 022; cd ` + stateTarget + `; t=.` + gateFile + `.migrate; rm -f "$t"; cat > "$t"; sync "$t"; ` +
+		`if [ "$1" = replace ]; then grep -qF "\"id\":\"$2\"" ` + gateFile + `; mv "$t" ` + gateFile + `; else ln "$t" ` + gateFile + `; rm "$t"; fi; sync .`
+)
+
+// HoldGate has the installation behind g, in the volume that carries it,
+// before anything of it is started: the gate's file is made there when it is
+// gone (the reverse's import lifts it), as it was. The Compose files are not
+// needed (they may not be whole). A volume that is gone is made as Compose
+// makes it. A gate there that the journal does not record is another's, and
+// left. The gate it is behind then, and its volume, are given.
+func (c *Compose) HoldGate(ctx context.Context, g GateRef, position string) (GateRef, error) {
+	p, all, err := c.verified(ctx)
+	if err != nil {
+		return g, err
+	}
+	if g.ID == "" {
+		return g, errors.New("the journal records no gate of the TypeScript installation's")
+	}
+	name, key := "", stateKey
+	if g.State != nil {
+		name, key = g.State.Name, orWord(g.State.Key, stateKey)
+	} else {
+		// An earlier build's journal.
+		cfg, err := c.config(ctx)
+		if err != nil {
+			return g, err
+		}
+		if name, _, err = c.stateName(ctx, cfg); err != nil {
+			return g, err
+		}
+	}
+	for _, l := range serviceContainers(p, all, service) {
+		if err := c.checkMounts(ctx, l.id, name); err != nil {
+			return g, err
+		}
+	}
+	if err := c.ensureImage(ctx, g.Image); err != nil {
+		return g, err
+	}
+	v, err := c.volume(ctx, name)
+	if err != nil {
+		return g, err
+	}
+	if v == nil && g.State != nil && g.State.Project != p.Name {
+		// Not one Compose makes.
+		return g, fmt.Errorf("the volume %s, which carries the installation's gate, is not there", name)
+	}
+	if v == nil {
+		r, err := c.docker(ctx, []string{"volume", "create", "--label", labelProject + "=" + p.Name, "--label", labelVolume + "=" + key, name}, nil)
+		if err != nil {
+			return g, err
+		}
+		if r.Code != 0 {
+			return g, failure("docker volume create "+name, r)
+		}
+		if v, err = c.volume(ctx, name); err != nil {
+			return g, err
+		}
+	}
+	// The recorded one as it was, whatever its labels (an external volume has
+	// none); another only of the project.
+	if v == nil || v.Project != p.Name && (g.State == nil || v.differs(*g.State) != "") {
+		return g, fmt.Errorf("the volume %s, which carries the installation's gate, is not of its project %s", name, p.Name)
+	}
+	text, there, err := c.volumeGate(ctx, g.Image, name)
+	if err != nil {
+		return g, err
+	}
+	how := []string{"new"}
+	if there {
+		f, err := parseGate(text)
+		switch {
+		case err != nil:
+			return g, fmt.Errorf("the gate in the volume %s (%s) cannot be read: %v", name, gateFile, err)
+		case f.ID != g.ID && (f.ID != g.Was || g.Was == "") || f.Kind != "migrated-out" && f.Kind != "migration" || !f.Permanent:
+			return g, fmt.Errorf("the installation is behind a %s gate (%s), not the migration's: left as it is", f.Kind, f.ID)
+		case f.Kind == "migrated-out" && f.Phase == "paused":
+			g.ID, g.State = f.ID, v
+			return g, nil
+		}
+		how = []string{"replace", f.ID}
+	}
+	r, err := c.docker(ctx, append(append(ownRun("type=volume,source="+name+",target="+stateTarget), g.Image, "-c", writeGateScript, "sh"), how...), g.text(position))
+	if err != nil {
+		return g, err
+	}
+	if r.Code != 0 {
+		return g, failure("making the TypeScript installation's gate again", r)
+	}
+	g.State = v
+	if text, there, err = c.volumeGate(ctx, g.Image, name); err != nil {
+		return g, err
+	}
+	if !there {
+		return g, noGate(name)
+	}
+	return g, g.matches(name, text)
+}
+
+// text is the gate's file for g, as the release writes it: frozen at the
+// barrier's position.
+func (g GateRef) text(position string) []byte {
+	var at *string
+	if frozenPosition.MatchString(position) {
+		at = &position
+	}
+	b, _ := json.Marshal(struct {
+		ID             string  `json:"id"`
+		Kind           string  `json:"kind"`
+		Phase          string  `json:"phase"`
+		ExpiresAt      *int64  `json:"expiresAt"`
+		ArchiveID      *string `json:"archiveId"`
+		FrozenPosition *string `json:"frozenPosition"`
+		FrozenSnapshot *string `json:"frozenSnapshot"`
+	}{ID: g.ID, Kind: "migrated-out", Phase: "paused", FrozenPosition: at})
+	return b
+}
+
+// CheckHeld refuses an installation whose server, whoever starts it (Docker
+// itself, an orchestrator's deploy), would not be behind g: g is in the
+// volume the journal records, the Compose files as they are now give that
+// volume to varlatchd, its containers have it, whole, for their state, no
+// container of the project has another there, and nothing that could lift it
+// runs.
+func (c *Compose) CheckHeld(ctx context.Context, g GateRef) error {
+	if g.ID == "" || g.State == nil {
+		return errors.New("the journal does not record the TypeScript installation's gate and the volume that carries it")
+	}
+	p, all, err := c.verified(ctx)
+	if err != nil {
+		return err
+	}
+	v, err := c.volume(ctx, g.State.Name)
+	if err != nil {
+		return err
+	}
+	if v == nil {
+		return fmt.Errorf("the volume %s, which carries the installation's gate, is not there", g.State.Name)
+	}
+	if why := v.differs(*g.State); why != "" {
+		return fmt.Errorf("the volume %s is not the one that carries the gate (%s)", v.Name, why)
+	}
+	text, there, err := c.volumeGate(ctx, g.Image, v.Name)
+	if err != nil {
+		return err
+	}
+	if !there {
+		return noGate(v.Name)
+	}
+	if err := g.matches(v.Name, text); err != nil {
+		return err
+	}
+	// What the next container is made with: nothing else tells it, when
+	// varlatchd has none now.
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return fmt.Errorf("%w; which volume its Compose files give varlatchd's state is not known: put them back as the migration left them", err)
+	}
+	if name, _, err := c.stateName(ctx, cfg); err != nil {
+		return err
+	} else if name != v.Name {
+		return fmt.Errorf("the Compose files give varlatchd's state the volume %s, and the gate is in %s: put them back as the migration left them", name, v.Name)
+	}
+	for _, l := range all {
+		if l.project != p.Name {
+			continue
+		}
+		for _, m := range l.mounts {
+			if m.Destination == stateTarget && (m.Type != "volume" || m.Name != v.Name) {
+				return fmt.Errorf("the project's %s container has %s at %s, not the volume %s that carries the gate", l.called(), orWord(m.Name, "a "+orWord(m.Type, "mount")), stateTarget, v.Name)
+			}
+		}
+		switch {
+		case l.service == service && !l.isOneOff():
+			if err := c.checkMounts(ctx, l.id, v.Name); err != nil {
+				return err
+			}
+		case l.service == importService && l.status != "exited" && l.status != "created" && l.status != "dead":
+			return fmt.Errorf("the reverse's import (%s) still runs", l.name)
+		}
+	}
+	return nil
+}
+
+// in refuses a volume that is not the recorded one, when one is.
+func (g GateRef) in(v *VolumeRecord) error {
 	if g.State != nil {
 		if why := v.differs(*g.State); why != "" {
 			return fmt.Errorf("the volume %s is not the one that carried the gate when the migration began (%s)", v.Name, why)
 		}
 	}
-	if daemon != nil {
-		return c.containerGate(ctx, daemon.id, v.Name, g)
-	}
-	if err := c.ensureImage(ctx, g.Image); err != nil {
-		return err
-	}
-	r, err := c.docker(ctx, []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-		"--mount", "type=volume,source=" + v.Name + ",target=/state,readonly,volume-nocopy", "--entrypoint", "cat", g.Image, "/state/" + gateFile}, nil)
-	if err != nil {
-		return err
-	}
-	if r.Code != 0 {
-		if bytes.Contains(r.Said, []byte("No such file")) {
-			return noGate(v.Name)
-		}
-		return failure("reading the TypeScript installation's gate", r)
-	}
-	return g.matches(v.Name, r.Answer)
+	return nil
 }
 
 func noGate(volume string) error {
@@ -330,8 +557,13 @@ func (c *Compose) startGated(ctx context.Context, g GateRef, again bool, flags .
 		return err
 	}
 	if !has || again {
-		// Compose makes a volume that is not there.
-		if _, _, err := c.stateVolume(ctx); err != nil {
+		// Compose makes a volume that is not there, and the container on the
+		// one its files give now.
+		v, _, err := c.stateVolume(ctx)
+		if err != nil {
+			return err
+		}
+		if err := g.in(v); err != nil {
 			return err
 		}
 		args := append([]string{"up", "--no-start", "--no-deps"}, flags...)
@@ -346,10 +578,8 @@ func (c *Compose) startGated(ctx context.Context, g GateRef, again bool, flags .
 	if daemon == nil || daemon.id == "" {
 		return fmt.Errorf("the installation has no %s container", service)
 	}
-	if g.State != nil {
-		if why := v.differs(*g.State); why != "" {
-			return fmt.Errorf("the volume %s is not the one that carried the gate when the migration began (%s)", v.Name, why)
-		}
+	if err := g.in(v); err != nil {
+		return err
 	}
 	if err := c.containerGate(ctx, daemon.id, v.Name, g); err != nil {
 		return err

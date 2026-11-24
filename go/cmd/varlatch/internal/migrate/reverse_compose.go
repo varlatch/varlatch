@@ -84,10 +84,15 @@ type ReverseSource interface {
 	// shape's ingress); StopServing stops them.
 	StartServing(ctx context.Context, kind Ingress) error
 	StopServing(ctx context.Context, kind Ingress) error
+	// HoldGate has the source behind g before anything of it is started: an
+	// undo's first step. CheckHeld holds that whoever starts its server, it
+	// is behind g. StopFront stops what serves its address.
+	HoldGate(ctx context.Context, g GateRef, position string) (GateRef, error)
+	CheckHeld(ctx context.Context, g GateRef) error
+	StopFront(ctx context.Context, kind Ingress) error
 	// UndoRebuild puts the installation back as the forward migration left
-	// it: behind gate, or, when the import lifted it, behind another, whose
-	// id gated journals before it is the installation's.
-	UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, gated func(id string) error) error
+	// it, its server started (start) behind gate.
+	UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, start bool) error
 	// ReverseReady refuses, with the step to take, a reverse whose
 	// one-off commands could not start (varlatchd in a stopped sidecar's
 	// network), before anything of it is done.
@@ -313,8 +318,16 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 	if j.Source.Digest == "" || j.Source.DigestRepository == "" {
 		return RebuildRecord{}, errors.New("the journal records no image digest of the source: the rebuild runs the release's own image only")
 	}
-	// An undo reads its gate there.
-	if _, _, err := c.stateName(ctx, cfg); err != nil {
+	// An undo holds its gate there: the volume is the recorded one.
+	if j.Source.State != nil {
+		v, _, err := c.stateVolume(ctx)
+		if err != nil {
+			return RebuildRecord{}, err
+		}
+		if why := v.differs(*j.Source.State); why != "" {
+			return RebuildRecord{}, fmt.Errorf("the volume %s is not the one that carried the gate when the migration began (%s)", v.Name, why)
+		}
+	} else if _, _, err := c.stateName(ctx, cfg); err != nil {
 		return RebuildRecord{}, err
 	}
 	// Names no volume has: one there already is another's, whatever it is.
@@ -938,19 +951,28 @@ func (c *Compose) refreshDashboard(ctx context.Context) error {
 
 // StopServing: the shape's ingress, then varlatchd.
 func (c *Compose) StopServing(ctx context.Context, kind Ingress) error {
-	if err := c.StopIngress(ctx, kind); err != nil {
+	if err := c.StopFront(ctx, kind); err != nil {
 		return err
 	}
-	return c.compose(ctx, "docker compose stop varlatchd", "stop", service)
+	return c.StopServers(ctx)
+}
+
+// StopFront stops the service of the shape's ingress, by its containers: an
+// undo's, which may have no Compose files to go by.
+func (c *Compose) StopFront(ctx context.Context, kind Ingress) error {
+	svc, err := ingressService(kind)
+	if err != nil {
+		return err
+	}
+	return c.stopContainers(ctx, svc)
 }
 
 // UndoRebuild: what holds the database stopped; COMPOSE_FILE as it was and
 // migrate's file removed, so Compose names the old volumes again; Postgres
-// and Convex back on them (their containers made again, which frees the
-// fresh volumes), the fresh volumes removed by their names; the
-// migrated-out gate made again if the import lifted it; varlatchd started
-// behind it, as the forward migration left it.
-func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, gated func(id string) error) error {
+// and Convex back on them, the fresh volumes removed by their names; with
+// start, varlatchd started behind the gate, which is there already
+// (HoldGate), as the forward migration left it.
+func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, start bool) error {
 	c.reversed = true
 	if err := c.stopContainers(ctx, service, importService, "convex-deploy", "convex-backend", "postgres"); err != nil {
 		return err
@@ -999,66 +1021,17 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate Gate
 			return failure("docker volume rm "+name, r)
 		}
 	}
-	// The one-off commands below and varlatchd itself run in varlatchd's
-	// network, without their dependencies.
+	if !start {
+		return nil
+	}
+	// Without its dependencies: varlatchd's one-off dependency
+	// (varlatch-migrate, service_completed_successfully) would run again and
+	// refuse behind the migrated-out marker, so varlatchd would not start.
+	// Its own volume's schema is current already, Postgres was started above,
+	// and varlatchd restarts (unless-stopped) until Postgres answers.
 	if err := c.networkOwnerRunning(ctx, "varlatch migrate --resume"); err != nil {
 		return err
 	}
-	g, err := c.gateOffline(ctx)
-	if err != nil {
-		return err
-	}
-	if g != nil && g.Kind == "migrated-out" && g.ID != gate.ID {
-		// An undo interrupted, or an earlier build's: a migrated-out gate all
-		// the same, known from here.
-		if err := gated(g.ID); err != nil {
-			return err
-		}
-		gate.ID = g.ID
-	}
-	if g == nil || g.Kind != "migrated-out" {
-		if g != nil && g.Kind != "migration" {
-			return fmt.Errorf("the TypeScript installation is behind a %s gate (%s), not the migration's: left as it is", g.Kind, g.ID)
-		}
-		if g == nil {
-			r, err := c.docker(ctx, oneOff("migration", "barrier", "--drain-seconds", "1"), nil)
-			if err != nil {
-				return err
-			}
-			if r.Code != 0 {
-				return failure("the TypeScript release's migration barrier", r)
-			}
-			var b struct {
-				Gate Gate `json:"gate"`
-			}
-			if err := json.Unmarshal(lastLine(r.Answer), &b); err != nil || b.Gate.ID == "" {
-				return errors.New("the TypeScript release's migration barrier did not answer with its gate")
-			}
-			g = &b.Gate
-		}
-		// Journalled before it is the installation's gate, so that a reverse
-		// begun again knows it.
-		if err := gated(g.ID); err != nil {
-			return err
-		}
-		gate.ID = g.ID
-		r, err := c.docker(ctx, oneOff("migration", "mark-migrated-out", "--id", g.ID), nil)
-		if err != nil {
-			return err
-		}
-		if r.Code != 0 {
-			return failure("the TypeScript release's migration mark-migrated-out", r)
-		}
-	}
-	// The daemon starts behind that gate only, read where it will read it.
-	// The volume may be another than the migration began with (one that was
-	// lost, made again by the commands above): what counts here is the gate.
-	gate.State = nil
-	// --no-deps: varlatchd's one-off dependency (varlatch-migrate,
-	// service_completed_successfully) would run again with it and refuse
-	// behind the migrated-out marker, so varlatchd would not start. Its
-	// own volume's schema is current already, Postgres was started above,
-	// and varlatchd restarts (unless-stopped) until Postgres answers.
 	if err := c.startGated(ctx, gate, true); err != nil {
 		return err
 	}
@@ -1323,22 +1296,4 @@ func (c *Compose) ensureImage(ctx context.Context, img string) error {
 		return fmt.Errorf("the image %s %s is not on this host and could not be pulled (exit %d): pull it, then run this again", repo, digest, r.Code)
 	}
 	return nil
-}
-
-// gateOffline is the installation's gate, read in a one-off container.
-func (c *Compose) gateOffline(ctx context.Context) (*Gate, error) {
-	r, err := c.docker(ctx, oneOff("migration", "status"), nil)
-	if err != nil {
-		return nil, err
-	}
-	if r.Code != 0 {
-		return nil, failure("the TypeScript release's admin migration status", r)
-	}
-	var s struct {
-		Gate *Gate `json:"gate"`
-	}
-	if err := json.Unmarshal(lastLine(r.Answer), &s); err != nil {
-		return nil, errors.New("the TypeScript release's admin migration status did not answer in JSON")
-	}
-	return s.Gate, nil
 }
