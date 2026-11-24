@@ -819,8 +819,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    # G5's own -timeout is 25 minutes; the Headscale steps add about 10.
-    timeout-minutes: 50
+    # G5's own -timeout is 45 minutes (it takes 13 to 20 on this runner,
+    # November 2026); the Headscale steps add about 11.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -860,7 +861,7 @@ jobs:
         env:
           CGO_ENABLED: "0"
         # -timeout: go test's default 10m is shorter than the G5 package now.
-        run: go test -count=1 -tags g5 -timeout 25m -run '^TestG5' -v ./server/migration/g5/
+        run: go test -count=1 -tags g5 -timeout 45m -run '^TestG5' -v ./server/migration/g5/
 
       # A self-hosted control server (ADR-0059 Decision 5 as amended for
       # step 7.5c; go/server/tailnet/headscaletest): varlatchd's node joins
