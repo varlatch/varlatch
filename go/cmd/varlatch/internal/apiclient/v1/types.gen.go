@@ -577,14 +577,17 @@ func (e AuditExportRetentionMode) Valid() bool {
 
 // Defines values for CallerViewWithheldReason.
 const (
-	CallerViewWithheldReasonOneTimeCode CallerViewWithheldReason = "one-time-code"
-	CallerViewWithheldReasonPermission  CallerViewWithheldReason = "permission"
-	CallerViewWithheldReasonRequirement CallerViewWithheldReason = "requirement"
+	CallerViewWithheldReasonOauthConnection CallerViewWithheldReason = "oauth-connection"
+	CallerViewWithheldReasonOneTimeCode     CallerViewWithheldReason = "one-time-code"
+	CallerViewWithheldReasonPermission      CallerViewWithheldReason = "permission"
+	CallerViewWithheldReasonRequirement     CallerViewWithheldReason = "requirement"
 )
 
 // Valid indicates whether the value is a known member of the CallerViewWithheldReason enum.
 func (e CallerViewWithheldReason) Valid() bool {
 	switch e {
+	case CallerViewWithheldReasonOauthConnection:
+		return true
 	case CallerViewWithheldReasonOneTimeCode:
 		return true
 	case CallerViewWithheldReasonPermission:
@@ -619,12 +622,15 @@ func (e CallerViewWithheldRequires) Valid() bool {
 
 // Defines values for CapabilityExerciseItemsKind.
 const (
-	Totp CapabilityExerciseItemsKind = "totp"
+	Oauth CapabilityExerciseItemsKind = "oauth"
+	Totp  CapabilityExerciseItemsKind = "totp"
 )
 
 // Valid indicates whether the value is a known member of the CapabilityExerciseItemsKind enum.
 func (e CapabilityExerciseItemsKind) Valid() bool {
 	switch e {
+	case Oauth:
+		return true
 	case Totp:
 		return true
 	default:
@@ -1270,13 +1276,13 @@ func (e GitHubAppRegistrationFailedOutcome) Valid() bool {
 
 // Defines values for GitHubAppRegistrationRefusedOutcome.
 const (
-	Refused GitHubAppRegistrationRefusedOutcome = "refused"
+	GitHubAppRegistrationRefusedOutcomeRefused GitHubAppRegistrationRefusedOutcome = "refused"
 )
 
 // Valid indicates whether the value is a known member of the GitHubAppRegistrationRefusedOutcome enum.
 func (e GitHubAppRegistrationRefusedOutcome) Valid() bool {
 	switch e {
-	case Refused:
+	case GitHubAppRegistrationRefusedOutcomeRefused:
 		return true
 	default:
 		return false
@@ -1802,6 +1808,144 @@ func (e MemberReviewSyncTargetsState) Valid() bool {
 	case MemberReviewSyncTargetsStatePaused:
 		return true
 	case MemberReviewSyncTargetsStateRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthAuthMethod.
+const (
+	ClientSecretBasic OAuthAuthMethod = "client_secret_basic"
+	ClientSecretPost  OAuthAuthMethod = "client_secret_post"
+	None              OAuthAuthMethod = "none"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAuthMethod enum.
+func (e OAuthAuthMethod) Valid() bool {
+	switch e {
+	case ClientSecretBasic:
+		return true
+	case ClientSecretPost:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthAuthorizationOutcomeOutcome.
+const (
+	OAuthAuthorizationOutcomeOutcomeConnected OAuthAuthorizationOutcomeOutcome = "connected"
+	OAuthAuthorizationOutcomeOutcomeFailed    OAuthAuthorizationOutcomeOutcome = "failed"
+	OAuthAuthorizationOutcomeOutcomeRefused   OAuthAuthorizationOutcomeOutcome = "refused"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAuthorizationOutcomeOutcome enum.
+func (e OAuthAuthorizationOutcomeOutcome) Valid() bool {
+	switch e {
+	case OAuthAuthorizationOutcomeOutcomeConnected:
+		return true
+	case OAuthAuthorizationOutcomeOutcomeFailed:
+		return true
+	case OAuthAuthorizationOutcomeOutcomeRefused:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthDisconnectionAtProvider.
+const (
+	OAuthDisconnectionAtProviderFailed          OAuthDisconnectionAtProvider = "failed"
+	OAuthDisconnectionAtProviderLeft            OAuthDisconnectionAtProvider = "left"
+	OAuthDisconnectionAtProviderNotSupported    OAuthDisconnectionAtProvider = "not-supported"
+	OAuthDisconnectionAtProviderNothingToRevoke OAuthDisconnectionAtProvider = "nothing-to-revoke"
+	OAuthDisconnectionAtProviderRevoked         OAuthDisconnectionAtProvider = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OAuthDisconnectionAtProvider enum.
+func (e OAuthDisconnectionAtProvider) Valid() bool {
+	switch e {
+	case OAuthDisconnectionAtProviderFailed:
+		return true
+	case OAuthDisconnectionAtProviderLeft:
+		return true
+	case OAuthDisconnectionAtProviderNotSupported:
+		return true
+	case OAuthDisconnectionAtProviderNothingToRevoke:
+		return true
+	case OAuthDisconnectionAtProviderRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthGrant.
+const (
+	AuthorizationCode OAuthGrant = "authorization_code"
+	ClientCredentials OAuthGrant = "client_credentials"
+)
+
+// Valid indicates whether the value is a known member of the OAuthGrant enum.
+func (e OAuthGrant) Valid() bool {
+	switch e {
+	case AuthorizationCode:
+		return true
+	case ClientCredentials:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthProviderInputPreset.
+const (
+	Generic   OAuthProviderInputPreset = "generic"
+	Google    OAuthProviderInputPreset = "google"
+	Microsoft OAuthProviderInputPreset = "microsoft"
+)
+
+// Valid indicates whether the value is a known member of the OAuthProviderInputPreset enum.
+func (e OAuthProviderInputPreset) Valid() bool {
+	switch e {
+	case Generic:
+		return true
+	case Google:
+		return true
+	case Microsoft:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthStatus.
+const (
+	OAuthStatusConnected      OAuthStatus = "connected"
+	OAuthStatusFailing        OAuthStatus = "failing"
+	OAuthStatusNeedsReconnect OAuthStatus = "needs_reconnect"
+	OAuthStatusNotConnected   OAuthStatus = "not_connected"
+	OAuthStatusRefreshing     OAuthStatus = "refreshing"
+	OAuthStatusRevoked        OAuthStatus = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OAuthStatus enum.
+func (e OAuthStatus) Valid() bool {
+	switch e {
+	case OAuthStatusConnected:
+		return true
+	case OAuthStatusFailing:
+		return true
+	case OAuthStatusNeedsReconnect:
+		return true
+	case OAuthStatusNotConnected:
+		return true
+	case OAuthStatusRefreshing:
+		return true
+	case OAuthStatusRevoked:
 		return true
 	default:
 		return false
@@ -3771,13 +3915,13 @@ type Capability struct {
 // CapabilityExercise defines model for CapabilityExercise.
 type CapabilityExercise struct {
 	Items []struct {
-		// ExpiresAt Of a code. When its period ends
+		// ExpiresAt Of a code: when its period ends. Of an access token: when it expires, absent when the provider does not say. As the server's clock has it.
 		ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 
-		// ExpiresInSeconds Of a code: whole seconds from this answer until its period ends.
+		// ExpiresInSeconds Present with expiresAt: whole seconds from this answer until then.
 		ExpiresInSeconds *int `json:"expiresInSeconds,omitempty"`
 
-		// Kind Present for a one-time code (capability values.totp).
+		// Kind Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
 		Kind *CapabilityExerciseItemsKind `json:"kind,omitempty"`
 		Name string                       `json:"name"`
 
@@ -3804,7 +3948,7 @@ type CapabilityExercise struct {
 		// StartsInSeconds Present with notBefore. How long to wait from this answer.
 		StartsInSeconds *int `json:"startsInSeconds,omitempty"`
 
-		// Value The value or, with kind totp, the one-time code.
+		// Value The value or, with kind totp, the one-time code or, with kind oauth, the access token (to send as a Bearer token).
 		Value     string `json:"value"`
 		VersionId string `json:"versionId"`
 	} `json:"items"`
@@ -3814,7 +3958,7 @@ type CapabilityExercise struct {
 	Withheld []string            `json:"withheld"`
 }
 
-// CapabilityExerciseItemsKind Present for a one-time code (capability values.totp).
+// CapabilityExerciseItemsKind Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
 type CapabilityExerciseItemsKind string
 
 // ConfigItemSearchResult One (project, item name) search hit (ADR-0030). Metadata only — never Values, version history, or value-derived fields. The environments list contains only authorized, navigable Environments in which the name is effectively present; it is bounded and its truncation flag never reveals hidden-candidate counts.
@@ -4039,6 +4183,9 @@ type EffectiveConfiguration struct {
 // EffectiveConfigurationItem defines model for EffectiveConfigurationItem.
 type EffectiveConfigurationItem struct {
 	Name string `json:"name"`
+
+	// Oauth Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+	Oauth *OAuthItem `json:"oauth,omitempty"`
 
 	// RawValue Present only when the stored value contains ${NAME} references that were expanded in `value` (capability values.references): the literal stored text. Editors must write this back — writing the expanded `value` would destroy the reference.
 	RawValue *string `json:"rawValue,omitempty"`
@@ -4924,6 +5071,261 @@ type Meta struct {
 // NextCursor Opaque; null when no further pages exist.
 type NextCursor = string
 
+// OAuthAccount defines model for OAuthAccount.
+type OAuthAccount struct {
+	// Id The provider's own ID of it.
+	Id string `json:"id"`
+
+	// Label What the provider calls it: an email address, a name.
+	Label string `json:"label"`
+}
+
+// OAuthAuthMethod defines model for OAuthAuthMethod.
+type OAuthAuthMethod string
+
+// OAuthAuthorization defines model for OAuthAuthorization.
+type OAuthAuthorization struct {
+	AuthorizationUrl string    `json:"authorizationUrl"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	RedirectUri      string    `json:"redirectUri"`
+	State            string    `json:"state"`
+}
+
+// OAuthAuthorizationAnswer defines model for OAuthAuthorizationAnswer.
+type OAuthAuthorizationAnswer struct {
+	Code  *string `json:"code,omitempty"`
+	Error *string `json:"error,omitempty"`
+	Iss   *string `json:"iss,omitempty"`
+
+	// RedirectUri The address the browser came back to, without its query.
+	RedirectUri string `json:"redirectUri"`
+	State       string `json:"state"`
+}
+
+// OAuthAuthorizationInput defines model for OAuthAuthorizationInput.
+type OAuthAuthorizationInput struct {
+	// ConfirmAccountChange Another account than the one it was connected to may connect it.
+	ConfirmAccountChange *bool `json:"confirmAccountChange,omitempty"`
+}
+
+// OAuthAuthorizationOutcome defines model for OAuthAuthorizationOutcome.
+type OAuthAuthorizationOutcome struct {
+	Account *OAuthAccount `json:"account,omitempty"`
+
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection *OAuthConnection `json:"connection,omitempty"`
+	Message    *string          `json:"message,omitempty"`
+
+	// Outcome refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+	Outcome         OAuthAuthorizationOutcomeOutcome `json:"outcome"`
+	PreviousAccount *OAuthAccount                    `json:"previousAccount,omitempty"`
+	Reason          *string                          `json:"reason,omitempty"`
+}
+
+// OAuthAuthorizationOutcomeOutcome refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+type OAuthAuthorizationOutcomeOutcome string
+
+// OAuthConnection An OAuth connection. No secret and no token, nor anything derived from one.
+type OAuthConnection struct {
+	AccessTokenExpiresAt nullable.Nullable[time.Time] `json:"accessTokenExpiresAt"`
+
+	// Account Whose account it is or, disconnected, was. Null when the provider does not say.
+	Account     nullable.Nullable[OAuthAccount] `json:"account"`
+	ClientId    string                          `json:"clientId"`
+	ConnectedAt nullable.Nullable[time.Time]    `json:"connectedAt"`
+
+	// ConnectedBy The person who connected it.
+	ConnectedBy nullable.Nullable[string] `json:"connectedBy"`
+	CreatedAt   time.Time                 `json:"createdAt"`
+
+	// CreatedBy Who wrote its parameters as they are now.
+	CreatedBy     nullable.Nullable[string] `json:"createdBy"`
+	EnvironmentId string                    `json:"environmentId"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant OAuthGrant `json:"grant"`
+
+	// GrantedScopes As the provider named them; null when it did not.
+	GrantedScopes   nullable.Nullable[[]string] `json:"grantedScopes"`
+	HasClientSecret bool                        `json:"hasClientSecret"`
+	HasRefreshToken bool                        `json:"hasRefreshToken"`
+	Hosts           []string                    `json:"hosts"`
+	Item            string                      `json:"item"`
+
+	// MissingScopes The scopes asked for that the provider did not grant, as far as it says.
+	MissingScopes []string `json:"missingScopes"`
+	Paused        bool     `json:"paused"`
+
+	// Provider A provider as a connection pinned it.
+	Provider OAuthProvider `json:"provider"`
+
+	// Reason Why it is failing or needs to be connected again: a word of Varlatch's (unreachable, timeout, refresh-answer-lost, no-refresh-token, refused-by-provider) or the provider's error code (invalid_client). Never text of the provider's.
+	Reason nullable.Nullable[string] `json:"reason"`
+
+	// RedirectUri To register at the provider. Present for authorization_code when this installation has a public URL.
+	RedirectUri           *string                      `json:"redirectUri,omitempty"`
+	RefreshTokenExpiresAt nullable.Nullable[time.Time] `json:"refreshTokenExpiresAt"`
+	RefreshedAt           nullable.Nullable[time.Time] `json:"refreshedAt"`
+
+	// RetryAt When a failed refresh is tried again
+	RetryAt nullable.Nullable[time.Time] `json:"retryAt"`
+	Scopes  []string                     `json:"scopes"`
+
+	// Status not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+	Status OAuthStatus `json:"status"`
+
+	// VersionId Changes with its parameters and its client secret
+	VersionId string `json:"versionId"`
+}
+
+// OAuthConnectionChange defines model for OAuthConnectionChange.
+type OAuthConnectionChange struct {
+	ClientId     *string `json:"clientId,omitempty"`
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// ExpectedVersionId Rejects a stale change with VERSION_CONFLICT.
+	ExpectedVersionId *string   `json:"expectedVersionId,omitempty"`
+	Hosts             *[]string `json:"hosts,omitempty"`
+	Paused            *bool     `json:"paused,omitempty"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider *OAuthProviderInput `json:"provider,omitempty"`
+	Scopes   *[]string           `json:"scopes,omitempty"`
+}
+
+// OAuthConnectionInput defines model for OAuthConnectionInput.
+type OAuthConnectionInput struct {
+	ClientId string `json:"clientId"`
+
+	// ClientSecret Stored sealed. No operation answers it, to anyone.
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant *OAuthGrant `json:"grant,omitempty"`
+
+	// Hosts The destinations its access token may go to, as a Capability's: a Capability that names the connection may name only these, and an exercise for another is refused. None, whatever the Capability names.
+	Hosts *[]string `json:"hosts,omitempty"`
+	Item  string    `json:"item"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider OAuthProviderInput `json:"provider"`
+
+	// Scopes What to ask for; a preset adds what it needs to know the account and to get a refresh token.
+	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// OAuthDisconnectInput defines model for OAuthDisconnectInput.
+type OAuthDisconnectInput struct {
+	RevokeAtProvider *bool `json:"revokeAtProvider,omitempty"`
+}
+
+// OAuthDisconnection defines model for OAuthDisconnection.
+type OAuthDisconnection struct {
+	// AtProvider What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+	AtProvider OAuthDisconnectionAtProvider `json:"atProvider"`
+
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection OAuthConnection `json:"connection"`
+
+	// Reason Of failed.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// OAuthDisconnectionAtProvider What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+type OAuthDisconnectionAtProvider string
+
+// OAuthDiscovery defines model for OAuthDiscovery.
+type OAuthDiscovery struct {
+	// Provider A provider as a connection pinned it.
+	Provider OAuthProvider `json:"provider"`
+
+	// RedirectUri Of an authorization_code connection, when this installation has a public URL.
+	RedirectUri *string `json:"redirectUri,omitempty"`
+}
+
+// OAuthDiscoveryInput defines model for OAuthDiscoveryInput.
+type OAuthDiscoveryInput struct {
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant *OAuthGrant `json:"grant,omitempty"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider OAuthProviderInput `json:"provider"`
+}
+
+// OAuthGrant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+type OAuthGrant string
+
+// OAuthItem Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+type OAuthItem struct {
+	// Account Whose account it is
+	Account *string `json:"account,omitempty"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant  OAuthGrant `json:"grant"`
+	Paused bool       `json:"paused"`
+	Preset string     `json:"preset"`
+
+	// Status not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+	Status OAuthStatus `json:"status"`
+}
+
+// OAuthProvider A provider as a connection pinned it.
+type OAuthProvider struct {
+	AccessTokenLifetimeSeconds *int               `json:"accessTokenLifetimeSeconds,omitempty"`
+	AuthorizationEndpoint      *string            `json:"authorizationEndpoint,omitempty"`
+	AuthorizationParams        *map[string]string `json:"authorizationParams,omitempty"`
+	Issuer                     *string            `json:"issuer,omitempty"`
+	JwksUri                    *string            `json:"jwksUri,omitempty"`
+	Preset                     string             `json:"preset"`
+	RefreshTokenIdleDays       *int               `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint         *string            `json:"revocationEndpoint,omitempty"`
+	Tenant                     *string            `json:"tenant,omitempty"`
+	TokenEndpoint              string             `json:"tokenEndpoint"`
+	TokenEndpointAuthMethod    OAuthAuthMethod    `json:"tokenEndpointAuthMethod"`
+	UserinfoEndpoint           *string            `json:"userinfoEndpoint,omitempty"`
+}
+
+// OAuthProviderInput A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+type OAuthProviderInput struct {
+	// AccessTokenLifetimeSeconds How long an access token lasts where the provider does not say.
+	AccessTokenLifetimeSeconds *int    `json:"accessTokenLifetimeSeconds,omitempty"`
+	AuthorizationEndpoint      *string `json:"authorizationEndpoint,omitempty"`
+
+	// AuthorizationParams More parameters of the authorization request, at most 10; none of the request's own.
+	AuthorizationParams *map[string]string       `json:"authorizationParams,omitempty"`
+	Issuer              *string                  `json:"issuer,omitempty"`
+	Preset              OAuthProviderInputPreset `json:"preset"`
+
+	// RefreshTokenIdleDays After how many days without use the provider drops a refresh token: Varlatch then refreshes after two thirds of them, used or not.
+	RefreshTokenIdleDays *int    `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint   *string `json:"revocationEndpoint,omitempty"`
+
+	// Tenant microsoft only: the tenant's ID (a UUID). common, organizations and consumers are refused.
+	Tenant                  *string          `json:"tenant,omitempty"`
+	TokenEndpoint           *string          `json:"tokenEndpoint,omitempty"`
+	TokenEndpointAuthMethod *OAuthAuthMethod `json:"tokenEndpointAuthMethod,omitempty"`
+
+	// UserinfoEndpoint Asked once at each connection, with the access token, for whose account it is (sub or id).
+	UserinfoEndpoint *string `json:"userinfoEndpoint,omitempty"`
+}
+
+// OAuthProviderInputPreset defines model for OAuthProviderInput.Preset.
+type OAuthProviderInputPreset string
+
+// OAuthRefresh defines model for OAuthRefresh.
+type OAuthRefresh struct {
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection OAuthConnection `json:"connection"`
+
+	// Reason Why not.
+	Reason            *string `json:"reason,omitempty"`
+	Refreshed         bool    `json:"refreshed"`
+	RetryAfterSeconds *int    `json:"retryAfterSeconds,omitempty"`
+}
+
+// OAuthStatus not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+type OAuthStatus string
+
 // ObservedCheck defines model for ObservedCheck.
 type ObservedCheck struct {
 	// CertificateNotAfter browserTls only, when the certificate in use expires.
@@ -5544,6 +5946,9 @@ type StrictRetrieval struct {
 	EnvironmentId string                                    `json:"environmentId"`
 	Items         []struct {
 		Name string `json:"name"`
+
+		// Oauth Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+		Oauth *OAuthItem `json:"oauth,omitempty"`
 
 		// RawValue The stored text, present only when expansion changed `value`.
 		RawValue *string `json:"rawValue,omitempty"`
@@ -6707,7 +7112,7 @@ type ExerciseCapabilityJSONBody struct {
 	// Fresh Only codes of a later period than any this server has given (capability values.totp): the current period's, else the next one's. Once one of the next period or a later one was given (minValiditySeconds may have skipped the current one), the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected.
 	Fresh *bool `json:"fresh,omitempty"`
 
-	// MinValiditySeconds How long the one-time codes among the items must still be valid (capability values.totp). When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. More than an item's period is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected.
+	// MinValiditySeconds How long the one-time codes (capability values.totp) and the access tokens (capability oauth.connections) among the items must still be valid. When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. When an access token ends sooner, it is refreshed first. More than an item's period, or than the provider's access tokens last, is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected.
 	MinValiditySeconds *int `json:"minValiditySeconds,omitempty"`
 
 	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed.
@@ -7214,6 +7619,24 @@ type ApplyChangeSetJSONRequestBody ApplyChangeSetJSONBody
 
 // DiscloseSecretsJSONRequestBody defines body for DiscloseSecrets for application/json ContentType.
 type DiscloseSecretsJSONRequestBody DiscloseSecretsJSONBody
+
+// CreateOAuthConnectionJSONRequestBody defines body for CreateOAuthConnection for application/json ContentType.
+type CreateOAuthConnectionJSONRequestBody = OAuthConnectionInput
+
+// DiscoverOAuthProviderJSONRequestBody defines body for DiscoverOAuthProvider for application/json ContentType.
+type DiscoverOAuthProviderJSONRequestBody = OAuthDiscoveryInput
+
+// UpdateOAuthConnectionJSONRequestBody defines body for UpdateOAuthConnection for application/json ContentType.
+type UpdateOAuthConnectionJSONRequestBody = OAuthConnectionChange
+
+// StartOAuthAuthorizationJSONRequestBody defines body for StartOAuthAuthorization for application/json ContentType.
+type StartOAuthAuthorizationJSONRequestBody = OAuthAuthorizationInput
+
+// CompleteOAuthAuthorizationJSONRequestBody defines body for CompleteOAuthAuthorization for application/json ContentType.
+type CompleteOAuthAuthorizationJSONRequestBody = OAuthAuthorizationAnswer
+
+// DisconnectOAuthConnectionJSONRequestBody defines body for DisconnectOAuthConnection for application/json ContentType.
+type DisconnectOAuthConnectionJSONRequestBody = OAuthDisconnectInput
 
 // StrictRetrievalJSONRequestBody defines body for StrictRetrieval for application/json ContentType.
 type StrictRetrievalJSONRequestBody StrictRetrievalJSONBody

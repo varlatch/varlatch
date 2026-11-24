@@ -407,8 +407,132 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Exercise a Capability (ADR-0022). Requires the bearer of the Broker it was issued for (an exercise-only credential too, ADR-0060) plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only. */
+        /**
+         * Exercise a Capability (ADR-0022). Requires the bearer of the Broker it was issued for (an exercise-only credential too, ADR-0060) plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only.
+         *     An OAuth connection (capability oauth.connections, ADR-0062) gives its access token, refreshed first when it has ended, ends within a minute, or ends before minValiditySeconds. When there is none now the exercise is refused with RATE_LIMITED (429, Retry-After), reason connection-unavailable and retryAfterSeconds; when a person has to act, with PERMISSION_DENIED, reason connection-needs-reconnect, connection-not-connected, connection-revoked or connection-paused; when the connection's own hosts do not name the destination, with PERMISSION_DENIED, reason destination-mismatch. Neither uses up anything.
+         */
         post: operations["exerciseCapability"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one. */
+        get: operations["listOAuthConnections"];
+        put?: never;
+        /** Make an OAuth connection, not connected yet. Needs config.value.write. Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive. */
+        post: operations["createOAuthConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** What a connection to this provider would pin, and the redirect URI to register there, without making one. Needs config.value.write. */
+        post: operations["discoverOAuthProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that. */
+        get: operations["getOAuthConnection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change an OAuth connection. Needs config.value.write; its provider, client ID, scopes and hosts are changed by a person (PERMISSION_DENIED, reason person-required). Its provider and client ID can change only while it holds no tokens (VALIDATION_FAILED, reason connected: disconnect it first), and need the client secret again. A new client secret or new hosts leave it connected; new scopes are asked for at the next connection. Paused, it is neither used nor refreshed, and its tokens stay. */
+        patch: operations["updateOAuthConnection"];
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Begin connecting an OAuth connection: the authorization endpoint's URL to send the browser to, with a state, a nonce and a PKCE challenge (S256) bound to this person and this session, good for ten minutes and once. A person in their dashboard session only (PERMISSION_DENIED, reason browser-session-required), with config.value.write. */
+        post: operations["startOAuthAuthorization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Connect with what the provider sent the browser back with. The state is taken, once, by the person and the session that began it (RESOURCE_NOT_FOUND for anyone else, EXPIRED after ten minutes), and then the redirect URI, the issuer (RFC 9207), the ID token and the account are checked: another account than the one before is refused unless the change was confirmed when it was begun. */
+        post: operations["completeOAuthAuthorization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh an OAuth connection's access token now, or get the first one of a client's own connection. Needs config.value.write. The answer says whether there is a new one, never the token. */
+        post: operations["refreshOAuthConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disconnect an OAuth connection: its tokens revoked at the provider where it has an endpoint for that (RFC 7009), unless revokeAtProvider is false, and forgotten here whatever it answers. Needs config.value.write; also while the Organization is frozen. Many providers revoke the whole grant of that client for that account, other connections' tokens included. */
+        post: operations["disconnectOAuthConnection"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2594,6 +2718,201 @@ export interface components {
             /** @description True while a dual-phase rotation (ADR-0027) is active for this item. Metadata only — the retiring plaintext is exposed solely through explicit disclosure and capability exercise. */
             rotating?: boolean;
             totp?: components["schemas"]["OneTimeCode"];
+            oauth?: components["schemas"]["OAuthItem"];
+        };
+        /** @description Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token. */
+        OAuthItem: {
+            preset: string;
+            grant: components["schemas"]["OAuthGrant"];
+            status: components["schemas"]["OAuthStatus"];
+            paused: boolean;
+            /** @description Whose account it is */
+            account?: string;
+        };
+        /**
+         * @description authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+         * @enum {string}
+         */
+        OAuthGrant: "authorization_code" | "client_credentials";
+        /**
+         * @description not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+         * @enum {string}
+         */
+        OAuthStatus: "not_connected" | "connected" | "refreshing" | "failing" | "needs_reconnect" | "revoked";
+        /** @description A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https. */
+        OAuthProviderInput: {
+            /** @enum {string} */
+            preset: "google" | "microsoft" | "generic";
+            /** @description microsoft only: the tenant's ID (a UUID). common, organizations and consumers are refused. */
+            tenant?: string;
+            issuer?: string;
+            authorizationEndpoint?: string;
+            tokenEndpoint?: string;
+            revocationEndpoint?: string;
+            /** @description Asked once at each connection, with the access token, for whose account it is (sub or id). */
+            userinfoEndpoint?: string;
+            tokenEndpointAuthMethod?: components["schemas"]["OAuthAuthMethod"];
+            /** @description More parameters of the authorization request, at most 10; none of the request's own. */
+            authorizationParams?: {
+                [key: string]: string;
+            };
+            /** @description How long an access token lasts where the provider does not say. */
+            accessTokenLifetimeSeconds?: number;
+            /** @description After how many days without use the provider drops a refresh token: Varlatch then refreshes after two thirds of them, used or not. */
+            refreshTokenIdleDays?: number;
+        };
+        /** @enum {string} */
+        OAuthAuthMethod: "client_secret_basic" | "client_secret_post" | "none";
+        /** @description A provider as a connection pinned it. */
+        OAuthProvider: {
+            preset: string;
+            tenant?: string;
+            issuer?: string;
+            authorizationEndpoint?: string;
+            tokenEndpoint: string;
+            revocationEndpoint?: string;
+            userinfoEndpoint?: string;
+            jwksUri?: string;
+            tokenEndpointAuthMethod: components["schemas"]["OAuthAuthMethod"];
+            authorizationParams?: {
+                [key: string]: string;
+            };
+            accessTokenLifetimeSeconds?: number;
+            refreshTokenIdleDays?: number;
+        };
+        OAuthConnectionInput: {
+            item: string;
+            provider: components["schemas"]["OAuthProviderInput"];
+            grant?: components["schemas"]["OAuthGrant"];
+            clientId: string;
+            /** @description Stored sealed. No operation answers it, to anyone. */
+            clientSecret?: string;
+            /** @description What to ask for; a preset adds what it needs to know the account and to get a refresh token. */
+            scopes?: string[];
+            /** @description The destinations its access token may go to, as a Capability's: a Capability that names the connection may name only these, and an exercise for another is refused. None, whatever the Capability names. */
+            hosts?: string[];
+        };
+        OAuthConnectionChange: {
+            provider?: components["schemas"]["OAuthProviderInput"];
+            clientId?: string;
+            clientSecret?: string;
+            scopes?: string[];
+            hosts?: string[];
+            paused?: boolean;
+            /** @description Rejects a stale change with VERSION_CONFLICT. */
+            expectedVersionId?: string;
+        };
+        OAuthDiscoveryInput: {
+            provider: components["schemas"]["OAuthProviderInput"];
+            grant?: components["schemas"]["OAuthGrant"];
+        };
+        OAuthDiscovery: {
+            provider: components["schemas"]["OAuthProvider"];
+            /** @description Of an authorization_code connection, when this installation has a public URL. */
+            redirectUri?: string;
+        };
+        OAuthAccount: {
+            /** @description The provider's own ID of it. */
+            id: string;
+            /** @description What the provider calls it: an email address, a name. */
+            label: string;
+        };
+        /** @description An OAuth connection. No secret and no token, nor anything derived from one. */
+        OAuthConnection: {
+            item: string;
+            environmentId: string;
+            /** @description Changes with its parameters and its client secret */
+            versionId: string;
+            provider: components["schemas"]["OAuthProvider"];
+            grant: components["schemas"]["OAuthGrant"];
+            clientId: string;
+            hasClientSecret: boolean;
+            scopes: string[];
+            hosts: string[];
+            status: components["schemas"]["OAuthStatus"];
+            /** @description Why it is failing or needs to be connected again: a word of Varlatch's (unreachable, timeout, refresh-answer-lost, no-refresh-token, refused-by-provider) or the provider's error code (invalid_client). Never text of the provider's. */
+            reason: string | null;
+            paused: boolean;
+            /** @description Whose account it is or, disconnected, was. Null when the provider does not say. */
+            account: components["schemas"]["OAuthAccount"] | null;
+            /** @description As the provider named them; null when it did not. */
+            grantedScopes: string[] | null;
+            /** @description The scopes asked for that the provider did not grant, as far as it says. */
+            missingScopes: string[];
+            hasRefreshToken: boolean;
+            /** Format: date-time */
+            accessTokenExpiresAt: string | null;
+            /** Format: date-time */
+            refreshTokenExpiresAt: string | null;
+            /** @description The person who connected it. */
+            connectedBy: string | null;
+            /** Format: date-time */
+            connectedAt: string | null;
+            /** Format: date-time */
+            refreshedAt: string | null;
+            /**
+             * Format: date-time
+             * @description When a failed refresh is tried again
+             */
+            retryAt: string | null;
+            /** @description Who wrote its parameters as they are now. */
+            createdBy: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** @description To register at the provider. Present for authorization_code when this installation has a public URL. */
+            redirectUri?: string;
+        };
+        OAuthAuthorizationInput: {
+            /** @description Another account than the one it was connected to may connect it. */
+            confirmAccountChange?: boolean;
+        };
+        OAuthAuthorization: {
+            authorizationUrl: string;
+            state: string;
+            redirectUri: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        OAuthAuthorizationAnswer: {
+            state: string;
+            /** @description The address the browser came back to, without its query. */
+            redirectUri: string;
+            code?: string;
+            error?: string;
+            iss?: string;
+        };
+        OAuthAuthorizationOutcome: {
+            /**
+             * @description refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+             * @enum {string}
+             */
+            outcome: "connected" | "refused" | "failed";
+            reason?: string;
+            message?: string;
+            account?: components["schemas"]["OAuthAccount"];
+            previousAccount?: components["schemas"]["OAuthAccount"];
+            connection?: components["schemas"]["OAuthConnection"];
+        };
+        OAuthRefresh: {
+            refreshed: boolean;
+            /** @description Why not. */
+            reason?: string;
+            retryAfterSeconds?: number;
+            connection: components["schemas"]["OAuthConnection"];
+        };
+        OAuthDisconnectInput: {
+            /** @default true */
+            revokeAtProvider: boolean;
+        };
+        OAuthDisconnection: {
+            /**
+             * @description What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+             * @enum {string}
+             */
+            atProvider: "revoked" | "not-supported" | "failed" | "nothing-to-revoke" | "left";
+            /** @description Of failed. */
+            reason?: string;
+            connection: components["schemas"]["OAuthConnection"];
         };
         /** @description The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it. */
         OtpauthURI: string;
@@ -2672,7 +2991,7 @@ export interface components {
                  * @description one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
                  * @enum {string}
                  */
-                reason: "permission" | "requirement" | "one-time-code";
+                reason: "permission" | "requirement" | "one-time-code" | "oauth-connection";
                 /** @enum {string} */
                 requires: "config.value.read" | "secret.reveal" | "secret.use";
             }[];
@@ -2719,6 +3038,7 @@ export interface components {
                 };
                 rotating?: boolean;
                 totp?: components["schemas"]["OneTimeCode"];
+                oauth?: components["schemas"]["OAuthItem"];
             }[];
             callerView: components["schemas"]["CallerView"];
             validation: components["schemas"]["ValidationReport"];
@@ -3334,13 +3654,13 @@ export interface components {
             items: {
                 name: string;
                 versionId: string;
-                /** @description The value or, with kind totp, the one-time code. */
+                /** @description The value or, with kind totp, the one-time code or, with kind oauth, the access token (to send as a Bearer token). */
                 value: string;
                 /**
-                 * @description Present for a one-time code (capability values.totp).
+                 * @description Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
                  * @enum {string}
                  */
-                kind?: "totp";
+                kind?: "totp" | "oauth";
                 /**
                  * Format: date-time
                  * @description Present while the code's period has not started, as the server's clock has it.
@@ -3350,10 +3670,10 @@ export interface components {
                 startsInSeconds?: number;
                 /**
                  * Format: date-time
-                 * @description Of a code. When its period ends
+                 * @description Of a code: when its period ends. Of an access token: when it expires, absent when the provider does not say. As the server's clock has it.
                  */
                 expiresAt?: string;
-                /** @description Of a code: whole seconds from this answer until its period ends. */
+                /** @description Present with expiresAt: whole seconds from this answer until then. */
                 expiresInSeconds?: number;
                 /** @description The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window; of a one-time code, the previous seed's code for the same conditions. Absent when the item is stable. */
                 retiring?: {
@@ -5539,7 +5859,7 @@ export interface operations {
                         item: string;
                         target: string;
                     }[];
-                    /** @description How long the one-time codes among the items must still be valid (capability values.totp). When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. More than an item's period is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected. */
+                    /** @description How long the one-time codes (capability values.totp) and the access tokens (capability oauth.connections) among the items must still be valid. When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. When an access token ends sooner, it is refreshed first. More than an item's period, or than the provider's access tokens last, is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected. */
                     minValiditySeconds?: number;
                     /** @description Only codes of a later period than any this server has given (capability values.totp): the current period's, else the next one's. Once one of the next period or a later one was given (minValiditySeconds may have skipped the current one), the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected. */
                     fresh?: boolean;
@@ -5554,6 +5874,308 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CapabilityExercise"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listOAuthConnections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connections */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["OAuthConnection"][];
+                        nextCursor: components["schemas"]["NextCursor"];
+                        /** @description What a connection's redirect URI starts with; the token endpoint's host (and port, when it is not 443) follows. Null when this installation has no public URL over HTTPS (or on a loopback host). */
+                        redirectBase?: string | null;
+                    };
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    createOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthConnectionInput"];
+            };
+        };
+        responses: {
+            /** @description Made */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthConnection"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    discoverOAuthProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthDiscoveryInput"];
+            };
+        };
+        responses: {
+            /** @description The provider */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthDiscovery"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthConnection"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthConnectionChange"];
+            };
+        };
+        responses: {
+            /** @description The connection as it is now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthConnection"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startOAuthAuthorization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthAuthorizationInput"];
+            };
+        };
+        responses: {
+            /** @description Begun (Cache-Control no-store) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthAuthorization"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    completeOAuthAuthorization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthAuthorizationAnswer"];
+            };
+        };
+        responses: {
+            /** @description Connected, or why not (Cache-Control no-store) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthAuthorizationOutcome"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What became of it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthRefresh"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    disconnectOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthDisconnectInput"];
+            };
+        };
+        responses: {
+            /** @description What became of it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthDisconnection"];
                 };
             };
             429: components["responses"]["RequestWindow"];

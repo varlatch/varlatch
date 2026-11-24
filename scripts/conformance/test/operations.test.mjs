@@ -225,6 +225,9 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "attachGitHubAppRegistration", "discardGitHubAppRegistration", "importGitHubApp",
     // Step 4.10b: the App's key rotation and installations (App Connections are createPlatformConnection's).
     "rotateGitHubAppKey", "listGitHubAppInstallations",
+    // ADR-0062: OAuth connections, which only the Go server has.
+    "listOAuthConnections", "createOAuthConnection", "discoverOAuthProvider", "getOAuthConnection", "updateOAuthConnection",
+    "startOAuthAuthorization", "completeOAuthAuthorization", "refreshOAuthConnection", "disconnectOAuthConnection",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // No named operation is lacking: serving the CLI is built (step 6.8; the

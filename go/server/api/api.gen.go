@@ -585,14 +585,17 @@ func (e AuditExportRetentionMode) Valid() bool {
 
 // Defines values for CallerViewWithheldReason.
 const (
-	CallerViewWithheldReasonOneTimeCode CallerViewWithheldReason = "one-time-code"
-	CallerViewWithheldReasonPermission  CallerViewWithheldReason = "permission"
-	CallerViewWithheldReasonRequirement CallerViewWithheldReason = "requirement"
+	CallerViewWithheldReasonOauthConnection CallerViewWithheldReason = "oauth-connection"
+	CallerViewWithheldReasonOneTimeCode     CallerViewWithheldReason = "one-time-code"
+	CallerViewWithheldReasonPermission      CallerViewWithheldReason = "permission"
+	CallerViewWithheldReasonRequirement     CallerViewWithheldReason = "requirement"
 )
 
 // Valid indicates whether the value is a known member of the CallerViewWithheldReason enum.
 func (e CallerViewWithheldReason) Valid() bool {
 	switch e {
+	case CallerViewWithheldReasonOauthConnection:
+		return true
 	case CallerViewWithheldReasonOneTimeCode:
 		return true
 	case CallerViewWithheldReasonPermission:
@@ -627,12 +630,15 @@ func (e CallerViewWithheldRequires) Valid() bool {
 
 // Defines values for CapabilityExerciseItemsKind.
 const (
-	Totp CapabilityExerciseItemsKind = "totp"
+	Oauth CapabilityExerciseItemsKind = "oauth"
+	Totp  CapabilityExerciseItemsKind = "totp"
 )
 
 // Valid indicates whether the value is a known member of the CapabilityExerciseItemsKind enum.
 func (e CapabilityExerciseItemsKind) Valid() bool {
 	switch e {
+	case Oauth:
+		return true
 	case Totp:
 		return true
 	default:
@@ -1278,13 +1284,13 @@ func (e GitHubAppRegistrationFailedOutcome) Valid() bool {
 
 // Defines values for GitHubAppRegistrationRefusedOutcome.
 const (
-	Refused GitHubAppRegistrationRefusedOutcome = "refused"
+	GitHubAppRegistrationRefusedOutcomeRefused GitHubAppRegistrationRefusedOutcome = "refused"
 )
 
 // Valid indicates whether the value is a known member of the GitHubAppRegistrationRefusedOutcome enum.
 func (e GitHubAppRegistrationRefusedOutcome) Valid() bool {
 	switch e {
-	case Refused:
+	case GitHubAppRegistrationRefusedOutcomeRefused:
 		return true
 	default:
 		return false
@@ -1810,6 +1816,144 @@ func (e MemberReviewSyncTargetsState) Valid() bool {
 	case MemberReviewSyncTargetsStatePaused:
 		return true
 	case MemberReviewSyncTargetsStateRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthAuthMethod.
+const (
+	ClientSecretBasic OAuthAuthMethod = "client_secret_basic"
+	ClientSecretPost  OAuthAuthMethod = "client_secret_post"
+	None              OAuthAuthMethod = "none"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAuthMethod enum.
+func (e OAuthAuthMethod) Valid() bool {
+	switch e {
+	case ClientSecretBasic:
+		return true
+	case ClientSecretPost:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthAuthorizationOutcomeOutcome.
+const (
+	OAuthAuthorizationOutcomeOutcomeConnected OAuthAuthorizationOutcomeOutcome = "connected"
+	OAuthAuthorizationOutcomeOutcomeFailed    OAuthAuthorizationOutcomeOutcome = "failed"
+	OAuthAuthorizationOutcomeOutcomeRefused   OAuthAuthorizationOutcomeOutcome = "refused"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAuthorizationOutcomeOutcome enum.
+func (e OAuthAuthorizationOutcomeOutcome) Valid() bool {
+	switch e {
+	case OAuthAuthorizationOutcomeOutcomeConnected:
+		return true
+	case OAuthAuthorizationOutcomeOutcomeFailed:
+		return true
+	case OAuthAuthorizationOutcomeOutcomeRefused:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthDisconnectionAtProvider.
+const (
+	OAuthDisconnectionAtProviderFailed          OAuthDisconnectionAtProvider = "failed"
+	OAuthDisconnectionAtProviderLeft            OAuthDisconnectionAtProvider = "left"
+	OAuthDisconnectionAtProviderNotSupported    OAuthDisconnectionAtProvider = "not-supported"
+	OAuthDisconnectionAtProviderNothingToRevoke OAuthDisconnectionAtProvider = "nothing-to-revoke"
+	OAuthDisconnectionAtProviderRevoked         OAuthDisconnectionAtProvider = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OAuthDisconnectionAtProvider enum.
+func (e OAuthDisconnectionAtProvider) Valid() bool {
+	switch e {
+	case OAuthDisconnectionAtProviderFailed:
+		return true
+	case OAuthDisconnectionAtProviderLeft:
+		return true
+	case OAuthDisconnectionAtProviderNotSupported:
+		return true
+	case OAuthDisconnectionAtProviderNothingToRevoke:
+		return true
+	case OAuthDisconnectionAtProviderRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthGrant.
+const (
+	AuthorizationCode OAuthGrant = "authorization_code"
+	ClientCredentials OAuthGrant = "client_credentials"
+)
+
+// Valid indicates whether the value is a known member of the OAuthGrant enum.
+func (e OAuthGrant) Valid() bool {
+	switch e {
+	case AuthorizationCode:
+		return true
+	case ClientCredentials:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthProviderInputPreset.
+const (
+	Generic   OAuthProviderInputPreset = "generic"
+	Google    OAuthProviderInputPreset = "google"
+	Microsoft OAuthProviderInputPreset = "microsoft"
+)
+
+// Valid indicates whether the value is a known member of the OAuthProviderInputPreset enum.
+func (e OAuthProviderInputPreset) Valid() bool {
+	switch e {
+	case Generic:
+		return true
+	case Google:
+		return true
+	case Microsoft:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthStatus.
+const (
+	OAuthStatusConnected      OAuthStatus = "connected"
+	OAuthStatusFailing        OAuthStatus = "failing"
+	OAuthStatusNeedsReconnect OAuthStatus = "needs_reconnect"
+	OAuthStatusNotConnected   OAuthStatus = "not_connected"
+	OAuthStatusRefreshing     OAuthStatus = "refreshing"
+	OAuthStatusRevoked        OAuthStatus = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OAuthStatus enum.
+func (e OAuthStatus) Valid() bool {
+	switch e {
+	case OAuthStatusConnected:
+		return true
+	case OAuthStatusFailing:
+		return true
+	case OAuthStatusNeedsReconnect:
+		return true
+	case OAuthStatusNotConnected:
+		return true
+	case OAuthStatusRefreshing:
+		return true
+	case OAuthStatusRevoked:
 		return true
 	default:
 		return false
@@ -3779,13 +3923,13 @@ type Capability struct {
 // CapabilityExercise defines model for CapabilityExercise.
 type CapabilityExercise struct {
 	Items []struct {
-		// ExpiresAt Of a code. When its period ends
+		// ExpiresAt Of a code: when its period ends. Of an access token: when it expires, absent when the provider does not say. As the server's clock has it.
 		ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 
-		// ExpiresInSeconds Of a code: whole seconds from this answer until its period ends.
+		// ExpiresInSeconds Present with expiresAt: whole seconds from this answer until then.
 		ExpiresInSeconds *int `json:"expiresInSeconds,omitempty"`
 
-		// Kind Present for a one-time code (capability values.totp).
+		// Kind Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
 		Kind *CapabilityExerciseItemsKind `json:"kind,omitempty"`
 		Name string                       `json:"name"`
 
@@ -3812,7 +3956,7 @@ type CapabilityExercise struct {
 		// StartsInSeconds Present with notBefore. How long to wait from this answer.
 		StartsInSeconds *int `json:"startsInSeconds,omitempty"`
 
-		// Value The value or, with kind totp, the one-time code.
+		// Value The value or, with kind totp, the one-time code or, with kind oauth, the access token (to send as a Bearer token).
 		Value     string `json:"value"`
 		VersionId string `json:"versionId"`
 	} `json:"items"`
@@ -3822,7 +3966,7 @@ type CapabilityExercise struct {
 	Withheld []string            `json:"withheld"`
 }
 
-// CapabilityExerciseItemsKind Present for a one-time code (capability values.totp).
+// CapabilityExerciseItemsKind Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
 type CapabilityExerciseItemsKind string
 
 // ConfigItemSearchResult One (project, item name) search hit (ADR-0030). Metadata only — never Values, version history, or value-derived fields. The environments list contains only authorized, navigable Environments in which the name is effectively present; it is bounded and its truncation flag never reveals hidden-candidate counts.
@@ -4047,6 +4191,9 @@ type EffectiveConfiguration struct {
 // EffectiveConfigurationItem defines model for EffectiveConfigurationItem.
 type EffectiveConfigurationItem struct {
 	Name string `json:"name"`
+
+	// Oauth Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+	Oauth *OAuthItem `json:"oauth,omitempty"`
 
 	// RawValue Present only when the stored value contains ${NAME} references that were expanded in `value` (capability values.references): the literal stored text. Editors must write this back — writing the expanded `value` would destroy the reference.
 	RawValue *string `json:"rawValue,omitempty"`
@@ -4932,6 +5079,261 @@ type Meta struct {
 // NextCursor Opaque; null when no further pages exist.
 type NextCursor = string
 
+// OAuthAccount defines model for OAuthAccount.
+type OAuthAccount struct {
+	// Id The provider's own ID of it.
+	Id string `json:"id"`
+
+	// Label What the provider calls it: an email address, a name.
+	Label string `json:"label"`
+}
+
+// OAuthAuthMethod defines model for OAuthAuthMethod.
+type OAuthAuthMethod string
+
+// OAuthAuthorization defines model for OAuthAuthorization.
+type OAuthAuthorization struct {
+	AuthorizationUrl string    `json:"authorizationUrl"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	RedirectUri      string    `json:"redirectUri"`
+	State            string    `json:"state"`
+}
+
+// OAuthAuthorizationAnswer defines model for OAuthAuthorizationAnswer.
+type OAuthAuthorizationAnswer struct {
+	Code  *string `json:"code,omitempty"`
+	Error *string `json:"error,omitempty"`
+	Iss   *string `json:"iss,omitempty"`
+
+	// RedirectUri The address the browser came back to, without its query.
+	RedirectUri string `json:"redirectUri"`
+	State       string `json:"state"`
+}
+
+// OAuthAuthorizationInput defines model for OAuthAuthorizationInput.
+type OAuthAuthorizationInput struct {
+	// ConfirmAccountChange Another account than the one it was connected to may connect it.
+	ConfirmAccountChange *bool `json:"confirmAccountChange,omitempty"`
+}
+
+// OAuthAuthorizationOutcome defines model for OAuthAuthorizationOutcome.
+type OAuthAuthorizationOutcome struct {
+	Account *OAuthAccount `json:"account,omitempty"`
+
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection *OAuthConnection `json:"connection,omitempty"`
+	Message    *string          `json:"message,omitempty"`
+
+	// Outcome refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+	Outcome         OAuthAuthorizationOutcomeOutcome `json:"outcome"`
+	PreviousAccount *OAuthAccount                    `json:"previousAccount,omitempty"`
+	Reason          *string                          `json:"reason,omitempty"`
+}
+
+// OAuthAuthorizationOutcomeOutcome refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+type OAuthAuthorizationOutcomeOutcome string
+
+// OAuthConnection An OAuth connection. No secret and no token, nor anything derived from one.
+type OAuthConnection struct {
+	AccessTokenExpiresAt nullable.Nullable[time.Time] `json:"accessTokenExpiresAt"`
+
+	// Account Whose account it is or, disconnected, was. Null when the provider does not say.
+	Account     nullable.Nullable[OAuthAccount] `json:"account"`
+	ClientId    string                          `json:"clientId"`
+	ConnectedAt nullable.Nullable[time.Time]    `json:"connectedAt"`
+
+	// ConnectedBy The person who connected it.
+	ConnectedBy nullable.Nullable[string] `json:"connectedBy"`
+	CreatedAt   time.Time                 `json:"createdAt"`
+
+	// CreatedBy Who wrote its parameters as they are now.
+	CreatedBy     nullable.Nullable[string] `json:"createdBy"`
+	EnvironmentId string                    `json:"environmentId"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant OAuthGrant `json:"grant"`
+
+	// GrantedScopes As the provider named them; null when it did not.
+	GrantedScopes   nullable.Nullable[[]string] `json:"grantedScopes"`
+	HasClientSecret bool                        `json:"hasClientSecret"`
+	HasRefreshToken bool                        `json:"hasRefreshToken"`
+	Hosts           []string                    `json:"hosts"`
+	Item            string                      `json:"item"`
+
+	// MissingScopes The scopes asked for that the provider did not grant, as far as it says.
+	MissingScopes []string `json:"missingScopes"`
+	Paused        bool     `json:"paused"`
+
+	// Provider A provider as a connection pinned it.
+	Provider OAuthProvider `json:"provider"`
+
+	// Reason Why it is failing or needs to be connected again: a word of Varlatch's (unreachable, timeout, refresh-answer-lost, no-refresh-token, refused-by-provider) or the provider's error code (invalid_client). Never text of the provider's.
+	Reason nullable.Nullable[string] `json:"reason"`
+
+	// RedirectUri To register at the provider. Present for authorization_code when this installation has a public URL.
+	RedirectUri           *string                      `json:"redirectUri,omitempty"`
+	RefreshTokenExpiresAt nullable.Nullable[time.Time] `json:"refreshTokenExpiresAt"`
+	RefreshedAt           nullable.Nullable[time.Time] `json:"refreshedAt"`
+
+	// RetryAt When a failed refresh is tried again
+	RetryAt nullable.Nullable[time.Time] `json:"retryAt"`
+	Scopes  []string                     `json:"scopes"`
+
+	// Status not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+	Status OAuthStatus `json:"status"`
+
+	// VersionId Changes with its parameters and its client secret
+	VersionId string `json:"versionId"`
+}
+
+// OAuthConnectionChange defines model for OAuthConnectionChange.
+type OAuthConnectionChange struct {
+	ClientId     *string `json:"clientId,omitempty"`
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// ExpectedVersionId Rejects a stale change with VERSION_CONFLICT.
+	ExpectedVersionId *string   `json:"expectedVersionId,omitempty"`
+	Hosts             *[]string `json:"hosts,omitempty"`
+	Paused            *bool     `json:"paused,omitempty"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider *OAuthProviderInput `json:"provider,omitempty"`
+	Scopes   *[]string           `json:"scopes,omitempty"`
+}
+
+// OAuthConnectionInput defines model for OAuthConnectionInput.
+type OAuthConnectionInput struct {
+	ClientId string `json:"clientId"`
+
+	// ClientSecret Stored sealed. No operation answers it, to anyone.
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant *OAuthGrant `json:"grant,omitempty"`
+
+	// Hosts The destinations its access token may go to, as a Capability's: a Capability that names the connection may name only these, and an exercise for another is refused. None, whatever the Capability names.
+	Hosts *[]string `json:"hosts,omitempty"`
+	Item  string    `json:"item"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider OAuthProviderInput `json:"provider"`
+
+	// Scopes What to ask for; a preset adds what it needs to know the account and to get a refresh token.
+	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// OAuthDisconnectInput defines model for OAuthDisconnectInput.
+type OAuthDisconnectInput struct {
+	RevokeAtProvider *bool `json:"revokeAtProvider,omitempty"`
+}
+
+// OAuthDisconnection defines model for OAuthDisconnection.
+type OAuthDisconnection struct {
+	// AtProvider What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+	AtProvider OAuthDisconnectionAtProvider `json:"atProvider"`
+
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection OAuthConnection `json:"connection"`
+
+	// Reason Of failed.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// OAuthDisconnectionAtProvider What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+type OAuthDisconnectionAtProvider string
+
+// OAuthDiscovery defines model for OAuthDiscovery.
+type OAuthDiscovery struct {
+	// Provider A provider as a connection pinned it.
+	Provider OAuthProvider `json:"provider"`
+
+	// RedirectUri Of an authorization_code connection, when this installation has a public URL.
+	RedirectUri *string `json:"redirectUri,omitempty"`
+}
+
+// OAuthDiscoveryInput defines model for OAuthDiscoveryInput.
+type OAuthDiscoveryInput struct {
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant *OAuthGrant `json:"grant,omitempty"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider OAuthProviderInput `json:"provider"`
+}
+
+// OAuthGrant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+type OAuthGrant string
+
+// OAuthItem Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+type OAuthItem struct {
+	// Account Whose account it is
+	Account *string `json:"account,omitempty"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant  OAuthGrant `json:"grant"`
+	Paused bool       `json:"paused"`
+	Preset string     `json:"preset"`
+
+	// Status not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+	Status OAuthStatus `json:"status"`
+}
+
+// OAuthProvider A provider as a connection pinned it.
+type OAuthProvider struct {
+	AccessTokenLifetimeSeconds *int               `json:"accessTokenLifetimeSeconds,omitempty"`
+	AuthorizationEndpoint      *string            `json:"authorizationEndpoint,omitempty"`
+	AuthorizationParams        *map[string]string `json:"authorizationParams,omitempty"`
+	Issuer                     *string            `json:"issuer,omitempty"`
+	JwksUri                    *string            `json:"jwksUri,omitempty"`
+	Preset                     string             `json:"preset"`
+	RefreshTokenIdleDays       *int               `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint         *string            `json:"revocationEndpoint,omitempty"`
+	Tenant                     *string            `json:"tenant,omitempty"`
+	TokenEndpoint              string             `json:"tokenEndpoint"`
+	TokenEndpointAuthMethod    OAuthAuthMethod    `json:"tokenEndpointAuthMethod"`
+	UserinfoEndpoint           *string            `json:"userinfoEndpoint,omitempty"`
+}
+
+// OAuthProviderInput A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+type OAuthProviderInput struct {
+	// AccessTokenLifetimeSeconds How long an access token lasts where the provider does not say.
+	AccessTokenLifetimeSeconds *int    `json:"accessTokenLifetimeSeconds,omitempty"`
+	AuthorizationEndpoint      *string `json:"authorizationEndpoint,omitempty"`
+
+	// AuthorizationParams More parameters of the authorization request, at most 10; none of the request's own.
+	AuthorizationParams *map[string]string       `json:"authorizationParams,omitempty"`
+	Issuer              *string                  `json:"issuer,omitempty"`
+	Preset              OAuthProviderInputPreset `json:"preset"`
+
+	// RefreshTokenIdleDays After how many days without use the provider drops a refresh token: Varlatch then refreshes after two thirds of them, used or not.
+	RefreshTokenIdleDays *int    `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint   *string `json:"revocationEndpoint,omitempty"`
+
+	// Tenant microsoft only: the tenant's ID (a UUID). common, organizations and consumers are refused.
+	Tenant                  *string          `json:"tenant,omitempty"`
+	TokenEndpoint           *string          `json:"tokenEndpoint,omitempty"`
+	TokenEndpointAuthMethod *OAuthAuthMethod `json:"tokenEndpointAuthMethod,omitempty"`
+
+	// UserinfoEndpoint Asked once at each connection, with the access token, for whose account it is (sub or id).
+	UserinfoEndpoint *string `json:"userinfoEndpoint,omitempty"`
+}
+
+// OAuthProviderInputPreset defines model for OAuthProviderInput.Preset.
+type OAuthProviderInputPreset string
+
+// OAuthRefresh defines model for OAuthRefresh.
+type OAuthRefresh struct {
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection OAuthConnection `json:"connection"`
+
+	// Reason Why not.
+	Reason            *string `json:"reason,omitempty"`
+	Refreshed         bool    `json:"refreshed"`
+	RetryAfterSeconds *int    `json:"retryAfterSeconds,omitempty"`
+}
+
+// OAuthStatus not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+type OAuthStatus string
+
 // ObservedCheck defines model for ObservedCheck.
 type ObservedCheck struct {
 	// CertificateNotAfter browserTls only, when the certificate in use expires.
@@ -5552,6 +5954,9 @@ type StrictRetrieval struct {
 	EnvironmentId string                                    `json:"environmentId"`
 	Items         []struct {
 		Name string `json:"name"`
+
+		// Oauth Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+		Oauth *OAuthItem `json:"oauth,omitempty"`
 
 		// RawValue The stored text, present only when expansion changed `value`.
 		RawValue *string `json:"rawValue,omitempty"`
@@ -6715,7 +7120,7 @@ type ExerciseCapabilityJSONBody struct {
 	// Fresh Only codes of a later period than any this server has given (capability values.totp): the current period's, else the next one's. Once one of the next period or a later one was given (minValiditySeconds may have skipped the current one), the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected.
 	Fresh *bool `json:"fresh,omitempty"`
 
-	// MinValiditySeconds How long the one-time codes among the items must still be valid (capability values.totp). When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. More than an item's period is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected.
+	// MinValiditySeconds How long the one-time codes (capability values.totp) and the access tokens (capability oauth.connections) among the items must still be valid. When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. When an access token ends sooner, it is refreshed first. More than an item's period, or than the provider's access tokens last, is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected.
 	MinValiditySeconds *int `json:"minValiditySeconds,omitempty"`
 
 	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed.
@@ -7222,6 +7627,24 @@ type ApplyChangeSetJSONRequestBody ApplyChangeSetJSONBody
 
 // DiscloseSecretsJSONRequestBody defines body for DiscloseSecrets for application/json ContentType.
 type DiscloseSecretsJSONRequestBody DiscloseSecretsJSONBody
+
+// CreateOAuthConnectionJSONRequestBody defines body for CreateOAuthConnection for application/json ContentType.
+type CreateOAuthConnectionJSONRequestBody = OAuthConnectionInput
+
+// DiscoverOAuthProviderJSONRequestBody defines body for DiscoverOAuthProvider for application/json ContentType.
+type DiscoverOAuthProviderJSONRequestBody = OAuthDiscoveryInput
+
+// UpdateOAuthConnectionJSONRequestBody defines body for UpdateOAuthConnection for application/json ContentType.
+type UpdateOAuthConnectionJSONRequestBody = OAuthConnectionChange
+
+// StartOAuthAuthorizationJSONRequestBody defines body for StartOAuthAuthorization for application/json ContentType.
+type StartOAuthAuthorizationJSONRequestBody = OAuthAuthorizationInput
+
+// CompleteOAuthAuthorizationJSONRequestBody defines body for CompleteOAuthAuthorization for application/json ContentType.
+type CompleteOAuthAuthorizationJSONRequestBody = OAuthAuthorizationAnswer
+
+// DisconnectOAuthConnectionJSONRequestBody defines body for DisconnectOAuthConnection for application/json ContentType.
+type DisconnectOAuthConnectionJSONRequestBody = OAuthDisconnectInput
 
 // StrictRetrievalJSONRequestBody defines body for StrictRetrieval for application/json ContentType.
 type StrictRetrievalJSONRequestBody StrictRetrievalJSONBody
@@ -8410,6 +8833,7 @@ type ServerInterface interface {
 	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability})
 	RevokeCapability(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, capability string)
 	// ExerciseCapability Exercise a Capability (ADR-0022). Requires the bearer of the Broker it was issued for (an exercise-only credential too, ADR-0060) plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only.
+	// An OAuth connection (capability oauth.connections, ADR-0062) gives its access token, refreshed first when it has ended, ends within a minute, or ends before minValiditySeconds. When there is none now the exercise is refused with RATE_LIMITED (429, Retry-After), reason connection-unavailable and retryAfterSeconds; when a person has to act, with PERMISSION_DENIED, reason connection-needs-reconnect, connection-not-connected, connection-revoked or connection-paused; when the connection's own hosts do not name the destination, with PERMISSION_DENIED, reason destination-mismatch. Neither uses up anything.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}/exercises)
 	ExerciseCapability(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, capability string)
 	// ApplyChangeSet Atomic value change set (capability values.changeset): all expected-version guards validate before mutation; any conflict rejects the entire set with VERSION_CONFLICT. Supports Idempotency-Key.
@@ -8421,6 +8845,33 @@ type ServerInterface interface {
 	// GetEffectiveConfiguration Bulk-resolve the Effective Configuration (child overrides over parent values). With include=values, plaintext is returned for items the caller is authorized for (config.value.read for non-sensitive, secret.reveal for Secrets) and every disclosure is audited before material is returned. Values may reference sibling items as ${NAME} (capability values.references): references are expanded server-side using only values the caller receives in the same response; anything else stays a literal ${NAME}. $${NAME} escapes to a literal ${NAME}.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/effective-configuration)
 	GetEffectiveConfiguration(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, params GetEffectiveConfigurationParams)
+	// ListOAuthConnections The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
+	ListOAuthConnections(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// CreateOAuthConnection Make an OAuth connection, not connected yet. Needs config.value.write. Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
+	CreateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// DiscoverOAuthProvider What a connection to this provider would pin, and the redirect URI to register there, without making one. Needs config.value.write.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery)
+	DiscoverOAuthProvider(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// GetOAuthConnection One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
+	GetOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// UpdateOAuthConnection Change an OAuth connection. Needs config.value.write; its provider, client ID, scopes and hosts are changed by a person (PERMISSION_DENIED, reason person-required). Its provider and client ID can change only while it holds no tokens (VALIDATION_FAILED, reason connected: disconnect it first), and need the client secret again. A new client secret or new hosts leave it connected; new scopes are asked for at the next connection. Paused, it is neither used nor refreshed, and its tokens stay.
+	// (PATCH /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
+	UpdateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// StartOAuthAuthorization Begin connecting an OAuth connection: the authorization endpoint's URL to send the browser to, with a state, a nonce and a PKCE challenge (S256) bound to this person and this session, good for ten minutes and once. A person in their dashboard session only (PERMISSION_DENIED, reason browser-session-required), with config.value.write.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations)
+	StartOAuthAuthorization(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// CompleteOAuthAuthorization Connect with what the provider sent the browser back with. The state is taken, once, by the person and the session that began it (RESOURCE_NOT_FOUND for anyone else, EXPIRED after ten minutes), and then the redirect URI, the issuer (RFC 9207), the ID token and the account are checked: another account than the one before is refused unless the change was confirmed when it was begun.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete)
+	CompleteOAuthAuthorization(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// DisconnectOAuthConnection Disconnect an OAuth connection: its tokens revoked at the provider where it has an endpoint for that (RFC 7009), unless revokeAtProvider is false, and forgotten here whatever it answers. Needs config.value.write; also while the Organization is frozen. Many providers revoke the whole grant of that client for that account, other connections' tokens included.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect)
+	DisconnectOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// RefreshOAuthConnection Refresh an OAuth connection's access token now, or get the first one of a client's own connection. Needs config.value.write. The answer says whether there is a new one, never the token.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh)
+	RefreshOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
 	// StrictRetrieval Strict retrieval (capability retrieval.strict): the non-sensitive values (config.value.read) and every Secret (secret.reveal) this caller may receive, the state manifest and its digest, the caller view, the active Contract (contract.read), and the validation of exactly the values returned, all from one database snapshot, in one response. Requires config.metadata.read. Each class is authorized separately: a denied class is reported in callerView.withheld, not an error. Every decryption follows an audit commit naming its version. Any failure after the snapshot returns an error and no values. Never cacheable.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/retrievals)
 	StrictRetrieval(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
@@ -13351,6 +13802,456 @@ func (siw *ServerInterfaceWrapper) GetEffectiveConfiguration(w http.ResponseWrit
 	handler.ServeHTTP(w, r)
 }
 
+// ListOAuthConnections operation middleware
+func (siw *ServerInterfaceWrapper) ListOAuthConnections(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOAuthConnections(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) CreateOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateOAuthConnection(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DiscoverOAuthProvider operation middleware
+func (siw *ServerInterfaceWrapper) DiscoverOAuthProvider(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DiscoverOAuthProvider(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) GetOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOAuthConnection(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) UpdateOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateOAuthConnection(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartOAuthAuthorization operation middleware
+func (siw *ServerInterfaceWrapper) StartOAuthAuthorization(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartOAuthAuthorization(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteOAuthAuthorization operation middleware
+func (siw *ServerInterfaceWrapper) CompleteOAuthAuthorization(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteOAuthAuthorization(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisconnectOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) DisconnectOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisconnectOAuthConnection(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) RefreshOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshOAuthConnection(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StrictRetrieval operation middleware
 func (siw *ServerInterfaceWrapper) StrictRetrieval(w http.ResponseWriter, r *http.Request) {
 
@@ -15689,6 +16590,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/capabilities", wrapper.IssueCapability)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}", wrapper.RevokeCapability)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}/exercises", wrapper.ExerciseCapability)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections", wrapper.ListOAuthConnections)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections", wrapper.CreateOAuthConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery", wrapper.DiscoverOAuthProvider)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}", wrapper.GetOAuthConnection)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}", wrapper.UpdateOAuthConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations", wrapper.StartOAuthAuthorization)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete", wrapper.CompleteOAuthAuthorization)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh", wrapper.RefreshOAuthConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect", wrapper.DisconnectOAuthConnection)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/changes", wrapper.ApplyChangeSet)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/validate", wrapper.ValidateEnvironment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/contract", wrapper.GetActiveContract)
@@ -23284,6 +24194,548 @@ func (response GetEffectiveConfigurationdefaultJSONResponse) VisitGetEffectiveCo
 	return err
 }
 
+type ListOAuthConnectionsRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+}
+
+type ListOAuthConnectionsResponseObject interface {
+	VisitListOAuthConnectionsResponse(w http.ResponseWriter) error
+}
+
+type ListOAuthConnections200JSONResponse struct {
+	Items []OAuthConnection `json:"items"`
+
+	// NextCursor Opaque; null when no further pages exist.
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
+
+	// RedirectBase What a connection's redirect URI starts with; the token endpoint's host (and port, when it is not 443) follows. Null when this installation has no public URL over HTTPS (or on a loopback host).
+	RedirectBase nullable.Nullable[string] `json:"redirectBase,omitempty"`
+}
+
+func (response ListOAuthConnections200JSONResponse) VisitListOAuthConnectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOAuthConnections429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response ListOAuthConnections429JSONResponse) VisitListOAuthConnectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOAuthConnectionsdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response ListOAuthConnectionsdefaultJSONResponse) VisitListOAuthConnectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Body        *CreateOAuthConnectionJSONRequestBody
+}
+
+type CreateOAuthConnectionResponseObject interface {
+	VisitCreateOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type CreateOAuthConnection201JSONResponse OAuthConnection
+
+func (response CreateOAuthConnection201JSONResponse) VisitCreateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response CreateOAuthConnection429JSONResponse) VisitCreateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response CreateOAuthConnectiondefaultJSONResponse) VisitCreateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverOAuthProviderRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Body        *DiscoverOAuthProviderJSONRequestBody
+}
+
+type DiscoverOAuthProviderResponseObject interface {
+	VisitDiscoverOAuthProviderResponse(w http.ResponseWriter) error
+}
+
+type DiscoverOAuthProvider200JSONResponse OAuthDiscovery
+
+func (response DiscoverOAuthProvider200JSONResponse) VisitDiscoverOAuthProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverOAuthProvider429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response DiscoverOAuthProvider429JSONResponse) VisitDiscoverOAuthProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverOAuthProviderdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response DiscoverOAuthProviderdefaultJSONResponse) VisitDiscoverOAuthProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+}
+
+type GetOAuthConnectionResponseObject interface {
+	VisitGetOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type GetOAuthConnection200JSONResponse OAuthConnection
+
+func (response GetOAuthConnection200JSONResponse) VisitGetOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response GetOAuthConnection429JSONResponse) VisitGetOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetOAuthConnectiondefaultJSONResponse) VisitGetOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+	Body        *UpdateOAuthConnectionJSONRequestBody
+}
+
+type UpdateOAuthConnectionResponseObject interface {
+	VisitUpdateOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type UpdateOAuthConnection200JSONResponse OAuthConnection
+
+func (response UpdateOAuthConnection200JSONResponse) VisitUpdateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response UpdateOAuthConnection429JSONResponse) VisitUpdateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response UpdateOAuthConnectiondefaultJSONResponse) VisitUpdateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartOAuthAuthorizationRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+	Body        *StartOAuthAuthorizationJSONRequestBody
+}
+
+type StartOAuthAuthorizationResponseObject interface {
+	VisitStartOAuthAuthorizationResponse(w http.ResponseWriter) error
+}
+
+type StartOAuthAuthorization201JSONResponse OAuthAuthorization
+
+func (response StartOAuthAuthorization201JSONResponse) VisitStartOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartOAuthAuthorization429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response StartOAuthAuthorization429JSONResponse) VisitStartOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartOAuthAuthorizationdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response StartOAuthAuthorizationdefaultJSONResponse) VisitStartOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteOAuthAuthorizationRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+	Body        *CompleteOAuthAuthorizationJSONRequestBody
+}
+
+type CompleteOAuthAuthorizationResponseObject interface {
+	VisitCompleteOAuthAuthorizationResponse(w http.ResponseWriter) error
+}
+
+type CompleteOAuthAuthorization200JSONResponse OAuthAuthorizationOutcome
+
+func (response CompleteOAuthAuthorization200JSONResponse) VisitCompleteOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteOAuthAuthorization429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response CompleteOAuthAuthorization429JSONResponse) VisitCompleteOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteOAuthAuthorizationdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response CompleteOAuthAuthorizationdefaultJSONResponse) VisitCompleteOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisconnectOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+	Body        *DisconnectOAuthConnectionJSONRequestBody
+}
+
+type DisconnectOAuthConnectionResponseObject interface {
+	VisitDisconnectOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type DisconnectOAuthConnection200JSONResponse OAuthDisconnection
+
+func (response DisconnectOAuthConnection200JSONResponse) VisitDisconnectOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisconnectOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response DisconnectOAuthConnection429JSONResponse) VisitDisconnectOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisconnectOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response DisconnectOAuthConnectiondefaultJSONResponse) VisitDisconnectOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+}
+
+type RefreshOAuthConnectionResponseObject interface {
+	VisitRefreshOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type RefreshOAuthConnection200JSONResponse OAuthRefresh
+
+func (response RefreshOAuthConnection200JSONResponse) VisitRefreshOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response RefreshOAuthConnection429JSONResponse) VisitRefreshOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response RefreshOAuthConnectiondefaultJSONResponse) VisitRefreshOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type StrictRetrievalRequestObject struct {
 	Org         Org                  `json:"org"`
 	Project     ProjectParameter     `json:"project"`
@@ -26526,6 +27978,7 @@ type StrictServerInterface interface {
 	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability})
 	RevokeCapability(ctx context.Context, request RevokeCapabilityRequestObject) (RevokeCapabilityResponseObject, error)
 	// ExerciseCapability Exercise a Capability (ADR-0022). Requires the bearer of the Broker it was issued for (an exercise-only credential too, ADR-0060) plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only.
+	// An OAuth connection (capability oauth.connections, ADR-0062) gives its access token, refreshed first when it has ended, ends within a minute, or ends before minValiditySeconds. When there is none now the exercise is refused with RATE_LIMITED (429, Retry-After), reason connection-unavailable and retryAfterSeconds; when a person has to act, with PERMISSION_DENIED, reason connection-needs-reconnect, connection-not-connected, connection-revoked or connection-paused; when the connection's own hosts do not name the destination, with PERMISSION_DENIED, reason destination-mismatch. Neither uses up anything.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}/exercises)
 	ExerciseCapability(ctx context.Context, request ExerciseCapabilityRequestObject) (ExerciseCapabilityResponseObject, error)
 	// ApplyChangeSet Atomic value change set (capability values.changeset): all expected-version guards validate before mutation; any conflict rejects the entire set with VERSION_CONFLICT. Supports Idempotency-Key.
@@ -26537,6 +27990,33 @@ type StrictServerInterface interface {
 	// GetEffectiveConfiguration Bulk-resolve the Effective Configuration (child overrides over parent values). With include=values, plaintext is returned for items the caller is authorized for (config.value.read for non-sensitive, secret.reveal for Secrets) and every disclosure is audited before material is returned. Values may reference sibling items as ${NAME} (capability values.references): references are expanded server-side using only values the caller receives in the same response; anything else stays a literal ${NAME}. $${NAME} escapes to a literal ${NAME}.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/effective-configuration)
 	GetEffectiveConfiguration(ctx context.Context, request GetEffectiveConfigurationRequestObject) (GetEffectiveConfigurationResponseObject, error)
+	// ListOAuthConnections The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
+	ListOAuthConnections(ctx context.Context, request ListOAuthConnectionsRequestObject) (ListOAuthConnectionsResponseObject, error)
+	// CreateOAuthConnection Make an OAuth connection, not connected yet. Needs config.value.write. Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
+	CreateOAuthConnection(ctx context.Context, request CreateOAuthConnectionRequestObject) (CreateOAuthConnectionResponseObject, error)
+	// DiscoverOAuthProvider What a connection to this provider would pin, and the redirect URI to register there, without making one. Needs config.value.write.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery)
+	DiscoverOAuthProvider(ctx context.Context, request DiscoverOAuthProviderRequestObject) (DiscoverOAuthProviderResponseObject, error)
+	// GetOAuthConnection One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
+	GetOAuthConnection(ctx context.Context, request GetOAuthConnectionRequestObject) (GetOAuthConnectionResponseObject, error)
+	// UpdateOAuthConnection Change an OAuth connection. Needs config.value.write; its provider, client ID, scopes and hosts are changed by a person (PERMISSION_DENIED, reason person-required). Its provider and client ID can change only while it holds no tokens (VALIDATION_FAILED, reason connected: disconnect it first), and need the client secret again. A new client secret or new hosts leave it connected; new scopes are asked for at the next connection. Paused, it is neither used nor refreshed, and its tokens stay.
+	// (PATCH /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
+	UpdateOAuthConnection(ctx context.Context, request UpdateOAuthConnectionRequestObject) (UpdateOAuthConnectionResponseObject, error)
+	// StartOAuthAuthorization Begin connecting an OAuth connection: the authorization endpoint's URL to send the browser to, with a state, a nonce and a PKCE challenge (S256) bound to this person and this session, good for ten minutes and once. A person in their dashboard session only (PERMISSION_DENIED, reason browser-session-required), with config.value.write.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations)
+	StartOAuthAuthorization(ctx context.Context, request StartOAuthAuthorizationRequestObject) (StartOAuthAuthorizationResponseObject, error)
+	// CompleteOAuthAuthorization Connect with what the provider sent the browser back with. The state is taken, once, by the person and the session that began it (RESOURCE_NOT_FOUND for anyone else, EXPIRED after ten minutes), and then the redirect URI, the issuer (RFC 9207), the ID token and the account are checked: another account than the one before is refused unless the change was confirmed when it was begun.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete)
+	CompleteOAuthAuthorization(ctx context.Context, request CompleteOAuthAuthorizationRequestObject) (CompleteOAuthAuthorizationResponseObject, error)
+	// DisconnectOAuthConnection Disconnect an OAuth connection: its tokens revoked at the provider where it has an endpoint for that (RFC 7009), unless revokeAtProvider is false, and forgotten here whatever it answers. Needs config.value.write; also while the Organization is frozen. Many providers revoke the whole grant of that client for that account, other connections' tokens included.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect)
+	DisconnectOAuthConnection(ctx context.Context, request DisconnectOAuthConnectionRequestObject) (DisconnectOAuthConnectionResponseObject, error)
+	// RefreshOAuthConnection Refresh an OAuth connection's access token now, or get the first one of a client's own connection. Needs config.value.write. The answer says whether there is a new one, never the token.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh)
+	RefreshOAuthConnection(ctx context.Context, request RefreshOAuthConnectionRequestObject) (RefreshOAuthConnectionResponseObject, error)
 	// StrictRetrieval Strict retrieval (capability retrieval.strict): the non-sensitive values (config.value.read) and every Secret (secret.reveal) this caller may receive, the state manifest and its digest, the caller view, the active Contract (contract.read), and the validation of exactly the values returned, all from one database snapshot, in one response. Requires config.metadata.read. Each class is authorized separately: a denied class is reported in callerView.withheld, not an error. Every decryption follows an audit commit naming its version. Any failure after the snapshot returns an error and no values. Never cacheable.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/retrievals)
 	StrictRetrieval(ctx context.Context, request StrictRetrievalRequestObject) (StrictRetrievalResponseObject, error)
@@ -30139,6 +31619,306 @@ func (sh *strictHandler) GetEffectiveConfiguration(w http.ResponseWriter, r *htt
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetEffectiveConfigurationResponseObject); ok {
 		if err := validResponse.VisitGetEffectiveConfigurationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListOAuthConnections operation middleware
+func (sh *strictHandler) ListOAuthConnections(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request ListOAuthConnectionsRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListOAuthConnections(ctx, request.(ListOAuthConnectionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListOAuthConnections")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListOAuthConnectionsResponseObject); ok {
+		if err := validResponse.VisitListOAuthConnectionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateOAuthConnection operation middleware
+func (sh *strictHandler) CreateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request CreateOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	var body CreateOAuthConnectionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateOAuthConnection(ctx, request.(CreateOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitCreateOAuthConnectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DiscoverOAuthProvider operation middleware
+func (sh *strictHandler) DiscoverOAuthProvider(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request DiscoverOAuthProviderRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	var body DiscoverOAuthProviderJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DiscoverOAuthProvider(ctx, request.(DiscoverOAuthProviderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DiscoverOAuthProvider")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DiscoverOAuthProviderResponseObject); ok {
+		if err := validResponse.VisitDiscoverOAuthProviderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOAuthConnection operation middleware
+func (sh *strictHandler) GetOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request GetOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOAuthConnection(ctx, request.(GetOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitGetOAuthConnectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateOAuthConnection operation middleware
+func (sh *strictHandler) UpdateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request UpdateOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	var body UpdateOAuthConnectionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateOAuthConnection(ctx, request.(UpdateOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitUpdateOAuthConnectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartOAuthAuthorization operation middleware
+func (sh *strictHandler) StartOAuthAuthorization(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request StartOAuthAuthorizationRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	var body StartOAuthAuthorizationJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartOAuthAuthorization(ctx, request.(StartOAuthAuthorizationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartOAuthAuthorization")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartOAuthAuthorizationResponseObject); ok {
+		if err := validResponse.VisitStartOAuthAuthorizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CompleteOAuthAuthorization operation middleware
+func (sh *strictHandler) CompleteOAuthAuthorization(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request CompleteOAuthAuthorizationRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	var body CompleteOAuthAuthorizationJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteOAuthAuthorization(ctx, request.(CompleteOAuthAuthorizationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteOAuthAuthorization")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteOAuthAuthorizationResponseObject); ok {
+		if err := validResponse.VisitCompleteOAuthAuthorizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DisconnectOAuthConnection operation middleware
+func (sh *strictHandler) DisconnectOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request DisconnectOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	var body DisconnectOAuthConnectionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DisconnectOAuthConnection(ctx, request.(DisconnectOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DisconnectOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DisconnectOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitDisconnectOAuthConnectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RefreshOAuthConnection operation middleware
+func (sh *strictHandler) RefreshOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request RefreshOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RefreshOAuthConnection(ctx, request.(RefreshOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RefreshOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RefreshOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitRefreshOAuthConnectionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

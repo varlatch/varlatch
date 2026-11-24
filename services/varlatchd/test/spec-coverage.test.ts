@@ -24,6 +24,12 @@ const UNSPECCED = new Set([
   "POST /v1/tokens/convex",
 ]);
 
+/**
+ * Operations under /v1 that only the Go varlatchd serves, behind a capability
+ * this server does not list: OAuth connections (oauth.connections, ADR-0062).
+ */
+const GO_ONLY = "/v1/organizations/:org/projects/:project/environments/:environment/oauth-connections";
+
 const METHODS = new Set(["get", "post", "put", "patch", "delete"]);
 
 function specOperations(): Set<string> {
@@ -52,7 +58,7 @@ function specOperations(): Set<string> {
       continue;
     }
     const method = line.match(/^ {4}([a-z]+):$/);
-    if (method && currentPath && METHODS.has(method[1]!)) {
+    if (method && currentPath && METHODS.has(method[1]!) && currentPath !== GO_ONLY && !currentPath.startsWith(`${GO_ONLY}/`)) {
       ops.add(`${method[1]!.toUpperCase()} ${currentPath}`);
     }
   }
@@ -101,6 +107,10 @@ describe("OpenAPI route coverage", () => {
   it("every spec operation is served", () => {
     const phantom = [...spec].filter((op) => !served.has(op)).sort();
     expect(phantom, "in openapi.yaml but not served").toEqual([]);
+  });
+
+  it("what only the Go varlatchd serves is not served here", () => {
+    expect([...served].filter((op) => op.includes(GO_ONLY))).toEqual([]);
   });
 
   it("exclusions do not rot: everything allowlisted is actually served", () => {

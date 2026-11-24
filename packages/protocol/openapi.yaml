@@ -44,6 +44,10 @@ tags:
   - name: search
   - name: audit
   - name: sync
+  - name: oauth
+    description: >
+      OAuth connections (ADR-0062): varlatchd only, behind the capability
+      oauth.connections.
 
 paths:
   /installation/backups:
@@ -1044,6 +1048,17 @@ paths:
         denies the exercise (reason unresolved-reference) rather than
         injecting literal ${NAME} upstream — $${NAME} escapes. Responses
         are never cacheable and go to the Broker only.
+
+        An OAuth connection (capability oauth.connections, ADR-0062) gives its
+        access token, refreshed first when it has ended, ends within a minute,
+        or ends before minValiditySeconds. When there is none now the exercise
+        is refused with RATE_LIMITED (429, Retry-After), reason
+        connection-unavailable and retryAfterSeconds; when a person has to act,
+        with PERMISSION_DENIED, reason connection-needs-reconnect,
+        connection-not-connected, connection-revoked or connection-paused; when
+        the connection's own hosts do not name the destination, with
+        PERMISSION_DENIED, reason destination-mismatch. Neither uses up
+        anything.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -1092,13 +1107,16 @@ paths:
                   minimum: 0
                   maximum: 86400
                   description: >
-                    How long the one-time codes among the items must still be
-                    valid (capability values.totp). When the current code ends
+                    How long the one-time codes (capability values.totp) and
+                    the access tokens (capability oauth.connections) among the
+                    items must still be valid. When the current code ends
                     sooner, the next one is answered, with the time it starts
                     (notBefore, startsInSeconds): the caller waits for it, the
-                    server does not. More than an item's period is refused
-                    with VALIDATION_FAILED, reason min-validity-too-long, and
-                    uses up nothing. Other items are not affected.
+                    server does not. When an access token ends sooner, it is
+                    refreshed first. More than an item's period, or than the
+                    provider's access tokens last, is refused with
+                    VALIDATION_FAILED, reason min-validity-too-long, and uses
+                    up nothing. Other items are not affected.
                 fresh:
                   type: boolean
                   description: >
@@ -1118,6 +1136,258 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CapabilityExercise" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections:
+    get:
+      tags: [oauth]
+      operationId: listOAuthConnections
+      summary: >
+        The environment's own OAuth connections (capability
+        oauth.connections, ADR-0062), without the ones it inherits. Needs
+        config.metadata.read. No secret and no token, nor anything derived
+        from one.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: The connections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/OAuthConnection" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+                  redirectBase:
+                    type: [string, "null"]
+                    description: >
+                      What a connection's redirect URI starts with; the token
+                      endpoint's host (and port, when it is not 443) follows.
+                      Null when this installation has no public URL over HTTPS
+                      (or on a loopback host).
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [oauth]
+      operationId: createOAuthConnection
+      summary: >
+        Make an OAuth connection, not connected yet. Needs config.value.write.
+        Its endpoints are pinned: the provider's metadata is read now and
+        never again, and nothing but these endpoints is ever sent the client
+        secret or a token. The item has no value in this environment
+        (VERSION_CONFLICT otherwise) and is sensitive.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthConnectionInput" }
+      responses:
+        "201":
+          description: Made
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthConnection" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery:
+    post:
+      tags: [oauth]
+      operationId: discoverOAuthProvider
+      summary: >
+        What a connection to this provider would pin, and the redirect URI to
+        register there, without making one. Needs config.value.write.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthDiscoveryInput" }
+      responses:
+        "200":
+          description: The provider
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthDiscovery" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}:
+    get:
+      tags: [oauth]
+      operationId: getOAuthConnection
+      summary: >
+        One of the environment's own OAuth connections. Needs
+        config.metadata.read. An item is deleted as any item is
+        (deleteValue), which forgets its tokens without revoking them:
+        disconnect it first for that.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      responses:
+        "200":
+          description: The connection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthConnection" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [oauth]
+      operationId: updateOAuthConnection
+      summary: >
+        Change an OAuth connection. Needs config.value.write; its provider,
+        client ID, scopes and hosts are changed by a person
+        (PERMISSION_DENIED, reason person-required). Its provider and client
+        ID can change only while it holds no tokens (VALIDATION_FAILED, reason
+        connected: disconnect it first), and need the client secret again. A
+        new client secret or new hosts leave it connected; new scopes are
+        asked for at the next connection. Paused, it is neither used nor
+        refreshed, and its tokens stay.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthConnectionChange" }
+      responses:
+        "200":
+          description: The connection as it is now
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthConnection" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations:
+    post:
+      tags: [oauth]
+      operationId: startOAuthAuthorization
+      summary: >
+        Begin connecting an OAuth connection: the authorization endpoint's URL
+        to send the browser to, with a state, a nonce and a PKCE challenge
+        (S256) bound to this person and this session, good for ten minutes
+        and once. A person in their dashboard session only
+        (PERMISSION_DENIED, reason browser-session-required), with
+        config.value.write.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthAuthorizationInput" }
+      responses:
+        "201":
+          description: Begun (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthAuthorization" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete:
+    post:
+      tags: [oauth]
+      operationId: completeOAuthAuthorization
+      summary: >
+        Connect with what the provider sent the browser back with. The state
+        is taken, once, by the person and the session that began it
+        (RESOURCE_NOT_FOUND for anyone else, EXPIRED after ten minutes), and
+        then the redirect URI, the issuer (RFC 9207), the ID token and the
+        account are checked: another account than the one before is refused
+        unless the change was confirmed when it was begun.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthAuthorizationAnswer" }
+      responses:
+        "200":
+          description: Connected, or why not (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthAuthorizationOutcome" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh:
+    post:
+      tags: [oauth]
+      operationId: refreshOAuthConnection
+      summary: >
+        Refresh an OAuth connection's access token now, or get the first one
+        of a client's own connection. Needs config.value.write. The answer
+        says whether there is a new one, never the token.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      responses:
+        "200":
+          description: What became of it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthRefresh" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect:
+    post:
+      tags: [oauth]
+      operationId: disconnectOAuthConnection
+      summary: >
+        Disconnect an OAuth connection: its tokens revoked at the provider
+        where it has an endpoint for that (RFC 7009), unless revokeAtProvider
+        is false, and forgotten here whatever it answers. Needs
+        config.value.write; also while the Organization is frozen. Many
+        providers revoke the whole grant of that client for that account,
+        other connections' tokens included.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthDisconnectInput" }
+      responses:
+        "200":
+          description: What became of it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthDisconnection" }
         "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
@@ -6042,6 +6312,310 @@ components:
             item. Metadata only — the retiring plaintext is exposed solely
             through explicit disclosure and capability exercise.
         totp: { $ref: "#/components/schemas/OneTimeCode" }
+        oauth: { $ref: "#/components/schemas/OAuthItem" }
+
+    OAuthItem:
+      type: object
+      description: >
+        Present when the item is an OAuth connection (capability
+        oauth.connections, ADR-0062). Such an item is always sensitive and has
+        no value that is delivered: exercising a Capability that names it
+        gives its access token.
+      required: [preset, grant, status, paused]
+      properties:
+        preset: { type: string }
+        grant: { $ref: "#/components/schemas/OAuthGrant" }
+        status: { $ref: "#/components/schemas/OAuthStatus" }
+        paused: { type: boolean }
+        account: { type: string, description: Whose account it is, as the provider calls it. }
+
+    OAuthGrant:
+      type: string
+      enum: [authorization_code, client_credentials]
+      description: >
+        authorization_code: a person consents, in the browser.
+        client_credentials: the client's own access, nobody's account.
+
+    OAuthStatus:
+      type: string
+      description: >
+        not_connected: nobody connected it yet. connected: it has tokens.
+        refreshing: a refresh is in progress. failing: the last refresh failed
+        for now, and is tried again; an access token that still lasts is used.
+        needs_reconnect: the provider refuses its refresh token (or there is
+        none), and a person has to connect it again. revoked: it was
+        disconnected here.
+      enum: [not_connected, connected, refreshing, failing, needs_reconnect, revoked]
+
+    OAuthProviderInput:
+      type: object
+      required: [preset]
+      description: >
+        A provider: a preset (google; microsoft with the tenant's ID), or
+        generic with an issuer, whose metadata is read (OpenID Connect
+        Discovery, RFC 8414), or with its endpoints. Every URL is https.
+      properties:
+        preset: { type: string, enum: [google, microsoft, generic] }
+        tenant:
+          type: string
+          maxLength: 100
+          description: "microsoft only: the tenant's ID (a UUID). common, organizations and consumers are refused."
+        issuer: { type: string, maxLength: 2000 }
+        authorizationEndpoint: { type: string, maxLength: 2000 }
+        tokenEndpoint: { type: string, maxLength: 2000 }
+        revocationEndpoint: { type: string, maxLength: 2000 }
+        userinfoEndpoint:
+          type: string
+          maxLength: 2000
+          description: Asked once at each connection, with the access token, for whose account it is (sub or id).
+        tokenEndpointAuthMethod: { $ref: "#/components/schemas/OAuthAuthMethod" }
+        authorizationParams:
+          type: object
+          description: More parameters of the authorization request, at most 10; none of the request's own.
+          additionalProperties: { type: string, maxLength: 512 }
+        accessTokenLifetimeSeconds:
+          type: integer
+          minimum: 1
+          maximum: 31622400
+          description: How long an access token lasts where the provider does not say.
+        refreshTokenIdleDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: >
+            After how many days without use the provider drops a refresh
+            token: Varlatch then refreshes after two thirds of them, used or
+            not.
+
+    OAuthAuthMethod:
+      type: string
+      enum: [client_secret_basic, client_secret_post, none]
+
+    OAuthProvider:
+      type: object
+      description: A provider as a connection pinned it.
+      required: [preset, tokenEndpoint, tokenEndpointAuthMethod]
+      properties:
+        preset: { type: string }
+        tenant: { type: string }
+        issuer: { type: string }
+        authorizationEndpoint: { type: string }
+        tokenEndpoint: { type: string }
+        revocationEndpoint: { type: string }
+        userinfoEndpoint: { type: string }
+        jwksUri: { type: string }
+        tokenEndpointAuthMethod: { $ref: "#/components/schemas/OAuthAuthMethod" }
+        authorizationParams:
+          type: object
+          additionalProperties: { type: string }
+        accessTokenLifetimeSeconds: { type: integer }
+        refreshTokenIdleDays: { type: integer }
+
+    OAuthConnectionInput:
+      type: object
+      required: [item, provider, clientId]
+      properties:
+        item: { type: string, minLength: 1 }
+        provider: { $ref: "#/components/schemas/OAuthProviderInput" }
+        grant: { $ref: "#/components/schemas/OAuthGrant" }
+        clientId: { type: string, minLength: 1, maxLength: 512 }
+        clientSecret:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: Stored sealed. No operation answers it, to anyone.
+        scopes:
+          type: array
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 512 }
+          description: What to ask for; a preset adds what it needs to know the account and to get a refresh token.
+        hosts:
+          type: array
+          maxItems: 50
+          items: { type: string, minLength: 1 }
+          description: >
+            The destinations its access token may go to, as a Capability's:
+            a Capability that names the connection may name only these, and an
+            exercise for another is refused. None, whatever the Capability
+            names.
+
+    OAuthConnectionChange:
+      type: object
+      properties:
+        provider: { $ref: "#/components/schemas/OAuthProviderInput" }
+        clientId: { type: string, minLength: 1, maxLength: 512 }
+        clientSecret: { type: string, minLength: 1, maxLength: 2048 }
+        scopes:
+          type: array
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 512 }
+        hosts:
+          type: array
+          maxItems: 50
+          items: { type: string, minLength: 1 }
+        paused: { type: boolean }
+        expectedVersionId: { type: string, description: Rejects a stale change with VERSION_CONFLICT. }
+
+    OAuthDiscoveryInput:
+      type: object
+      required: [provider]
+      properties:
+        provider: { $ref: "#/components/schemas/OAuthProviderInput" }
+        grant: { $ref: "#/components/schemas/OAuthGrant" }
+
+    OAuthDiscovery:
+      type: object
+      required: [provider]
+      properties:
+        provider: { $ref: "#/components/schemas/OAuthProvider" }
+        redirectUri: { type: string, description: "Of an authorization_code connection, when this installation has a public URL." }
+
+    OAuthAccount:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string, description: The provider's own ID of it. }
+        label: { type: string, description: "What the provider calls it: an email address, a name." }
+
+    OAuthConnection:
+      type: object
+      description: An OAuth connection. No secret and no token, nor anything derived from one.
+      required:
+        - item
+        - environmentId
+        - versionId
+        - provider
+        - grant
+        - clientId
+        - hasClientSecret
+        - scopes
+        - hosts
+        - status
+        - reason
+        - paused
+        - account
+        - grantedScopes
+        - missingScopes
+        - hasRefreshToken
+        - accessTokenExpiresAt
+        - refreshTokenExpiresAt
+        - connectedBy
+        - connectedAt
+        - refreshedAt
+        - retryAt
+        - createdBy
+        - createdAt
+      properties:
+        item: { type: string }
+        environmentId: { type: string }
+        versionId: { type: string, description: Changes with its parameters and its client secret, not with its tokens. }
+        provider: { $ref: "#/components/schemas/OAuthProvider" }
+        grant: { $ref: "#/components/schemas/OAuthGrant" }
+        clientId: { type: string }
+        hasClientSecret: { type: boolean }
+        scopes:
+          type: array
+          items: { type: string }
+        hosts:
+          type: array
+          items: { type: string }
+        status: { $ref: "#/components/schemas/OAuthStatus" }
+        reason:
+          type: [string, "null"]
+          description: >
+            Why it is failing or needs to be connected again: a word of
+            Varlatch's (unreachable, timeout, refresh-answer-lost,
+            no-refresh-token, refused-by-provider) or the provider's error
+            code (invalid_client). Never text of the provider's.
+        paused: { type: boolean }
+        account:
+          oneOf:
+            - { $ref: "#/components/schemas/OAuthAccount" }
+            - { type: "null" }
+          description: Whose account it is or, disconnected, was. Null when the provider does not say.
+        grantedScopes:
+          type: [array, "null"]
+          items: { type: string }
+          description: As the provider named them; null when it did not.
+        missingScopes:
+          type: array
+          items: { type: string }
+          description: The scopes asked for that the provider did not grant, as far as it says.
+        hasRefreshToken: { type: boolean }
+        accessTokenExpiresAt: { type: [string, "null"], format: date-time }
+        refreshTokenExpiresAt: { type: [string, "null"], format: date-time }
+        connectedBy: { type: [string, "null"], description: The person who connected it. }
+        connectedAt: { type: [string, "null"], format: date-time }
+        refreshedAt: { type: [string, "null"], format: date-time }
+        retryAt: { type: [string, "null"], format: date-time, description: When a failed refresh is tried again, if it is asked for. }
+        createdBy: { type: [string, "null"], description: Who wrote its parameters as they are now. }
+        createdAt: { type: string, format: date-time }
+        redirectUri: { type: string, description: To register at the provider. Present for authorization_code when this installation has a public URL. }
+
+    OAuthAuthorizationInput:
+      type: object
+      properties:
+        confirmAccountChange:
+          type: boolean
+          description: Another account than the one it was connected to may connect it.
+
+    OAuthAuthorization:
+      type: object
+      required: [authorizationUrl, state, redirectUri, expiresAt]
+      properties:
+        authorizationUrl: { type: string }
+        state: { type: string }
+        redirectUri: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    OAuthAuthorizationAnswer:
+      type: object
+      required: [state, redirectUri]
+      properties:
+        state: { type: string, minLength: 1, maxLength: 200 }
+        redirectUri: { type: string, minLength: 1, maxLength: 2000, description: "The address the browser came back to, without its query." }
+        code: { type: string, maxLength: 8192 }
+        error: { type: string, maxLength: 200 }
+        iss: { type: string, maxLength: 2000 }
+
+    OAuthAuthorizationOutcome:
+      type: object
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [connected, refused, failed]
+          description: "refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer."
+        reason: { type: string }
+        message: { type: string }
+        account: { $ref: "#/components/schemas/OAuthAccount" }
+        previousAccount: { $ref: "#/components/schemas/OAuthAccount" }
+        connection: { $ref: "#/components/schemas/OAuthConnection" }
+
+    OAuthRefresh:
+      type: object
+      required: [refreshed, connection]
+      properties:
+        refreshed: { type: boolean }
+        reason: { type: string, description: Why not. }
+        retryAfterSeconds: { type: integer, minimum: 1 }
+        connection: { $ref: "#/components/schemas/OAuthConnection" }
+
+    OAuthDisconnectInput:
+      type: object
+      properties:
+        revokeAtProvider: { type: boolean, default: true }
+
+    OAuthDisconnection:
+      type: object
+      required: [atProvider, connection]
+      properties:
+        atProvider:
+          type: string
+          enum: [revoked, not-supported, failed, nothing-to-revoke, left]
+          description: "What became of the tokens at the provider; here they are forgotten in every case. left: not asked."
+        reason: { type: string, description: Of failed. }
+        connection: { $ref: "#/components/schemas/OAuthConnection" }
 
     OtpauthURI:
       type: string
@@ -6173,7 +6747,7 @@ components:
               name: { type: string }
               reason:
                 type: string
-                enum: [permission, requirement, one-time-code]
+                enum: [permission, requirement, one-time-code, oauth-connection]
                 description: >
                   one-time-code (strict retrieval): the item holds the seed of
                   one-time codes, which is delivered to nobody; its code is
@@ -6251,6 +6825,7 @@ components:
                   value: { type: string }
               rotating: { type: boolean }
               totp: { $ref: "#/components/schemas/OneTimeCode" }
+              oauth: { $ref: "#/components/schemas/OAuthItem" }
         callerView: { $ref: "#/components/schemas/CallerView" }
         validation: { $ref: "#/components/schemas/ValidationReport" }
 
@@ -7175,18 +7750,18 @@ components:
               versionId: { type: string }
               value:
                 type: string
-                description: The value or, with kind totp, the one-time code.
+                description: The value or, with kind totp, the one-time code or, with kind oauth, the access token (to send as a Bearer token).
               kind:
                 type: string
-                enum: [totp]
-                description: Present for a one-time code (capability values.totp).
+                enum: [totp, oauth]
+                description: Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
               notBefore:
                 type: string
                 format: date-time
                 description: Present while the code's period has not started, as the server's clock has it.
               startsInSeconds: { type: integer, minimum: 1, description: Present with notBefore. How long to wait from this answer. }
-              expiresAt: { type: string, format: date-time, description: Of a code. When its period ends, as the server's clock has it. }
-              expiresInSeconds: { type: integer, minimum: 0, description: "Of a code: whole seconds from this answer until its period ends." }
+              expiresAt: { type: string, format: date-time, description: "Of a code: when its period ends. Of an access token: when it expires, absent when the provider does not say. As the server's clock has it." }
+              expiresInSeconds: { type: integer, minimum: 0, description: "Present with expiresAt: whole seconds from this answer until then." }
               retiring:
                 description: >
                   The previous value during a dual-phase rotation (ADR-0027),
