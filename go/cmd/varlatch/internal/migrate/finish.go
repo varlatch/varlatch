@@ -858,14 +858,13 @@ func (c *Compose) ServeForArchive(ctx context.Context, g GateRef) ([]string, err
 		return nil, err
 	}
 	start := slices.DeleteFunc(slices.Clone(need), func(s string) bool { return slices.Contains(running, s) })
-	if len(start) == 0 {
-		return nil, nil
-	}
 	cfg, err := c.config(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:"); ok {
+	// Its varlatchd runs on for some seconds in a stopped owner's network,
+	// where it reaches nothing (B3): what counts is the owner.
+	if owner, ok := strings.CutPrefix(cfg.Services[service].NetworkMode, "service:"); ok && (len(start) > 0 || !slices.Contains(running, owner)) {
 		names, err := c.dataNames(cfg)
 		if err != nil {
 			return nil, err
@@ -873,6 +872,9 @@ func (c *Compose) ServeForArchive(ctx context.Context, g GateRef) ([]string, err
 		return nil, fmt.Errorf("--delete-old-data is refused here: the TypeScript installation's varlatchd runs in %s's network (network_mode: service:%s), so starting it for the final archive "+
 			"would bring the old Tailscale node back beside Go's. Its data volumes are kept. By hand: 1. make a backup of them by your own means and test that it restores; "+
 			"2. remove them: docker volume rm %s (on Coolify instead: delete the TypeScript application, its volumes included)", owner, owner, strings.Join(names, " "))
+	}
+	if len(start) == 0 {
+		return nil, nil
 	}
 	up := slices.DeleteFunc(slices.Clone(start), func(s string) bool { return s == service })
 	if len(up) < len(start) {
