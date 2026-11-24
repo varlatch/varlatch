@@ -24,7 +24,9 @@
 #    steps write a row of every new kind they bring.
 # 3. Declared rollback-safe: the previous release opens the upgraded
 #    database (`admin schema status`), and the conformance suites pass
-#    against it there; what that run wrote is kept. Not rollback-safe: the
+#    against it there; what that run wrote is kept. On a copy, the
+#    previous release archives the upgraded database and restores that
+#    archive, and the new release upgrades again. Not rollback-safe: the
 #    previous release must refuse it, and steps 3 and 4 end there.
 # 4. The new release upgrades again (nothing to do: the previous release
 #    leaves the schema as it found it), takes an archive (reading every
@@ -133,6 +135,19 @@ if [ "$G6_ROLLBACK_SAFE" = false ]; then
   echo "not rollback-safe: the previous release refuses the upgraded database, as declared"
 else
   [ "$opens" = true ] || fail "declared rollback-safe, but the previous release cannot open the upgraded database"
+  # On a copy: what the suites below start from stays as it is.
+  step "the previous release archives and restores the upgraded database"
+  cp -Rp "$out/upgraded" "$out/archived"
+  conf "$out/archived"
+  "$previous" admin backup run --json --config "$out/archived/varlatchd.conf" > "$out/previous-backup.json" \
+    || fail "the previous release cannot archive the upgraded database"
+  "$previous" admin backup restore --in "$(jq -er '.path' "$out/previous-backup.json")" --config "$out/archived/varlatchd.conf" \
+    || fail "the previous release cannot restore its archive of the upgraded database"
+  "$new" admin schema upgrade --json --config "$out/archived/varlatchd.conf" > "$out/archived-upgrade.json" \
+    || fail "the new release cannot upgrade what the previous release restored"
+  [ "$(jq -er '.to' "$out/archived-upgrade.json")" = "$new_schema" ] \
+    || fail "the previous release's restore is not of the new release's schema"
+
   if [ "$conformance" = off ]; then
     echo "the conformance runs are left out (G6_CONFORMANCE=off): the previous release opens the upgraded database"
     echo

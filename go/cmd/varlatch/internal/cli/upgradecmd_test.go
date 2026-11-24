@@ -196,6 +196,53 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	}
 }
 
+// A release whose schema is below the database's is refused before
+// anything is asked or recorded: an open migration's rollback window is not
+// ended for an upgrade that does not happen.
+func TestUpgradeBelowTheDatabasesSchema(t *testing.T) {
+	if testing.Short() || runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		t.Skip("builds varlatchd and runs as root on Linux (go.yml's Go container)")
+	}
+	from, newer := cliBuild(t, "0.50.0-rc.1", ""), cliBuild(t, "0.50.0-rc.2", "g6fixture")
+	srv := fakerelease.New()
+	defer srv.Close()
+	defer func(f func(*Run) selfupdate.Source) { selfUpdateSource = f }(selfUpdateSource)
+	selfUpdateSource = func(*Run) selfupdate.Source { return srv.Source() }
+	fromSchema := checkoutSchema(t)
+	m, err := release.NewManifest("0.50.0-rc.3", release.Declaration{SchemaVersion: fromSchema, CompatibleFrom: 1, RollbackSafe: true,
+		Previous: &release.Previous{Version: "0.50.0-rc.1", SchemaVersion: fromSchema}, EndsRollbackWindow: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, _ := m.Bytes()
+	cli, server, name := upgrade.Assets("0.50.0-rc.3", runtime.GOARCH)
+	srv.Publish("0.50.0-rc.3", &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\n"), server: from, name: manifest}})
+
+	h := newCLIHost(t, from)
+	if err := h.svc.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(h.bin, "varlatchd-newer")
+	if err := os.WriteFile(other, newer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(other, "admin", "schema", "upgrade", "--config", h.conf).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if err := h.svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.migrated(t, time.Now().Add(-time.Hour))
+	code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--end-rollback-window", "--config", h.conf)
+	if code != ExitFailure || !strings.Contains(errs, "upgrade to a release of schema") || !strings.Contains(errs, "nothing was changed") || strings.Contains(out, "migration:") {
+		t.Fatalf("%d %q %q", code, out, errs)
+	}
+	if j := h.journal(t); j.WindowEnded != nil {
+		t.Fatalf("the window was ended: %+v", j.WindowEnded)
+	}
+	h.serves(t, "0.50.0-rc.1")
+}
+
 // migrated gives the host's data directory a migration's journal, open
 // and switched at switched, as varlatch migrate leaves it; varlatchd is
 // restarted on it.

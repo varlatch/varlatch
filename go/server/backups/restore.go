@@ -75,7 +75,7 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 	if m.FormatVersion != backup.FormatGo {
 		return RestoreResult{}, fmt.Errorf("this is the TypeScript server's archive (format %d): the migration to varlatchd (ADR-0059 step 7) converts it; a restore takes a varlatchd archive", m.FormatVersion)
 	}
-	if !Compatible(m) {
+	if !Compatible(ctx, m, opened.Path(backup.ComponentDatabase)) {
 		r, _ := m.GoRelease()
 		return RestoreResult{}, fmt.Errorf("this release (%s, database schema %d) cannot restore an archive of %s with database schema %d", buildinfo.Version, db.SchemaVersion, r.Version, r.DatabaseSchema)
 	}
