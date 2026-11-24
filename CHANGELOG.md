@@ -65,6 +65,11 @@ with a dry run, a short downtime and 30 days to go back. Follow
    what changed since. **When you are sure:** `varlatch migrate --finish`,
    which cannot be undone.
 
+The CLI on each machine: `varlatch self-update` of a CLI before 0.50 cannot
+install 0.50.0 (it installs nothing, and answers that the release has no
+single-file CLI). Run `install.sh` (or `install.ps1`), or `brew upgrade
+varlatch` ([Install the CLI](docs/reference/install-the-cli.md)).
+
 An archive made by a release before 0.50 is turned into one 0.50 restores with
 `varlatch migrate --from-archive`. An installation of a 0.50 prerelease is upgraded
 in place, with `sudo varlatch upgrade`. From 0.50.0-rc.4 on, `sudo varlatch
