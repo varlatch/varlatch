@@ -234,7 +234,7 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
     `Seal` writes without decompressing it (`checkFrame`: one frame, no
     dictionary, a window of at most 8 MiB, the manifest's size, nothing
     after it), and never writes more than the manifest declares. A
-    configuration past 1 MiB is neither sealed nor opened. Format 3
+    configuration past 16 MiB is neither sealed nor opened. Format 3
     under `VLTBAK01`, not compressed (0.50.0-rc.1 to rc.3, and what their
     converter wrote), still opens; those releases answer a compressed one
     "Unsupported archive format", as the TypeScript CLI does.
@@ -1261,12 +1261,15 @@ daemon's maintenance admission and its one backup at a time.
   archive this release cannot open (another API major or schema), another
   installation's data directory, an open maintenance lease, and an archive
   with active audit exports (whose streams a restore restarts; that comes
-  with the audit export's port). It then opens a restore gate, copies the
-  snapshot beside the database, removes the old WAL, renames it into
-  place, opens it with this release, checks the installation and its
-  canary, records `installation.restored` (archive, manifest hash,
-  installation), leaves the restore hold and removes the gate. A restore that fails or is killed
-  leaves the gate: a varlatchd that starts then serves 503 MAINTENANCE and
+  with the audit export's port). In the copy unpacked from the archive it
+  opens the database with this release, checks the installation and its
+  canary and records `installation.restored` (archive, manifest hash,
+  installation): a failure up to here changed nothing, and a backup's own
+  check and `--check` make the same writes in a copy they throw away. It
+  then opens a restore gate, copies that database beside the one that is
+  there, removes the old WAL, renames it into place, leaves the restore hold
+  and removes the gate. A restore that fails or is killed from the gate on
+  leaves it: a varlatchd that starts then serves 503 MAINTENANCE and
   leaves the database untouched (no schema, installation or canary
   check), and running the restore again with the same archive completes
   it. It prints the archive's settings to compare with `varlatchd.conf`.

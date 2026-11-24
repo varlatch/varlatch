@@ -607,14 +607,15 @@ func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, e
 	}
 	var unpacked io.Reader = packed
 	if compressed {
-		// The beat counts nothing: it only lets a stop end the scan.
-		if err := checkFrame(packed, packed.Size(), sum, func() error { return pace(0) }); err != nil {
+		// The beat counts nothing: it only lets a stop end the work.
+		beat := func() error { return pace(0) }
+		if err := checkFrame(packed, packed.Size(), sum, beat); err != nil {
 			return nil, err
 		}
 		if _, err := packed.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
-		z, err := newDecompressor(packed)
+		z, err := newDecompressor(packed, beat)
 		if err != nil {
 			return nil, err
 		}

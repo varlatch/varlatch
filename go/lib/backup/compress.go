@@ -52,19 +52,49 @@ func newCompressor(w io.Writer, size int64) (*zstd.Encoder, error) {
 	return enc, nil
 }
 
-// decompressor reads a frame checkFrame accepted; what zstd refuses in it
-// is errCompressed.
-type decompressor struct{ z *zstd.Decoder }
-
-func newDecompressor(r io.Reader) (decompressor, error) {
-	z, err := zstd.NewReader(r, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true), zstd.WithDecoderMaxWindow(maxWindow))
-	return decompressor{z}, err
+// decompressor reads a frame checkFrame accepted. What zstd refuses in it is
+// errCompressed; an error of its input's own (a read's, the beat's) stays
+// that error. The beat is called at each read of the input, so that a stop
+// ends it however little comes out.
+type decompressor struct {
+	z  *zstd.Decoder
+	in *beating
 }
 
-func (d decompressor) Read(p []byte) (int, error) {
+func newDecompressor(r io.Reader, beat func() error) (*decompressor, error) {
+	in := &beating{r: r, beat: beat}
+	z, err := zstd.NewReader(in, zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true), zstd.WithDecoderMaxWindow(maxWindow))
+	return &decompressor{z, in}, err
+}
+
+func (d *decompressor) Read(p []byte) (int, error) {
 	n, err := d.z.Read(p)
 	if err != nil && err != io.EOF {
+		if d.in.err != nil {
+			return n, d.in.err
+		}
 		err = fmt.Errorf("%w: %w", errCompressed, err)
+	}
+	return n, err
+}
+
+// beating is a reader that calls beat before each read, and keeps its error.
+type beating struct {
+	r    io.Reader
+	beat func() error
+	err  error
+}
+
+func (b *beating) Read(p []byte) (int, error) {
+	if b.err == nil {
+		b.err = b.beat()
+	}
+	if b.err != nil {
+		return 0, b.err
+	}
+	n, err := b.r.Read(p)
+	if err != nil && err != io.EOF {
+		b.err = err
 	}
 	return n, err
 }
@@ -116,15 +146,14 @@ func checkFrame(r io.Reader, size, content int64, beat func() error) error {
 		}
 		v := uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16
 		last = v&1 != 0
-		length := int(v >> 3)
-		switch v >> 1 & 3 {
-		case 1: // one byte, repeated
-			length = 1
-		case 3: // reserved
+		length, kind := int(v>>3), v>>1&3
+		// A block of nothing (only the last, and stored), and one of a kind
+		// zstd has none of.
+		if length == 0 && (!last || kind != 0) || kind == 3 {
 			return errCompressed
 		}
-		if length == 0 && !last {
-			return errCompressed
+		if kind == 1 { // one byte, repeated length times
+			length = 1
 		}
 		if err := skip(3 + length); err != nil {
 			return err

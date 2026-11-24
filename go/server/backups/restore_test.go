@@ -113,6 +113,10 @@ func TestRestore(t *testing.T) {
 	}
 }
 
+// refuseRestored makes a database that refuses the event a restore records
+// in it.
+const refuseRestored = "CREATE TRIGGER refuse BEFORE INSERT ON audit_events WHEN NEW.event_type = 'installation.restored' BEGIN SELECT RAISE(ABORT, 'refused by the test'); END"
+
 // An archive whose components a restore cannot use, its manifest and its
 // seal right: a backup's own check fails it, restore --check and Restore
 // refuse it, and Restore has changed nothing.
@@ -164,6 +168,7 @@ func TestRestoreContents(t *testing.T) {
 		"no installation":          {database("DELETE FROM installation"), "has no installation"},
 		"another installation":     {database("UPDATE installation SET id = 'inst_another'"), "not its installation's"},
 		"a canary of another key":  {database("UPDATE installation SET kek_canary = '" + string(canary) + "'"), "its canary did not verify"},
+		"refusing the event":       {database(refuseRestored), "refused by the test"},
 		"a canary that is none":    {database("UPDATE installation SET kek_canary = '{}'"), "its canary did not verify"},
 		"the control, none of it":  {func(*testing.T, *backup.Opened) {}, ""},
 		"later settings, the same": {settings(`{"formatVersion":2,"settings":{"later":"x"},"more":[1]}`), ""},
@@ -189,7 +194,8 @@ func TestRestoreContents(t *testing.T) {
 				t.Fatal(err)
 			}
 			v, err := s.verify(ctx, res.ArchiveID, archive, bek, t.TempDir(), nil)
-			if err != nil || v.Integrity != (tc.why == "") || !v.Compatibility || !v.KeyMatch {
+			whole := v.Integrity && v.Compatibility
+			if err != nil || whole != (tc.why == "") || !v.KeyMatch {
 				t.Errorf("its own check: %+v %v", v, err)
 			}
 			cfg := f.target(t)
@@ -208,6 +214,22 @@ func TestRestoreContents(t *testing.T) {
 			refused("Restore", err)
 			if l := listing(t, cfg.DataDir); tc.why != "" && l != "" {
 				t.Errorf("a refused restore left %q", l)
+			}
+			// Over a database that is there: it stays, byte for byte, and
+			// no gate is left.
+			if tc.why == "" {
+				return
+			}
+			cfg = f.target(t)
+			if _, err := Restore(ctx, cfg, res.Path, bek, f.rootKEK, nil); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(cfg.DatabasePath())
+			_, err = Restore(ctx, cfg, archive, bek, f.rootKEK, nil)
+			refused("Restore over a database", err)
+			after, _ := os.ReadFile(cfg.DatabasePath())
+			if l := listing(t, cfg.DataDir); l != "restore-hold.json varlatch.db" || !bytes.Equal(before, after) {
+				t.Errorf("a refused restore left %q, the database the same: %t", l, bytes.Equal(before, after))
 			}
 		})
 	}
@@ -233,8 +255,19 @@ func TestRestoreUncompressed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer o.Close()
+	// With settings of more than a MiB, which those releases wrote as they
+	// were.
+	settings, _ := json.Marshal(Configuration{FormatVersion: 1, Settings: map[string]string{"outbound_allow": strings.Repeat("a.example,", 300_000)}})
+	if err := os.WriteFile(o.Path(backup.ComponentConfiguration), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := o.Manifest
+	if m.Components[1], err = backup.Describe(backup.ComponentConfiguration, o.Path(backup.ComponentConfiguration)); err != nil {
+		t.Fatal(err)
+	}
+	manifest, _ := json.Marshal(m)
 	older := filepath.Join(t.TempDir(), "older.vltbak")
-	if err := backup.Seal(older, o.ManifestJSON, []string{o.Path(backup.ComponentDatabase), o.Path(backup.ComponentConfiguration)}, f.bekOf(t), backup.SealOptions{Uncompressed: true}); err != nil {
+	if err := backup.Seal(older, manifest, []string{o.Path(backup.ComponentDatabase), o.Path(backup.ComponentConfiguration)}, f.bekOf(t), backup.SealOptions{Uncompressed: true}); err != nil {
 		t.Fatal(err)
 	}
 	if v, err := s.verify(ctx, res.ArchiveID, older, f.bekOf(t), t.TempDir(), nil); err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {
@@ -364,7 +397,7 @@ func TestRestoreRefusals(t *testing.T) {
 	a.End(lease.ID)
 }
 
-// A restore that fails after the database was replaced leaves its gate:
+// A restore that fails once it began to change the directory leaves its gate:
 // a varlatchd that starts stays isolated. Running it again with the same
 // archive resumes and completes it.
 func TestFailedRestoreStaysIsolatedAndResumes(t *testing.T) {
@@ -374,40 +407,19 @@ func TestFailedRestoreStaysIsolatedAndResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The same archive, its database one that refuses the restore's event:
-	// it passes the checks before the swap, and fails after it.
 	bek := f.bekOf(t)
-	o, err := backup.Open(res.Path, bek, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot := o.Path(backup.ComponentDatabase)
-	conn, err := sql.Open("sqlite", fileURI(snapshot))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := conn.Exec("CREATE TRIGGER refuse BEFORE INSERT ON audit_events WHEN NEW.event_type = 'installation.restored' BEGIN SELECT RAISE(ABORT, 'refused by the test'); END"); err != nil {
-		t.Fatal(err)
-	}
-	conn.Close()
-	m := o.Manifest
-	for i, c := range m.Components {
-		d, err := backup.Describe(c.Name, o.Path(c.Name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		m.Components[i] = d
-	}
-	manifest, _ := json.Marshal(m)
-	damaged := filepath.Join(t.TempDir(), "damaged.vltbak")
-	if err := backup.Seal(damaged, manifest, []string{snapshot, o.Path(backup.ComponentConfiguration)}, bek, backup.SealOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	o.Close()
-
 	cfg := f.target(t)
-	if _, err := Restore(ctx, cfg, damaged, bek, f.rootKEK, nil); err == nil || !strings.Contains(err.Error(), "refused by the test") {
-		t.Fatalf("the damaged restore: %v", err)
+	// The old database's write-ahead log cannot be removed: the restore
+	// fails once it began to change the directory.
+	wal := cfg.DatabasePath() + "-wal"
+	if err := os.MkdirAll(filepath.Join(wal, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Restore(ctx, cfg, res.Path, bek, f.rootKEK, nil); err == nil || !strings.Contains(err.Error(), "varlatch.db-wal") {
+		t.Fatalf("a restore that cannot replace the database: %v", err)
+	}
+	if err := os.RemoveAll(wal); err != nil {
+		t.Fatal(err)
 	}
 	g, err := backup.ReadGate(cfg.DataDir)
 	if err != nil || g == nil || g.Kind != "restore" || *g.ArchiveID != res.ArchiveID || g.ExpiresAt != nil {

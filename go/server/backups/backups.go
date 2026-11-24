@@ -256,7 +256,7 @@ const spaceMargin = 64 << 20
 // of the database, then the archive and, while it is checked, its
 // unpacked copy, plus a margin. The archive counts as the database's size:
 // it is compressed, but what a database holds sealed compresses little.
-// Setup and doctor (step 6) count it too.
+// (doctor's disk.free counts the snapshot only.)
 func RequiredSpace(dbBytes int64) int64 { return 3*dbBytes + spaceMargin }
 
 // Run takes one backup now.
@@ -707,7 +707,15 @@ func (s *Service) verify(ctx context.Context, id, archive string, bek backup.BEK
 		} else {
 			v.Integrity = true
 		}
+		// This release restores it: its schema, then a restore's own writes,
+		// made in the copy unpacked here, which is thrown away.
 		v.Compatibility = Compatible(ctx, o.Manifest, o.Path(backup.ComponentDatabase))
+		if v.Compatibility && v.Integrity {
+			if err := reconcile(ctx, o, s.o.RootKEK, s.o.Now()); err != nil {
+				s.o.Log.Warn("backup: the archive opens, but a restore would fail on it", "archive", archive, "error", err)
+				v.Compatibility = false
+			}
+		}
 		candidates := map[int][]byte{}
 		for _, version := range o.Manifest.RequiredKeyVersions {
 			candidates[version] = s.o.RootKEK

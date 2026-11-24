@@ -98,7 +98,9 @@ it does not.
 Archives are compressed. How much smaller they are than the database depends
 on what it holds: an audit history compresses well, sealed values little.
 While it runs, a backup needs free space for a copy of the database and, in
-the worst case, two more: `varlatch doctor` checks it. Finished archives are encrypted. A killed run
+the worst case, two more: it does not start without three times the
+database's size. `varlatch doctor` checks for one. Archives kept on this
+host come on top. Finished archives are encrypted. A killed run
 can leave its working files in `/var/lib/varlatch/backups`; the next run
 removes them.
 

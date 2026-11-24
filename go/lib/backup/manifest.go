@@ -47,8 +47,8 @@ const (
 	// ComponentConfiguration is a Go archive's non-key configuration.
 	ComponentConfiguration = "configuration.json"
 	// MaxConfigurationBytes bounds it, when an archive is sealed and when
-	// one is opened: it is settings, read whole.
-	MaxConfigurationBytes = 1 << 20
+	// one is opened: it is settings, read whole, and far fewer than this.
+	MaxConfigurationBytes = 16 << 20
 )
 
 // Manifest is an archive's manifest. Release is the release record as the
@@ -190,7 +190,7 @@ func ParseManifest(raw []byte) (Manifest, error) {
 			return Manifest{}, ErrManifest
 		}
 		if component.Name == ComponentConfiguration && component.Bytes > MaxConfigurationBytes {
-			return Manifest{}, &Error{"The archive's configuration is larger than 1 MiB"}
+			return Manifest{}, &Error{"The archive's configuration is larger than 16 MiB"}
 		}
 		m.Components = append(m.Components, component)
 	}

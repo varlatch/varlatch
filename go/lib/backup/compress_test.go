@@ -174,6 +174,52 @@ func TestFrameScanStops(t *testing.T) {
 	}
 }
 
+// A stop, or a failing read, ends the decompression as itself, not as a
+// damaged archive.
+func TestDecompressStops(t *testing.T) {
+	packed := frame(t, make([]byte, 64<<20), 64<<20) // next to nothing to read
+	stop := errors.New("stopped")
+	beats := 0
+	d, err := newDecompressor(bytes.NewReader(packed), func() error {
+		if beats++; beats > 1 {
+			return stop
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.z.Close()
+	if n, err := io.Copy(io.Discard, d); err != stop || n == 64<<20 {
+		t.Errorf("stopped: %v after %d bytes and %d beats", err, n, beats)
+	}
+	d, err = newDecompressor(&failingReader{bytes.NewReader(packed), 100}, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.z.Close()
+	if _, err := io.Copy(io.Discard, d); err != errRead {
+		t.Errorf("a failing read: %v", err)
+	}
+}
+
+var errRead = errors.New("the disk failed")
+
+// failingReader fails past n bytes.
+type failingReader struct {
+	r io.Reader
+	n int
+}
+
+func (f *failingReader) Read(p []byte) (int, error) {
+	if f.n <= 0 {
+		return 0, errRead
+	}
+	n, err := f.r.Read(p[:min(len(p), f.n)])
+	f.n -= n
+	return n, err
+}
+
 // A configuration past the limit is neither sealed nor opened: not a byte
 // of it is written.
 func TestConfigurationBound(t *testing.T) {
@@ -188,7 +234,7 @@ func TestConfigurationBound(t *testing.T) {
 		}
 		all := append([]byte("a database"), configuration...)
 		_, err = openRaw(t, sealRaw(t, header2(1), plaintext(manifest, frame(t, all, int64(len(all))))), &rawKeys)
-		if (err == nil) != ok || !ok && !strings.Contains(err.Error(), "larger than 1 MiB") {
+		if (err == nil) != ok || !ok && !strings.Contains(err.Error(), "larger than 16 MiB") {
 			t.Errorf("%d bytes opened: %v", size, err)
 		}
 	}
@@ -222,7 +268,9 @@ func TestSealWriteFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	written := 1<<30 - whole.n
-	for name, n := range map[string]int{"the manifest": 10, "a block": written / 2, "the last block, as the compressor closes": written - 1, "the frame's end": written - 4} {
+	// The last block holds what is past the last whole 64 KiB, not
+	// compressible, then comes its checksum, of four bytes.
+	for name, n := range map[string]int{"the manifest": 10, "a block": written / 2, "inside the last block, as the compressor closes": written - 4 - 1000, "its checksum": written - 1} {
 		testHooks.out = func(w io.Writer) io.Writer { return &failAfter{w, n} }
 		d := t.TempDir()
 		if err := Seal(filepath.Join(d, "a"), manifest, paths, passphrase(t), SealOptions{}); err == nil || !strings.Contains(err.Error(), "the disk is full") {
@@ -360,34 +408,36 @@ func TestCompressedRefuses(t *testing.T) {
 		manifest, rest []byte
 		want           error
 	}{
-		"no frame":                    {manifest, nil, errCompressed},
-		"not compressed":              {manifest, all, errCompressed},
-		"a frame of nothing":          {manifest, frame(t, nil, 0), errCompressed},
-		"one component too few":       {manifest, frame(t, database, int64(len(database))), errCompressed},
-		"a byte more":                 {manifest, frame(t, append(bytes.Clone(all), 0), size+1), errCompressed},
-		"no size stated":              {manifest, frame(t, all, -1), errCompressed},
-		"no checksum":                 {manifest, frame(t, all, size, zstd.WithEncoderCRC(false)), errCompressed},
-		"a dictionary":                {manifest, append(dictionary, blocks...), errCompressed},
-		"a window past the limit":     {wide, frame(t, random, int64(len(random)), zstd.WithWindowSize(16<<20)), errCompressed},
-		"a byte after the frame":      {manifest, append(bytes.Clone(good), 0), errCompressed},
-		"an empty block":              {manifest, append(append(bytes.Clone(good[:h.HeaderSize]), 0, 0, 0), blocks...), errCompressed},
-		"a reserved block":            {manifest, append(append(bytes.Clone(good[:h.HeaderSize]), 7|1<<3, 0, 0, 0), good[len(good)-4:]...), errCompressed},
-		"a skippable frame after":     {manifest, append(bytes.Clone(good), 0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0), errCompressed},
-		"a skippable frame first":     {manifest, append([]byte{0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0}, good...), errCompressed},
-		"a second frame":              {manifest, append(bytes.Clone(good), frame(t, nil, 0)...), errCompressed},
-		"two frames":                  {manifest, append(frame(t, database, int64(len(database))), frame(t, configuration, int64(len(configuration)))...), errCompressed},
-		"cut short by a byte":         {manifest, good[:len(good)-1], errCompressed},
-		"cut short by its checksum":   {manifest, last, errCompressed},
-		"cut short in a block":        {manifest, good[:len(good)/2], errCompressed},
-		"cut short in its header":     {manifest, good[:6], errCompressed},
-		"its magic":                   {manifest, flipped(0), errCompressed},
-		"its checksum wrong":          {manifest, flipped(len(good) - 1), errCompressed},
-		"its size wrong":              {manifest, flipped(6), errCompressed},
-		"more than it states":         {manifest, lies, errCompressed},
-		"less than it states":         {manifest, shorter, errCompressed},
-		"the manifest's size smaller": {sized(0, int64(len(database))-1), good, errCompressed},
-		"the manifest's size larger":  {sized(0, int64(len(database))+1), good, errCompressed},
-		"the manifest's size vast":    {sized(0, 1<<53-1), good, &Error{"Component sizes do not match archive"}},
+		"no frame":                          {manifest, nil, errCompressed},
+		"not compressed":                    {manifest, all, errCompressed},
+		"a frame of nothing":                {manifest, frame(t, nil, 0), errCompressed},
+		"one component too few":             {manifest, frame(t, database, int64(len(database))), errCompressed},
+		"a byte more":                       {manifest, frame(t, append(bytes.Clone(all), 0), size+1), errCompressed},
+		"no size stated":                    {manifest, frame(t, all, -1), errCompressed},
+		"no checksum":                       {manifest, frame(t, all, size, zstd.WithEncoderCRC(false)), errCompressed},
+		"a dictionary":                      {manifest, append(dictionary, blocks...), errCompressed},
+		"a window past the limit":           {wide, frame(t, random, int64(len(random)), zstd.WithWindowSize(16<<20)), errCompressed},
+		"a byte after the frame":            {manifest, append(bytes.Clone(good), 0), errCompressed},
+		"an empty block":                    {manifest, append(append(bytes.Clone(good[:h.HeaderSize]), 0, 0, 0), blocks...), errCompressed},
+		"a block that repeats nothing":      {manifest, append(append(bytes.Clone(good[:h.HeaderSize]), 2, 0, 0, 'x'), blocks...), errCompressed},
+		"a last block that repeats nothing": {manifest, append(append(bytes.Clone(good[:h.HeaderSize]), 3, 0, 0, 'x'), good[len(good)-4:]...), errCompressed},
+		"a reserved block":                  {manifest, append(append(bytes.Clone(good[:h.HeaderSize]), 7|1<<3, 0, 0, 0), good[len(good)-4:]...), errCompressed},
+		"a skippable frame after":           {manifest, append(bytes.Clone(good), 0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0), errCompressed},
+		"a skippable frame first":           {manifest, append([]byte{0x50, 0x2a, 0x4d, 0x18, 0, 0, 0, 0}, good...), errCompressed},
+		"a second frame":                    {manifest, append(bytes.Clone(good), frame(t, nil, 0)...), errCompressed},
+		"two frames":                        {manifest, append(frame(t, database, int64(len(database))), frame(t, configuration, int64(len(configuration)))...), errCompressed},
+		"cut short by a byte":               {manifest, good[:len(good)-1], errCompressed},
+		"cut short by its checksum":         {manifest, last, errCompressed},
+		"cut short in a block":              {manifest, good[:len(good)/2], errCompressed},
+		"cut short in its header":           {manifest, good[:6], errCompressed},
+		"its magic":                         {manifest, flipped(0), errCompressed},
+		"its checksum wrong":                {manifest, flipped(len(good) - 1), errCompressed},
+		"its size wrong":                    {manifest, flipped(6), errCompressed},
+		"more than it states":               {manifest, lies, errCompressed},
+		"less than it states":               {manifest, shorter, errCompressed},
+		"the manifest's size smaller":       {sized(0, int64(len(database))-1), good, errCompressed},
+		"the manifest's size larger":        {sized(0, int64(len(database))+1), good, errCompressed},
+		"the manifest's size vast":          {sized(0, 1<<53-1), good, &Error{"Component sizes do not match archive"}},
 		"a component's checksum": {with(func(m map[string]any) { component(m, 0)["sha256"] = strings.Repeat("0", 64) }), good,
 			&Error{"Component checksum mismatch"}},
 		"the bytes between the two": {with(func(m map[string]any) {
@@ -409,9 +459,43 @@ func TestCompressedRefuses(t *testing.T) {
 	}
 }
 
-// openRaw opens an archive's bytes. While it does, scratch never holds more
-// than the archive and what its manifest declares (a bomb), seen at each
-// step of the pace; a refusal leaves scratch empty.
+// declaredSizes are the sizes an archive's manifest declares, by component
+// (none when it cannot be read).
+func declaredSizes(raw []byte, keys *KeyCache) map[string]int64 {
+	if len(raw) < 60 || string(raw[:8]) != "VLTBAK02" || keys == nil {
+		return nil
+	}
+	b, _ := PassphraseBEK([]byte("correct horse battery"))
+	key, err := keys.derive(b, raw[8:24])
+	if err != nil {
+		return nil
+	}
+	s, err := newGCMStream(key, raw[24:36], raw[:40], true)
+	if err != nil {
+		return nil
+	}
+	plain := make([]byte, len(raw)-56)
+	if s.xor(plain, raw[40:len(raw)-16]) != nil {
+		return nil
+	}
+	n := int(binary.BigEndian.Uint32(plain))
+	if n > len(plain)-4 {
+		return nil
+	}
+	m, err := ParseManifest(plain[4 : 4+n])
+	if err != nil {
+		return nil
+	}
+	out := map[string]int64{}
+	for _, c := range m.Components {
+		out[c.Name] = c.Bytes
+	}
+	return out
+}
+
+// openRaw opens an archive's bytes. While it does, at each step of the pace,
+// scratch holds the archive's own bytes and no file of more bytes than the
+// manifest declares for it (a bomb); a refusal leaves scratch empty.
 func openRaw(t *testing.T, raw []byte, keys *KeyCache) (*Opened, error) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "a.vlt")
@@ -419,18 +503,21 @@ func openRaw(t *testing.T, raw []byte, keys *KeyCache) (*Opened, error) {
 		t.Fatal(err)
 	}
 	scratch := t.TempDir()
-	most := int64(len(raw)) + 1<<20 + 100 // the cases' database and configuration
+	declared := declaredSizes(raw, keys)
 	o, err := OpenWith(p, passphrase(t), scratch, OpenOptions{Keys: keys, Pace: func(int64) error {
-		var held int64
 		_ = filepath.WalkDir(scratch, func(p string, d fs.DirEntry, err error) error {
-			if info, ierr := d.Info(); err == nil && ierr == nil && info.Mode().IsRegular() {
-				held += info.Size()
+			if err != nil || d.IsDir() {
+				return err
+			}
+			most, ok := declared[d.Name()]
+			if d.Name() == "authenticated.pack" {
+				most, ok = int64(len(raw)), true
+			}
+			if info, err := d.Info(); err == nil && (!ok || info.Size() > most) {
+				t.Errorf("scratch holds %s of %d bytes, %d declared", d.Name(), info.Size(), most)
 			}
 			return nil
 		})
-		if held > most {
-			t.Errorf("scratch held %d bytes of an archive of %d", held, len(raw))
-		}
 		return nil
 	}})
 	if left, _ := os.ReadDir(scratch); err != nil && len(left) != 0 {

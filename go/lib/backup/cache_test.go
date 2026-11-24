@@ -111,7 +111,8 @@ func TestOpenAndDescribePaced(t *testing.T) {
 		t.Fatalf("paced %d times, to %v; want at least 6, to %d", len(calls), calls[len(calls)-1:], want)
 	}
 	for i := 1; i < len(calls); i++ {
-		if calls[i] <= calls[i-1] || calls[i]-calls[i-1] > chunk {
+		// (The same count again: a beat, which lets a stop end the work.)
+		if calls[i] < calls[i-1] || calls[i]-calls[i-1] > chunk {
 			t.Fatalf("pace steps %v", calls)
 		}
 	}

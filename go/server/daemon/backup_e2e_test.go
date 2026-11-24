@@ -85,8 +85,8 @@ func stalledIn(phase string) func(*backups.Options) {
 	}
 }
 
-// refuseRestored makes a database that passes every check before a restore
-// puts it in place, and refuses the event the restore records in it.
+// refuseRestored makes a database that refuses the event a restore records
+// in it.
 const refuseRestored = "CREATE TRIGGER refuse BEFORE INSERT ON audit_events WHEN NEW.event_type = 'installation.restored' BEGIN SELECT RAISE(ABORT, 'refused by the test'); END"
 
 // damaged is the archive at good with the same identity, whose database is
@@ -143,7 +143,7 @@ func status(t *testing.T, url string) int {
 // checked, then restored on a fresh host that holds only the
 // configuration, the archive and the two keys; the restored installation
 // serves the same values, records installation.restored, and a restore
-// that fails after replacing the database stays isolated across a
+// that fails once it began to change the directory stays isolated across a
 // restart until running it again completes it.
 func TestBackupRestoreEndToEnd(t *testing.T) {
 	in, bek, fixture := backupInstall(t, t.TempDir(), 8)
@@ -216,11 +216,33 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 	copyTo(archive, filepath.Join(host, "archive.vltbak"))
 	target.write(t, "backup_key_file = "+filepath.Join(host, "bek")+"\nbackup_interval = off\n")
 
-	// A restore that fails after the database was replaced: isolated, and
-	// still isolated after a restart.
+	// An archive whose database refuses what a restore writes in it: refused
+	// by the check and by the restore, with nothing changed.
 	bad := damaged(t, archive, bek)
-	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", bad, "--config", target.conf); code != ExitFailure || !strings.Contains(errOut, "refused by the test") {
-		t.Fatalf("the damaged restore: %d %q", code, errOut)
+	for _, check := range [][]string{{"--check"}, nil} {
+		args := append([]string{"backup", "restore", "--in", bad, "--config", target.conf}, check...)
+		if code, _, errOut := runAdmin(t, args...); code != ExitFailure || !strings.Contains(errOut, "refused by the test") {
+			t.Fatalf("the damaged restore %v: %d %q", check, code, errOut)
+		}
+	}
+	for _, name := range []string{config.DatabaseFile, backup.GateFile, backup.HoldFile} {
+		if _, err := os.Lstat(filepath.Join(target.data, name)); !os.IsNotExist(err) {
+			t.Errorf("the refused restore left %s (%v)", name, err)
+		}
+	}
+	// A restore that fails once it began to change the directory (the old
+	// database's write-ahead log cannot be removed): isolated, and still
+	// isolated after a restart.
+	good := filepath.Join(host, "archive.vltbak")
+	wal := filepath.Join(target.data, config.DatabaseFile+"-wal")
+	if err := os.MkdirAll(filepath.Join(wal, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", good, "--config", target.conf); code != ExitFailure || !strings.Contains(errOut, "varlatch.db-wal") {
+		t.Fatalf("a restore that cannot replace the database: %d %q", code, errOut)
+	}
+	if err := os.RemoveAll(wal); err != nil {
+		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
 		tr := start(t, target)
@@ -233,10 +255,6 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 		tr.stop(t)
 	}
 
-	// --check: whether a restore would take the archive, changing nothing.
-	if code, _, errOut := runAdmin(t, "backup", "restore", "--check", "--in", bad, "--config", target.conf); code != ExitOK {
-		t.Errorf("--check cannot tell what the database refuses when it is written: %d %q", code, errOut)
-	}
 	// Running it again with the archive completes it.
 	code, out, errOut = runAdmin(t, "backup", "restore", "--in", filepath.Join(host, "archive.vltbak"), "--config", target.conf)
 	if code != ExitOK || !strings.HasPrefix(out, "Restore completed for inst_") || !strings.Contains(out, archiveID) {

@@ -37,28 +37,35 @@ import (
 //
 //  1. the archive opens (integrity), this release restores it, and the
 //     Root KEK opens its canaries;
-//  2. a database already in the directory must be the same installation;
-//  3. a restore gate (maintenance.json, kind restore) is opened, or a
+//  2. in the copy unpacked from the archive: it opens with this release,
+//     its installation is the archive's and its canary opens with the Root
+//     KEK, and the installation.restored audit event is the first new one,
+//     with every live audit export's new stream after it (ADR-0056
+//     Decision 5);
+//  3. a database already in the directory must be the same installation.
+//     A failure up to here changed nothing in the directory;
+//  4. a restore gate (maintenance.json, kind restore) is opened, or a
 //     restore of the same archive that stopped is resumed. While it is
 //     open a varlatchd that starts answers 503 MAINTENANCE;
-//  4. the snapshot replaces the database: copied beside it and synced, the
+//  5. that copy replaces the database: copied beside it and synced, the
 //     old WAL removed, renamed into place, the directory synced;
-//  5. the restored database opens with this release, its installation is
-//     the archive's and its canary opens with the Root KEK, and the
-//     installation.restored audit event is the first new one, with every
-//     live audit export's new stream after it (ADR-0056 Decision 5);
 //  6. the installation is held (backup.Hold): what an archive brings back
 //     does nothing on its own until the host operator resumes it;
 //  7. the gate is removed.
 //
-// A restore that fails or is killed leaves the gate open; running it
-// again with the same archive completes it.
+// A restore that fails or is killed from 4 on leaves the gate open; running
+// it again with the same archive completes it.
 func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup.BEK, rootKEK []byte, now func() time.Time) (RestoreResult, error) {
 	if now == nil {
 		now = time.Now
 	}
 	// What a check that was killed left.
 	if err := os.RemoveAll(filepath.Join(cfg.DataDir, checkScratch)); err != nil {
+		return RestoreResult{}, err
+	}
+	// Before SQLite is used at all: its temporary files, where nothing else
+	// is writable, in the data directory, never in the scratch one.
+	if _, err := storage.PrepareTemp(cfg.DataDir); err != nil {
 		return RestoreResult{}, err
 	}
 	scratch := filepath.Join(cfg.DataDir, ".restore-work")
@@ -70,6 +77,11 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 	defer opened.Close()
 	settings, err := restores(ctx, opened, rootKEK)
 	if err != nil {
+		return RestoreResult{}, err
+	}
+	// The restore's own writes, on the copy unpacked from the archive: one
+	// that refuses them leaves this data directory as it was.
+	if err := reconcile(audit.WithClock(ctx, now), opened, rootKEK, now()); err != nil {
 		return RestoreResult{}, err
 	}
 	m := opened.Manifest
@@ -110,9 +122,6 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 		return RestoreResult{}, err
 	}
 
-	if err := reconcile(audit.WithClock(ctx, now), cfg, m, opened.ManifestJSON, rootKEK, now()); err != nil {
-		return RestoreResult{}, err
-	}
 	if err := backup.WriteHold(cfg.DataDir, backup.Hold{ArchiveID: m.ArchiveID, RestoredAt: iso(now())}); err != nil {
 		return RestoreResult{}, fmt.Errorf("the restored installation could not be held: %w", err)
 	}
@@ -149,6 +158,9 @@ type Checked struct {
 // removes. A varlatchd may run. With opens, an archive of a release this one
 // does not restore is not refused.
 func CheckRestore(ctx context.Context, cfg *config.Config, archive string, bek backup.BEK, rootKEK []byte, opens bool) (Checked, error) {
+	if _, err := storage.PrepareTemp(cfg.DataDir); err != nil {
+		return Checked{}, err
+	}
 	scratch := filepath.Join(cfg.DataDir, checkScratch)
 	defer os.RemoveAll(scratch)
 	opened, err := openArchive(ctx, archive, bek, rootKEK, scratch)
@@ -177,6 +189,15 @@ func CheckRestore(ctx context.Context, cfg *config.Config, archive string, bek b
 	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM auth_sessions WHERE expires_at > ?", time.Now().UnixMicro()).Scan(&c.Sessions); err != nil {
 		return Checked{}, fmt.Errorf("the archive's sessions cannot be read: %w", err)
 	}
+	if c.Restores {
+		// Last: it writes to the copy read above.
+		_ = conn.Close()
+		if err := reconcile(ctx, opened, rootKEK, time.Now()); err != nil && !opens {
+			return Checked{}, err
+		} else if err != nil {
+			c.Restores = false
+		}
+	}
 	return c, nil
 }
 
@@ -194,9 +215,7 @@ func restores(ctx context.Context, opened *backup.Opened, rootKEK []byte) (Confi
 // contents is what a restore needs of an opened archive's components, as a
 // backup's own check, a restore's and Restore itself ask it: the settings
 // can be read, and the database holds the manifest's installation, whose
-// canary the Root KEK opens. What only a restore can tell is what happens
-// in the data directory: the database opened to be written, and
-// installation.restored recorded in it.
+// canary the Root KEK opens. reconcile asks the rest, by writing.
 func contents(ctx context.Context, opened *backup.Opened, rootKEK []byte) (Configuration, error) {
 	var c Configuration
 	// At most backup.MaxConfigurationBytes (the manifest's check).
@@ -301,34 +320,53 @@ func openRestoreGate(dir, archiveID string, now func() time.Time) (backup.Gate, 
 	return gate, backup.DurableJSON(path, gate, true)
 }
 
-// reconcile opens the restored database with this release, checks it is
-// the archive's installation under this Root KEK, and records
-// installation.restored, every live audit export's stream restarted at
-// its restored cursor in the same job (recordRestore).
-func reconcile(ctx context.Context, cfg *config.Config, m backup.Manifest, manifest []byte, rootKEK []byte, now time.Time) error {
-	store, err := storage.Open(ctx, storage.Options{Path: cfg.DatabasePath()})
+// reconcile opens an archive's unpacked database with this release, as the
+// server opens it, checks it is the archive's installation under this Root
+// KEK, and records installation.restored, every live audit export's stream
+// restarted at its restored cursor in the same job (recordRestore). It ends
+// with the database whole in its one file. A restore puts that file in
+// place; a check makes the same writes, to know that a restore can, and
+// throws the copy away.
+func reconcile(ctx context.Context, opened *backup.Opened, rootKEK []byte, now time.Time) error {
+	path, m := opened.Path(backup.ComponentDatabase), opened.Manifest
+	store, err := storage.Open(ctx, storage.Options{Path: path, ReadConns: 1})
 	if err != nil {
-		return fmt.Errorf("the restored database does not open: %w", err)
+		return fmt.Errorf("the archive's database does not open: %w", err)
 	}
-	defer store.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = store.Close()
+		}
+	}()
 	if _, err := db.Init(ctx, store, buildinfo.Version); err != nil {
-		return fmt.Errorf("the restored database: %w", err)
+		return fmt.Errorf("the archive's database: %w", err)
 	}
-	sum := sha256.Sum256(manifest)
-	return store.Write(ctx, func(tx *storage.Tx) error {
+	sum := sha256.Sum256(opened.ManifestJSON)
+	if err := store.Write(ctx, func(tx *storage.Tx) error {
 		row, err := query.New(tx).GetInstallation(ctx)
 		if err != nil {
-			return fmt.Errorf("the restored database has no installation: %w", err)
+			return fmt.Errorf("the archive's database has no installation: %w", err)
 		}
 		var canary envelope.Envelope
 		if row.ID != m.InstallationID || json.Unmarshal([]byte(row.KekCanary), &canary) != nil || !envelope.VerifyCanary(rootKEK, canary, row.ID) {
-			return errors.New("the restored installation, or its canary, did not verify")
+			return errors.New("the archive's installation, or its canary, did not verify")
 		}
 		return auditexport.RecordRestore(ctx, tx, audit.Event{
 			Type: "installation.restored", Decision: audit.Info,
 			Metadata: jsvalue.Object{{Key: "archiveId", Value: m.ArchiveID}, {Key: "manifestIdentity", Value: hex.EncodeToString(sum[:])}, {Key: "installationId", Value: row.ID}},
 		}, now)
-	})
+	}); err != nil {
+		return err
+	}
+	closed = true
+	if err := store.Close(); err != nil {
+		return err
+	}
+	if st, err := os.Stat(path + "-wal"); err == nil && st.Size() > 0 {
+		return errors.New("the archive's database did not take its write-ahead log in when it was closed")
+	}
+	return nil
 }
 
 // sameInstallation is whether the database at path, if there is one, is the
