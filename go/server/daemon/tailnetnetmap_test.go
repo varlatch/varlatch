@@ -19,6 +19,7 @@ import (
 
 	"tailscale.com/envknob"
 	"tailscale.com/tailcfg"
+	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tsnet"
 	"tailscale.com/tstest/integration/testcontrol"
 	"tailscale.com/types/logger"
@@ -152,34 +153,33 @@ func mapper(change func(n int, res *tailcfg.MapResponse)) func(*testcontrol.Serv
 }
 
 // cacheMap starts and stops the node as a varlatchd before this one did,
-// tsnet's network map cache on, until the node's map is on disk.
+// tsnet's network map cache on and the control server granting it, so the
+// node's map is on disk for certain.
 func (w *netmapWorld) cacheMap(t *testing.T) {
 	t.Helper()
-	t.Cleanup(func() { envknob.Setenv("TS_USE_CACHED_NETMAP", "false") })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for _, n := range w.control.AllNodes() {
+		w.control.SetNodeCapMap(n.Key, tailcfg.NodeCapMap{nodecap.CacheNetworkMaps: nil})
+	}
 	envknob.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
+	defer envknob.Setenv("TS_USE_CACHED_NETMAP", "false")
+	envknob.Setenv("TS_USE_CACHED_NETMAP", "true")
 	cached := func() bool {
 		files, _ := filepath.Glob(filepath.Join(w.stateDir(), "profile-data", "*", "netmap-cache", "*"))
 		return len(files) > 0
 	}
-	for range 40 {
-		envknob.Setenv("TS_USE_CACHED_NETMAP", "true")
-		srv := &tsnet.Server{Dir: w.stateDir(), Hostname: w.temp, ControlURL: w.control.BaseURL(), AdvertiseTags: []string{"tag:varlatch"}, Logf: logger.Discard, UserLogf: logger.Discard}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		if _, err := srv.Up(ctx); err != nil {
-			t.Fatal(err)
-		}
-		// Written about when the node is up, and discarded by the next whole
-		// map: it stays when the node closes in between.
-		for end := time.Now().Add(time.Second); time.Now().Before(end) && !cached(); {
-			time.Sleep(time.Millisecond)
-		}
-		_ = srv.Close()
-		cancel()
-		if cached() {
-			return
-		}
+	srv := &tsnet.Server{Dir: w.stateDir(), Hostname: w.temp, ControlURL: w.control.BaseURL(), AdvertiseTags: []string{"tag:varlatch"}, Logf: logger.Discard, UserLogf: logger.Discard}
+	if _, err := srv.Up(ctx); err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("tsnet cached no network map: this test shows nothing")
+	for !cached() && ctx.Err() == nil {
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = srv.Close()
+	if !cached() {
+		t.Fatal("tsnet cached no network map: this test shows nothing")
+	}
 }
 
 func (w *netmapWorld) held(t *testing.T) bool {

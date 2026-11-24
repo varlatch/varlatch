@@ -7,46 +7,68 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"tailscale.com/envknob"
 	"tailscale.com/ipn/ipnlocal"
+	"tailscale.com/ipn/ipnlocal/netmapcache"
+	"tailscale.com/tailcfg"
+	"tailscale.com/tailcfg/nodecap"
 	"tailscale.com/tsnet"
 	"tailscale.com/tstest/integration/testcontrol"
 	"tailscale.com/types/logger"
 )
 
-// cachedMap starts and stops tsnet on the node's state directory until the
-// node's map is written there: with tsnet's network map cache on, as a
-// varlatchd before this one did, or off, as this one has it, where tsnet
-// still writes the map at a change of the node's home DERP region. It ends
-// as a killed process does: nothing removes it.
-func cachedMap(t *testing.T, control *testcontrol.Server, dir, hostname, cache string) {
+// cachedMap starts and stops tsnet on the node's state directory, with its
+// network map cache on and the control server granting it, so the node's map
+// is on disk for certain: as a varlatchd before this one left it, or, with
+// selfOnly, as tsnet writes it at a change of the node's home DERP region
+// whatever the switch (its UpdateSelfOnly: that write's timing is tsnet's, so
+// it is made here). It ends as a killed process does: nothing removes it.
+func cachedMap(t *testing.T, control *testcontrol.Server, dir, hostname string, selfOnly bool) {
 	t.Helper()
-	// Off again for whatever starts after it.
-	t.Cleanup(func() { envknob.Setenv(netmapCacheEnv, "false") })
-	prepareTsnet()
-	for range 40 {
-		envknob.Setenv(netmapCacheEnv, cache)
-		srv := &tsnet.Server{Dir: dir, Hostname: hostname, ControlURL: control.BaseURL(), AdvertiseTags: []string{"tag:varlatch"}, Logf: logger.Discard, UserLogf: logger.Discard}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		if _, err := srv.Up(ctx); err != nil {
-			t.Fatal(err)
-		}
-		// The home DERP region's choice writes it, about when the node is
-		// up, and the next whole map discards it: it stays when the node
-		// closes in between, as a handoff's short-lived node does.
-		for end := time.Now().Add(time.Second); time.Now().Before(end) && !hasCachedMap(dir); {
-			time.Sleep(time.Millisecond)
-		}
-		_ = srv.Close()
-		cancel()
-		if hasCachedMap(dir) {
-			return
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for _, n := range control.AllNodes() {
+		control.SetNodeCapMap(n.Key, tailcfg.NodeCapMap{nodecap.CacheNetworkMaps: nil})
 	}
-	t.Fatal("tsnet cached no network map: this test shows nothing")
+	prepareTsnet()
+	// Off again for whatever starts after it.
+	defer envknob.Setenv(netmapCacheEnv, "false")
+	envknob.Setenv(netmapCacheEnv, "true")
+	srv := &tsnet.Server{Dir: dir, Hostname: hostname, ControlURL: control.BaseURL(), AdvertiseTags: []string{"tag:varlatch"}, Logf: logger.Discard, UserLogf: logger.Discard}
+	if _, err := srv.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for !hasCachedMap(dir) && ctx.Err() == nil {
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = srv.Close()
+	caches, _ := filepath.Glob(filepath.Join(dir, ipnlocal.ProfileDataDir, "*", netmapCacheDir))
+	if len(caches) != 1 || !hasCachedMap(dir) {
+		t.Fatalf("tsnet cached no network map: this test shows nothing (%v)", caches)
+	}
+	nm, err := netmapcache.NewCache(netmapcache.FileStore(caches[0])).Load(ctx)
+	if err != nil || !strings.HasPrefix(nm.SelfNode.Name(), hostname+".") {
+		t.Fatalf("the map cached is not the node's as %s: this test shows nothing: %v", hostname, err)
+	}
+	if !selfOnly {
+		return
+	}
+	// As the control server sent it: a map read from the cache is not
+	// written again.
+	nm.Cached = false
+	if err := os.RemoveAll(caches[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(caches[0], 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := netmapcache.NewCache(netmapcache.FileStore(caches[0])).UpdateSelfOnly(ctx, nm); err != nil || !hasCachedMap(dir) {
+		t.Fatalf("no map of the node alone: this test shows nothing: %v", err)
+	}
 }
 
 func hasCachedMap(dir string) bool {
@@ -96,9 +118,9 @@ func TestARestartedNodeNeverReadsACachedMap(t *testing.T) {
 	_ = n.Close()
 	name := "vault-1"
 	for i, to := range []string{"vault-2", "vault-3", "vault-4", "vault-5"} {
-		// One written with the cache on, and one with it off (at a home
-		// DERP change), in turn.
-		cachedMap(t, control, dir, name, []string{"true", "false"}[i%2])
+		// A whole map's, and one of the node alone (a home DERP change's),
+		// in turn.
+		cachedMap(t, control, dir, name, i%2 == 1)
 		rename(t, control, name, to)
 		n := start()
 		if hasCachedMap(dir) {
@@ -135,7 +157,7 @@ func TestANodeIsNotUpWithoutItsControlPlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = n.Close()
-	cachedMap(t, control, dir, "varlatch", "false")
+	cachedMap(t, control, dir, "varlatch", true)
 	url := control.BaseURL()
 	control.HTTPTestServer.Close()
 	n, err = StartNode(NodeConfig{Dir: dir, Hostname: "varlatch", ControlURL: url, Tags: []string{"tag:varlatch"}})
