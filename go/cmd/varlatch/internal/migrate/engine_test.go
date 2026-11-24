@@ -1200,15 +1200,24 @@ func TestCoolifysTransferByHand(t *testing.T) {
 	if !strings.Contains(said, "move the domain of https://vault.example.test") || !strings.Contains(said, "varlatch migrate --resume") {
 		t.Fatalf("the instruction: %s", said)
 	}
+	// Not moved yet: the whole step again, not only how to check it.
+	w.said = nil
 	if j, err = w.eng.Resume(context.Background()); err == nil || !strings.Contains(err.Error(), "once the domain is moved") || j.Phase != Transfer {
 		t.Fatalf("a resume before the move: %+v %v", j, err)
+	}
+	if said := strings.Join(w.said, "\n"); !strings.Contains(said, "by hand, if not done: in Coolify, move the domain of https://vault.example.test from the TypeScript application to the Go one (its domain setting; Save only). "+
+		"Do not Deploy, Restart or Stop the TypeScript application") {
+		t.Fatalf("a resume before the move says: %s", said)
 	}
 	if containsCall(w.src.calls, "release gate-1") {
 		t.Fatal("a resume before the move undid")
 	}
-	w.prober.moved = true
+	w.prober.moved, w.said = true, nil
 	if j, err = w.eng.Resume(context.Background()); err != nil || j.Phase != Open {
 		t.Fatalf("the resume after the move: %+v %v", j, err)
+	}
+	if said := strings.Join(w.said, "\n"); strings.Contains(said, "move the domain of") {
+		t.Fatalf("a move that was seen, asked for again: %s", said)
 	}
 	w.noSecrets(t)
 }
@@ -1507,5 +1516,43 @@ func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
 				t.Errorf("said: %s", said)
 			}
 		})
+	}
+}
+
+// Options.StageAs settles the stage once it is needed: the target's owner
+// and its base, asked for once; none is this user's work directory.
+func TestStageAs(t *testing.T) {
+	ctx := context.Background()
+	asked := 0
+	base := t.TempDir()
+	e := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) {
+		asked++
+		return &Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}, base, nil
+	}}}
+	for range 2 {
+		dir, err := e.scratchDir(ctx)
+		if err != nil || filepath.Dir(dir) != base {
+			t.Fatalf("%s, %v", dir, err)
+		}
+		bundle := filepath.Join(t.TempDir(), "b")
+		if err := os.WriteFile(bundle, []byte("bundle"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		staged, err := e.stage(bundle, dir)
+		if err != nil || filepath.Dir(staged) != dir {
+			t.Fatalf("%s, %v", staged, err)
+		}
+	}
+	if asked != 1 {
+		t.Errorf("asked %d times", asked)
+	}
+	none := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) { return nil, "", nil }}}
+	if dir, err := none.scratchDir(ctx); err != nil || filepath.Dir(dir) != none.Options.Work {
+		t.Errorf("%s, %v", dir, err)
+	}
+	refused := errors.New("no target")
+	bad := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) { return nil, "", refused }}}
+	if _, err := bad.scratchDir(ctx); !errors.Is(err, refused) {
+		t.Error(err)
 	}
 }

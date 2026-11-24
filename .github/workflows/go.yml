@@ -784,6 +784,30 @@ jobs:
           sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_PEBBLE="$VARLATCH_TEST_PEBBLE" VARLATCH_TEST_PEBBLE_ROOT="$VARLATCH_TEST_PEBBLE_ROOT" \
             go/install/test-setup.sh "$RUNNER_TEMP/setup-bin"
 
+      # What changes only as root: host commands that become the data
+      # directory's owner, and the host's upgrade. In temporary directories,
+      # nothing of the host's touched; the tests skip for anyone else. Go's
+      # cache, which the builds they make fill, is this user's again after.
+      - name: The tests that need root
+        if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -o pipefail
+          cache=$(go env GOCACHE) mod=$(go env GOMODCACHE)
+          trap 'sudo chown -R "$(id -u):$(id -g)" "$cache" "$mod"' EXIT
+          names="$(grep -hoE '^func (TestAdminAsRoot|TestMigrate)[A-Za-z]*AsRoot?[A-Za-z]*|^func TestAdminAsRoot[A-Za-z]*' server/daemon/privileges_test.go | sed 's/^func //' | sort -u) TestUpgradeAsRootWorksAsTheOwner TestUpgradeCommandOnAHost"
+          status=0
+          # shellcheck disable=SC2086 # one word per test
+          sudo env PATH="$PATH" HOME="$RUNNER_TEMP" GOCACHE="$cache" GOMODCACHE="$mod" GOFLAGS=-buildvcs=false CGO_ENABLED=0 \
+            go test -count=1 -v -run "^($(echo $names | tr ' ' '|'))\$" ./server/daemon ./cmd/varlatch/internal/upgrade ./cmd/varlatch/internal/cli > "$RUNNER_TEMP/root-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/root-tests.log"
+          [ "$status" -eq 0 ] || exit "$status"
+          for name in $names; do
+            grep -q -- "^--- PASS: $name " "$RUNNER_TEMP/root-tests.log" || { echo "::error::$name, which needs root, did not pass as root"; exit 1; }
+          done
+
       # A migration's host target (step 7, slice 7.4e): varlatch migrate
       # makes it with setup's steps, keys aside, on this runner's systemd,
       # then undoes it (setup's PrepareTarget and UndoTarget for real:

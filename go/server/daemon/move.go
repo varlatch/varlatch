@@ -251,12 +251,14 @@ type configFacts struct {
 	ListenHTTPS *string `json:"listenHttps"`
 	Tailnet     bool    `json:"tailnet"`
 	DataDir     string  `json:"dataDir"`
+	// ActsAsOwner is actsAsOwner (privileges.go).
+	ActsAsOwner bool `json:"actsAsOwner"`
 }
 
 // runConfigCheck is `admin config check`: the configuration file parsed
 // (an invalid one already refused with 78), and its facts as JSON.
 func runConfigCheck(cfg *config.Config, stdout, stderr io.Writer) int {
-	f := configFacts{Listen: cfg.Listen, Tailnet: cfg.Tailnet != nil, DataDir: cfg.DataDir, Ingress: "local"}
+	f := configFacts{Listen: cfg.Listen, Tailnet: cfg.Tailnet != nil, DataDir: cfg.DataDir, Ingress: "local", ActsAsOwner: actsAsOwner}
 	if cfg.PublicURL != nil {
 		s := strings.TrimSuffix(cfg.PublicURL.String(), "/")
 		f.PublicURL = &s

@@ -17,7 +17,10 @@
 //	State in-progress                      an upgrade was interrupted (or
 //	                                       runs now): the next varlatch
 //	                                       upgrade finishes it (Step checked)
-//	                                       or undoes it (any earlier step)
+//	                                       or undoes it (any earlier step).
+//	                                       From Stopping on (Holds), until
+//	                                       Checked, no varlatchd may start
+//	                                       but the one Start allows
 //	State failed                           an undo did not complete: Reason
 //	                                       says what is left, and the
 //	                                       pre-upgrade snapshot (Snapshot) is
@@ -40,13 +43,19 @@ import (
 // File is the journal's name, in varlatchd.conf's directory.
 const File = "upgrade.json"
 
-// Format is the journal format this package reads and writes. A member it
-// does not know is refused. 0.50.0-rc.2 wrote and reads this format without
-// Kind, DeclaredRollbackSafe, RollbackRule, SnapshotAt and SnapshotBytes: its
-// journals read here as an upgrade that declared nothing, and a rollback,
-// whose journal the release returned to reads, never returns to it
-// (internal/upgrade's RollbackSince).
-const Format = 1
+// Format is the journal format this package writes; it reads FormatOne too
+// (0.50.0-rc.2 and rc.3), without what that had not: Undo, Start, Binaries,
+// SnapshotSHA256 and SnapshotAt, Kind and what goes with it, and the steps Kept and Installed. A
+// journal of any other format, or with a member not known here, is refused,
+// never read in part.
+const (
+	Format    = 2
+	FormatOne = 1
+)
+
+// FormatSince is the first release that reads Format: an upgrade undone to
+// an earlier one leaves no journal its varlatch would refuse.
+const FormatSince = "0.50.0-rc.4"
 
 // Step is an upgrade's step, named for what is true once it is done.
 type Step string
@@ -68,8 +77,14 @@ const (
 	Stopped Step = "stopped"
 	// Prepared: a copy of the database has the new release's schema.
 	Prepared Step = "prepared"
-	// Swapped: the new binaries and the upgraded copy are in place; the
-	// original database is kept with the upgrade.
+	// Kept: the original database's files are in their set
+	// (<Work>/original), whole, under second names; the data directory is
+	// as it was.
+	Kept Step = "kept"
+	// Installed: the new binaries are in place; the data directory is as it
+	// was. From here on an undo puts the original back from its set.
+	Installed Step = "installed"
+	// Swapped: the upgraded copy is in the database's place.
 	Swapped Step = "swapped"
 	// Started: the new varlatchd is started.
 	Started Step = "started"
@@ -78,7 +93,47 @@ const (
 )
 
 // Steps are the steps in order.
-var Steps = []Step{Verified, Snapshot, Stopping, Stopped, Prepared, Swapped, Started, Checked}
+var Steps = []Step{Verified, Snapshot, Stopping, Stopped, Prepared, Kept, Installed, Swapped, Started, Checked}
+
+// UndoStep is how far an undo got, named for what is true once it is done;
+// a run again goes on from there.
+type UndoStep string
+
+const (
+	// UndoNone: no undo has begun, or nothing of it is done.
+	UndoNone UndoStep = ""
+	// FilesBack: the original database is back in its place (needed from
+	// Installed on).
+	// From here on it is what varlatchd may change: never put back again.
+	FilesBack UndoStep = "files-back"
+	// BinariesBack: the previous release's binaries are back.
+	BinariesBack UndoStep = "binaries-back"
+)
+
+var undoSteps = []UndoStep{UndoNone, FilesBack, BinariesBack}
+
+// Start is the one start of varlatchd allowed while the journal holds it
+// (Holds): of this release, in this boot. It is written right before
+// varlatchd is started and checked, and goes with the next record.
+type Start struct {
+	Version string `json:"version"`
+	// BootID is the kernel's boot id (/proc/sys/kernel/random/boot_id): a
+	// start after a reboot is not the one meant.
+	BootID string `json:"bootId"`
+	At     string `json:"at"`
+}
+
+// Binaries are the SHA-256 (hex) of each release's two binaries.
+type Binaries struct {
+	From BinarySums `json:"from"`
+	To   BinarySums `json:"to"`
+}
+
+// BinarySums are one release's.
+type BinarySums struct {
+	Varlatch  string `json:"varlatch"`
+	Varlatchd string `json:"varlatchd"`
+}
 
 // State is where the upgrade stands.
 type State string
@@ -104,15 +159,23 @@ const (
 	Rollback Kind = "rollback"
 )
 
+// RollbackEnd is a rollback that was undone, in the record of the upgrade it
+// was of: that upgrade is the last one again, and can be rolled back.
+type RollbackEnd struct {
+	ID     string `json:"id"`
+	At     string `json:"at"`
+	Reason string `json:"reason"`
+}
+
 // Journal is the file.
 type Journal struct {
 	Format int    `json:"format"`
 	ID     string `json:"id"`
 	Kind   Kind   `json:"kind,omitempty"`
 	// From and To are the releases; FromSchema and ToSchema their schema
-	// versions; RollbackSafe whether going back keeps the database: for an
-	// upgrade, DeclaredRollbackSafe and the manifest's compatibleFrom at or
-	// below FromSchema; for a rollback, whether it does.
+	// versions; RollbackSafe whether the previous release may open the
+	// upgraded database (the manifest's compatibleFrom at or below
+	// FromSchema).
 	From         string `json:"from"`
 	To           string `json:"to"`
 	FromSchema   int64  `json:"fromSchema"`
@@ -122,13 +185,20 @@ type Journal struct {
 	// declares itself rollback-safe for From (its previous release is
 	// From). A rollback keeps the database only with this declaration and
 	// From's varlatchd opening the database as it is.
-	DeclaredRollbackSafe bool `json:"declaredRollbackSafe"`
+	DeclaredRollbackSafe bool `json:"declaredRollbackSafe,omitempty"`
 	// RollbackRule (a rollback): which rule chose keeping the database or
-	// restoring the snapshot, in words.
-	RollbackRule string `json:"rollbackRule,omitempty"`
-	State        State  `json:"state"`
-	// Step is the last step completed.
-	Step      Step   `json:"step"`
+	// restoring the snapshot, in words. Upgraded is the upgrade it rolls
+	// back, whole: its record again when the rollback is undone.
+	RollbackRule string   `json:"rollbackRule,omitempty"`
+	Upgraded     *Journal `json:"upgraded,omitempty"`
+	// LastRollback (an upgrade): its rollback that was undone last.
+	LastRollback *RollbackEnd `json:"lastRollback,omitempty"`
+	State        State        `json:"state"`
+	// Step is the last step completed; Undo how far an undo got.
+	Step Step     `json:"step"`
+	Undo UndoStep `json:"undo,omitempty"`
+	// Start is the start allowed now, nil for none.
+	Start     *Start `json:"start,omitempty"`
 	StartedAt string `json:"startedAt"`
 	UpdatedAt string `json:"updatedAt"`
 	// BinDir holds varlatch and varlatchd; Releases each release's
@@ -140,14 +210,20 @@ type Journal struct {
 	Releases string `json:"releases"`
 	DataDir  string `json:"dataDir"`
 	Work     string `json:"work"`
+	// Binaries are the two releases' binaries: From's as they were
+	// installed, To's as its signed SHA256SUMS gives them. Nothing else is
+	// put in place, or run from <Releases>.
+	Binaries *Binaries `json:"binaries,omitempty"`
 	// Snapshot is the pre-upgrade archive, "" before it is taken;
-	// SnapshotAt when the archive was made (RFC 3339), what a rollback to
-	// it loses everything after.
-	Snapshot   string `json:"snapshot"`
-	SnapshotAt string `json:"snapshotAt,omitempty"`
-	// SnapshotBytes is the database the snapshot captured (its restored
-	// size), 0 when unknown.
-	SnapshotBytes int64 `json:"snapshotBytes,omitempty"`
+	// SnapshotSHA256 its SHA-256 and SnapshotAt when the archive was made
+	// (RFC 3339).
+	Snapshot       string `json:"snapshot"`
+	SnapshotSHA256 string `json:"snapshotSha256,omitempty"`
+	SnapshotAt     string `json:"snapshotAt,omitempty"`
+	// SnapshotArchive is the archive's id, SnapshotBytes the size of the
+	// database it holds.
+	SnapshotArchive string `json:"snapshotArchive,omitempty"`
+	SnapshotBytes   int64  `json:"snapshotBytes,omitempty"`
 	// Reason says why the upgrade was undone, or what an undo left.
 	Reason string `json:"reason,omitempty"`
 }
@@ -155,6 +231,18 @@ type Journal struct {
 // Pending is whether the journal holds an upgrade that is not over: one
 // in progress (or interrupted), or an undo that failed.
 func (j *Journal) Pending() bool { return j != nil && (j.State == InProgress || j.State == Failed) }
+
+// Holds is whether no varlatchd may start but the one Start allows: the
+// upgrade is not over, and from the stop on (Stopping) until its checks
+// passed (Checked) the database, or the binaries, may be neither release's
+// to serve.
+func (j *Journal) Holds() bool { return j.Pending() && j.Reached(Stopping) && !j.Reached(Checked) }
+
+// Allows is whether the journal, holding, allows a start of version in the
+// boot bootID.
+func (j *Journal) Allows(version, bootID string) bool {
+	return j.Start != nil && j.Start.Version == version && j.Start.BootID == bootID && bootID != ""
+}
 
 // Reached is whether step s is done.
 func (j *Journal) Reached(s Step) bool {
@@ -186,14 +274,25 @@ func Read(dir string) (*Journal, error) {
 }
 
 func (j *Journal) check() error {
-	if j.Format != Format {
+	if j.Format != Format && j.Format != FormatOne {
 		return fmt.Errorf("upgrade journal: format %d, not %d: a newer varlatch wrote it", j.Format, Format)
+	}
+	if j.Kind != Upgrade && j.Kind != Rollback || j.Kind == Rollback && (j.Upgraded == nil || j.Upgraded.Kind != Upgrade) {
+		return fmt.Errorf("upgrade journal: kind %q", j.Kind)
+	}
+	if j.Upgraded != nil {
+		if err := j.Upgraded.check(); err != nil {
+			return err
+		}
+	}
+	if j.Format == FormatOne && (j.Kind != Upgrade || j.Upgraded != nil || j.LastRollback != nil || j.SnapshotArchive != "" || j.Undo != UndoNone || j.Start != nil || j.Binaries != nil || j.SnapshotSHA256 != "" || j.SnapshotAt != "" || j.Step == Kept || j.Step == Installed) {
+		return errors.New("upgrade journal: a member of a later format in one of format 1")
+	}
+	if !slices.Contains(undoSteps, j.Undo) {
+		return fmt.Errorf("upgrade journal: undo %q", j.Undo)
 	}
 	if j.ID == "" || !release.ValidVersion(j.From) || !release.ValidVersion(j.To) {
 		return errors.New("upgrade journal: no upgrade id, or a release that is no release version")
-	}
-	if j.Kind != Upgrade && j.Kind != Rollback {
-		return fmt.Errorf("upgrade journal: kind %q", j.Kind)
 	}
 	if !slices.Contains([]State{InProgress, Done, Undone, Failed}, j.State) || j.Step != None && !slices.Contains(Steps, j.Step) {
 		return fmt.Errorf("upgrade journal: state %q, step %q", j.State, j.Step)
@@ -201,9 +300,14 @@ func (j *Journal) check() error {
 	return nil
 }
 
-// Write replaces dir's journal with j, durably, readable by anyone.
+// Write replaces dir's journal with j, durably, readable by anyone. A
+// journal read in format 1 is written in it. An error that is
+// release.ErrNotDurable left the new journal in place, not known to survive
+// a power cut; any other left the one before.
 func Write(dir string, j *Journal) error {
-	j.Format = Format
+	if j.Format == 0 {
+		j.Format = Format
+	}
 	if err := j.check(); err != nil {
 		return err
 	}

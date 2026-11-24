@@ -58,6 +58,9 @@ type profileConfig struct {
 	// client's file, the nodes' reusable tagged auth key's, the tailnet's
 	// MagicDNS suffix.
 	tailscaleOAuth, tailscaleAuthKey, tailscaleTailnet string
+	// The combined case's: the Go app's UUID, and the name the run's Git
+	// repository is served on.
+	coolifyTarget, gitName string
 	// B5 against the owner's throwaway destinations (VL_RH_SYNC=real).
 	syncReal syncRealInputs
 	// B6: the archive VL_RH_SOURCE=restore:<archive> names, and its keys
@@ -97,6 +100,7 @@ func readProfile(euid int) (profileConfig, error) {
 		source: env("VL_RH_SOURCE", "seed"), kill: os.Getenv("VL_RH_KILL"), sync: os.Getenv("VL_RH_SYNC"),
 		continueDir: env("VL_RH_CONTINUE_DIR", filepath.Join(workDir, "continue")),
 		goImage:     os.Getenv("VL_RH_GO_IMAGE"), coolifySourceDir: os.Getenv("VL_RH_COOLIFY_SOURCE_DIR"),
+		coolifyTarget: os.Getenv("VL_RH_COOLIFY_TARGET"), gitName: os.Getenv("VL_RH_GIT_NAME"),
 		restoreBEK: os.Getenv("VL_RH_RESTORE_BEK"), restoreKEK: os.Getenv("VL_RH_RESTORE_KEK"), bundleOut: os.Getenv("VL_RH_BUNDLE_OUT"),
 		tailscaleOAuth: os.Getenv("VL_RH_TAILSCALE_OAUTH_FILE"), tailscaleAuthKey: os.Getenv("VL_RH_TAILSCALE_AUTH_KEY_FILE"),
 		tailscaleTailnet: os.Getenv("VL_RH_TAILSCALE_TAILNET"),
@@ -120,8 +124,6 @@ func readProfile(euid int) (profileConfig, error) {
 	switch {
 	case !prof.box && prof.ingress != "proxy" && prof.ingress != "tailnet":
 		return prof, fmt.Errorf("VL_RH_INGRESS=%s runs on the box only (VL_RH_PROFILE=box)", prof.ingress)
-	case prof.ingress == "combined":
-		return prof, errors.New("the combined case (Coolify plus the tailnet, internal#221 B4.3) needs the lab Coolify's steps, the owner's; not built yet: VL_RH_INGRESS=tailnet runs the handoff behind the own proxy")
 	case realTailscale && prof.ingress != "tailnet":
 		return prof, errors.New("VL_RH_TAILSCALE_* goes with VL_RH_INGRESS=tailnet")
 	case realTailscale && !prof.box:
@@ -149,7 +151,7 @@ func readProfile(euid int) (profileConfig, error) {
 		}
 	case prof.source != "seed":
 		return prof, fmt.Errorf("VL_RH_SOURCE is seed or restore:<archive>, not %q", prof.source)
-	case prof.target == "image" && prof.ingress != "coolify":
+	case prof.target == "image" && prof.ingress != "coolify" && prof.ingress != "combined":
 		return prof, errors.New("the image target runs with the Coolify ingress only (B3); with Compose it is not built yet")
 	case prof.target != "host" && prof.target != "image":
 		return prof, fmt.Errorf("VL_RH_TARGET is host or image, not %q", prof.target)
@@ -169,6 +171,10 @@ func readProfile(euid int) (profileConfig, error) {
 				return prof, fmt.Errorf("%s:%s is not free (%v): the run never stops what holds it", prof.publicBind, port, err)
 			}
 			l.Close()
+		}
+	case prof.ingress == "combined":
+		if err := checkCombined(prof); err != nil {
+			return prof, err
 		}
 	case prof.ingress == "coolify":
 		if prof.target != "image" || prof.goImage == "" || prof.coolifySourceDir == "" || prof.publicName == "" {
@@ -200,6 +206,8 @@ func readProfile(euid int) (profileConfig, error) {
 	if prof.kill != "" && prof.kill != "transfer" && prof.kill != "barrier" {
 		return prof, fmt.Errorf("VL_RH_KILL is transfer or barrier, not %q", prof.kill)
 	}
+	// Each is honoured or refused, never left aside: what it asks for is
+	// what runs.
 	switch {
 	case only != "" && only != "setup" && only != "kill" && only != "sync" && only != "bundle":
 		return prof, fmt.Errorf("VL_RH_ONLY is setup, kill, sync or bundle, not %q", only)
@@ -208,6 +216,16 @@ func readProfile(euid int) (profileConfig, error) {
 		return prof, errors.New("VL_RH_ONLY=kill needs VL_RH_KILL (transfer or barrier): it runs the kill case alone")
 	case only == "sync" && prof.sync != "fakes" && prof.sync != "real":
 		return prof, errors.New("VL_RH_ONLY=sync needs VL_RH_SYNC=fakes or real: it runs the sync case alone")
+	case only != "" && slices.Contains([]string{"coolify", "tailnet", "combined"}, prof.ingress):
+		return prof, fmt.Errorf("VL_RH_INGRESS=%s runs its own cases, whole: leave VL_RH_ONLY unset", prof.ingress)
+	case prof.kill != "" && prof.ingress == "coolify":
+		return prof, errors.New("VL_RH_INGRESS=coolify runs its own case, with no kill in it: leave VL_RH_KILL unset")
+	case only == "setup" && (prof.kill != "" || prof.sync != ""):
+		return prof, errors.New("VL_RH_ONLY=setup only sets the source up: leave VL_RH_KILL and VL_RH_SYNC unset")
+	case only == "kill" && prof.sync != "":
+		return prof, errors.New("VL_RH_ONLY=kill runs the kill case alone: leave VL_RH_SYNC unset")
+	case only == "sync" && prof.kill != "":
+		return prof, errors.New("VL_RH_ONLY=sync runs the sync case alone: leave VL_RH_KILL unset")
 	case only == "bundle":
 		if prof.restore != "" || prof.kill != "" || prof.sync != "" || prof.ingress != "proxy" {
 			return prof, errors.New("VL_RH_ONLY=bundle makes the synthetic archive alone: on a seeded source (VL_RH_SOURCE=seed), with the own proxy, no VL_RH_KILL or VL_RH_SYNC")
@@ -444,13 +462,107 @@ func (in *installation) installUnit(t *testing.T) {
 	t.Helper()
 	// The case's environment for the target (service.env: its trust
 	// roots), as the workstation's fake systemctl gives it.
-	unit := fmt.Sprintf("[Unit]\nDescription=varlatchd (rehearsal %s, %s)\n\n[Service]\nEnvironmentFile=-%s\nExecStart=%s serve --config %s\nRestart=no\n\n[Install]\nWantedBy=multi-user.target\n",
-		runID, in.name, filepath.Join(in.state, "service.env"), filepath.Join(binDir, "varlatchd"), in.conf)
+	unit := unitFile(runID+", "+in.name, filepath.Join(in.state, "service.env"), filepath.Join(binDir, "varlatchd"), in.conf)
 	path := filepath.Join("/etc/systemd/system", in.unitName()+".service")
 	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	must(t, run("", nil, nil, "systemctl", "daemon-reload"), "systemctl daemon-reload")
+}
+
+// unitFile is the run's unit. How it starts and how long it may take to
+// stop are the shipped unit's (go/install/varlatchd.service): without them
+// systemd waits 90 s before it kills, which rehearsal B2's run b2k did.
+func unitFile(what, env, bin, conf string) string {
+	return fmt.Sprintf("[Unit]\nDescription=varlatchd (rehearsal %s)\n\n[Service]\nType=exec\nEnvironmentFile=-%s\nExecStart=%s serve --config %s\nRestart=no\nTimeoutStopSec=%s\n\n[Install]\nWantedBy=multi-user.target\n",
+		what, env, bin, conf, unitStopTimeout)
+}
+
+// unitStopTimeout is the shipped unit's TimeoutStopSec.
+const unitStopTimeout = 30 * time.Second
+
+// stopped is one stop of a unit, as systemd's journal has it.
+type stopped struct {
+	took   time.Duration
+	killed bool // systemd's limit passed, and it was killed
+}
+
+// The journal's messages about a unit's stop, by systemd's catalog.
+const (
+	msgStopping = "de5b426a63be47a7b6ac3eaac82e2f6f" // "Stopping ..."
+	msgStopped  = "9d1aaa27d60140bd96365438aad20286" // "Stopped ..."
+	msgFailed   = "d9b373ed55a64feb8242e02dbe79a49c" // "Failed with result ..." (UNIT_RESULT)
+)
+
+// stopsIn reads a unit's stops from journalctl -o json's lines. A stop
+// whose end is not there is left out.
+func stopsIn(lines string) ([]stopped, error) {
+	var out []stopped
+	var began int64
+	killed := false
+	for _, l := range strings.Split(lines, "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		var e struct {
+			ID     string `json:"MESSAGE_ID"`
+			At     string `json:"__REALTIME_TIMESTAMP"`
+			Result string `json:"UNIT_RESULT"`
+		}
+		// A message that is not text is an array there: of no interest.
+		if err := json.Unmarshal([]byte(l), &e); err != nil {
+			return nil, err
+		}
+		at, _ := strconv.ParseInt(e.At, 10, 64)
+		switch e.ID {
+		case msgStopping:
+			began, killed = at, false
+		case msgFailed:
+			killed = killed || e.Result == "timeout"
+		case msgStopped:
+			if began > 0 {
+				out = append(out, stopped{took: time.Duration(at-began) * time.Microsecond, killed: killed})
+			}
+			began = 0
+		}
+	}
+	return out, nil
+}
+
+// targetStops are the target's stops so far: from systemd's journal on the
+// box, from the stand-in systemctl's log on a workstation.
+func (in *installation) targetStops() ([]stopped, error) {
+	if !prof.box {
+		return fakeStops(filepath.Join(in.state, "stops.log"))
+	}
+	run("", nil, nil, "journalctl", "--sync")
+	r := run("", nil, nil, "journalctl", "-u", in.unitName()+".service", "-o", "json", "--no-pager", "--output-fields=MESSAGE_ID,UNIT_RESULT")
+	if r.code != 0 {
+		return nil, errors.New(r.String())
+	}
+	return stopsIn(r.stdout)
+}
+
+// recordStops says how long the target took to stop, each time, and that
+// none took the unit's whole limit.
+func (in *installation) recordStops(t *testing.T, item int, what string) {
+	t.Helper()
+	stops, err := in.targetStops()
+	ok, said := len(stops) > 0 && err == nil, make([]string, 0, len(stops))
+	for _, s := range stops {
+		l := s.took.Round(time.Millisecond).String()
+		if s.killed {
+			l += " (killed at systemd's limit)"
+		}
+		said = append(said, l)
+		ok = ok && !s.killed && s.took < unitStopTimeout
+	}
+	detail := strings.Join(said, ", ")
+	if err != nil {
+		detail = err.Error()
+	}
+	measure(fmt.Sprintf("item %d: %s: the target's stop", item, what), detail)
+	record(t, item, what+": the target stops by itself within the unit's "+unitStopTimeout.String(), ok, detail)
 }
 
 // removeUnit stops and removes the run's unit (its exact name only).
@@ -577,15 +689,17 @@ networks:
 
 // --- the Coolify domain move (box, B3) ---
 
-// coolifyCase: the source and the 0.50 target are apps the owner creates
-// in the lab Coolify; the migration pauses at each step only the owner can
-// make (exit 75), the harness then resuming.
-func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
-	const item = 11
-	digests, err := os.ReadFile(filepath.Join(releaseDir, "coolify-image-digests.env"))
-	if err != nil {
-		t.Fatal(err)
-	}
+// coolifyFiles are the operator's files of a run on the lab Coolify: the
+// source app's secrets (their variables in lines), the operator's backup
+// key and destination, and a TMPDIR the image's user can pass through.
+type coolifyFiles struct {
+	base, secrets, tmp           string
+	lines                        []string
+	bek, destinations, readCreds string
+}
+
+func coolifyFilesFor(t *testing.T, s3 *s3Server, bucket string) coolifyFiles {
+	t.Helper()
 	// The source's secrets as host files (infra/coolify/README.md step 4),
 	// the operator's backup key and destination: generated by the run,
 	// shown to the owner as paths only.
@@ -634,10 +748,24 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	if err := os.WriteFile(bek, []byte(secret(hexBytes(32))+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s3.createBucket(t, "vl-rh-coolify")
+	s3.createBucket(t, bucket)
 	destinations, readCreds := filepath.Join(op, "backup-destinations.json"), filepath.Join(op, "read.json")
-	s3.writeDestination(t, destinations, "vl-rh-coolify", "write.json")
+	s3.writeDestination(t, destinations, bucket, "write.json")
 	s3.writeCredentials(t, readCreds)
+	return coolifyFiles{base: base, secrets: secretsDir, tmp: tmpDir, lines: lines, bek: bek, destinations: destinations, readCreds: readCreds}
+}
+
+// coolifyCase: the source and the 0.50 target are apps the owner creates
+// in the lab Coolify; the migration pauses at each step only the owner can
+// make (exit 75), the harness then resuming.
+func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
+	const item = 11
+	digests, err := os.ReadFile(filepath.Join(releaseDir, "coolify-image-digests.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := coolifyFilesFor(t, s3, "vl-rh-coolify")
+	base, tmpDir, lines, bek, destinations, readCreds := f.base, f.tmp, f.lines, f.bek, f.destinations, f.readCreds
 	pause(t, "source-app",
 		"In the lab Coolify (never production's), in a throwaway project, create a Docker Compose app from",
 		"the 0.23.0 candidate's checkout, Base Directory /infra/compose, Docker Compose Location /docker-compose.coolify.yml,",
@@ -736,6 +864,10 @@ func publicCase(t *testing.T, rel release, s3 *s3Server) {
 		s := seed(t, in)
 		record(t, 9, "seeded through the real /v1", true, fmt.Sprintf("%d values, %d versions", s.values, s.versions))
 	}
+	if os.Getenv("VL_RH_ONLY") == "setup" {
+		t.Logf("set up %s in %s (VL_RH_ONLY=setup)", in.project, in.dir)
+		return
+	}
 	issuer := func() string {
 		conn, err := tls.Dial("tcp", net.JoinHostPort(prof.publicBind, "443"), in.client.Transport.(*http.Transport).TLSClientConfig)
 		if err != nil {
@@ -749,4 +881,8 @@ func publicCase(t *testing.T, rel release, s3 *s3Server) {
 	migration(t, in, rel, s3)
 	after := issuer()
 	record(t, item, "the target serves its own Pebble certificate on the same name", strings.Contains(after, "Pebble"), after)
+	if r := run("", nil, nil, "systemctl", "stop", in.unitName()+".service"); r.code != 0 {
+		record(t, item, "the target is stopped", false, r.String())
+	}
+	in.recordStops(t, item, "public ingress")
 }

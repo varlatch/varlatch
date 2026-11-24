@@ -22,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 	"github.com/varlatch/varlatch/go/server/config"
@@ -151,7 +152,7 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 			}
 		}()
 	}
-	owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
+	_, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
 		return fail("%v; nothing was done", err)
 	}
@@ -166,7 +167,6 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 		return fail("cannot lock the data directory %s: %v", cfg.DataDir, err)
 	}
 	defer unlock()
-	defer giveToOwner(cfg.DataDir, owner)
 	journal := &takeoverJournal{path: filepath.Join(cfg.DataDir, TakeoverFile), controlURL: t.ControlURL}
 	rec, err := journal.readRecord()
 	if err != nil {
@@ -251,7 +251,7 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 	if t.AuthKeyFile == "" {
 		return fail("no auth key (tailnet_auth_key_file): the reach check's probe joins with it (it must be reusable)")
 	}
-	b, err := os.ReadFile(t.AuthKeyFile)
+	b, err := preread.ReadFile(t.AuthKeyFile)
 	if err != nil {
 		return fail("cannot read the auth key file: %v", err)
 	}

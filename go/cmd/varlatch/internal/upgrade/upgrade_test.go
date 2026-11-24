@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,14 +28,14 @@ import (
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
-// Two prereleases of the Go line, built from this checkout: 0.50.0-rc.3, on
-// this checkout's schema (fromSchema), and 0.50.0-rc.4 with G6's fixture
-// schema step (toSchema, compatible from 1: rollback-safe). "wrong" is rc.4's build saying rc.5 (a release whose
+// Two prereleases of the Go line, built from this checkout: 0.50.0-rc.4, on
+// this checkout's schema (fromSchema), and 0.50.0-rc.5 with G6's fixture
+// schema step (toSchema, compatible from 1: rollback-safe). "wrong" is rc.5's build saying rc.6 (a release whose
 // varlatchd is not the one its manifest names: its health checks fail);
 // "unsafe" the same step declared not rollback-safe.
 const (
-	fromVersion = "0.50.0-rc.3"
-	toVersion   = "0.50.0-rc.4"
+	fromVersion = "0.50.0-rc.4"
+	toVersion   = "0.50.0-rc.5"
 )
 
 // fromSchema is this checkout's schema version, as go/release/release.json
@@ -79,7 +80,7 @@ func build(t *testing.T, name string) []byte {
 		}
 		defer os.RemoveAll(dir)
 		for _, b := range []struct{ name, version, tags string }{
-			{"from", fromVersion, ""}, {"to", toVersion, "g6fixture"}, {"wrong", "0.50.0-rc.5", "g6fixture"}, {"unsafe", toVersion, "g6fixture,g6unsafe"},
+			{"from", fromVersion, ""}, {"to", toVersion, "g6fixture"}, {"wrong", "0.50.0-rc.6", "g6fixture"}, {"unsafe", toVersion, "g6fixture,g6unsafe"},
 		} {
 			out := filepath.Join(dir, b.name)
 			cmd := exec.Command("go", "build", "-tags", b.tags, "-trimpath",
@@ -123,8 +124,9 @@ func key(t *testing.T, path string) {
 
 func newHost(t *testing.T) *host { t.Helper(); return newHostOf(t, -1) }
 
-// newHostOf is newHost with varlatchd, its data directory and its keys
-// uid's, as the unit runs it as the varlatch user; -1 is the test's own.
+// newHostOf is newHost with varlatchd and its data directory uid's, as the
+// unit runs it as the varlatch user, its keys root's, which the unit hands
+// it (here: copies of its own); -1 is the test's own user.
 func newHostOf(t *testing.T, uid int) *host {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -153,7 +155,23 @@ func newHostOf(t *testing.T, uid int) *host {
 	}
 	h.svc = &fakeService{bin: h.bin, conf: h.conf, uid: uid}
 	if uid >= 0 {
-		for _, p := range []string{h.data, filepath.Join(dir, "keys"), filepath.Join(dir, "keys", "root-kek"), filepath.Join(dir, "keys", "backup-key")} {
+		// The service reads its keys from its own copies, as the unit's
+		// credentials are.
+		own := filepath.Join(dir, "own")
+		if err := os.Mkdir(own, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range []string{"root-kek", "backup-key"} {
+			b, err := os.ReadFile(filepath.Join(dir, "keys", k))
+			if err != nil || os.WriteFile(filepath.Join(own, k), b, 0o400) != nil || os.Chown(filepath.Join(own, k), uid, uid) != nil {
+				t.Fatal(err)
+			}
+		}
+		h.svc.conf = filepath.Join(dir, "etc", "service.conf")
+		if err := os.WriteFile(h.svc.conf, []byte(strings.ReplaceAll(conf, filepath.Join(dir, "keys"), own)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{h.data, own} {
 			if err := os.Chown(p, uid, uid); err != nil {
 				t.Fatal(err)
 			}
@@ -183,11 +201,9 @@ func newHostOf(t *testing.T, uid int) *host {
 type fakeService struct {
 	bin, conf string
 	uid       int
-	// kill: Stop kills varlatchd, as systemd does one that does not stop.
-	kill bool
-	mu   sync.Mutex
-	cmd  *exec.Cmd
-	done chan struct{}
+	mu        sync.Mutex
+	cmd       *exec.Cmd
+	done      chan struct{}
 }
 
 func (f *fakeService) Start(context.Context) error {
@@ -198,7 +214,7 @@ func (f *fakeService) Start(context.Context) error {
 	}
 	cmd := exec.Command(filepath.Join(f.bin, "varlatchd"), "serve", "--config", f.conf)
 	if f.uid >= 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(f.uid), Gid: uint32(f.uid)}}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(f.uid), Gid: uint32(f.uid), Groups: []uint32{}}}
 	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -215,12 +231,6 @@ func (f *fakeService) Stop(context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.cmd == nil {
-		return nil
-	}
-	if f.kill {
-		_ = f.cmd.Process.Kill()
-		<-f.done
-		f.cmd = nil
 		return nil
 	}
 	_ = f.cmd.Process.Signal(syscall.SIGTERM)
@@ -297,12 +307,8 @@ func TestUpgradeBetweenTwoPrereleases(t *testing.T) {
 	h := newHost(t)
 	inst := h.inspect(t)
 	rel := h.release(t, "to", safe)
-	if !RollbackSafe(rel.Manifest, inst) || !DeclaredRollbackSafe(rel.Manifest, inst) {
-		t.Fatal("a manifest declared rollback-safe for rc.3 and compatible from schema 1 is rollback-safe for it")
-	}
-	jump := h.release(t, "to", release.Declaration{SchemaVersion: toSchema, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: "0.50.0-rc.0", SchemaVersion: fromSchema}, ReversibleTo: &reversible})
-	if RollbackSafe(jump.Manifest, inst) || DeclaredRollbackSafe(jump.Manifest, inst) {
-		t.Fatal("a manifest checked against another release declares nothing about rc.3")
+	if !RollbackSafe(rel.Manifest, inst) {
+		t.Fatalf("a manifest compatible from schema 1 is rollback-safe for schema %d", fromSchema)
 	}
 	var log bytes.Buffer
 	u := h.upgrader(nil)
@@ -311,7 +317,7 @@ func TestUpgradeBetweenTwoPrereleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, log.String())
 	}
-	if j.State != journal.Done || j.Step != journal.Checked || !j.RollbackSafe || !j.DeclaredRollbackSafe || j.From != fromVersion || j.To != toVersion || j.ToSchema != toSchema {
+	if j.State != journal.Done || j.Step != journal.Checked || !j.RollbackSafe || j.From != fromVersion || j.To != toVersion || j.ToSchema != toSchema {
 		t.Fatalf("journal: %+v", j)
 	}
 	u.mustServe(t, toVersion, toSchema)
@@ -398,17 +404,28 @@ func previousServes(t *testing.T, h *host, j *journal.Journal) {
 // Killed at each point, the next run finishes the upgrade (after its
 // checks) or undoes it (before them), and the host ends in that state.
 func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
-	points := []string{"verified", "snapshot", "stopping", "stop:done", "stopped", "prepared", "swap:original-aside", "swap:database-in",
-		"install:" + toVersion + ":varlatchd", "install:" + toVersion + ":varlatch", "swapped", "started", "checked"}
+	points := []string{"verified", "snapshot", "stopping", "stop:done", "stopped", "data:copy-database:create:varlatch.db", "prepared",
+		"data:keep-original:rename:original", "kept", "install:" + toVersion + ":varlatchd", "install:" + toVersion + ":varlatch", "installed",
+		"data:swap:rename:varlatch.db", "swapped", "start:" + toVersion, "started", "checked", "done"}
 	for _, point := range points {
 		t.Run(point, func(t *testing.T) {
 			h := newHost(t)
 			inst := h.inspect(t)
 			j, err := h.upgrader(func(p string) bool { return p == point }).Run(context.Background(), inst, h.release(t, "to", safe))
-			if !errors.Is(err, errKilled) || !j.Pending() {
+			if !errors.Is(err, errKilled) || j.Pending() != (point != "done") {
 				t.Fatalf("killed at %s: %+v, %v", point, j, err)
 			}
 			// A new run first finishes or undoes it.
+			if point == "done" {
+				if j, err := h.upgrader(nil).Recover(context.Background()); j != nil || err != nil {
+					t.Fatalf("recover: %+v, %v", j, err)
+				}
+				h.upgrader(nil).mustServe(t, toVersion, toSchema)
+				if left, _ := filepath.Glob(filepath.Join(h.data, "upgrades", "*", "original")); len(left) > 0 {
+					t.Fatalf("%s is left", left)
+				}
+				return
+			}
 			if _, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe)); err == nil || !strings.Contains(err.Error(), "is not over") {
 				t.Fatalf("a run over a pending upgrade: %v", err)
 			}
@@ -433,7 +450,7 @@ func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
 
 // An undo that is itself killed is undone again by the next run.
 func TestAKilledUndoIsUndoneAgain(t *testing.T) {
-	for _, point := range []string{"undo:stopped", "undo:restored", "install:" + fromVersion + ":varlatchd"} {
+	for _, point := range []string{"undo:stopped", "data:put-back:rename:varlatch.db", "undo:files-back", "install:" + fromVersion + ":varlatchd", "undo:binaries-back", "start:" + fromVersion, "undo:checked"} {
 		t.Run(point, func(t *testing.T) {
 			h := newHost(t)
 			inst := h.inspect(t)
@@ -458,7 +475,7 @@ func TestAKilledUndoIsUndoneAgain(t *testing.T) {
 func TestAFullDiskIsUndone(t *testing.T) {
 	for _, c := range []struct{ name, suffix string }{
 		{"staging", filepath.Join(toVersion, "varlatchd")},
-		{"the database copy", filepath.Join("db", "varlatch.db")},
+		{"the database copy", filepath.Join("db"+makingDir, "varlatch.db")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHost(t)
@@ -489,7 +506,7 @@ func TestAFailedHealthCheckIsUndone(t *testing.T) {
 	u := h.upgrader(nil)
 	u.HealthTimeout = 3 * time.Second
 	j, err := u.Run(context.Background(), inst, h.release(t, "wrong", safe))
-	if err == nil || !strings.Contains(err.Error(), "it runs 0.50.0-rc.5, not "+toVersion) {
+	if err == nil || !strings.Contains(err.Error(), "it runs 0.50.0-rc.6, not "+toVersion) {
 		t.Fatalf("%v", err)
 	}
 	previousServes(t, h, j)
@@ -546,7 +563,7 @@ func TestFetch(t *testing.T) {
 		{"a wrong identity", &fakerelease.Release{Files: files, Identity: release.Identity("0.50.0-rc.9")}, "does NOT verify"},
 		{"no signature", &fakerelease.Release{Files: files, NoSignature: true}, "has no signature"},
 		{"a changed download", &fakerelease.Release{Files: files, Served: map[string][]byte{server: []byte("other")}}, "does not match SHA256SUMS"},
-		{"another release's manifest", &fakerelease.Release{Files: map[string][]byte{cli: []byte("cli"), server: []byte("server"), name: mustManifest(t, "0.50.0-rc.3")}}, "is for 0.50.0-rc.3"},
+		{"another release's manifest", &fakerelease.Release{Files: map[string][]byte{cli: []byte("cli"), server: []byte("server"), name: mustManifest(t, "0.50.0-rc.4")}}, "is for 0.50.0-rc.4"},
 	} {
 		srv.Publish(toVersion, c.r)
 		if _, err := Fetch(context.Background(), srv.Source(), toVersion, "amd64"); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "nothing was changed") {
@@ -617,7 +634,7 @@ func TestNotEnoughSpaceChangesNothing(t *testing.T) {
 
 	// Two paths on one filesystem are counted once, against its free space.
 	FreeSpace = func(path string) (uint64, uint64, error) { return 1 << 40, 7, nil }
-	if err := h.upgrader(nil).enoughSpace(inst, h.release(t, "to", safe)); err != nil {
+	if err := h.upgrader(nil).enoughSpace(context.Background(), inst, h.release(t, "to", safe)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -648,4 +665,73 @@ func TestALinkedUpgradesDirectoryIsRefused(t *testing.T) {
 		t.Fatalf("written or removed through the link: %v", entries)
 	}
 	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
+}
+
+// As root with varlatchd another user's, as the unit runs it: the data
+// directory's work is that user's (a child of this program, killed at each
+// of its points too), and nothing there is root's after.
+func TestUpgradeAsRootWorksAsTheOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("runs varlatchd as another user, as root (go.yml)")
+	}
+	const uid = 65534
+	owned := func(h *host, what string) {
+		t.Helper()
+		_ = filepath.WalkDir(h.data, func(p string, _ fs.DirEntry, err error) error {
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Lstat(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Sys().(*syscall.Stat_t).Uid; got != uid {
+				t.Errorf("%s: %s is uid %d's", what, p, got)
+			}
+			return nil
+		})
+	}
+	h := newHostOf(t, uid)
+	inst := h.inspect(t)
+	if j, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe)); err != nil || j.State != journal.Done {
+		t.Fatalf("%+v, %v", j, err)
+	}
+	h.upgrader(nil).mustServe(t, toVersion, toSchema)
+	owned(h, "an upgrade")
+
+	for _, point := range []string{"data:copy-database:create:varlatch.db", "data:keep-original:rename:original", "data:swap:rename:varlatch.db"} {
+		h := newHostOf(t, uid)
+		inst := h.inspect(t)
+		u := h.upgrader(func(string) bool { return false })
+		u.ChildCrash = point
+		if j, err := u.Run(context.Background(), inst, h.release(t, "to", safe)); !errors.Is(err, errKilled) || !j.Pending() {
+			t.Fatalf("%s: %+v, %v", point, j, err)
+		}
+		j, err := h.upgrader(nil).Recover(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", point, err)
+		}
+		previousServes(t, h, j)
+		owned(h, point)
+	}
+
+	// A link of that user's leads the upgrade nowhere.
+	h = newHostOf(t, uid)
+	inst = h.inspect(t)
+	outside := filepath.Join(h.dir, "roots")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(h.data, "upgrades")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Lchown(filepath.Join(h.data, "upgrades"), uid, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe)); err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("%v", err)
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("written through a link: %v", entries)
+	}
 }

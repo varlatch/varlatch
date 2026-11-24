@@ -17,6 +17,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/keyenv"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/config"
@@ -205,6 +206,12 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, err.Error())
 		return ExitFailure
 	}
+	if !staysRoot(cfg, sub, rest) {
+		if err := becomeOwner(cfg, func() { keepForOwner(cfg, sub, rest) }); err != nil {
+			fmt.Fprintf(stderr, "varlatchd admin %s: %v\n", sub, err)
+			return ExitConfig
+		}
+	}
 	switch {
 	case sub == "config":
 		return runConfigCheck(cfg, stdout, stderr)
@@ -369,7 +376,7 @@ func parseAdmin(sub string, args []string) (adminArgs, string) {
 // lock: the Root KEK, the database (its schema and installation created if
 // this is the first use, as serve would), and the canary checked.
 func openOffline(cfg *config.Config, what string, stderr io.Writer) (*hostEnv, int) {
-	material, err := os.ReadFile(cfg.RootKEKFile)
+	material, err := preread.ReadFile(cfg.RootKEKFile)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the Root KEK file: %v\n", what, err)
 		return nil, ExitFailure

@@ -38,7 +38,7 @@ const upgradeUsage = `Usage:
                 --check looks for a newer release and records what it found for the dashboard's notice. --rollback
                 returns to the release the last upgrade came from: keeping every change when that release opens the
                 database as it is, else restoring the pre-upgrade snapshot, after listing what is lost
-                (--accept-data-loss). A Compose installation's upgrade is varlatch-ts upgrade)`
+                (--accept-data-loss, for scripts). A Compose installation's upgrade is varlatch-ts upgrade)`
 
 // UpgradeHelp is upgradeUsage, for the transcripts' accepted difference.
 const UpgradeHelp = upgradeUsage
@@ -402,6 +402,9 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 	}
 	last := plan.Last
 	lines := []string{"", "  varlatchd " + last.To + " -> back to " + last.From, "  rule:      " + plan.Rule}
+	if r := last.LastRollback; r != nil {
+		lines = append(lines, "  before:    a rollback begun before was undone ("+Printable(r.At)+": "+Printable(r.Reason)+")")
+	}
 	if plan.Migration != "" {
 		lines = append(lines, "  migration: "+plan.Migration)
 	}
@@ -412,26 +415,7 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 			"  database:  the pre-upgrade snapshot is restored",
 			"  snapshot:  "+last.Snapshot+" (taken "+last.SnapshotAt+")",
 		)
-		lines = append(lines, undoneLines(plan.Lost)...)
-		lines = append(lines, fmt.Sprintf("  LOST:      %d audit events recorded since %s (a few in the snapshot's last minute may be in it):", plan.Lost.Total, plan.Lost.Since))
-		types := make([]string, 0, len(plan.Lost.ByType))
-		for t := range plan.Lost.ByType {
-			types = append(types, t)
-		}
-		slices.Sort(types)
-		for _, t := range types {
-			lines = append(lines, fmt.Sprintf("             %6d  %s", plan.Lost.ByType[t], Printable(t)))
-		}
-		if len(plan.Lost.Latest) > 0 {
-			lines = append(lines, "             the newest:")
-			for _, c := range plan.Lost.Latest {
-				org := "the installation"
-				if c.OrganizationID != nil {
-					org = Printable(*c.OrganizationID)
-				}
-				lines = append(lines, "               "+Printable(c.OccurredAt)+"  "+Printable(c.EventType)+" ("+Printable(c.Decision)+", "+org+")")
-			}
-		}
+		lines = append(lines, lostLines(plan.Lost)...)
 		lines = append(lines, "  NOT COUNTED: "+notCounted, "             The database the rollback replaces is kept with it for 30 days.")
 	}
 	lines = append(lines, "")
@@ -452,7 +436,7 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 		if !ok {
 			return r.println("Nothing was changed.")
 		}
-	case !yes:
+	case plan.Safe && !yes:
 		if !isTerminal(r.Stdin) {
 			return Fail("varlatch upgrade --rollback: not a terminal: pass --yes to roll back without a prompt. Nothing was changed.", ExitFailure)
 		}
@@ -464,10 +448,24 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 			return r.println("Nothing was changed.")
 		}
 	}
+	// What was made between the list and the stop is lost too: asked again,
+	// and never taken for accepted without a terminal.
+	grown := func(now *upgrade.Changes) (bool, error) {
+		lines := append([]string{"", "  More changes were made before varlatchd stopped. All the rollback loses now:"}, lostLines(now)...)
+		for _, line := range append(lines, "") {
+			if err := r.println(line); err != nil {
+				return false, err
+			}
+		}
+		if !isTerminal(r.Stdin) {
+			return false, nil
+		}
+		return newTerminalPrompter(r).confirm("Restore the pre-upgrade snapshot and lose these changes?", false)
+	}
 	// Its time begins now: the prompt may have waited.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), upgradeTimeout)
 	defer cancel()
-	j, err := u.Rollback(ctx, plan)
+	j, err := u.Rollback(ctx, plan, grown)
 	if err != nil {
 		return upgradeFailure(err)
 	}
@@ -477,7 +475,7 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 	if plan.Safe {
 		return nil
 	}
-	for _, line := range afterRestore(last.From, filepath.Join(j.Work, "original")) {
+	for _, line := range afterRestore(last.From, filepath.Join(j.Work, "original"), upgrade.Held(j.DataDir)) {
 		if err := r.println(line); err != nil {
 			return err
 		}
@@ -491,6 +489,31 @@ const notCounted = "Only audited changes are counted. Also lost or reverted: sig
 
 // undoneShown is how many of them are shown, the newest.
 const undoneShown = 200
+
+// lostLines are the changes a restore loses, what it takes back first.
+func lostLines(lost *upgrade.Changes) []string {
+	lines := undoneLines(lost)
+	lines = append(lines, fmt.Sprintf("  LOST:      %d audit events recorded since %s (a few in the snapshot's last minute may be in it):", lost.Total, lost.Since))
+	types := make([]string, 0, len(lost.ByType))
+	for t := range lost.ByType {
+		types = append(types, t)
+	}
+	slices.Sort(types)
+	for _, t := range types {
+		lines = append(lines, fmt.Sprintf("             %6d  %s", lost.ByType[t], Printable(t)))
+	}
+	if len(lost.Latest) > 0 {
+		lines = append(lines, "             the newest:")
+		for _, c := range lost.Latest {
+			org := "the installation"
+			if c.OrganizationID != nil {
+				org = Printable(*c.OrganizationID)
+			}
+			lines = append(lines, "               "+Printable(c.OccurredAt)+"  "+Printable(c.EventType)+" ("+Printable(c.Decision)+", "+org+")")
+		}
+	}
+	return lines
+}
 
 // undoneLines are the revocations, removals, rotations, replacements,
 // deletions and freezes the restore takes back, listed before anything
@@ -520,21 +543,27 @@ func undoneLines(lost *upgrade.Changes) []string {
 // afterRestore is what to do once a restore has taken changes back:
 // with the commands the release returned to has, and no command run for
 // the operator.
-func afterRestore(release, kept string) []string {
-	return []string{
-		"",
+func afterRestore(release, kept string, held bool) []string {
+	lines := []string{""}
+	if held {
+		lines = append(lines,
+			"The installation is held after the restore: it serves, but what it would deliver or destroy on its own (webhooks, sync,",
+			"deletions) waits until you have gone through the list below and run sudo varlatch admin restore resume.",
+			"")
+	}
+	return append(lines,
 		"What to do now: the restore took the changes listed above back.",
 		"  - Revoke again each credential listed as revoked (varlatch credential revoke <identity-id> <credential-id>), retire again",
 		"    each identity listed as retired (varlatch identity retire <identity-id> --confirm <name>), revoke again each grant,",
 		"    capability, binding, invitation or requirement, and remove again each member, as they are listed.",
 		"  - Rotate again each Secret listed as rotated and replace again each credential listed as replaced: the old values are",
 		"    current again. Delete again what is listed as deleted.",
-		"  - Sign-outs since the snapshot are undone: a session ended since then is valid again until it expires. " + release + " has no",
+		"  - Sign-outs since the snapshot are undone: a session ended since then is valid again until it expires. "+release+" has no",
 		"    command that signs everyone out; ask the people affected to sign out of the dashboard and in again.",
 		"  - Approvals pending at the snapshot are pending again; webhooks may deliver events again; sync targets converge back to",
 		"    the restored values.",
-		"  The database the rollback replaced is kept in " + kept + " (30 days).",
-	}
+		"  The database the rollback replaced is kept in "+kept+" (30 days).",
+	)
 }
 
 // recoveredMessage says what Recover did with an interrupted upgrade or
@@ -543,9 +572,8 @@ func recoveredMessage(j *journal.Journal) string {
 	what := "upgrade"
 	again := "Run varlatch upgrade again to upgrade."
 	if j.Kind == journal.Rollback {
-		// A rollback is not run twice: going back further is by hand.
 		what = "rollback"
-		again = "A rollback is not run again: to go back, stop varlatchd and restore the pre-upgrade snapshot by hand with " + j.To + "'s varlatchd admin backup restore --in " + j.Snapshot + "."
+		again = "Run varlatch upgrade --rollback again to go back."
 	}
 	if j.State == journal.Done {
 		if j.Kind == journal.Rollback {

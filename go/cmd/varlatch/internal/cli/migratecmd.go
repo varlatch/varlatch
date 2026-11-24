@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
@@ -239,6 +240,29 @@ func migrateCommand(r *Run) error {
 		}
 		return r.showJournal(j, o.asJSON)
 	}
+	// Everything this command writes on stderr from here goes through one
+	// writer, which nothing waits for; and a pipe whose reader went away
+	// ends no migration half way: a write to it fails, and is ignored. For
+	// the rest of the process, so that what is printed last cannot end it
+	// either, with another status than the result's.
+	_ = ignoreBrokenPipe()
+	lines := migrate.NewLines(func(s string) { _ = r.warn(s) })
+	err = r.migrateRun(o, lines)
+	// Its failure is its last line, and does not wait for a reader either.
+	var e *exitError
+	if errors.As(err, &e) && !e.silent && e.constant == "" && e.usage == "" {
+		lines.Say(e.message)
+		err = ExitWith(e.code)
+	}
+	lines.Close(migrateLastWait)
+	return err
+}
+
+// migrateLastWait bounds what a migration waits for its reader at its end.
+const migrateLastWait = 5 * time.Second
+
+// migrateRun is a run that may change something.
+func (r *Run) migrateRun(o migrateOptions, lines *migrate.Lines) (err error) {
 	// --resume and --abort read the BEK when given: a migration redone
 	// from its preflight needs it (its backup refuses without it), a
 	// reverse never.
@@ -277,7 +301,7 @@ func migrateCommand(r *Run) error {
 			// A run killed before it closed its key left it live: said, with
 			// its prefix. This run's is recorded until it is closed.
 			if note := unclosedKeyNote(o.from); note != "" {
-				_ = r.warn(note)
+				lines.Say(note)
 			}
 			markKeyOpen(o.from, api.KeyPrefix(), time.Now())
 		}
@@ -291,7 +315,7 @@ func migrateCommand(r *Run) error {
 				prefix = api.KeyPrefix()
 			}
 			if err := cp.Close(ctx); err != nil {
-				_ = r.warn("varlatch migrate: " + err.Error() + "; it expires on its own within the hour, or expire it now: headscale apikeys expire --prefix " + cmp.Or(prefix, "<its prefix>"))
+				lines.Say("varlatch migrate: " + err.Error() + "; it expires on its own within the hour, or expire it now: headscale apikeys expire --prefix " + cmp.Or(prefix, "<its prefix>"))
 				return
 			}
 			if api != nil {
@@ -319,14 +343,26 @@ func migrateCommand(r *Run) error {
 			Destination: o.destination, DestinationsFile: o.destinationsFile, ReadCredentialsFile: o.readCredentials},
 		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: targetCredentials(varlatchdEnviron(r), o.config)}, Unit: o.unit},
 		Options: migrate.Options{MaxDowntime: o.maxDowntime, Drain: o.drain, TransferTimeout: o.transferTimeout, Ingress: migrate.Ingress(o.ingress),
-			Say: func(s string) { _ = r.warn(s) }},
+			Say: lines.Say},
 		BEK:     bek,
 		Prober:  migrate.HTTPProber{},
 		Tailnet: tailnetOptions,
 	}
-	e.Target.(*migrate.Host).TailnetAuthKey = tailnetAuthKey
+	if !o.asJSON {
+		e.Options.Progress = lines.Progress
+	}
+	host := e.Target.(*migrate.Host)
+	host.TailnetAuthKey = tailnetAuthKey
+	e.Options.StageAs = func(ctx context.Context) (*migrate.Owner, string, error) {
+		owner, err := host.DataOwner(ctx)
+		if err != nil || owner == nil {
+			return nil, "", err
+		}
+		base, err := migrate.StageBase(o.from)
+		return owner, base, err
+	}
 	if o.config != "" {
-		if err := r.targetMaker(e, o, varlatchd); err != nil {
+		if err := r.targetMaker(e, o, varlatchd, lines); err != nil {
 			return err
 		}
 	}
@@ -344,6 +380,7 @@ func migrateCommand(r *Run) error {
 		}
 		img.Host.TailnetAuthKey = tailnetAuthKey
 		e.Target = img
+		e.Options.StageAs = nil
 		e.Options.Stage, e.Options.StageBase, e.Options.StageKeep = &migrate.ImageUser, base, filepath.Dir(img.Host.Config)
 	}
 	var j *migrate.Journal
@@ -361,6 +398,7 @@ func migrateCommand(r *Run) error {
 	default:
 		j, err = e.Run(context.Background(), o.dryRun)
 	}
+	lines.Flush(time.Second)
 	// What the journal records, read back: a refusal's request (such as
 	// --delete-old-data refused before anything was done) is not shown as
 	// done.
@@ -368,8 +406,16 @@ func migrateCommand(r *Run) error {
 		if disk, rerr := migrate.Status(o.from); rerr == nil && disk != nil {
 			j = disk
 		}
-		if serr := r.showJournal(j, o.asJSON); serr != nil {
-			return serr
+		// A journal nobody reads is no other result: stdout may be a pipe
+		// that is full, and is not waited for longer than stderr is.
+		shown := make(chan error, 1)
+		go func() { shown <- r.showJournal(j, o.asJSON) }()
+		select {
+		case serr := <-shown:
+			if serr != nil && err == nil && !errors.Is(serr, syscall.EPIPE) {
+				return serr
+			}
+		case <-time.After(migrateLastWait):
 		}
 	}
 	if errors.Is(err, migrate.ErrAwaitingOperator) {
@@ -644,7 +690,7 @@ func targetNeedsRoot(statErr error, j *migrate.Journal) string {
 // --config is setup's place: migrate makes the target there when it is
 // missing (as root, on a systemd host), and undoes what it made. Another
 // place must be a prepared target.
-func (r *Run) targetMaker(e *migrate.Engine, o migrateOptions, varlatchd string) error {
+func (r *Run) targetMaker(e *migrate.Engine, o migrateOptions, varlatchd string, lines *migrate.Lines) error {
 	host, seam := targetHost(varlatchd, varlatchdEnviron(r))
 	_, statErr := os.Stat(o.config)
 	missing := errors.Is(statErr, fs.ErrNotExist)
@@ -659,6 +705,6 @@ func (r *Run) targetMaker(e *migrate.Engine, o migrateOptions, varlatchd string)
 		return Fail("varlatch migrate: "+why+", which needs root on a systemd host (sudo varlatch migrate ...)", ExitFailure)
 	}
 	e.Maker = &setupMaker{host: host, given: setup.Answers{ACMEEmail: o.acmeEmail, Listen: o.listen}, accept: o.acceptExistingUser,
-		say: func(s string) error { return r.warn(s) }}
+		say: func(s string) error { lines.Say(s); return nil }}
 	return nil
 }

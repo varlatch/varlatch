@@ -60,7 +60,7 @@ func (e *Engine) reverseSides() (ReverseSource, ReverseTarget, error) {
 	if !ok {
 		return nil, nil, errors.New("this target cannot be reversed")
 	}
-	return rs, rt, nil
+	return steppedSource{rs, e}, steppedTarget{rt, e}, nil
 }
 
 // sidecarOwned is whether the forward migration's tailnet handoff moved
@@ -219,7 +219,7 @@ func (e *Engine) askRoute(ctx context.Context, j *Journal) error {
 	// With its dashboard stopped, whatever answers is not the TypeScript
 	// installation, and the proxy's own error through the route bears its
 	// header too.
-	if err := e.Source.StopIngress(ctx, Coolify); err != nil {
+	if err := e.step("stopping the source's dashboard", func() error { return e.Source.StopIngress(ctx, Coolify) }); err != nil {
 		return fmt.Errorf("stopping the source's dashboard: %w; nothing was done", err)
 	}
 	sleep := e.sleep
@@ -291,10 +291,10 @@ func (e *Engine) checkRoute(ctx context.Context, j *Journal, rs ReverseSource) e
 		return fmt.Errorf("the TypeScript dashboard was not started: %w", err)
 	}
 	// Made again, not only started: it resolves varlatchd once.
-	if err := e.Source.StartIngress(ctx, Coolify, true); err != nil {
+	if err := e.step("starting the TypeScript dashboard", func() error { return e.Source.StartIngress(ctx, Coolify, true) }); err != nil {
 		return fmt.Errorf("starting the TypeScript dashboard: %w", err)
 	}
-	if err := e.waitForGate(ctx, gp, j); err != nil {
+	if err := e.step(e.awaiting(j, "the TypeScript installation's gate, by the operator's route"), func() error { return e.waitForGate(ctx, gp, j) }); err != nil {
 		return fmt.Errorf("%w; check %s names the dashboard's container (its text is below), then varlatch migrate --rollback again; or remove it, and Go serves the address as before:\n%s", err, path, text)
 	}
 	return nil
@@ -347,7 +347,7 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 	}
 	crashPoint("rollback barrier held")
 
-	dir, err := e.scratchDir()
+	dir, err := e.scratchDir(ctx)
 	if err != nil {
 		return e.undoReverse(ctx, j, err)
 	}
@@ -478,7 +478,7 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 		if j.Rollback.GoStopped {
 			return true, nil
 		}
-		if err := e.Target.Stop(ctx); err != nil {
+		if err := e.step("stopping Go", func() error { return e.Target.Stop(ctx) }); err != nil {
 			var human *HumanStep
 			if errors.As(err, &human) {
 				j.Rollback.Asked = true
@@ -584,7 +584,7 @@ func (e *Engine) waitForSource(ctx context.Context, j *Journal) error {
 	if j.Rollback.Export != nil {
 		want = j.Rollback.Export.InstallationID
 	}
-	return e.waitForTypeScript(ctx, j, want)
+	return e.step(e.awaiting(j, "the TypeScript release"), func() error { return e.waitForTypeScript(ctx, j, want) })
 }
 
 // waitForTypeScript probes the public URL until it answers from the
@@ -725,7 +725,7 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		}
 		// Asked again below, when it could not.
 		_ = rs.StopServing(ctx, j.Ingress)
-		if err := e.Target.Start(ctx); err != nil {
+		if err := e.step("starting Go again", func() error { return e.Target.Start(ctx) }); err != nil {
 			var human *HumanStep
 			if errors.As(err, &human) {
 				e.say("To undo, by hand: %s Then run varlatch migrate --abort (or --resume) again.", human.Instruction)
@@ -759,7 +759,7 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	// for the route's check; the name is Go's node's, so the old node is
 	// stopped again (not logged out), its state kept for the window.
 	if ts, ok := e.Source.(TailnetSource); ok && sidecarOwned(j) {
-		if err := stopSidecar(ctx, ts); err != nil {
+		if err := e.step("stopping the TypeScript release's tailnet sidecar", func() error { return stopSidecar(ctx, ts) }); err != nil {
 			problems = append(problems, fmt.Errorf("stopping the TypeScript release's tailnet sidecar: %w", err))
 		}
 	}
@@ -910,6 +910,7 @@ func (e *Engine) finishRestore(ctx context.Context, j *Journal) error {
 // directory, or its stage directories.
 func (e *Engine) cleanReverseScratch() {
 	_ = cleanScratch(e.work())
+	_ = e.staged(context.Background())
 	if e.Options.Stage != nil && e.Options.StageBase != "" {
 		for _, re := range []*regexp.Regexp{leftoverStage} {
 			_ = removeMatchingExcept(e.Options.StageBase, re, true, e.Options.StageKeep)
@@ -957,7 +958,7 @@ func (e *Engine) finishRolledBack(ctx context.Context, j *Journal) error {
 		return err
 	}
 	if st.Running {
-		if err := e.Target.Stop(ctx); err != nil {
+		if err := e.step("stopping Go", func() error { return e.Target.Stop(ctx) }); err != nil {
 			return e.waitForHuman(err, "Then run varlatch migrate --resume again.")
 		}
 	}

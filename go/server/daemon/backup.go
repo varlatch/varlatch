@@ -16,6 +16,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 )
@@ -29,7 +30,7 @@ import (
 //	varlatchd admin backup run [--json]
 //	varlatchd admin backup status
 //	varlatchd admin backup test-bucket [--json]
-//	varlatchd admin backup restore --in <archive> [--backup-key-file <file>]   (offline only)
+//	varlatchd admin backup restore --in <archive> [--backup-key-file <file>] [--check]   (offline only, but for --check)
 //	varlatchd admin maintenance begin --ttl <duration>
 //	varlatchd admin maintenance end <lease id>
 //	varlatchd admin maintenance status
@@ -65,7 +66,7 @@ func commandTimeout(args []string) time.Duration {
 }
 
 const (
-	backupUsage      = "Usage: varlatchd admin backup run [--json [--verify-remote]] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] | varlatchd admin backup test-bucket [--json]"
+	backupUsage      = "Usage: varlatchd admin backup run [--json [--verify-remote]] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] [--check] | varlatchd admin backup test-bucket [--json]"
 	maintenanceUsage = "Usage: varlatchd admin maintenance begin --ttl <duration> | varlatchd admin maintenance end <lease id> | varlatchd admin maintenance status"
 )
 
@@ -226,11 +227,16 @@ func newBackups(env *hostEnv) *backups.Service {
 	return backups.New(o)
 }
 
-// restoreArgs reads `backup restore`'s flags: --in (required) and
-// --backup-key-file.
+// restoreArgs reads `backup restore`'s flags: --in (required),
+// --backup-key-file and --check.
 func restoreArgs(rest []string) (map[string]string, bool) {
 	v := map[string]string{}
 	for i := 0; i < len(rest); i += 2 {
+		if rest[i] == "--check" {
+			v["--check"] = "yes"
+			i--
+			continue
+		}
 		if i+1 >= len(rest) || (rest[i] != "--in" && rest[i] != "--backup-key-file") || rest[i+1] == "" {
 			return nil, false
 		}
@@ -239,12 +245,71 @@ func restoreArgs(rest []string) (map[string]string, bool) {
 	return v, v["--in"] != ""
 }
 
+// restoreKeys reads a restore's two keys; its status is 0 when both are
+// there.
+func restoreKeys(cfg *config.Config, args map[string]string, fail func(status int, format string, args ...any) int) (backup.BEK, []byte, int) {
+	var none backup.BEK
+	bekFile := args["--backup-key-file"]
+	if bekFile == "" {
+		bekFile = cfg.BackupKeyFile
+	}
+	if bekFile == "" {
+		return none, nil, fail(ExitConfig, "no Backup Encryption Key: give --backup-key-file, or set backup_key_file")
+	}
+	raw, err := preread.ReadFile(bekFile)
+	if err != nil {
+		return none, nil, fail(ExitFailure, "cannot read the Backup Encryption Key file: %v", err)
+	}
+	material, err := backup.ParseKey(string(raw))
+	clear(raw)
+	if err != nil {
+		return none, nil, fail(ExitConfig, "%v", err)
+	}
+	bek, err := backup.KeyBEK(material)
+	clear(material)
+	if err != nil {
+		return none, nil, fail(ExitConfig, "%v", err)
+	}
+	raw, err = preread.ReadFile(cfg.RootKEKFile)
+	if err != nil {
+		bek.Clear()
+		return none, nil, fail(ExitFailure, "cannot read the Root KEK file: %v", err)
+	}
+	rootKEK, err := envelope.ParseRootKEK(string(raw))
+	clear(raw)
+	if err != nil {
+		bek.Clear()
+		return none, nil, fail(ExitConfig, "the Root KEK file does not hold a Root KEK: %v", err)
+	}
+	return bek, rootKEK, 0
+}
+
+// checkRestore is `varlatchd admin backup restore --check`.
+func checkRestore(cfg *config.Config, args map[string]string, stdout io.Writer, fail func(status int, format string, args ...any) int) int {
+	bek, rootKEK, status := restoreKeys(cfg, args, fail)
+	if status != 0 {
+		return status
+	}
+	defer bek.Clear()
+	defer clear(rootKEK)
+	res, err := backups.CheckRestore(context.Background(), cfg, args["--in"], bek, rootKEK)
+	if err != nil {
+		return fail(ExitFailure, "%v", err)
+	}
+	fmt.Fprintf(stdout, "The archive %s of %s (created %s) opens with these keys, and this release restores it; nothing was changed.\n", res.ArchiveID, res.InstallationID, res.CreatedAt)
+	return 0
+}
+
 // restoreOffline is `varlatchd admin backup restore`: never through the
 // socket, since it replaces the database a running varlatchd holds. It
 // takes the data directory's lock (a running varlatchd holds it, and is
 // refused) and restores in this process, from the archive, the Backup
 // Encryption Key (--backup-key-file, else backup_key_file) and the Root
 // KEK (root_kek_file): the two keys held apart from the archive.
+//
+// With --check it only checks that the archive would restore: it opens, this
+// release restores it, and the Root KEK opens its canaries. It writes
+// nothing to keep, so a varlatchd may run.
 func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
 	const what = "varlatchd admin backup restore"
 	fail := func(status int, format string, args ...any) int {
@@ -252,9 +317,13 @@ func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer)
 		return status
 	}
 	args, _ := restoreArgs(rest)
+	check := args["--check"] != ""
 	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
 		return fail(ExitConfig, "%v; nothing was written", err)
+	}
+	if check {
+		return checkRestore(cfg, args, stdout, fail)
 	}
 	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second); err == nil {
 		_ = conn.Close()
@@ -273,42 +342,13 @@ func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer)
 			return fail(ExitFailure, "%v; nothing was written", err)
 		}
 	}
-	bekFile := args["--backup-key-file"]
-	if bekFile == "" {
-		bekFile = cfg.BackupKeyFile
-	}
-	if bekFile == "" {
-		return fail(ExitConfig, "no Backup Encryption Key: give --backup-key-file, or set backup_key_file")
-	}
-	raw, err := os.ReadFile(bekFile)
-	if err != nil {
-		return fail(ExitFailure, "cannot read the Backup Encryption Key file: %v", err)
-	}
-	material, err := backup.ParseKey(string(raw))
-	clear(raw)
-	if err != nil {
-		return fail(ExitConfig, "%v", err)
-	}
-	bek, err := backup.KeyBEK(material)
-	clear(material)
-	if err != nil {
-		return fail(ExitConfig, "%v", err)
+	bek, rootKEK, status := restoreKeys(cfg, args, fail)
+	if status != 0 {
+		return status
 	}
 	defer bek.Clear()
-	raw, err = os.ReadFile(cfg.RootKEKFile)
-	if err != nil {
-		return fail(ExitFailure, "cannot read the Root KEK file: %v", err)
-	}
-	rootKEK, err := envelope.ParseRootKEK(string(raw))
-	clear(raw)
-	if err != nil {
-		return fail(ExitConfig, "the Root KEK file does not hold a Root KEK: %v", err)
-	}
 	defer clear(rootKEK)
 	res, err := backups.Restore(context.Background(), cfg, args["--in"], bek, rootKEK, nil)
-	// Run as root, whatever it wrote (a gate that still stands included)
-	// becomes the data directory owner's, the user varlatchd runs as.
-	handOver(cfg.DataDir, config.DatabaseFile, config.DatabaseFile+"-wal", config.DatabaseFile+"-shm", backup.GateFile)
 	if err != nil {
 		return fail(ExitFailure, "%v", err)
 	}
