@@ -66,6 +66,7 @@ type archiveRunner struct {
 	running []string
 	stopped []string
 	host    *labelled
+	config  string
 }
 
 func (a *archiveRunner) Run(_ context.Context, _, _ string, args []string, _ []byte) (Ran, error) {
@@ -83,6 +84,9 @@ func (a *archiveRunner) Run(_ context.Context, _, _ string, args []string, _ []b
 	case j == "compose ps --status running --services":
 		return Ran{Answer: []byte(strings.Join(a.running, "\n") + "\n")}, nil
 	case j == "compose config --no-interpolate --format json":
+		if a.config != "" {
+			return Ran{Answer: []byte(a.config)}, nil
+		}
 		return Ran{Answer: []byte(stockConfig)}, nil
 	case strings.HasPrefix(j, "compose up -d --no-deps --no-recreate "):
 		a.running = append(a.running, args[5])
@@ -112,6 +116,13 @@ func TestServeForArchiveAPartialStart(t *testing.T) {
 	run.host.gates[stateVol.Name] = ""
 	if started, err := stockCompose(t, run).ServeForArchive(context.Background(), gate1); err == nil || !strings.Contains(err.Error(), "holds no gate") || len(started) != 0 || len(run.running) != 1 {
 		t.Fatalf("the gate lost: started %v, running %v, %v", started, run.running, err)
+	}
+	// Its varlatchd in a stopped sidecar's network, running still.
+	for sidecar, refused := range map[string]bool{"": true, "tailscale": false} {
+		run = &archiveRunner{running: []string{"postgres", "varlatchd", "convex-backend", sidecar}, config: sidecarConfig}
+		if started, err := stockCompose(t, run).ServeForArchive(context.Background(), gate1); len(started) != 0 || (err != nil) != refused || refused && !strings.Contains(err.Error(), "would bring the old Tailscale node back") {
+			t.Fatalf("the sidecar %q: %v %v", sidecar, started, err)
+		}
 	}
 	// Everything running already: nothing started, nothing to stop.
 	run = &archiveRunner{running: []string{"postgres", "varlatchd", "convex-backend"}}
