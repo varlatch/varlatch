@@ -931,6 +931,9 @@ func pasteFrom(h *fakeHost) func(q string) []byte {
 // configuration that names it, and the browser endpoint is off unless asked
 // for.
 func TestTailnetSetup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix modes and links")
+	}
 	h := newFakeHost(t)
 	o := options(h, &recorder{}, t.TempDir())
 	o.Given = Answers{Ingress: Tailnet, TailnetAuthKeyFile: "/srv/ts-key", Backups: "host"}
