@@ -56,6 +56,9 @@ type statusJSON struct {
 		RootKEK      bool `json:"rootKek"`
 		Installation bool `json:"installation"`
 	} `json:"ready"`
+	// UpgradeHold is why an upgrade holds it (server/maintenance): its
+	// listeners answer 503. "" when none does.
+	UpgradeHold string `json:"upgradeHold,omitempty"`
 }
 
 // statusOnline is `admin status` in this process: the running varlatchd
@@ -93,6 +96,9 @@ func runStatus(ctx context.Context, env *hostEnv, rest []string, stdout, stderr 
 	st.Version, st.SchemaVersion, st.Serving = buildinfo.Version, db.SchemaVersion, env.serving.Load()
 	if env.ready != nil {
 		st.Ready.Schema, st.Ready.RootKEK, st.Ready.Installation = env.ready(ctx)
+	}
+	if env.admission != nil {
+		st.UpgradeHold = env.admission.UpgradeHold()
 	}
 	if asJSON {
 		return printJSON(stdout, stderr, "varlatchd admin status", st)

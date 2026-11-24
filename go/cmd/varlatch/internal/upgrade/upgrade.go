@@ -963,8 +963,24 @@ func (u *Upgrader) promote(ctx context.Context, j *journal.Journal) error {
 	if err := u.tidy(ctx, j); err != nil {
 		return err
 	}
+	u.opened(ctx)
 	u.logf("varlatchd %s serves, after its health checks.", j.To)
 	return nil
+}
+
+// opened waits, a little, until the varlatchd that was held has read that
+// the upgrade is over: what comes after an upgrade finds it serving.
+func (u *Upgrader) opened(ctx context.Context) {
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		var st struct {
+			UpgradeHold string `json:"upgradeHold"`
+		}
+		out, err := u.admin(ctx, u.varlatchd(), "admin", "status", "--json")
+		if err != nil || json.Unmarshal(out, &st) != nil || st.UpgradeHold == "" {
+			return
+		}
+	}
+	u.logf("varlatchd has not opened yet: varlatch doctor says why.")
 }
 
 // tidy removes what an ended upgrade left in the data directory; what it
@@ -1053,6 +1069,7 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 	if err := u.tidy(ctx, j); err != nil {
 		return err
 	}
+	u.opened(ctx)
 	if j.Reached(journal.Stopping) {
 		u.logf("Undone: %s serves again, on its database as it was, after its health checks.", j.From)
 	} else {

@@ -180,6 +180,10 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 				}
 				getJSON(t, "http://"+r.addr+"/readyz", &answer)
 				code, out, _ := runAdmin(t, "doctor", "--json", "--config", in.conf)
+				var st statusJSON
+				if _, out, _ := runAdmin(t, "status", "--json", "--config", in.conf); json.Unmarshal([]byte(out), &st) != nil || st.UpgradeHold != want {
+					t.Fatalf("%s: admin status says %q", when, st.UpgradeHold)
+				}
 				if answer.Upgrade != want || code == ExitOK || !strings.Contains(out, remedy) {
 					t.Fatalf("%s: /readyz says %q, want %q; doctor: %d %s", when, answer.Upgrade, want, code, out)
 				}
