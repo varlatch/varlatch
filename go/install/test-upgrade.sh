@@ -427,40 +427,6 @@ for point in $KILLS; do
   if [ "$failures" -gt 0 ]; then finish; fi
 done
 
-# --- 4b. killed in an undo ---
-
-for point in $UNDOS; do
-  name=$(echo "undo-$point" | tr ':' '-')
-  export VARLATCH_TEST_UPGRADE_KILL="$point"
-  upgrade "$name" "$VARLATCH" "$BROKEN" --yes --accept-not-rollback-safe
-  unset VARLATCH_TEST_UPGRADE_KILL
-  case "$point" in
-    data:*) check "$name: killed there" [ "$status" = 1 ] ;;
-    *) check "$name: killed there" [ "$status" = 137 ] ;;
-  esac
-  restarted
-  item=UNDO_$(echo "$point" | tr -c 'A-Za-z0-9\n' _ | tr '[:lower:]' '[:upper:]')
-  written=no
-  for _ in 1 2; do
-    if put "$item"; then written=yes; break; fi
-    sleep 1
-  done
-  over=no
-  if journal_says undone; then over=yes; fi
-  if [ "$over" = no ]; then
-    check "$name: varlatchd serves nothing until the upgrade is over" [ "$written" = no ]
-    upgrade "$name-again" "$VARLATCH"
-    if [ "$status" != 0 ]; then tail -n 8 "$work/$name-again.out" >&2; fi
-    check "$name: run again, it exits 0" [ "$status" = 0 ]
-  fi
-  check "$name: undone: $NEXT serves" serves "$NEXT"
-  check "$name: the journal says undone" journal_says undone
-  check "$name: the data is there" has SECOND
-  check "$name: the data directory is varlatch's" data_is_varlatchs
-  if [ "$written" = yes ]; then check "$name: a write taken in between is there" has "$item"; fi
-  if [ "$failures" -gt 0 ]; then finish; fi
-done
-
 # --- 5. the rollback ---
 
 # killed_rollback <name> <point> <arguments...>: a rollback killed there, then
@@ -539,6 +505,43 @@ if has_rollback; then
 else
   echo "SKIP  rollback: this candidate has no upgrade --rollback"
 fi
+
+# --- 5b. killed in an undo ---
+
+# After the rollbacks: an upgrade that was undone leaves none to roll back.
+
+for point in $UNDOS; do
+  name=$(echo "undo-$point" | tr ':' '-')
+  export VARLATCH_TEST_UPGRADE_KILL="$point"
+  upgrade "$name" "$VARLATCH" "$BROKEN" --yes --accept-not-rollback-safe
+  unset VARLATCH_TEST_UPGRADE_KILL
+  case "$point" in
+    data:*) check "$name: killed there" [ "$status" = 1 ] ;;
+    *) check "$name: killed there" [ "$status" = 137 ] ;;
+  esac
+  restarted
+  item=UNDO_$(echo "$point" | tr -c 'A-Za-z0-9\n' _ | tr '[:lower:]' '[:upper:]')
+  written=no
+  for _ in 1 2; do
+    if put "$item"; then written=yes; break; fi
+    sleep 1
+  done
+  over=no
+  if journal_says undone; then over=yes; fi
+  if [ "$over" = no ]; then
+    check "$name: varlatchd serves nothing until the upgrade is over" [ "$written" = no ]
+    upgrade "$name-again" "$VARLATCH"
+    if [ "$status" != 0 ]; then tail -n 8 "$work/$name-again.out" >&2; fi
+    check "$name: run again, it exits 0" [ "$status" = 0 ]
+  fi
+  check "$name: undone: $NEXT serves" serves "$NEXT"
+  check "$name: the journal says undone" journal_says undone
+  check "$name: the data is there" has SECOND
+  check "$name: the data directory is varlatch's" data_is_varlatchs
+  if [ "$written" = yes ]; then check "$name: a write taken in between is there" has "$item"; fi
+  if [ "$failures" -gt 0 ]; then finish; fi
+done
+
 journalctl -u varlatchd.service --no-pager >"$work/journal.txt" 2>&1 || true
 check "no key in an upgrade's output, its journal or the unit's" no_key_in "$work"/*.out "$work/journal.txt" /etc/varlatch/upgrade.json
 check "varlatch doctor passes" doctor
