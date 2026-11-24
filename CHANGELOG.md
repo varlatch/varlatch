@@ -439,7 +439,7 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
   `varlatchd-image.txt`, listed in the signed `SHA256SUMS`, gives the
   image's digest to pin ([verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)).
 
-## 0.50.0-rc.4 (2026-11-24)
+## 0.50.0-rc.4 (2026-11-25)
 
 The fourth prerelease of the Go line (ADR-0059), to test upgrades, going
 back and restores, and the Go installation's documentation. **It is a
