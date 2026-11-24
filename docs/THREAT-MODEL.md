@@ -116,6 +116,9 @@ replay or a suite named here does not exist.
 | Refreshes are bounded: for a longer validity alone one is asked for once a minute at most (or a quarter of a shorter life), and one nobody asked for keeps a refresh token within its announced life alone, every ten minutes at most; connections that cannot be refreshed, or are slow, hold up no other Organization's | **SHIPPED GUARANTEE** | `server/capabilities.TestMinValidityAsksOnceAMinute`, `server/capabilities.TestKeepaliveEndsWithTheToken`, `server/capabilities.TestKeepaliveIsNotHeldUp` |
 | A connection's hosts bound where its access token may go, at issuing and again at each exercise; nothing is refreshed while the Organization is frozen or the connection is paused, disconnected or deleted | **SHIPPED GUARANTEE** | `server/capabilities.TestHosts`, `server/capabilities.TestAnInheritedConnection`, `server/capabilities.TestFrozenPausedAndDeleted`, `server/capabilities.TestRacesWithARefresh` |
 | On a server that does not know OAuth connections such an item has no value, and nothing of it is refreshed; a reverse migration carries no tokens | **SHIPPED GUARANTEE** | `server/capabilities.TestAnOlderServerReadsNoConnection`; `server/migration/check.TestTheReverseChecksWithConnections` |
+| An entry link (Go server) writes one item's value, once, while the item's value is the one there was when the link was made, its parent's included; of several submissions at once, one is taken, in the job that writes the value; nothing reads through a link, and looking at one, a scanner that runs the page included, uses nothing up | **SHIPPED GUARANTEE** | `server/capabilities.TestAValueIsEnteredOnce`, `server/capabilities.TestSubmittedByManyAtOnce` (`-race`), `server/capabilities.TestAChangedValueEndsTheLink`, `server/capabilities.TestReplacing`, `server/capabilities.TestAnInheritedValueIsNotOverridden`, `server/capabilities.TestAnEntryLinkIsDurable` |
+| Who makes an entry link gains no read, reveal or overwrite by it: `entry-link.create` and `entry-link.create-open` are in no role, count for no agent and no person, and replacing needs `config.value.write`; the maker's right, the freeze, and who the link is for are decided again when the value is entered | **SHIPPED GUARANTEE** | `server/capabilities.TestWhoMayMakeEntryLinks`, `server/capabilities.TestEntryLinkActionsAreNoBuiltInRoles`, `server/capabilities.TestWhoMayEnter`, `server/capabilities.TestWhatEndsWithItsMaker`, `server/capabilities.TestFrozenAndDeleted`, `server/capabilities.TestPasskeyVerification` |
+| An entry link's secret is in no request's address or header, no log, audit event, webhook or table (its hash is), and the value entered is in none of them and in no answer; the entry page loads nothing from another origin, sends no referrer, cannot be framed, and shows the caller's words as text without links, marked as the caller's | **SHIPPED GUARANTEE** | `server/capabilities.TestAValueIsEnteredOnce` (every row); `server/httpserver.TestTheEntryPagesHeaders`; `server/entry.TestDescriptions`, `FuzzDescription`; `apps/web` `entryLinks.test.tsx` |
 | These limits fail closed on a server that does not know them (an earlier release after a rollback, the TypeScript server after a reverse migration): it accepts neither the credential, nor an exchange under the binding, nor the Capability | **SHIPPED GUARANTEE** | `server/capabilities.TestLimitsFailClosedOnAnOlderServer`; `server/migration/check.TestTheReverseChecksWithLimits` |
 | Reference expansion at exercise is strict and capability-bound: referenced Secrets must be named in the Capability, non-sensitive pull-ins require the Agent's `config.value.read` and are audited before use, and any unresolvable reference denies the exercise rather than sending literal `${NAME}` upstream | **SHIPPED GUARANTEE** | replay `capabilities`; `server/values.TestExpandReferences`; suite `broker` |
 | Destination constraints are canonical host+port; wildcards never match the apex; every hop is independently checked and successful exercise is audited (host+port + `item@versionId`) before decryption | **SHIPPED GUARANTEE** | `server/authz.TestDestinationVectors`; replay `capabilities`; suite `broker` |
@@ -309,6 +312,46 @@ boundary. The limits:
   provider decides about, or delete one.
 - **The provider's account** is outside Varlatch: consent withdrawn there, a
   changed password or an administrator's policy ends a connection.
+
+**Entry links** (the Go server) let somebody write one value without being
+given the right. What is entered is never a reference (`${NAME}`), so it draws
+no other Secret out with it. The limits:
+
+- **A link open to anyone** is a bearer secret. Whoever has it first, the
+  person it was sent to or anybody who read the message, can enter a value of
+  their own choosing: what uses the item then uses *their* account or key, and
+  the audit log says only that it was somebody with the link. Its maker can
+  use it too, so `entry-link.create-open` is the right to write new Secrets.
+  It is an action of its own, and passkey-verification's enforce refuses such
+  links. A link for
+  a member or one person takes their sign-in, and is refused to anybody else.
+- **A compromised application** holding `entry-link.create` can make links for
+  items without a value (any name where the Project has no Contract, else
+  what the Contract names), with words of its choice, and send them to people. It reads nothing that is entered. It can get a person to
+  put a value where it does not belong, for what else may read that item; it
+  learns whether a name has a value there; and it can make 100 links at a time.
+  Its words can mislead, but hold no link, address or markup, and the page
+  says whose they are. Removing the grant ends all its links.
+- **A compromised orchestrator or broker** that also holds `config.value.write`
+  can write values anyway; a link adds that a person's key replaces one.
+- **Whoever may read the item** reads what was entered: a link says nothing
+  about that. Grant the right to make links in an environment whose readers
+  are meant to have such values.
+- **Phishing** uses a page that looks like Varlatch's on another address. Nothing
+  here can stop it: the page shows the address it is served from, and people
+  have to look at their browser's.
+- **The browser**: an extension, malware or a shared screen sees what is typed.
+  The page keeps the link's secret and the value in memory, until they are
+  sent or the page is left.
+- **Guessing** a link takes guessing 256 random bits; 20 unknown ones from an
+  address and it waits ten minutes. People behind one address share that.
+- **A proxy in front of Varlatch** sees the requests' bodies if it terminates
+  TLS: the link's secret and the value, as it sees every value written. It sees
+  nothing in an address.
+- **A restored backup** holds links as they were. One that was used since, and
+  has not expired, can be used once more.
+- **Refused entries** are recorded, twenty of one link, so that nobody fills
+  the log with one.
 
 **One-time codes** (TOTP seeds; the Go server) put a second factor behind the
 same boundary as the first, and change what it proves: a sign-in whose

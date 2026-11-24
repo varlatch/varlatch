@@ -49,6 +49,7 @@ varlatch init
 - [Install the CLI](reference/install-the-cli.md): Linux, macOS, Windows, and signature verification.
 - [Members and access](reference/members.md): inviting people, default roles, and offboarding.
 - [Passkeys and sessions](reference/passkeys-and-sessions.md): trusted passkeys, headless login, and signing out.
+- [Entry links](reference/entry-links.md): a person enters a secret's value on Varlatch's own page, for an application that never sees it.
 - [OAuth connections](reference/oauth-connections.md): access tokens for automations, refreshed in one place, without handing out a refresh token.
 - [One-time codes](reference/one-time-codes.md): two-factor sign-in codes for automations, without handing out the seed.
 - [CI and other machines](reference/ci-and-machines.md): OIDC for CI and scoped machine credentials.

@@ -64,6 +64,7 @@ export default defineConfig({
             { label: "Passkeys and sessions", slug: "reference/passkeys-and-sessions" },
             { label: "CI and other machines", slug: "reference/ci-and-machines" },
             { label: "One-time codes", slug: "reference/one-time-codes" },
+            { label: "Entry links", slug: "reference/entry-links" },
             {
               label: "OAuth connections",
               items: [

@@ -173,6 +173,10 @@ unlimited one after a rollback), no token of that issuer exchanges as that
 identity (`mixed-bindings` in the audit log) until the bindings of one kind
 are revoked.
 
+An application that needs a person's API key does not have to handle it: it
+makes an [entry link](entry-links.md), the person enters the key in Varlatch,
+and a Capability uses it.
+
 A machine that uses an API behind OAuth gets the access token the same way:
 the Capability names an [OAuth connection](oauth-connections.md), and the
 exercise gives the token and when it ends, refreshed first when

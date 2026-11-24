@@ -103,6 +103,32 @@ fixes.
   - The database schema is version 6 (two new tables). On an earlier
     release, as after a reverse migration to 0.23, a connection has no value
     and nothing refreshes it; a reverse migration carries no tokens.
+- **One-time entry links for a secret's value (#426, the Go server only).** An
+  application makes a link with which a person enters one Secret's value on
+  Varlatch's own page, once, so the application never handles it. Existing
+  calls are unchanged; `/v1/meta` lists `values.entry-links`.
+  [Entry links](docs/reference/entry-links.md) shows the calls.
+  - New operations: `…/environments/{environment}/entry-links` (make, list,
+    look up, cancel), and `/v1/entry-links/lookup` and `/submit`, which need no
+    credential but the link's own secret (and a signed-in person's bearer, for
+    a link that is not open to anyone). An earlier server answers 404, and 401
+    without a credential.
+  - Two new actions, `entry-link.create` and `entry-link.create-open` (a link
+    whoever has it can use), held by no built-in role and counting for
+    service, workload, ci and broker identities. They read, reveal and replace
+    nothing. A person makes links with `config.value.write`. The `Action` enum
+    gains both: a client generated from the earlier document that rejects
+    unknown values needs regenerating.
+  - A link lives an hour at most, works once, and only while the item is what
+    it was when the link was made. `accepts: otpauth` takes the seed of
+    one-time codes. OAuth connections are not entered through a link.
+  - Under `passkey-verification`'s enforce, a link open to anyone is refused.
+  - `value.written` gains `entryLinkId`; an event without an actor can be what
+    somebody did with a link open to anyone, which `actor=varlatch` leaves out.
+  - The dashboard and the CLI (`values ask`, `asked`, `ask-cancel`) make, list
+    and cancel links.
+  - The database schema is version 7 (one new table). An earlier release
+    ignores it, and a reverse migration carries none of it.
 
 ### Server
 

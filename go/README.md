@@ -1036,6 +1036,7 @@ it to the recording.
 | `self-update` (slice 6.7a of internal docs/design/go-step6.md) | replaces its `.cjs` with `varlatch-cli-<version>.cjs`; the newest release is GitHub's latest; the signature is checked only when cosign is installed and the release carries one, and `--allow-unverified` (with `--yes`) installs without it; `--repo` and `VARLATCH_RELEASE_REPO` choose another repository | replaces its own binary with the release's `varlatch-<version>-<os>-<arch>[.exe]`, always verifying SHA256SUMS's signature with the embedded verifier first (`--allow-unverified` changes nothing); the newest release is the newest of the Go line (0.50.0 or later), a prerelease only from a prerelease or with `--prerelease`; an older release only with `--allow-downgrade` (64 otherwise); `--repo` and `VARLATCH_RELEASE_REPO` other than `varlatch/varlatch` are refused (64); a Homebrew or winget copy is refused (1) with that package manager's command; `--check --json` reports `install` as `release`, `homebrew` or `winget`; 69 when GitHub cannot be reached, 1 for a release that does not verify | Decision 11: the Go CLI is a native binary from the Go line's releases, and fails closed (Decision 8). Pinned by `internal/selfupdate`'s tests and `TestSelfUpdateReplacesItself`, `TestSelfUpdateRefuses` |
 | `values-oauth` (ADR-0062) | no such items | `values list` names an OAuth connection (`OAuth connection, status, account`, `oauth` in `--json`), `run` says one is not delivered, and a strict run's violation says why | Go only. Pinned by `TestAConnectionIsListedAndNotDelivered` |
 | `values-totp` (ADR-0061) | `values set` and `values rotate` have no `--totp` ("unknown option") | `--totp` takes the seed of one-time codes from a hidden prompt, `--stdin` or `--from-file`, never from the command line nor `--generate`, and sends it as `otpauth`; only a command line with `--totp` prints a usage that names it. `values list` names an item that holds a seed (`one-time code, issuer …, account …`, `totp` in `--json`), `run` says one is not delivered, and a strict run's violation says why | Go only. Pinned by `TestValuesSetTOTP`, `TestValuesSetTOTPRefuses`, `TestASeedIsListedAndNotDelivered` |
+| `values-ask` (ADR-0063) | `values ask`, `values asked` and `values ask-cancel` print the usage of `values` | `values ask` makes an entry link and prints its address, the one token it shows on purpose, as `invite` does; not `--anyone` in assisted mode. `values asked` lists links and their status, `values ask-cancel` ends one. The usage of `values` does not name them | Go only. Pinned by `TestValuesAsk`, `TestValuesAskRefuses`, `TestValuesAskPrintsNoCredential`, `TestValuesAskedAndCancel` |
 | `self-update-usage` | `varlatch help self-update`, `self-update --help` and `self-update -h` print the TypeScript CLI's form | the Go CLI's: `[<version>] [--check [--json]] [--yes] [--prerelease] [--allow-downgrade]`, with what it checks; `varlatch --help` has it too (`host-usage`) | `self-update`. Transcript cases `help.self-update`, `help.self-update.option` and `help.self-update.short` name it; pinned by `TestHelpIsTheUsageText` |
 | `host-usage` | `varlatch`, `--help`, `-h`, `help`, and an unknown command print the whole usage with a Compose installation's host commands (`admin` with `--dir`, `setup`, `adopt`, `move`, `doctor`, `self-update`, `upgrade`) | the same text, its title without the dash, with a Go installation's in their place (`setup`, `move`, `doctor`, `admin`; `self-update`, `upgrade`, `migrate`), as each command's own help prints them, without `adopt`, and with `tailnet repin`; `varlatch help migrate` prints `migrate`'s | A release whose help names commands it refuses, and not the ones it has, sends people to the wrong ones (the audit of 2026-11-24). Transcript cases of area 5.1a name it; the text is made from the TypeScript one (`hostUsage`), and `TestUsageIsAGoInstallations` holds the rest to it |
 | `tailnet-usage` | `varlatch help tailnet`, `tailnet --help` and `tailnet -h` print `require`, `requirements` and `remove` | the same, and `repin` | Only the Go CLI has `tailnet repin`. Transcript cases `help.tailnet`, `help.tailnet.option` and `help.tailnet.short` name it |
@@ -1906,6 +1907,24 @@ may use; it never adds to the Agent's Grants.
     gives the use back, never touching `revoked_at`; any other failure leaves
     it spent. An older server matches no secret against any prefixed hash.
   - `server/capabilities` `delegation_test.go` covers all of it over HTTP.
+- **Entry links** (ADR-0063, `server/entry`, `server/values/entry.go`,
+  `httpserver/entry.go`; Go only, capability `values.entry-links`).
+  - A row of `entry_links` (schema version 7): the hash of the link's secret,
+    the item, the effective version it had (its own or its parent's, NULL for
+    none), who may use it, who made it. No migration carries one, and an older
+    server ignores the table.
+  - `Submit` decides all of it in the job that writes the value and ends the
+    link: who it is for, the Organization, Project and environment live, the
+    maker's right, the version. A refusal is recorded in that job too, the
+    first 20 of a link.
+  - `/v1/entry-links/lookup` and `/submit` read a bearer credential when there
+    is one (`optionalBearer`) and need none. They are the only operations
+    beside device sign-in's, the OIDC exchange and `/v1/meta` that do
+    (`TestOpenOperations`).
+  - The page is `apps/web`'s `features/entry`, which `main.tsx` loads for
+    `/entry` in place of the app; `web.go` gives it headers of its own. Its
+    audit events use the Capabilities' types with an `entryLinkId`, since a
+    reverse migration carries only types the TypeScript server knows.
 - **OAuth connections** (ADR-0062, `server/oauth`, `server/values/connections.go`;
   Go only, capability `oauth.connections`).
   - What a connection is (`server/oauth/oauthparams`: the pinned endpoints,

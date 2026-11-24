@@ -88,6 +88,10 @@ _Avoid_: 2FA token (ambiguous with credentials), OTP secret (say Seed)
 An item whose use yields an access token for somebody else's API: the provider's endpoints (pinned when it is made), the client, its scopes, the account that consented, and the tokens. Always a Secret. Varlatch holds the client secret and the refresh token and delivers neither on any path, a Reveal included; exercising a Capability gives the access token, refreshed first when needed. A person *connects* it (consent in the browser), or the client has access of its own. It *needs reconnecting* when the provider refuses its refresh token; it is *disconnected* here (revoked at the provider where that is possible, and forgotten). Its *hosts* bound where its token may go, which a Capability can only narrow; its *endpoint hosts* are the provider's own, where its secrets go, and are in its redirect URI.
 _Avoid_: Platform Connection (the opposite direction: Varlatch delivering Secrets to a platform), integration, OAuth token (say access token or refresh token)
 
+**Entry Link**:
+A short-lived link with which a person *enters* one Secret's value on Varlatch's own page, once. Whoever *makes* it (a machine identity holding `entry-link.create`, or a person holding `config.value.write`) gets no value by it, only its status: pending, entered, expired or cancelled. It is bound to the item's value when it was made, and is for a member, for one person, or *open to anyone* who has it. It is write-only: nothing is read through one.
+_Avoid_: Capability (the opposite: using a value), invitation, magic link, upload link
+
 **Value Reference**:
 A `${NAME}` token inside a Value that reuses another Config Item's Value from the same Effective Configuration. Expanded strictly server-side and never authority-expanding: read paths leave what the caller may not read literal, while capability exercise resolves every reference or denies. `$${NAME}` escapes to literal text.
 _Avoid_: interpolation, templating (suggests a general expression language; it is name substitution only)
