@@ -645,6 +645,38 @@ func (c *combined) gateLost(step string) {
 	}
 }
 
+// gate is the source's gate, in its state volume ("" for none).
+func (c *combined) gate() string {
+	l := serviceOf(c.source, "postgres")
+	if l == nil {
+		return "postgres has no container to read it with"
+	}
+	r := run("", nil, nil, "docker", "run", "--rm", "--pull", "never", "--network", "none", "-v", c.source+"_varlatch-state:/s:ro", "--entrypoint", "sh", l.Image, "-c", "cat /s/maintenance.json 2>/dev/null || true")
+	return strings.TrimSpace(r.stdout)
+}
+
+// goTakes is Go's answer to a request that needs no one signed in: 401 when
+// it takes requests, 503 behind its barrier (0: none).
+func (c *combined) goTakes() int {
+	for _, l := range containersOf(prof.coolifyTarget) {
+		for _, ip := range l.IPs {
+			_, addr, _ := strings.Cut(ip, "=")
+			if resp, err := c.client.Get("http://" + addr + ":8686/v1/whoami"); err == nil {
+				resp.Body.Close()
+				return resp.StatusCode
+			}
+		}
+	}
+	return 0
+}
+
+// oneWriter: while Go takes requests, the source's gate is the migration's.
+func (c *combined) oneWriter(step string) {
+	c.t.Helper()
+	g, takes := c.gate(), c.goTakes()
+	c.record(step+": Go and the source cannot both take requests", takes == 503 || strings.Contains(g, `"kind":"migrated-out"`) && strings.Contains(g, `"phase":"paused"`), fmt.Sprintf("Go answers %d; the gate %s", takes, trim(g)))
+}
+
 // removeStopped removes the source's stopped containers: their images.
 func (c *combined) removeStopped() []string {
 	c.t.Helper()
@@ -875,6 +907,28 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 			r := c.migrate("--resume after a kill once the volumes are made", c.reverseArgs("--resume"))
 			c.record("--resume after a kill once the volumes are made undoes it", r.code == 1 && strings.Contains(r.stdout+r.stderr, "the reverse was undone"), r.String())
 			c.undone("resumed once the volumes are made")
+		}
+		// Once the import lifted the source's gate: its undo killed at its
+		// steps, the source's containers started again by Docker each time.
+		if c.killed("entered rollback-imported", c.reverseArgs("--rollback")) {
+			c.record("the import lifted the source's gate, Go behind its barrier", c.gate() == "" && c.goTakes() == 503, fmt.Sprintf("Go answers %d; the gate %s", c.goTakes(), trim(c.gate())))
+			for _, at := range []string{"rollback undo gate held", "rollback undo restored"} {
+				if !c.killed(at, c.reverseArgs("--abort")) {
+					break
+				}
+				c.oneWriter("killed at " + at)
+				for _, l := range containersOf(c.source) {
+					if l.Service != "tailscale" && l.Service != "varlatch-web" && l.State != "running" {
+						run("", nil, nil, "docker", "start", l.ID)
+					}
+				}
+				c.oneWriter("the source's containers started again after " + at)
+			}
+			r := c.migrate("--abort, its kills behind it", c.reverseArgs("--abort"))
+			c.record("--abort, its kills behind it", r.code == 0, r.String())
+			c.undone("aborted once the import was done")
+			c.oneWriter("aborted once the import was done")
+			c.record("then Go takes requests", c.goTakes() == 401, fmt.Sprint(c.goTakes()))
 		}
 		if ok = c.killed("entered rollback-transfer", c.reverseArgs("--rollback")); !ok {
 			return
