@@ -468,7 +468,7 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 		return err
 	}
 	e.say("Tailnet: the target's node joins as %s (held: it serves nothing on the tailnet until the transfer).", temp)
-	node, err := tt.TailnetEnroll(ctx, temp, info.HTTPS)
+	node, err := stepOf(e, "waiting for the target's node to join the tailnet", func() (EnrolledNode, error) { return tt.TailnetEnroll(ctx, temp, info.HTTPS) })
 	if err != nil {
 		return fmt.Errorf("preflight: enrolling the target's node: %w", err)
 	}
@@ -551,12 +551,12 @@ func (e *Engine) switchTailnet(ctx context.Context, j *Journal) error {
 	case rec.Handoff.Phase == tailhandoff.Prepared:
 		e.say("Tailnet: the name %s moves to the target's node.", rec.Name)
 		crashPoint("tailnet switch")
-		st, err = he.Switch(ctx, rec.Operation)
+		st, err = e.moveName(ctx, he.Switch, rec.Operation)
 	case rec.Handoff.Phase == tailhandoff.Done:
 		st = rec.Handoff
 	default:
 		e.say("Tailnet: the handoff was interrupted (%s): it is resumed.", rec.Handoff.Phase)
-		st, err = he.Resume(ctx, rec.Operation)
+		st, err = e.moveName(ctx, he.Resume, rec.Operation)
 		if rec.Handoff != nil && rec.Handoff.Phase == tailhandoff.Undone {
 			// tailhandoff undoes a switch a crash cut short; --resume goes
 			// on with the migration, so the name moves again (--abort is
@@ -565,7 +565,7 @@ func (e *Engine) switchTailnet(ctx context.Context, j *Journal) error {
 			plan := rec.Handoff.Plan
 			rec.Handoff = nil
 			if _, err = he.Prepare(ctx, plan); err == nil {
-				st, err = he.Switch(ctx, rec.Operation)
+				st, err = e.moveName(ctx, he.Switch, rec.Operation)
 			}
 		}
 	}
@@ -585,7 +585,7 @@ func (e *Engine) switchTailnet(ctx context.Context, j *Journal) error {
 		return fmt.Errorf("the tailnet handoff ended %v, not done; varlatch migrate --resume goes on", st)
 	}
 	// The combined final check: the public URL again, from the target.
-	if err := e.waitForTarget(ctx, j); err != nil {
+	if err := e.step(e.awaiting(j, "the target"), func() error { return e.waitForTarget(ctx, j) }); err != nil {
 		return e.undo(ctx, j, fmt.Errorf("the combined final check: %w", err))
 	}
 	rec.Checked = e.now().UTC().Format(time.RFC3339Nano)
@@ -650,7 +650,7 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 		if err != nil {
 			return err
 		}
-		st, err := he.Resume(ctx, rec.Operation)
+		st, err := e.moveName(ctx, he.Resume, rec.Operation)
 		if st != nil && st.Phase == tailhandoff.Done {
 			break
 		}
@@ -686,16 +686,16 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 	}
 	var st *tailhandoff.State
 	if rec.Reverse != nil && rec.Reverse.Phase == tailhandoff.Prepared {
-		st, err = he.Switch(ctx, rec.Operation)
+		st, err = e.moveName(ctx, he.Switch, rec.Operation)
 	} else {
-		st, err = he.Resume(ctx, rec.Operation)
+		st, err = e.moveName(ctx, he.Resume, rec.Operation)
 		if rec.Reverse != nil && rec.Reverse.Phase == tailhandoff.Undone {
 			// A reverse a crash cut short, undone by tailhandoff (the name
 			// with the target's node again): planned and switched again.
 			rec.Reverse = nil
 			plan := tailhandoff.NewReverse(rec.Operation, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)
 			if _, err = he.Prepare(ctx, plan); err == nil {
-				st, err = he.Switch(ctx, rec.Operation)
+				st, err = e.moveName(ctx, he.Switch, rec.Operation)
 			}
 		}
 	}
@@ -734,7 +734,7 @@ func (e *Engine) reholdTargetAs(ctx context.Context, name, op string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tt.TailnetEnroll(ctx, temp, false); err != nil {
+	if _, err := stepOf(e, "holding the target's node again", func() (EnrolledNode, error) { return tt.TailnetEnroll(ctx, temp, false) }); err != nil {
 		return fmt.Errorf("holding the target's node again under %s: %w", temp, err)
 	}
 	return nil
@@ -786,17 +786,17 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 			return e.undoReverse(ctx, j, fmt.Errorf("the tailnet name back: %w", err))
 		}
 		crashPoint("rollback tailnet switch")
-		st, err = he.Switch(ctx, op)
+		st, err = e.moveName(ctx, he.Switch, op)
 		if err != nil {
 			return e.rollbackTailnetFailed(ctx, j, err)
 		}
 	case rec.Rollback.Phase == tailhandoff.Prepared:
-		if st, err = he.Switch(ctx, rec.RollbackOperation); err != nil {
+		if st, err = e.moveName(ctx, he.Switch, rec.RollbackOperation); err != nil {
 			return e.rollbackTailnetFailed(ctx, j, err)
 		}
 	default:
 		e.say("Tailnet: the name's return was interrupted (%s): it is resumed.", rec.Rollback.Phase)
-		st, err = he.Resume(ctx, rec.RollbackOperation)
+		st, err = e.moveName(ctx, he.Resume, rec.RollbackOperation)
 		if rec.Rollback != nil && rec.Rollback.Phase == tailhandoff.Undone {
 			// Undone by tailhandoff (a switch cut short): --resume goes on
 			// with the reverse, the name handed back again under a new
@@ -847,7 +847,7 @@ func (e *Engine) unwindRollbackTailnet(ctx context.Context, j *Journal) error {
 	if err != nil {
 		return err
 	}
-	st, err := he.Resume(ctx, rec.RollbackOperation)
+	st, err := e.moveName(ctx, he.Resume, rec.RollbackOperation)
 	if st != nil && st.Phase == tailhandoff.Done {
 		return errors.New("the tailnet name went back to the TypeScript release's node meanwhile: varlatch migrate --resume finishes the reverse")
 	}
