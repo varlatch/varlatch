@@ -28,6 +28,9 @@ type goWriter struct {
 	http *http.Client
 	// admin runs `varlatchd admin` beside the running varlatchd.
 	admin func(args ...string) ran
+	// What writes left: the client's token, the Organization, and one of its
+	// items with its value.
+	token, slug, item1, value1 string
 }
 
 var enrollLink = regexp.MustCompile(`https?://\S+/enroll#\S+`)
@@ -62,6 +65,7 @@ func (w *goWriter) writes() bool {
 		secret(id)
 	}
 	ok := w.passkey(id)
+	w.token = token
 	c := &apiClient{t: w.t, base: w.base, token: token, http: w.http}
 	call := func(name, method, path string, body any) map[string]any {
 		code, out := c.send(method, path, body)
@@ -70,6 +74,7 @@ func (w *goWriter) writes() bool {
 		return out
 	}
 	slug := "vl-rh-" + hexBytes(4)
+	w.slug = slug
 	call("an Organization of the run's", "POST", "/v1/organizations", map[string]any{"name": "Rehearsal " + slug, "slug": slug})
 	at := "/v1/organizations/" + slug
 	if !ok {
@@ -81,13 +86,30 @@ func (w *goWriter) writes() bool {
 	for _, n := range []int{5, 200} {
 		changes := make([]map[string]any, n)
 		for i := range changes {
-			changes[i] = map[string]any{"op": "set", "item": fmt.Sprintf("ITEM_%d_%d", n, i), "value": secret("rh-" + hexBytes(16) + strings.Repeat("x", 4000))}
+			w.item1, w.value1 = fmt.Sprintf("ITEM_%d_%d", n, i), secret("rh-"+hexBytes(16)+strings.Repeat("x", 4000))
+			changes[i] = map[string]any{"op": "set", "item": w.item1, "value": w.value1}
 		}
 		out := call(fmt.Sprintf("a change set of %d values", n), "POST", at+"/projects/writes/environments/development/changes", map[string]any{"changes": changes})
 		results, _ := out["results"].([]any)
 		ok = record(fmt.Sprintf("every one of the %d is answered", n), len(results) == n, fmt.Sprint(len(results))) && ok
 	}
 	return ok
+}
+
+// kept is whether what writes left is on the installation that answers now:
+// the Organization, and the last value of the change set of two hundred.
+func (w *goWriter) kept(where string) bool {
+	w.t.Helper()
+	if w.value1 == "" {
+		return record2(w.t, w.item, w.what+": on "+where+": what was written on Go", false, "nothing was written")
+	}
+	c := &apiClient{t: w.t, base: w.base, token: w.token, http: w.http}
+	at := "/v1/organizations/" + w.slug
+	org, _ := c.send("GET", at, nil)
+	code, out := c.send("POST", at+"/projects/writes/environments/development/disclosures", map[string]any{"items": []string{w.item1}})
+	b, _ := json.Marshal(out)
+	return record2(w.t, w.item, w.what+": on "+where+": what was written on Go: the Organization and the last of 200 values", org == 200 && code == 200 && strings.Contains(string(b), w.value1),
+		fmt.Sprintf("the Organization %d; the value %d, the same %v", org, code, strings.Contains(string(b), w.value1)))
 }
 
 // firstAdmin is bootstrap-status's first enabled administrator, "" for none.

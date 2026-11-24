@@ -305,6 +305,8 @@ type combined struct {
 	client          *http.Client
 	roots           string
 	tsBin           string
+	// wrote is what wrote on Go after the last forward migration.
+	wrote *goWriter
 }
 
 func (c *combined) record(name string, ok bool, detail string) bool {
@@ -548,8 +550,26 @@ func (c *combined) forward(step string) bool {
 	c.name(step+": the tailnet name is Go's", isGo)
 	// Production's shape: the image's service, its root read-only. Not only
 	// that it answers: that it takes a client's writes.
-	c.writer(step).writes()
+	c.readOnly(step)
+	c.wrote = c.writer(step)
+	c.wrote.writes()
 	return true
+}
+
+// readOnly: the Go app's container is what production's is, or the writes
+// prove nothing of it: a read-only root, and no /tmp of any kind.
+func (c *combined) readOnly(step string) {
+	c.t.Helper()
+	names := goContainers()
+	ok, detail := len(names) == 1, fmt.Sprint(names)
+	if ok {
+		r := run("", nil, nil, "docker", "inspect", "--format", "{{.HostConfig.ReadonlyRootfs}} {{len .HostConfig.Tmpfs}} {{range .Mounts}}{{.Destination}} {{end}}", names[0])
+		f := strings.Fields(r.stdout)
+		ok = r.code == 0 && len(f) >= 2 && f[0] == "true" && f[1] == "0" &&
+			!slices.ContainsFunc(f[2:], func(p string) bool { return p == "/tmp" || strings.HasPrefix(p, "/tmp/") })
+		detail = strings.TrimSpace(r.stdout) + r.stderr
+	}
+	c.record(step+": the Go app's root is read-only, with no tmpfs and no mount on /tmp", ok, detail)
 }
 
 // writer writes on the Go app, its admin commands in its container.
@@ -571,6 +591,9 @@ func (c *combined) reversed(step string) {
 	c.record(step+": the public URL answers from 0.23.0", code == 200 && strings.HasPrefix(body, "0.23.0 "), fmt.Sprintf("%d %s", code, body))
 	c.record(step+": the journal says rolled back", c.phase() == "rolled-back", c.phase())
 	c.name(step+": the tailnet name is the sidecar's again", isTS)
+	if c.wrote != nil {
+		c.wrote.kept("0.23.0, after " + step)
+	}
 	fresh, retained := "", ""
 	if rb, _ := c.journal()["rollback"].(map[string]any); rb != nil {
 		if b, _ := rb["rebuild"].(map[string]any); b != nil {

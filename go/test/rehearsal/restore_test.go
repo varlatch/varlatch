@@ -252,6 +252,9 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	if !record2(t, item, "a day of changes on Go through the CLI", err == nil, fmt.Sprintf("%d values set (%v)", changes, err)) {
 		return
 	}
+	// And objects of the run's, in writes past what SQLite keeps in memory.
+	w := in.hostWriter(t, item, "the migration")
+	w.writes()
 	changed, err := rd.read()
 	record(t, item, "the CLI reads the changes on Go", err == nil && changed.parts["values"] != before.parts["values"] && changed.parts["value names"] != before.parts["value names"],
 		rd.describe(changed, err))
@@ -271,6 +274,7 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	reverseParity(t, in)
 	back, err := rd.read()
 	record(t, item, "the CLI reads after the rollback: the day's changes are on 0.23.0", err == nil && sameReads(changed, back), rd.compare(changed, back, err))
+	w.kept("0.23.0, after the rollback")
 	// Go's copy discarded, then the migration again.
 	f := in.migrateFinish(rel)
 	record(t, item, "--finish --delete-old-data after the rollback: Go's copy discarded", f.code == 0, f.String()+" "+lastLines(f.stdout, 3))
