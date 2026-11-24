@@ -44,7 +44,7 @@ sudo varlatch upgrade --check       # is there a newer release?
 | `varlatch doctor` | [checks the installation's health](#health-check) |
 | `varlatch upgrade` | [upgrades, and goes back when the new release fails its checks](operations/upgrade.md) |
 | `varlatch move` | [moves the installation to another address](operations/move-installation.md) |
-| `varlatch admin ...` | backups, maintenance, re-enrollment, the outbound check, and the ways back below |
+| `varlatch admin ...` | backups, a restored installation's hold, maintenance, re-enrollment, the outbound check, and the ways back below |
 | `varlatchd admin ...` | the same commands, and the rarer ones: keys, recovery, the tailnet |
 
 After you change `varlatchd.conf`, check it, then restart the service:
@@ -112,8 +112,9 @@ sudo varlatchd admin custody status
 `kek export` wraps the Root KEK with a passphrase. The file it writes is
 safe to store anywhere, backups included; only the passphrase must be kept
 apart. `kek restore` checks the key against the installation's database
-before it writes it. On a fresh host, with no database yet, it writes the key
-with a warning: run `kek verify` once the installation is restored.
+before it writes it. When it cannot read one, on a fresh host or with a
+database it cannot open, it writes the key with a warning instead: run `kek
+verify` once the installation is restored.
 
 ```sh
 sudo varlatchd admin kek export --passphrase-file /root/passphrase > kek-escrow.json

@@ -477,19 +477,48 @@ Give it a bucket next: [S3-compatible
 destinations](../../docs/operations/backup.md#s3-compatible-destinations).
 Mount both files, readable by `65532`, at the paths they name.
 
-To restore an archive, first let only yourself reach the address, in your
-proxy or the host's firewall, and turn `sync` and `audit_export` off in
-`varlatchd.conf`: the archive brings back credentials revoked since it was
-made. [Backup and recovery](../../docs/operations/backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore)
-explains what to put right before you open it again. Then stop the
-container, run the image once with the same mounts, and start the container
-again:
+### Restore in the container image
 
-```sh
-docker run --rm -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
-  -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image> \
-  admin backup restore --in /var/lib/varlatch/backups/ARCHIVE-ID.vltbak
-```
+Read [Backup and recovery](../../docs/operations/backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore)
+first: a restored installation brings back credentials revoked since the
+archive was made, and is held until you resume it. Anyone with a credential
+in the archive can still read, so run it where nobody else reaches it: no
+domain, not on the proxy's network, and a port on `127.0.0.1` only. In
+Coolify, stop the resource and do not deploy it until you are done.
+
+1. Put the archive in the data directory, put a `#` in front of every
+   `tailnet` line of `varlatchd.conf`, and restore:
+
+   ```sh
+   docker run --rm -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
+     -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image> \
+     admin backup restore --in /var/lib/varlatch/backups/ARCHIVE-ID.vltbak
+   ```
+
+2. Run it by hand, on a network of its own:
+
+   ```sh
+   docker network create varlatch-restore
+   docker run -d --name varlatch-restore --network varlatch-restore -p 127.0.0.1:8686:8686 \
+     --read-only --cap-drop ALL --security-opt no-new-privileges --stop-timeout 30 \
+     -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
+     -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image>
+   ```
+
+3. Sign in with the CLI as an Installation Admin
+   ([how](../../docs/operations/backup.md#sign-in-while-it-is-closed)), with
+   `docker exec varlatch-restore varlatchd admin recover --identity <id>
+   --cli-credential` and the server `http://127.0.0.1:8686`, and put right
+   what changed since the archive was made.
+
+4. Resume, remove that container and network, take the `#`s away, and
+   deploy:
+
+   ```sh
+   docker exec varlatch-restore varlatchd admin restore resume
+   docker rm -f varlatch-restore
+   docker network rm varlatch-restore
+   ```
 
 ### Pinning and upgrading by digest
 

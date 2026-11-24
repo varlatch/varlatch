@@ -37,18 +37,18 @@ for `--accept-not-rollback-safe` without a terminal. While a migration's
 [rollback window](migrate-to-0.50.md#the-rollback-window) is open, an
 upgrade that would end it needs `--end-rollback-window`.
 
+It refuses while the installation is held after a
+[restore](backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore).
+
 If an upgrade is interrupted, by a reboot for example, run
 `sudo varlatch upgrade` again: it finishes the upgrade or undoes it, before
 anything else.
 
 ## Go back
 
-> **Being built.** `--rollback` is not in a release yet, and its details may
-> change.
-
-`sudo varlatch upgrade --rollback` returns to the release you upgraded from.
-When that release cannot use the database as it is now, going back loses the
-changes made since the upgrade: the command says which, and asks first.
+`varlatch upgrade` goes back by itself when the new release fails its
+checks. There is no command yet to go back later, from a release that
+serves.
 
 ## Newer releases in the dashboard
 

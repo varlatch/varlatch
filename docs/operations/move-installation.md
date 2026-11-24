@@ -105,7 +105,8 @@ sudo varlatch move --abandon
 
 It puts the old address back in `varlatchd.conf`, restarts `varlatchd`, and
 says whether the old passkeys were already removed. If they were, restore
-the archive the move took. It prints the archive's path:
+the archive the move took. It prints the archive's path.
+[Close every way in](backup.md#keep-clients-away) first:
 
 ```sh
 sudo systemctl stop varlatchd
@@ -114,8 +115,9 @@ sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db
 sudo systemctl start varlatchd
 ```
 
-Every change since the move began is lost with it, revocations included: let
-only yourself reach the installation until you made them again
+Every change since the move began is lost with it, revocations included. The
+installation is held: put right what changed, then run `sudo varlatch admin
+restore resume` and open it again
 ([Put an archive back](backup.md#put-an-archive-back-on-the-same-host)). Passkeys enrolled at the
 new address are not in that archive, and would not work at the old address
 anyway.

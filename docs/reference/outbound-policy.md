@@ -70,9 +70,9 @@ and set the container's `SSL_CERT_FILE` to its path. The image's own list
 still counts.
 
 `SSL_CERT_FILE` names the file to read in place of the system's bundle. The
-certificates in the system's directories (or `SSL_CERT_DIR`'s) are read too,
-so it does not take the public authorities away, and is no way to distrust
-them.
+certificates in the system's directories (or `SSL_CERT_DIR`'s) are read
+too. Where those hold the public authorities, as in the image, they stay
+trusted: `SSL_CERT_FILE` is no way to distrust them.
 
 The TypeScript server (0.23.0 and earlier) took extra authorities from
 `NODE_EXTRA_CA_CERTS`. `varlatchd` does not read that variable: when you

@@ -287,30 +287,35 @@ you revoked since works again, a person you removed is back, and a value
 you rotated is the old one. So restore it closed, put those things right,
 and only then open it.
 
+Every restore leaves the installation **held**. `varlatchd` serves it, but
+its background work does not run: no sync, webhook, audit export or
+organization deletion, and no local archive is removed, until you run `sudo
+varlatch admin restore resume`. While it is held, `varlatch upgrade` is
+refused.
+
+Held is not closed: **anyone with a session, token or credential in the
+archive can still read and write**, and what they ask for is done. You keep
+them away yourself: [Keep clients away](#keep-clients-away).
+
 1. **Make sure the old installation no longer serves**, anywhere. Two copies
-   of one installation must never run at the same time.
+   of one installation must never run at the same time. With public HTTPS,
+   point the name at the new host now: the certificate authority checks it
+   there.
 
-2. **Let only yourself reach the new host.** Point the name at it, and allow
-   only your own address: in your proxy, or in the host's firewall on port
-   443. With public HTTPS leave port 80 open to all: it answers the
-   certificate authority and redirects, and serves no page.
-
-3. **Put the configuration in place first**, before anything starts. Copy
-   `varlatchd.conf` and the files it names to the same paths. In it, turn
-   delivery off until you have checked the installation:
+2. **Put the configuration in place first**, closed. Copy your saved
+   `varlatchd.conf` and the files it names to the same paths, then make the
+   changes under [Keep clients away](#keep-clients-away) in it:
 
    ```sh
    sudo install -d -m 750 /etc/varlatch
    sudo install -m 644 varlatchd.conf /etc/varlatch/varlatchd.conf
-   sudoedit /etc/varlatch/varlatchd.conf   # sync = off, audit_export = off
+   sudoedit /etc/varlatch/varlatchd.conf
    ```
 
    Setup keeps a `varlatchd.conf` it finds. Without one it writes a new one
-   from its questions, with `sync` and `audit_export` on: the installation
-   then starts to deliver again at once. No setting stops audit webhooks:
-   block the host's other outgoing connections too if that matters.
+   from its questions, which is open.
 
-4. **Restore.** Keep the archive and the two keys in files only root can
+3. **Restore.** Keep the archive and the two keys in files only root can
    read:
 
    ```sh
@@ -323,41 +328,107 @@ and only then open it.
    Or, when the binaries are already there, `sudo varlatch setup --restore`
    with the same flags. It installs your keys, restores the archive, checks
    that the Root KEK opens it, starts `varlatchd`, makes a backup and runs
-   `varlatch doctor`. Answer its questions as `varlatchd.conf` says. The
-   address must be the one the installation had: its passkeys belong to it.
-   To change it, restore first, then [move it](move-installation.md). Setup
-   refuses a host that holds other keys. If it stops, run it again.
+   `varlatch doctor`, which says that the installation is held.
 
-5. **Give the configuration its owner back:**
+   Answer **proxy** when it asks how people reach Varlatch: `varlatchd.conf`
+   decides that, not the answer. The address must be the one the
+   installation had: its passkeys belong to it. To change it, restore first,
+   then [move it](move-installation.md). Setup refuses a host that holds
+   other keys. If it stops, run it again.
+
+4. **Give the files their owner back:**
 
    ```sh
    sudo chown root:varlatch /etc/varlatch/varlatchd.conf
    sudo chmod 640 /etc/varlatch/varlatchd.conf
    ```
 
-   Do the same for the bucket's key file. When setup stopped at the first
-   backup because the service could not read it, run setup again.
+   Do the same for the destinations file and the bucket's key file. When
+   setup stopped at the first backup because the service could not read
+   one of them, run setup again.
 
-6. **Put right what changed since the archive was made:** sign in, revoke
-   the credentials and remove the people again, rotate the values again, and
-   undo any freeze or control that is no longer true. An audit export or
-   your own notes say what those were.
+5. **Put right what changed since the archive was made.** Sign in
+   ([how](#sign-in-while-it-is-closed)), revoke the credentials and remove
+   the people again, withdraw the invitations, rotate the values, cancel or
+   request the deletions, and set freezes and controls as they were. An
+   audit export or your own notes say what those were.
 
-7. **Open it:** set `sync` and `audit_export` back, `sudo systemctl restart
-   varlatchd`, then let people reach the host again.
+6. **Resume, then open it:**
 
-- **Public ingress:** the certificate is not in the archive; the new host
-  obtains its own. Point the name at it.
-- **Tailnet:** the node's state is not in the archive. Setup can take the
-  old node's name over, with `--tailscale-oauth-client-file`, or
-  `--tailnet-control-url` and `--headscale-api-key-file`.
+   ```sh
+   sudo varlatch admin restore resume
+   sudoedit /etc/varlatch/varlatchd.conf   # take the closing changes out
+   sudo systemctl restart varlatchd
+   sudo varlatch doctor
+   ```
+
+   Point the name at the new host if it is not there yet, and open your
+   proxy again.
+
+At the resume, what came due meanwhile is done: organization deletions that
+are due run, an audit export being drained past its deadline is given up,
+and webhooks and Sync Targets go on from where the archive had them, so a
+receiver may see an event twice.
+
+`sudo varlatch admin restore status` says whether the installation is held,
+and since when. `resume` is recorded in the audit log. It works with
+`varlatchd` stopped too.
+
+### Keep clients away
+
+Close every way in before you restore, and open it again after `resume`:
+
+| Way in | To close it | After `resume` |
+|---|---|---|
+| public HTTPS | `listen_https = 127.0.0.1:443` and `listen_http_redirect = :80` in `varlatchd.conf` | put your own two lines back |
+| your own proxy | let the proxy listen on `127.0.0.1` only, or accept only your own address; keep `listen = 127.0.0.1:8686` | undo it in the proxy |
+| the tailnet | put a `#` in front of every `tailnet` line in `varlatchd.conf`, all of them | remove the `#`s ([the node](#the-tailnet-node)) |
+| the container image | run it by hand on a network of its own: [Restore in the container image](../../infra/coolify/README.md#restore-in-the-container-image) | remove that container and network, and deploy |
+
+Port 80 stays open with public HTTPS: it answers the certificate authority
+and redirects, and serves nothing else.
+
+#### Sign in while it is closed
+
+- **In a browser,** through SSH. Forward port 443 from your computer, and
+  add `127.0.0.1 vault.example.com` to your computer's hosts file until you
+  are done. Then open the installation's address:
+
+  ```sh
+  sudo ssh -L 443:127.0.0.1:443 you@the-host
+  ```
+
+  Other administrators do the same, or reach it through a proxy that
+  accepts only their addresses.
+
+- **With the CLI,** on the host, as an Installation Admin. This prints a
+  credential, which does not expire:
+
+  ```sh
+  sudo varlatchd admin bootstrap-status      # the administrators' ids
+  sudo varlatchd admin recover --identity <identity id> --cli-credential
+  varlatch login --server http://127.0.0.1:8686 --token-stdin   # paste it, then Ctrl-D
+  ```
+
+  Revoke that credential when you are done: in the dashboard, under your
+  account, then Sessions. `varlatch logout` alone does not.
+
+#### The tailnet node
+
+The node's state is not in the archive. On a fresh host it joins again when
+you take the `#`s away, so it needs a new auth key in
+`tailnet_auth_key_file`. Delete the old node in your tailnet first: while
+it is there, the new one gets another name, and the listener stays closed.
+On the same host the node keeps its state and needs neither.
+
+With public HTTPS, the certificate is not in the archive either: a new host
+obtains its own, through port 80.
 
 ### Put an archive back on the same host
 
-Every change since the archive is lost, revocations included. Before you
-start, let only yourself reach the host, as in step 2 above, and turn `sync`
-and `audit_export` off in `varlatchd.conf`. Copy the archive out of
-`backups/` first, so that nothing removes it.
+Every change since the archive is lost, revocations included. First
+[close every way in](#keep-clients-away), and copy the archive out of
+`backups/`, so that nothing removes it.
 
 ```sh
 sudo systemctl stop varlatchd
@@ -365,11 +436,9 @@ sudo cp /var/lib/varlatch/backups/ARCHIVE-ID.vltbak /root/
 sudo varlatch admin backup restore --in /root/ARCHIVE-ID.vltbak
 sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db
 sudo systemctl start varlatchd
-sudo varlatch admin backup run
 ```
 
-Then put right what changed and open the installation again, as in steps 6
-and 7 above.
+Then do steps 5 and 6 above, and make a fresh backup.
 
 It uses the keys in `/etc/varlatch`; `--backup-key-file` names another
 backup key. The restore runs as root, so the `chown` gives the restored
