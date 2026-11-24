@@ -281,13 +281,13 @@ past() {
   done
   return 1
 }
-# killed_from <point>: an upgrade from $FROM by the candidate's varlatch at
-# $tool, killed there, then the installed varlatch.
+# killed_from <point> [binary]: an upgrade from $FROM by the candidate's
+# varlatch (at $tool), killed there, then the installed varlatch.
 killed_from() {
   point=$1
   name=from-new-$(echo "$point" | tr ':' '-')
   export VARLATCH_TEST_UPGRADE_KILL="$point"
-  upgrade "$name" "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
+  upgrade "$name" "${2:-$tool}" "$CANDIDATE" --yes --accept-not-rollback-safe
   unset VARLATCH_TEST_UPGRADE_KILL
   case "$point" in
     data:*) check "$name: killed there" [ "$status" = 1 ] ;;
@@ -348,6 +348,19 @@ if [ "$failures" -gt 0 ]; then finish; fi
 must "from-kill: $FROM serves, to go on from" serves "$FROM"
 # And the candidate's varlatch, finished by the one it installed.
 install -m 755 "$client_bin" "$tool"
+# Its first act, before there is a journal of its own: it installs itself. The
+# installed varlatch goes on from there.
+export VARLATCH_TEST_UPGRADE_KILL="install:$CANDIDATE:varlatch"
+upgrade from-new-first "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
+unset VARLATCH_TEST_UPGRADE_KILL
+check "from-new-first: killed there" [ "$status" = 137 ]
+check "from-new-first: nothing is in progress" sh -c '! grep -q "\"state\": *\"in-progress\"" "$1"' sh /etc/varlatch/upgrade.json
+check "from-new-first: $CANDIDATE's varlatch beside $FROM's varlatchd" [ "$("$VARLATCH" --version), $("$VARLATCHD" --version)" = "varlatch $CANDIDATE, varlatchd $FROM" ]
+restarted
+check "from-new-first: $FROM answers" ready
+check "from-new-first: the data is there" has FIRST
+if [ "$failures" -gt 0 ]; then finish; fi
+killed_from stopped "$VARLATCH"
 for point in $FROM_KILLS; do killed_from "$point"; done
 install -m 755 "$built/from/varlatch" "$tool"
 upgrade to-candidate "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
