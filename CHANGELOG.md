@@ -7,6 +7,67 @@ fixes.
 
 ## Unreleased
 
+### What 0.50.0 is
+
+0.50.0 is a new Varlatch server and a new CLI (ADR-0059). The server is one
+program, `varlatchd`: the API, the dashboard, the live views, the sync to
+platforms, the audit export and the backups, with its database (SQLite) in
+one directory of its own. It runs as a systemd service on Linux (amd64 and
+arm64), or as the container image `ghcr.io/varlatch/varlatchd`. The CLI is
+one program too, for Linux, macOS and Windows. The `/v1` API, the encryption
+and the semantics of values, Contracts, grants and audit are those of 0.23.0;
+the differences are listed below.
+
+What left:
+
+- **Docker Compose, PostgreSQL and Convex**, for the server. Nothing of
+  Varlatch's but `varlatchd` runs on the host. (Convex stays a platform
+  values can be synced to.)
+- **Node.js.** The CLI is a native program; `varlatch-cli-<version>.cjs` is
+  not published any more.
+- **The server's `VARLATCH_*` settings** and `.env`. The server reads one
+  file, `/etc/varlatch/varlatchd.conf`. The variables the CLI and
+  applications read (`VARLATCH_TOKEN`, `VARLATCH_SERVER` and the like) stay.
+- **`NODE_EXTRA_CA_CERTS`**, for the server: it trusts the system's
+  certificate authorities, or the file `SSL_CERT_FILE` names.
+- **`varlatch adopt`, and the Compose forms of `setup`, `doctor`, `move`,
+  `upgrade` and `admin`** (`--dir`, `admin backup create` and `verify`). The
+  Go CLI's forms of those commands are a Go installation's: see `varlatch
+  --help`. For a Compose installation keep the 0.23.0 CLI, as `varlatch-ts`.
+- **The backup timer of `infra/host-backup`.** `varlatchd` makes its backups
+  itself (`backup_interval`), to the same kind of destination, under the same
+  Backup Encryption Key.
+
+### Upgrading to 0.50.0
+
+A Compose installation is not upgraded in place: `varlatch migrate` moves it,
+with a dry run, a short downtime and 30 days to go back. Follow
+[Migrating an installation to Varlatch 0.50](docs/operations/migrate-to-0.50.md).
+
+1. **Upgrade to 0.23.0 first**, with its published images, and let it run.
+   `varlatch migrate` starts from that release only.
+2. **Before:** Docker Compose 2.32.0 or later; a backup destination with read
+   credentials; the Backup Encryption Key and the Root KEK. Look for settings
+   without a counterpart: `varlatch migrate` carries the outbound allow list
+   over and warns of `NODE_EXTRA_CA_CERTS`.
+3. **The dry run** (`varlatch migrate --dry-run`) copies and checks everything
+   with no downtime, and says how long the migration will take.
+4. **The migration.** People sign in again, with the same passkey. CLIs,
+   machine credentials, OIDC and applications keep working at the same
+   address, released CLIs included.
+5. **After, check:** `sudo varlatch doctor`; `sudo varlatch admin backup run`
+   and `sudo varlatch admin backup test-bucket`; `sudo varlatch admin outbound
+   check`; the Sync Targets, the webhooks and the audit export in the
+   dashboard; a sign-in and a `varlatch run` from a client. Do not start,
+   recreate or redeploy the old installation.
+6. **To go back** within 30 days: `varlatch migrate --rollback`, which keeps
+   what changed since. **When you are sure:** `varlatch migrate --finish`,
+   which cannot be undone.
+
+An archive made by a release before 0.50 is turned into one 0.50 restores with
+`varlatch migrate --from-archive`. An installation of a 0.50 prerelease is upgraded
+in place, with `sudo varlatch upgrade`.
+
 ### API
 
 - **`GET /v1/installation/listeners` has a new node check reason,
@@ -163,19 +224,12 @@ fixes.
 ### Documentation
 
 - **Sharing the host with other workloads.** [Host requirements](docs/self-hosting/requirements.md#sharing-the-host-with-other-workloads)
-  explains how a host's other containers can take CPU from Varlatch, with
-  a measurement on a small host shared with Coolify, whose scheduler does
-  its periodic work at the start of every minute. It also explains how to
-  give varlatchd and PostgreSQL a higher CPU weight in
-  `docker-compose.override.yml` (`cpu_shares: 4096`, the value that raises
-  the weight under every runtime's conversion), and why the shipped Compose
-  files set none. It now gives one measurement of the weight's effect.
-  [Deploying on Coolify](infra/coolify/README.md#sharing-the-host) explains
-  that Coolify sets the CPU weight of an application it builds itself from
-  the application's CPU shares setting (1024 by default, which gives weight
-  39 on runtimes with the older conversion; set 4096), that a
-  `--cpu-shares` in its custom run options is overridden, and that a
-  Compose resource needs `cpu_shares` in its Compose file.
+  explains how a host's other containers can take CPU from Varlatch, with a
+  measurement on a small host shared with Coolify, whose scheduler does its
+  periodic work at the start of every minute. Its settings for a Compose
+  installation, and those of
+  [Deploying on Coolify](infra/coolify/README.md#sharing-the-host), are for
+  0.23.x.
 
 ### Releases
 
@@ -773,6 +827,86 @@ Changes since 0.50.0-rc.1, by pull request:
   migrate` migrates from the last TypeScript release's published image
   (0.23.0) only.
 
+## 0.23.0 (2026-11-22)
+
+The last release of the current server line: the 0.50 line replaces it.
+An installation moves to it with `varlatch migrate`, which runs the
+commands this release adds. An installation that never runs them behaves
+as on 0.22.4.
+
+### Server
+
+- **`varlatchd admin migration`.** The commands the 0.50 line's `varlatch
+  migrate` runs on a 0.23.0 installation:
+  - `barrier` stops the installation at a fixed point: it drains the
+    requests in flight, then pauses every request and background loop
+    until `release` or `mark-migrated-out`. `status` shows the barrier.
+  - `release` lifts the barrier: the installation serves again, as it
+    was. That is how a move is called off before the switch.
+  - `export` writes the installation, as it stands behind the barrier,
+    to a migration bundle (a new file, mode 0600, or standard output with
+    `--out -`, its summary then the last line of standard error). With `--dry-run` it
+    reads a consistent snapshot of a running installation instead, with
+    no barrier, to check the export before the move.
+  - `mark-migrated-out` marks an installation that moved: from then on it
+    answers no request, reads included. A backup of it can still be made
+    (`varlatch admin backup create`), since its data no longer changes:
+    the old installation's final archive. Behind the barrier, while the
+    data moves, a backup is refused.
+  - `import` rebuilds the database of a stopped installation from a
+    bundle the 0.50 line wrote (a file, or standard input with `--in -`), which moves an installation back; once it
+    commits, the installation answers requests again.
+  - `backfill` finishes, in one run and with varlatchd stopped, the audit
+    backfill an export needs, for a database brought forward from a
+    release before 0.20.0.
+- **A new audit event, `installation.migrated`.** The 0.50 line records it
+  when an installation moves to it, and an installation moved back keeps
+  it. The dashboard shows it as "Installation migrated"; audit exports and
+  webhooks deliver it like any other event.
+- An `admin migration` command that fails unexpectedly says what failed:
+  a system error's code, call and path, or PostgreSQL's error code and the
+  table or column it names, never what it read.
+- The Convex supervisor stops the backend behind the migration barrier and
+  on a migrated-out installation, as it does under a backup or restore.
+
+### Coolify
+
+- **Coolify installations run the release's published images.** Both
+  Coolify files, `docker-compose.coolify-tailscale.yml` and the new
+  `docker-compose.coolify.yml` (without the Tailscale sidecar), pull
+  varlatchd, varlatch-web and convex-deploy by digest instead of building
+  them from the checkout, so a Coolify installation runs exactly the
+  images the release signed. `varlatch migrate` requires that of its
+  source. The digests are Coolify variables, published with each release
+  as `coolify-image-digests.env` and in its release notes; a deploy without
+  them stops before anything starts, naming the variable.
+- The release images carry the `org.opencontainers.image.version` label.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.23.0.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`. It changes only its version.
+- The server: to move an installation to 0.23.0, follow the 0.22.1 notes
+  below with the 0.23.0 CLI and version.
+- Coolify: before deploying 0.23.0, set the four variables of this
+  release's `coolify-image-digests.env` (checked against `SHA256SUMS`) in
+  the resource's environment, then update the repository ref as usual
+  ([Deploying on Coolify](infra/coolify/README.md#upgrades)). A resource
+  that deploys the canonical `docker-compose.yml` switches its Docker
+  Compose Location to `docker-compose.coolify.yml` in the same upgrade.
+  That file carries the Coolify settings the Tailscale one has: varlatchd
+  trusts `coolify-proxy` as well as the dashboard, the dashboard and Convex
+  join the default network explicitly, and `convex-deploy` runs on every
+  deploy.
+- Audit consumers that list the event types they accept: add
+  `installation.migrated`.
+
+Backups: archives of 0.22.4 and earlier still restore into this release.
+
 ## 0.50.0-rc.1 (2026-11-20)
 
 A prerelease of the Go line (ADR-0059): the first release built from the
@@ -794,6 +928,146 @@ the release assets. **It is not for production.** The TypeScript line
   (`varlatch upgrade`, the release notice, the CLI's self-update) offers
   it. The Go server has no container image, `setup`, `upgrade` or `doctor`
   yet, and there is no migration from a TypeScript installation.
+
+## 0.22.4 (2026-11-20)
+
+A CLI release: a fix to the agent-safe Broker's response scrubbing. The
+server is unchanged apart from its version and the CLI its image carries
+(for the backup job and `/cli/varlatch.cjs`).
+
+### CLI
+
+- **A destination's reset ends a scrubbed response as an abort.** When a
+  destination reset its connection during a scrubbed response that has no
+  declared length, the Broker treated the reset as the end of the body, so
+  a destination reset could release held bytes. The Broker now treats it
+  as an abort: it releases nothing it holds, closes the Agent's
+  connection, and reports the abort. A response that ends cleanly is
+  unchanged.
+- An abort after the response headers is reported once, not twice.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.22.4.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`.
+- The server: nothing changes but its version and the CLI in its image.
+  To move an installation to 0.22.4, follow the 0.22.1 notes below with
+  the 0.22.4 CLI and version.
+
+Backups: archives of 0.22.3 and earlier still restore into this release.
+
+## 0.22.3 (2026-11-19)
+
+A security release for the web image. Nothing else changes.
+
+### Web
+
+- **nginx 1.31.9.** The `varlatch-web` image moves from `nginx:1.29-alpine`
+  to `nginx:1.31.9-alpine`, which fixes the nginx2root vulnerabilities
+  disclosed on 2026-11-18. The 1.29 line gets no fix. The image's
+  `/convex/` location uses `resolver` with a variable `proxy_pass`, which is
+  the setup CVE-2026-123634 (a use-after-free in nginx's DNS resolver)
+  needs. Any installation that serves the web image is affected, whatever
+  proxy sits in front of it.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The server: move the `varlatch-web` image to 0.22.3. Upgrade the
+  other images too, so every image runs the same version. To move an
+  installation to 0.22.3, follow the 0.22.1 notes below with the 0.22.3
+  CLI and version.
+- The CLI: unchanged apart from its version.
+
+Backups: archives of 0.22.2 and earlier still restore into this release.
+
+## 0.22.2 (2026-11-17)
+
+A CLI release: security hardening of agent file installation and of
+credential display. The server is unchanged apart from its version and
+the CLI its image carries (for the backup job and `/cli/varlatch.cjs`).
+
+### CLI
+
+- **Agent file installation.** `varlatch agents install`, `--check` and
+  `--remove` stop with status 78 before reading or changing anything when
+  a directory below the project (with `--scope user`, below the home
+  directory) on the way to a file they manage is a symbolic link. Replace
+  the link with a directory and run the command again. `varlatch init`
+  still writes `varlatch.toml` in that case, prints a warning, and skips
+  the agent files. A changed file is replaced as a whole and keeps its
+  permission bits; `AGENTS.md` and a `CLAUDE.md` that is the same file
+  stay one file, and a file with any other second name (a hard link) stops
+  the command with status 78.
+- **Credential display.** The CLI never prints a credential or a server
+  URL's user name and password. A stored credential that cannot be sent is
+  named, not quoted; such a URL is shown with `[redacted]` in their place
+  in `status`, `server`, `context`, `login`, `logout`, `whoami`,
+  `varlatch mcp` and every message that names a server. A URL without them
+  is printed as before.
+- **`varlatch init`** refuses a server URL with a user name or password
+  (status 64) and writes nothing, since `varlatch.toml` is committed.
+- **An empty `VARLATCH_CONFIG_DIR` or `HOME`** counts as unset: the CLI
+  uses the default configuration directory and the home directory the
+  operating system records. With no home directory at all, commands exit
+  64 and say to set `HOME` or `VARLATCH_CONFIG_DIR`.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.22.2.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`.
+- The server: nothing changes but its version and the CLI in its image.
+  To move an installation to 0.22.2, follow the 0.22.1 notes below with
+  the 0.22.2 CLI and version.
+- Scripts that run `varlatch agents install` in a checkout whose `.claude`,
+  `.agents`, `.codex`, `.cursor`, `.vscode` or `.gemini` directory is a
+  symbolic link now get status 78: replace the link with a directory.
+
+Backups: archives of 0.22.1 and earlier still restore into this release.
+
+## 0.22.1 (2026-11-16)
+
+### Access control
+
+- **A Grant can name only its own Organization's groups and roles.**
+  Creating or replacing a Grant whose group or role belongs to another
+  Organization is refused, and the Grants an identity holds count only
+  through its own Organization's groups and roles.
+- **Only an Organization Admin can invite an admin.** Inviting someone with
+  the admin role needs a live admin of the Organization, as changing a
+  member's role already does. `identity.manage`, through a Grant, a custom
+  role or a machine identity, still invites members. A refused admin
+  invitation answers `403 PERMISSION_DENIED` and is recorded in the audit
+  log as `authorization.denied`.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- From 0.22.0: run `varlatch upgrade 0.22.1 --bek-file /secure/backup-key
+  --kek-file /secure/root-kek-copy` on the Compose host, as
+  [the Compose guide](infra/compose/README.md) describes, then replace the
+  host CLI with `varlatch-cli-0.22.1.cjs`, or run `varlatch self-update`.
+- From 0.21.0 or older: follow the 0.22.0 notes below with the 0.22.1 CLI
+  and version.
+- Scripts that invite admins with a machine credential, or as a member who
+  holds `identity.manage`, now get `403`: invite them as an Organization
+  Admin instead.
+
+Backups: archives of 0.22.0 and earlier still restore into this release.
 
 ## 0.22.0 (2026-11-13)
 
