@@ -28,6 +28,7 @@ import type {
   TailnetEndpoint,
   ApiError,
   CapabilityExercise,
+  OneTimeCode,
   CapabilitySummary,
   ConfigItemSearchResult,
   ContractRevision,
@@ -667,7 +668,8 @@ export class VarlatchClient {
     project: string,
     environment: string,
     item: string,
-    input: { value: string; expectedVersionId?: string },
+    /** A value, or the seed of one-time codes as an otpauth:// URI (capability values.totp; an older server refuses it). */
+    input: ({ value: string } | { otpauth: string }) & { expectedVersionId?: string },
     opts: { idempotencyKey?: string } = {},
   ): Promise<ValueVersion> {
     return this.request(
@@ -691,7 +693,8 @@ export class VarlatchClient {
     project: string,
     environment: string,
     item: string,
-    input: { value: string; expectedVersionId?: string; graceSeconds?: number },
+    /** Of a seed of one-time codes, to another seed: otpauth (capability values.totp). */
+    input: ({ value: string } | { otpauth: string }) & { expectedVersionId?: string; graceSeconds?: number },
   ): Promise<ValueRotation> {
     return this.request(
       "POST",
@@ -741,13 +744,18 @@ export class VarlatchClient {
     org: string,
     project: string,
     environment: string,
-    request: ({ items: string[] } | { scope: "all-authorized-secrets" }) & { purpose?: DisclosurePurpose },
+    request:
+      | (({ items: string[] } | { scope: "all-authorized-secrets" }) & { purpose?: DisclosurePurpose; totpSeeds?: undefined })
+      /** Also the seeds of one-time codes among the items, each as its otpauth:// URI (capability values.totp). */
+      | { items: string[]; totpSeeds: true },
   ): Promise<{
     items: {
       name: string;
       versionId: string;
       value: string;
       retiring?: { versionId: string; value: string };
+      /** Present when value is a seed. */
+      totp?: OneTimeCode;
     }[];
     withheld: string[];
     /** Present when the caller also holds config.metadata.read. */
@@ -786,6 +794,8 @@ export class VarlatchClient {
     environment: string,
     changes: (
       | { op: "set"; item: string; value: string; expectedVersionId?: string }
+      /** The seed of one-time codes (capability values.totp). */
+      | { op: "set"; item: string; otpauth: string; expectedVersionId?: string }
       | { op: "delete"; item: string; expectedVersionId?: string }
     )[],
     opts: { idempotencyKey?: string } = {},
@@ -1052,6 +1062,10 @@ export class VarlatchClient {
       destination: { host: string; port: number };
       /** Each substitution the Broker will make: an item and one of its recorded targets. */
       placements: { item: string; target: string }[];
+      /** One-time codes among the items: still valid for this long, else the next one (capability values.totp). */
+      minValiditySeconds?: number;
+      /** One-time codes among the items: none given before, else RATE_LIMITED (capability values.totp). */
+      fresh?: boolean;
     },
   ): Promise<CapabilityExercise> {
     return this.request(

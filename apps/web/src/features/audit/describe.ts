@@ -229,8 +229,8 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
     case "value.written":
       return {
         icon: "pencil",
-        title: r.previousVersionId ? "Value changed" : "Value set",
-        segments: [r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names)],
+        title: m.totp === true ? "One-time code seed set" : r.previousVersionId ? "Value changed" : "Value set",
+        segments: [m.totp === true ? "set the seed of " : r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names)],
       };
     case "value.deleted":
       return { icon: "trash", title: "Value removed", segments: ["removed ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names, "from")] };
@@ -254,9 +254,10 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       const forExport = str(m.purpose) === "export";
       return {
         icon: "eye",
-        title: forExport ? "Secrets read for export" : "Secrets revealed",
+        // ADR-0061: a disclosure that asked for seeds of one-time codes.
+        title: forExport ? "Secrets read for export" : typeof m.totpSeeds === "number" ? "One-time code seed revealed" : "Secrets revealed",
         segments: [
-          str(m.mode) === "strict-retrieval" ? "received " : forExport ? "read " : "revealed ",
+          str(m.mode) === "strict-retrieval" ? "received " : forExport ? "read " : typeof m.totpSeeds === "number" ? "revealed the seed of " : "revealed ",
           ...itemsPhrase(items, "secret"),
           ...inPlace(r, names),
           ...(forExport ? [" for export"] : []),
@@ -338,7 +339,7 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return {
         icon: "key",
         title: "Capability used",
-        segments: ["used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...inPlace(r, names)],
+        segments: [typeof m.oneTimeCodes === "string" ? "got a one-time code, using " : "used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...inPlace(r, names)],
       };
     case "capability.denied":
       return { icon: "shield", title: "Capability refused", segments: ["was refused a capability use", ...inPlace(r, names)] };

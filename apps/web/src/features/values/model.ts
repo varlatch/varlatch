@@ -163,6 +163,25 @@ export function generateSecret(bytes = 32): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/** "Portal · alice@example.com" of a one-time code: what may be read of its seed. */
+export function codeLabel(server: ServerItem | undefined): string | null {
+  const code = server?.totp;
+  if (!code) return null;
+  return [code.issuer, code.account].filter((s) => s !== "").join(" · ");
+}
+
+/**
+ * What is plainly wrong with a pasted seed, before it is sent: the server
+ * decides. Fixed texts: none repeats any of it.
+ */
+export function seedProblem(text: string): string | null {
+  const uri = text.trim();
+  if (/^otpauth:\/\/hotp\b/i.test(uri)) return "A counter-based code (hotp) is not supported.";
+  if (!/^otpauth:\/\/totp\b/i.test(uri)) return "Not an otpauth://totp/ URI.";
+  if (!/[?&]secret=[^&]+/i.test(uri)) return "The URI has no secret.";
+  return null;
+}
+
 /** Editor flavour for an item: a select for enums and booleans, a blind input for Secrets. */
 export function editorKind(
   sensitive: boolean,

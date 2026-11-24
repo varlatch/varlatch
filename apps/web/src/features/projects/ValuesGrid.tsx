@@ -146,7 +146,7 @@ export function ValuesGrid() {
         for (const r of rows) {
           const server = byName?.get(r.name);
           if (byName && cellStateOf(server, r.contract, env) === "missing_required") missing++;
-          if (server && isSensitive(server, r.contract)) secrets.push(r.name);
+          if (server && !server.totp && isSensitive(server, r.contract)) secrets.push(r.name);
         }
         return {
           missing,
@@ -327,7 +327,7 @@ export function ValuesGrid() {
     if (e.key === "Enter" || e.key === "e" || e.key === "E") {
       e.preventDefault();
       const col = columns[active.col];
-      if (col?.data) setEditing(active);
+      if (col?.data && !col.data.byName.get(active.row)?.totp) setEditing(active);
     } else if (e.key === "Home") {
       e.preventDefault();
       focusCell({ ...active, col: 0 });

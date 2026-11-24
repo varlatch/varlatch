@@ -64,7 +64,8 @@ export function useExport(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, org, project, key, ready, opts.exportPurpose]);
 
-  const secrets = (items ?? []).filter((i) => i.sensitive);
+  // A one-time code's seed is never exported, and never asked for.
+  const secrets = (items ?? []).filter((i) => i.sensitive && !i.totp);
   const plain = (items ?? []).filter((i) => !i.sensitive && !withheld.has(i.name) && i.value != null);
   // Values no `.env` line carries safely to every loader; never written.
   const unwritable = plain.filter((i) => dotenvLine(i.name, i.value as string) === null).map((i) => i.name);
@@ -87,7 +88,9 @@ export function useExport(
       lines.push(line ?? `# ${name}: not written, tools would load its value differently`);
     };
     for (const item of [...items].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (item.sensitive) {
+      if (item.totp) {
+        lines.push(`# ${item.name}: one-time code, never exported`);
+      } else if (item.sensitive) {
         const value = disclosed.get(item.name);
         if (value !== undefined) write(item.name, value);
         else lines.push(`# ${item.name}: secret, not exported`);
