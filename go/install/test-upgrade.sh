@@ -95,6 +95,16 @@ if ! host_is_empty; then
   exit 2
 fi
 
+# A hosted runner's image lets everybody write in /usr/local/bin, where varlatch
+# upgrade neither runs nor keeps a binary as root (it refuses, and says chmod
+# go-w). A host is not like that.
+for d in /usr /usr/local /usr/local/bin /usr/local/lib; do
+  if [ -n "$(find "$d" -maxdepth 0 -perm /022)" ]; then
+    echo "      $d was $(stat -c '%a' "$d"): chmod go-w"
+    chmod go-w "$d"
+  fi
+done
+
 work=$(mktemp -d)
 chmod 700 "$work"
 mkdir -m 700 "$work/home" "$work/repo" "$work/source" "$work/saved"
