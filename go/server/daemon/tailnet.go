@@ -158,11 +158,6 @@ func (r *tailnetRunner) browserEndpoint() *httpserver.BrowserEndpoint {
 // wait; then it is looked at every tailnet.CheckEvery. Tests shorten it.
 var joinNotice = 15 * time.Second
 
-// errJoinRefused is a join the control server refused, as the log and open
-// say it: never in the control server's own words, which may repeat the auth
-// key it was given.
-var errJoinRefused = errors.New("its control server refused it (its answer is not shown, since it may repeat the auth key: check the key, whether it expired, was used or was revoked, and the control server's own log)")
-
 // What the report and doctor say of a node that has not joined.
 const (
 	waitingDetail = "The node is waiting for control: its control server has not answered since varlatchd started. Tailnet access is closed; the tailnet listener opens by itself when the node joins. After 5 minutes of this, the control server may also be refusing the node without saying so: check the auth key and the control server."
@@ -204,10 +199,7 @@ func (r *tailnetRunner) join(ctx context.Context) error {
 				return nil
 			}
 			var refused *tailnet.RefusedError
-			if errors.As(err, &refused) {
-				err = errJoinRefused
-			}
-			if ctx.Err() == nil && errors.Is(err, errJoinRefused) {
+			if ctx.Err() == nil && errors.As(err, &refused) {
 				r.manager.SetJoin(tailnet.JoinRefused, refusedDetail)
 				r.manager.Listening(false)
 				r.manager.Check(ctx)

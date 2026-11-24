@@ -205,7 +205,11 @@ func TestFailingChecks(t *testing.T) {
 		{"a node its control server refused", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
 			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "join-refused"
 			f.in.Live.TailnetDetail = "The node's control server refused it."
-		}, "tailnet access is closed: The node's control server refused it.", "restart varlatchd"},
+		}, "tailnet access is closed: The node's control server refused it.", "put it right, then restart varlatchd. Keep <data_dir>/tailnet"},
+		{"a node its control server refused, enrolling", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
+			f.in.Live.Tailnet, f.in.Live.TailnetClosed, f.in.Live.TailnetNeverJoined = true, "join-refused", true
+			f.in.Live.TailnetDetail = "The node's control server refused it."
+		}, "tailnet access is closed: The node's control server refused it.", "The node never joined: a new auth key (tailnet_auth_key_file) is read only while it has no state, so stop varlatchd, move <data_dir>/tailnet away"},
 		{"Tailscale's DERP servers in a self-hosted DERP map", "tailnet.control", Advisory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://192.0.2.10\n", func(f *fixture) {
 			f.in.Live.Tailnet = true
 			f.in.Live.TailnetWarnings = []string{"The control server's DERP map lists Tailscale's DERP servers (derp1f.tailscale.com)."}

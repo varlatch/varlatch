@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,8 +40,18 @@ func TestJoinWaitsThroughWhatPasses(t *testing.T) {
 	}
 	n := 0
 	var r *RefusedError
-	if err := join(ctx, nil, ups(&n, refused, nil), nil); !errors.As(err, &r) || n != 1 || !errors.Is(err, refused) || RateLimited(err) {
+	if err := join(ctx, nil, ups(&n, refused, nil), nil); !errors.As(err, &r) || n != 1 || err.Error() != refusedText || RateLimited(err) {
 		t.Errorf("refused: %v after %d", err, n)
+	}
+	// tsnet's own words for a tailnet that requires logs are told apart.
+	n = 0
+	if err := join(ctx, nil, ups(&n, errors.New(backendError+logsRequired)), nil); !errors.As(err, &r) || !strings.Contains(err.Error(), "requires its nodes to log") {
+		t.Errorf("logs required: %v", err)
+	}
+	// Refused as its time ends: the fixed text all the same.
+	ectx, end := context.WithCancel(ctx)
+	if err := join(ectx, nil, func(context.Context) error { end(); return refused }, nil); !errors.As(err, &r) || err.Error() != refusedText {
+		t.Errorf("refused as its time ends: %v", err)
 	}
 	// A refusal whose words only resemble what passes is a refusal.
 	for _, said := range []string{
@@ -75,51 +86,115 @@ func TestJoinWaitsThroughWhatPasses(t *testing.T) {
 	}
 }
 
+// spellings are a key as an answer may write it.
+func spellings(key string) map[string]string {
+	escaped := func(s, format string, every int) string {
+		var b strings.Builder
+		for i := range len(s) {
+			if i%every == 0 {
+				fmt.Fprintf(&b, format, s[i])
+			} else {
+				b.WriteByte(s[i])
+			}
+		}
+		return b.String()
+	}
+	fully := escaped(key, "%%%02X", 1)
+	mixed := ""
+	for i := range len(key) {
+		mixed += fmt.Sprintf([]string{"%%%02x", "%%%02X"}[i%2], key[i])
+	}
+	again := func(s string) string { return strings.ReplaceAll(s, "%", "%25") }
+	return map[string]string{
+		"literal": key, "fully escaped": fully, "partially escaped": escaped(key, "%%%02X", 3), "mixed-case hex": mixed,
+		"double-escaped": again(fully), "partially, double-escaped": again(escaped(key, "%%%02x", 4)), "triple-escaped": again(again(fully)),
+		"escaped deeper than is looked through":      again(again(again(fully))),
+		"beside a percent sign that escapes nothing": "100% %zz%" + escaped(key, "%%%02x", 2) + "%4",
+	}
+}
+
+func TestAKeyIsFoundHoweverItIsEscaped(t *testing.T) {
+	secret := strings.ToLower(rand.Text())
+	key := "ts" + "key-auth-kABC11CNTRL-" + secret
+	for what, as := range map[string]string{"a key": key, "its secret part": secret, "another key": "hs" + "key-auth-" + strings.ToLower(rand.Text())} {
+		for how, said := range spellings(as) {
+			if got := withoutKey("the key "+said+" is not valid\nand more", key); got != keyTaken {
+				t.Errorf("%s, %s: shown", what, how)
+			}
+			if err := keyless(errors.New("x: "+said), key); err.Error() != keyTaken {
+				t.Errorf("%s, %s: an error with it", what, how)
+			}
+		}
+	}
+	// Without parameters, wrapped, and one with no shape (an old Headscale's).
+	for full, said := range map[string]string{key + "?ephemeral=false": key, key + "--TLabcdefgh-ijklmnop": key, secret: secret, secret + "?a=b": secret} {
+		for how, as := range spellings(said) {
+			if withoutKey(as, full) != keyTaken {
+				t.Errorf("a part of it, %s: shown", how)
+			}
+		}
+	}
+	for _, text := range []string{"", "nothing of a key", "100% of %41 %zz %", "three layers, %252541, of nothing", "a key- and tskey", "register request: http 403: no"} {
+		if got := withoutKey(text, key); got != text {
+			t.Errorf("%q: %q", text, got)
+		}
+		if got := withoutKey(text, ""); got != text {
+			t.Errorf("%q without a key: %q", text, got)
+		}
+	}
+	if err := errors.New("plain"); keyless(err, key) != err || keyless(nil, key) != nil {
+		t.Error("an error without the key")
+	}
+}
+
 // A control server's answer that repeats the auth key: no error or log line
-// of the node has it.
+// of the node, or of a probe, has it.
 func TestARefusalNeverRepeatsTheAuthKey(t *testing.T) {
 	secret := strings.ToLower(rand.Text())
-	bare := "ts" + "key-auth-" + secret
-	for _, key := range []string{bare, bare + "?ephemeral=false", secret, secret + "?preauthorized=true"} {
-		sent, _, _ := strings.Cut(key, "?")
+	key := "ts" + "key-auth-" + secret
+	for how, said := range spellings(key) {
 		control := startControl(t)
 		control.MaybeRejectRequest = func(r *http.Request) (int, string, string) {
 			if r.URL.Path == "/machine/register" {
-				return http.StatusOK, "", `{"Error":"the key ` + key + ` (` + sent + `) is not valid"}`
+				return http.StatusOK, "", `{"Error":"the key ` + said + ` is not valid"}`
 			}
 			return 0, "", ""
 		}
 		var mu sync.Mutex
-		var log strings.Builder
+		var log []string
 		n, err := StartNode(NodeConfig{Dir: t.TempDir(), Hostname: "varlatch", ControlURL: control.BaseURL(), AuthKey: key, Tags: []string{"tag:varlatch"},
 			Logf: func(format string, args ...any) {
 				mu.Lock()
 				defer mu.Unlock()
-				fmt.Fprintf(&log, format+"\n", args...)
+				log = append(log, fmt.Sprintf(format, args...))
 			}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		err = n.Up(ctx)
-		cancel()
 		_ = n.Close()
 		var refused *RefusedError
-		if !errors.As(err, &refused) || !strings.Contains(err.Error(), "is not valid") || strings.Contains(err.Error(), secret) {
-			t.Errorf("the refusal of %d characters: not a refusal, or with the key in it", len(key))
+		if !errors.As(err, &refused) || err.Error() != refusedText {
+			t.Errorf("%s: the refusal is not the fixed text", how)
 		}
+		if how == "literal" || how == "partially escaped" {
+			_, err = ProbeName(ctx, ProbeConfig{Dir: t.TempDir(), Hostname: "vault", ControlURL: control.BaseURL(), AuthKey: key, Tags: []string{"tag:varlatch"}})
+			if !errors.As(err, &refused) || !strings.HasSuffix(err.Error(), refusedText) {
+				t.Errorf("%s: the probe's refusal is not the fixed text", how)
+			}
+		}
+		cancel()
 		mu.Lock()
-		said := log.String()
-		mu.Unlock()
-		if !strings.Contains(said, "is not valid") || strings.Contains(said, secret) {
-			t.Error("the node's log does not say the refusal, or has the key in it")
+		if !slices.Contains(log, keyTaken) {
+			t.Errorf("%s: the node's log never had the refusal: this shows nothing", how)
 		}
-	}
-	if got := withoutKey("a wrapped "+bare+" and "+bare+"--TLabc-def", bare+"--TLabc-def"); strings.Contains(got, secret) {
-		t.Error("a wrapped key is not taken out")
-	}
-	if got := withoutKey("nothing of a key", bare); got != "nothing of a key" {
-		t.Error(got)
+		for _, line := range log {
+			if strings.Contains(line, "is not valid") || hasKey(line, key) {
+				t.Errorf("%s: a line of the node's log has the refusal's words", how)
+			}
+		}
+		mu.Unlock()
 	}
 }
 
@@ -166,7 +241,7 @@ func TestANodeJoinsOnceItsControlServerLetsIt(t *testing.T) {
 	}
 	defer n.Close()
 	var refused *RefusedError
-	if err := n.Up(ctx); !errors.As(err, &refused) || !strings.Contains(err.Error(), "invalid authkey") {
+	if err := n.Up(ctx); !errors.As(err, &refused) || err.Error() != refusedText {
 		t.Errorf("an auth key the control server does not take: %v", err)
 	}
 }
@@ -191,7 +266,7 @@ func TestANodeThatNeedsLogin(t *testing.T) {
 		}
 		return st
 	}
-	if st := look(true); !st.AuthNeeded {
+	if st := look(true); !st.AuthNeeded || st.HaveNodeKey {
 		t.Errorf("a node that needs a login: %+v", st)
 	}
 	if st := look(false); st.AuthNeeded {
@@ -231,6 +306,9 @@ func TestWhyANodeHasNotJoined(t *testing.T) {
 		// Tags that differ are said too, but never in place of the restart.
 		m.RequireTags([]string{"tag:varlatch"})
 		m.SetJoin(c.reason, "why")
+		if m.NeverJoined() {
+			t.Errorf("%s: never joined, before it is known", c.what)
+		}
 		if got := m.Closed(); got != c.before {
 			t.Errorf("%s: %q", c.what, got)
 		}
@@ -244,6 +322,40 @@ func TestWhyANodeHasNotJoined(t *testing.T) {
 		m.Check(context.Background())
 		if got := m.Closed(); got != c.after {
 			t.Errorf("%s: after a check, %q", c.what, got)
+		}
+	}
+}
+
+// Only a node no control server ever registered, with no tailnet ever pinned,
+// never joined.
+func TestANodeThatNeverJoined(t *testing.T) {
+	for _, c := range []struct {
+		what string
+		pin  *Pin
+		st   Status
+		err  error
+		want bool
+	}{
+		{"a first enrolment refused", &Pin{Enrolling: true}, Status{BackendState: "NeedsLogin"}, nil, true},
+		{"registered, not pinned yet", &Pin{Enrolling: true}, Status{BackendState: "Starting", HaveNodeKey: true}, nil, false},
+		{"a StableID, not pinned yet", &Pin{Enrolling: true}, Status{BackendState: "NeedsLogin", SelfID: "nA"}, nil, false},
+		{"pinned", &Pin{Suffix: testSuffix}, Status{BackendState: "NeedsLogin"}, nil, false},
+		{"no pin", nil, Status{BackendState: "NeedsLogin"}, nil, false},
+		{"not known", &Pin{Enrolling: true}, Status{}, errors.New("no status"), false},
+	} {
+		dir := t.TempDir()
+		if c.pin != nil {
+			if err := SavePin(filepath.Join(dir, PinFile), c.pin); err != nil {
+				t.Fatal(err)
+			}
+		}
+		m, err := NewManager(&statusNode{st: c.st, err: c.err}, "", dir, 8687, slog.New(slog.DiscardHandler), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.Check(context.Background())
+		if got := m.NeverJoined(); got != c.want {
+			t.Errorf("%s: %v", c.what, got)
 		}
 	}
 }

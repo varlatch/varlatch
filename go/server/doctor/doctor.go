@@ -135,6 +135,9 @@ type Live struct {
 	// listing Tailscale's DERP servers).
 	TailnetDetail   string   `json:"tailnetDetail,omitempty"`
 	TailnetWarnings []string `json:"tailnetWarnings,omitempty"`
+	// TailnetNeverJoined: the tailnet node has no identity yet (no control
+	// server ever registered it).
+	TailnetNeverJoined bool `json:"tailnetNeverJoined,omitempty"`
 	// Custody is the attestations, CustodyError why they could not be read.
 	Custody      *custody.Status `json:"custody,omitempty"`
 	CustodyError string          `json:"custodyError,omitempty"`
@@ -656,8 +659,13 @@ func certificate(cfg *config.Config, live *Live) Check {
 	return c
 }
 
-// newKey is how a node takes another auth key.
-const newKey = "a new auth key (tailnet_auth_key_file) is read only while the node has no state: stop varlatchd, move <data_dir>/tailnet away, start varlatchd, and it enrols as a new node"
+// What a node that has not joined does with its state directory: one that
+// never joined reads a new auth key only without it; any other's is its
+// identity, and stays.
+const (
+	newKey       = "The node never joined: a new auth key (tailnet_auth_key_file) is read only while it has no state, so stop varlatchd, move <data_dir>/tailnet away, and start varlatchd"
+	keepIdentity = "Keep <data_dir>/tailnet: it is the node's identity, which a new auth key does not replace"
+)
 
 func tailnetPin(live *Live) Check {
 	c := Check{ID: "tailnet.pin", Title: "Tailnet pin", Class: Mandatory}
@@ -674,13 +682,17 @@ func tailnetPin(live *Live) Check {
 	case live.TailnetClosed == closed.WaitingForControl, live.TailnetClosed == closed.LoginNeeded, live.TailnetClosed == closed.JoinRefused:
 		// Not on its tailnet since varlatchd started: nothing to re-pin.
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetDetail
+		state := keepIdentity
+		if live.TailnetNeverJoined {
+			state = newKey
+		}
 		switch live.TailnetClosed {
 		case closed.WaitingForControl:
-			c.Remedy = "Check that this host reaches the tailnet's control server; the listener then opens with no restart. After 5 minutes of this, the control server may also be refusing the node: check the auth key and the control server (" + newKey + ")"
+			c.Remedy = "Check that this host reaches the tailnet's control server; the listener then opens with no restart. After 5 minutes of this, the control server may also be refusing the node: check the auth key and the control server. " + state
 		case closed.LoginNeeded:
-			c.Remedy = "Approve the node, or extend its key, in the tailnet's admin console, or enrol it anew: " + newKey
+			c.Remedy = "Approve the node, or extend its key, in the tailnet's admin console. " + state
 		default:
-			c.Remedy = "Check the auth key (expired, used or revoked?) and the control server's own log, put it right, then restart varlatchd; " + newKey
+			c.Remedy = "Check the auth key (expired, used or revoked?) and the control server's own log, put it right, then restart varlatchd. " + state
 		}
 	case live.TailnetClosed != "":
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetClosed

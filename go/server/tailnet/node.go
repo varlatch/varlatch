@@ -73,6 +73,9 @@ type Status struct {
 	// AuthNeeded: somebody must log it in or approve it at its control
 	// server before it can join.
 	AuthNeeded bool
+	// HaveNodeKey: a control server has registered it, now or ever: it has
+	// an identity, which its state directory holds.
+	HaveNodeKey bool
 }
 
 // TSNode is varlatchd's node, in process: tsnet.
@@ -114,7 +117,10 @@ func newServer(cfg NodeConfig) (*tsnet.Server, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	// tsnet logs the control server's answers.
+	// tsnet logs the control server's answers. It calls a Logf once for a
+	// whole message (nothing here is an io.Writer that could be handed a key
+	// in two pieces; its own log buffer takes nothing, logtail being
+	// disabled), so each message is looked at whole.
 	say := logf
 	logf = func(format string, args ...any) { say("%s", withoutKey(fmt.Sprintf(format, args...), cfg.AuthKey)) }
 	advertise := slices.Clone(cfg.Tags)
@@ -275,7 +281,7 @@ func (n *TSNode) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	out := Status{BackendState: st.BackendState, CertDomains: slices.Clone(st.CertDomains)}
+	out := Status{BackendState: st.BackendState, CertDomains: slices.Clone(st.CertDomains), HaveNodeKey: st.HaveNodeKey}
 	// Without a network map, NeedsLogin is also a first registration still
 	// under way (or a control server that does not answer it).
 	out.AuthNeeded = st.AuthURL != "" || st.BackendState == ipn.NeedsMachineAuth.String() ||

@@ -259,6 +259,15 @@ func (m *Manager) SetJoin(reason, detail string) {
 	}
 }
 
+// NeverJoined is whether the node has no identity yet: no tailnet was ever
+// pinned for it, and the last check found that no control server ever
+// registered it. False whenever that is not known.
+func (m *Manager) NeverJoined() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pin != nil && m.pin.Enrolling && m.status != nil && !m.status.HaveNodeKey && m.status.SelfID == ""
+}
+
 // joinLocked is why the node is not on its tailnet yet, and what that
 // means: nothing once a check found it on one, except after a refusal.
 func (m *Manager) joinLocked() (reason, detail string) {

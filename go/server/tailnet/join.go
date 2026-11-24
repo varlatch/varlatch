@@ -4,10 +4,11 @@ package tailnet
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,12 +24,24 @@ import (
 
 // RefusedError is a join the control server refused (an auth key it does
 // not take, a node it does not know): trying again answers the same. Its
-// text is the control server's own, the auth key taken out (withoutKey): for
-// the operator at a terminal, never a log.
-type RefusedError struct{ Err error }
+// text is fixed, never the control server's own words, which may repeat the
+// auth key in any form.
+type RefusedError struct{ text string }
 
-func (e *RefusedError) Error() string { return e.Err.Error() }
-func (e *RefusedError) Unwrap() error { return e.Err }
+func (e *RefusedError) Error() string { return e.text }
+
+// refusedText is a refused registration: tsnet's backend reports one only as
+// the error in an answer of HTTP 200.
+const refusedText = "the control server refused the node's registration (HTTP 200, with an error in its answer, whose words are not shown: they may repeat the auth key). Check the key (expired, used or revoked?) and the control server's own log"
+
+// refusedBy is err as a *RefusedError.
+func refusedBy(err error) error {
+	if strings.TrimPrefix(err.Error(), backendError) == logsRequired {
+		// tsnet's own words.
+		return &RefusedError{text: "the tailnet requires its nodes to log to Tailscale (data plane audit logs), which varlatchd's node never does"}
+	}
+	return &RefusedError{text: refusedText}
+}
 
 // errNodeClosed is a join of a node closed meanwhile.
 var errNodeClosed = errors.New("tailnet: the node was closed")
@@ -50,6 +63,8 @@ const (
 	// words it has in it.
 	limitedFor  = "node registration rate limited; will retry after "
 	watchBehind = "IPN bus consumer fell behind; closing watch"
+	// And one of tsnet's own that does not pass.
+	logsRequired = "tailnet requires logging to be enabled. Remove --no-logs-no-support from tailscaled command line."
 )
 
 // passing is whether a join that ended with err may still succeed as it
@@ -75,25 +90,71 @@ func RateLimited(err error) bool {
 }
 
 // keyShape is an auth key as Tailscale and Headscale write them.
-var keyShape = regexp.MustCompile(`(?i)\b(ts|hs)key-[\w-]+`)
+var keyShape = regexp.MustCompile(`(?i)(ts|hs)key-[\w-]`)
 
-// withoutKey is text with the auth key the node joins with taken out, whole
-// or as it is sent (without its parameters, or the signature wrapped into
-// it), and anything shaped like one: a control server's answer may repeat
-// what it was given.
+// keyTaken is said in place of a text that has the auth key in it.
+const keyTaken = "[not shown: it has the auth key in it]"
+
+// withoutKey is text, or keyTaken in place of all of it when it has the auth
+// key the node joins with in it: a control server's answer may repeat what
+// it was given.
 func withoutKey(text, authKey string) string {
-	sent, _, _ := strings.Cut(authKey, "--TL")
-	bare, _, _ := strings.Cut(sent, "?")
-	for _, k := range []string{authKey, sent, bare} {
-		if k != "" {
-			text = strings.ReplaceAll(text, k, keyTaken)
-			text = strings.ReplaceAll(text, url.QueryEscape(k), keyTaken)
-		}
+	if hasKey(text, authKey) {
+		return keyTaken
 	}
-	return keyShape.ReplaceAllString(text, keyTaken)
+	return text
 }
 
-const keyTaken = "[auth key]"
+// maxEscapes is how many layers of percent escapes hasKey looks through.
+const maxEscapes = 3
+
+// hasKey is whether text has authKey in it, or anything shaped like an auth
+// key: as it is, or under percent escapes, wholly or partly escaped. The key
+// is looked for whole, as it is sent (without the signature wrapped into it,
+// or its parameters), and as its secret part alone. A text with more layers
+// of escapes than are looked through counts as one that has it.
+func hasKey(text, authKey string) bool {
+	sent, _, _ := strings.Cut(authKey, "--TL")
+	bare, _, _ := strings.Cut(sent, "?")
+	var parts []string
+	for _, k := range []string{authKey, sent, bare} {
+		if k == "" {
+			continue
+		}
+		parts = append(parts, k)
+		if secret := k[strings.LastIndexByte(k, '-')+1:]; len(secret) >= 8 {
+			parts = append(parts, secret)
+		}
+	}
+	for range maxEscapes + 1 {
+		if keyShape.MatchString(text) || slices.ContainsFunc(parts, func(k string) bool { return strings.Contains(text, k) }) {
+			return true
+		}
+		next := unescape(text)
+		if next == text {
+			return false
+		}
+		text = next
+	}
+	return true
+}
+
+// unescape is text with one layer of its percent escapes decoded; a percent
+// sign that begins none stays.
+func unescape(text string) string {
+	out := make([]byte, 0, len(text))
+	for i := 0; i < len(text); i++ {
+		if text[i] == '%' && i+2 < len(text) {
+			if b, err := hex.DecodeString(text[i+1 : i+3]); err == nil {
+				out = append(out, b[0])
+				i += 2
+				continue
+			}
+		}
+		out = append(out, text[i])
+	}
+	return string(out)
+}
 
 // keyless is err without the auth key in its text; err itself when there is
 // none in it.
@@ -101,8 +162,8 @@ func keyless(err error, authKey string) error {
 	if err == nil {
 		return nil
 	}
-	if text := withoutKey(err.Error(), authKey); text != err.Error() {
-		return errors.New(text)
+	if hasKey(err.Error(), authKey) {
+		return errors.New(keyTaken)
 	}
 	return err
 }
@@ -117,13 +178,14 @@ func join(ctx context.Context, closed <-chan struct{}, up func(context.Context) 
 		switch {
 		case err == nil:
 			return nil
+		case !passing(err):
+			// Before anything else: its words go no further.
+			return refusedBy(err)
 		case ctx.Err() != nil:
 			if last != nil {
 				return fmt.Errorf("%w (before that: %v)", err, last)
 			}
 			return err
-		case !passing(err):
-			return &RefusedError{Err: err}
 		}
 		last = err
 		if waiting != nil {
@@ -146,6 +208,11 @@ func join(ctx context.Context, closed <-chan struct{}, up func(context.Context) 
 func upOf(srv *tsnet.Server) func(context.Context) error {
 	return func(ctx context.Context) error {
 		_, err := srv.Up(ctx)
+		if err != nil && !passing(err) {
+			// Told by join from what passes: kept as it is until then, and
+			// its words go no further.
+			return err
+		}
 		return keyless(err, srv.AuthKey)
 	}
 }

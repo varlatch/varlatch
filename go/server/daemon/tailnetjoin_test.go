@@ -94,13 +94,15 @@ func TestTheTailnetListenerOpensWhenItsControlServerRecovers(t *testing.T) {
 	} {
 		reject(c.status, c.retryAfter)
 		r := startWith(t, in, h)
+		stateSays := "Keep <data_dir>/tailnet"
 		if i == 0 {
 			bearer = joinBootstrap(t, in)
+			stateSays = "The node never joined"
 		}
 		waitReport(t, r, bearer, `"warnings":["The node is waiting for control: `)
 		waitReport(t, r, bearer, c.says)
 		waitReport(t, r, bearer, `"node":{"status":"fail","reason":"NOT_RUNNING"}`)
-		doctorSays(t, in, "FAIL    tailnet.pin", "waiting for control", c.says, "the listener then opens with no restart", "may also be refusing the node")
+		doctorSays(t, in, "FAIL    tailnet.pin", "waiting for control", c.says, "the listener then opens with no restart", "may also be refusing the node", stateSays)
 		if log := r.stderr.String(); !strings.Contains(log, "has not joined its tailnet") || !strings.Contains(log, "waiting-for-control") || strings.Contains(log, "is not serving") {
 			t.Fatalf("the log: %s", log)
 		}
@@ -121,14 +123,14 @@ func TestARefusedNodeStaysClosed(t *testing.T) {
 	waitReport(t, r, bearer, `"listener":{"status":"fail","reason":"NOT_LISTENING"}`)
 	waitReport(t, r, bearer, "The node's control server refused it")
 	doctorSays(t, in, "FAIL    tailnet.pin", "control server refused it", "restart varlatchd")
-	if log := r.stderr.String(); !strings.Contains(log, "is not serving") || !strings.Contains(log, "control server refused it") || strings.Contains(log, "invalid authkey") {
+	if log := r.stderr.String(); !strings.Contains(log, "is not serving") || !strings.Contains(log, "control server refused the node") || strings.Contains(log, "invalid authkey") {
 		t.Fatalf("the log: %s", log)
 	}
 	if b, err := os.ReadFile(filepath.Join(in.data, tailnet.ListenersFile)); err != nil || strings.Contains(string(b), "invalid authkey") {
 		t.Fatalf("the report: %s %v", b, err)
 	}
 	// Doctor's way out: the state moved away, and the new key.
-	doctorSays(t, in, "move <data_dir>/tailnet away")
+	doctorSays(t, in, "The node never joined", "move <data_dir>/tailnet away")
 	r.stop(t)
 	if err := os.WriteFile(filepath.Join(in.dir, "tailnet-auth-key"), []byte("another\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -155,7 +157,7 @@ func TestOpenOfARefusedNodeFails(t *testing.T) {
 	bearer := joinBootstrap(t, in)
 	waitReport(t, r, bearer, "The node's control server refused it")
 	begun := time.Now()
-	if code, _, errOut := runAdmin(t, "tailnet", "open", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "control server refused it") || time.Since(begun) > 10*time.Second {
+	if code, _, errOut := runAdmin(t, "tailnet", "open", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "control server refused the node") || time.Since(begun) > 10*time.Second {
 		t.Fatalf("open: %d in %v %q", code, time.Since(begun), errOut)
 	}
 }
@@ -190,7 +192,7 @@ func TestARefusalThatRepeatsTheAuthKeyIsNotShown(t *testing.T) {
 	answer.Store(echoed(secret))
 	shown := map[string]string{}
 	code, out, errOut := runAdmin(t, "tailnet", "enroll", "--hostname", temp, "--json", "--config", in.conf)
-	if shown["enroll"] = out + errOut; code != ExitFailure || !strings.Contains(errOut, "the key [auth key] is not valid") {
+	if shown["enroll"] = out + errOut; code != ExitFailure || !strings.Contains(errOut, "the control server refused the node's registration (HTTP 200") || strings.Contains(errOut, "is not valid") {
 		t.Errorf("enroll: %d", code)
 	}
 	// Held by that enroll; the open waits for the node, refused after it.
@@ -213,7 +215,7 @@ func TestARefusalThatRepeatsTheAuthKeyIsNotShown(t *testing.T) {
 	case <-time.After(90 * time.Second):
 		t.Fatal("open did not end")
 	}
-	if !strings.HasPrefix(shown["open"], fmt.Sprint(ExitFailure)) || !strings.Contains(shown["open"], "control server refused it") {
+	if !strings.HasPrefix(shown["open"], fmt.Sprint(ExitFailure)) || !strings.Contains(shown["open"], "control server refused the node") {
 		t.Errorf("open did not say the refusal")
 	}
 	waitReport(t, r, bearer, "The node's control server refused it")
@@ -246,13 +248,25 @@ func TestARefusedNodeNeedsARestartThoughItRuns(t *testing.T) {
 			t.Fatalf("the node never ran: %s", out)
 		}
 	}
-	doctorSays(t, in, "FAIL    tailnet.pin", "control server refused it", "restart varlatchd")
+	doctorSays(t, in, "FAIL    tailnet.pin", "control server refused it", "restart varlatchd", "Keep <data_dir>/tailnet")
+	if _, out, _ := runAdmin(t, "doctor", "--config", in.conf); strings.Contains(out, "move <data_dir>/tailnet") {
+		t.Fatalf("a node with an identity is told to move it:\n%s", out)
+	}
 	waitReport(t, r, bearer, `"listener":{"status":"fail","reason":"NOT_LISTENING"}`)
 	waitReport(t, r, bearer, "The node's control server refused it")
 	r.stop(t)
 	r = startWith(t, in, h)
 	waitReport(t, r, bearer, joined)
 	doctorSays(t, in, "PASS    tailnet.pin")
+	// An enrolled node refused at a restart keeps its identity.
+	r.stop(t)
+	answer.Store(echoed("k"))
+	r = startWith(t, in, h)
+	waitReport(t, r, bearer, "The node's control server refused it")
+	doctorSays(t, in, "FAIL    tailnet.pin", "Keep <data_dir>/tailnet")
+	if _, out, _ := runAdmin(t, "doctor", "--config", in.conf); strings.Contains(out, "move <data_dir>/tailnet") {
+		t.Fatalf("an enrolled node is told to move its identity:\n%s", out)
+	}
 }
 
 // A node that must be logged in at its control server is said to be, and

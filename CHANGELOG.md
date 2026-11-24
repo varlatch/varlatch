@@ -117,8 +117,8 @@ fixes.
   control plane refuses (an auth key it does not take) keeps the listener
   closed as before, and they say so until varlatchd is restarted. The
   control plane's own words are no longer logged or shown by `varlatchd admin
-  tailnet open`, and the host commands take the auth key out of them: such an
-  answer can repeat the key it was given.
+  tailnet open` and the other host commands: such an answer can repeat the
+  auth key it was given.
 - **The handoff's host commands wait for the control plane's change to reach
   the node**, for 30 seconds at most, and refuse as before, naming what the
   node is and what it must be, when it does not. `admin tailnet enroll` takes

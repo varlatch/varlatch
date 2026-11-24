@@ -2152,9 +2152,9 @@ serves the tailnet listener on the node's own addresses
   the node (`join-refused`: an auth key it does not take) ends the wait: the
   listener stays closed, and doctor says so, until varlatchd is restarted,
   though tsnet goes on and the node may come to run. The refusal's own words,
-  which may repeat the auth key, are in neither the log, the report nor
-  `open`'s answer; the host commands show them without the key. A control
-  server that answers a registration with a plain HTTP error (a 403) is not
+  which may repeat the auth key, are shown nowhere: not in the log, the
+  report, or a host command's answer; a message of tsnet's own log with the
+  key in it, percent-escaped or not, is not logged. A control server that answers a registration with a plain HTTP error (a 403) is not
   told from one that does not answer.
 - **Coordination server.** Tailscale's by default (`tailnet_control_url`
   unset, or Tailscale's own URL), and the node is always given its control
