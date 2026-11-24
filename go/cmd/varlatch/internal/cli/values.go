@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,8 +29,12 @@ import (
 // value").
 
 const (
-	valuesSetUsage            = "Usage: varlatch values set <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<value> | --stdin | --from-file <path> | --generate <spec>]"
-	valuesRotateUsage         = "Usage: varlatch values rotate <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]"
+	valuesSetUsage    = "Usage: varlatch values set <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<value> | --stdin | --from-file <path> | --generate <spec>]"
+	valuesRotateUsage = "Usage: varlatch values rotate <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]"
+	// With --totp (ADR-0061), which the TypeScript CLI's usage does not have
+	// (go/README.md, values-totp).
+	valuesSetSeedUsage        = "Usage: varlatch values set <ITEM> --totp [-e <environment>] [--server <url>] [--replace <ITEM>] [--stdin | --from-file <path>]"
+	valuesRotateSeedUsage     = "Usage: varlatch values rotate <ITEM> --totp [-e <environment>] [--server <url>] [--replace <ITEM>] [--stdin | --from-file <path>] [--grace <seconds>]"
 	valuesDeleteUsage         = "Usage: varlatch values delete <ITEM> [-e <environment>] [--server <url>] [--confirm <ITEM>]"
 	valuesRotateCompleteUsage = "Usage: varlatch values rotate-complete <ITEM>"
 	valuesUsage               = "Usage: varlatch values <set|list|delete|rotate|rotate-complete>"
@@ -152,12 +157,20 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 		usage = valuesRotateUsage
 		values = append(values, "--grace")
 	}
+	// --totp: the seed of one-time codes, an otpauth:// URI, never from the
+	// command line. Only its own errors name it, so every other is as it was.
+	if hasArg(beforeEndOfOptions(r.Args), "--totp") {
+		usage = valuesSetSeedUsage
+		if sub == "rotate" {
+			usage = valuesRotateSeedUsage
+		}
+	}
 	// Strict (ADR-0043 Decision 10), before anything is read, prompted or
 	// written: an option typo such as `--env production` must never become
 	// the stored value. A value that begins with "-" goes after `--`.
 	parsed, err := valueFreeOptions("values "+sub, r.Args, OptionSpec{
 		Values:       values,
-		Booleans:     []string{"--stdin"},
+		Booleans:     []string{"--stdin", "--totp"},
 		Aliases:      []Alias{{"-e", "--environment"}},
 		Positionals:  3,
 		EndOfOptions: true,
@@ -194,6 +207,10 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	}
 	options.File, options.HasFile = parsed.Value("--from-file")
 	options.Generate, options.HasGen = parsed.Value("--generate")
+	seed := parsed.Has("--totp")
+	if seed && (options.HasValue || options.HasGen) {
+		return UsageErrorWithUsage("varlatch values "+sub+": a seed (--totp) is never taken from the command line nor generated: the issuer's otpauth:// URI comes from a hidden prompt, --stdin or --from-file. Nothing was stored.", "\n"+usage)
+	}
 	source, err := secretinput.SourceOf(options)
 	if err != nil {
 		return secretInputFailure(err)
@@ -216,6 +233,11 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	}
 	api := r.client(ctx)
 	environment := environmentOf(ctx)
+	if seed && r.Assisted.On && source.Kind == secretinput.Prompt {
+		return UsageError("varlatch: no seed given for " + item + ", and assisted mode never prompts. Nothing was stored.\n" +
+			"  A seed is the human's to enter. Ask them to run this in their own terminal, where it prompts without showing it, or to use the dashboard:\n" +
+			"    varlatch values " + sub + " " + item + " --totp " + r.contextOptions(where, environment, ctx.Server))
+	}
 	// Refusals that need no value (a Secret on the command line, a prompt in assisted mode) come first.
 	if err := r.refuseValueSource(sub, item, r.contextOptions(where, environment, ctx.Server), source, func() (bool, error) {
 		return sensitiveItem(api, ctx, item)
@@ -255,7 +277,16 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 	if hasHint {
 		r.eprintln("How to rotate " + item + " (from the Contract): " + r.Secrets.ServerMessage(hint))
 	}
-	value, generated, err := r.obtainValue(source, item)
+	if seed {
+		c, err := api.get()
+		if err != nil {
+			return err
+		}
+		if err := r.requireSeedsServer(c); err != nil {
+			return err
+		}
+	}
+	value, generated, err := r.obtainValue(source, item, seed)
 	if err != nil {
 		return err
 	}
@@ -275,7 +306,11 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 		return err
 	}
 	if sub == "set" {
-		version, err := c.SetValue(context.Background(), ctx.Organization, ctx.Project, environment, item, value)
+		send := c.SetValue
+		if seed {
+			send, how = c.SetSeed, " to the seed of one-time codes"
+		}
+		version, err := send(context.Background(), ctx.Organization, ctx.Project, environment, item, value)
 		if err != nil {
 			return err
 		}
@@ -297,7 +332,11 @@ func (r *Run) valuesSetOrRotate(sub string) error {
 		n, _ := strconv.ParseFloat(grace, 64) // Number(digits)
 		graceSeconds = &n
 	}
-	rot, err := c.BeginRotation(context.Background(), ctx.Organization, ctx.Project, environment, item, value, graceSeconds)
+	begin := c.BeginRotation
+	if seed {
+		begin, how = c.BeginSeedRotation, " to another seed of one-time codes"
+	}
+	rot, err := begin(context.Background(), ctx.Organization, ctx.Project, environment, item, value, graceSeconds)
 	if err != nil {
 		return err
 	}
@@ -419,7 +458,7 @@ func (r *Run) refuseValueSource(sub, item, where string, source secretinput.Sour
 
 // obtainValue is main.ts's obtainValue: the value itself, once every check
 // has passed: read, generated, or prompted for.
-func (r *Run) obtainValue(source secretinput.Source, item string) (string, *secretinput.GenerateSpec, error) {
+func (r *Run) obtainValue(source secretinput.Source, item string, seed bool) (string, *secretinput.GenerateSpec, error) {
 	var value string
 	var err error
 	switch source.Kind {
@@ -438,7 +477,11 @@ func (r *Run) obtainValue(source secretinput.Source, item string) (string, *secr
 			return value, &spec, nil
 		}
 	case secretinput.Prompt:
-		value, err = r.promptHidden("Value for " + item + " (input hidden): ")
+		question := "Value for " + item + " (input hidden): "
+		if seed {
+			question = "otpauth:// URI for " + item + " (input hidden): "
+		}
+		value, err = r.promptHidden(question)
 	}
 	if err != nil {
 		if _, cancelled := err.(secretinput.Cancelled); cancelled {
@@ -447,6 +490,31 @@ func (r *Run) obtainValue(source secretinput.Source, item string) (string, *secr
 		return "", nil, secretInputFailure(err)
 	}
 	return value, nil, nil
+}
+
+// beforeEndOfOptions is args up to a "--".
+func beforeEndOfOptions(args []string) []string {
+	if i := slices.Index(args, "--"); i >= 0 {
+		return args[:i]
+	}
+	return args
+}
+
+// requireSeedsServer refuses a server that does not store seeds, before one
+// is asked for.
+func (r *Run) requireSeedsServer(c *apiclient.Client) error {
+	meta, err := c.Meta(context.Background())
+	if err != nil {
+		return err
+	}
+	ok, err := includesCapability(meta, "values.totp")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("varlatch: this server (" + r.serverVersionText(meta) + ") does not store seeds of one-time codes. Nothing was stored.")
+	}
+	return nil
 }
 
 // readAllStdin is secretInput.ts's readAll(process.stdin).
@@ -691,7 +759,11 @@ func (r *Run) valuesList(ctx *clientctx.Context, api *lazyClient) error {
 				}
 			}
 			rotating, _ := jsval.Get(item, "rotating")
-			list[i] = append(o, jsjson.Member{Key: "rotating", Value: rotating == true})
+			o = append(o, jsjson.Member{Key: "rotating", Value: rotating == true})
+			if code, ok := jsval.Get(item, "totp"); ok {
+				o = append(o, jsjson.Member{Key: "totp", Value: code})
+			}
+			list[i] = o
 		}
 		return r.printJSON(jsjson.Object{{Key: "version", Value: statusSchemaVersion}, {Key: "environment", Value: ctx.Environment}, {Key: "items", Value: list}})
 	}
@@ -705,6 +777,14 @@ func (r *Run) valuesList(ctx *clientctx.Context, api *lazyClient) error {
 		kind := "plain"
 		if jsjson.Truthy(sensitive) {
 			kind = "secret"
+		}
+		if code, ok := jsval.Get(i, "totp"); ok {
+			kind = "one-time code"
+			for _, key := range []string{"issuer", "account"} {
+				if s, ok := stringField(code, key); ok && s != "" {
+					kind += ", " + key + " " + Printable(s)
+				}
+			}
 		}
 		if err := r.println(Printable(jsTemplate(name, nOK)) + "  (" + kind + ", " + Printable(jsTemplate(source, sOK)) + ")"); err != nil {
 			return err

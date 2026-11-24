@@ -25,6 +25,22 @@ func (c *Client) SetValue(ctx context.Context, org, project, environment, item, 
 	return c.Request(ctx, "PUT", environmentPath(org, project, environment)+"/values/"+EncodeURIComponent(item), jsjson.Object{{Key: "value", Value: value}}, nil)
 }
 
+// SetSeed is PUT .../values/<item> with {otpauth}: the seed of one-time
+// codes in a value's place (capability values.totp, ADR-0061). A server
+// without the capability refuses it for want of a value.
+func (c *Client) SetSeed(ctx context.Context, org, project, environment, item, uri string) (any, error) {
+	return c.Request(ctx, "PUT", environmentPath(org, project, environment)+"/values/"+EncodeURIComponent(item), jsjson.Object{{Key: "otpauth", Value: uri}}, nil)
+}
+
+// BeginSeedRotation is BeginRotation with {otpauth}, as SetSeed.
+func (c *Client) BeginSeedRotation(ctx context.Context, org, project, environment, item, uri string, graceSeconds *float64) (any, error) {
+	body := jsjson.Object{{Key: "otpauth", Value: uri}}
+	if graceSeconds != nil {
+		body = append(body, jsjson.Member{Key: "graceSeconds", Value: *graceSeconds})
+	}
+	return c.Request(ctx, "POST", environmentPath(org, project, environment)+"/values/"+EncodeURIComponent(item)+"/rotations", body, nil)
+}
+
 // DeleteValue is DELETE .../values/<item>.
 func (c *Client) DeleteValue(ctx context.Context, org, project, environment, item string) (any, error) {
 	return c.Request(ctx, "DELETE", environmentPath(org, project, environment)+"/values/"+EncodeURIComponent(item), NoBody, nil)

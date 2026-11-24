@@ -365,12 +365,21 @@ func (r *Run) defaultRun(ctx *clientctx.Context, c *apiclient.Client, cwd string
 		return err
 	}
 	effective := got.effective
-	var withheld []string
+	var withheld, codes []string
 	for _, item := range listOf(effective, "items") {
 		name := jsjson.String(fieldOf(item, "name"))
 		if v := fieldOf(item, "value"); v == nil && !omitted[name] {
+			if fieldOf(item, "totp") != nil {
+				codes = append(codes, name)
+				continue
+			}
 			withheld = append(withheld, name)
 		}
+	}
+	if len(codes) > 0 {
+		// Always: the seed is delivered to nobody, and a code would be stale
+		// in an environment variable (ADR-0061).
+		r.eprintln("varlatch: " + itoa(len(codes)) + " one-time code(s) not delivered, since a seed never is (an agent-safe run's Broker gets the code when it is used): " + Printable(strings.Join(codes, ", ")))
 	}
 	if len(withheld) > 0 {
 		r.eprintln("varlatch: " + itoa(len(withheld)) + " value(s) withheld by policy: " + Printable(strings.Join(withheld, ", ")))
