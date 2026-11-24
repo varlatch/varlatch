@@ -318,8 +318,16 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 	if j.Source.Digest == "" || j.Source.DigestRepository == "" {
 		return RebuildRecord{}, errors.New("the journal records no image digest of the source: the rebuild runs the release's own image only")
 	}
-	// An undo reads its gate there.
-	if _, _, err := c.stateName(ctx, cfg); err != nil {
+	// An undo holds its gate there: the volume is the recorded one.
+	if j.Source.State != nil {
+		v, _, err := c.stateVolume(ctx)
+		if err != nil {
+			return RebuildRecord{}, err
+		}
+		if why := v.differs(*j.Source.State); why != "" {
+			return RebuildRecord{}, fmt.Errorf("the volume %s is not the one that carried the gate when the migration began (%s)", v.Name, why)
+		}
+	} else if _, _, err := c.stateName(ctx, cfg); err != nil {
 		return RebuildRecord{}, err
 	}
 	// Names no volume has: one there already is another's, whatever it is.

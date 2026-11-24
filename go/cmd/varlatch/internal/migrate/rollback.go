@@ -153,6 +153,13 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("removing what an interrupted run left: %w", err)
 	}
 	e.cleanReverseScratch()
+	if j.Ingress == Coolify {
+		// Its containers start again before Go's barrier (checkRoute), on the
+		// database they left: behind the migration's gate only.
+		if err := rs.CheckGate(ctx, sourceGate(j)); err != nil {
+			return j, gateLost(j, err)
+		}
+	}
 	// What the rebuild would stand on, told before Go's barrier (it is read
 	// again after it).
 	if _, err := rs.RebuildPlan(ctx, j); err != nil {
@@ -163,11 +170,6 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("%w; nothing was done", err)
 	}
 	if j.Ingress == Coolify {
-		// Its containers start again before Go's barrier (checkRoute), on the
-		// database they left: behind the migration's gate only.
-		if err := rs.CheckGate(ctx, sourceGate(j)); err != nil {
-			return j, gateLost(j, err)
-		}
 		if err := e.askRoute(ctx, j); err != nil {
 			return j, err
 		}
@@ -698,7 +700,7 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	// Before anything of the TypeScript side is started, stopped or put back:
 	// its gate, which the import lifted, stands again. From here whatever
 	// starts its server (Docker, a deploy) starts it behind the gate.
-	if err := e.holdSource(ctx, j, rs); err != nil {
+	if err := e.holdSource(ctx, j, rs, func() error { return e.save(ctx, j) }); err != nil {
 		// Its server stopped is the safer side, but in the transfer, where
 		// the address may be its own.
 		held := "nothing of it was started"
@@ -820,9 +822,9 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 		return fmt.Errorf("%w; the reverse was undone: %s. The TypeScript installation is not put back (%s): it is behind its gate, and its server is stopped. Do not start it, and start no containers of it (docker compose up, or Coolify's Deploy): varlatch migrate --resume puts it back, and no other --rollback or --finish begins before", cause, at, unrestored)
 	}
 	if j.Ingress == Coolify {
-		return fmt.Errorf("%w; the reverse was undone: Go runs and takes requests again, and the address reaches it once the route is out of the proxy; the TypeScript installation is as the migration left it", cause)
+		return undoneError{fmt.Errorf("%w; the reverse was undone: Go runs and takes requests again, and the address reaches it once the route is out of the proxy; the TypeScript installation is as the migration left it", cause)}
 	}
-	return fmt.Errorf("%w; the reverse was undone: Go serves again, the TypeScript installation is as the migration left it", cause)
+	return undoneError{fmt.Errorf("%w; the reverse was undone: Go serves again, the TypeScript installation is as the migration left it", cause)}
 }
 
 // notHeld is an undo that stops: the TypeScript installation is not held
@@ -837,7 +839,7 @@ func notHeld(cause error, j *Journal, done string, err error) error {
 }
 
 // holdSource is HoldGate, journalled.
-func (e *Engine) holdSource(ctx context.Context, j *Journal, rs ReverseSource) error {
+func (e *Engine) holdSource(ctx context.Context, j *Journal, rs ReverseSource, save func() error) error {
 	position := ""
 	if j.Barrier != nil {
 		position = j.Barrier.AuditPosition
@@ -851,8 +853,25 @@ func (e *Engine) holdSource(ctx context.Context, j *Journal, rs ReverseSource) e
 		return nil
 	}
 	j.SourceGate, j.Source.State = g.ID, g.State
-	return e.save(ctx, j)
+	return save()
 }
+
+// checkHeld is CheckHeld once Go's journal says open: an earlier build's
+// journal, which records no volume, is given it first (the source's journal
+// only, beside a Go that may run).
+func (e *Engine) checkHeld(ctx context.Context, j *Journal, rs ReverseSource) error {
+	if j.Source.State == nil {
+		if err := e.holdSource(ctx, j, rs, func() error { return writeJournal(e.Source.Dir(), j) }); err != nil {
+			return err
+		}
+	}
+	return rs.CheckHeld(ctx, sourceGate(j))
+}
+
+// undoneError is an undo that is done, its cause with it.
+type undoneError struct{ error }
+
+func (e undoneError) Unwrap() error { return e.error }
 
 // restoreSource puts the rebuilt source back, as the forward migration left
 // it: its server started again, but where a sidecar that the forward handoff
@@ -876,7 +895,7 @@ func (e *Engine) finishRestore(ctx context.Context, j *Journal) error {
 		return err
 	}
 	e.say("The TypeScript installation, which an undone reverse left (%s), is put back.", j.Rollback.Unrestored)
-	if err := rs.CheckHeld(ctx, sourceGate(j)); err != nil {
+	if err := e.checkHeld(ctx, j, rs); err != nil {
 		return fmt.Errorf("the TypeScript installation is not held behind its gate: %w; nothing of it was started. Go serves: do not start the TypeScript installation", err)
 	}
 	if err := e.restoreSource(ctx, j, rs); err != nil {

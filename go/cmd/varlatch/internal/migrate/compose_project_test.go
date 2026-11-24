@@ -86,8 +86,8 @@ func tarOf(name, text string, typ byte) []byte {
 func gateRun(volume string) []string {
 	return append(ownRun("type=volume,source="+volume+",target=/state,readonly,volume-nocopy"), gate1.Image, "-c", readGateScript)
 }
-func gateWrite(volume, how string) []string {
-	return append(ownRun("type=volume,source="+volume+",target=/var/lib/varlatch"), gate1.Image, "-c", writeGateScript, "sh", how)
+func gateWrite(volume string, how ...string) []string {
+	return append(append(ownRun("type=volume,source="+volume+",target=/var/lib/varlatch"), gate1.Image, "-c", writeGateScript, "sh"), how...)
 }
 
 const gateText = `{"id":"gate-1","kind":"migrated-out","phase":"paused","expiresAt":null,"archiveId":null,"frozenPosition":"46"}`
@@ -166,7 +166,8 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 		return Ran{}, true
 	case args[0] == "run":
 		for name := range h.volumes {
-			write := slices.Equal(args, gateWrite(name, "new")) || slices.Equal(args, gateWrite(name, "replace"))
+			how := args[min(len(args), len(gateWrite(name))):]
+			write := slices.Equal(args, gateWrite(name, how...)) && (slices.Equal(how, []string{"new"}) || len(how) == 2 && how[0] == "replace")
 			if !write && !slices.Equal(args, gateRun(name)) {
 				continue
 			}
@@ -180,7 +181,7 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 				return Ran{Code: 1, Said: []byte("ln: maintenance.json: File exists")}, true
 			case write:
 				h.gates[name] = string(h.stdin)
-				h.writes = append(h.writes, name+" "+args[len(args)-1])
+				h.writes = append(h.writes, name+" "+strings.Join(how, " "))
 				return Ran{}, true
 			case text == "":
 				h.reads++
@@ -1483,8 +1484,9 @@ func (r *reverseFake) StartNetworkOwner(context.Context) error { return nil }
 
 type reverseTargetFake struct {
 	*fakeTarget
-	released  int
-	onRelease func()
+	released    int
+	onRelease   func()
+	failRelease error
 }
 
 func (r *reverseTargetFake) Barrier(context.Context, string, time.Duration) (BarrierRecord, error) {
@@ -1499,6 +1501,9 @@ func (r *reverseTargetFake) WriteJournal(_ context.Context, j *Journal) error {
 func (r *reverseTargetFake) ReleaseBarrier(context.Context, string) error {
 	if r.onRelease != nil {
 		r.onRelease()
+	}
+	if r.failRelease != nil {
+		return r.failRelease
 	}
 	r.released++
 	r.barrier = ""

@@ -40,6 +40,8 @@ type GateRef struct {
 	Image string
 	// Barrier also takes the gate before it is migrated out: the barrier.
 	Barrier bool
+	// Was is the id it had before, when the journal records another too.
+	Was string
 }
 
 // gateChecker is a source whose gate is read, and whose state is held to be
@@ -66,8 +68,12 @@ type GatedStart struct {
 // sourceGate is the migrated-out gate j's source is behind.
 func sourceGate(j *Journal) GateRef {
 	g := GateRef{ID: j.SourceGate, State: j.Source.State, Image: j.Source.DigestRepository + "@" + j.Source.Digest}
-	if g.ID == "" && j.Barrier != nil {
-		g.ID = j.Barrier.GateID
+	if j.Barrier != nil {
+		if g.ID == "" {
+			g.ID = j.Barrier.GateID
+		} else if g.ID != j.Barrier.GateID {
+			g.Was = j.Barrier.GateID
+		}
 	}
 	return g
 }
@@ -170,10 +176,8 @@ func (c *Compose) CheckGate(ctx context.Context, g GateRef) error {
 	if err != nil {
 		return err
 	}
-	if g.State != nil {
-		if why := v.differs(*g.State); why != "" {
-			return fmt.Errorf("the volume %s is not the one that carried the gate when the migration began (%s)", v.Name, why)
-		}
+	if err := g.in(v); err != nil {
+		return err
 	}
 	if daemon != nil {
 		return c.containerGate(ctx, daemon.id, v.Name, g)
@@ -225,15 +229,15 @@ const (
 	readGateScript = `f=/state/` + gateFile + `; [ -e "$f" ] || [ -L "$f" ] || exit 3; [ -f "$f" ] && [ ! -L "$f" ] || exit 4; cat "$f"`
 
 	writeGateScript = `set -eu; umask 022; cd ` + stateTarget + `; t=.` + gateFile + `.migrate; rm -f "$t"; cat > "$t"; sync "$t"; ` +
-		`if [ "$1" = replace ]; then mv "$t" ` + gateFile + `; else ln "$t" ` + gateFile + `; rm "$t"; fi; sync .`
+		`if [ "$1" = replace ]; then grep -qF "\"id\":\"$2\"" ` + gateFile + `; mv "$t" ` + gateFile + `; else ln "$t" ` + gateFile + `; rm "$t"; fi; sync .`
 )
 
 // HoldGate has the installation behind g, in the volume that carries it,
 // before anything of it is started: the gate's file is made there when it is
-// gone (the reverse's import lifts it), as it was. Nothing of the Compose
-// files is needed, or run. A volume that is gone is made as Compose makes it.
-// The gate it is behind then, which may be another migrated-out one that is
-// there already (an earlier build's undo), and its volume are given.
+// gone (the reverse's import lifts it), as it was. The Compose files are not
+// needed (they may not be whole). A volume that is gone is made as Compose
+// makes it. A gate there that the journal does not record is another's, and
+// left. The gate it is behind then, and its volume, are given.
 func (c *Compose) HoldGate(ctx context.Context, g GateRef, position string) (GateRef, error) {
 	p, all, err := c.verified(ctx)
 	if err != nil {
@@ -267,6 +271,10 @@ func (c *Compose) HoldGate(ctx context.Context, g GateRef, position string) (Gat
 	if err != nil {
 		return g, err
 	}
+	if v == nil && g.State != nil && g.State.Project != p.Name {
+		// Not one Compose makes.
+		return g, fmt.Errorf("the volume %s, which carries the installation's gate, is not there", name)
+	}
 	if v == nil {
 		r, err := c.docker(ctx, []string{"volume", "create", "--label", labelProject + "=" + p.Name, "--label", labelVolume + "=" + key, name}, nil)
 		if err != nil {
@@ -279,28 +287,30 @@ func (c *Compose) HoldGate(ctx context.Context, g GateRef, position string) (Gat
 			return g, err
 		}
 	}
-	if v == nil || v.Project != p.Name {
+	// The recorded one as it was, whatever its labels (an external volume has
+	// none); another only of the project.
+	if v == nil || v.Project != p.Name && (g.State == nil || v.differs(*g.State) != "") {
 		return g, fmt.Errorf("the volume %s, which carries the installation's gate, is not of its project %s", name, p.Name)
 	}
 	text, there, err := c.volumeGate(ctx, g.Image, name)
 	if err != nil {
 		return g, err
 	}
-	how := "new"
+	how := []string{"new"}
 	if there {
 		f, err := parseGate(text)
 		switch {
 		case err != nil:
 			return g, fmt.Errorf("the gate in the volume %s (%s) cannot be read: %v", name, gateFile, err)
-		case f.Kind == "migrated-out" && f.Phase == "paused" && f.Permanent:
+		case f.ID != g.ID && (f.ID != g.Was || g.Was == "") || f.Kind != "migrated-out" && f.Kind != "migration" || !f.Permanent:
+			return g, fmt.Errorf("the installation is behind a %s gate (%s), not the migration's: left as it is", f.Kind, f.ID)
+		case f.Kind == "migrated-out" && f.Phase == "paused":
 			g.ID, g.State = f.ID, v
 			return g, nil
-		case f.Kind != "migration":
-			return g, fmt.Errorf("the installation is behind a %s gate (%s), not the migration's: left as it is", f.Kind, f.ID)
 		}
-		how = "replace"
+		how = []string{"replace", f.ID}
 	}
-	r, err := c.docker(ctx, append(ownRun("type=volume,source="+name+",target="+stateTarget), g.Image, "-c", writeGateScript, "sh", how), g.text(position))
+	r, err := c.docker(ctx, append(append(ownRun("type=volume,source="+name+",target="+stateTarget), g.Image, "-c", writeGateScript, "sh"), how...), g.text(position))
 	if err != nil {
 		return g, err
 	}
@@ -308,7 +318,13 @@ func (c *Compose) HoldGate(ctx context.Context, g GateRef, position string) (Gat
 		return g, failure("making the TypeScript installation's gate again", r)
 	}
 	g.State = v
-	return g, c.CheckHeld(ctx, g)
+	if text, there, err = c.volumeGate(ctx, g.Image, name); err != nil {
+		return g, err
+	}
+	if !there {
+		return g, noGate(name)
+	}
+	return g, g.matches(name, text)
 }
 
 // text is the gate's file for g, as the release writes it: frozen at the
@@ -332,8 +348,10 @@ func (g GateRef) text(position string) []byte {
 
 // CheckHeld refuses an installation whose server, whoever starts it (Docker
 // itself, an orchestrator's deploy), would not be behind g: g is in the
-// volume the journal records, varlatchd's containers have that volume, whole,
-// for their state, and nothing that could lift it runs.
+// volume the journal records, the Compose files as they are now give that
+// volume to varlatchd, its containers have it, whole, for their state, no
+// container of the project has another there, and nothing that could lift it
+// runs.
 func (c *Compose) CheckHeld(ctx context.Context, g GateRef) error {
 	if g.ID == "" || g.State == nil {
 		return errors.New("the journal does not record the TypeScript installation's gate and the volume that carries it")
@@ -362,9 +380,25 @@ func (c *Compose) CheckHeld(ctx context.Context, g GateRef) error {
 	if err := g.matches(v.Name, text); err != nil {
 		return err
 	}
+	// What the next container is made with: nothing else tells it, when
+	// varlatchd has none now.
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return fmt.Errorf("%w; which volume its Compose files give varlatchd's state is not known: put them back as the migration left them", err)
+	}
+	if name, _, err := c.stateName(ctx, cfg); err != nil {
+		return err
+	} else if name != v.Name {
+		return fmt.Errorf("the Compose files give varlatchd's state the volume %s, and the gate is in %s: put them back as the migration left them", name, v.Name)
+	}
 	for _, l := range all {
 		if l.project != p.Name {
 			continue
+		}
+		for _, m := range l.mounts {
+			if m.Destination == stateTarget && (m.Type != "volume" || m.Name != v.Name) {
+				return fmt.Errorf("the project's %s container has %s at %s, not the volume %s that carries the gate", l.called(), orWord(m.Name, "a "+orWord(m.Type, "mount")), stateTarget, v.Name)
+			}
 		}
 		switch {
 		case l.service == service && !l.isOneOff():
@@ -373,6 +407,16 @@ func (c *Compose) CheckHeld(ctx context.Context, g GateRef) error {
 			}
 		case l.service == importService && l.status != "exited" && l.status != "created" && l.status != "dead":
 			return fmt.Errorf("the reverse's import (%s) still runs", l.name)
+		}
+	}
+	return nil
+}
+
+// in refuses a volume that is not the recorded one, when one is.
+func (g GateRef) in(v *VolumeRecord) error {
+	if g.State != nil {
+		if why := v.differs(*g.State); why != "" {
+			return fmt.Errorf("the volume %s is not the one that carried the gate when the migration began (%s)", v.Name, why)
 		}
 	}
 	return nil
@@ -513,8 +557,13 @@ func (c *Compose) startGated(ctx context.Context, g GateRef, again bool, flags .
 		return err
 	}
 	if !has || again {
-		// Compose makes a volume that is not there.
-		if _, _, err := c.stateVolume(ctx); err != nil {
+		// Compose makes a volume that is not there, and the container on the
+		// one its files give now.
+		v, _, err := c.stateVolume(ctx)
+		if err != nil {
+			return err
+		}
+		if err := g.in(v); err != nil {
 			return err
 		}
 		args := append([]string{"up", "--no-start", "--no-deps"}, flags...)
@@ -529,10 +578,8 @@ func (c *Compose) startGated(ctx context.Context, g GateRef, again bool, flags .
 	if daemon == nil || daemon.id == "" {
 		return fmt.Errorf("the installation has no %s container", service)
 	}
-	if g.State != nil {
-		if why := v.differs(*g.State); why != "" {
-			return fmt.Errorf("the volume %s is not the one that carried the gate when the migration began (%s)", v.Name, why)
-		}
+	if err := g.in(v); err != nil {
+		return err
 	}
 	if err := c.containerGate(ctx, daemon.id, v.Name, g); err != nil {
 		return err

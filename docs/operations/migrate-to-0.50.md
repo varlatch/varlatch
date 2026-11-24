@@ -710,8 +710,9 @@ changes anything else, and lifts the new server's barrier last, only while
 the gate is there: the two servers never both take requests, whoever starts
 the old containers (Docker after a restart, or a Coolify deploy).
 
-- **The gate cannot be put back** (its volume is another project's, say): the
-  undo stops. The new server stays behind its barrier, so the outage goes on
+- **The gate cannot be put back, or held** (its volume is another project's,
+  another operation's gate is in it, or the Compose files now give the server
+  another volume, say): the undo stops. The new server stays behind its barrier, so the outage goes on
   and no data is lost. The message says what is not as it should be and what
   to do; then `--resume` or `--abort` tries again.
 - **The gate is back, the rest is not** (a database volume is gone or still
