@@ -1871,6 +1871,57 @@ jobs:
           VARLATCH_UPGRADE_TESTS: all
         run: go test -count=1 -timeout 50m ./cmd/varlatch/internal/upgrade
 
+  # The Go vulnerability database against what the released programs reach, at
+  # night and by hand, never per pull request: an advisory is published on its
+  # own day. A finding is a failure only where a vulnerable function is called
+  # from the program (govulncheck's exit status 3); one in a module that is
+  # linked or required and not called is listed, and passes. The check that
+  # could not run (the database does not answer) is tried again, then fails as
+  # that. Every dependency of the image, called or not, is image-scan.yml's.
+  govulncheck:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - name: No known vulnerability in what the programs call
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          # Checked against Go's checksum database. Update only to a version
+          # published at least 14 days earlier.
+          GOVULNCHECK: golang.org/x/vuln/cmd/govulncheck@v1.9.0
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install "$GOVULNCHECK"
+          failed=0
+          scan() {
+            echo "=== $3 for $1/$2"
+            for _ in 1 2 3; do
+              status=0
+              GOOS=$1 GOARCH=$2 "$RUNNER_TEMP/bin/govulncheck" "$3" || status=$?
+              [ "$status" != 0 ] || return 0
+              if [ "$status" = 3 ]; then
+                echo "::error title=govulncheck::$3 for $1/$2 calls a function with a known vulnerability."
+                failed=1
+                return 0
+              fi
+              sleep 30
+            done
+            echo "::error title=govulncheck::$3 for $1/$2 was not checked (exit status $status)."
+            failed=1
+          }
+          scan linux amd64 ./cmd/varlatchd
+          scan linux amd64 ./cmd/varlatch
+          scan darwin arm64 ./cmd/varlatch
+          scan windows amd64 ./cmd/varlatch
+          exit "$failed"
+
   # The required check (the main ruleset's merge queue): every Go job
   # succeeded or was skipped because none of its paths changed.
   # The backup converter's conversions (go-step7 decision 18, slice 7.7b),
@@ -1938,12 +1989,12 @@ jobs:
     name: go-ok
     # On a draft it runs too, and fails: every other job is skipped then, and
     # a skipped required check would read as passed.
-    # go-container, go-g5-published and go-upgrade-all run only at night and by
-    # hand (skipped on a pull request and in the merge queue, which go-ok
+    # go-container, go-g5-published, go-upgrade-all and govulncheck run only
+    # at night and by hand (skipped on a pull request and in the merge queue, which go-ok
     # accepts): listed so that a failed nightly run's go-ok is red too, not
     # green beside a red job.
     if: always()
-    needs: [changes, go, go-g5, go-g5-published, go-upgrade-all, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
+    needs: [changes, go, go-g5, go-g5-published, go-upgrade-all, go-race, go-platforms, go-binary, go-image, go-container, govulncheck, openapi, windows, go-cli-platforms, go-binary-go-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -62,3 +62,19 @@ test("the night after v0.50.0: its image, and the last TypeScript release's two 
   assert.match(workflow, /node scripts\/ci-scan-images\.mjs /);
   assert.match(workflow, /include: \$\{\{ fromJSON\(needs\.images\.outputs\.images\) \}\}/);
 });
+
+test("go.yml checks what the programs call against the vulnerability database at night, and a red one is go-ok's", () => {
+  const workflow = readFileSync(join(repo, ".github/workflows/go.yml"), "utf8");
+  const from = workflow.indexOf("\n  govulncheck:\n") + 1;
+  const job = workflow.slice(from, from + workflow.slice(from + 1).search(/\n  [a-z][\w-]*:\n|\n  # /) + 1);
+  assert.match(job, /^    if: github\.event_name == 'schedule' \|\| github\.event_name == 'workflow_dispatch'$/m);
+  assert.match(job, /GOVULNCHECK: golang\.org\/x\/vuln\/cmd\/govulncheck@v\d+\.\d+\.\d+$/m);
+  for (const scan of ["linux amd64 ./cmd/varlatchd", "linux amd64 ./cmd/varlatch", "darwin arm64 ./cmd/varlatch", "windows amd64 ./cmd/varlatch"]) assert.ok(job.includes(`          scan ${scan}\n`), scan);
+  assert.ok(!/continue-on-error/.test(job));
+  // Every job that runs at night and by hand only, but converter, which is
+  // release/0.22's as much (its comment says so).
+  const ok = /\n  go-ok:\n[\s\S]*?\n    needs: \[([^\]]+)\]/.exec(workflow)[1].split(", ");
+  const nightly = [...workflow.matchAll(/\n  ([a-z][\w-]*):\n    if: github\.event_name == 'schedule' \|\| github\.event_name == 'workflow_dispatch'\n/g)].map((m) => m[1]);
+  assert.ok(nightly.includes("govulncheck"), nightly.join());
+  for (const name of nightly.filter((n) => n !== "converter")) assert.ok(ok.includes(name), `go-ok does not wait for ${name}`);
+});
