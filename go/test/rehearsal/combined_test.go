@@ -756,7 +756,13 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 
 	// Production's layout.
 	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "docker-compose.coolify-tailscale.yml", ".env"} {
-		_, err := os.Stat(filepath.Join(prof.coolifySourceDir, name))
+		// Coolify writes its docker-compose.yaml last, a moment after the
+		// deployment says it is finished.
+		var err error
+		pollUntil(30*time.Second, time.Second, func() bool {
+			_, err = os.Stat(filepath.Join(prof.coolifySourceDir, name))
+			return err == nil
+		})
 		c.record("the source's directory holds "+name, err == nil, fmt.Sprint(err))
 	}
 	for _, l := range containersOf(c.source) {
