@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { placeLabel } from "../access/places";
 
 /**
  * Plain-English audit lines. Each event becomes an icon, a short title and a
@@ -176,6 +177,13 @@ function inPlace(resource: Rec, names: NameResolver, prep = "in"): Segment[] {
 function who(id: unknown, names: NameResolver, fallback = "an identity"): Segment {
   const name = names.identity(str(id));
   return name ? { kind: "name", text: name } : fallback;
+}
+
+/** Where a value was typed (ADR-0064), as the broker said: a page or an application; nothing for a host, as ever. */
+function typedInto(metadata: Rec, names: NameResolver): Segment[] {
+  const destination = str(metadata.destination);
+  if (!destination || (metadata.destinationKind !== "web" && metadata.destinationKind !== "app")) return [];
+  return [metadata.destinationKind === "web" ? " at " : " in ", { kind: "mono", text: placeLabel(destination, (id) => names.identity(id) ?? "its machine") }];
 }
 
 function actionText(action: string | null | undefined): Segment {
@@ -386,13 +394,13 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return {
         icon: "key",
         title: "Capability used",
-        segments: [typeof m.oauthTokens === "string" ? "got an access token, using " : typeof m.oneTimeCodes === "string" ? "got a one-time code, using " : "used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...inPlace(r, names)],
+        segments: [typeof m.oauthTokens === "string" ? "got an access token, using " : typeof m.oneTimeCodes === "string" ? "got a one-time code, using " : "used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...typedInto(m, names), ...inPlace(r, names)],
       };
     case "capability.denied":
       if (str(r.entryLinkId)) {
         return { icon: "shield", title: "Entry refused", segments: ["was refused to enter ", { kind: "mono", text: item ?? "a secret" }, " with a link", ...inPlace(r, names)] };
       }
-      return { icon: "shield", title: "Capability refused", segments: ["was refused a capability use", ...inPlace(r, names)] };
+      return { icon: "shield", title: "Capability refused", segments: ["was refused a capability use", ...typedInto(m, names), ...inPlace(r, names)] };
     case "capability.revoked":
       if (str(r.entryLinkId)) {
         // It ended with the credential that made it, which was revoked.

@@ -1123,8 +1123,9 @@ export class VarlatchClient {
     input: {
       agentIdentityId: string;
       items: string[];
+      /** Hosts; or pages (web:https://host/path) and applications (app:name@broker), capability capabilities.destination-kinds. */
       destinations: string[];
-      /** Per item, 1 to 4 substitution targets (header:, query:, json:, form:). */
+      /** Per item, 1 to 4 substitution targets (header:, query:, json:, form:; pipe: and field:, capability capabilities.target-kinds). */
       targets: Record<string, string[]>;
       ttlSeconds: number;
       runId?: string;
@@ -1169,7 +1170,12 @@ export class VarlatchClient {
     capabilityId: string,
     input: {
       capabilitySecret: string;
-      destination: { host: string; port: number };
+      /**
+       * Where the values go: a host, or (capability capabilities.destination-kinds, ADR-0064) the page whose field
+       * it is, as the browser has its address, or an application on this machine. Report what is there, not what
+       * should be. An older server refuses the last two.
+       */
+      destination: { host: string; port: number } | { url: string; topUrl?: string } | { app: string; window?: string };
       /** Each substitution the Broker will make: an item and one of its recorded targets. */
       placements: { item: string; target: string }[];
       /**
