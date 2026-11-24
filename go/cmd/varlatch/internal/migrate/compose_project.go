@@ -47,7 +47,7 @@ const (
 // host: whose it is, whether it runs, and the volumes it mounts.
 type composeContainer struct {
 	project, service, files, dir, oneOff string
-	name, status                         string
+	name, status, id                     string
 	mounts                               []containerMount
 }
 
@@ -71,7 +71,7 @@ func (l composeContainer) volumeAt(target string) string {
 
 // containersFormat prints them, each as JSON.
 const containersFormat = `{{json (index .Config.Labels "` + labelProject + `")}} {{json (index .Config.Labels "` + labelService + `")}} {{json (index .Config.Labels "` + labelFiles +
-	`")}} {{json (index .Config.Labels "` + labelDir + `")}} {{json (index .Config.Labels "` + labelOneOff + `")}} {{json .Name}} {{json .State.Status}} {{json .Mounts}}`
+	`")}} {{json (index .Config.Labels "` + labelDir + `")}} {{json (index .Config.Labels "` + labelOneOff + `")}} {{json .Name}} {{json .State.Status}} {{json .Mounts}} {{json .Id}}`
 
 // composeNames and overrideNames are the files Compose reads by itself in
 // a directory, in its order.
@@ -381,7 +381,7 @@ func (c *Compose) containers(ctx context.Context) ([]composeContainer, error) {
 		dec := json.NewDecoder(bytes.NewReader(r.Answer))
 		for {
 			var l composeContainer
-			for i, v := range []any{&l.project, &l.service, &l.files, &l.dir, &l.oneOff, &l.name, &l.status, &l.mounts} {
+			for i, v := range []any{&l.project, &l.service, &l.files, &l.dir, &l.oneOff, &l.name, &l.status, &l.mounts, &l.id} {
 				err := dec.Decode(v)
 				if i == 0 && errors.Is(err, io.EOF) {
 					if len(out) != len(ids) {

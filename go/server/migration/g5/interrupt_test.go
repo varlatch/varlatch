@@ -227,11 +227,7 @@ func writeGate(g *gateDoc) error {
 func fakeDocker(args []string) int {
 	fail := func(f string, a ...any) int { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1 }
 	if strings.Join(args, " ") == "compose version --short" {
-		v := "5.2.0"
-		if b, err := os.ReadFile(state("compose-version")); err == nil {
-			v = string(b)
-		}
-		fmt.Println(v)
+		fmt.Println(composeVersion())
 		return 0
 	}
 	args, err := composeArgs(args)

@@ -469,6 +469,9 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		}
 		if u := rb.Undone; u != nil {
 			fmt.Fprintf(&b, " undone from phase %s: %s", u.From, u.Why)
+			if rb.Unrestored != "" {
+				fmt.Fprintf(&b, "; the TypeScript installation is not put back (%s), its server stopped: do not start it, varlatch migrate --resume puts it back", rb.Unrestored)
+			}
 		}
 		b.WriteString("\n")
 		for _, a := range rb.Archives {

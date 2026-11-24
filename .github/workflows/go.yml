@@ -577,8 +577,9 @@ jobs:
           VARLATCH_MIGRATE_TEST_IMAGE: busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
         run: |
           docker pull -q "$VARLATCH_MIGRATE_TEST_IMAGE" >/dev/null
-          go test -count=1 -v -run '^TestComposeProjectOnDocker$' ./cmd/varlatch/internal/migrate/ | tee "$RUNNER_TEMP/compose-project.log"
+          go test -count=1 -v -run '^(TestComposeProjectOnDocker|TestTheUndoOnDocker)$' ./cmd/varlatch/internal/migrate/ | tee "$RUNNER_TEMP/compose-project.log"
           grep -q -- '--- PASS: TestComposeProjectOnDocker' "$RUNNER_TEMP/compose-project.log"
+          grep -q -- '--- PASS: TestTheUndoOnDocker' "$RUNNER_TEMP/compose-project.log"
 
       # G13 (ADR-0059 step 4.14), and the Go replacement of
       # scripts/test-backup-s3.mjs: the S3 client against a local S3 server

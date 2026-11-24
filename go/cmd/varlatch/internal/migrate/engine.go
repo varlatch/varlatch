@@ -451,6 +451,16 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	if g != nil {
 		return fmt.Errorf("the source is behind a %s gate (%s): a migration starts from an installation that serves; nothing was done", g.Kind, g.ID)
 	}
+	// What carries the source's gate: the mark at the switch and the way
+	// back need it read and held, so one where they could not is refused
+	// before anything of the migration (past the switch nothing is undone).
+	if gc, ok := e.Source.(gateChecker); ok {
+		v, err := gc.CheckState(ctx)
+		if err != nil {
+			return fmt.Errorf("preflight: %w; a migration needs the stock Compose file's layout there: varlatchd's "+stateTarget+" on a named volume of its own, the whole of it (move the directory's files to one, then docker compose up -d varlatchd); nothing was done", err)
+		}
+		j.Source.State = v
+	}
 	// The import's own check of the target's data directory, made now, so
 	// what it would refuse after the barrier is refused before any
 	// downtime (rehearsal r16f: a stray name passed the dry run, which
@@ -701,6 +711,9 @@ func (e *Engine) cutover(ctx context.Context, j *Journal) (*Journal, error) {
 		return j, e.undo(ctx, j, err)
 	}
 	crashPoint("barrier held")
+	if err := e.checkBarrier(ctx, j); err != nil {
+		return j, e.undo(ctx, j, err)
+	}
 	if err := e.finalCopy(ctx, j); err != nil {
 		return j, e.undo(ctx, j, err)
 	}
@@ -762,6 +775,10 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 // forward only), then the target opened: stopped, its journal open (which
 // removes the transfer's gate), started again.
 func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
+	// The last moment an undo is possible: what the mark needs is there.
+	if err := e.checkBarrier(ctx, j); err != nil {
+		return e.undo(ctx, j, err)
+	}
 	if err := e.enter(ctx, j, Switched); err != nil {
 		return err
 	}
@@ -770,6 +787,19 @@ func (e *Engine) switchAndOpen(ctx context.Context, j *Journal) error {
 	}
 	e.say("Switched: the source refuses writes from now on.")
 	return e.open(ctx, j)
+}
+
+// checkBarrier refuses a source that is not behind the migration's barrier,
+// as its server would find it.
+func (e *Engine) checkBarrier(ctx context.Context, j *Journal) error {
+	gc, ok := e.Source.(gateChecker)
+	if !ok {
+		return nil
+	}
+	if err := gc.CheckGate(ctx, barrierGate(j)); err != nil {
+		return fmt.Errorf("the source is not behind the migration's barrier: %w", err)
+	}
+	return nil
 }
 
 // switchSource marks the source migrated out (migratedOut). A source whose
@@ -804,15 +834,15 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 			temp = j.Tailnet.Handoff.ServingTemp
 		}
 		// Started without its barrier, it would take requests again.
+		start := ts.StartTailnet
 		if gc, ok := e.Source.(gateChecker); ok {
-			g := sourceGate(j)
-			g.Barrier = true
-			if err := gc.CheckGate(ctx, g); err != nil {
-				return fmt.Errorf("the source is not behind the migration's barrier, so its sidecar and its varlatchd are not started to mark it migrated out: %w; varlatch migrate --resume goes on once it is", err)
+			if err := e.checkBarrier(ctx, j); err != nil {
+				return fmt.Errorf("%w, so its sidecar and its varlatchd are not started to mark it migrated out: put its state volume back as it was when the migration began, then varlatch migrate --resume goes on", err)
 			}
+			start = func(ctx context.Context) error { return gc.StartTailnetGated(ctx, barrierGate(j)) }
 		}
 		e.say("Tailnet: the source's sidecar starts again (its node under %s), so that its varlatchd, which shares its network, is marked migrated out; then it stops.", temp)
-		if err := e.step("starting the source's tailnet sidecar", func() error { return ts.StartTailnet(ctx) }); err != nil {
+		if err := e.step("starting the source's tailnet sidecar", func() error { return start(ctx) }); err != nil {
 			// The sidecar may have started and varlatchd not: as the
 			// handoff left it, the old node off the tailnet.
 			if serr := stop(); serr != nil {
@@ -890,8 +920,8 @@ func (e *Engine) sourceAnswers(ctx context.Context) error {
 		actx, cancel := context.WithTimeout(ctx, ask)
 		_, err := e.Source.Gate(actx)
 		cancel()
-		if err == nil {
-			return nil
+		if err == nil || permanent(err) {
+			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -1211,7 +1241,10 @@ func (e *Engine) Resume(ctx context.Context) (*Journal, error) {
 		}
 		return j, e.open(ctx, j)
 	case j.Phase == Open:
-		return j, e.finishOpen(ctx, j)
+		if err := e.finishOpen(ctx, j); err != nil {
+			return j, err
+		}
+		return j, e.finishRestore(ctx, j)
 	case j.Phase == Released:
 		return j, e.removalFailed(j, e.finishReleased(ctx, j))
 	}
@@ -1337,7 +1370,7 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 			return j, fmt.Errorf("the migration %s is in phase %s, but its journal records no reverse", j.ID, j.Phase)
 		}
 		err := e.undoReverse(ctx, j, errors.New("aborted by the operator"))
-		if j.Phase == Open && j.Rollback.Undone != nil {
+		if j.Phase == Open && j.Rollback.Undone != nil && j.Rollback.Unrestored == "" {
 			return j, nil
 		}
 		return j, err
@@ -1345,6 +1378,11 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 		return j, fmt.Errorf("the migration %s was rolled back: the TypeScript release serves; going to Go again is a new migration (after varlatch migrate --finish)", j.ID)
 	case j.Phase == Finished:
 		return j, fmt.Errorf("the migration %s is finished: its rollback window is closed, and nothing of it is undone", j.ID)
+	case j.Phase == Open && j.Rollback != nil && j.Rollback.Unrestored != "":
+		if err := e.finishOpen(ctx, j); err != nil {
+			return j, err
+		}
+		return j, e.finishRestore(ctx, j)
 	case j.Phase == Switched || j.Phase == Open:
 		return j, fmt.Errorf("the migration %s is %s: past its switch it goes forward only (varlatch migrate --resume)", j.ID, j.Phase)
 	}

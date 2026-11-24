@@ -277,6 +277,14 @@ func TestTheHandoffNode(t *testing.T) {
 		res.Body.Close()
 		t.Fatalf("a held node answered on the tailnet: %d", res.StatusCode)
 	}
+	// Without a directory it may make its own in: this host's failure, by
+	// its exit status, not the tailnet's.
+	was := os.Getenv("TMPDIR")
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "none"))
+	if code, _, errOut := runAdmin(t, "tailnet", "reaches", "--name", temp, "--stable-id", en.StableID, "--wait", "60s", "--json", "--config", in.conf); code != ExitConfig || !strings.Contains(errOut, "no such file") {
+		t.Fatalf("no temporary directory: %d %q", code, errOut)
+	}
+	t.Setenv("TMPDIR", was)
 	// The reach check, from a client node.
 	code, out, errOut = runAdmin(t, "tailnet", "reaches", "--name", temp, "--stable-id", en.StableID, "--wait", "60s", "--json", "--config", in.conf)
 	if code != ExitOK || !strings.Contains(out, `"reaches":true`) {

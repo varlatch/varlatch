@@ -154,7 +154,7 @@ func (c *Compose) Discover(ctx context.Context) (SourceInfo, error) {
 	if vols, _, err := c.MountedVolumes(ctx, nil); err == nil {
 		info.Volumes = vols
 	}
-	if v, err := c.stateVolume(ctx); err == nil {
+	if v, err := c.CheckState(ctx); err == nil {
 		info.State = v
 	}
 	return info, nil

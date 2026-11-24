@@ -216,6 +216,10 @@ func (s steppedSource) StartNetworkOwner(ctx context.Context) error {
 	return s.e.step("starting the TypeScript release's tailnet sidecar", func() error { return s.ReverseSource.StartNetworkOwner(ctx) })
 }
 
+func (s steppedSource) StopServers(ctx context.Context) error {
+	return s.e.step("stopping the TypeScript installation's server", func() error { return s.ReverseSource.StopServers(ctx) })
+}
+
 func (t steppedTarget) Barrier(ctx context.Context, id string, drain time.Duration) (BarrierRecord, error) {
 	return stepOf(t.e, "Go's barrier", func() (BarrierRecord, error) { return t.ReverseTarget.Barrier(ctx, id, drain) })
 }

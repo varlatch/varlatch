@@ -237,30 +237,26 @@ func privateDir(dir string) error {
 func (m *Manager) Close() { m.cache.Stop() }
 
 // Run obtains the certificate, then keeps it renewed, until ctx ends. A
-// certificate already in the store is served at once.
+// certificate already in the store is served at once. An attempt that ctx
+// cut short is due again at once (it records no failure), so ctx is looked
+// at before each one.
 func (m *Manager) Run(ctx context.Context) {
 	if err := m.load(ctx); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		m.o.Log.Warn("the stored public certificate could not be loaded; obtaining a new one", "host", m.o.Host, "error", oneLine(err))
 	}
-	for {
-		now := m.o.Now()
-		if wait := m.due(now); wait <= 0 {
+	for ctx.Err() == nil {
+		wait := m.due(m.o.Now())
+		if wait <= 0 {
 			m.attempt(ctx)
 			continue
-		} else {
-			t := time.NewTimer(min(wait, m.o.CheckInterval))
-			select {
-			case <-ctx.Done():
-				t.Stop()
-				return
-			case <-m.wake:
-				t.Stop()
-			case <-t.C:
-			}
 		}
-		if ctx.Err() != nil {
-			return
+		t := time.NewTimer(min(wait, m.o.CheckInterval))
+		select {
+		case <-ctx.Done():
+		case <-m.wake:
+		case <-t.C:
 		}
+		t.Stop()
 	}
 }
 

@@ -242,12 +242,17 @@ func TestTheRouteWaitIsSaid(t *testing.T) {
 			t.Errorf("no %q in:\n%s", want, strings.Join(c.all(), "\n"))
 		}
 	}
-	// What the undo of a route's check stops.
+	// What the undo of a route's check stops, and of a rebuild it could not
+	// put back.
 	n := len(c.all())
 	if err := (steppedSource{src, w.eng}).StopStarted(t.Context(), []string{"postgres"}); err != nil {
 		t.Fatal(err)
 	}
-	sameLines(t, c.all()[n:], []string{"Step: stopping what the route's check started.", "Done in 0s: stopping what the route's check started."})
+	if err := (steppedSource{src, w.eng}).StopServers(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	sameLines(t, c.all()[n:], []string{"Step: stopping what the route's check started.", "Done in 0s: stopping what the route's check started.",
+		"Step: stopping the TypeScript installation's server.", "Done in 0s: stopping the TypeScript installation's server."})
 }
 
 // The tailnet name's move forward and back, and the sidecar's stop: said,

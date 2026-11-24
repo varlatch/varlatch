@@ -55,6 +55,11 @@ it as a file instead.
 The container runs with a read-only root filesystem (`docker run
 --read-only`): it writes only to the data volume.
 
+Give it 30 seconds to stop (`docker run --stop-timeout 30`, or
+`stop_grace_period: 30s` in a Compose file): at a stop `varlatchd` gives
+requests in flight up to 20 seconds, and Docker kills a container after 10
+unless told otherwise.
+
 ## Building and checking it
 
 ```

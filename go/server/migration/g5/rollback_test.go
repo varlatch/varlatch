@@ -201,7 +201,7 @@ func sharedNetworkDown(args []string) bool {
 	if !sharedNamespace() || !stopped("tailscale") || len(args) < 3 || args[0] != "compose" || !slices.Contains(args, "--no-deps") {
 		return false
 	}
-	return (args[1] == "run" || args[1] == "up") && slices.Contains(args, "varlatchd")
+	return (args[1] == "run" || args[1] == "up" && !slices.Contains(args, "--no-start")) && slices.Contains(args, "varlatchd")
 }
 
 // fakeDockerReverse answers the commands a reverse migration gives; ok is
@@ -210,6 +210,9 @@ func fakeDockerReverse(args []string) (int, bool) {
 	fail := func(f string, a ...any) (int, bool) { fmt.Fprintf(os.Stderr, f+"\n", a...); return 1, true }
 	j := strings.Join(args, " ")
 	logCall(j)
+	if code, ok := dockerByID(args); ok {
+		return code, true
+	}
 	if sharedNetworkDown(args) {
 		// As Docker: a container in a stopped container's network
 		// namespace does not start.
@@ -232,6 +235,17 @@ func fakeDockerReverse(args []string) (int, bool) {
 			return fail("%v", err)
 		}
 		return okOr(readdress(args[2])), true
+	case len(args) >= 5 && args[0] == "compose" && args[1] == "up" && args[2] == "--no-start" && args[len(args)-1] == "varlatchd":
+		// As Compose: a volume that is not there is made, empty; a container
+		// that is there, and did not change, is left as it is.
+		if err := makeVolume(ownVolume("varlatchd"), nil); err != nil {
+			return fail("%v", err)
+		}
+		_ = os.Remove(state("sidecar-remade"))
+		if stopped("varlatchd") && containerGone("varlatchd") {
+			return okOr(os.WriteFile(state("created-varlatchd"), nil, 0o600)), true
+		}
+		return 0, true
 	case len(args) == 17 && args[0] == "run":
 		return readGateFile(args), true
 	case j == "compose --profile deploy config --images":
@@ -867,7 +881,7 @@ func TestG5RollbackWhole(t *testing.T) {
 		if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone: Go serves again") {
 			t.Fatalf("--rollback with a faulty import: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
-		if !slices.Contains(w.calls("docker-calls"), "compose up -d --no-deps varlatchd") {
+		if !slices.Contains(w.calls("docker-calls"), "compose up --no-start --no-deps varlatchd") || !slices.Contains(w.calls("docker-calls"), "start g5-varlatchd-1") {
 			t.Errorf("the TypeScript varlatchd was not started without its dependencies: %v", w.calls("docker-calls"))
 		}
 		w.expectReverse("undone", undoneState)
@@ -897,8 +911,9 @@ func TestG5RollbackWhole(t *testing.T) {
 	})
 	// The undo puts the installation back on its own volumes, then asks
 	// Docker who uses each fresh one: a container still holding one (not
-	// the installation's) leaves it, refused, and --resume finishes the
-	// undo once it is free.
+	// the installation's) leaves it, said, and Go serves meanwhile (its
+	// outage does not wait for that); --resume finishes the undo once it is
+	// free.
 	t.Run("fresh volume in use", func(t *testing.T) {
 		w := migratedWorld(t, false, false)
 		for _, m := range []string{"corrupt-import", "fresh-in-use"} {
@@ -914,11 +929,13 @@ func TestG5RollbackWhole(t *testing.T) {
 		if len(strings.Fields(string(fresh))) == 0 || len(strings.TrimSpace(string(removed))) != 0 {
 			t.Fatalf("the fresh volume: kept %q, removed %q", fresh, removed)
 		}
+		if s, d := w.phases(); s != "open" || d != "open" || !w.goRuns() || !w.stopped("varlatchd") || w.answers() != "target-open" {
+			t.Fatalf("meanwhile: the journals %s / %s, Go runs %v, varlatchd stopped %v, the address answers %s", s, d, w.goRuns(), w.stopped("varlatchd"), w.answers())
+		}
 		if err := os.Remove(filepath.Join(w.stateDir, "fresh-in-use")); err != nil {
 			t.Fatal(err)
 		}
-		// A resumed undo ends with its cause (exit 1), the undo done.
-		if code := w.rollback("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "the reverse was undone: Go serves again") {
+		if code := w.rollback("", "--resume"); code != 0 {
 			t.Fatalf("--resume once the volume is free: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
 		w.expectReverse("undone", undoneState)

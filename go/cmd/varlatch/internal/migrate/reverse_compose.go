@@ -102,6 +102,9 @@ type ReverseSource interface {
 	ServeGated(ctx context.Context, s GatedStart) error
 	// StopStarted stops the services named.
 	StopStarted(ctx context.Context, services []string) error
+	// StopServers has the source's server, and what else could write as it,
+	// stopped.
+	StopServers(ctx context.Context) error
 	// EnsureImages has the images the reverse starts on this host, pulling
 	// those that are not: before Go's barrier, never in the downtime.
 	EnsureImages(ctx context.Context, j *Journal) error
@@ -311,7 +314,7 @@ func (c *Compose) RebuildPlan(ctx context.Context, j *Journal) (RebuildRecord, e
 		return RebuildRecord{}, errors.New("the journal records no image digest of the source: the rebuild runs the release's own image only")
 	}
 	// An undo reads its gate there.
-	if _, err := c.stateName(ctx, cfg); err != nil {
+	if _, _, err := c.stateName(ctx, cfg); err != nil {
 		return RebuildRecord{}, err
 	}
 	// Names no volume has: one there already is another's, whatever it is.
@@ -949,7 +952,7 @@ func (c *Compose) StopServing(ctx context.Context, kind Ingress) error {
 // behind it, as the forward migration left it.
 func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, gated func(id string) error) error {
 	c.reversed = true
-	if err := c.compose(ctx, "docker compose stop", "stop", service, "convex-backend", "postgres"); err != nil {
+	if err := c.stopContainers(ctx, service, importService, "convex-deploy", "convex-backend", "postgres"); err != nil {
 		return err
 	}
 	if err := c.setEnv("COMPOSE_FILE", plan.ComposeFile, plan.ComposeFileLine); err != nil {
@@ -965,7 +968,7 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate Gate
 	} else if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := c.compose(ctx, "docker compose up -d postgres convex-backend", "up", "-d", "postgres", "convex-backend"); err != nil {
+	if err := c.restoreVolumes(ctx, plan); err != nil {
 		return err
 	}
 	for i, name := range plan.Volumes {
@@ -1051,18 +1054,123 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate Gate
 	// The volume may be another than the migration began with (one that was
 	// lost, made again by the commands above): what counts here is the gate.
 	gate.State = nil
-	if err := c.CheckGate(ctx, gate); err != nil {
-		return fmt.Errorf("%w; varlatchd was not started", err)
-	}
 	// --no-deps: varlatchd's one-off dependency (varlatch-migrate,
 	// service_completed_successfully) would run again with it and refuse
 	// behind the migrated-out marker, so varlatchd would not start. Its
 	// own volume's schema is current already, Postgres was started above,
 	// and varlatchd restarts (unless-stopped) until Postgres answers.
-	if err := c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service); err != nil {
+	if err := c.startGated(ctx, gate, true); err != nil {
 		return err
 	}
 	return c.refreshDashboard(ctx)
+}
+
+// importService is the import's one-off service (override).
+const importService = "varlatch-reverse-import"
+
+// stopContainers stops the containers of the services named, one-offs among
+// them (a killed run's go on), each by its id, and holds them to be stopped:
+// Compose's own stop refuses a project whose files it cannot take.
+func (c *Compose) stopContainers(ctx context.Context, services ...string) error {
+	for try := 0; ; try++ {
+		p, all, err := c.verified(ctx)
+		if err != nil {
+			return err
+		}
+		var ids, names []string
+		for _, l := range all {
+			if l.project == p.Name && slices.Contains(services, l.service) && l.status != "exited" && l.status != "created" && l.status != "dead" {
+				ids, names = append(ids, l.id), append(names, l.name)
+			}
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if try == 3 {
+			return fmt.Errorf("%s did not stop", strings.Join(names, ", "))
+		}
+		r, err := c.docker(ctx, append([]string{"stop"}, ids...), nil)
+		if err != nil {
+			return err
+		}
+		// One removed since it was listed is not there to stop.
+		if r.Code != 0 && !bytes.Contains(bytes.ToLower(r.Said), []byte("no such container")) {
+			return failure("docker stop of "+strings.Join(names, ", "), r)
+		}
+	}
+}
+
+// StopServers stops the installation's varlatchd, and what else could write
+// as it, however the installation's Compose files are.
+func (c *Compose) StopServers(ctx context.Context) error {
+	return c.stopContainers(ctx, service, importService)
+}
+
+// restoreVolumes has Postgres and Convex on the volumes the Compose files
+// give them again, the retained ones: a container on a fresh volume is
+// removed, that one, stopped already, and made again. An earlier Docker
+// Compose leaves it as it is when only its volume's name changed, so it is
+// not left to Compose to see; what they are on then is held.
+func (c *Compose) restoreVolumes(ctx context.Context, plan RebuildRecord) error {
+	p, all, err := c.verified(ctx)
+	if err != nil {
+		return err
+	}
+	cfg, err := c.config(ctx)
+	if err != nil {
+		return err
+	}
+	keys, err := cfg.volumeKeys()
+	if err != nil {
+		return err
+	}
+	for i, d := range dataMounts {
+		want := cfg.volumeName(keys[i])
+		if slices.Contains(plan.Volumes, want) {
+			return fmt.Errorf("the Compose files still give %s the reverse's volume %s", d.service, want)
+		}
+		if len(plan.Retained) == len(dataMounts) && plan.Retained[i].CreatedAt != "" {
+			// Compose would make one that is not there, empty.
+			v, err := c.volume(ctx, want)
+			switch {
+			case err != nil:
+				return err
+			case v == nil:
+				return fmt.Errorf("the volume %s, which %s was on before the reverse, is not there", want, d.service)
+			case v.differs(plan.Retained[i]) != "":
+				return fmt.Errorf("the volume %s is not the one %s was on before the reverse (%s)", want, d.service, v.differs(plan.Retained[i]))
+			}
+		}
+		for _, l := range serviceContainers(p, all, d.service) {
+			on := l.volumeAt(d.target)
+			if on == want {
+				continue
+			}
+			if !slices.Contains(plan.Volumes, on) {
+				return fmt.Errorf("the installation's %s container is on %s, neither the volume from before the reverse (%s) nor the reverse's: left as it is", d.service, orWord(on, "no named volume"), want)
+			}
+			r, err := c.docker(ctx, []string{"rm", l.id}, nil)
+			if err != nil {
+				return err
+			}
+			if r.Code != 0 {
+				return failure("docker rm of "+l.name, r)
+			}
+		}
+	}
+	if err := c.compose(ctx, "docker compose up -d postgres convex-backend", "up", "-d", "postgres", "convex-backend"); err != nil {
+		return err
+	}
+	if p, all, err = c.verified(ctx); err != nil {
+		return err
+	}
+	for i, d := range dataMounts {
+		own := serviceContainers(p, all, d.service)
+		if want := cfg.volumeName(keys[i]); len(own) != 1 || own[0].volumeAt(d.target) != want {
+			return fmt.Errorf("the installation's %s did not go back to the volume from before the reverse, %s", d.service, want)
+		}
+	}
+	return nil
 }
 
 // networkOwnerRunning refuses, with the step to take, when varlatchd runs
@@ -1173,10 +1281,7 @@ func (c *Compose) ServeGated(ctx context.Context, s GatedStart) error {
 	if err := starting(service); err != nil {
 		return err
 	}
-	if s.Owned {
-		return c.restartDaemon(ctx, made)
-	}
-	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
+	return c.startGated(ctx, s.Gate, !s.Owned || made)
 }
 
 // EnsureImages: the images the Compose files give their services, and the

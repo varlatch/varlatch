@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -223,6 +224,33 @@ func PrepareImage(ctx context.Context, img *Image, tmp string, fresh bool) (clea
 		return cleanup, err
 	}
 	img.Host.Config = conf
+	// Its programs run in an environment of their own: this process's
+	// temporary directory and home may be closed to the image's user, which
+	// they would find out in the downtime (the tailnet's reach probe makes
+	// its node's directory).
+	if x, ok := img.Host.Run.(ExecRunner); ok {
+		own := filepath.Join(dir, "tmp")
+		if err := os.Mkdir(own, 0o700); err != nil {
+			return cleanup, err
+		}
+		if err := chownAll(img.User, own); err != nil {
+			return cleanup, err
+		}
+		base := x.Env
+		if base == nil {
+			base = os.Environ()
+		}
+		x.Env = imageEnv(base, own)
+		img.Host.Run = x
+		r, err := x.Run(ctx, "", "sh", []string{"-c", `d=$(mktemp -d "$TMPDIR/probe.XXXXXX") && rmdir "$d"`}, nil)
+		if err != nil {
+			return cleanup, err
+		}
+		if r.Code != 0 {
+			return cleanup, fmt.Errorf("%w; run varlatch migrate with TMPDIR set to a directory every user can pass through (such as /tmp)",
+				failure(fmt.Sprintf("the image's user (%d:%d) cannot write in %s, migrate's own directory for it: making a directory there", img.User.UID, img.User.GID, own), r))
+		}
+	}
 	// The varlatchd here is the image's release.
 	info, st, err := img.Host.Describe(ctx)
 	if err != nil {
@@ -235,6 +263,21 @@ func PrepareImage(ctx context.Context, img *Image, tmp string, fresh bool) (clea
 		return cleanup, fmt.Errorf("--to-image is release %s; this host's varlatchd is %s: install the varlatchd of the image's release (the release's assets)", tag, info.Release)
 	}
 	return cleanup, nil
+}
+
+// imageEnv is what the image's user's programs are given of env: what finds
+// programs, trusts and reaches servers, and varlatchd's own variables;
+// nothing of the user migrate runs as.
+func imageEnv(env []string, tmp string) []string {
+	out := []string{"HOME=" + tmp, "TMPDIR=" + tmp}
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch up := strings.ToUpper(name); {
+		case slices.Contains([]string{"PATH", "TZ", "LANG", "LC_ALL", "SSL_CERT_FILE", "SSL_CERT_DIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY"}, up), strings.HasPrefix(name, "VARLATCH_"):
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // ownedDir checks a bind path: a directory (not a link), owned by o,

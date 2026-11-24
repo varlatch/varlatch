@@ -73,11 +73,18 @@ the Linux host of the installation it migrates`):
   programs: it opens neither database itself.
 - **The TypeScript CLI** of 0.23.0, as `varlatch-ts` on the `PATH` (or name
   it with `--ts-cli`). The preflight makes its backup with it.
+- **The stock layout of the server's state.** `varlatchd`'s `/var/lib/varlatch`
+  is on a named volume of its own, the whole of it, as the stock and Coolify
+  Compose files have it (`varlatch-state`). The marks the migration leaves
+  the old server behind are in it, so a bind mount, a part of a volume, or
+  something mounted inside it is refused in the preflight, before the backup
+  and the barrier.
 - **Docker Compose 2.32.0 or later** (`docker compose version`). An earlier
   one does not make PostgreSQL's container again when a rollback gives it a
   fresh volume, so `varlatch migrate` and `varlatch migrate --rollback`
   refuse it before anything is done: `Docker Compose <version> is too old:
-  varlatch migrate needs 2.32.0 or later`.
+  varlatch migrate needs 2.32.0 or later`. An undo (`--resume`, `--abort`)
+  works with an earlier one too.
 - **The Backup Encryption Key** (`--bek-file`) and, when the Root KEK is not
   where the installation's `.env` says, its file (`--kek-file`). The new
   server uses the same two keys, so every archive, old and new, opens with
@@ -403,10 +410,13 @@ override), and refuses several unless `COMPOSE_FILE` names them.
    and [The image target](#the-image-target)),
    with `VARLATCH_VARLATCHD_DIGEST` set to the release's verified digest,
    in setup mode with nothing listening (do not click **Deploy** yet):
-   - create the host configuration file (`/srv/varlatch/varlatchd.conf`, or
-     `VARLATCH_CONFIG_FILE`) as a regular file before clicking **Deploy**,
-     otherwise Docker creates an empty directory there and `varlatchd`
-     fails with `EISDIR`;
+   - create the host configuration file (`/srv/varlatch/varlatchd.conf`) as
+     a regular file before clicking **Deploy**, otherwise Docker creates an
+     empty directory there and `varlatchd` fails with `EISDIR`;
+   - use the default paths: Coolify mounts `/srv/varlatch/data`,
+     `/srv/varlatch/keys` and `/srv/varlatch/varlatchd.conf` whatever
+     `VARLATCH_DATA_DIR`, `VARLATCH_KEYS_DIR` and `VARLATCH_CONFIG_FILE` are
+     set to;
    - set `listen = 0.0.0.0:8686` and `trusted_proxies = coolify-proxy` in
      `varlatchd.conf`, and leave `listen_https` unset (Coolify's proxy
      terminates TLS; setting `listen_https` with `listen = 0.0.0.0:8686`
@@ -578,7 +588,11 @@ sudo varlatch migrate --ingress coolify \
   Its data directory, keys directory and configuration are bind paths on
   this host, owned by the image's user (`65532:65532`) and not writable by
   others. The migration says the `chown` and `chmod` to run when they are
-  not. On Coolify, `infra/coolify/varlatchd.compose.yml`'s default bind
+  not. Its `varlatchd` runs as that user with a temporary directory and a
+  home of its own, which the migration makes under its own `TMPDIR` and
+  checks at once: when that user cannot write there (a `TMPDIR` closed to
+  other users), it refuses before anything is done. On Coolify,
+  `infra/coolify/varlatchd.compose.yml`'s default bind
   paths and service name match `--to-data /srv/varlatch/data`,
   `--to-keys /srv/varlatch/keys`, `--to-config /srv/varlatch/varlatchd.conf`
   and `--to-service varlatchd`, and its `VARLATCH_VARLATCHD_DIGEST`
@@ -715,10 +729,20 @@ volume (`<project>_varlatch-state`, `maintenance.json`). A TypeScript server
 that does not find it takes requests again, on the database from before the
 migration. So the rollback on Coolify, and `--finish --delete-old-data`,
 read it first, without starting anything: the volume must be the one the
-migration recorded, and the gate the migration's own, by its id. Otherwise
-they refuse, nothing is started, and the new server serves on. Do not start
-the TypeScript installation then. Keep that volume during the rollback
-window, as you keep its PostgreSQL and Convex volumes.
+migration recorded in its preflight, and the gate the migration's own, by its
+id (a migration that an earlier 0.50 pre-release began recorded no volume:
+then only the gate is checked). The server's container is made, its gate read
+through its own mounts, and that very container started. Otherwise they
+refuse, nothing is started, and the new server serves on. Do not start the
+TypeScript installation then. Keep that volume during the rollback window, as
+you keep its PostgreSQL and Convex volumes.
+
+An undone rollback that cannot put the TypeScript installation back (its
+volume gone, for example) does not keep the new server behind its barrier:
+the old server is held stopped, the new one takes requests again, and the
+message says so. Do not start the old installation then: `varlatch migrate
+--resume` puts it back once the cause is gone, and until then neither
+`--rollback` nor `--finish` begins.
 
 Coolify 4.7.6's own Docker cleanup leaves an
 application's stopped containers, and the images they use; with **Delete
