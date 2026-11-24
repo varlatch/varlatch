@@ -150,6 +150,17 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 	}
 	refuse("a journal that is none")
 
+	// What an upgrade and a rollback run themselves between their stop and
+	// their start is not held up: these open what they are given, or restore
+	// the database whole.
+	writeUpgrade(t, in.dir, upgradeTo(0, upgradejournal.InProgress, upgradejournal.Prepared, nil))
+	if code, out, errOut := runAdmin(t, "schema", "status", "--json", "--config", in.conf); code != ExitOK || !strings.Contains(out, `"schemaVersion"`) {
+		t.Fatalf("schema status: %d %q %q", code, out, errOut)
+	}
+	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", filepath.Join(in.dir, "none.vltbak"), "--config", in.conf); code == ExitOK || strings.Contains(errOut, "upgrade") {
+		t.Fatalf("backup restore: %d %q; want its own refusal", code, errOut)
+	}
+
 	for name, j := range map[string]*upgradejournal.Journal{
 		"format 2": upgradeTo(0, upgradejournal.InProgress, upgradejournal.Swapped, allowed),
 		"format 1": upgradeTo(upgradejournal.FormatOne, upgradejournal.InProgress, upgradejournal.Swapped, nil),
