@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -312,6 +313,26 @@ func TestIngressModesSideBySide(t *testing.T) {
 	}
 }
 
+// ownAddress is an address varlatchd can listen on that nothing else is
+// given: a free port of a loopback address of this process's own (the
+// configuration takes no port 0, and a port picked on 127.0.0.1 and closed is
+// anyone's until varlatchd binds it, as a merge group's run had it).
+func ownAddress(t *testing.T) string {
+	t.Helper()
+	pid := os.Getpid() // below 1<<22
+	host := net.IPv4(127, byte(64+pid>>16&63), byte(pid>>8), byte(pid)).String()
+	var err error
+	for port := 20443; port < 20543; port++ {
+		var ln net.Listener
+		if ln, err = net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port))); err == nil {
+			ln.Close()
+			return ln.Addr().String()
+		}
+	}
+	t.Fatal(err)
+	return ""
+}
+
 // TestStopDuringAnIssuance: SIGTERM while the first public certificate is
 // being obtained (the CA took the request and does not answer) stops
 // varlatchd cleanly and at once, well within StopTimeout; so does a second
@@ -334,12 +355,7 @@ func TestStopDuringAnIssuance(t *testing.T) {
 	if err := os.WriteFile(rootFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Certificate().Raw}), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	ln.Close()
+	addr := ownAddress(t)
 	_, port, _ := net.SplitHostPort(addr)
 	in := newInstall(t, "public_url = https://vault.varlatch.test:"+port+"\nlisten_https = "+addr+"\nlisten_http_redirect = off\n"+
 		"acme_ca = "+ca.URL+"/directory\nacme_ca_root = "+rootFile+"\nacme_email = ops@varlatch.test\n")
