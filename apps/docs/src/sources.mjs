@@ -21,7 +21,8 @@ export const REPOSITORY = "https://github.com/varlatch/varlatch";
 export const sourceRef = process.env.DOCS_SOURCE_REF || "main";
 
 const EXTRA = [
-  { source: "infra/compose/README.md", route: "self-hosting", title: "Install and operate" },
+  // docs/self-hosting.md is the page at /self-hosting/, where this one was.
+  { source: "infra/compose/README.md", route: "self-hosting/compose", title: "Docker Compose (0.23.0 and earlier)" },
   { source: "CONTEXT.md", route: "concepts", title: "Concepts" },
   { source: "CHANGELOG.md", route: "changelog" },
 ];

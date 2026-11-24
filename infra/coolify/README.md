@@ -1,7 +1,7 @@
 # Deploying Varlatch on Coolify
 
 Coolify is a first-class deployment target, but **not a second architecture**:
-a Coolify deployment is the canonical `infra/compose` contract
+up to 0.23.0, a Coolify deployment is the canonical `infra/compose` contract
 deployed through Coolify's Docker Compose support. For Varlatch 0.50 and later
 (the single-container Go `varlatchd` image), see
 [Single-container Go service (0.50+)](#single-container-go-service-050) below.
@@ -319,10 +319,8 @@ pins the published image by digest using Coolify environment variables.
 
    When migrating from 0.23.0 with `varlatch migrate --ingress coolify`, leave
    `/srv/varlatch/data` empty and let `varlatch migrate` populate the bind
-   paths as `65532:65532`. For a fresh install, place the Root KEK
-   (`/srv/varlatch/keys/root-kek`) and Backup Encryption Key
-   (`/srv/varlatch/keys/backup-key`) in `/srv/varlatch/keys` with mode `0400`
-   and owner `65532:65532`.
+   paths as `65532:65532`. For a fresh install, follow
+   [A fresh install by hand](#a-fresh-install-by-hand) instead of this step.
 
    **Keys never go in Coolify environment variables.** `varlatchd` refuses to
    start (exit `78`) if any key value or key variable name is present in its
@@ -384,6 +382,173 @@ pins the published image by digest using Coolify environment variables.
      `varlatchd.conf`) run in-process via `tsnet` and store node state under
      `/var/lib/varlatch/tailnet`. No Tailscale sidecar container,
      `/dev/net/tun` device, or elevated Linux capabilities are required.
+
+### A fresh install by hand
+
+There is no guided setup for the container yet: a later release adds one.
+Until then, these are the steps of `varlatch setup`, one by one. Run them as
+root on the host.
+
+1. Make the directories, the two keys and the configuration. Put your own
+   address in `public_url`. Outside Coolify, put your proxy container's name
+   in `trusted_proxies`.
+
+   ```sh
+   install -d -m 700 -o 65532 -g 65532 /srv/varlatch/data /srv/varlatch/keys
+   for key in root-kek backup-key; do
+     openssl rand -hex 32 | install -m 400 -o 65532 -g 65532 /dev/stdin /srv/varlatch/keys/$key
+   done
+   tee /srv/varlatch/varlatchd.conf >/dev/null <<'EOF'
+   listen = 0.0.0.0:8686
+   public_url = https://app.example.com
+   trusted_proxies = coolify-proxy
+   data_dir = /var/lib/varlatch
+   root_kek_file = /keys/root-kek
+   backup_key_file = /keys/backup-key
+   EOF
+   # Readable by the image's user whatever root's umask is.
+   chown root:65532 /srv/varlatch/varlatchd.conf
+   chmod 640 /srv/varlatch/varlatchd.conf
+   ```
+
+   Do this once. Never make the keys again for an installation that has
+   data: it would not start, and nothing could read its values.
+
+2. **Copy both keys off the host**, apart from each other, before you store
+   anything in the installation. Without the Root KEK, every value is lost;
+   without the backup key, every backup.
+
+3. Deploy it: in Coolify, steps 2 to 4
+   [above](#creating-the-coolify-application), then **Deploy**. With plain
+   Docker, on the network of your own proxy's container:
+
+   ```sh
+   docker run -d --name varlatchd --network <the proxy's network> \
+     --restart unless-stopped --read-only --cap-drop ALL \
+     --security-opt no-new-privileges --stop-timeout 30 \
+     -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
+     -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro \
+     ghcr.io/varlatch/varlatchd@sha256:<the release's digest>
+   ```
+
+   The root filesystem is read-only, and no tmpfs is needed: Varlatch writes
+   only to `/srv/varlatch/data`, SQLite's temporary files included.
+
+   The proxy serves HTTPS and forwards to `varlatchd:8686`.
+   [Verifying a release](../../docs/operations/verify-release.md#the-go-lines-image-0500-and-later)
+   gives the digest.
+
+4. Check that it answers at its address, then create the first
+   administrator. `/readyz` must answer 200:
+
+   ```sh
+   curl -fsS https://app.example.com/readyz
+   ```
+
+   ```sh
+   docker exec <container> varlatchd admin bootstrap
+   ```
+
+   `bootstrap` prints a one-time link, valid for 15 minutes. Open it and
+   create the passkey.
+
+   Too late? `varlatchd admin bootstrap --revoke-unused` prints a new one.
+   When it says the installation is bootstrapped already (the enrollment was
+   interrupted), ask for that administrator's id, then for a link for them:
+
+   ```sh
+   docker exec <container> varlatchd admin bootstrap-status
+   docker exec <container> varlatchd admin recover --identity <identity id>
+   ```
+
+5. Check the key, and record that both copies exist off the host:
+
+   ```sh
+   docker exec <container> varlatchd admin kek verify
+   docker exec <container> varlatchd admin custody attest --key root-kek --method copy
+   docker exec <container> varlatchd admin custody attest --key backup-key --method copy
+   ```
+
+6. Make the first backup, and check the installation:
+
+   ```sh
+   docker exec <container> varlatchd admin backup run
+   docker exec <container> varlatchd admin doctor
+   ```
+
+Give it a bucket next: [S3-compatible
+destinations](../../docs/operations/backup.md#s3-compatible-destinations).
+Mount both files, readable by `65532`, at the paths they name.
+
+### Restore in the container image
+
+Read [Backup and recovery](../../docs/operations/backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore)
+first: a restored installation brings back credentials revoked since the
+archive was made, and is held until you resume it. Anyone with a credential
+in the archive can still read, so run it where nobody else reaches it: no
+domain, not on the proxy's network, and a port on `127.0.0.1` only. In
+Coolify, stop the resource and do not deploy it until you are done.
+
+1. Put the archive in the data directory, put a `#` in front of every
+   `tailnet` line of `varlatchd.conf`, and restore:
+
+   ```sh
+   docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+     -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
+     -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image> \
+     admin backup restore --in /var/lib/varlatch/backups/ARCHIVE-ID.vltbak
+   ```
+
+2. Run it by hand, on a network of its own:
+
+   ```sh
+   docker network create varlatch-restore
+   docker run -d --name varlatch-restore --network varlatch-restore -p 127.0.0.1:8686:8686 \
+     --read-only --cap-drop ALL --security-opt no-new-privileges --stop-timeout 30 \
+     -v /srv/varlatch/data:/var/lib/varlatch -v /srv/varlatch/keys:/keys:ro \
+     -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro <the image>
+   ```
+
+3. Reach it at its own address, alone. Passkeys, and the approvals that
+   security controls ask for, work at that address only, and Coolify's proxy
+   is out of the way. A TLS proxy on the same network, with a certificate
+   authority of its own, stands in for it. With Caddy:
+
+   ```sh
+   docker run -d --name varlatch-restore-tls --network varlatch-restore -p 127.0.0.1:443:443 \
+     caddy:2 caddy reverse-proxy --from app.example.com --to varlatch-restore:8686 --internal-certs
+   docker cp varlatch-restore-tls:/data/caddy/pki/authorities/local/root.crt ./restore-ca.crt
+   ```
+
+   When Coolify's proxy holds port 443 on the host, publish another local
+   port (`-p 127.0.0.1:8443:443`). On your computer, until you are done:
+   trust `restore-ca.crt`, add `127.0.0.1 app.example.com` to the hosts
+   file, and forward your own port 443 to it
+   (`sudo ssh -L 443:127.0.0.1:8443 you@the-host`). Then open
+   `https://app.example.com` and sign in. Each administrator who has
+   something to put right does this.
+
+   For the CLI, as an Installation Admin, without the proxy:
+
+   ```sh
+   docker exec varlatch-restore varlatchd admin recover --identity <id> --cli-credential |
+     grep -o 'vlt_[A-Za-z0-9_-]*' |
+     varlatch login --server http://127.0.0.1:8686 --token-stdin
+   ```
+
+   That credential does not expire: revoke it in the dashboard when you are
+   done. Put right what changed since the archive was made, an organization's
+   unwanted deletion first.
+
+4. Resume, remove what you ran by hand, take the `#`s away, and deploy. On
+   your computer, take the certificate authority and the hosts entry out
+   again:
+
+   ```sh
+   docker exec varlatch-restore varlatchd admin restore resume
+   docker rm -f varlatch-restore-tls varlatch-restore
+   docker network rm varlatch-restore
+   ```
 
 ### Pinning and upgrading by digest
 
