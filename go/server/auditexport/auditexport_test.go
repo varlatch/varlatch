@@ -228,7 +228,7 @@ func TestCreateRefusals(t *testing.T) {
 	ctx := context.Background()
 	in := CreateInput{Destination: wd.dest(s3fake.BucketLocked), Credential: good(), From: "beginning"}
 	wd.s.Enabled = false
-	if _, err := wd.s.Create(ctx, alice(), wd.org, in); !strings.Contains(err.Error(), "VARLATCH_AUDIT_EXPORT=off") {
+	if _, err := wd.s.Create(ctx, alice(), wd.org, in); !strings.Contains(err.Error(), "audit_export = off in varlatchd.conf") {
 		t.Errorf("switch off: %v", err)
 	}
 	wd.s.Enabled = true
