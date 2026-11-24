@@ -939,17 +939,38 @@ func TestTokenUsesArePruned(t *testing.T) {
 	if count() != "4" {
 		t.Fatalf("%s uses", count())
 	}
-	// Kept for as long as the token is accepted, and an hour more.
+	// Kept for as long as the token is accepted, and 26 hours more.
 	w.ahead.Store(int64(10*time.Minute + 30*time.Second))
 	w.want("within the leeway", w.exchange(token), 401, "INVALID_CREDENTIAL")
 	if e := w.event("authentication.failed"); !strings.Contains(fmt.Sprint(e["metadata"]), "token-already-exchanged") {
 		t.Errorf("within the leeway: %v", e["metadata"])
 	}
-	w.ahead.Store(int64(2 * time.Hour))
+	w.ahead.Store(int64(26 * time.Hour))
 	w.want("long after", w.exchange(token), 401, "INVALID_CREDENTIAL")
 	w.exchanged(w.token(nil))
-	if count() != "1" {
-		t.Errorf("%s uses kept", count())
+	if count() != "5" {
+		t.Errorf("%s uses kept after 26 hours", count())
+	}
+	w.ahead.Store(int64(27 * time.Hour))
+	w.exchanged(w.token(nil))
+	if count() != "2" {
+		t.Errorf("%s uses kept after 27 hours", count())
+	}
+}
+
+// The server's clock runs a day ahead and is set back: a token exchanged
+// before is not exchanged again, whatever was pruned meanwhile.
+func TestAClockAheadForgetsNoTokenUse(t *testing.T) {
+	w := newWorld(t)
+	w.want("bind", w.bind("broker", with{"exerciseOnly": true}), 201, "")
+	token := w.token(nil)
+	w.exchanged(token)
+	w.ahead.Store(int64(24 * time.Hour))
+	w.exchanged(w.token(nil))
+	w.ahead.Store(0)
+	w.want("replay", w.exchange(token), 401, "INVALID_CREDENTIAL")
+	if e := w.event("authentication.failed"); !strings.Contains(fmt.Sprint(e["metadata"]), "token-already-exchanged") {
+		t.Errorf("%v", e["metadata"])
 	}
 }
 

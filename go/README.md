@@ -1564,8 +1564,9 @@ other machine identity step-up operations.
   - A single exchange is recorded in the credential's own write job
     (`oidc_token_uses`, the SHA-256 of the issuer and the `jti`, or of the
     token's signed part without one), so an exchange that is refused spends
-    nothing and two at once issue one. A use is kept until an hour after
-    the token stops being accepted and pruned by later exchanges; a token
+    nothing and two at once issue one. A use is kept until 26 hours after
+    the token stops being accepted (a clock that was ahead meanwhile forgets
+    nothing it needs once it is back) and pruned by later exchanges; a token
     valid for more than a day exchanges nothing under such a binding. A
     replay is `token-already-exchanged`, recorded in the Organization.
 - **The verifier** (`verify.go`) checks the token as the TypeScript code

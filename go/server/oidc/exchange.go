@@ -47,8 +47,9 @@ const (
 const MaxSingleExchangeLifetime = 24 * 60 * 60
 
 // useKept is how much longer than the token's acceptance (its exp and
-// ClockSkew) its use is kept, in seconds: the host's clock may be set back.
-const useKept = 60 * 60
+// ClockSkew) its use is kept, in seconds: while the host's clock is ahead,
+// exchanges prune what is still needed once it is set back.
+const useKept = 26 * 60 * 60
 
 // PolicyFetcher is the verifier's fetch through the outbound policy's oidc
 // client (ADR-0057): every connection checked as it opens, no redirect

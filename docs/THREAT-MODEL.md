@@ -260,7 +260,8 @@ limits each party, and no further than this:
   first gets the credential: a thief that wins leaves the rightful holder
   refused (`token-already-exchanged` in the audit log). Restoring a backup
   restores what it knew of exchanged tokens: those exchanged after it, and
-  still valid, can be exchanged once more. Bindings without the limit accept
+  still valid, can be exchanged once more. So can a token of which the use
+  was pruned while the server's clock was more than a day ahead. Bindings without the limit accept
   a token until it expires, as before. An identity's live bindings for one
   issuer are either all limited or all unlimited, so a rollback to an earlier
   server does not find an unlimited binding to exchange a limited one's tokens
