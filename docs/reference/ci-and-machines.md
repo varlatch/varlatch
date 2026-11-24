@@ -161,7 +161,13 @@ move from unlimited to limited bindings without downtime, create a separate
 identity with the limited binding, switch workloads to it, and revoke the old
 one; to switch an existing identity in place, revoke its unlimited bindings
 for that issuer before creating the limited one. Rotating between two limited
-bindings on the same identity and issuer works with overlap.
+bindings on the same identity and issuer works with overlap: a token gets the
+limits of every binding it matches, and those of the ones left once one is
+revoked. Where they are
+mixed all the same (an earlier server, which knows no limits, can add an
+unlimited one after a rollback), no token of that issuer exchanges as that
+identity (`mixed-bindings` in the audit log) until the bindings of one kind
+are revoked.
 
 `singleExchange` on its own, without `exerciseOnly`, makes each token of an
 ordinary binding exchange once. It is off by default: a CI job that runs

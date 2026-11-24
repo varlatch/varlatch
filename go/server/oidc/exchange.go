@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -206,6 +207,10 @@ func Matches(claims jsvalue.Object, audience, subject string, extra jsvalue.Obje
 // once.
 var errTokenUsed = errors.New("oidc: the token was exchanged before")
 
+// errBindingGone is a binding the token matched, no longer live when the
+// credential is issued.
+var errBindingGone = errors.New("oidc: a matched binding is no longer live")
+
 // tokenKey names a verified token among the uses: its issuer and jti, or,
 // for one without a jti, its signed part (its signature can be written more
 // than one way; what it signs cannot).
@@ -323,6 +328,9 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 	}
 	var matched []query.OidcBinding
 	var each []limits.Limits
+	// Whether an identity's bindings for the issuer, matching or not, limit
+	// (true) or not (false): one entry of each when they are mixed.
+	kinds := map[string]map[bool]bool{}
 	for _, b := range bindings {
 		var extra jsvalue.Object
 		if b.Claims.Valid {
@@ -332,6 +340,10 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 			}
 			extra, _ = v.(jsvalue.Object)
 		}
+		if kinds[b.IdentityID] == nil {
+			kinds[b.IdentityID] = map[bool]bool{}
+		}
+		kinds[b.IdentityID][limits.IsLimited(extra)] = true
 		plain, l := limits.Split(extra)
 		if Matches(claims, b.Audience, b.Subject, plain) {
 			matched, each = append(matched, b), append(each, l)
@@ -345,12 +357,18 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 			return Issued{}, s.reject(ctx, "ambiguous-binding", requestID)
 		}
 	}
-	// Every matched binding's limits hold: one that limits is never undone
-	// by one beside it that does not. The credential is the most limited
-	// binding's, so its event names the one that says why.
 	b, limit := matched[0], each[0]
+	// All limited or all unlimited, as CreateOIDCBinding keeps them: an
+	// earlier server, which knows no limits, can add an unlimited binding
+	// beside a limited one. No token is exchanged then, instead of one
+	// without the limits of the other.
+	if len(kinds[b.IdentityID]) > 1 {
+		return Issued{}, s.rejectFor(ctx, &b, "mixed-bindings", requestID)
+	}
+	// Every matched binding's limits hold. The credential is the most
+	// limited binding's, so its event names the one that says why.
 	for i, l := range each[1:] {
-		if l.ExerciseOnly && !limit.ExerciseOnly || l.Any() && !limit.Any() {
+		if l.ExerciseOnly && !limit.ExerciseOnly {
 			b = matched[i+1]
 		}
 		combined, ok := limits.Combine(limit, l)
@@ -390,8 +408,19 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 		if err := write.CheckLive(ctx, tx, write.Scope{OrganizationID: b.OrganizationID}); err != nil {
 			return err
 		}
+		q := query.New(tx)
+		// The bindings as they are now: one revoked while the token was
+		// verified (to be replaced by one that limits, say) gives nothing.
+		live, err := q.ExchangeOidcBindings(ctx, query.ExchangeOidcBindingsParams{Organization: b.OrganizationID, Issuer: b.Issuer})
+		if err != nil {
+			return err
+		}
+		for _, m := range matched {
+			if !slices.ContainsFunc(live, func(l query.OidcBinding) bool { return l.ID == m.ID }) {
+				return errBindingGone
+			}
+		}
 		if use != nil {
-			q := query.New(tx)
 			if err := q.PruneOidcTokenUses(ctx, s.now().UnixMicro()); err != nil {
 				return err
 			}
@@ -420,6 +449,9 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 		out = Issued{CredentialID: issued.CredentialID, Token: issued.Token, IdentityID: b.IdentityID, ExpiresAt: expires, ExerciseOnly: only}
 		return nil
 	})
+	if errors.Is(err, errBindingGone) {
+		return Issued{}, s.rejectFor(ctx, &b, "no-binding", requestID)
+	}
 	if errors.Is(err, errTokenUsed) {
 		return Issued{}, s.rejectFor(ctx, &b, "token-already-exchanged", requestID)
 	}

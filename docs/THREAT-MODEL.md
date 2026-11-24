@@ -263,8 +263,11 @@ limits each party, and no further than this:
   still valid, can be exchanged once more. Bindings without the limit accept
   a token until it expires, as before. An identity's live bindings for one
   issuer are either all limited or all unlimited, so a rollback to an earlier
-  server cannot fall back from a limited binding to an unlimited one for that
-  identity and issuer.
+  server does not find an unlimited binding to exchange a limited one's tokens
+  by. That server knows no limits and can add one: the tokens of that issuer
+  then exchange as the identity there without limits, and not at all here
+  (`mixed-bindings` in the audit log) until the bindings of one kind are
+  revoked.
 - **A guessed Capability ID** is told `Capability not found`, as another
   broker's, another run's or a wrong secret's is; the secret is 32 random
   bytes. Each attempt is in the audit log.

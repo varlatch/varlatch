@@ -1543,7 +1543,13 @@ other machine identity step-up operations.
   `auth.oidc.limits`). A binding may say `exerciseOnly` (a Broker's only),
   `runIdClaim` (with it) and `singleExchange` (always on with it). A token
   that matches several bindings gets the limits of all; two different run
-  claims are ambiguous.
+  claims are ambiguous. An identity's live bindings for one issuer are all
+  limited or all unlimited, decided in the job that creates one, because an
+  older server knows only the unlimited ones. Where that server mixed them,
+  or beside a limit of a later release, no token of the issuer exchanges as
+  that identity (`mixed-bindings`). The bindings matched are read again in
+  the job that issues the credential: one revoked while the token was
+  verified gives nothing.
   - They are one reserved claim (`varlatch:limits`) in the binding's
     `claims`, written and read strictly: an older server requires a token
     to carry it, which none does, so it exchanges nothing there. Callers

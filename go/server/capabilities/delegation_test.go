@@ -64,6 +64,8 @@ type world struct {
 	// ahead is how far the clock is ahead of the wall's, in nanoseconds.
 	ahead atomic.Int64
 	check bool
+	// onFetch, when set, runs as the verifier fetches an issuer's document.
+	onFetch func()
 }
 
 func newWorld(t *testing.T) *world {
@@ -124,6 +126,9 @@ func (w *world) restart() { w.t.Helper(); w.stop(); w.start() }
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 func (w *world) fetch(_ context.Context, raw string) (*oidc.Response, error) {
+	if w.onFetch != nil {
+		w.onFetch()
+	}
 	for _, iss := range []string{testIssuer, testIssuer2} {
 		switch raw {
 		case iss + "/.well-known/openid-configuration":
@@ -1042,6 +1047,72 @@ func TestLimitsOfSeveralBindings(t *testing.T) {
 	}
 	w.want("another run claim", w.bind("broker", with{"exerciseOnly": true, "runIdClaim": "run", "subject": "machine:m1*"}), 201, "")
 	w.want("two run claims", w.exchange(w.token(map[string]any{"job": "job-1", "run": "job-1"})), 401, "INVALID_CREDENTIAL")
+}
+
+// An earlier server can mix an identity's bindings for one issuer, since it
+// knows no limits. Here none of them exchanges a token then, whichever it
+// matches, until one kind is revoked; the same for a limit of a later
+// release. Nothing of another identity or issuer is affected.
+func TestMixedBindingsExchangeNothing(t *testing.T) {
+	w := newWorld(t)
+	const limited = `{"varlatch:limits":"{\"v\":1,\"exerciseOnly\":true,\"singleExchange\":true}"}`
+	insert := func(id, issuer, subject string, claims any) {
+		t.Helper()
+		w.exec(`INSERT INTO oidc_bindings (id, identity_id, organization_id, issuer, audience, subject, claims, created_at)
+			SELECT ?, ?, id, ?, 'varlatch', ?, ?, ? FROM organizations WHERE slug = 'cap'`,
+			id, w.idn("broker"), issuer, subject, claims, w.now().UnixMicro())
+	}
+	refused := func(what string, claims map[string]any) {
+		t.Helper()
+		w.want(what, w.exchange(w.token(claims)), 401, "INVALID_CREDENTIAL")
+		if e := w.event("authentication.failed"); !strings.Contains(fmt.Sprint(e["metadata"]), "mixed-bindings") {
+			t.Errorf("%s: %v", what, e["metadata"])
+		}
+	}
+	insert("oib_plain", testIssuer, "machine:m1", nil)
+	insert("oib_limited", testIssuer, "machine:*", limited)
+	refused("a token both match", nil)
+	refused("a token the limited one matches", map[string]any{"sub": "machine:m2"})
+	w.exec("UPDATE oidc_bindings SET subject = 'machine:other' WHERE id = 'oib_limited'")
+	refused("a token the unlimited one matches", nil)
+	w.want("bind another identity", w.bind("broker2", with{"subject": "machine:m3"}), 201, "")
+	w.exchanged(w.token(map[string]any{"sub": "machine:m3"}))
+
+	// A limit this server does not know counts as one.
+	w.exec(`UPDATE oidc_bindings SET claims = '{"varlatch:limits":"{\"v\":2,\"more\":true}"}' WHERE id = 'oib_limited'`)
+	refused("beside a later release's limit", nil)
+	insert("oib_later", testIssuer2, "machine:m1", `{"varlatch:limits":"{\"v\":2,\"more\":true}"}`)
+	w.want("created beside a later release's limit", w.bind("broker", with{"issuer": testIssuer2}), 422, "VALIDATION_FAILED")
+	// The unlimited one revoked, as the rotation says: the limited one works.
+	w.exec("UPDATE oidc_bindings SET claims = ?, subject = 'machine:*' WHERE id = 'oib_limited'", limited)
+	w.want("revoke", w.call("DELETE", "/v1/organizations/cap/identities/"+w.idn("broker")+"/oidc-bindings/oib_plain", "alice", nil), 204, "")
+	if ex := w.want("exchange", w.exchange(w.token(nil)), 201, ""); ex.body["exerciseOnly"] != true {
+		t.Errorf("%s", ex.raw)
+	}
+}
+
+// A binding revoked while a token it matches is verified gives nothing:
+// rotating from an unlimited to a limited one leaves no exchange that began
+// before with an unlimited credential after.
+func TestABindingRevokedDuringAnExchange(t *testing.T) {
+	w := newWorld(t)
+	plain := w.want("plain", w.bind("broker", nil), 201, "")
+	var once sync.Once
+	w.onFetch = func() {
+		once.Do(func() {
+			w.want("revoke", w.call("DELETE", "/v1/organizations/cap/identities/"+w.idn("broker")+"/oidc-bindings/"+plain.body["id"].(string), "alice", nil), 204, "")
+			w.want("limited", w.bind("broker", with{"exerciseOnly": true}), 201, "")
+		})
+	}
+	before := w.text("SELECT count(*) FROM credentials")
+	token := w.token(nil)
+	w.want("exchange", w.exchange(token), 401, "INVALID_CREDENTIAL")
+	if after := w.text("SELECT count(*) FROM credentials"); after != before {
+		t.Errorf("%s credentials, then %s", before, after)
+	}
+	if ex := w.want("again", w.exchange(token), 201, ""); ex.body["exerciseOnly"] != true {
+		t.Errorf("%s", ex.raw)
+	}
 }
 
 // Concurrent creation of a plain and a limited binding on one identity and
