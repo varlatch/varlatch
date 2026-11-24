@@ -278,7 +278,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   SHA256SUMS in memory, then written to a new file beside the running one,
   made executable, run once (it must report the version), and renamed over
   it. On Windows the running file is renamed aside first, and the next run
-  removes it. It never goes to an older release without
+  removes it; a rename another process's hold on a file stops is tried
+  again for up to 5 seconds, the running file back in its place meanwhile. It never goes to an older release without
   `--allow-downgrade`, to a prerelease unless this binary is one or
   `--prerelease` is given, or to a release before the Go line (0.50.0); a
   copy Homebrew or winget installed (its path is in a Cellar or in WinGet's
