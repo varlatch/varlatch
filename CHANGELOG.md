@@ -365,7 +365,7 @@ Changes since 0.50.0-rc.2, by pull request:
   seconds of the shipped systemd unit). `infra/coolify/varlatchd.compose.yml`
   gives the service 30 seconds to stop, as the unit does; for `docker run`,
   give `--stop-timeout 30`.
-<!-- SLOT #444 (ready, head 03788ae5; recheck against the merged PR, then remove both markers) -->
+<!-- SLOT #444 (ready, head b98c8def; text from 5.1e; recheck against the merged PR, then remove both markers) -->
 - **varlatchd's tailnet node starts on no cached network map (#444).** After
   a rename, a node that started again could read its old name and tags from
   a map on its disk: `varlatchd admin tailnet enroll` then refused a node
@@ -373,10 +373,16 @@ Changes since 0.50.0-rc.2, by pull request:
   now starts on the map the control plane sends at that start, and
   `enroll`, `admin tailnet certificate obtain` and `take-name` wait, at most
   30 seconds, for what they expect of the node before they refuse it. A
-  varlatchd restarted while its control plane cannot be reached keeps the
-  tailnet listener closed until it answers, and then opens it without a
-  restart; its log, the report's warnings and `varlatch doctor` say what it
-  waits for.
+  control plane that puts the node off (a rate limit) or does not answer is
+  waited for, and the listener opens without a restart. One that refuses the
+  node keeps it closed until varlatchd is restarted, whatever a check finds
+  meanwhile. The control plane's own words, which can repeat the auth key,
+  are in neither the log, `open`, `enroll` nor the probes' answers, and a
+  message of the tailnet client's log with the key in it is not logged.
+  `varlatch doctor` says to move the node's state directory away only for a
+  node no control server ever registered; any other keeps it. The client may
+  still write the node's own map while it runs; it is never read, and is
+  removed at start and at stop.
 <!-- END SLOT #444 -->
 - **Not-found and error pages in the dashboard (#439).** An address
   without a page shows a not-found page of the dashboard, with its
