@@ -98,9 +98,10 @@ rm -r ~/.config/varlatch
 - The system user and group `varlatch`.
 - `/etc/varlatch`: the configuration, the two keys, and what setup and
   upgrades recorded.
-- `/var/lib/varlatch`: the database, local backups, snapshots, and the
-  certificate and tailnet state, when used.
-- `/usr/local/lib/varlatch`, once you upgraded: the releases' binaries.
+- `/var/lib/varlatch`: the database, local backups, and the certificate and
+  tailnet state, when used.
+- `/usr/local/lib/varlatch`, once you upgraded: the releases' binaries and
+  the snapshots from before upgrades.
 - Files you named in a setup command, such as copies of the keys.
 - A port: `127.0.0.1:8686`, and with public HTTPS, TCP ports 80 and 443 on
   every interface.

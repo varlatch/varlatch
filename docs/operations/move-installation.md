@@ -111,13 +111,12 @@ the archive the move took. It prints the archive's path.
 ```sh
 sudo systemctl stop varlatchd
 sudo varlatch admin backup restore --in <your copy of it>
-sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db
 sudo systemctl start varlatchd
 ```
 
 Every change since the move began is lost with it, revocations included. The
-installation is held: put right what changed, check that no upgrade is
-pending, then run `sudo varlatch admin restore resume` and open it again
+installation is held: put right what changed, then run
+`sudo varlatch admin restore resume` and open it again
 ([Put an archive back](backup.md#put-an-archive-back-on-the-same-host)). Passkeys enrolled at the
 new address are not in that archive, and would not work at the old address
 anyway.

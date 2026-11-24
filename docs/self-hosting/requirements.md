@@ -239,8 +239,10 @@ you accept it. `varlatch doctor` measures it again.
 
 The database grows with the audit history. Beside it, plan for the local
 archives (7 by default), a working copy during a backup, and during an
-upgrade a second copy and a snapshot kept 30 days. Each upgrade also keeps
-the previous release's binaries. A large import or read also uses
+upgrade a second copy and a snapshot. Each upgrade keeps that snapshot (30
+days) and the previous release's binaries in `/usr/local/lib/varlatch`, which
+may be another disk; going back to a snapshot also keeps the database it
+replaced, 30 days. A large import or read also uses
 temporary files for as long as it runs: in the data directory in the
 container image, in the service's own `/var/tmp` with systemd.
 **Recommended: 5 GB free.**
@@ -252,6 +254,7 @@ Where the data lives:
 | `/var/lib/varlatch` | the database, `backups/`, `upgrades/`, and, when used, `acme/` (the certificate), `tailnet/` (the node's identity) and `cli/` |
 | `/etc/varlatch` | the configuration and the two keys |
 | `/usr/local/lib/varlatch/releases` | the binaries of earlier releases |
+| `/usr/local/lib/varlatch/snapshots` | the encrypted snapshots from before upgrades |
 
 ### Deleting an organization
 
