@@ -39,6 +39,15 @@ upgrade that would end it needs `--end-rollback-window`.
 
 It refuses while the installation is held after a
 [restore](backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore).
+When you restored because an upgrade could not be undone, that upgrade is
+still recorded. Move its record away **before** you resume, or the next
+`varlatch upgrade` would undo it over the restored database:
+
+```sh
+sudo mv /etc/varlatch/upgrade.json /root/
+sudo varlatch admin restore resume   # once you put right what changed
+sudo varlatch upgrade
+```
 
 If an upgrade is interrupted, by a reboot for example, run
 `sudo varlatch upgrade` again: it finishes the upgrade or undoes it, before
