@@ -65,6 +65,7 @@ func (e AccessCheckWhere) Valid() bool {
 // Defines values for Action.
 const (
 	ActionAuditRead          Action = "audit.read"
+	ActionCapabilityIssue    Action = "capability.issue"
 	ActionConfigMetadataRead Action = "config.metadata.read"
 	ActionConfigSyncManage   Action = "config.sync.manage"
 	ActionConfigValueRead    Action = "config.value.read"
@@ -90,6 +91,8 @@ const (
 func (e Action) Valid() bool {
 	switch e {
 	case ActionAuditRead:
+		return true
+	case ActionCapabilityIssue:
 		return true
 	case ActionConfigMetadataRead:
 		return true
@@ -3664,16 +3667,25 @@ type CallerViewWithheldRequires string
 
 // Capability defines model for Capability.
 type Capability struct {
-	AgentIdentityId  string                       `json:"agentIdentityId"`
-	BrokerIdentityId string                       `json:"brokerIdentityId"`
-	CreatedAt        time.Time                    `json:"createdAt"`
-	Destinations     []string                     `json:"destinations"`
-	EnvironmentId    string                       `json:"environmentId"`
-	ExpiresAt        time.Time                    `json:"expiresAt"`
-	Id               string                       `json:"id"`
-	Items            []string                     `json:"items"`
-	RevokedAt        nullable.Nullable[time.Time] `json:"revokedAt"`
-	RunId            nullable.Nullable[string]    `json:"runId"`
+	AgentIdentityId  string    `json:"agentIdentityId"`
+	BrokerIdentityId string    `json:"brokerIdentityId"`
+	CreatedAt        time.Time `json:"createdAt"`
+	Destinations     []string  `json:"destinations"`
+	EnvironmentId    string    `json:"environmentId"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	Id               string    `json:"id"`
+
+	// IssuedByIdentityId Who issued it, when that is not its Broker (ADR-0060).
+	IssuedByIdentityId *string                      `json:"issuedByIdentityId,omitempty"`
+	Items              []string                     `json:"items"`
+	RevokedAt          nullable.Nullable[time.Time] `json:"revokedAt"`
+	RunId              nullable.Nullable[string]    `json:"runId"`
+
+	// SingleUse Present (true) for one that may be exercised once.
+	SingleUse *bool `json:"singleUse,omitempty"`
+
+	// Used With singleUse, whether it was.
+	Used *bool `json:"used,omitempty"`
 }
 
 // CapabilityExercise defines model for CapabilityExercise.
@@ -3791,16 +3803,22 @@ type CredentialLifetimeConfig struct {
 // CredentialMetadata Credential metadata (ADR-0034 §2). Never includes token material — tokens are stored hashed and unrecoverable (ADR-0007).
 type CredentialMetadata struct {
 	// Client A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers.
-	Client    nullable.Nullable[string]    `json:"client,omitempty"`
-	CreatedAt time.Time                    `json:"createdAt"`
-	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
-	Id        string                       `json:"id"`
-	Kind      CredentialMetadataKind       `json:"kind"`
+	Client    nullable.Nullable[string] `json:"client,omitempty"`
+	CreatedAt time.Time                 `json:"createdAt"`
+
+	// ExerciseOnly Present (true) for an exercise-only credential (ADR-0060).
+	ExerciseOnly *bool                        `json:"exerciseOnly,omitempty"`
+	ExpiresAt    nullable.Nullable[time.Time] `json:"expiresAt"`
+	Id           string                       `json:"id"`
+	Kind         CredentialMetadataKind       `json:"kind"`
 
 	// LastUsedAt Last successful authentication, throttled to ~60s granularity. An operational signal, never evidence of what was accessed.
 	LastUsedAt nullable.Nullable[time.Time] `json:"lastUsedAt"`
 	Name       nullable.Nullable[string]    `json:"name"`
 	RevokedAt  nullable.Nullable[time.Time] `json:"revokedAt"`
+
+	// RunId The run whose Capabilities it exercises. Present when it is tied to one.
+	RunId *string `json:"runId,omitempty"`
 }
 
 // CredentialMetadataKind defines model for CredentialMetadata.Kind.
@@ -4534,12 +4552,15 @@ type IssuedAgentCredential struct {
 
 // IssuedCapability defines model for IssuedCapability.
 type IssuedCapability struct {
-	AgentIdentityId string    `json:"agentIdentityId"`
-	Destinations    []string  `json:"destinations"`
-	EnvironmentId   string    `json:"environmentId"`
-	ExpiresAt       time.Time `json:"expiresAt"`
-	Id              string    `json:"id"`
-	Items           []string  `json:"items"`
+	AgentIdentityId string `json:"agentIdentityId"`
+
+	// BrokerIdentityId The Broker it was issued for. Present when the request named one.
+	BrokerIdentityId *string   `json:"brokerIdentityId,omitempty"`
+	Destinations     []string  `json:"destinations"`
+	EnvironmentId    string    `json:"environmentId"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	Id               string    `json:"id"`
+	Items            []string  `json:"items"`
 
 	// Preflight Advisory current-authority check; exercise re-evaluates regardless.
 	Preflight IssuedCapabilityPreflight `json:"preflight"`
@@ -4555,6 +4576,9 @@ type IssuedCapability struct {
 
 	// Secret Returned exactly once; stored hashed; required to exercise.
 	Secret string `json:"secret"`
+
+	// SingleUse Present (true) for one that may be exercised once.
+	SingleUse *bool `json:"singleUse,omitempty"`
 
 	// Targets The substitution targets as recorded, canonical and sorted; the only ones the Broker may enforce.
 	Targets map[string][]string `json:"targets"`
@@ -4595,9 +4619,14 @@ type IssuedMachineCredentialKind string
 
 // IssuedOidcCredential defines model for IssuedOidcCredential.
 type IssuedOidcCredential struct {
-	ExpiresAt  time.Time `json:"expiresAt"`
-	Id         string    `json:"id"`
-	IdentityId string    `json:"identityId"`
+	// ExerciseOnly Present (true) for an exercise-only credential (ADR-0060).
+	ExerciseOnly *bool     `json:"exerciseOnly,omitempty"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	Id           string    `json:"id"`
+	IdentityId   string    `json:"identityId"`
+
+	// RunId The run whose Capabilities it exercises. Present when its binding names a claim.
+	RunId *string `json:"runId,omitempty"`
 
 	// Token Returned exactly once; never retrievable again.
 	Token string `json:"token"`
@@ -4821,13 +4850,22 @@ type ObservedNode struct {
 
 // OidcBinding defines model for OidcBinding.
 type OidcBinding struct {
-	Audience   string                               `json:"audience"`
-	Claims     nullable.Nullable[map[string]string] `json:"claims"`
-	CreatedAt  time.Time                            `json:"createdAt"`
-	Id         string                               `json:"id"`
-	IdentityId string                               `json:"identityId"`
-	Issuer     string                               `json:"issuer"`
-	Subject    string                               `json:"subject"`
+	Audience  string                               `json:"audience"`
+	Claims    nullable.Nullable[map[string]string] `json:"claims"`
+	CreatedAt time.Time                            `json:"createdAt"`
+
+	// ExerciseOnly Present (true) when the binding has this limit (ADR-0060).
+	ExerciseOnly *bool  `json:"exerciseOnly,omitempty"`
+	Id           string `json:"id"`
+	IdentityId   string `json:"identityId"`
+	Issuer       string `json:"issuer"`
+
+	// RunIdClaim Present when the binding has this limit.
+	RunIdClaim *string `json:"runIdClaim,omitempty"`
+
+	// SingleExchange Present (true) when the binding has this limit.
+	SingleExchange *bool  `json:"singleExchange,omitempty"`
+	Subject        string `json:"subject"`
 }
 
 // Organization defines model for Organization.
@@ -6239,10 +6277,19 @@ type IssueIdentityCredential201JSONResponseBody struct {
 type CreateOidcBindingJSONBody struct {
 	Audience string `json:"audience"`
 
-	// Claims Additional token claims that must match exactly.
-	Claims  *map[string]string `json:"claims,omitempty"`
-	Issuer  string             `json:"issuer"`
-	Subject string             `json:"subject"`
+	// Claims Additional token claims that must match exactly. Names that start with varlatch: are reserved.
+	Claims *map[string]string `json:"claims,omitempty"`
+
+	// ExerciseOnly The exchanged credential exercises Capabilities issued for the binding's identity, a Broker, and nothing else: every other operation, reads included, is refused with PERMISSION_DENIED. Turns singleExchange on.
+	ExerciseOnly *bool  `json:"exerciseOnly,omitempty"`
+	Issuer       string `json:"issuer"`
+
+	// RunIdClaim With exerciseOnly: only Capabilities whose runId equals this claim of the exchanged token. A token without it (a string of 1 to 200 characters) exchanges nothing.
+	RunIdClaim *string `json:"runIdClaim,omitempty"`
+
+	// SingleExchange A token exchanges once within its lifetime, by its issuer and jti, or by the token itself when it has no jti. A token that stays valid for more than a day exchanges nothing. Off by default, always on with exerciseOnly.
+	SingleExchange *bool  `json:"singleExchange,omitempty"`
+	Subject        string `json:"subject"`
 }
 
 // CreateOidcBindingParams defines parameters for CreateOidcBinding.
@@ -6478,9 +6525,12 @@ type CreateEnvironmentJSONBody struct {
 
 // IssueCapabilityJSONBody defines parameters for IssueCapability.
 type IssueCapabilityJSONBody struct {
-	AgentIdentityId string   `json:"agentIdentityId"`
-	Destinations    []string `json:"destinations"`
-	Items           []string `json:"items"`
+	AgentIdentityId string `json:"agentIdentityId"`
+
+	// BrokerIdentityId The Broker the Capability is issued for (capability capabilities.delegate): a broker identity of the Organization that is not retired. Naming any but the caller itself needs capability.issue. Required when the caller is not a Broker. While the Capability lives, every exercise also needs its issuer to be live and to hold capability.issue here.
+	BrokerIdentityId *string  `json:"brokerIdentityId,omitempty"`
+	Destinations     []string `json:"destinations"`
+	Items            []string `json:"items"`
 
 	// Precondition Agent-safe strict preflight (capability retrieval.preflight): the state a preflight strict retrieval saw. Issuance compares it in its own snapshot, without decrypting anything, and refuses with STATE_CHANGED (details.categories names only what changed) when it differs. It confers no authority.
 	Precondition *struct {
@@ -6495,6 +6545,9 @@ type IssueCapabilityJSONBody struct {
 	} `json:"precondition,omitempty"`
 	RunId *string `json:"runId,omitempty"`
 
+	// SingleUse Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one does not. A server without the capability ignores this member: check it, or that the answer says singleUse.
+	SingleUse *bool `json:"singleUse,omitempty"`
+
 	// Targets Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets.
 	Targets    map[string][]string `json:"targets"`
 	TtlSeconds int                 `json:"ttlSeconds"`
@@ -6508,7 +6561,7 @@ type ExerciseCapabilityJSONBody struct {
 		Port int    `json:"port"`
 	} `json:"destination"`
 
-	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted.
+	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed.
 	Placements *[]struct {
 		Item   string `json:"item"`
 		Target string `json:"target"`

@@ -370,10 +370,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Capabilities for this environment. Brokers see their own; callers with policy.read see all. */
+        /** List Capabilities for this environment. Brokers see their own (issued for them or by them); callers with policy.read see all; an identity holding capability.issue here sees what it issued. */
         get: operations["listCapabilities"];
         put?: never;
-        /** Issue a Capability (capability capabilities.broker, ADR-0022). Broker identities only. Issuance narrows potential future use and never expands the Agent's Grants; the capability secret is returned exactly once. Responses are never cacheable. */
+        /** Issue a Capability (capability capabilities.broker, ADR-0022). A Broker identity issues one for itself. With capability.issue on the Environment (capability capabilities.delegate, ADR-0060), a service, workload, ci, or broker identity issues one for the Broker it names in brokerIdentityId: only that Broker can exercise it, the issuer cannot. Anyone else gets RESOURCE_NOT_FOUND. Issuance narrows potential future use and never expands the Agent's Grants; the capability secret is returned exactly once. Responses are never cacheable. */
         post: operations["issueCapability"];
         delete?: never;
         options?: never;
@@ -391,7 +391,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Revoke a Capability. The issuing Broker may revoke its own; callers with policy.manage may revoke any. Takes effect on the next exercise. */
+        /** Revoke a Capability. Its Broker and the identity that issued it may revoke it; callers with policy.manage may revoke any. Takes effect on the next exercise. */
         delete: operations["revokeCapability"];
         options?: never;
         head?: never;
@@ -407,7 +407,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Exercise a Capability (ADR-0022). Requires the issuing Broker's bearer plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only. */
+        /** Exercise a Capability (ADR-0022). Requires the bearer of the Broker it was issued for (an exercise-only credential too, ADR-0060) plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only. */
         post: operations["exerciseCapability"];
         delete?: never;
         options?: never;
@@ -822,7 +822,7 @@ export interface paths {
         /** List a machine identity's active OIDC bindings */
         get: operations["listOidcBindings"];
         put?: never;
-        /** Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'. */
+        /** Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'. exerciseOnly, runIdClaim, and singleExchange limit what its exchanges give (capability auth.oidc.limits, ADR-0060); a token that matches several bindings gets the limits of all of them. */
         post: operations["createOidcBinding"];
         delete?: never;
         options?: never;
@@ -3118,6 +3118,12 @@ export interface components {
             revokedAt: string | null;
             /** Format: date-time */
             createdAt: string;
+            /** @description Who issued it, when that is not its Broker (ADR-0060). */
+            issuedByIdentityId?: string;
+            /** @description Present (true) for one that may be exercised once. */
+            singleUse?: boolean;
+            /** @description With singleUse, whether it was. */
+            used?: boolean;
         };
         /** @description Credential metadata (ADR-0034 §2). Never includes token material — tokens are stored hashed and unrecoverable (ADR-0007). */
         CredentialMetadata: {
@@ -3138,6 +3144,10 @@ export interface components {
             lastUsedAt: string | null;
             /** @description A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers. */
             client?: string | null;
+            /** @description Present (true) for an exercise-only credential (ADR-0060). */
+            exerciseOnly?: boolean;
+            /** @description The run whose Capabilities it exercises. Present when it is tied to one. */
+            runId?: string;
         };
         /**
          * @description never-used: no successful authentication yet. idle: last used more than idleDays days ago. no-expiry: it never expires.
@@ -3286,6 +3296,10 @@ export interface components {
              * @enum {string}
              */
             preflight: "ok" | "agent-lacks-secret-use";
+            /** @description The Broker it was issued for. Present when the request named one. */
+            brokerIdentityId?: string;
+            /** @description Present (true) for one that may be exercised once. */
+            singleUse?: boolean;
             /** @description Present when the request carried a precondition that matched. Per item: whether it is a stored Secret, and whether the Agent holds secret.use here with the Requirements evaluable at issuance. It makes no claim that exercise can resolve the item's references for the Agent: every exercise evaluates authorization again and resolves every reference or denies. */
             preflightItems?: {
                 name: string;
@@ -3313,7 +3327,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        Action: "organization.read" | "organization.manage" | "project.read" | "project.manage" | "environment.read" | "environment.manage" | "config.metadata.read" | "config.value.read" | "config.value.write" | "secret.reveal" | "secret.use" | "contract.read" | "contract.submit" | "contract.activate" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read" | "config.sync.manage";
+        Action: "organization.read" | "organization.manage" | "project.read" | "project.manage" | "environment.read" | "environment.manage" | "config.metadata.read" | "config.value.read" | "config.value.write" | "secret.reveal" | "secret.use" | "capability.issue" | "contract.read" | "contract.submit" | "contract.activate" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read" | "config.sync.manage";
         GrantScope: {
             /** @enum {string} */
             kind: "organization";
@@ -3956,6 +3970,12 @@ export interface components {
             } | null;
             /** Format: date-time */
             createdAt: string;
+            /** @description Present (true) when the binding has this limit (ADR-0060). */
+            exerciseOnly?: boolean;
+            /** @description Present when the binding has this limit. */
+            runIdClaim?: string;
+            /** @description Present (true) when the binding has this limit. */
+            singleExchange?: boolean;
         };
         IssuedOidcCredential: {
             id: string;
@@ -3964,6 +3984,10 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
             identityId: string;
+            /** @description Present (true) for an exercise-only credential (ADR-0060). */
+            exerciseOnly?: boolean;
+            /** @description The run whose Capabilities it exercises. Present when its binding names a claim. */
+            runId?: string;
         };
         Webhook: {
             id: string;
@@ -5371,6 +5395,10 @@ export interface operations {
                     };
                     ttlSeconds: number;
                     runId?: string;
+                    /** @description The Broker the Capability is issued for (capability capabilities.delegate): a broker identity of the Organization that is not retired. Naming any but the caller itself needs capability.issue. Required when the caller is not a Broker. While the Capability lives, every exercise also needs its issuer to be live and to hold capability.issue here. */
+                    brokerIdentityId?: string;
+                    /** @description Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one does not. A server without the capability ignores this member: check it, or that the answer says singleUse. */
+                    singleUse?: boolean;
                     /** @description Agent-safe strict preflight (capability retrieval.preflight): the state a preflight strict retrieval saw. Issuance compares it in its own snapshot, without decrypting anything, and refuses with STATE_CHANGED (details.categories names only what changed) when it differs. It confers no authority. */
                     precondition?: {
                         projectId: string;
@@ -5446,7 +5474,7 @@ export interface operations {
                         host: string;
                         port: number;
                     };
-                    /** @description Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. */
+                    /** @description Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed. */
                     placements?: {
                         item: string;
                         target: string;
@@ -6382,10 +6410,16 @@ export interface operations {
                     issuer: string;
                     audience: string;
                     subject: string;
-                    /** @description Additional token claims that must match exactly. */
+                    /** @description Additional token claims that must match exactly. Names that start with varlatch: are reserved. */
                     claims?: {
                         [key: string]: string;
                     };
+                    /** @description The exchanged credential exercises Capabilities issued for the binding's identity, a Broker, and nothing else: every other operation, reads included, is refused with PERMISSION_DENIED. Turns singleExchange on. */
+                    exerciseOnly?: boolean;
+                    /** @description With exerciseOnly: only Capabilities whose runId equals this claim of the exchanged token. A token without it (a string of 1 to 200 characters) exchanges nothing. */
+                    runIdClaim?: string;
+                    /** @description A token exchanges once within its lifetime, by its issuer and jti, or by the token itself when it has no jti. A token that stays valid for more than a day exchanges nothing. Off by default, always on with exerciseOnly. */
+                    singleExchange?: boolean;
                 };
             };
         };
