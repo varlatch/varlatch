@@ -130,11 +130,15 @@ type Live struct {
 	Tailnet       bool   `json:"tailnet"`
 	TailnetClosed string `json:"tailnetClosed,omitempty"`
 	// TailnetDetail says why the node's tags close access (TailnetClosed
-	// tags-differ: both sets named); TailnetWarnings what the last check
+	// tags-differ: both sets named), or why the node has not joined its
+	// tailnet; TailnetWarnings what the last check
 	// found that closes nothing (a self-hosted control server's DERP map
 	// listing Tailscale's DERP servers).
 	TailnetDetail   string   `json:"tailnetDetail,omitempty"`
 	TailnetWarnings []string `json:"tailnetWarnings,omitempty"`
+	// TailnetNeverJoined: the tailnet node has no identity yet (no control
+	// server ever registered it).
+	TailnetNeverJoined bool `json:"tailnetNeverJoined,omitempty"`
 	// Custody is the attestations, CustodyError why they could not be read.
 	Custody      *custody.Status `json:"custody,omitempty"`
 	CustodyError string          `json:"custodyError,omitempty"`
@@ -659,6 +663,14 @@ func certificate(cfg *config.Config, live *Live) Check {
 	return c
 }
 
+// What a node that has not joined does with its state directory: one that
+// never joined reads a new auth key only without it; any other's is its
+// identity, and stays.
+const (
+	newKey       = "The node never joined: a new auth key (tailnet_auth_key_file) is read only while it has no state, so stop varlatchd, move <data_dir>/tailnet away, and start varlatchd"
+	keepIdentity = "Keep <data_dir>/tailnet: it is the node's identity, which a new auth key does not replace"
+)
+
 func tailnetPin(live *Live) Check {
 	c := Check{ID: "tailnet.pin", Title: "Tailnet pin", Class: Mandatory}
 	switch {
@@ -671,6 +683,21 @@ func tailnetPin(live *Live) Check {
 		// pre-auth key gave it others than tailnet_tags.
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetDetail
 		c.Remedy = "Give the node exactly tailnet_tags in Headscale (headscale nodes tag -i <node id> -t <tailnet_tags>), or enrol it again with a pre-auth key tagged with them; access reopens at the next check"
+	case live.TailnetClosed == closed.WaitingForControl, live.TailnetClosed == closed.LoginNeeded, live.TailnetClosed == closed.JoinRefused:
+		// Not on its tailnet since varlatchd started: nothing to re-pin.
+		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetDetail
+		state := keepIdentity
+		if live.TailnetNeverJoined {
+			state = newKey
+		}
+		switch live.TailnetClosed {
+		case closed.WaitingForControl:
+			c.Remedy = "Check that this host reaches the tailnet's control server; the listener then opens with no restart. After 5 minutes of this, the control server may also be refusing the node: check the auth key and the control server. " + state
+		case closed.LoginNeeded:
+			c.Remedy = "Approve the node, or extend its key, in the tailnet's admin console. " + state
+		default:
+			c.Remedy = "Check the auth key (expired, used or revoked?) and the control server's own log, put it right, then restart varlatchd. " + state
+		}
 	case live.TailnetClosed != "":
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetClosed
 		c.Remedy = "Run `sudo varlatch tailnet repin` on this host: it shows the pinned and the observed tailnet, and offers what can be re-pinned"
