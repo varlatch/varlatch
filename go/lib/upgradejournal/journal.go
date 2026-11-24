@@ -40,7 +40,12 @@ import (
 // File is the journal's name, in varlatchd.conf's directory.
 const File = "upgrade.json"
 
-// Format is the journal format this package reads and writes.
+// Format is the journal format this package reads and writes. A member it
+// does not know is refused. 0.50.0-rc.2 wrote and reads this format without
+// Kind, DeclaredRollbackSafe, RollbackRule, SnapshotAt and SnapshotBytes: its
+// journals read here as an upgrade that declared nothing, and a rollback,
+// whose journal the release returned to reads, never returns to it
+// (internal/upgrade's RollbackSince).
 const Format = 1
 
 // Step is an upgrade's step, named for what is true once it is done.
@@ -105,9 +110,9 @@ type Journal struct {
 	ID     string `json:"id"`
 	Kind   Kind   `json:"kind,omitempty"`
 	// From and To are the releases; FromSchema and ToSchema their schema
-	// versions; RollbackSafe whether the previous release may open the
-	// upgraded database (the manifest's compatibleFrom at or below
-	// FromSchema).
+	// versions; RollbackSafe whether going back keeps the database: for an
+	// upgrade, DeclaredRollbackSafe and the manifest's compatibleFrom at or
+	// below FromSchema; for a rollback, whether it does.
 	From         string `json:"from"`
 	To           string `json:"to"`
 	FromSchema   int64  `json:"fromSchema"`

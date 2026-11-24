@@ -4,7 +4,8 @@ package tailnet
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,12 +23,23 @@ import (
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/tailnet/closed"
 )
 
 // StatusNode is the part of a node the manager reads.
 type StatusNode interface {
 	Status(ctx context.Context) (Status, error)
 }
+
+// DERPNode is a node that says which DERP servers its control server's
+// DERP map lists (their host names).
+type DERPNode interface {
+	DERPHosts(ctx context.Context) ([]string, error)
+}
+
+// TagsDiffer is why tailnet access is closed while a node on a self-hosted
+// control server does not carry exactly tailnet_tags (RequireTags).
+const TagsDiffer = closed.TagsDiffer
 
 // Files of the tailnet in the data directory.
 const (
@@ -78,12 +90,26 @@ type Manager struct {
 	verdict   string // Pin.Check's on observed, "" while it holds
 	status    *Status
 	statusErr bool
-	listening *bool
-	checkedAt *time.Time
+	// requireTags are tailnet_tags, which a node on a self-hosted control
+	// server must carry exactly (RequireTags); nil: not required.
+	requireTags []string
+	// nodeTags are the tags the last check found; tagsDiffer is whether
+	// they are not requireTags (access closed while so).
+	nodeTags   []string
+	tagsDiffer bool
+	// tailscaleDERP are the DERP servers of Tailscale's that the control
+	// server's DERP map lists (a self-hosted one's should list none).
+	tailscaleDERP []string
+	listening     *bool
+	checkedAt     *time.Time
 	// The browser endpoint (step 4.13c), when configured: the node's
 	// configured host name, the port, its certificate, and whether it
 	// bound its port.
-	browser   *browserEndpoint
+	browser *browserEndpoint
+	// hostname is the configured name, for the read-back (NameSuffixed);
+	// held, the temporary name a handoff holds the node under.
+	hostname  string
+	held      bool
 	persisted struct {
 		json string
 		at   time.Time
@@ -104,8 +130,58 @@ type Manager struct {
 
 type admission struct{ cancel context.CancelFunc }
 
-// PinMissing is why access is closed for an enrolled node without a pin.
-const PinMissing = "pin-missing"
+// PinMissing is why access is closed for an enrolled node without a pin;
+// NameSuffixed for a node the control plane named with a suffix (package
+// closed says more).
+const (
+	PinMissing   = closed.PinMissing
+	NameSuffixed = closed.NameSuffixed
+)
+
+// ErrNameSuffixed: a re-pin while the node's name still carries the
+// control plane's suffix.
+var ErrNameSuffixed = errors.New("tailnet: the node's name still carries a suffix the control plane added (its configured name is held by another node): delete that node in the tailnet's admin console and rename this one to its configured name, then re-pin")
+
+// SuffixedName is suffixedName: whether a name would read back as the
+// control plane's collision suffix of hostname (a handoff's temporary name
+// must never).
+func SuffixedName(dnsName, hostname string) bool { return suffixedName(dnsName, hostname) }
+
+// suffixedName is whether dnsName's first label is hostname with the
+// control plane's collision suffix (-1, -2, ...), case-insensitively. A
+// name an administrator chose is not one.
+func suffixedName(dnsName, hostname string) bool {
+	if hostname == "" {
+		return false
+	}
+	label, _, _ := strings.Cut(strings.ToLower(dnsName), ".")
+	rest, ok := strings.CutPrefix(label, strings.ToLower(hostname)+"-")
+	if !ok || rest == "" {
+		return false
+	}
+	for _, c := range rest {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// SetHostname gives the node's configured hostname, for the read-back of
+// its name after enrolment (NameSuffixed).
+func (m *Manager) SetHostname(hostname string) {
+	m.mu.Lock()
+	m.hostname, m.held = hostname, false
+	m.mu.Unlock()
+}
+
+// SetHeldName gives the temporary name a handoff holds the node under, for
+// the read-back while the hold stands.
+func (m *Manager) SetHeldName(name string) {
+	m.mu.Lock()
+	m.hostname, m.held = name, true
+	m.mu.Unlock()
+}
 
 // NewManager loads the pin from dataDir; controlURL is the configured one
 // ("" for Tailscale's), port the tailnet listener's. Without a pin file
@@ -134,7 +210,20 @@ func NewManager(node StatusNode, controlURL, dataDir string, port int, log *slog
 
 // openLocked is whether tailnet access is open now.
 func (m *Manager) openLocked() bool {
-	return m.pin != nil && !m.pin.Enrolling && m.pin.Closed == nil && !m.missing && m.observed != nil && m.verdict == ""
+	return m.pin != nil && !m.pin.Enrolling && m.pin.Closed == nil && !m.missing && m.observed != nil && m.verdict == "" && !m.tagsDiffer
+}
+
+// RequireTags makes tags (tailnet_tags) the exact set the node must carry
+// for tailnet access to open: on a self-hosted control server, where the
+// node's tags are its pre-auth key's and not the ones it advertises
+// (ADR-0059 amendment 11). Another set, none included, closes access until
+// they match (fail closed), checked at each check; never latched.
+func (m *Manager) RequireTags(tags []string) {
+	want := slices.Clone(tags)
+	slices.Sort(want)
+	m.mu.Lock()
+	m.requireTags = slices.Compact(want)
+	m.mu.Unlock()
 }
 
 // settleLocked starts a new open period when access opened or closed: the
@@ -251,8 +340,57 @@ func (m *Manager) Closed() string {
 		return m.pin.Closed.Reason
 	case m.observed == nil:
 		return PinUnknown
+	case m.verdict == "" && m.tagsDiffer:
+		return TagsDiffer
 	}
 	return m.verdict
+}
+
+// Explain is what the last check found that a status line names: why the
+// tags close access (detail, "" when they do not), and the warnings that
+// close nothing (Tailscale's DERP servers in a self-hosted control
+// server's DERP map).
+func (m *Manager) Explain() (detail string, warnings []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.tagsDetailLocked(), m.warningsLocked()
+}
+
+func (m *Manager) tagsDetailLocked() string {
+	if !m.tagsDiffer {
+		return ""
+	}
+	return fmt.Sprintf("The node's tags (%s) are not tailnet_tags (%s): on a self-hosted control server they are its pre-auth key's. Tailnet access is closed until they match: "+
+		"give the node tailnet_tags in Headscale (headscale nodes tag -i <node id> -t %s), or enrol it again with a tagged pre-auth key.",
+		tagList(m.nodeTags), tagList(m.requireTags), strings.Join(m.requireTags, ","))
+}
+
+func (m *Manager) warningsLocked() []string {
+	if len(m.tailscaleDERP) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf("The control server's DERP map lists Tailscale's DERP servers (%s): the node's relayed and STUN traffic can go to Tailscale. "+
+		"Keep Headscale's DERP map (derp.urls, derp.paths) to your own servers (ADR-0059 amendment 11).", strings.Join(m.tailscaleDERP, ", "))}
+}
+
+func tagList(tags []string) string {
+	if len(tags) == 0 {
+		return "none"
+	}
+	return strings.Join(tags, ", ")
+}
+
+// tailscaleDERPHosts are those of hosts that are Tailscale's DERP servers.
+func tailscaleDERPHosts(hosts []string) []string {
+	var out []string
+	for _, h := range hosts {
+		h = strings.ToLower(strings.TrimSuffix(h, "."))
+		if (h == "tailscale.com" || strings.HasSuffix(h, ".tailscale.com")) && !slices.Contains(out, h) {
+			out = append(out, h)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 type browserEndpoint struct {
@@ -365,6 +503,17 @@ func (m *Manager) checkLocked(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, lookupTimeout)
 	st, err := m.node.Status(cctx)
 	cancel()
+	// A self-hosted control server's DERP map, read beside the status (an
+	// error reads as nothing to warn of).
+	var derp []string
+	if dn, ok := m.node.(DERPNode); ok && m.controlURL != "" && err == nil && st.BackendState == "Running" {
+		dctx, dcancel := context.WithTimeout(ctx, lookupTimeout)
+		hosts, derr := dn.DERPHosts(dctx)
+		dcancel()
+		if derr == nil {
+			derp = tailscaleDERPHosts(hosts)
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
@@ -380,6 +529,25 @@ func (m *Manager) checkLocked(ctx context.Context) {
 		return
 	}
 	m.status, m.statusErr = &st, false
+	// On a self-hosted control server the node's tags are its pre-auth
+	// key's: any other set than tailnet_tags (none included) closes access
+	// until they match (ADR-0059 amendment 11, step 7.5c c3).
+	tags := slices.Clone(st.Tags)
+	slices.Sort(tags)
+	tags = slices.Compact(tags)
+	differ := m.requireTags != nil && st.BackendState == "Running" && !slices.Equal(tags, m.requireTags)
+	switch {
+	case differ && !m.tagsDiffer:
+		m.log.Error("the tailnet node's tags are not tailnet_tags: tailnet access is closed until they match (give the node tailnet_tags in Headscale, or enrol it again with a tagged pre-auth key)",
+			"tags", tagList(tags), "tailnetTags", tagList(m.requireTags))
+	case !differ && m.tagsDiffer:
+		m.log.Info("the tailnet node carries tailnet_tags again", "tags", tagList(tags))
+	}
+	m.nodeTags, m.tagsDiffer = tags, differ
+	if len(derp) > 0 && !slices.Equal(derp, m.tailscaleDERP) {
+		m.log.Warn("the self-hosted control server's DERP map lists Tailscale's DERP servers: the node's relayed and STUN traffic can go to Tailscale", "servers", strings.Join(derp, ", "))
+	}
+	m.tailscaleDERP = derp
 	if st.BackendState != "Running" || st.Suffix == "" {
 		m.persistLocked()
 		return
@@ -401,9 +569,21 @@ func (m *Manager) checkLocked(ctx context.Context) {
 		return
 	}
 	m.verdict = m.pin.Check(o)
-	if m.verdict != "" && m.pin.Closed == nil {
+	if m.verdict == "" && suffixedName(st.DNSName, m.hostname) {
+		m.verdict = NameSuffixed
+	}
+	switch {
+	case m.verdict == NameSuffixed && m.pin.Closed == nil && m.held:
+		m.log.Error("the control plane named this node with a suffix: its temporary name, under which a handoff holds it, is another node's; tailnet access is closed. Delete that node in the tailnet's admin console, rename this one to its temporary name, then re-pin on the host (varlatch tailnet repin --yes)",
+			"name", st.DNSName, "temporaryName", m.hostname)
+	case m.verdict == NameSuffixed && m.pin.Closed == nil:
+		m.log.Error("the control plane named this node with a suffix: its configured name is held by another node (after a restore, the old installation's); tailnet access is closed. Delete that node in the tailnet's admin console, rename this one to its configured name, then re-pin on the host (varlatch tailnet repin --yes)",
+			"name", st.DNSName, "hostname", m.hostname)
+	case m.verdict != "" && m.pin.Closed == nil:
 		m.log.Error("the tailnet no longer matches its pin; tailnet access is closed until it is re-pinned on the host",
 			"reason", m.verdict, "pinnedSuffix", m.pin.Suffix, "observedSuffix", o.Suffix, "pinnedTailnetId", m.pin.TailnetID, "observedTailnetId", o.TailnetID)
+	}
+	if m.verdict != "" && m.pin.Closed == nil {
 		closed := *m.pin
 		closed.Closed = &Closure{Reason: m.verdict, Since: now.UTC().Format(time.RFC3339), Observed: o}
 		// Latched in memory whatever happens to the file.
@@ -416,19 +596,69 @@ func (m *Manager) checkLocked(ctx context.Context) {
 }
 
 // RepinView is what a re-pin shows the operator.
+// Its JSON names are stable: `varlatchd admin tailnet repin --json` prints
+// them, and `varlatch tailnet repin` reads them.
 type RepinView struct {
-	Pinned   *Pin
-	Observed *Observed
+	Pinned   *Pin      `json:"pinned"`
+	Observed *Observed `json:"observed"`
 	// Reason is Pin.Check's on what the node is on now, "" when it holds.
-	Reason string
+	Reason string `json:"reason"`
 	// Closed is the latched closure's reason, "" when none.
-	Closed string
+	Closed string `json:"closed"`
 	// Missing: the node was enrolled before but its pin is missing; only
 	// an adoption pins it.
-	Missing bool
+	Missing bool `json:"missing"`
 	// Offered is whether a re-pin (or, when Missing, an adoption) may take
 	// the observed tailnet.
-	Offered bool
+	Offered bool `json:"offered"`
+	// Offer binds a confirmation to what was shown: a value-free token
+	// (OfferToken) over the pin, the observed tailnet and what is offered;
+	// "" when nothing is offered. A re-pin given it acts only while the
+	// offer is still the same (ErrOfferChanged otherwise).
+	Offer string `json:"offer"`
+}
+
+// OfferToken is v's offer: the first 128 bits of a SHA-256, in hex, over
+// what is offered (an adoption, a new suffix, or reopening after a
+// closure, with its reason), the pinned tailnet and the observed one
+// (control URL, StableID, suffix). It reveals none of them; "" when
+// nothing is offered.
+func (v RepinView) OfferToken() string {
+	if !v.Offered || v.Observed == nil {
+		return ""
+	}
+	kind := "repin"
+	switch {
+	case v.Missing:
+		kind = "adopt"
+	case v.Reason == "" && v.Closed != "":
+		kind = "reopen:" + v.Closed
+	}
+	h := sha256.New()
+	field := func(s string) { h.Write([]byte(s)); h.Write([]byte{0}) }
+	field("varlatch tailnet repin offer v1")
+	field(kind)
+	if p := v.Pinned; p != nil {
+		field(p.ControlURL)
+		field(p.TailnetID)
+		field(p.Suffix)
+	} else {
+		field("no pin")
+	}
+	field(v.Observed.ControlURL)
+	field(v.Observed.TailnetID)
+	field(v.Observed.Suffix)
+	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// ErrOfferChanged is Repin's refusal when the offer a confirmation was
+// given for is not the current one: the pin or the observed tailnet
+// changed since it was shown. Nothing is re-pinned and nothing recorded;
+// View is the fresh view, to show and ask again.
+type ErrOfferChanged struct{ View RepinView }
+
+func (e *ErrOfferChanged) Error() string {
+	return "the tailnet changed since the re-pin was offered: nothing was re-pinned; look at the new observation and confirm again"
 }
 
 // RepinView is the pinned and the observed tailnet, from a fresh check.
@@ -453,6 +683,7 @@ func (m *Manager) viewLocked() RepinView {
 	case m.pin != nil && !m.pin.Enrolling:
 		v.Offered = v.Reason == PinSuffix || v.Reason == "" && v.Closed != ""
 	}
+	v.Offer = v.OfferToken()
 	return v
 }
 
@@ -470,12 +701,31 @@ var (
 // nil on an adoption; new nil when there was nothing to do). Only the host
 // calls it (`varlatchd admin tailnet repin`, which step 6's `varlatch
 // tailnet repin` runs).
-func (m *Manager) Repin(ctx context.Context, adopt bool) (*Pin, *Pin, error) {
+//
+// offer, when not "", is the offer a confirmation was given for (the
+// view's Offer when it was shown): the re-pin is decided on this check's
+// view, under the same locks, and only when its offer is still the same;
+// otherwise nothing changes and the error is *ErrOfferChanged with the
+// fresh view. "" acts on the observation at that moment.
+//
+// record, when not nil, is called with the old and the new pin and the
+// reason this check found (Pin.Check's, or the closure's) once the re-pin
+// is decided and before anything is changed: the host's audit event,
+// committed first. When it fails, nothing is re-pinned.
+func (m *Manager) Repin(ctx context.Context, adopt bool, offer string, record func(old, next *Pin, reason string) error) (*Pin, *Pin, error) {
 	m.checking.Lock()
 	defer m.checking.Unlock()
 	m.checkLocked(ctx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	view := m.viewLocked()
+	if offer != "" && view.Offer != offer {
+		return m.pin, nil, &ErrOfferChanged{View: view}
+	}
+	reason := view.Reason
+	if reason == "" {
+		reason = view.Closed
+	}
 	if m.observed == nil {
 		return m.pin, nil, ErrNothingToRepin
 	}
@@ -489,13 +739,21 @@ func (m *Manager) Repin(ctx context.Context, adopt bool) (*Pin, *Pin, error) {
 		next = &Pin{ControlURL: o.ControlURL, TailnetID: o.TailnetID, Suffix: o.Suffix, PinnedAt: now.UTC().Format(time.RFC3339)}
 	case m.pin.Enrolling:
 		return m.pin, nil, nil
+	case m.verdict == NameSuffixed:
+		return m.pin, nil, ErrNameSuffixed
 	default:
 		var err error
 		if next, err = m.pin.Repin(*m.observed, now); err != nil || next == nil {
 			return m.pin, nil, err
 		}
 	}
+	if record != nil {
+		if err := record(m.pin, next, reason); err != nil {
+			return m.pin, nil, err
+		}
+	}
 	if err := SavePin(filepath.Join(m.dataDir, PinFile), next); err != nil {
+		m.log.Error("the re-pin is recorded in the audit log, but the pin could not be saved: nothing changed", "error", err)
 		return m.pin, nil, err
 	}
 	old := m.pin
@@ -545,6 +803,11 @@ func (m *Manager) reportLocked() jsvalue.Object {
 		endpoint = fmt.Sprintf("https://%s:%d", host, m.browser.port)
 	}
 	configured := jsvalue.Object{{Key: "tailnet", Value: tailnetName}, {Key: "listenerPort", Value: m.port}, {Key: "browserEndpoint", Value: endpoint}}
+	if m.controlURL != "" {
+		// A self-hosted control server (Headscale), named; Tailscale's is
+		// the default and left out.
+		configured = append(configured, jsvalue.Member{Key: "controlUrl", Value: m.controlURL})
+	}
 	listener, localAPI, node := unchecked, unchecked, unchecked
 	wanted := []*bool{m.listening}
 	if m.browser != nil {
@@ -566,6 +829,9 @@ func (m *Manager) reportLocked() jsvalue.Object {
 		switch {
 		case st.BackendState != "Running":
 			node = check("fail", "NOT_RUNNING")
+		case m.tagsDiffer && m.verdict == "" && m.pin != nil && m.pin.Closed == nil:
+			// On its tailnet, but not with tailnet_tags.
+			node = check("fail", "TAGS_DIFFER")
 		case !m.open:
 			node = check("fail", "OTHER_TAILNET")
 		case m.browser != nil && st.DNSName != m.browserHostLocked():
@@ -587,6 +853,16 @@ func (m *Manager) reportLocked() jsvalue.Object {
 	observed := jsvalue.Object{{Key: "checkedAt", Value: checkedAt}, {Key: "checks", Value: checks}}
 	if len(details) > 0 {
 		observed = append(observed, jsvalue.Member{Key: "node", Value: details})
+	}
+	var warnings []any
+	if d := m.tagsDetailLocked(); d != "" {
+		warnings = append(warnings, d)
+	}
+	for _, w := range m.warningsLocked() {
+		warnings = append(warnings, w)
+	}
+	if len(warnings) > 0 {
+		observed = append(observed, jsvalue.Member{Key: "warnings", Value: warnings})
 	}
 	return jsvalue.Object{{Key: "configured", Value: configured}, {Key: "observed", Value: observed}}
 }
@@ -677,17 +953,4 @@ func (m *Manager) persistLocked() {
 		return
 	}
 	m.persisted.json, m.persisted.at = key, now
-}
-
-// MarshalJSON lets a view print as JSON (the host command's --json).
-func (v RepinView) MarshalJSON() ([]byte, error) {
-	type view struct {
-		Pinned   *Pin      `json:"pinned"`
-		Observed *Observed `json:"observed"`
-		Reason   string    `json:"reason"`
-		Closed   string    `json:"closed"`
-		Missing  bool      `json:"missing"`
-		Offered  bool      `json:"offered"`
-	}
-	return json.Marshal(view(v))
 }

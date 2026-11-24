@@ -58,6 +58,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/release"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
@@ -66,21 +67,19 @@ import (
 // server's config.DatabaseFile and SQLite's write-ahead log and index).
 var databaseFiles = []string{"varlatch.db", "varlatch.db-wal", "varlatch.db-shm"}
 
-// gateFile is the maintenance gate in the data directory (go/lib/backup
-// GateFile), which an unfinished `admin backup restore` leaves open with
-// kind "restore".
-const gateFile = "maintenance.json"
+// restoreLeftovers are what an `admin backup restore` that stopped leaves
+// in the data directory besides its gate: the archive it opened, and the
+// database it had not put in place.
+var restoreLeftovers = []string{".restore-work", "varlatch.db.restore"}
+
+// copyingDir is, in a rollback's directory, the copy of the database it
+// replaces while it is made.
+const copyingDir = "original.copying"
 
 // restoreGateOpen is whether a restore's gate is open in dataDir.
 func restoreGateOpen(dataDir string) bool {
-	raw, err := os.ReadFile(filepath.Join(dataDir, gateFile))
-	if err != nil {
-		return false
-	}
-	var g struct {
-		Kind string `json:"kind"`
-	}
-	return json.Unmarshal(raw, &g) == nil && g.Kind == "restore"
+	g, err := backup.ReadGate(dataDir)
+	return err == nil && g != nil && g.Kind == "restore"
 }
 
 // keepSnapshots is how long an upgrade's directory (its snapshot) is kept.
@@ -393,7 +392,7 @@ func (u *Upgrader) steps(ctx context.Context, j *journal.Journal, rel Release) e
 		return err
 	}
 
-	if err := u.Service.Start(ctx); err != nil {
+	if err := u.start(ctx, j); err != nil {
 		return fmt.Errorf("starting varlatchd %s: %w", j.To, err)
 	}
 	if err := u.reach(j, journal.Started); err != nil {
@@ -559,6 +558,17 @@ func (u *Upgrader) install(j *journal.Journal, version string) error {
 	return nil
 }
 
+// start starts varlatchd. What root's host commands wrote or made beside
+// the database (a restored one, the log and index SQLite makes for a
+// reader) becomes the data directory owner's first: varlatchd runs as that
+// user.
+func (u *Upgrader) start(ctx context.Context, j *journal.Journal) error {
+	for _, name := range databaseFiles {
+		ownFile(filepath.Join(j.DataDir, name), j.DataDir)
+	}
+	return u.Service.Start(ctx)
+}
+
 // check waits for the running varlatchd to answer `admin status` as
 // version, serving its database: schema, Root KEK and installation ready.
 func (u *Upgrader) check(ctx context.Context, version string, schema int64) error {
@@ -638,8 +648,10 @@ func (u *Upgrader) promote(j *journal.Journal) error {
 // was, from wherever j stands; it records undone, or failed with what is
 // left. It never takes the service to be running: whatever happened, it
 // ends by starting the previous release (nothing to do for one that runs)
-// and checking it.
+// and checking it. It has no deadline but its checks': the one the upgrade
+// ran under may be what stopped it.
 func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) error {
+	ctx = context.WithoutCancel(ctx)
 	j.Reason = why
 	var left []string
 	if j.Reached(journal.Stopping) {
@@ -652,32 +664,33 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 			return err
 		}
 		original := filepath.Join(j.Work, "original")
-		if j.Kind == journal.Rollback {
-			// A restore the rollback began and did not finish left its
-			// gate; the database it was writing goes, the original comes
-			// back.
-			if _, err := os.Stat(filepath.Join(original, databaseFiles[0])); err == nil {
-				if restoreGateOpen(j.DataDir) {
-					if err := os.Remove(filepath.Join(j.DataDir, gateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-						left = append(left, err.Error())
-					}
+		unlock, err := dataLock(j.DataDir)
+		if err != nil {
+			// A varlatchd command of the interrupted run (a restore) still
+			// works on the database, or varlatchd was not stopped.
+			return u.failed(j, why, append(left, err.Error()))
+		}
+		left = append(left, putBack(original, j.DataDir)...)
+		if err := u.point("undo:database-back"); err != nil {
+			unlock()
+			return err
+		}
+		if j.Kind == journal.Rollback && !j.RollbackSafe && len(left) == 0 {
+			// A restore the rollback began (no gate stood when it did) and
+			// did not finish: its gate and what it opened go, now that the
+			// database it was replacing is back.
+			if restoreGateOpen(j.DataDir) {
+				if err := os.Remove(filepath.Join(j.DataDir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					left = append(left, err.Error())
+				}
+			}
+			for _, name := range restoreLeftovers {
+				if err := os.RemoveAll(filepath.Join(j.DataDir, name)); err != nil {
+					left = append(left, err.Error())
 				}
 			}
 		}
-		for _, name := range databaseFiles {
-			from := filepath.Join(original, name)
-			if _, err := os.Stat(from); err != nil {
-				continue
-			}
-			to := filepath.Join(j.DataDir, name)
-			if err := os.Remove(to); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				left = append(left, err.Error())
-				continue
-			}
-			if err := os.Rename(from, to); err != nil {
-				left = append(left, err.Error())
-			}
-		}
+		unlock()
 		if j.Reached(journal.Prepared) {
 			if err := u.install(j, j.From); errors.Is(err, errKilled) {
 				return err
@@ -689,6 +702,7 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 		syncDir(j.DataDir)
 		syncDir(original)
 		os.RemoveAll(filepath.Join(j.Work, "db"))
+		os.RemoveAll(filepath.Join(j.Work, copyingDir))
 		if err := u.point("undo:restored"); err != nil {
 			return err
 		}
@@ -701,23 +715,18 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 		}
 	}
 	if len(left) == 0 {
-		if err := u.Service.Start(ctx); err != nil {
+		if err := u.start(ctx, j); err != nil {
 			left = append(left, "starting varlatchd "+j.From+": "+err.Error())
 		} else if err := u.check(ctx, j.From, j.FromSchema); err != nil {
 			left = append(left, fmt.Sprintf("the health checks of %s: %v", j.From, err))
 		}
 	}
 	if len(left) > 0 {
-		j.State = journal.Failed
-		j.Reason = fmt.Sprintf("%s; the undo did not complete: %s. The pre-upgrade snapshot is %s (varlatchd admin backup restore --in <it>, varlatchd stopped)", why, strings.Join(left, "; "), j.Snapshot)
-		if err := u.write(j); err != nil {
-			return fmt.Errorf("the upgrade to %s failed, its undo did not complete (%s), and the journal could not record it: %v", j.To, j.Reason, err)
-		}
-		return fmt.Errorf("the upgrade to %s failed and its undo did not complete: %s", j.To, j.Reason)
+		return u.failed(j, why, left)
 	}
 	j.State = journal.Undone
 	if err := u.write(j); err != nil {
-		return fmt.Errorf("the upgrade to %s was undone (%s serves, after its checks), but the journal could not record it: %v", j.To, j.From, err)
+		return fmt.Errorf("the %s to %s was undone (%s serves, after its checks), but the journal could not record it: %v", change(j), j.To, j.From, err)
 	}
 	if j.Reached(journal.Stopping) {
 		u.logf("Undone: %s serves again, on its database as it was, after its health checks.", j.From)
@@ -725,6 +734,59 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 		u.logf("Undone: nothing was changed; %s serves, after its health checks.", j.From)
 	}
 	return nil
+}
+
+// failed records an undo that did not complete, with what is left.
+func (u *Upgrader) failed(j *journal.Journal, why string, left []string) error {
+	j.State = journal.Failed
+	j.Reason = fmt.Sprintf("%s; the undo did not complete: %s. The pre-upgrade snapshot is %s (varlatchd admin backup restore --in <it>, varlatchd stopped)", why, strings.Join(left, "; "), j.Snapshot)
+	if err := u.write(j); err != nil {
+		return fmt.Errorf("the %s to %s failed, its undo did not complete (%s), and the journal could not record it: %v", change(j), j.To, j.Reason, err)
+	}
+	return fmt.Errorf("the %s to %s failed and its undo did not complete: %s", change(j), j.To, j.Reason)
+}
+
+// change names what the journal records: an upgrade or a rollback.
+func change(j *journal.Journal) string {
+	if j.Kind == journal.Rollback {
+		return "rollback"
+	}
+	return "upgrade"
+}
+
+// putBack moves the original database in dir back into the data directory,
+// and returns what it could not do. The log and index beside a database
+// that stands there are that database's (a varlatchd killed rather than
+// stopped leaves them), and go first: SQLite would apply them to the
+// original. With no database there (an upgrade's swap stopped between the
+// original's files) they are the original's own.
+func putBack(original, dataDir string) (left []string) {
+	database := databaseFiles[0]
+	if exists(filepath.Join(original, database)) && exists(filepath.Join(dataDir, database)) {
+		for _, name := range databaseFiles[1:] {
+			if err := os.Remove(filepath.Join(dataDir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				left = append(left, err.Error())
+			}
+		}
+		if len(left) > 0 {
+			return left
+		}
+	}
+	for _, name := range databaseFiles {
+		from := filepath.Join(original, name)
+		if !exists(from) {
+			continue
+		}
+		if err := os.Rename(from, filepath.Join(dataDir, name)); err != nil {
+			left = append(left, err.Error())
+		}
+	}
+	return left
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }
 
 // Recover finishes or undoes an upgrade the journal says is not over: one

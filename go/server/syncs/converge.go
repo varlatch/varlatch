@@ -11,7 +11,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -250,7 +252,9 @@ func (s *Service) RunOnce(ctx context.Context, opts RunOptions) {
 			if _, crashed := p.(Crash); crashed {
 				return
 			}
-			panic(p)
+			// A bug outside any Target's run (the trigger scan, the
+			// selection): this pass ends, logged; the next one runs.
+			s.logger().Error("sync pass panicked; the next pass runs as usual", "panic", fmt.Sprintf("%T", p), "stack", string(debug.Stack()))
 		}
 	}()
 	if err := s.scanTriggers(ctx); err != nil && ctx.Err() == nil {
@@ -556,15 +560,39 @@ func (s *Service) reconcile(ctx context.Context, targetID string, opts RunOption
 		return err
 	}
 	r.stats.Generation = r.gen
+	// The run's lease and row go however it ends (C25, C26), even when the
+	// failure's own bookkeeping panics; a test's Crash alone writes nothing
+	// more.
+	crashed := false
+	defer func() {
+		if !crashed {
+			r.finish(ctx, began)
+		}
+	}()
 	defer func() {
 		if p := recover(); p != nil {
-			panic(p) // a crash: nothing more is written
+			if _, crash := p.(Crash); crash {
+				crashed = true
+				panic(p) // a test's crash: nothing more is written
+			}
+			// A bug in this Target's run (rendering, an adapter): the run
+			// fails as an error does, counted and backed off, and its lease
+			// and row go; every other Target converges. The log names the
+			// panic's type and where it was, never its value, which can
+			// hold one of the run's.
+			r.s.logger().Error("sync run panicked; the Target's run fails", "target", r.target.ID,
+				"panic", fmt.Sprintf("%T", p), "stack", string(debug.Stack()))
+			if err := r.recordFailure(context.WithoutCancel(ctx), errorResult(errRunPanicked), true, r.inspected, r.credentialVersion); err != nil {
+				r.s.logger().Error("sync failure bookkeeping failed", "target", r.target.ID, "error", err)
+			}
 		}
-		r.finish(ctx, began)
 	}()
 	r.attempt(ctx)
 	return nil
 }
+
+// errRunPanicked is a run that panicked: its Target's last result.
+var errRunPanicked = errors.New("the sync engine failed unexpectedly on this Target; varlatchd's log has the details")
 
 // finish is reconcileTarget's finally: the lease released (C25) and the
 // run's row removed (C26), whether or not the run was fenced; then its

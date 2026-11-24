@@ -36,7 +36,7 @@ and a headless Chromium. Check `free -g` first, and do not run it next to
 | `shard.mjs`, `shard-weights.json` | `--shard <k>/<n>`: which suites each shard runs, balanced by each suite's measured seconds. |
 | `suite-kit.mjs` | What a suite imports: the result reporter, the CLI under test, target operations. |
 | `target-op.mjs` | One target operation, run by a suite as a subprocess. |
-| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`; the first two share `compose-stack.mjs`), the registry, and each target's optional capabilities as data (`capabilities.json`). |
+| `targets/` | Target adapters (`ts-source`, `ts-release`, `go-binary`, `go-container`; the first two share `compose-stack.mjs`, and `go-container` is `go-binary` with varlatchd in the single-container image, run with go-binary's capabilities and expectations), the registry, and each target's optional capabilities as data (`capabilities.json`). |
 | `suites/` | Suites that were inline shell in the old `ci-e2e.sh` (reconcile, doctor, Convex down, CLI download, server logs), the client suites (the CLI's compatibility core, `varlatch mcp`, and the sdk smoke), G11's checks on the Go server's server-sent events (`realtime-events`), and the suites where the e2e suites cover nothing (Security Controls over the API, audit webhook delivery, the audit export, Sync Target delivery). |
 | `lib/` | The runner's pure logic: result lines, inventory rules, operations and declared gaps, the request-log check, the client pins, release verification, expected failures, gate mode. |
 | `test/` | Unit tests: `pnpm test:conformance`. |
@@ -189,6 +189,7 @@ of reaching into Compose or the database:
 | `ts-stack` | `ts-stack compose <args...>` and `ts-stack compose-env`: Compose control for the ts-stack checks |
 | `webhook-receiver` | `webhook-receiver url\|requests`: a local endpoint the server reaches on its own loopback (`url` starts it when it is not running and answers the URL to register; `requests` what it recorded: `[{ at, method, target, contentType, signature, body, status }]`); a path with a segment `fail-<n>` answers 500 to its first n requests. The target's outbound allow list opens that port and nothing else private (the TypeScript stacks run it inside varlatchd's container with `VARLATCH_OUTBOUND_ALLOW`; go-binary as a process of its own with `outbound_allow`) |
 | `host-admin` | `host-admin audit-export <args...>`: one `varlatchd admin audit-export` host command, run as the operator runs it (the TypeScript stacks: in the container; go-binary: through the daemon's control socket). JSON: `{ status, stdout, stderr }`, whatever the status, so a suite can check a refusal |
+| `go-host` | `go-host doctor`: the Go installation's own host command `varlatchd admin doctor --json` (the one `varlatch doctor` fronts), run on its host with its configuration. JSON: `{ status, report, stderr }`, the report parsed (null when none was printed). go-binary only |
 | `oidc-issuer` | `oidc-issuer start`: a local OIDC issuer over https (lib/oidc-issuer.cjs) at `https://127.0.0.1:<port>`, its self-signed certificate made when the target starts and trusted by its server (the TypeScript stacks: `NODE_EXTRA_CA_CERTS`, the issuer inside varlatchd's container; go-binary: `SSL_CERT_FILE`, the issuer on a host loopback port). The allow list opens its port. JSON `{ issuer }`. `keys <json>` sets its JWKS (`{ keys }`); `counts` answers `{ discovery, jwks }`, its documents fetched so far |
 | `platform-fakes` | `platform-fakes start`: fake GitHub, Coolify and Convex services (lib/platform-fakes.cjs) the server's sync engine reaches under the platforms' own host names: `api.github.com`, `coolify.conformance.test`, `convex.conformance.test`, over https with a certificate made when the target starts and trusted by its server. The TypeScript stacks run them inside varlatchd's container on its loopback port 443, with `extra_hosts` leading the names there and `NODE_EXTRA_CA_CERTS`; go-binary runs them on a host loopback port, which the conformance build's host override (`VARLATCH_CONFORMANCE_OUTBOUND_HOSTS`, never in a release) leads the names to, with `SSL_CERT_FILE`. Either way the outbound allow list is what lets the fakes' address through. JSON `{ github, coolify, convex }` (the base identities). `state` answers what they hold and every request they saw (`{ github, coolify, running, convex, requests, githubApps, codesUsed, mints }`, credentials, keys and sealed values left out); `drift <resource> <key> <value>` changes a Coolify value behind Varlatch's back; `github <json>` sets up the fake GitHub's App side (a manifest code the conversion hands an App over for, an App registered directly with its private key answered, its keys added or deleted, an installation), which then answers the App's JWT, its installations and installation tokens narrowed to repositories and permissions as GitHub does |
 | `object-store` | `object-store start`: a local S3 server with Object Lock (MinIO, pinned by digest), running until `down` removes it by its name. JSON: `{ endpoint, hostEndpoint, region, accessKeyId, secretAccessKey }`, the endpoint the server reaches it at and the one the suite does. The target's outbound allow list opens it and nothing else private (the TypeScript stacks: an alias on the Compose project's network; go-binary: a loopback port) |
@@ -467,7 +468,8 @@ judged:
 
 ```sh
 node scripts/conformance/run.mjs --target go-binary:<path> --cli source \
-  --gate --walkthrough docs/evidence/<walkthrough record> [--recent-cli-report <report.json>]
+  --gate [--candidate <commit>] [--walkthrough docs/evidence/<walkthrough record> [--walkthrough-commit <commit>]] \
+  [--recent-cli-report <report.json>]
 ```
 
 Besides passing as an ordinary run, a gate run must have:
@@ -479,8 +481,15 @@ Besides passing as an ordinary run, a gate run must have:
   with its reason. An `open` replacement fails the gate;
 - the browser-walkthrough evidence file (G1's full browser walkthrough,
   done by hand and kept under `docs/evidence/`), named with
-  `--walkthrough`. The run stops before the target starts when it is
-  missing; the report records its path and hash;
+  `--walkthrough`. It names the candidate's commit, so it is committed on
+  top of the candidate and read from that evidence commit
+  (`--walkthrough-commit`; in CI the `walkthrough_ref` input), which may
+  differ from the candidate only in regular files under `docs/evidence/`
+  and is never checked out ([`docs/evidence/README.md`](../../docs/evidence/README.md),
+  "The evidence commit"). Passing a missing file stops before the target starts;
+  omitting `--walkthrough` still runs every suite and fails the gate on
+  missing walkthrough evidence alongside any open entries. The report
+  records its path and hash;
 - every suite (no `--suite`);
 - the target's record of what it ran (`implementation` in the report):
   for `ts-source` the commit, whether the tree was exactly that commit, and
@@ -524,21 +533,26 @@ shows this on the inventory as it stands.
 (`gh workflow run conformance.yml --ref <branch>`), on GitHub-hosted
 runners with only the read-only job token:
 
-| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` |
-| --- | --- | --- | --- |
-| `ts-source` | ✓ | ✓ | ✓ |
-| `ts-release:0.22.0` | ✓ | ✓ | ✓ |
-| `go-binary` | ✓ | | |
+| | CLI `source` | CLI `0.21.0` | CLI `0.22.0` | CLI `0.22.4` | CLI `0.23.0` | CLI `go` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ts-source` | ✓ | ✓ | ✓ | | | ✓ |
+| `ts-release:0.22.0` | ✓ | ✓ | ✓ | | | ✓ |
+| `go-binary` | ✓ | | | ✓ | ✓ | |
 
 The `images` job builds the source images once (`source-images.mjs`) and
-passes them to the `ts-source` cells as an artifact. The `go-binary` cell
-builds the dashboard and `varlatchd` from the checkout. Each cell is its own
-job, with its own stack (or server) on its own free ports, at most three at
-a time and 60 minutes each, and uploads its `conformance-report.json`
-(`conformance-report-<target>-cli-<cli>`, tokens masked as in the logs).
-`go.yml` also runs the `go-binary` target with the source CLI on every pull
-request that changes `go/` or the harness's `go-binary` pieces, in three
-shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
+passes them to the `ts-source` cells as an artifact. The `go-binary` cells
+build the dashboard and `varlatchd` from the checkout; the `0.22.4` and
+`0.23.0` cells cover ADR-0059 gate G2 (the last two TypeScript CLI releases
+against the Go server). Any future CLI entry marked `pending` in
+`clients.json` (without `commit` or `sha256`) is skipped in `cells` with a
+notice and activates automatically once its commit and hash are pinned. Each
+cell is its own job, with its own stack (or server) on its own free ports, at
+most three at a time and 60 minutes each, and uploads its
+`conformance-report.json` (`conformance-report-<target>-cli-<cli>`, tokens
+masked as in the logs). `go.yml` also runs the `go-binary` target with the
+source CLI and the Go CLI on every pull request that changes `go/` or the
+harness's `go-binary` pieces, in three shards ([Shards](#shards)), as
+`ci.yml`'s `e2e` job runs `ts-source`.
 
 ## Clients
 
@@ -547,9 +561,13 @@ shards ([Shards](#shards)), as `ci.yml`'s `e2e` job runs `ts-source`.
 checkout: `cd go && go build -o <path> ./cmd/varlatch`), or a
 released TypeScript CLI pinned in `clients.json` by version, release commit
 and the hash of `varlatch-cli-<version>.cjs`, never "latest". The pins now
-are 0.21.0 and 0.22.0; a later release is added by hand (its commit from
-`gh api repos/varlatch/varlatch/commits/v<V> --jq .sha`, its hash from the
-verified `SHA256SUMS`).
+are 0.21.0, 0.22.0, 0.22.4, and 0.23.0; a later release is added by hand (its
+commit from `gh api repos/varlatch/varlatch/commits/v<V> --jq .sha`, its hash
+from the verified `SHA256SUMS`). An unreleased future entry may temporarily
+use `{ "pending": "<reason>" }` (with no `commit` or `sha256`) so the weekly
+matrix skips it with a notice; selecting a `pending` version directly with
+`run.mjs --cli <version>` fails closed with a usage error and never downloads
+anything.
 
 Before the target starts, a pinned CLI is downloaded from its GitHub release
 into a new, empty directory and verified as
@@ -600,9 +618,12 @@ a feature, everything it needs:
 
 `client-runtime`'s two whole-suite checks, "the audit export holds no
 value" and "varlatchd logs hold no value", need no CLI feature of their
-own. On the Go CLI before slices 5.4b and 5.4d they cover only what the
-suite's setup and `types` did: no run or scan has disclosed anything yet,
-so they prove the server side only until those slices land.
+own. On the Go CLI before slice 5.4b they cover only what the suite's
+setup, `types` and `scan` did: no run has disclosed anything yet, so they
+prove the server side, the generated modules and the scans only until that
+slice lands. The suite gates each of its sections with `kit.supports()`,
+which is false for a feature the client lacks (`CONFORMANCE_CLIENT_LACKING`),
+so a section whose CLI feature is missing never runs.
 
 `go/cmd/varlatch`'s `TestClientLacksNotStale` also fails while an entry
 names a slice the Go CLI marks built (`go/cmd/varlatch/testdata/built/`).
@@ -627,8 +648,12 @@ release's section says it) and is one of:
   CLI older than the feature, that call reports each of the group's checks
   `PREDATES-CLI` and the suite skips the group; the rest of the suite runs.
   The runner accepts the result only after comparing the CLI's verified
-  version with the inventory itself. `pnpm test:conformance` checks that
-  every version-gated feature is gated in each suite that has its checks.
+  version with the inventory itself. `kit.supports()` is false, too, when
+  every check of the feature lacks something (a feature the Go CLI lacks,
+  `CONFORMANCE_CLIENT_LACKING`, or an operation the target lacks), so a
+  suite may gate a core feature with it as well. `pnpm test:conformance`
+  checks that every version-gated feature is gated in each suite that has
+  its checks, and that a suite gates only features its checks have.
 
 An old CLI failing a check whose feature it already had is a finding, not a
 reason to gate the check.

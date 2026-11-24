@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate/fakerelease"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
@@ -88,39 +90,48 @@ func TestUpgradeUsageAndPrivilege(t *testing.T) {
 // records the newer release for the dashboard; upgrade --yes upgrades to
 // it; a release that is not rollback-safe is refused until accepted. As
 // root (the command's rule): the host's directories are root's.
+// reversible is the test releases' declaration that a reverse migration
+// returns their data to the last TypeScript release, which lib/release
+// requires of a release (reversibleTo, go-step7 decision 17).
+var reversible = release.LastTypeScriptRelease
+
 func TestUpgradeCommandOnAHost(t *testing.T) {
 	if testing.Short() || runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		t.Skip("builds varlatchd and runs as root on Linux (go.yml's Go container)")
 	}
-	from, to, unsafe := cliBuild(t, "0.50.0-rc.1", ""), cliBuild(t, "0.50.0-rc.2", "g6fixture"), cliBuild(t, "0.50.0-rc.2", "g6fixture,g6unsafe")
+	from, to, unsafe := cliBuild(t, "0.50.0-rc.3", ""), cliBuild(t, "0.50.0-rc.4", "g6fixture"), cliBuild(t, "0.50.0-rc.4", "g6fixture,g6unsafe")
 	srv := fakerelease.New()
 	defer srv.Close()
 	defer func(f func(*Run) selfupdate.Source) { selfUpdateSource = f }(selfUpdateSource)
 	selfUpdateSource = func(*Run) selfupdate.Source { return srv.Source() }
 	publish := func(varlatchd []byte, d release.Declaration) {
-		m, err := release.NewManifest("0.50.0-rc.2", d)
+		m, err := release.NewManifest("0.50.0-rc.4", d)
 		if err != nil {
 			t.Fatal(err)
 		}
 		manifest, _ := m.Bytes()
-		cli, server, name := upgrade.Assets("0.50.0-rc.2", runtime.GOARCH)
-		srv.Publish("0.50.0-rc.2", &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\necho varlatch 0.50.0-rc.2\n"), server: varlatchd, name: manifest}})
+		cli, server, name := upgrade.Assets("0.50.0-rc.4", runtime.GOARCH)
+		srv.Publish("0.50.0-rc.4", &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\necho varlatch 0.50.0-rc.4\n"), server: varlatchd, name: manifest}})
 	}
-	prev := &release.Previous{Version: "0.50.0-rc.1", SchemaVersion: 1}
+	// The rc.3 build is on this checkout's schema; rc.4's G6 fixture step
+	// adds one.
+	fromSchema := checkoutSchema(t)
+	toSchema := fromSchema + 1
+	prev := &release.Previous{Version: "0.50.0-rc.3", SchemaVersion: fromSchema}
 
 	// Not rollback-safe: refused without --accept-not-rollback-safe.
 	h := newCLIHost(t, from)
-	publish(unsafe, release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, Previous: prev})
+	publish(unsafe, release.Declaration{SchemaVersion: toSchema, CompatibleFrom: toSchema, Previous: prev, ReversibleTo: &reversible})
 	code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
 	if code != ExitFailure || !strings.Contains(out, "rollback:  NOT safe") || !strings.Contains(out, notCounted) || !strings.Contains(errs, "pass --accept-not-rollback-safe") {
 		t.Fatalf("not rollback-safe: %d %q %q", code, out, errs)
 	}
-	h.serves(t, "0.50.0-rc.1")
+	h.serves(t, "0.50.0-rc.3")
 	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--accept-not-rollback-safe", "--config", h.conf)
-	if code != ExitOK || !strings.Contains(out, "Upgraded to 0.50.0-rc.2") {
+	if code != ExitOK || !strings.Contains(out, "Upgraded to 0.50.0-rc.4") {
 		t.Fatalf("accepted: %d %q %q", code, out, errs)
 	}
-	h.serves(t, "0.50.0-rc.2")
+	h.serves(t, "0.50.0-rc.4")
 
 	// Its rollback restores the snapshot: what is lost is listed first, and
 	// nothing happens without --accept-data-loss (--yes is not enough).
@@ -130,42 +141,132 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 		strings.Index(out, "UNDONE:") > strings.Index(out, "LOST:") {
 		t.Fatalf("a rollback that loses changes, not accepted: %d %q %q", code, out, errs)
 	}
-	h.serves(t, "0.50.0-rc.2")
+	h.serves(t, "0.50.0-rc.4")
 	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--accept-data-loss", "--config", h.conf)
-	if code != ExitOK || !strings.Contains(out, "Rolled back to 0.50.0-rc.1") || !strings.Contains(out, "What to do now: the restore took the changes listed above back.") ||
-		!strings.Contains(out, "varlatch credential revoke <identity-id> <credential-id>") || !strings.Contains(out, "0.50.0-rc.1 has no\n    command that signs everyone out") {
+	if code != ExitOK || !strings.Contains(out, "Rolled back to 0.50.0-rc.3") || !strings.Contains(out, "What to do now: the restore took the changes listed above back.") ||
+		!strings.Contains(out, "varlatch credential revoke <identity-id> <credential-id>") || !strings.Contains(out, "0.50.0-rc.3 has no\n    command that signs everyone out") {
 		t.Fatalf("accepted: %d %q %q", code, out, errs)
 	}
-	h.serves(t, "0.50.0-rc.1")
+	h.serves(t, "0.50.0-rc.3")
 
 	// Rollback-safe: --check records it, upgrade --yes upgrades.
 	h = newCLIHost(t, from)
-	publish(to, release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: prev})
+	publish(to, release.Declaration{SchemaVersion: toSchema, CompatibleFrom: 1, RollbackSafe: true, Previous: prev, ReversibleTo: &reversible})
 	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--check", "--config", h.conf)
-	if code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.2 is available (this host runs 0.50.0-rc.1)") {
+	if code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.4 is available (this host runs 0.50.0-rc.3)") {
 		t.Fatalf("--check: %d %q %q", code, out, errs)
 	}
 	rc, err := release.ReadReleaseCheck(h.data)
-	if err != nil || rc == nil || rc.LastSuccess == nil || rc.LastSuccess.Latest.Version != "0.50.0-rc.2" || rc.LastAttempt.Failed != nil {
+	if err != nil || rc == nil || rc.LastSuccess == nil || rc.LastSuccess.Latest.Version != "0.50.0-rc.4" || rc.LastAttempt.Failed != nil {
 		t.Fatalf("the release check: %+v, %v", rc, err)
 	}
 	if code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--config", h.conf); code != ExitFailure || !strings.Contains(errs, "not a terminal: pass --yes") {
 		t.Fatalf("no --yes off a terminal: %d %q %q", code, out, errs)
 	}
 	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
-	if code != ExitOK || !strings.Contains(out, "rollback:  safe") || !strings.Contains(out, "Upgraded to 0.50.0-rc.2") {
+	if code != ExitOK || !strings.Contains(out, "rollback:  safe") || !strings.Contains(out, "Going back (varlatch upgrade --rollback) keeps every change") ||
+		!strings.Contains(out, "Upgraded to 0.50.0-rc.4") || !strings.Contains(out, "varlatch upgrade --rollback goes back to 0.50.0-rc.3.") {
 		t.Fatalf("upgrade: %d %q %q", code, out, errs)
 	}
-	h.serves(t, "0.50.0-rc.2")
-	if code, out, _ = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf); code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.2 is up to date") {
+	h.serves(t, "0.50.0-rc.4")
+	if code, out, _ = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf); code != ExitOK || !strings.Contains(out, "varlatchd 0.50.0-rc.4 is up to date") {
 		t.Fatalf("again: %d %q", code, out)
 	}
 	// A rollback-safe rollback keeps the database: --yes is enough.
 	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--config", h.conf)
-	if code != ExitOK || !strings.Contains(out, "database:  kept as it is") || strings.Contains(out, "LOST:") || !strings.Contains(out, "Rolled back to 0.50.0-rc.1") {
+	if code != ExitOK || !strings.Contains(out, "database:  kept as it is") || strings.Contains(out, "LOST:") || !strings.Contains(out, "Rolled back to 0.50.0-rc.3") {
 		t.Fatalf("a rollback-safe rollback: %d %q %q", code, out, errs)
 	}
-	h.serves(t, "0.50.0-rc.1")
+	h.serves(t, "0.50.0-rc.3")
+
+	// A release that ends the migration's rollback window (decision 17):
+	// while the window is open, refused with --yes alone; with
+	// --end-rollback-window, recorded in Go's journal (through the running
+	// varlatchd) before the upgrade, which then goes through.
+	ends := release.Declaration{SchemaVersion: toSchema, CompatibleFrom: 1, RollbackSafe: true, Previous: prev, EndsRollbackWindow: true}
+	h = newCLIHost(t, from)
+	h.migrated(t, time.Now().Add(-time.Hour))
+	publish(to, ends)
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
+	if code != ExitFailure || !strings.Contains(out, "migration: "+release.RollbackWindowNotice) || !strings.Contains(errs, "pass --end-rollback-window") {
+		t.Fatalf("a window-ending release with --yes alone: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.3")
+	if j := h.journal(t); j.WindowEnded != nil {
+		t.Fatalf("the window recorded ended after a refusal: %+v", j.WindowEnded)
+	}
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--end-rollback-window", "--config", h.conf)
+	if code != ExitOK || !strings.Contains(out, "The migration's rollback window ends") || !strings.Contains(out, "Upgraded to 0.50.0-rc.4") {
+		t.Fatalf("--end-rollback-window: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.4")
+	if j := h.journal(t); j.WindowEnded == nil || j.WindowEnded.Release != "0.50.0-rc.4" || j.Phase != migrate.Open {
+		t.Fatalf("the journal after the upgrade: %+v", j)
+	}
+	if open, err := migrate.RollbackWindowOpen(h.data, time.Now()); err != nil || open {
+		t.Errorf("the window after the upgrade: %v %v", open, err)
+	}
+	// Rolled back, it stays ended, and the rollback says so.
+	code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--rollback", "--yes", "--config", h.conf)
+	if code != ExitOK || !strings.Contains(out, "  migration: its rollback window was ended by the upgrade to 0.50.0-rc.4, and stays ended") || !strings.Contains(out, "Rolled back to 0.50.0-rc.3") {
+		t.Fatalf("a rollback beside a migration: %d %q %q", code, out, errs)
+	}
+	h.serves(t, "0.50.0-rc.3")
+	if open, err := migrate.RollbackWindowOpen(h.data, time.Now()); err != nil || open {
+		t.Errorf("the window after the rollback: %v %v", open, err)
+	}
+
+	// The same release with no window open (never migrated, or switched
+	// more than 30 days ago): no question.
+	for name, switched := range map[string]time.Time{"never migrated": {}, "past the window": time.Now().Add(-31 * 24 * time.Hour)} {
+		h = newCLIHost(t, from)
+		if !switched.IsZero() {
+			h.migrated(t, switched)
+		}
+		publish(to, ends)
+		code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
+		if code != ExitOK || strings.Contains(out, "migration:") || !strings.Contains(out, "Upgraded to 0.50.0-rc.4") {
+			t.Fatalf("%s: %d %q %q", name, code, out, errs)
+		}
+		h.serves(t, "0.50.0-rc.4")
+	}
+}
+
+// migrated gives the host's data directory a migration's journal, open
+// and switched at switched, as varlatch migrate leaves it; varlatchd is
+// restarted on it.
+func (h *cliHost) migrated(t *testing.T, switched time.Time) {
+	t.Helper()
+	j := &migrate.Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: migrate.Open, Ingress: migrate.Proxy,
+		History: []migrate.Step{{Phase: migrate.Switched, At: switched.UTC().Format(time.RFC3339Nano)}, {Phase: migrate.Open, At: switched.UTC().Format(time.RFC3339Nano)}}}
+	b, err := j.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.data, migrate.JournalFile), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.serves(t, "0.50.0-rc.3")
+}
+
+// journal is Go's migration journal on the host.
+func (h *cliHost) journal(t *testing.T) *migrate.Journal {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(h.data, migrate.JournalFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var j migrate.Journal
+	if err := json.Unmarshal(b, &j); err != nil {
+		t.Fatal(err)
+	}
+	return &j
 }
 
 var (
@@ -224,7 +325,7 @@ func newCLIHost(t *testing.T, varlatchd []byte) *cliHost {
 	if err := os.WriteFile(filepath.Join(h.bin, "varlatchd"), varlatchd, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.bin, "varlatch"), []byte("#!/bin/sh\necho varlatch 0.50.0-rc.1\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(h.bin, "varlatch"), []byte("#!/bin/sh\necho varlatch 0.50.0-rc.3\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	h.svc = &cliService{bin: h.bin, conf: h.conf}
@@ -234,7 +335,7 @@ func newCLIHost(t *testing.T, varlatchd []byte) *cliHost {
 	if err := h.svc.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	h.serves(t, "0.50.0-rc.1")
+	h.serves(t, "0.50.0-rc.3")
 	return h
 }
 
@@ -297,21 +398,78 @@ func (s *cliService) Stop(context.Context) error {
 
 // A recovered rollback says so, and how to go back further.
 func TestRecoveredMessage(t *testing.T) {
-	j := &journal.Journal{From: "0.50.0-rc.2", To: "0.50.0-rc.1", Kind: journal.Rollback, State: journal.Undone, Reason: "interrupted after step \"stopped\"", Snapshot: "/data/upgrades/x/snapshot.vltbak"}
-	if got := recoveredMessage(j); !strings.HasPrefix(got, "Undid the interrupted rollback from 0.50.0-rc.2 to 0.50.0-rc.1") ||
-		!strings.Contains(got, "0.50.0-rc.2 serves") || !strings.Contains(got, "varlatchd admin backup restore --in /data/upgrades/x/snapshot.vltbak") {
+	j := &journal.Journal{From: "0.50.0-rc.4", To: "0.50.0-rc.3", Kind: journal.Rollback, State: journal.Undone, Reason: "interrupted after step \"stopped\"", Snapshot: "/data/upgrades/x/snapshot.vltbak"}
+	if got := recoveredMessage(j); !strings.HasPrefix(got, "Undid the interrupted rollback from 0.50.0-rc.4 to 0.50.0-rc.3") ||
+		!strings.Contains(got, "0.50.0-rc.4 serves") || !strings.Contains(got, "varlatchd admin backup restore --in /data/upgrades/x/snapshot.vltbak") {
 		t.Fatalf("an undone rollback: %q", got)
 	}
 	j.State = journal.Done
-	if got := recoveredMessage(j); got != "Finished the interrupted rollback from 0.50.0-rc.2 to 0.50.0-rc.1: 0.50.0-rc.1 serves, after its health checks." {
+	if got := recoveredMessage(j); got != "Finished the interrupted rollback from 0.50.0-rc.4 to 0.50.0-rc.3: 0.50.0-rc.3 serves, after its health checks." {
 		t.Fatalf("a finished rollback: %q", got)
 	}
-	j.Kind, j.From, j.To = journal.Upgrade, "0.50.0-rc.1", "0.50.0-rc.2"
-	if got := recoveredMessage(j); !strings.HasPrefix(got, "Finished the interrupted upgrade from 0.50.0-rc.1 to 0.50.0-rc.2") {
+	j.Kind, j.From, j.To = journal.Upgrade, "0.50.0-rc.3", "0.50.0-rc.4"
+	if got := recoveredMessage(j); !strings.HasPrefix(got, "Finished the interrupted upgrade from 0.50.0-rc.3 to 0.50.0-rc.4") {
 		t.Fatalf("a finished upgrade: %q", got)
 	}
 	j.State = journal.Undone
 	if got := recoveredMessage(j); !strings.HasPrefix(got, "Undid the interrupted upgrade") || !strings.Contains(got, "Run varlatch upgrade again to upgrade.") {
 		t.Fatalf("an undone upgrade: %q", got)
 	}
+}
+
+// windowEnding: a release that ends the window ends it only while one is
+// open (an open journal, switched within 30 days, not ended already), and
+// is refused while a reverse is under way, whose journal it could not
+// record the end in; a release that keeps the window asks nothing.
+func TestWindowEnding(t *testing.T) {
+	now := time.Now()
+	write := func(phase migrate.Phase, switched time.Time) string {
+		t.Helper()
+		dir := t.TempDir()
+		j := &migrate.Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: phase, Ingress: migrate.Proxy,
+			History: []migrate.Step{{Phase: migrate.Switched, At: switched.UTC().Format(time.RFC3339Nano)}}}
+		b, err := j.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, migrate.JournalFile), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	if ends, err := windowEnding(t.TempDir(), "0.50.1", true, now); err != nil || ends {
+		t.Errorf("never migrated: %v %v", ends, err)
+	}
+	open := write(migrate.Open, now.Add(-time.Hour))
+	if ends, err := windowEnding(open, "0.50.1", true, now); err != nil || !ends {
+		t.Errorf("open: %v %v", ends, err)
+	}
+	if ends, err := windowEnding(open, "0.50.1", false, now); err != nil || ends {
+		t.Errorf("a release that keeps the window: %v %v", ends, err)
+	}
+	if ends, err := windowEnding(write(migrate.Open, now.Add(-31*24*time.Hour)), "0.50.1", true, now); err != nil || ends {
+		t.Errorf("past 30 days: %v %v", ends, err)
+	}
+	for _, p := range []migrate.Phase{migrate.Rollback, migrate.RollbackChecked, migrate.RollbackTransfer} {
+		if ends, err := windowEnding(write(p, now.Add(-time.Hour)), "0.50.1", true, now); err == nil || ends || !strings.Contains(err.Error(), "a rollback is under way (the migration is in phase "+string(p)+")") {
+			t.Errorf("%s: %v %v", p, ends, err)
+		}
+	}
+}
+
+// checkoutSchema is this checkout's schema version, as go/release/release.json
+// declares it (server/db/releasecheck holds it to server/db's).
+func checkoutSchema(t *testing.T) int64 {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "release", "release.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		SchemaVersion int64 `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(b, &d); err != nil || d.SchemaVersion < 1 {
+		t.Fatalf("go/release/release.json: schemaVersion %d, %v", d.SchemaVersion, err)
+	}
+	return d.SchemaVersion
 }

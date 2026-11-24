@@ -72,7 +72,8 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  * deadline; status; the switch off.
  */
 
-const MINIO_IMAGE = "cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b";
+// CI names the image it has by its ID (scripts/ci-pull-image.sh).
+const MINIO_IMAGE = process.env.VARLATCH_TEST_MINIO_IMAGE || "cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b";
 const ROOT_USER = "vltaudittest";
 const ROOT_PASSWORD = randomBytes(18).toString("hex");
 const LOCKED = "audit-lock";
@@ -289,6 +290,11 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     const limits = AUDIT_EXPORT_LIMITS as { batchEvents: number };
     const saved = limits.batchEvents;
     limits.batchEvents = 3;
+    // Pin the export clock for this test so draining across a UTC hour
+    // boundary (e.g. 15:59:59Z -> 16:00:00Z) cannot legitimately emit a second
+    // hourly heartbeat while keeping retainUntil ~24h ahead for Object Lock.
+    const fixedNow = new Date();
+    setAuditExportTestHooks({ now: () => fixedNow });
     try {
       // Another Organization's events stay out.
       expect((await call("POST", "/v1/organizations", person.cli, { name: "Other", slug: "other" })).status).toBe(201);

@@ -76,7 +76,8 @@ out=$(cd "$out" && pwd)
 
 ldflags="-s -w -buildid= -X github.com/varlatch/varlatch/go/lib/buildinfo.Version=$version"
 build() { # build <command> <os> <arch> <file>
-  (cd "$gomod" && CGO_ENABLED=0 GOOS=$2 GOARCH=$3 go build -trimpath -buildvcs=false \
+  # GOFLAGS cleared, so the environment adds no build tag to a release.
+  (cd "$gomod" && GOFLAGS='' CGO_ENABLED=0 GOOS=$2 GOARCH=$3 go build -trimpath -buildvcs=false \
     -ldflags "$ldflags" -o "$out/$4" "./cmd/$1")
   printf 'built %s\n' "$4"
 }

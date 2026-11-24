@@ -76,32 +76,88 @@ func (m Mapping) JS() jsvalue.Object {
 // stored is the mapping as the jsonb column holds it.
 func (m Mapping) stored() string { return string(jsvalue.Stringify(jsvalue.Jsonb(m.JS()))) }
 
-// ParseMapping reads a stored mapping.
+// ErrStoredMapping is a stored mapping this server cannot read: not the
+// shape normalizeMapping writes. Imported or migrated data can hold one
+// (a TypeScript database's row as it was); it fails its Target's runs and
+// requests, never the daemon.
+var ErrStoredMapping = errors.New("the Sync Target's stored mapping is not one this server reads")
+
+func badMapping(what string) error { return fmt.Errorf("%w: %s", ErrStoredMapping, what) }
+
+// ErrStoredDestination is a stored destination this server cannot read.
+var ErrStoredDestination = errors.New("the Sync Target's stored destination is not one this server reads")
+
+// StoredDestination reads a stored destination: a JSON object, in
+// JavaScript's member order. Anything else is an ErrStoredDestination,
+// never a panic.
+func StoredDestination(text string) (jsvalue.Object, error) {
+	v, err := jsvalue.Parse([]byte(text))
+	if err != nil {
+		return nil, fmt.Errorf("%w: not JSON", ErrStoredDestination)
+	}
+	o, ok := jsvalue.JSOrder(v).(jsvalue.Object)
+	if !ok {
+		return nil, fmt.Errorf("%w: not an object", ErrStoredDestination)
+	}
+	return o, nil
+}
+
+// ParseMapping reads a stored mapping: a wildcard, with its exclusions, or
+// an explicit list of at least one item, each named. Anything else is an
+// ErrStoredMapping, never a panic.
 func ParseMapping(text string) (Mapping, error) {
 	v, err := jsvalue.Parse([]byte(text))
 	if err != nil {
-		return Mapping{}, err
+		return Mapping{}, badMapping("not JSON")
 	}
-	o, _ := v.(jsvalue.Object)
+	o, ok := v.(jsvalue.Object)
+	if !ok {
+		return Mapping{}, badMapping("not an object")
+	}
 	kind, _ := o.Get("kind")
 	if kind == "wildcard" {
 		m := Mapping{Wildcard: true}
-		if list, ok := o.Get("exclude"); ok {
+		if raw, ok := o.Get("exclude"); ok {
+			list, ok := raw.([]any)
+			if !ok {
+				return Mapping{}, badMapping("its exclusions are not a list")
+			}
 			m.Exclude = []string{}
-			for _, e := range list.([]any) {
-				m.Exclude = append(m.Exclude, e.(string))
+			for _, e := range list {
+				s, ok := e.(string)
+				if !ok {
+					return Mapping{}, badMapping("an exclusion is not a string")
+				}
+				m.Exclude = append(m.Exclude, s)
 			}
 		}
 		return m, nil
 	}
+	if kind != nil && kind != "explicit" {
+		return Mapping{}, badMapping("its kind is neither wildcard nor explicit")
+	}
+	raw, _ := o.Get("items")
+	items, ok := raw.([]any)
+	if !ok || len(items) == 0 {
+		return Mapping{}, badMapping("it lists no item")
+	}
 	var m Mapping
-	items, _ := o.Get("items")
-	for _, raw := range items.([]any) {
-		it := raw.(jsvalue.Object)
-		name, _ := it.Get("name")
-		item := MappingItem{Name: name.(string)}
-		if r, ok := it.Get("rename"); ok {
-			s := r.(string)
+	for _, r := range items {
+		it, ok := r.(jsvalue.Object)
+		if !ok {
+			return Mapping{}, badMapping("an item is not an object")
+		}
+		n, _ := it.Get("name")
+		name, ok := n.(string)
+		if !ok || name == "" {
+			return Mapping{}, badMapping("an item has no name")
+		}
+		item := MappingItem{Name: name}
+		if rr, ok := it.Get("rename"); ok && rr != nil {
+			s, ok := rr.(string)
+			if !ok {
+				return Mapping{}, badMapping("an item's rename is not a string")
+			}
 			item.Rename = &s
 		}
 		affirmed, _ := it.Get("secretAffirmed")
@@ -513,11 +569,9 @@ func (s *Service) UpdateTarget(ctx context.Context, req Request, org authz.Organ
 		}
 		raw := patch.Destination
 		if !patch.HasDestination {
-			v, err := jsvalue.Parse([]byte(current.Destination))
-			if err != nil {
+			if raw, err = StoredDestination(current.Destination); err != nil {
 				return err
 			}
-			raw = jsvalue.JSOrder(v).(jsvalue.Object)
 		}
 		dest, err := adapter.CanonicalizeDestination(SyncObject(raw))
 		if err != nil {
@@ -530,9 +584,17 @@ func (s *Service) UpdateTarget(ctx context.Context, req Request, org authz.Organ
 				return err
 			}
 		}
+		// A stored mapping this server cannot read is repaired by a patch
+		// that gives a whole mapping: the previous one is then unknown, and
+		// the new one counts as widening (the caller ran the disclosure
+		// gate for it).
 		prev, err := ParseMapping(current.Mapping)
+		prevUnknown := false
 		if err != nil {
-			return err
+			if patch.Mapping == nil || !errors.Is(err, ErrStoredMapping) {
+				return err
+			}
+			prevUnknown = true
 		}
 		mapping := prev
 		if patch.Mapping != nil {
@@ -586,7 +648,7 @@ func (s *Service) UpdateTarget(ctx context.Context, req Request, org authz.Organ
 		md := jsvalue.Object{
 			{Key: "destination", Value: string(adapter.Platform()) + ":" + dest.Key}, {Key: "destinationChanged", Value: changed},
 			{Key: "connectionRepointed", Value: c.ID != target.ConnectionID}, {Key: "mapping", Value: mapping.summary()},
-			{Key: "widened", Value: MappingWidens(prev, mapping)},
+			{Key: "widened", Value: prevUnknown || MappingWidens(prev, mapping)},
 		}
 		e := audit.Event{
 			Type: "sync.target_updated", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &org.ID, Action: &action,

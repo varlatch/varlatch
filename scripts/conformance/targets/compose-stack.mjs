@@ -21,10 +21,11 @@
  */
 import { spawnSync } from "node:child_process";
 import { deadlineSpawnSync } from "../lib/deadline.mjs";
+import { reservePorts } from "../lib/ports.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { requestsFromNginxLog } from "./nginx-log.mjs";
 
 
@@ -78,19 +79,8 @@ export async function hostAdmin(state, ...args) {
 
 const psql = (state, sql) => mustCompose(state, ["exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "varlatch", "-Atqc", sql]).trim();
 
-/** Ask the kernel for `count` unused loopback ports. */
-async function freePorts(count) {
-  const servers = await Promise.all(
-    Array.from({ length: count }, () => new Promise((resolve, reject) => {
-      const server = createServer();
-      server.once("error", reject);
-      server.listen(0, "127.0.0.1", () => resolve(server));
-    })),
-  );
-  const ports = servers.map((s) => s.address().port);
-  await Promise.all(servers.map((s) => new Promise((resolve) => s.close(resolve))));
-  return ports;
-}
+/** `count` unused loopback ports, below the ephemeral range (lib/ports.mjs). */
+const freePorts = (count) => reservePorts(count);
 
 async function status(url) {
   try {
@@ -522,6 +512,19 @@ export async function oidcIssuer(state, action, ...args) {
 export const OBJECT_STORE_ALIAS = "conformance-s3";
 export const OBJECT_STORE_IMAGE = "cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b";
 
+/**
+ * Pulls the object store's image before its container starts, trying again
+ * when the registry has a bad moment (scripts/ci-pull-image.sh); nothing
+ * when it is here already. It answers what to start: the image, or the ID of
+ * the one CI loaded from its cache.
+ */
+export function pullObjectStore() {
+  const script = fileURLToPath(new URL("../../ci-pull-image.sh", import.meta.url));
+  const r = spawnSync("bash", [script, OBJECT_STORE_IMAGE], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`pulling the object store's image failed: ${(r.stderr || r.error?.message || "").trim().slice(-300)}`);
+  return r.stdout.trim();
+}
+
 const objectStoreName = (state) => `${state.project}-object-store`;
 
 /** The object store's keys: derived from the installation, so every operation names the same ones. */
@@ -554,9 +557,10 @@ export async function objectStore(state, action) {
   const running = spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", name], { encoding: "utf8" });
   if (running.status !== 0 || running.stdout.trim() !== "true") {
     spawnSync("docker", ["rm", "-fv", name], { stdio: "ignore" });
+    const image = pullObjectStore();
     const r = spawnSync("docker", ["run", "-d", "--name", name, "--network", `${state.project}_default`, "--network-alias", OBJECT_STORE_ALIAS,
       "-p", "127.0.0.1::9000", "-e", `MINIO_ROOT_USER=${keys.accessKeyId}`, "-e", `MINIO_ROOT_PASSWORD=${keys.secretAccessKey}`,
-      OBJECT_STORE_IMAGE, "server", "/data"], { encoding: "utf8" });
+      image, "server", "/data"], { encoding: "utf8" });
     if (r.status !== 0) throw new Error(`docker run ${name} failed: ${r.stderr.trim().slice(-300)}`);
   }
   const port = spawnSync("docker", ["port", name, "9000/tcp"], { encoding: "utf8" }).stdout.trim().split("\n")[0].split(":").pop();

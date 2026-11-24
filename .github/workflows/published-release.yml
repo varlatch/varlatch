@@ -1,0 +1,193 @@
+# The Go line's published releases, checked as people install them
+# (ADR-0059 G8, the published-asset half; internal docs/design/go-step6.md,
+# slice 6.1b): on Linux, macOS and Windows, the installers install the
+# release from github.com and a rerun changes nothing; they fail closed on
+# a bad signature, a cut-off asset and a wrong platform with the release's
+# real files (tampered copies served locally); and the release's own
+# binary refuses its signature as another version's
+# (go/install/published_test.go). Its container image (job image) is the
+# one varlatchd-image.txt records: the record listed in the signed
+# SHA256SUMS, the version's tag still on that index digest, the image's
+# signature from the release workflow for the tag, and provenance and an
+# SBOM for linux/amd64 and linux/arm64. Every check uses Sigstore's live
+# trusted root. Nothing is signed, uploaded or published here.
+#
+# It runs after the Release workflow publishes a release of the Go line
+# (0.50.0 and later: its prereleases and its final releases), and by hand
+# for any published release of the Go line (Actions, "Run workflow", its
+# tag). Not on `release: published`: the
+# Release workflow publishes with GITHUB_TOKEN, whose events start no other
+# workflow. The tests come from the default branch, so a release tagged
+# before them is checked too.
+name: Published release
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release's tag, as v0.50.0-rc.1"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published-release-${{ github.event.workflow_run.head_branch || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  # The release's version from its tag, and whether it is the Go line's.
+  version:
+    # A Release run that published something, or a run by hand.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      go: ${{ steps.v.outputs.go }}
+    steps:
+      - id: v
+        env:
+          # A tag's run of the Release workflow names the tag as its branch.
+          TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          version=${TAG#v}
+          # A release version (lib/release's pattern): nothing else may
+          # reach a command line or a URL.
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$' || [ "v$version" != "$TAG" ]; then
+            echo "::error::$TAG is not a release tag"
+            exit 1
+          fi
+          # The Go line: 0.50.0 and its prereleases, and later.
+          major=${version%%.*}
+          rest=${version#*.}
+          minor=${rest%%.*}
+          go=false
+          if [ "$major" -gt 0 ] || [ "$minor" -ge 50 ]; then go=true; fi
+          # The release must be published (a prerelease or a final one),
+          # and a draft is not: refused explicitly, not left to what the
+          # token can see. Anything but "false" is refused.
+          if ! draft=$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft); then
+            echo "::error::$TAG is not a published release"
+            exit 1
+          fi
+          if [ "$draft" != "false" ]; then
+            echo "::error::$TAG is a draft release, not a published one"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "$TAG: version $version, checked: $go"
+
+  installers:
+    needs: version
+    if: needs.version.outputs.go == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      - name: The installers against the published release
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          VARLATCH_TEST_PUBLISHED: ${{ needs.version.outputs.version }}
+          # The runner is thrown away: install.ps1 may change its user PATH.
+          VARLATCH_TEST_DISPOSABLE: "1"
+        run: go test -count=1 -v -timeout 25m -run '^TestPublished' ./install/
+
+  image:
+    needs: version
+    if: needs.version.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      # The checks' script from the default branch, as the installers' tests.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: The release's image, as its record names it
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          assets=$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name')
+          if ! grep -qx varlatchd-image.txt <<< "$assets"; then
+            # The prereleases from before the release published an image.
+            case "$VERSION" in
+              0.50.0-rc.1 | 0.50.0-rc.2)
+                echo "::notice::$tag was published before the Go line's image: nothing to check"
+                exit 0 ;;
+            esac
+            echo "::error::$tag has no varlatchd-image.txt: a Go release ships its image"
+            exit 1
+          fi
+          mkdir rel && cd rel
+          gh release download "$tag" --repo "$REPO" -p SHA256SUMS -p SHA256SUMS.sigstore.json -p varlatchd-image.txt
+          # An image built self-hosted attaches its SBOMs as release files.
+          if grep -q '^sbom-varlatchd-.*\.spdx\.json$' <<< "$assets"; then
+            gh release download "$tag" --repo "$REPO" -p 'sbom-varlatchd-*.spdx.json'
+          fi
+          identity="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/${tag}"
+          issuer=https://token.actions.githubusercontent.com
+          # SHA256SUMS is signed by the release workflow for this tag, and
+          # lists the record with its hash.
+          cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+            --certificate-identity "$identity" --certificate-oidc-issuer "$issuer"
+          grep -E '^[0-9a-f]{64}  varlatchd-image\.txt$' SHA256SUMS | sha256sum --check --strict -
+          ref=$(cat varlatchd-image.txt)
+          [ "$(wc -l < varlatchd-image.txt)" = 1 ] || { echo "::error::varlatchd-image.txt is not one line"; exit 1; }
+          owner=$(echo "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')
+          name="ghcr.io/${owner}/varlatchd"
+          [[ "$ref" =~ ^ghcr\.io/${owner}/varlatchd:${VERSION//./\\.}@sha256:[0-9a-f]{64}$ ]] \
+            || { echo "::error::varlatchd-image.txt names $ref, not this version's varlatchd image"; exit 1; }
+          digest=${ref##*@}
+          # The version's tag still names that index: a tag is for people,
+          # the digest is the pin, but a moved tag is a finding.
+          now=$(docker buildx imagetools inspect "$name:$VERSION" --format '{{println .Manifest.Digest}}' | head -1)
+          [ "$now" = "$digest" ] || { echo "::error::$name:$VERSION now names $now, not the recorded $digest"; exit 1; }
+          # Signed by the release workflow for this tag; the signatures are
+          # in their own package.
+          COSIGN_REPOSITORY="ghcr.io/${owner}/varlatch-signatures" cosign verify "$name@$digest" \
+            --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" > /dev/null
+          # Both platforms: an SLSA provenance predicate each, and an SPDX
+          # SBOM attested or attached as a release file whose bytes match
+          # the signed SHA256SUMS (buildx renders a missing predicate as {},
+          # which is refused).
+          cd ..
+          go/image/check-attestations.sh "$name@$digest" "$VERSION" --sbom-dir rel --sums rel/SHA256SUMS
+          cd rel
+          echo "$ref: signed, recorded and attested for linux/amd64 and linux/arm64" | tee -a "$GITHUB_STEP_SUMMARY"

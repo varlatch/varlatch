@@ -2,12 +2,5 @@
   "schema": 1,
   "description": "The Go server (go-binary, whatever its path). expected: the checks it is known to fail, by client, each with why and the step that removes it. lacks: the operations it does not have yet (OpenAPI operationIds and the inventory's named operations), each with why and the step that adds it; a check that needs one reports target-lacks, and the runner first asks the server that each one really answers 501 NOT_IMPLEMENTED_YET (scripts/conformance/README.md, Declared gaps). This is the parity tracker: entries are removed as operations are built. CI fails a pull request that adds an entry, or makes a check newly lack an operation, unless it carries the conformance-regression label.",
   "expected": {},
-  "lacks": {
-    "go-binary": {
-      "serve-cli": {
-        "reason": "the Go server cannot serve the CLI and install scripts yet (ADR-0058 Decision 3): in Go they are the Go CLI's binaries and installers, which steps 5 and 6 build",
-        "step": "ADR-0059 step 6"
-      }
-    }
-  }
+  "lacks": {}
 }

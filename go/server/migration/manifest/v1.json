@@ -1,0 +1,1209 @@
+{
+  "comment": "The migration manifest (ADR-0059 Decision 9; docs/design/go-step7.md decisions 3 to 5). Every table and column of the TypeScript server's PostgreSQL schema: where it goes in varlatchd's SQLite schema, or why it is left out; the transformations; what lives outside the database. Rows are written in the canonical encoding (go/server/migration/canonical/CANONICAL.md), columns in the order listed. manifest_test.go holds it to db/testdata/pg-v0.22.0.json, db/mapping.json and schema.sql. A value canonical-v1 refuses (a jsonb number a double does not hold exactly, for one) fails its row, never changes; the export's preflight reports such rows before any barrier.",
+  "version": 1,
+  "encoding": "canonical-v1",
+  "source": {
+    "release": "0.23.0",
+    "schema": "v0.22.0",
+    "migrations": [
+      "0001_initial",
+      "0002_identity_org_scope",
+      "0003_runtime_grants",
+      "0004_signing_keys",
+      "0005_better_auth",
+      "0006_invite_grants",
+      "0007_capabilities",
+      "0008_agent_run_credentials",
+      "0009_credential_limits",
+      "0010_webhooks",
+      "0011_oidc_bindings",
+      "0012_environment_removal",
+      "0013_value_rotation",
+      "0014_roles_groups_teams",
+      "0015_access_entity_versions",
+      "0016_sync_targets",
+      "0017_audit_order",
+      "0018_backup_keys",
+      "0019_identity_lifecycle",
+      "0020_capture_read_access",
+      "0021_drop_environment_name_mapping",
+      "0022_capability_targets",
+      "0023_invitation_revocation",
+      "0024_credential_client",
+      "0025_device_sign_in",
+      "0026_reenrollment_grants",
+      "0027_audit_client",
+      "0028_credential_expiry",
+      "0029_github_apps",
+      "0030_github_app_registrations",
+      "0031_sync_target_notes",
+      "0032_sync_runs",
+      "0033_redeploy_debt",
+      "0034_sync_drift",
+      "0035_member_removal",
+      "0036_member_exposure",
+      "0037_project_deletion",
+      "0038_organization_deletion",
+      "0039_passkey_evidence",
+      "0040_passkey_counter",
+      "0041_security_controls",
+      "0042_security_report_counters",
+      "0043_session_end_revokes_browser_credentials",
+      "0044_incident_freeze",
+      "0045_requirement_protection",
+      "0046_admin_step_up_identities",
+      "0047_admin_step_up_access",
+      "0048_admin_step_up_people",
+      "0049_organization_security_epoch",
+      "0050_admin_step_up_integrations",
+      "0051_admin_step_up_deletion_export",
+      "0052_audit_exports"
+    ]
+  },
+  "target": {
+    "schemaVersion": 2
+  },
+  "foreignKeys": "The schema's foreign keys form cycles (identities and organization_deletions refer to each other), so no table order satisfies them all: tables are listed by name, the import defers foreign keys and checks every one before it commits.",
+  "tables": [
+    {
+      "source": "account",
+      "action": "leftOut",
+      "reason": "Better Auth's provider accounts (passwords, OAuth tokens). Varlatch signs people in with passkeys only and never writes a row, so there is nothing to carry; preflight refuses a source where the table is not empty.",
+      "precondition": "empty",
+      "columns": [
+        {"source": "id", "type": "text"},
+        {"source": "accountId", "type": "text"},
+        {"source": "providerId", "type": "text"},
+        {"source": "userId", "type": "text"},
+        {"source": "accessToken", "type": "text"},
+        {"source": "refreshToken", "type": "text"},
+        {"source": "idToken", "type": "text"},
+        {"source": "accessTokenExpiresAt", "type": "timestamp with time zone"},
+        {"source": "refreshTokenExpiresAt", "type": "timestamp with time zone"},
+        {"source": "scope", "type": "text"},
+        {"source": "password", "type": "text"},
+        {"source": "createdAt", "type": "timestamp with time zone"},
+        {"source": "updatedAt", "type": "timestamp with time zone"}
+      ]
+    },
+    {
+      "source": "approval_intent_challenges",
+      "action": "copy",
+      "target": "approval_intent_challenges",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "intent_id", "type": "text", "target": "intent_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "auth_session_id", "type": "text", "target": "auth_session_id"},
+        {"source": "challenge", "type": "text", "target": "challenge"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "consumed_at", "type": "timestamp with time zone", "target": "consumed_at"}
+      ]
+    },
+    {
+      "source": "approval_intents",
+      "action": "copy",
+      "target": "approval_intents",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "credential_id", "type": "text", "target": "credential_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "auth_session_id", "type": "text", "target": "auth_session_id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "operation", "type": "text", "target": "operation"},
+        {"source": "target", "type": "jsonb", "target": "target"},
+        {"source": "body_hash", "type": "text", "target": "body_hash"},
+        {"source": "query_hash", "type": "text", "target": "query_hash"},
+        {"source": "expected_version", "type": "integer", "target": "expected_version"},
+        {"source": "summary", "type": "jsonb", "target": "summary"},
+        {"source": "origin", "type": "text", "target": "origin"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "approved_at", "type": "timestamp with time zone", "target": "approved_at"},
+        {"source": "approved_with_passkey_id", "type": "text", "target": "approved_with_passkey_id"},
+        {"source": "approval_user_verified", "type": "boolean", "target": "approval_user_verified"},
+        {"source": "consumed_at", "type": "timestamp with time zone", "target": "consumed_at"},
+        {"source": "closed_at", "type": "timestamp with time zone", "target": "closed_at"},
+        {"source": "close_reason", "type": "text", "target": "close_reason"},
+        {"source": "poll_interval", "type": "integer", "target": "poll_interval"},
+        {"source": "last_polled_at", "type": "timestamp with time zone", "target": "last_polled_at"}
+      ]
+    },
+    {
+      "source": "audit_events",
+      "action": "copy",
+      "target": "audit_events",
+      "orderBy": ["event_order"],
+      "note": "Copied in event_order, positions kept: PostgreSQL's are 1 to n without gaps, which audit_events_position requires.",
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "schema_version", "type": "integer", "target": "schema_version"},
+        {"source": "event_type", "type": "text", "target": "event_type"},
+        {"source": "occurred_at", "type": "timestamp with time zone", "target": "occurred_at"},
+        {"source": "actor_identity_id", "type": "text", "target": "actor_identity_id"},
+        {"source": "authentication_method_id", "type": "text", "target": "authentication_method_id"},
+        {"source": "credential_id", "type": "text", "target": "credential_id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "action", "type": "text", "target": "action"},
+        {"source": "resource", "type": "jsonb", "target": "resource"},
+        {"source": "decision", "type": "text", "target": "decision"},
+        {"source": "authz", "type": "jsonb", "target": "authz"},
+        {"source": "tailnet", "type": "jsonb", "target": "tailnet"},
+        {"source": "listener", "type": "text", "target": "listener"},
+        {"source": "request_id", "type": "text", "target": "request_id"},
+        {"source": "metadata", "type": "jsonb", "target": "metadata"},
+        {"source": "event_order", "type": "bigint", "target": "event_order"},
+        {"source": "client", "type": "text", "target": "client"}
+      ]
+    },
+    {
+      "source": "audit_export_plans",
+      "action": "copy",
+      "target": "audit_export_plans",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "export_id", "type": "text", "target": "export_id"},
+        {"source": "export_version", "type": "integer", "target": "export_version"},
+        {"source": "stream_id", "type": "text", "target": "stream_id"},
+        {"source": "generation", "type": "bigint", "target": "generation"},
+        {"source": "kind", "type": "text", "target": "kind"},
+        {"source": "object_name", "type": "text", "target": "object_name"},
+        {"source": "body", "type": "bytea", "target": "body"},
+        {"source": "sha256", "type": "text", "target": "sha256"},
+        {"source": "md5", "type": "text", "target": "md5"},
+        {"source": "content_type", "type": "text", "target": "content_type"},
+        {"source": "content_encoding", "type": "text", "target": "content_encoding"},
+        {"source": "format_version", "type": "integer", "target": "format_version"},
+        {"source": "retention_mode", "type": "text", "target": "retention_mode"},
+        {"source": "retain_until", "type": "timestamp with time zone", "target": "retain_until"},
+        {"source": "first_order", "type": "bigint", "target": "first_order"},
+        {"source": "last_order", "type": "bigint", "target": "last_order"},
+        {"source": "event_count", "type": "integer", "target": "event_count"},
+        {"source": "heartbeat_hour", "type": "timestamp with time zone", "target": "heartbeat_hour"},
+        {"source": "planned_at", "type": "timestamp with time zone", "target": "planned_at"}
+      ]
+    },
+    {
+      "source": "audit_exports",
+      "action": "copy",
+      "target": "audit_exports",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "endpoint", "type": "text", "target": "endpoint"},
+        {"source": "region", "type": "text", "target": "region"},
+        {"source": "bucket", "type": "text", "target": "bucket"},
+        {"source": "prefix", "type": "text", "target": "prefix"},
+        {"source": "path_style", "type": "boolean", "target": "path_style"},
+        {"source": "credential_envelope", "type": "jsonb", "target": "credential_envelope"},
+        {"source": "retention_mode", "type": "text", "target": "retention_mode"},
+        {"source": "retention_days", "type": "integer", "target": "retention_days"},
+        {"source": "stream_id", "type": "text", "target": "stream_id"},
+        {"source": "stream_started_at", "type": "timestamp with time zone", "target": "stream_started_at"},
+        {"source": "cursor_order", "type": "bigint", "target": "cursor_order"},
+        {"source": "generation", "type": "bigint", "target": "generation"},
+        {"source": "lease_expires_at", "type": "timestamp with time zone", "target": "lease_expires_at"},
+        {"source": "state", "type": "text", "target": "state"},
+        {"source": "drain_deadline", "type": "timestamp with time zone", "target": "drain_deadline"},
+        {"source": "last_attempt_at", "type": "timestamp with time zone", "target": "last_attempt_at"},
+        {"source": "last_success_at", "type": "timestamp with time zone", "target": "last_success_at"},
+        {"source": "last_error", "type": "text", "target": "last_error"},
+        {"source": "failing_since", "type": "timestamp with time zone", "target": "failing_since"},
+        {"source": "failing_recorded", "type": "boolean", "target": "failing_recorded"},
+        {"source": "key_can_read", "type": "boolean", "target": "key_can_read"},
+        {"source": "retention_readable", "type": "boolean", "target": "retention_readable"},
+        {"source": "stopped_reason", "type": "text", "target": "stopped_reason"},
+        {"source": "conditional_checked_at", "type": "timestamp with time zone", "target": "conditional_checked_at"},
+        {"source": "lock_verified", "type": "boolean", "target": "lock_verified"},
+        {"source": "last_heartbeat_hour", "type": "timestamp with time zone", "target": "last_heartbeat_hour"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"},
+        {"source": "removed_at", "type": "timestamp with time zone", "target": "removed_at"},
+        {"source": "version", "type": "integer", "target": "version"}
+      ]
+    },
+    {
+      "source": "audit_position",
+      "action": "leftOut",
+      "reason": "PostgreSQL's audit position counter. In SQLite the position is the rowid, checked by audit_events_position, so the copied events carry it.",
+      "columns": [
+        {"source": "singleton", "type": "boolean"},
+        {"source": "value", "type": "bigint"}
+      ]
+    },
+    {
+      "source": "audit_tombstone_readers",
+      "action": "copy",
+      "target": "audit_tombstone_readers",
+      "orderBy": ["organization_id", "identity_id"],
+      "columns": [
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "added_at", "type": "timestamp with time zone", "target": "added_at"},
+        {"source": "removed_at", "type": "timestamp with time zone", "target": "removed_at"},
+        {"source": "removed_by", "type": "text", "target": "removed_by"}
+      ]
+    },
+    {
+      "source": "auth_session_evidence",
+      "action": "copy",
+      "target": "auth_session_evidence",
+      "orderBy": ["session_id"],
+      "columns": [
+        {"source": "session_id", "type": "text", "target": "session_id"},
+        {"source": "ceremony", "type": "text", "target": "ceremony"},
+        {"source": "user_verified", "type": "boolean", "target": "user_verified"},
+        {"source": "passkey_id", "type": "text", "target": "passkey_id"},
+        {"source": "recorded_at", "type": "timestamp with time zone", "target": "recorded_at"}
+      ]
+    },
+    {
+      "source": "auth_user_links",
+      "action": "copy",
+      "target": "auth_user_links",
+      "orderBy": ["better_auth_user_id"],
+      "columns": [
+        {"source": "better_auth_user_id", "type": "text", "target": "better_auth_user_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"}
+      ]
+    },
+    {
+      "source": "capabilities",
+      "action": "copy",
+      "target": "capabilities",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "broker_identity_id", "type": "text", "target": "broker_identity_id"},
+        {"source": "agent_identity_id", "type": "text", "target": "agent_identity_id"},
+        {"source": "project_id", "type": "text", "target": "project_id"},
+        {"source": "environment_id", "type": "text", "target": "environment_id"},
+        {"source": "items", "type": "text[]", "target": "items"},
+        {"source": "destinations", "type": "text[]", "target": "destinations"},
+        {"source": "secret_hash", "type": "text", "target": "secret_hash"},
+        {"source": "run_id", "type": "text", "target": "run_id"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "targets", "type": "jsonb", "target": "targets"}
+      ]
+    },
+    {
+      "source": "contract_revisions",
+      "action": "copy",
+      "target": "contract_revisions",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "project_id", "type": "text", "target": "project_id"},
+        {"source": "content_hash", "type": "text", "target": "content_hash"},
+        {"source": "contract", "type": "jsonb", "target": "contract"},
+        {"source": "provenance", "type": "jsonb", "target": "provenance"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"}
+      ]
+    },
+    {
+      "source": "credentials",
+      "action": "copy",
+      "target": "credentials",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "kind", "type": "text", "target": "kind"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "token_hash", "type": "text", "target": "token_hash"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "max_uses", "type": "integer", "target": "max_uses"},
+        {"source": "use_count", "type": "integer", "target": "use_count"},
+        {"source": "last_used_at", "type": "timestamp with time zone", "target": "last_used_at"},
+        {"source": "client", "type": "text", "target": "client"},
+        {"source": "auth_session_id", "type": "text", "target": "auth_session_id"},
+        {"source": "issued_by", "type": "text", "target": "issued_by"},
+        {"source": "evidence_user_verified", "type": "boolean", "target": "evidence_user_verified"},
+        {"source": "evidence_passkey_id", "type": "text", "target": "evidence_passkey_id"}
+      ]
+    },
+    {
+      "source": "device_code_attempt_windows",
+      "action": "copy",
+      "target": "device_code_attempt_windows",
+      "orderBy": ["scope", "key"],
+      "columns": [
+        {"source": "scope", "type": "text", "target": "scope"},
+        {"source": "key", "type": "text", "target": "key"},
+        {"source": "window_started_at", "type": "timestamp with time zone", "target": "window_started_at"},
+        {"source": "failures", "type": "integer", "target": "failures"}
+      ]
+    },
+    {
+      "source": "device_sign_in_challenges",
+      "action": "copy",
+      "target": "device_sign_in_challenges",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "device_sign_in_id", "type": "text", "target": "device_sign_in_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "auth_session_id", "type": "text", "target": "auth_session_id"},
+        {"source": "challenge", "type": "text", "target": "challenge"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "consumed_at", "type": "timestamp with time zone", "target": "consumed_at"}
+      ]
+    },
+    {
+      "source": "device_sign_ins",
+      "action": "copy",
+      "target": "device_sign_ins",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "device_code_hash", "type": "text", "target": "device_code_hash"},
+        {"source": "user_code", "type": "text", "target": "user_code"},
+        {"source": "status", "type": "text", "target": "status"},
+        {"source": "requested_ttl", "type": "integer", "target": "requested_ttl"},
+        {"source": "requested_name", "type": "text", "target": "requested_name"},
+        {"source": "requester_ip", "type": "text", "target": "requester_ip"},
+        {"source": "requester_user_agent", "type": "text", "target": "requester_user_agent"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "approved_by_identity_id", "type": "text", "target": "approved_by_identity_id"},
+        {"source": "decided_at", "type": "timestamp with time zone", "target": "decided_at"},
+        {"source": "last_polled_at", "type": "timestamp with time zone", "target": "last_polled_at"},
+        {"source": "poll_interval", "type": "integer", "target": "poll_interval"},
+        {"source": "issued_credential_id", "type": "text", "target": "issued_credential_id"},
+        {"source": "approval_user_verified", "type": "boolean", "target": "approval_user_verified"},
+        {"source": "approval_passkey_id", "type": "text", "target": "approval_passkey_id"}
+      ]
+    },
+    {
+      "source": "env_values",
+      "action": "copy",
+      "target": "env_values",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "environment_id", "type": "text", "target": "environment_id"},
+        {"source": "item_name", "type": "text", "target": "item_name"},
+        {"source": "current_version_id", "type": "text", "target": "current_version_id"},
+        {"source": "deleted_at", "type": "timestamp with time zone", "target": "deleted_at"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "retiring_version_id", "type": "text", "target": "retiring_version_id"},
+        {"source": "rotation_deadline", "type": "timestamp with time zone", "target": "rotation_deadline"},
+        {"source": "rotation_started_at", "type": "timestamp with time zone", "target": "rotation_started_at"}
+      ]
+    },
+    {
+      "source": "environments",
+      "action": "copy",
+      "target": "environments",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "project_id", "type": "text", "target": "project_id"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "kind", "type": "text", "target": "kind"},
+        {"source": "tier", "type": "text", "target": "tier"},
+        {"source": "parent_environment_id", "type": "text", "target": "parent_environment_id"},
+        {"source": "owner_identity_id", "type": "text", "target": "owner_identity_id"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "deleted_at", "type": "timestamp with time zone", "target": "deleted_at"}
+      ]
+    },
+    {
+      "source": "exposure_backfill",
+      "action": "copy",
+      "target": "exposure_backfill",
+      "orderBy": ["singleton"],
+      "replacesSeedRow": true,
+      "note": "The source's row replaces the one a new database seeds. Preflight requires the backfill finished.",
+      "columns": [
+        {"source": "singleton", "type": "boolean", "target": "singleton"},
+        {"source": "cursor", "type": "bigint", "target": "cursor"},
+        {"source": "until_order", "type": "bigint", "target": "until_order"},
+        {"source": "finished_at", "type": "timestamp with time zone", "target": "finished_at"}
+      ]
+    },
+    {
+      "source": "exposure_confirmations",
+      "action": "copy",
+      "target": "exposure_confirmations",
+      "orderBy": ["organization_id", "version_id"],
+      "columns": [
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "version_id", "type": "text", "target": "version_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "actor_identity_id", "type": "text", "target": "actor_identity_id"},
+        {"source": "confirmed_at", "type": "timestamp with time zone", "target": "confirmed_at"}
+      ]
+    },
+    {
+      "source": "github_app_registrations",
+      "action": "copy",
+      "target": "github_app_registrations",
+      "orderBy": ["state_hash"],
+      "columns": [
+        {"source": "state_hash", "type": "text", "target": "state_hash"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "actor_identity_id", "type": "text", "target": "actor_identity_id"},
+        {"source": "account_login", "type": "text", "target": "account_login"},
+        {"source": "account_type", "type": "text", "target": "account_type"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "consumed_at", "type": "timestamp with time zone", "target": "consumed_at"},
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "converted_at", "type": "timestamp with time zone", "target": "converted_at"},
+        {"source": "pending_expires_at", "type": "timestamp with time zone", "target": "pending_expires_at"},
+        {"source": "pending_github_app_id", "type": "bigint", "target": "pending_github_app_id"},
+        {"source": "pending_slug", "type": "text", "target": "pending_slug"},
+        {"source": "pending_client_id", "type": "text", "target": "pending_client_id"},
+        {"source": "pending_owner_login", "type": "text", "target": "pending_owner_login"},
+        {"source": "pending_owner_id", "type": "bigint", "target": "pending_owner_id"},
+        {"source": "pending_owner_type", "type": "text", "target": "pending_owner_type"},
+        {"source": "pending_key_envelope", "type": "jsonb", "target": "pending_key_envelope"},
+        {"source": "ended_at", "type": "timestamp with time zone", "target": "ended_at"},
+        {"source": "end_reason", "type": "text", "target": "end_reason"}
+      ]
+    },
+    {
+      "source": "github_apps",
+      "action": "copy",
+      "target": "github_apps",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "github_app_id", "type": "bigint", "target": "github_app_id"},
+        {"source": "slug", "type": "text", "target": "slug"},
+        {"source": "client_id", "type": "text", "target": "client_id"},
+        {"source": "owner_login", "type": "text", "target": "owner_login"},
+        {"source": "owner_id", "type": "bigint", "target": "owner_id"},
+        {"source": "owner_type", "type": "text", "target": "owner_type"},
+        {"source": "key_envelope", "type": "jsonb", "target": "key_envelope"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "removed_at", "type": "timestamp with time zone", "target": "removed_at"},
+        {"source": "version", "type": "integer", "target": "version"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"}
+      ]
+    },
+    {
+      "source": "grants",
+      "action": "copy",
+      "target": "grants",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "subject_identity_id", "type": "text", "target": "subject_identity_id"},
+        {"source": "scope", "type": "jsonb", "target": "scope"},
+        {"source": "actions", "type": "text[]", "target": "actions"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "subject_group_id", "type": "text", "target": "subject_group_id"},
+        {"source": "role_id", "type": "text", "target": "role_id"}
+      ]
+    },
+    {
+      "source": "group_members",
+      "action": "copy",
+      "target": "group_members",
+      "orderBy": ["group_id", "identity_id"],
+      "columns": [
+        {"source": "group_id", "type": "text", "target": "group_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"}
+      ]
+    },
+    {
+      "source": "groups",
+      "action": "copy",
+      "target": "groups",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "kind", "type": "text", "target": "kind"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "version", "type": "integer", "target": "version"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"}
+      ]
+    },
+    {
+      "source": "idempotency_keys",
+      "action": "copy",
+      "target": "idempotency_keys",
+      "orderBy": ["identity_id", "endpoint", "idempotency_key"],
+      "columns": [
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "endpoint", "type": "text", "target": "endpoint"},
+        {"source": "idempotency_key", "type": "text", "target": "idempotency_key"},
+        {"source": "body_hash", "type": "text", "target": "body_hash"},
+        {"source": "response", "type": "jsonb", "target": "response"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"}
+      ]
+    },
+    {
+      "source": "identities",
+      "action": "copy",
+      "target": "identities",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "kind", "type": "text", "target": "kind"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "disabled", "type": "boolean", "target": "disabled"},
+        {"source": "installation_admin", "type": "boolean", "target": "installation_admin"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "last_seen_at", "type": "timestamp with time zone", "target": "last_seen_at"},
+        {"source": "suspended_by_deletion", "type": "text", "target": "suspended_by_deletion"}
+      ]
+    },
+    {
+      "source": "installation",
+      "action": "copy",
+      "target": "installation",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "kek_canary", "type": "jsonb", "target": "kek_canary"},
+        {"source": "bootstrapped_at", "type": "timestamp with time zone", "target": "bootstrapped_at"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "root_kek_version", "type": "integer", "target": "root_kek_version"},
+        {"source": "key_rotation_state", "type": "text", "target": "key_rotation_state"},
+        {"source": "public_url", "type": "text", "target": "public_url"}
+      ]
+    },
+    {
+      "source": "member_exposure",
+      "action": "copy",
+      "target": "member_exposure",
+      "orderBy": ["organization_id", "identity_id", "version_id", "environment_id", "way"],
+      "columns": [
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "version_id", "type": "text", "target": "version_id"},
+        {"source": "item_name", "type": "text", "target": "item_name"},
+        {"source": "environment_id", "type": "text", "target": "environment_id"},
+        {"source": "way", "type": "text", "target": "way"},
+        {"source": "first_at", "type": "timestamp with time zone", "target": "first_at"},
+        {"source": "last_at", "type": "timestamp with time zone", "target": "last_at"}
+      ]
+    },
+    {
+      "source": "member_integrations",
+      "action": "copy",
+      "target": "member_integrations",
+      "orderBy": ["organization_id", "identity_id", "kind", "resource_id"],
+      "columns": [
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "kind", "type": "text", "target": "kind"},
+        {"source": "resource_id", "type": "text", "target": "resource_id"},
+        {"source": "changes", "type": "text[]", "target": "changes"},
+        {"source": "first_at", "type": "timestamp with time zone", "target": "first_at"},
+        {"source": "last_at", "type": "timestamp with time zone", "target": "last_at"}
+      ]
+    },
+    {
+      "source": "membership_removals",
+      "action": "copy",
+      "target": "membership_removals",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "role", "type": "text", "target": "role"},
+        {"source": "actor_identity_id", "type": "text", "target": "actor_identity_id"},
+        {"source": "removed_at", "type": "timestamp with time zone", "target": "removed_at"}
+      ]
+    },
+    {
+      "source": "oidc_bindings",
+      "action": "copy",
+      "target": "oidc_bindings",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "issuer", "type": "text", "target": "issuer"},
+        {"source": "audience", "type": "text", "target": "audience"},
+        {"source": "subject", "type": "text", "target": "subject"},
+        {"source": "claims", "type": "jsonb", "target": "claims"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"}
+      ]
+    },
+    {
+      "source": "org_memberships",
+      "action": "copy",
+      "target": "org_memberships",
+      "orderBy": ["organization_id", "identity_id"],
+      "columns": [
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "role", "type": "text", "target": "role"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "removed_at", "type": "timestamp with time zone", "target": "removed_at"},
+        {"source": "version", "type": "bigint", "target": "version"}
+      ]
+    },
+    {
+      "source": "organization_deletions",
+      "action": "copy",
+      "target": "organization_deletions",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "requested_by", "type": "text", "target": "requested_by"},
+        {"source": "scheduled_at", "type": "timestamp with time zone", "target": "scheduled_at"},
+        {"source": "run_after", "type": "timestamp with time zone", "target": "run_after"},
+        {"source": "approval_required", "type": "boolean", "target": "approval_required"},
+        {"source": "approved_by", "type": "text", "target": "approved_by"},
+        {"source": "approved_at", "type": "timestamp with time zone", "target": "approved_at"},
+        {"source": "cancelled_by", "type": "text", "target": "cancelled_by"},
+        {"source": "cancelled_at", "type": "timestamp with time zone", "target": "cancelled_at"},
+        {"source": "completed_at", "type": "timestamp with time zone", "target": "completed_at"}
+      ]
+    },
+    {
+      "source": "organization_freezes",
+      "action": "copy",
+      "target": "organization_freezes",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "frozen_by", "type": "text", "target": "frozen_by"},
+        {"source": "frozen_at", "type": "timestamp with time zone", "target": "frozen_at"},
+        {"source": "reason", "type": "text", "target": "reason"},
+        {"source": "lifted_at", "type": "timestamp with time zone", "target": "lifted_at"},
+        {"source": "lifted_by", "type": "text", "target": "lifted_by"},
+        {"source": "lift_method", "type": "text", "target": "lift_method"}
+      ]
+    },
+    {
+      "source": "organizations",
+      "action": "copy",
+      "target": "organizations",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "slug", "type": "text", "target": "slug"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "wrapped_org_kek", "type": "jsonb", "target": "wrapped_org_kek"},
+        {"source": "deleted_at", "type": "timestamp with time zone", "target": "deleted_at"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "root_kek_version", "type": "integer", "target": "root_kek_version"},
+        {"source": "key_rotation_state", "type": "text", "target": "key_rotation_state"},
+        {"source": "org_kek_destroyed_at", "type": "timestamp with time zone", "target": "org_kek_destroyed_at"},
+        {"source": "security_epoch", "type": "bigint", "target": "security_epoch"}
+      ]
+    },
+    {
+      "source": "passkey",
+      "action": "copy",
+      "target": "passkeys",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "publicKey", "type": "text", "target": "public_key"},
+        {"source": "userId", "type": "text", "target": "user_id"},
+        {"source": "credentialID", "type": "text", "target": "credential_id"},
+        {"source": "counter", "type": "integer", "target": "counter"},
+        {"source": "deviceType", "type": "text", "target": "device_type"},
+        {"source": "backedUp", "type": "boolean", "target": "backed_up"},
+        {"source": "transports", "type": "text", "target": "transports"},
+        {"source": "createdAt", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "aaguid", "type": "text", "target": "aaguid"}
+      ]
+    },
+    {
+      "source": "passkey_confirmation_challenges",
+      "action": "copy",
+      "target": "passkey_confirmation_challenges",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "identity_id", "type": "text", "target": "identity_id"},
+        {"source": "auth_session_id", "type": "text", "target": "auth_session_id"},
+        {"source": "target_passkey_id", "type": "text", "target": "target_passkey_id"},
+        {"source": "challenge", "type": "text", "target": "challenge"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "consumed_at", "type": "timestamp with time zone", "target": "consumed_at"}
+      ]
+    },
+    {
+      "source": "passkey_provenance",
+      "action": "copy",
+      "target": "passkey_provenance",
+      "orderBy": ["passkey_id"],
+      "columns": [
+        {"source": "passkey_id", "type": "text", "target": "passkey_id"},
+        {"source": "trust", "type": "text", "target": "trust"},
+        {"source": "trusted_via", "type": "text", "target": "trusted_via"},
+        {"source": "trusted_at", "type": "timestamp with time zone", "target": "trusted_at"},
+        {"source": "setup_grant_kind", "type": "text", "target": "setup_grant_kind"},
+        {"source": "confirmed_by_passkey_id", "type": "text", "target": "confirmed_by_passkey_id"},
+        {"source": "recorded_at", "type": "timestamp with time zone", "target": "recorded_at"}
+      ]
+    },
+    {
+      "source": "passkey_quarantine",
+      "action": "copy",
+      "target": "passkey_quarantine",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "publicKey", "type": "text", "target": "public_key"},
+        {"source": "userId", "type": "text", "target": "user_id"},
+        {"source": "credentialID", "type": "text", "target": "credential_id"},
+        {"source": "counter", "type": "integer", "target": "counter"},
+        {"source": "deviceType", "type": "text", "target": "device_type"},
+        {"source": "backedUp", "type": "boolean", "target": "backed_up"},
+        {"source": "transports", "type": "text", "target": "transports"},
+        {"source": "createdAt", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "aaguid", "type": "text", "target": "aaguid"},
+        {"source": "quarantined_at", "type": "timestamp with time zone", "target": "quarantined_at"},
+        {"source": "reason", "type": "text", "target": "reason"},
+        {"source": "kept_passkey_id", "type": "text", "target": "kept_passkey_id"}
+      ]
+    },
+    {
+      "source": "platform_connections",
+      "action": "copy",
+      "target": "platform_connections",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "platform", "type": "text", "target": "platform"},
+        {"source": "base_identity", "type": "text", "target": "base_identity"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "credential_envelope", "type": "jsonb", "target": "credential_envelope"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "version", "type": "integer", "target": "version"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"},
+        {"source": "credential_expires_at", "type": "timestamp with time zone", "target": "credential_expires_at"},
+        {"source": "credential_expiry_seen_at", "type": "timestamp with time zone", "target": "credential_expiry_seen_at"},
+        {"source": "credential_kind", "type": "text", "target": "credential_kind"},
+        {"source": "github_app_id", "type": "text", "target": "github_app_id"},
+        {"source": "github_installation_id", "type": "bigint", "target": "github_installation_id"}
+      ]
+    },
+    {
+      "source": "projects",
+      "action": "copy",
+      "target": "projects",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "slug", "type": "text", "target": "slug"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "contract_authority", "type": "text", "target": "contract_authority"},
+        {"source": "active_contract_revision_id", "type": "text", "target": "active_contract_revision_id"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "deleted_at", "type": "timestamp with time zone", "target": "deleted_at"}
+      ]
+    },
+    {
+      "source": "removal_authority",
+      "action": "copy",
+      "target": "removal_authority",
+      "orderBy": ["removal_id", "environment_id", "action", "source"],
+      "columns": [
+        {"source": "removal_id", "type": "text", "target": "removal_id"},
+        {"source": "environment_id", "type": "text", "target": "environment_id"},
+        {"source": "action", "type": "text", "target": "action"},
+        {"source": "source", "type": "text", "target": "source"},
+        {"source": "role", "type": "text", "target": "role"},
+        {"source": "grant_id", "type": "text", "target": "grant_id"},
+        {"source": "via_group_id", "type": "text", "target": "via_group_id"},
+        {"source": "role_id", "type": "text", "target": "role_id"}
+      ]
+    },
+    {
+      "source": "removal_conditions",
+      "action": "copy",
+      "target": "removal_conditions",
+      "orderBy": ["removal_id", "environment_id", "requirement_id"],
+      "columns": [
+        {"source": "removal_id", "type": "text", "target": "removal_id"},
+        {"source": "environment_id", "type": "text", "target": "environment_id"},
+        {"source": "requirement_id", "type": "text", "target": "requirement_id"}
+      ]
+    },
+    {
+      "source": "removal_requirements",
+      "action": "copy",
+      "target": "removal_requirements",
+      "orderBy": ["removal_id", "requirement_id"],
+      "columns": [
+        {"source": "removal_id", "type": "text", "target": "removal_id"},
+        {"source": "requirement_id", "type": "text", "target": "requirement_id"},
+        {"source": "requirement_version", "type": "integer", "target": "requirement_version"},
+        {"source": "target", "type": "jsonb", "target": "target"},
+        {"source": "selector", "type": "jsonb", "target": "selector"}
+      ]
+    },
+    {
+      "source": "requirements",
+      "action": "copy",
+      "target": "requirements",
+      "orderBy": ["id"],
+      "physicalOrder": true,
+      "note": "Read in the source's physical order (ctid) and inserted in it: varlatchd reads Requirements in rowid order, as the TypeScript server read PostgreSQL's heap. From the migration on, rowid order is the defined order; PostgreSQL's heap order depended on the planner, so this is an accepted difference.",
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "kind", "type": "text", "target": "kind"},
+        {"source": "target", "type": "jsonb", "target": "target"},
+        {"source": "config", "type": "jsonb", "target": "config"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "version", "type": "integer", "target": "version"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"}
+      ]
+    },
+    {
+      "source": "roles",
+      "action": "copy",
+      "target": "roles",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "actions", "type": "text[]", "target": "actions"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "version", "type": "integer", "target": "version"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"}
+      ]
+    },
+    {
+      "source": "security_control_counters",
+      "action": "copy",
+      "target": "security_control_counters",
+      "orderBy": ["organization_id", "control", "config_version", "operation", "actor_identity_id", "reason", "bucket_hour"],
+      "columns": [
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "control", "type": "text", "target": "control"},
+        {"source": "config_version", "type": "integer", "target": "config_version"},
+        {"source": "operation", "type": "text", "target": "operation"},
+        {"source": "actor_identity_id", "type": "text", "target": "actor_identity_id"},
+        {"source": "reason", "type": "text", "target": "reason"},
+        {"source": "bucket_hour", "type": "timestamp with time zone", "target": "bucket_hour"},
+        {"source": "count", "type": "bigint", "target": "count"},
+        {"source": "first_seen", "type": "timestamp with time zone", "target": "first_seen"},
+        {"source": "last_seen", "type": "timestamp with time zone", "target": "last_seen"},
+        {"source": "emitted_at", "type": "timestamp with time zone", "target": "emitted_at"}
+      ]
+    },
+    {
+      "source": "security_controls",
+      "action": "copy",
+      "target": "security_controls",
+      "orderBy": ["organization_id", "control"],
+      "columns": [
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "control", "type": "text", "target": "control"},
+        {"source": "mode", "type": "text", "target": "mode"},
+        {"source": "config", "type": "jsonb", "target": "config"},
+        {"source": "version", "type": "integer", "target": "version"},
+        {"source": "changed_by", "type": "text", "target": "changed_by"},
+        {"source": "changed_at", "type": "timestamp with time zone", "target": "changed_at"}
+      ]
+    },
+    {
+      "source": "session",
+      "action": "transform",
+      "target": "auth_sessions",
+      "transformation": "browser-sessions-end",
+      "note": "No session row reaches the target: every live browser session ends, as a sign-out would end it (transformation browser-sessions-end). The rows are exported without their tokens, so varlatchd can end them; the columns map for the reverse migration, which ends varlatchd's sessions the same way.",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "expiresAt", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "token", "type": "text", "target": "token_hash", "leftOut": "Better Auth's session token, in plaintext (varlatchd keeps its hash): never exported, in either direction."},
+        {"source": "createdAt", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "updatedAt", "type": "timestamp with time zone", "target": "updated_at"},
+        {"source": "ipAddress", "type": "text", "target": "ip_address"},
+        {"source": "userAgent", "type": "text", "target": "user_agent"},
+        {"source": "userId", "type": "text", "target": "user_id"}
+      ]
+    },
+    {
+      "source": "setup_grants",
+      "action": "copy",
+      "target": "setup_grants",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "kind", "type": "text", "target": "kind"},
+        {"source": "subject_identity_id", "type": "text", "target": "subject_identity_id"},
+        {"source": "token_hash", "type": "text", "target": "token_hash"},
+        {"source": "expires_at", "type": "timestamp with time zone", "target": "expires_at"},
+        {"source": "consumed_at", "type": "timestamp with time zone", "target": "consumed_at"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "invite_organization_id", "type": "text", "target": "invite_organization_id"},
+        {"source": "invite_role", "type": "text", "target": "invite_role"},
+        {"source": "invite_name", "type": "text", "target": "invite_name"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "created_by", "type": "text", "target": "created_by"}
+      ]
+    },
+    {
+      "source": "signing_keys",
+      "action": "copy",
+      "target": "signing_keys",
+      "orderBy": ["id"],
+      "note": "No Go reader: kept so a reverse migration gives the TypeScript server its Convex signer back, and checked as the jwt-signing-key class.",
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "algorithm", "type": "text", "target": "algorithm"},
+        {"source": "public_jwk", "type": "jsonb", "target": "public_jwk"},
+        {"source": "private_key_wrapped", "type": "jsonb", "target": "private_key_wrapped"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "retired_at", "type": "timestamp with time zone", "target": "retired_at"}
+      ]
+    },
+    {
+      "source": "sync_cursor",
+      "action": "copy",
+      "target": "sync_cursor",
+      "orderBy": ["singleton"],
+      "columns": [
+        {"source": "singleton", "type": "boolean", "target": "singleton"},
+        {"source": "occurred_at", "type": "timestamp with time zone", "target": "occurred_at"},
+        {"source": "event_id", "type": "text", "target": "event_id"},
+        {"source": "cursor_order", "type": "bigint", "target": "cursor_order"}
+      ]
+    },
+    {
+      "source": "sync_ledger",
+      "action": "copy",
+      "target": "sync_ledger",
+      "orderBy": ["target_id", "dest_name"],
+      "columns": [
+        {"source": "target_id", "type": "text", "target": "target_id"},
+        {"source": "dest_name", "type": "text", "target": "dest_name"},
+        {"source": "fingerprint", "type": "text", "target": "fingerprint"},
+        {"source": "state", "type": "text", "target": "state"},
+        {"source": "generation", "type": "bigint", "target": "generation"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"},
+        {"source": "last_error", "type": "text", "target": "last_error"},
+        {"source": "repaired_at", "type": "timestamp with time zone", "target": "repaired_at"}
+      ]
+    },
+    {
+      "source": "sync_runs",
+      "action": "copy",
+      "target": "sync_runs",
+      "orderBy": ["target_id", "generation"],
+      "columns": [
+        {"source": "target_id", "type": "text", "target": "target_id"},
+        {"source": "generation", "type": "bigint", "target": "generation"},
+        {"source": "started_at", "type": "timestamp with time zone", "target": "started_at"},
+        {"source": "deadline", "type": "timestamp with time zone", "target": "deadline"}
+      ]
+    },
+    {
+      "source": "sync_targets",
+      "action": "copy",
+      "target": "sync_targets",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "project_id", "type": "text", "target": "project_id"},
+        {"source": "environment_id", "type": "text", "target": "environment_id"},
+        {"source": "connection_id", "type": "text", "target": "connection_id"},
+        {"source": "destination", "type": "jsonb", "target": "destination"},
+        {"source": "canonical_destination", "type": "text", "target": "canonical_destination"},
+        {"source": "mapping", "type": "jsonb", "target": "mapping"},
+        {"source": "remove_orphans", "type": "boolean", "target": "remove_orphans"},
+        {"source": "redeploy", "type": "boolean", "target": "redeploy"},
+        {"source": "state", "type": "text", "target": "state"},
+        {"source": "disabled_reason", "type": "text", "target": "disabled_reason"},
+        {"source": "failure_count", "type": "integer", "target": "failure_count"},
+        {"source": "needs_sync", "type": "boolean", "target": "needs_sync"},
+        {"source": "next_attempt_at", "type": "timestamp with time zone", "target": "next_attempt_at"},
+        {"source": "last_attempt_at", "type": "timestamp with time zone", "target": "last_attempt_at"},
+        {"source": "last_result", "type": "text", "target": "last_result"},
+        {"source": "last_repair_at", "type": "timestamp with time zone", "target": "last_repair_at"},
+        {"source": "generation", "type": "bigint", "target": "generation"},
+        {"source": "lease_expires_at", "type": "timestamp with time zone", "target": "lease_expires_at"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "version", "type": "integer", "target": "version"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"},
+        {"source": "last_notes", "type": "jsonb", "target": "last_notes"},
+        {"source": "repair_cycle_started_at", "type": "timestamp with time zone", "target": "repair_cycle_started_at"},
+        {"source": "redeploy_owed", "type": "bigint", "target": "redeploy_owed"},
+        {"source": "redeploy_paid", "type": "bigint", "target": "redeploy_paid"},
+        {"source": "last_drift_at", "type": "timestamp with time zone", "target": "last_drift_at"},
+        {"source": "last_drift_count", "type": "integer", "target": "last_drift_count"},
+        {"source": "last_drift_names", "type": "jsonb", "target": "last_drift_names"},
+        {"source": "last_drift_event_id", "type": "text", "target": "last_drift_event_id"}
+      ]
+    },
+    {
+      "source": "team_projects",
+      "action": "copy",
+      "target": "team_projects",
+      "orderBy": ["team_id", "project_id"],
+      "columns": [
+        {"source": "team_id", "type": "text", "target": "team_id"},
+        {"source": "project_id", "type": "text", "target": "project_id"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"}
+      ]
+    },
+    {
+      "source": "user",
+      "action": "copy",
+      "target": "auth_users",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "name", "type": "text", "target": "name"},
+        {"source": "email", "type": "text", "target": "email"},
+        {"source": "emailVerified", "type": "boolean", "target": "email_verified"},
+        {"source": "image", "type": "text", "target": "image"},
+        {"source": "createdAt", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "updatedAt", "type": "timestamp with time zone", "target": "updated_at"}
+      ]
+    },
+    {
+      "source": "value_versions",
+      "action": "copy",
+      "target": "value_versions",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "value_id", "type": "text", "target": "value_id"},
+        {"source": "payload", "type": "jsonb", "target": "payload"},
+        {"source": "wrapped_dek", "type": "jsonb", "target": "wrapped_dek"},
+        {"source": "previous_version_id", "type": "text", "target": "previous_version_id"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "erased_at", "type": "timestamp with time zone", "target": "erased_at"}
+      ]
+    },
+    {
+      "source": "varlatch_migrations",
+      "action": "leftOut",
+      "reason": "The TypeScript server's applied migrations. The source's are checked against source.migrations; the target records its own schema_version.",
+      "columns": [
+        {"source": "id", "type": "integer"},
+        {"source": "name", "type": "text"},
+        {"source": "applied_at", "type": "timestamp with time zone"}
+      ]
+    },
+    {
+      "source": "verification",
+      "action": "leftOut",
+      "reason": "Better Auth's short-lived verification values: the challenges of WebAuthn and OAuth ceremonies in flight. They expire within minutes and the barrier refuses new ones, so a ceremony unfinished at the migration fails and is retried against varlatchd. Left out on purpose; preflight reports the row count.",
+      "report": "rowCount",
+      "columns": [
+        {"source": "id", "type": "text"},
+        {"source": "identifier", "type": "text"},
+        {"source": "value", "type": "text"},
+        {"source": "expiresAt", "type": "timestamp with time zone"},
+        {"source": "createdAt", "type": "timestamp with time zone"},
+        {"source": "updatedAt", "type": "timestamp with time zone"}
+      ]
+    },
+    {
+      "source": "webhooks",
+      "action": "copy",
+      "target": "webhooks",
+      "orderBy": ["id"],
+      "columns": [
+        {"source": "id", "type": "text", "target": "id"},
+        {"source": "organization_id", "type": "text", "target": "organization_id"},
+        {"source": "url", "type": "text", "target": "url"},
+        {"source": "event_types", "type": "text[]", "target": "event_types"},
+        {"source": "secret_envelope", "type": "jsonb", "target": "secret_envelope"},
+        {"source": "created_by", "type": "text", "target": "created_by"},
+        {"source": "created_at", "type": "timestamp with time zone", "target": "created_at"},
+        {"source": "revoked_at", "type": "timestamp with time zone", "target": "revoked_at"},
+        {"source": "cursor_occurred_at", "type": "timestamp with time zone", "target": "cursor_occurred_at"},
+        {"source": "cursor_event_id", "type": "text", "target": "cursor_event_id"},
+        {"source": "failure_count", "type": "integer", "target": "failure_count"},
+        {"source": "last_attempt_at", "type": "timestamp with time zone", "target": "last_attempt_at"},
+        {"source": "last_status", "type": "text", "target": "last_status"},
+        {"source": "version", "type": "integer", "target": "version"},
+        {"source": "updated_at", "type": "timestamp with time zone", "target": "updated_at"},
+        {"source": "cursor_order", "type": "bigint", "target": "cursor_order"},
+        {"source": "suspended_by_deletion", "type": "text", "target": "suspended_by_deletion"}
+      ]
+    }
+  ],
+  "targetOnly": {
+    "tables": {
+      "certificate_issuances": "The public HTTPS name's certificate issuance count (ADR-0059 Decision 9, step 6 decision 16), schema version 2: varlatchd's own, which the TypeScript server does not keep, so an import writes no row and the count starts empty.",
+      "schema_version": "Written by the import: the target schema version above."
+    }
+  },
+  "transformations": [
+    {
+      "id": "browser-sessions-end",
+      "text": "Every live browser session in the source ends in the target, exactly as a sign-out ends it (migration 0043_session_end_revokes_browser_credentials): its browser credentials become revoked with the same reason, and the same credential.revoked audit events are written. The auth_session_evidence rows CLI hand-off credentials point to are kept, and those credentials stay valid."
+    },
+    {
+      "id": "audit-append",
+      "text": "The source's audit log is an exact prefix of the target's: the same events in the same positions. After it come only the events browser-sessions-end writes, then one installation.migrated event carrying the source release, the manifest version and the frozen point."
+    }
+  ],
+  "outside": [
+    {
+      "name": "convex",
+      "reason": "The Convex mirror (database convex_self_hosted and the convex-data volume) is non-authoritative and varlatchd has no Convex (ADR-0059 Decision 4). Left out; it stays with the retained old installation."
+    },
+    {
+      "name": "keys",
+      "reason": "The Root KEK and the BEK are files, not rows: migrate places the same keys in the target's key files."
+    },
+    {
+      "name": "maintenance-and-status-files",
+      "reason": "maintenance.json and the listener status files in the TypeScript state volume describe that installation's processes, not data."
+    },
+    {
+      "name": "tailnet-node",
+      "reason": "The tailscale sidecar's node state is not carried: a new tsnet node enrols and takes the name by rename."
+    }
+  ]
+}

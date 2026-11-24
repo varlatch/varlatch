@@ -15,6 +15,12 @@
 # signature, which only means something when the download itself is
 # trusted, so no option or variable changes where they come from.
 #
+# An installation that serves this script (varlatchd's serve_cli; ADR-0058
+# Decision 3) stamps its own address in ORIGIN below: the CLI then comes
+# from it, and is checked the same way. Installing from an installation
+# trusts it, and whoever controls its host or its address, to run code on
+# this machine.
+#
 # What this trusts: HTTPS to github.com for the release files, which are
 # checked against the release's SHA256SUMS; then, before anything is put in
 # place, the downloaded varlatch checks that SHA256SUMS is signed by the
@@ -29,11 +35,16 @@
 
 {
 set -eu
+# cd is for this script's own paths: never a directory found through CDPATH.
+unset CDPATH
 
 # The release stamps its version here; a copy that was not stamped needs
 # --version.
 VARLATCH_RELEASE='@VARLATCH_VERSION@'
 REPOSITORY='varlatch/varlatch'
+# The serving installation's address, stamped when it serves this script;
+# empty in a release, which installs from github.com.
+ORIGIN=''
 
 say() { printf '%s\n' "$*"; }
 stop() { printf 'varlatch install: %s\n' "$*" >&2; exit 1; }
@@ -44,8 +55,19 @@ usage() {
 }
 
 # curl without ~/.curlrc (-q), HTTPS only, also after redirects (GitHub
-# serves release files from another host), failing on any HTTP error.
+# serves release files from another host), failing on any HTTP error. From
+# an installation: its own scheme (https, or http on this machine), and no
+# redirect is followed.
 fetch() {
+  if [ -n "$ORIGIN" ]; then
+    if [ "$scheme" = http ]; then
+      status=$(curl -q -sS --proto '=http' -w '%{http_code}' -o "$2" "$1") || stop "could not download $1"
+    else
+      status=$(curl -q -sS --proto '=https' --tlsv1.2 -w '%{http_code}' -o "$2" "$1") || stop "could not download $1"
+    fi
+    [ "$status" = 200 ] || stop "could not download $1 (HTTP $status; a redirect is never followed from an installation)"
+    return
+  fi
   curl -q -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 2 -o "$2" "$1" \
     || stop "could not download $1"
 }
@@ -144,15 +166,65 @@ put_cli() {
   fi
 }
 
-# A Homebrew copy is Homebrew's to update.
+# resolved prints the file's path with every link on its way resolved: it
+# walks the path one component at a time from / (a relative path from the
+# working directory, pwd -P), following each link where it exists
+# (readlink, up to 40) and taking .. from what is resolved so far. At the
+# first component that does not exist (a link into a missing keg), what is
+# left is appended as it is written. No cd, so no CDPATH.
+resolved() {
+  hb_rest=$1 hb_cur=/ hb_hops=0
+  case "$hb_rest" in
+    /*) ;;
+    *) hb_rest=$(pwd -P)/$hb_rest ;;
+  esac
+  while [ -n "$hb_rest" ]; do
+    case "$hb_rest" in
+      */*) hb_c=${hb_rest%%/*} hb_rest=${hb_rest#*/} ;;
+      *) hb_c=$hb_rest hb_rest='' ;;
+    esac
+    case "$hb_c" in
+      '' | .) continue ;;
+      ..) hb_cur=$(dirname -- "$hb_cur"); continue ;;
+    esac
+    if [ "$hb_cur" = / ]; then hb_next=/$hb_c; else hb_next=$hb_cur/$hb_c; fi
+    if [ -L "$hb_next" ] && [ "$hb_hops" -lt 40 ]; then
+      hb_link=$(readlink "$hb_next" 2>/dev/null) || hb_link=''
+      if [ -n "$hb_link" ]; then
+        hb_hops=$((hb_hops + 1))
+        case "$hb_link" in /*) hb_cur=/ ;; esac
+        if [ -n "$hb_rest" ]; then hb_rest=$hb_link/$hb_rest; else hb_rest=$hb_link; fi
+        continue
+      fi
+    fi
+    hb_cur=$hb_next
+    if [ ! -e "$hb_next" ] && [ ! -L "$hb_next" ]; then
+      [ -z "$hb_rest" ] || hb_cur=$hb_cur/$hb_rest
+      break
+    fi
+  done
+  printf '%s\n' "$hb_cur"
+}
+
+# A Homebrew copy is Homebrew's to update. It is told as varlatch
+# self-update tells it (selfupdate.Locate): the path as given, or the path
+# with every link resolved, in lower case, has /cellar/ in it or starts
+# with /opt/homebrew/ or /home/linuxbrew/.linuxbrew/. And the TypeScript
+# CLI's formula installed a script wrapper, which says so. Never by the
+# message in a binary: every Go varlatch carries self-update's refusal.
 homebrew() {
-  [ -e "$1" ] || return 0
-  if grep -q 'installed with Homebrew' "$1" 2>/dev/null; then
+  # A link counts even when what it names is missing: one into a keg that
+  # is gone is still Homebrew's.
+  [ -e "$1" ] || [ -L "$1" ] || return 0
+  for hb_path in "$1" "$(resolved "$1")"; do
+    case "$(printf '%s' "$hb_path" | tr '[:upper:]' '[:lower:]')" in
+      */cellar/* | /opt/homebrew/* | /home/linuxbrew/.linuxbrew/*)
+        stop "varlatch is installed with Homebrew at $1; update it with: brew upgrade varlatch" ;;
+    esac
+  done
+  if [ "$(head -c 2 "$1" 2>/dev/null)" = '#!' ] && grep -q 'installed with Homebrew' "$1" 2>/dev/null; then
     stop "varlatch is installed with Homebrew at $1; update it with: brew upgrade varlatch"
   fi
-  case "$(readlink "$1" 2>/dev/null || true)" in
-    */Cellar/*) stop "varlatch is installed with Homebrew at $1; update it with: brew upgrade varlatch" ;;
-  esac
 }
 
 main() {
@@ -170,6 +242,7 @@ main() {
     esac
   done
   [ "$server" = yes ] || [ $# -eq 0 ] || stop "setup flags after -- are for --server"
+  [ -z "$ORIGIN" ] || [ "$server" = no ] || stop "a server installs from github.com: use the release's install.sh (https://github.com/$REPOSITORY/releases)"
   case "$version" in
     @*) stop "this copy of install.sh is not from a release; pass --version <version>" ;;
   esac
@@ -211,6 +284,16 @@ main() {
   fi
 
   base=https://github.com/$REPOSITORY/releases/download/v$version
+  scheme=https
+  if [ -n "$ORIGIN" ]; then
+    case "$ORIGIN" in
+      *[!A-Za-z0-9.:/\[\]-]*) stop "$ORIGIN is not an address to install from" ;;
+      https://?*) ;;
+      http://localhost|http://localhost:[0-9]*|http://127.0.0.1|http://127.0.0.1:[0-9]*|'http://[::1]'|'http://[::1]:'[0-9]*) scheme=http ;;
+      *) stop "$ORIGIN is neither https: nor http: on this machine" ;;
+    esac
+    base=$ORIGIN/cli/v$version
+  fi
   cli=varlatch-$version-$os-$arch
   daemon=varlatchd-$version-linux-$arch
 
@@ -279,7 +362,11 @@ install_cli() {
       fi ;;
     *) say "$dir is not on your PATH. Add it, for example: echo 'export PATH=\"$dir:\$PATH\"' >> ~/.profile" ;;
   esac
-  say "Next: varlatch login --server <your Varlatch address>"
+  if [ -n "$ORIGIN" ]; then
+    say "Next: varlatch login --server $ORIGIN"
+  else
+    say "Next: varlatch login --server <your Varlatch address>"
+  fi
 }
 
 install_server() {

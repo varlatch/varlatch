@@ -22,6 +22,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 )
 
@@ -363,6 +364,11 @@ func TestHealthReadyMeta(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("meta: %d %s", w.Code, w.Body.String())
 	}
+	// varlatch migrate reads it to tell which installation serves the
+	// address: no cache may answer for it.
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("meta's Cache-Control: %q", cc)
+	}
 	var m struct {
 		ApiMajor          int      `json:"apiMajor"`
 		ServerVersion     string   `json:"serverVersion"`
@@ -441,6 +447,67 @@ func TestCLIDownloadOff(t *testing.T) {
 		if w.Code != 404 || w.Body.String() != "Not found" || w.Header().Get("Cache-Control") != "no-cache" ||
 			w.Header().Get("X-Content-Type-Options") != "nosniff" || w.Header().Get("Content-Security-Policy") != "" {
 			t.Errorf("%s: %d %q %v", p, w.Code, w.Body.String(), w.Header())
+		}
+	}
+}
+
+// serve_cli on (step 6.8): the installers and every path under /cli/
+// reach the served release once it is ready, and /v1/meta then lists
+// cli.download; before, they answer as with serving off. Off, a /cli/ path
+// other than the TypeScript bundle's is the dashboard's, as on the
+// TypeScript deployment.
+func TestCLIDownloadOn(t *testing.T) {
+	var ready http.Handler
+	served := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("served " + r.URL.Path)) })
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.CLI = func() http.Handler { return ready } })
+	listed := func(srv http.Handler) bool {
+		return strings.Contains(do(srv, "GET", "/v1/meta", "", nil).Body.String(), `"cli.download"`)
+	}
+	paths := []string{"/install.sh", "/install.ps1", "/cli/v0.50.0/varlatch-0.50.0-linux-amd64", "/cli/v0.50.0/SHA256SUMS"}
+	for _, p := range paths {
+		if w := do(s, "GET", p, "", nil); w.Code != 404 || w.Body.String() != "Not found" {
+			t.Errorf("%s before a release is ready: %d %q", p, w.Code, w.Body.String())
+		}
+	}
+	if listed(s) {
+		t.Error("cli.download listed before a release is ready")
+	}
+	ready = served
+	for _, p := range paths {
+		if w := do(s, "GET", p, "", nil); w.Code != 200 || w.Body.String() != "served "+p {
+			t.Errorf("%s: %d %q", p, w.Code, w.Body.String())
+		}
+	}
+	if w := do(s, "HEAD", "/install.sh", "", nil); w.Code != 200 {
+		t.Errorf("HEAD /install.sh: %d", w.Code)
+	}
+	if w := do(s, "POST", "/install.sh", "", nil); w.Code == 200 && strings.HasPrefix(w.Body.String(), "served") {
+		t.Error("POST reached the served release")
+	}
+	if !listed(s) {
+		t.Error("cli.download not listed with a release ready")
+	}
+	// Off: the TypeScript deployment's paths.
+	off, _, _, _ := newTestServer(t, nil)
+	if w := do(off, "GET", "/cli/v0.50.0/SHA256SUMS", "", nil); w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("off, a /cli/ path: %d %v", w.Code, w.Header())
+	}
+}
+
+// The tailnet listener never serves the CLI, serve_cli on or not: its
+// /install.sh and /cli/ paths answer as with serving off, and it lists no
+// cli.download either (the public listener's alone).
+func TestCLIDownloadNotOnTheTailnetListener(t *testing.T) {
+	served := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("served " + r.URL.Path)) })
+	name := "laptop"
+	peer := tailnet.Resolution{Context: &authz.TailnetContext{Tailnet: "corp.ts.net", NodeID: "n1", NodeName: &name}}
+	s, _, _, _ := newTestServer(t, func(o *Options) {
+		o.CLI = func() http.Handler { return served }
+		tailnetListener(peer)(o)
+	})
+	for _, p := range []string{"/install.sh", "/install.ps1", "/cli/v0.50.0/varlatch-0.50.0-linux-amd64", "/cli/v0.50.0/SHA256SUMS"} {
+		if w := do(s, "GET", p, "", nil); w.Code != 404 || strings.Contains(w.Body.String(), "served") {
+			t.Errorf("%s on the tailnet listener: %d %q", p, w.Code, w.Body.String())
 		}
 	}
 }
@@ -559,7 +626,7 @@ func TestTheBrowserEndpointFollowsThePinEverywhere(t *testing.T) {
 	m = manager() // a restart: the closure is latched
 	m.Check(ctx)
 	seen("")
-	if _, _, err := m.Repin(ctx, false); err != nil {
+	if _, _, err := m.Repin(ctx, false, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	seen("https://varlatch.corp-new.ts.net:8443")

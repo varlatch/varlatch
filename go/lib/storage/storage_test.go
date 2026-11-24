@@ -223,6 +223,10 @@ func TestJobErrorIsIsolated(t *testing.T) {
 			t.Fatalf("job %d: %v, want its own error", i, res[i])
 		}
 	}
+	// A panic's error names its type, never its value (which can hold a row's data).
+	if res[4] == nil || res[4].Error() != "storage: job panicked (string)" || strings.Contains(res[4].Error(), "boom") {
+		t.Fatalf("panicking job: %v", res[4])
+	}
 	if n := count(t, db, "WHERE name IN ('a','d')"); n != 2 {
 		t.Fatalf("committed %d of the good jobs", n)
 	}
@@ -409,6 +413,8 @@ func TestTransactionControlRefused(t *testing.T) {
 		"COMMIT", "rollback", "-- c\n/* d */ RELEASE job0", "SAVEPOINT x", "BEGIN", "END",
 		"SELECT 1; COMMIT", "INSERT INTO item (name) VALUES ('x'); ROLLBACK",
 		"PRAGMA synchronous = OFF", "PRAGMA foreign_keys = 0", "PRAGMA journal_mode = DELETE",
+		"PRAGMA defer_foreign_keys = ON", "PRAGMA defer_foreign_keys = OFF", "PRAGMA defer_foreign_keys = 0", "PRAGMA foreign_keys = ON",
+		"PRAGMA defer_foreign_keys = ON; PRAGMA synchronous = OFF", "PRAGMA ignore_check_constraints = 1",
 		"ATTACH DATABASE ':memory:' AS other",
 	} {
 		for _, via := range []string{"exec", "query", "queryrow"} {

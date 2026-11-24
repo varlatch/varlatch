@@ -3,12 +3,18 @@
 package transcript
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/curve25519"
+
+	"github.com/varlatch/varlatch/go/lib/jsjson"
+	vsync "github.com/varlatch/varlatch/go/lib/sync"
 )
 
 // The comparison must fail on each kind of mismatch, never pass one over
@@ -19,6 +25,17 @@ func base() Outcome {
 		Status: 0, Stdout: "out\n", Stderr: "",
 		Requests: []Request{{Method: "GET", Path: "/v1/meta", Headers: map[string]string{"user-agent": "ua"}, Body: json.RawMessage("null")}},
 		Files:    map[string]FileState{"config/credentials.json": {Mode: "0600", Content: "{}\n"}},
+	}
+}
+
+// TestCaseCollision: two names differing only in case are found (a case
+// Windows cannot give), one name of each is not.
+func TestCaseCollision(t *testing.T) {
+	if a, b, ok := caseCollision(map[string]string{"PATH": "", "no_proxy": "", "NO_PROXY": "", "HOME": ""}); !ok || a != "NO_PROXY" || b != "no_proxy" {
+		t.Errorf("%q %q %v", a, b, ok)
+	}
+	if _, _, ok := caseCollision(map[string]string{"PATH": "", "NO_PROXY": "", "HTTPS_PROXY": ""}); ok {
+		t.Error("no two names differ only in case")
 	}
 }
 
@@ -225,5 +242,46 @@ func TestGeneratedPatternIsExact(t *testing.T) {
 	got := GeneratedPattern([]string{"--generate", "hex:32"}, []Request{{Body: body(value)}}, "shown: "+value+"\n")
 	if string(got[0].Body) != `{"value":"{{generated value shown in the output}}"}` {
 		t.Errorf("a value shown on stdout: recorded %s", got[0].Body)
+	}
+}
+
+// TestAgentRunPattern: the "agent-run" pattern names exactly a run's
+// identifier, a Placeholder and a loopback port, as goKit.ts's does.
+func TestAgentRunPattern(t *testing.T) {
+	for in, want := range map[string]string{
+		"agent-safe run run_0123456789abcdef \u2014 broker on 127.0.0.1:41234": "agent-safe run run_{{id}} \u2014 broker on 127.0.0.1:{{port}}",
+		`{"runId":"run_0123456789abcdef"}`:                                     `{"runId":"run_{{id}}"}`,
+		"run_0123456789abcdef0":                                                "run_0123456789abcdef0",
+		"run_0123456789ABCDEF":                                                 "run_0123456789ABCDEF",
+		"API_KEY=vlch_ph_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":                  "API_KEY={{placeholder}}",
+		"vlch_ph_v1_short":                                                     "vlch_ph_v1_short",
+		"http://10.0.0.1:8080":                                                 "http://10.0.0.1:8080",
+	} {
+		if got := AgentRunPattern(in); got != want {
+			t.Errorf("AgentRunPattern(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestPlatformKeyPair: the fake GitHub's public key is its secret key's, as
+// goKit.ts gives it, and a value sealed to it opens as {{sealed <value>}}.
+func TestPlatformKeyPair(t *testing.T) {
+	public, err := curve25519.X25519(PlatformSecretKey, curve25519.Basepoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base64.StdEncoding.EncodeToString(public); got != PlatformPublicKey {
+		t.Fatalf("public key %s, want %s", got, PlatformPublicKey)
+	}
+	sealed, err := vsync.SealedBox([]byte("s3cr3t"), public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := jsjson.Object{{Key: "encrypted_value", Value: base64.StdEncoding.EncodeToString(sealed)}, {Key: "key_id", Value: "k1"}}
+	if got := string(jsjson.Stringify(openSealed(body))); got != `{"encrypted_value":"{{sealed s3cr3t}}","key_id":"k1"}` {
+		t.Errorf("opened %s", got)
+	}
+	if got := string(jsjson.Stringify(openSealed(jsjson.Object{{Key: "encrypted_value", Value: "AAAA"}}))); got != `{"encrypted_value":"{{sealed, not opened}}"}` {
+		t.Errorf("not a box: %s", got)
 	}
 }

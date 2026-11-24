@@ -137,6 +137,22 @@
         "release": "0.14.0",
         "quote": "The MCP server ships inside the CLI as `varlatch mcp`, in every release and under the CLI's version."
       }
+    },
+    "audit-export": {
+      "title": "varlatch audit-export: an Organization's audit log copied to a bucket it controls",
+      "introducedIn": "0.22.0",
+      "changelog": {
+        "release": "0.22.0",
+        "quote": "`varlatch audit-export create`, the Security page, or the API"
+      }
+    },
+    "incident-freeze": {
+      "title": "varlatch org freeze and org unfreeze: the incident freeze",
+      "introducedIn": "0.22.0",
+      "changelog": {
+        "release": "0.22.0",
+        "quote": "(`varlatch org freeze <slug> --reason <text> --confirm <slug>`)"
+      }
     }
   },
   "operations": {
@@ -764,6 +780,91 @@
         "securityApprovalKeys"
       ]
     },
+    "admin-cli": {
+      "title": "Organization administration with the CLI under test (slice 5.7a): one smoke check per command, exit 0 and --json parsing, in an Organization of its own",
+      "script": "scripts/conformance/suites/admin-cli.mjs",
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "listOrganizations",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "listProjects",
+        "renameProject",
+        "createEnvironment",
+        "listEnvironments",
+        "deleteEnvironment",
+        "createInvitation",
+        "listIdentities",
+        "changeMemberRole",
+        "memberExposure",
+        "createServiceIdentity",
+        "renameIdentity",
+        "machineReach",
+        "issueIdentityCredential",
+        "listIdentityCredentials",
+        "revokeIdentityCredential",
+        "retireIdentity",
+        "reactivateIdentity",
+        "createRequirement",
+        "listRequirements",
+        "deleteRequirement",
+        "listAuditEvents"
+      ]
+    },
+    "security-cli": {
+      "title": "The security commands with the CLI under test (slice 5.7b): one check per command, exit 0 and --json parsing, a loosening that waits for its approval, in an Organization of its own",
+      "script": "scripts/conformance/suites/security-cli.mjs",
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "whoami",
+        "createOrganization",
+        "listSecurityControls",
+        "changeSecurityControl",
+        "cancelApproval",
+        "myOrganizationPermissions",
+        "getIncidentFreeze",
+        "securityControlReport",
+        "securityApprovalKeys",
+        "credentialReview",
+        "refusedDestinations",
+        "listRequirements",
+        "getAuditExport"
+      ]
+    },
+    "audit-cli": {
+      "title": "The audit export, deletion and freezes with the CLI under test (slice 5.7c): each command against a real installation and a local S3 server with Object Lock, each destructive one refused unconfirmed with nothing changed, each approval-gated step stopping for its approval",
+      "script": "scripts/conformance/suites/audit-cli.mjs",
+      "needs": [
+        "object-store"
+      ],
+      "operations": [
+        "admin-recover",
+        "getMeta",
+        "whoami",
+        "createOrganization",
+        "createProject",
+        "listProjects",
+        "deleteProject",
+        "exportAuditEvents",
+        "exportDeletedOrganizationAuditEvents",
+        "getOrganization",
+        "getOrganizationDeletion",
+        "scheduleOrganizationDeletion",
+        "cancelOrganizationDeletion",
+        "getIncidentFreeze",
+        "freezeOrganization",
+        "liftIncidentFreeze",
+        "cancelApproval",
+        "getAuditExport",
+        "checkAuditExport",
+        "createAuditExport",
+        "changeAuditExport",
+        "removeAuditExport"
+      ]
+    },
     "deletion": {
       "title": "deletion over the API (ADR-0051): a Project's deletion, what it answers and what it leaves, and its approval under admin-step-up at enforce; an Organization's deletion scheduled, approved by a second admin, cancelled and run when due, and the audit-access tombstone's readers; what the due run tears down (a Sync Target and its Connection, a webhook, the GitHub App) and the audit export's drain, completed or abandoned at its deadline",
       "script": "scripts/conformance/suites/deletion.mjs",
@@ -823,6 +924,15 @@
       "script": "scripts/conformance/suites/doctor.mjs",
       "needs": [
         "ts-stack",
+        "probe:audit-event-count"
+      ]
+    },
+    "go-doctor": {
+      "title": "read-only doctor of a Go installation on its host (ADR-0059 step 6.5)",
+      "script": "scripts/conformance/suites/go-doctor.mjs",
+      "needs": [
+        "go-server",
+        "go-host",
         "probe:audit-event-count"
       ]
     },
@@ -3696,6 +3806,266 @@
       "kind": "conformance",
       "title": "the approval keys list the Organization's admins with their passkeys' trust, names and dates, never a credential id or key"
     },
+    "admin-cli.org-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "org create makes an organization the caller administers"
+    },
+    "admin-cli.org-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "org list --json lists it"
+    },
+    "admin-cli.project-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project create --org makes a project"
+    },
+    "admin-cli.project-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project list --json lists it"
+    },
+    "admin-cli.project-rename": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "project rename renames it (project list shows the new name)"
+    },
+    "admin-cli.env-create": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "env-create makes a root environment (the environment list has it)"
+    },
+    "admin-cli.env-delete": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "env-delete deletes it (the environment list has it no more)"
+    },
+    "admin-cli.invite": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "invite prints a one-time enrollment link with its invitation token"
+    },
+    "admin-cli.member-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member list --json lists the caller"
+    },
+    "admin-cli.member-role": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member role to the role the caller has changes nothing (member list agrees)"
+    },
+    "admin-cli.member-exposure-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "member exposure --json is NDJSON, the member first"
+    },
+    "admin-cli.identity-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity list --json lists the machine"
+    },
+    "admin-cli.identity-rename": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity rename renames it"
+    },
+    "admin-cli.identity-reach-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity reach --json shows its reach"
+    },
+    "admin-cli.credential-issue-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential issue --json writes the token to a new 0600 file only, and refuses an --out that exists"
+    },
+    "admin-cli.credential-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential list --json lists it"
+    },
+    "admin-cli.credential-revoke": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "credential revoke revokes it"
+    },
+    "admin-cli.identity-retire": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity retire --confirm retires it (identity list shows it retired)"
+    },
+    "admin-cli.identity-reactivate": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "identity reactivate reactivates it (identity list shows it active)"
+    },
+    "admin-cli.tailnet-require": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet require makes a Tailnet Requirement"
+    },
+    "admin-cli.tailnet-requirements-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet requirements --json lists it"
+    },
+    "admin-cli.tailnet-remove": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "tailnet remove removes it"
+    },
+    "admin-cli.audit-list-json": {
+      "suite": "admin-cli",
+      "kind": "conformance",
+      "title": "audit list --json lists the organization's events"
+    },
+    "security-cli.controls": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security controls lists the organization's controls"
+    },
+    "security-cli.controls-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security controls --json lists them"
+    },
+    "security-cli.set": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security set turns a control up at once (security controls agrees)"
+    },
+    "security-cli.set-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security set --json prints the change"
+    },
+    "security-cli.set-loosen-waits": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "a loosening in assisted mode stops for the approval (75), unchanged and with no credential printed"
+    },
+    "security-cli.status": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security status shows the organization's security"
+    },
+    "security-cli.status-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security status --json shows it"
+    },
+    "security-cli.report": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security report shows the credential review"
+    },
+    "security-cli.report-json": {
+      "suite": "security-cli",
+      "kind": "conformance",
+      "title": "security report --json shows it"
+    },
+    "audit-cli.project-delete-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "project delete without --confirm refuses (64) and deletes nothing"
+    },
+    "audit-cli.project-delete": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "project delete --confirm deletes the Project"
+    },
+    "audit-cli.audit-export-ndjson": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit export prints the log as NDJSON"
+    },
+    "audit-cli.audit-export-deleted-unknown": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit export --deleted-org of an unknown id fails with the server's 404 (1)"
+    },
+    "audit-cli.org-delete-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete without --confirm refuses (64) and schedules nothing"
+    },
+    "audit-cli.org-delete-schedule": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete --confirm schedules the deletion"
+    },
+    "audit-cli.org-deletion-json": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org deletion --json shows it"
+    },
+    "audit-cli.org-delete-cancel": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org delete --cancel cancels it"
+    },
+    "audit-cli.org-freeze-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org freeze without --confirm refuses (64) and freezes nothing",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.org-freeze": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org freeze --confirm freezes it",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.org-unfreeze-waits": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "org unfreeze in assisted mode stops for the passkey approval (75), still frozen",
+      "feature": "incident-freeze"
+    },
+    "audit-cli.audit-export-show-json": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export show --json shows no export yet",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-check": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export check passes a destination, saves nothing, never shows the key",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-create": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export create --json makes the export, never showing the key",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-change": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export change --retention longer applies at once",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-show": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export show shows it active",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-remove-unconfirmed": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export remove without --confirm refuses (64), the export kept",
+      "feature": "audit-export"
+    },
+    "audit-cli.audit-export-remove-waits": {
+      "suite": "audit-cli",
+      "kind": "conformance",
+      "title": "audit-export remove in assisted mode stops for the passkey approval (75), the export kept",
+      "feature": "audit-export"
+    },
     "deletion.project-deleted": {
       "suite": "deletion",
       "kind": "conformance",
@@ -3771,36 +4141,28 @@
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor exits 0 (no mandatory failure)",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.exits-0"
     },
     "doctor.services-running": {
       "suite": "doctor",
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor: services.running passes",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.services-running"
     },
     "doctor.secret-plane-ready": {
       "suite": "doctor",
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor: secret-plane.ready passes",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.secret-plane-ready"
     },
     "doctor.config-public-url": {
       "suite": "doctor",
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor: config.public-url passes",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.config-public-url"
     },
     "doctor.mirror-catch-up": {
       "suite": "doctor",
@@ -3826,7 +4188,7 @@
       "feature": "doctor",
       "title": "doctor: release.pending-upgrade passes",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
+        "open": "ADR-0059 step 6.6: upgrade's journal (an upgrade left unfinished) is what doctor reports pending"
       }
     },
     "doctor.browser-reachability-unknown": {
@@ -3834,18 +4196,44 @@
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor: browser reachability is reported unknown",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.browser-reachability-unknown"
     },
     "doctor.no-audit-events": {
       "suite": "doctor",
       "kind": "ts-stack",
       "feature": "doctor",
       "title": "doctor wrote no audit events",
-      "replacement": {
-        "open": "ADR-0059 step 6: the Go server's doctor"
-      }
+      "replacement": "go-doctor.no-audit-events"
+    },
+    "go-doctor.exits-0": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor exits 0 (no mandatory failure)"
+    },
+    "go-doctor.services-running": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor: varlatchd answered on its control socket"
+    },
+    "go-doctor.secret-plane-ready": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor: secret-plane.ready passes"
+    },
+    "go-doctor.config-public-url": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor: config.public-url passes"
+    },
+    "go-doctor.browser-reachability-unknown": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor: browser reachability is reported unknown"
+    },
+    "go-doctor.no-audit-events": {
+      "suite": "go-doctor",
+      "kind": "go-server",
+      "title": "doctor wrote no audit events"
     },
     "convex-down.dashboard-serves": {
       "suite": "convex-down",
@@ -4180,7 +4568,13 @@
   "goServerChecks": {
     "realtime-events.no-signal-crosses-organizations": "It reads the Go server's own event stream (GET /auth/events). The TypeScript server's live updates are Convex subscriptions, scoped by the claims of a Convex token, which this suite cannot open as a stream.",
     "realtime-events.revocation-and-removal-close-streams": "The TypeScript server cannot pass it: a Convex subscription stays open until its 10-minute Convex token expires or is minted again, whatever was signed out, revoked or removed.",
-    "realtime-events.slow-client-cut-off-alone": "It needs the Go server's bounded per-stream buffer. On the TypeScript server, Convex serves the subscriptions and its own buffering is not varlatchd's to bound."
+    "realtime-events.slow-client-cut-off-alone": "It needs the Go server's bounded per-stream buffer. On the TypeScript server, Convex serves the subscriptions and its own buffering is not varlatchd's to bound.",
+    "go-doctor.exits-0": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.services-running": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.secret-plane-ready": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.config-public-url": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.browser-reachability-unknown": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces).",
+    "go-doctor.no-audit-events": "It runs the Go installation's own host command (varlatchd admin doctor) on its host; the TypeScript installation's doctor is the TypeScript CLI's over Compose (the ts-stack doctor checks it replaces)."
   },
   "externalSuites": {
     "setup": {
@@ -4188,7 +4582,7 @@
       "script": "scripts/test-setup.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go setup, with the same end-to-end suite against the Go installation"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflow (.github/workflows/go.yml), not runner checks. In the step 'Test', on a stand-in host: go/cmd/varlatch/internal/setup.TestNonInteractiveSetup, go/cmd/varlatch/internal/setup.TestRerunChangesNothing, go/cmd/varlatch/internal/setup.TestInterruptedAtEachStep and go/cmd/varlatch/internal/setup.TestFailureThenResume (one command from nothing, a rerun changes nothing, resumable after an interruption at each step), and the refusal and pending cases of the old suite: go/cmd/varlatch/internal/setup.TestADatabaseIsARestore (a data directory holding a database it did not make is refused), go/cmd/varlatch/internal/setup.TestAnswersAreFinal (an answer given differently is refused), go/cmd/varlatch/internal/setup.TestFirstAdministrator (the enrollment link written to its file, setup pending until the passkey, a rerun issuing a new link) and go/cmd/varlatch/internal/setup.TestCustodyAttestation (the attestation needs --attest without a terminal). In the step \"varlatch setup from an empty host, on this runner's systemd\": go/install/test-setup.sh, which on a GitHub-hosted runner runs the built varlatch setup as root against the real systemd of the runner, from an empty host, for the localhost, own proxy and public (against Pebble) ingress modes; checks each installation (the unit ready, the keys and their copies, the custody attested, the first backup verified, no key in any output); reruns it; restores the archive of the localhost installation with setup --restore; and stops it after each step and resumes it (ADR-0059 step 6.4a, varlatch/varlatch#341). The tailnet ingress is not among those modes: ingress-tailnet stays open."
       }
     },
     "adopt": {
@@ -4196,7 +4590,7 @@
       "script": "scripts/test-adopt.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 7: varlatch migrate takes over existing TypeScript installations, hand-configured ones included"
+        "open": "varlatch migrate (varlatch/varlatch#371) takes a TypeScript installation over. It closes with the step 8 rehearsals on the experiments server, B1 to B5, then B6 on a restored copy of production."
       }
     },
     "backup-compose": {
@@ -4204,7 +4598,7 @@
       "script": "scripts/test-backup-compose.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go container image and upgrade's recovery gate"
+        "none": "Its Go counterpart is go/image/check-image.mjs, not a runner check: the Go workflow (.github/workflows/go.yml) runs it in the job go-image, in the step 'The image as an operator runs it', against the single-container image built from the commit (go/image/Dockerfile): the user, entrypoint, volume and license label of the image; a key in the environment refused by varlatchd and by the CLI in the image (exit 78, the variable named, never its value); an installation on a new volume, owned by the image user alone and run as that user; no key in docker inspect or /proc/1/environ; the recovery gate (a maintenance lease) held in the volume across containers until it ends; and a backup restored into a new volume through the image alone, served and its canary opened. The job go-container runs the conformance suites against the image nightly (target go-container)."
       }
     },
     "backup-e2e": {
@@ -4228,7 +4622,7 @@
       "script": "scripts/test-backup-upgrade.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 steps 6 and 7: upgrade and rollback safety, and recovery from the pre-migration archive"
+        "open": "Upgrade and rollback safety are built (G6, and the rollback window of varlatch/varlatch#330 and #387). Recovery from the pre-migration archive closes with the step 8 rehearsal B6."
       }
     },
     "backup-v0100-restore": {
@@ -4236,7 +4630,7 @@
       "script": "scripts/test-backup-v0100-restore.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 7: the backup converter restores archives of earlier releases"
+        "open": "The backup converter (varlatch migrate --from-archive, varlatch/varlatch#362, which lands after 0.23.0) restores archives of earlier releases, with its nightly converter job. It closes with that PR and the step 8 rehearsal B6 (the converter on the production archive)."
       }
     },
     "prod-shape": {
@@ -4244,7 +4638,7 @@
       "script": "scripts/test-prod-shape.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 7: migrating a production-shaped TypeScript installation, rehearsed"
+        "open": "Migrating a production-shaped TypeScript installation closes with the step 8 rehearsals B3 (the Coolify shape) and B6 (a restored copy of production)."
       }
     },
     "sidecar-restart": {
@@ -4252,7 +4646,7 @@
       "script": "scripts/test-sidecar-restart.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the tailnet topology of the Go installation"
+        "none": "The Go installation has no Tailscale sidecar: varlatchd is its own tailnet node, in process (tsnet, ADR-0059 Decision 5), so no sidecar can restart and strand it. What the suite guarded, the tailnet listener serving again after its node restarts, is go/server/daemon.TestTailnetListener in the step 'Test' of go.yml (restarted without its auth key, the node rejoins and the listener serves)."
       }
     },
     "ingress-public": {
@@ -4260,7 +4654,7 @@
       "script": "scripts/test-ingress-public.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: setup's public ingress"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflow (.github/workflows/go.yml), not runner checks. In the step 'Public HTTPS against Pebble', varlatchd itself against Pebble: go/server/daemon.TestPublicHTTPSAgainstPebble (over HTTP-01: /readyz over HTTPS, HTTP/2, with the certificate chain verified against the Pebble root; the plain listener only a 308 redirect to the public URL, a forged Host included; another SNI name refused; the ACME store 0700) and go/server/daemon.TestPublicHTTPSTLSALPNAgainstPebble (over TLS-ALPN-01 alone: no plain listener open); and, in the same step, the certificate manager on its own, behind a stand-in handler: go/server/publictls.TestPebbleIssuanceAndRenewal and go/server/publictls.TestPebbleFailureAndBackoff (issuance, renewal before expiry, a failed challenge retried with backoff). The Go installation has no Caddy. In the step \"varlatch setup from an empty host, on this runner's systemd\": go/install/test-setup.sh runs varlatch setup with the public ingress against Pebble from an empty host and checks that HTTPS answers /readyz with 200 (curl -k: it checks no chain; the daemon tests above do) (ADR-0059 steps 6.3 and 6.4a)."
       }
     },
     "ingress-tailnet": {
@@ -4268,7 +4662,7 @@
       "script": "scripts/test-ingress-tailnet.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: setup's tailnet ingress"
+        "open": "ADR-0059 step 6.4a built setup's tailnet ingress, but no run proves it on a real tailnet yet. The step 8 rehearsal B4, on the throwaway Tailscale tailnet (internal docs/design/go-step8-rehearsals.md), closes it."
       }
     },
     "tailnet-endpoint": {
@@ -4276,7 +4670,7 @@
       "script": "scripts/test-tailnet-endpoint.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 steps 4 and 6: tailnet and Requirements, and setup's tailnet endpoint"
+        "open": "Step 4's half passed on a real tailnet (the live check of 2026-11-17, internal docs/evidence/go-tailnet-live-check-2026-11-17/). Setup's tailnet endpoint closes with the step 8 rehearsal B4, on the throwaway Tailscale tailnet."
       }
     },
     "move": {
@@ -4284,7 +4678,7 @@
       "script": "scripts/test-move.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: moving a Go installation to another public URL"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflow (.github/workflows/go.yml), not runner checks: go/server/daemon.TestPublicHTTPSMoveAgainstPebble in the step 'Public HTTPS against Pebble' (varlatch move, built from the commit, takes an installation on the public ingress from one name to another: an archive first, the certificate for the new name from Pebble, the passkey of the old address removed once and the old name no longer served, one re-enrollment link per person, never in the journal of the move or a log, the Installation Admin re-enrolled over HTTPS at the new origin on the same identity, and a rerun closing the move); and in the step 'Test': go/server/daemon.TestMoveKeepsTheTailnetNode (the settings, pin and state of the tailnet node unchanged by a move, and a move to the tailnet ingress refused), go/server/daemon.TestMoveCommands (admin public-url-changed and admin reenroll through the socket, else offline: passkeys and browser sessions removed once, one live link per person, no link in an audit event or a log), go/server/httpserver.TestMoveReenrollsAtTheNewRelyingParty (the relying party is the new host: an old passkey refused there, a re-enrollment link used once from the new origin only), go/cmd/varlatch/internal/cli.TestMoveRefusals, go/cmd/varlatch/internal/cli.TestMovedConfig and go/cmd/varlatch/internal/cli.TestAdminReenroll."
       }
     },
     "installers": {
@@ -4292,7 +4686,7 @@
       "script": "scripts/test-installers.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6: the Go installers"
+        "none": "Its Go counterparts are Go tests and steps of the Go workflows (.github/workflows/go.yml, and published-release.yml), not runner checks. In the step 'Test': go/install.TestEveryPrefixRunsNothingOrEverything, go/install.TestInstallCLIRerun, go/install.TestInstallRefuses, go/install.TestInstallRefusesOtherPlatforms and go/install.TestInstallFromAnInstallation (install.sh: every prefix under sh, dash and bash runs nothing or everything, a rerun changes nothing, the refusals, another platform refused, the script an installation serves). In the step 'install.ps1 under PowerShell 5.1 and 7' (the windows job, on windows-latest): go/install.TestPS1EveryPrefix and go/install.TestPS1EndToEnd (install.ps1 under both PowerShells; they skip off Windows). In the step 'install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck': install.sh under shellcheck. The published release, as people install it, on Linux, macOS and Windows: go/install.TestPublishedInstallSh, go/install.TestPublishedInstallPS1 and go/install.TestPublishedIdentity, run by the workflow published-release.yml (their VARLATCH_TEST_PUBLISHED unset, they skip in go.yml), after the Release workflow publishes a release of the Go line (prereleases and final releases) or by hand with a tag; its run 44931411499 on v0.50.0-rc.1 passed (ADR-0059 G8, step 6.1)."
       }
     },
     "coolify-live": {

@@ -15,20 +15,38 @@ import (
 // docs/design/go-step6.md decision 5).
 const ManifestAsset = "release.json"
 
-// ManifestVersion is the manifest format this package reads and writes. A
-// manifest of another format is refused: a newer CLI reads it.
-const ManifestVersion = 1
+// ManifestVersion is the manifest format this package writes. Format 2
+// adds what a release declares about the migration's rollback window
+// (reversibleTo, endsRollbackWindow; internal docs/design/go-step7.md
+// decision 17). Format 1 (0.50.0-rc.1 and rc.2, before any migration
+// existed) is still read, as declaring nothing about the window. A
+// manifest of a later format is refused: a newer CLI reads it.
+const ManifestVersion = 2
+
+// LastTypeScriptRelease is the TypeScript release a migration starts from,
+// and the only one a reverse migration returns to (ADR-0059 Decision 9 and
+// amendment 4; go-step7.md O1).
+const LastTypeScriptRelease = "0.23.0"
+
+// RollbackWindowNotice is what `varlatch upgrade` says before upgrading to a
+// release that ends the migration's rollback window.
+const RollbackWindowNotice = "This release ends the migration's rollback window: after it, `varlatch migrate --rollback` can no longer return this installation to the TypeScript release (" + LastTypeScriptRelease + "). Its data stays; only the way back goes."
 
 // Declaration is what a release declares about its database schema,
 // checked in as go/release/release.json and checked by G6: the schema
 // version varlatchd records, the oldest version whose varlatchd may open a
 // database of it, whether the release is rollback-safe, and the previous
-// release that was checked against.
+// release that was checked against; and what it declares about a
+// migration's rollback window (decision 17): the TypeScript release a
+// reverse migration of its data returns to (ReversibleTo), or that it
+// ends the window (EndsRollbackWindow), exactly one of them.
 type Declaration struct {
-	SchemaVersion  int64     `json:"schemaVersion"`
-	CompatibleFrom int64     `json:"compatibleFrom"`
-	RollbackSafe   bool      `json:"rollbackSafe"`
-	Previous       *Previous `json:"previous"`
+	SchemaVersion      int64     `json:"schemaVersion"`
+	CompatibleFrom     int64     `json:"compatibleFrom"`
+	RollbackSafe       bool      `json:"rollbackSafe"`
+	Previous           *Previous `json:"previous"`
+	ReversibleTo       *string   `json:"reversibleTo"`
+	EndsRollbackWindow bool      `json:"endsRollbackWindow"`
 }
 
 // Previous is the release a declaration was checked against: the release
@@ -48,6 +66,18 @@ type Manifest struct {
 
 // manifestJSON fixes the key order of the asset.
 type manifestJSON struct {
+	ManifestVersion    int       `json:"manifestVersion"`
+	Version            string    `json:"version"`
+	SchemaVersion      int64     `json:"schemaVersion"`
+	CompatibleFrom     int64     `json:"compatibleFrom"`
+	RollbackSafe       bool      `json:"rollbackSafe"`
+	Previous           *Previous `json:"previous"`
+	ReversibleTo       *string   `json:"reversibleTo"`
+	EndsRollbackWindow bool      `json:"endsRollbackWindow"`
+}
+
+// manifestV1JSON is format 1, read for releases before format 2.
+type manifestV1JSON struct {
 	ManifestVersion int       `json:"manifestVersion"`
 	Version         string    `json:"version"`
 	SchemaVersion   int64     `json:"schemaVersion"`
@@ -56,6 +86,12 @@ type manifestJSON struct {
 	Previous        *Previous `json:"previous"`
 }
 
+var (
+	declarationKeys = []string{"schemaVersion", "compatibleFrom", "rollbackSafe", "previous", "reversibleTo", "endsRollbackWindow"}
+	manifestV1Keys  = []string{"manifestVersion", "version", "schemaVersion", "compatibleFrom", "rollbackSafe", "previous"}
+	manifestKeys    = append([]string{"manifestVersion", "version"}, declarationKeys...)
+)
+
 // ParseDeclaration reads go/release/release.json: exactly the declaration's
 // keys, each present, and the rules Check holds.
 func ParseDeclaration(data []byte) (Declaration, error) {
@@ -63,7 +99,7 @@ func ParseDeclaration(data []byte) (Declaration, error) {
 	if err := strictDecode(data, &raw); err != nil {
 		return Declaration{}, fmt.Errorf("release: the declaration: %w", err)
 	}
-	if err := keysExactly(raw, "schemaVersion", "compatibleFrom", "rollbackSafe", "previous"); err != nil {
+	if err := keysExactly(raw, declarationKeys...); err != nil {
 		return Declaration{}, fmt.Errorf("release: the declaration: %w", err)
 	}
 	var d Declaration
@@ -84,19 +120,34 @@ func ParseManifest(data []byte) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("release: %s: %w", ManifestAsset, err)
 	}
 	var format int
-	if v, ok := raw["manifestVersion"]; !ok || json.Unmarshal(v, &format) != nil || format != ManifestVersion {
-		return Manifest{}, fmt.Errorf("release: %s is not of manifest format %d", ManifestAsset, ManifestVersion)
+	if v, ok := raw["manifestVersion"]; !ok || json.Unmarshal(v, &format) != nil || (format != 1 && format != ManifestVersion) {
+		return Manifest{}, fmt.Errorf("release: %s is not of manifest format 1 or %d", ManifestAsset, ManifestVersion)
 	}
-	if err := keysExactly(raw, "manifestVersion", "version", "schemaVersion", "compatibleFrom", "rollbackSafe", "previous"); err != nil {
-		return Manifest{}, fmt.Errorf("release: %s: %w", ManifestAsset, err)
+	var out Manifest
+	if format == 1 {
+		if err := keysExactly(raw, manifestV1Keys...); err != nil {
+			return Manifest{}, fmt.Errorf("release: %s: %w", ManifestAsset, err)
+		}
+		var m manifestV1JSON
+		if err := strictDecode(data, &m); err != nil {
+			return Manifest{}, fmt.Errorf("release: %s: %w", ManifestAsset, err)
+		}
+		out = Manifest{ManifestVersion: 1, Version: m.Version, Declaration: Declaration{
+			SchemaVersion: m.SchemaVersion, CompatibleFrom: m.CompatibleFrom, RollbackSafe: m.RollbackSafe, Previous: m.Previous,
+		}}
+	} else {
+		if err := keysExactly(raw, manifestKeys...); err != nil {
+			return Manifest{}, fmt.Errorf("release: %s: %w", ManifestAsset, err)
+		}
+		var m manifestJSON
+		if err := strictDecode(data, &m); err != nil {
+			return Manifest{}, fmt.Errorf("release: %s: %w", ManifestAsset, err)
+		}
+		out = Manifest{ManifestVersion: m.ManifestVersion, Version: m.Version, Declaration: Declaration{
+			SchemaVersion: m.SchemaVersion, CompatibleFrom: m.CompatibleFrom, RollbackSafe: m.RollbackSafe, Previous: m.Previous,
+			ReversibleTo: m.ReversibleTo, EndsRollbackWindow: m.EndsRollbackWindow,
+		}}
 	}
-	var m manifestJSON
-	if err := strictDecode(data, &m); err != nil {
-		return Manifest{}, fmt.Errorf("release: %s: %w", ManifestAsset, err)
-	}
-	out := Manifest{ManifestVersion: m.ManifestVersion, Version: m.Version, Declaration: Declaration{
-		SchemaVersion: m.SchemaVersion, CompatibleFrom: m.CompatibleFrom, RollbackSafe: m.RollbackSafe, Previous: m.Previous,
-	}}
 	if err := out.Check(); err != nil {
 		return Manifest{}, err
 	}
@@ -112,26 +163,40 @@ func NewManifest(version string, d Declaration) (Manifest, error) {
 	return m, nil
 }
 
-// MarshalJSON writes the asset: its keys in a fixed order, indented, with a
-// final newline.
-func (m Manifest) MarshalJSON() ([]byte, error) {
-	return json.Marshal(manifestJSON{m.ManifestVersion, m.Version, m.SchemaVersion, m.CompatibleFrom, m.RollbackSafe, m.Previous})
+func (m Manifest) asJSON() any {
+	if m.ManifestVersion == 1 {
+		return manifestV1JSON{m.ManifestVersion, m.Version, m.SchemaVersion, m.CompatibleFrom, m.RollbackSafe, m.Previous}
+	}
+	return manifestJSON{m.ManifestVersion, m.Version, m.SchemaVersion, m.CompatibleFrom, m.RollbackSafe, m.Previous, m.ReversibleTo, m.Declaration.EndsRollbackWindow}
 }
 
-// Bytes is the asset as the release attaches it.
+// MarshalJSON writes the asset: its keys in a fixed order.
+func (m Manifest) MarshalJSON() ([]byte, error) {
+	return json.Marshal(m.asJSON())
+}
+
+// Bytes is the asset as the release attaches it: indented, with a final
+// newline.
 func (m Manifest) Bytes() ([]byte, error) {
-	b, err := json.MarshalIndent(manifestJSON{m.ManifestVersion, m.Version, m.SchemaVersion, m.CompatibleFrom, m.RollbackSafe, m.Previous}, "", "  ")
+	b, err := json.MarshalIndent(m.asJSON(), "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(b, '\n'), nil
 }
 
+// EndsRollbackWindow reports whether upgrading to this release ends a
+// migration's rollback window: its manifest says so. A format 1 manifest
+// predates migrations and says nothing; it ends nothing.
+func (m Manifest) EndsRollbackWindow() bool {
+	return m.ManifestVersion >= 2 && m.Declaration.EndsRollbackWindow
+}
+
 // Check holds the manifest's rules: its format and version, then the
-// declaration's.
+// declaration's (format 1: the schema's only, as it predates the window).
 func (m Manifest) Check() error {
-	if m.ManifestVersion != ManifestVersion {
-		return fmt.Errorf("release: %s is not of manifest format %d", ManifestAsset, ManifestVersion)
+	if m.ManifestVersion != 1 && m.ManifestVersion != ManifestVersion {
+		return fmt.Errorf("release: %s is not of manifest format 1 or %d", ManifestAsset, ManifestVersion)
 	}
 	if !versionPattern.MatchString(m.Version) {
 		return fmt.Errorf("release: %s: %q is not a release version", ManifestAsset, m.Version)
@@ -139,10 +204,35 @@ func (m Manifest) Check() error {
 	if m.Previous != nil && m.Previous.Version == m.Version {
 		return fmt.Errorf("release: %s: the previous release is this one (%s)", ManifestAsset, m.Version)
 	}
+	if m.ManifestVersion == 1 {
+		if m.ReversibleTo != nil || m.Declaration.EndsRollbackWindow {
+			return fmt.Errorf("release: %s: format 1 declares nothing about the rollback window", ManifestAsset)
+		}
+		return m.Declaration.checkSchema()
+	}
 	return m.Declaration.Check()
 }
 
-// Check holds the declaration's rules:
+// Check holds the declaration's rules: the schema's (checkSchema), and the
+// rollback window's: exactly one of reversibleTo, naming
+// LastTypeScriptRelease, and endsRollbackWindow. A release that declares
+// neither fails, so no release ends the window without saying so.
+func (d Declaration) Check() error {
+	if err := d.checkSchema(); err != nil {
+		return err
+	}
+	switch {
+	case d.ReversibleTo != nil && d.EndsRollbackWindow:
+		return errors.New("release: the declaration: reversibleTo and endsRollbackWindow both set: a release either keeps the rollback window or ends it")
+	case d.ReversibleTo == nil && !d.EndsRollbackWindow:
+		return fmt.Errorf("release: the declaration: neither reversibleTo nor endsRollbackWindow: declare reversibleTo %q if a reverse migration of this release's data returns to it (G5 checks it), or endsRollbackWindow true", LastTypeScriptRelease)
+	case d.ReversibleTo != nil && *d.ReversibleTo != LastTypeScriptRelease:
+		return fmt.Errorf("release: the declaration: reversibleTo %q is not the last TypeScript release, %s", *d.ReversibleTo, LastTypeScriptRelease)
+	}
+	return nil
+}
+
+// checkSchema holds the schema's rules:
 //
 //   - a schema version of 1 or more, and compatibleFrom between 1 and it;
 //   - no previous release (the first Go release): not rollback-safe, since
@@ -152,7 +242,7 @@ func (m Manifest) Check() error {
 //     schema (compatibleFrom at or below its schema version), and, if not
 //     rollback-safe, compatibleFrom above it, so the previous varlatchd
 //     refuses the database instead of misreading it.
-func (d Declaration) Check() error {
+func (d Declaration) checkSchema() error {
 	fail := func(format string, args ...any) error {
 		return fmt.Errorf("release: the declaration: "+format, args...)
 	}

@@ -7,6 +7,7 @@ package daemon
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"tailscale.com/tstest/integration/testcontrol"
 	"tailscale.com/types/logger"
 
+	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/tailnet/tailnettest"
 )
@@ -138,7 +140,8 @@ func TestTailnetListener(t *testing.T) {
 	}
 	bearer := m[2]
 	waitReport(t, r, bearer, `"checks":{"listener":{"status":"pass"},"localApi":{"status":"pass"},"node":{"status":"pass"}}`)
-	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":null}`)
+	// The control server is the test's own (not Tailscale's): named.
+	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":null,"controlUrl":"http://`)
 	if st, err := os.Stat(filepath.Join(in.data, tailnet.StateDir)); err != nil || st.Mode().Perm() != 0o700 {
 		t.Fatalf("the node's state directory: %v %v", st, err)
 	}
@@ -195,13 +198,46 @@ func TestTailnetListener(t *testing.T) {
 	// request asked for is written.
 	refusedWhileClosed(t, r, peer, base, bearer, "pin-changed")
 	code, out, errOut = runAdmin(t, "tailnet", "repin", "--json", "--config", in.conf)
-	if code != ExitOK || !strings.Contains(out, `"reason":"suffix-changed","closed":"suffix-changed","missing":false,"offered":true`) {
+	if code != ExitOK || !strings.Contains(out, `"reason":"suffix-changed","closed":"suffix-changed","missing":false,"offered":true`) || !strings.Contains(out, `"outcome":"suffix-changed"`) || !strings.Contains(out, `"pin":null`) {
 		t.Fatalf("repin --json: %d %q %q", code, out, errOut)
 	}
 	code, out, errOut = runAdmin(t, "tailnet", "repin", "--config", in.conf)
 	if code != ExitOK || !strings.Contains(out, "pinned:   suffix old.ts.net") || !strings.Contains(out, "observed: suffix corp.ts.net") || !strings.Contains(out, "Run again with --yes") {
 		t.Fatalf("repin without --yes: %d %q %q", code, out, errOut)
 	}
+	// #319 review P2: a confirmation is bound to the offer it was given
+	// for. The view carries a value-free token; --yes with another token
+	// (the tailnet changed since it was shown) changes nothing, records
+	// nothing, and answers offer-changed with the fresh view.
+	var offered struct {
+		Offer string `json:"offer"`
+	}
+	_, out, _ = runAdmin(t, "tailnet", "repin", "--json", "--config", in.conf)
+	if err := json.Unmarshal([]byte(out), &offered); err != nil || len(offered.Offer) != 32 || strings.Contains(out, `"offer":"`+"corp") {
+		t.Fatalf("the offer: %q %v", out, err)
+	}
+	stale := strings.Repeat("0", 32)
+	code, out, errOut = runAdmin(t, "tailnet", "repin", "--yes", "--offer", stale, "--json", "--config", in.conf)
+	var changed struct {
+		Outcome string       `json:"outcome"`
+		Offer   string       `json:"offer"`
+		Pin     *tailnet.Pin `json:"pin"`
+	}
+	if err := json.Unmarshal([]byte(out), &changed); code != ExitFailure || err != nil || changed.Outcome != "offer-changed" || changed.Offer != offered.Offer || changed.Pin != nil {
+		t.Fatalf("repin --yes with a stale offer: %d %q %q", code, out, errOut)
+	}
+	if pin, err := tailnet.LoadPin(filepath.Join(in.data, tailnet.PinFile)); err != nil || pin.Suffix != "old.ts.net" || len(pin.History) != 0 {
+		t.Fatalf("a stale offer changed the pin: %+v %v", pin, err)
+	}
+	if n := repinnedEvents(t, in); n != 0 {
+		t.Fatalf("a stale offer recorded %d tailnet.repinned events", n)
+	}
+	for _, args := range [][]string{{"--offer", offered.Offer}, {"--yes", "--offer", "short"}, {"--yes", "--offer"}} {
+		if code, _, errOut := runAdmin(t, append(append([]string{"tailnet", "repin"}, args...), "--config", in.conf)...); code != 64 || !strings.Contains(errOut, "Usage: varlatchd admin tailnet repin") {
+			t.Errorf("%q: %d %q", args, code, errOut)
+		}
+	}
+	// Scripted use: --yes alone acts on the observation at that moment.
 	code, out, errOut = runAdmin(t, "tailnet", "repin", "--yes", "--config", in.conf)
 	if code != ExitOK || !strings.Contains(out, "Re-pinned the tailnet from old.ts.net to corp.ts.net; tailnet access is open.") {
 		t.Fatalf("repin --yes: %d %q %q", code, out, errOut)
@@ -232,13 +268,56 @@ func TestTailnetListener(t *testing.T) {
 	if code, _, errOut := runAdmin(t, "tailnet", "repin", "--yes", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "run again with --yes --adopt") {
 		t.Fatalf("repin --yes of a missing pin: %d %q", code, errOut)
 	}
-	if code, out, errOut := runAdmin(t, "tailnet", "repin", "--yes", "--adopt", "--config", in.conf); code != ExitOK || !strings.Contains(out, "Adopted corp.ts.net as the pinned tailnet; tailnet access is open.") {
-		t.Fatalf("repin --yes --adopt: %d %q %q", code, out, errOut)
+	// --json with --yes: the outcome and the pin after it (step 6.2b),
+	// bound to the offer shown (the CLI's way).
+	_, out, _ = runAdmin(t, "tailnet", "repin", "--json", "--config", in.conf)
+	if err := json.Unmarshal([]byte(out), &offered); err != nil || len(offered.Offer) != 32 {
+		t.Fatalf("the adoption's offer: %q %v", out, err)
+	}
+	code, out, errOut = runAdmin(t, "tailnet", "repin", "--yes", "--adopt", "--offer", offered.Offer, "--json", "--config", in.conf)
+	var adopted struct {
+		Outcome string       `json:"outcome"`
+		Message string       `json:"message"`
+		Pin     *tailnet.Pin `json:"pin"`
+	}
+	if err := json.Unmarshal([]byte(out), &adopted); code != ExitOK || err != nil || adopted.Outcome != "adopted" || adopted.Message != "Adopted corp.ts.net as the pinned tailnet; tailnet access is open." || adopted.Pin == nil || adopted.Pin.Suffix != "corp.ts.net" {
+		t.Fatalf("repin --yes --adopt --json: %d %q %q", code, out, errOut)
 	}
 	if code := do(t, peer.HTTPClient(), "POST", base+"/v1/organizations", bearer, `{"name":"Adopted","slug":"adopted"}`, nil); code != 201 {
 		t.Fatalf("creating an Organization over the tailnet after adopting: %d", code)
 	}
 	r.stop(t)
+
+	// Each re-pin is the audit event tailnet.repinned, by the host
+	// operator (no identity, no Organization), value-free.
+	conn, err := sql.Open("sqlite", "file:"+filepath.Join(in.data, config.DatabaseFile)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	rows, err := conn.Query("SELECT metadata, organization_id IS NULL, actor_identity_id IS NULL FROM audit_events WHERE event_type = 'tailnet.repinned' ORDER BY event_order")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var events []string
+	for rows.Next() {
+		var metadata string
+		var noOrg, noActor bool
+		if err := rows.Scan(&metadata, &noOrg, &noActor); err != nil {
+			t.Fatal(err)
+		}
+		if !noOrg || !noActor {
+			t.Errorf("tailnet.repinned with an Organization or an actor identity: %s", metadata)
+		}
+		events = append(events, metadata)
+	}
+	if want := []string{
+		`{"action":"repinned","fromSuffix":"old.ts.net","toSuffix":"corp.ts.net","tailnetId":"","reason":"suffix-changed","operator":true}`,
+		`{"action":"adopted","fromSuffix":null,"toSuffix":"corp.ts.net","tailnetId":"","reason":null,"operator":true}`,
+	}; !slices.Equal(events, want) {
+		t.Fatalf("tailnet.repinned events %q, want %q", events, want)
+	}
 }
 
 // refusedWhileClosed: with tailnet access closed, the tailnet listener
@@ -305,7 +384,7 @@ func TestBrowserEndpoint(t *testing.T) {
 	}
 	bearer := m[2]
 	const endpoint = "https://varlatch.corp.ts.net:8443"
-	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":"`+endpoint+`"}`)
+	waitReport(t, r, bearer, `"configured":{"tailnet":"corp.ts.net","listenerPort":8687,"browserEndpoint":"`+endpoint+`","controlUrl":"http://`)
 	waitReport(t, r, bearer, `"checks":{"listener":{"status":"pass"},"browserTls":{"status":"pass","certificateNotAfter":"`)
 	if len(ca.Requested()) == 0 || ca.Requested()[0].Domain != "varlatch.corp.ts.net" {
 		t.Fatalf("the certificate requests: %+v", ca.Requested())
@@ -392,4 +471,19 @@ func TestBrowserEndpoint(t *testing.T) {
 	if res.StatusCode != 403 || !strings.Contains(body, `"code":"TAILNET_CONTEXT_UNAVAILABLE"`) {
 		t.Fatalf("the browser endpoint with tailnet access closed: %d %s", res.StatusCode, body)
 	}
+}
+
+// repinnedEvents counts the tailnet.repinned events in in's database.
+func repinnedEvents(t *testing.T, in install) int {
+	t.Helper()
+	conn, err := sql.Open("sqlite", "file:"+filepath.Join(in.data, "varlatch.db")+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var n int
+	if err := conn.QueryRow("SELECT count(*) FROM audit_events WHERE event_type = 'tailnet.repinned'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

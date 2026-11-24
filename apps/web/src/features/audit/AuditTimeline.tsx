@@ -322,7 +322,7 @@ export function AuditTimeline({
           value={filters.text}
           onChange={(text) => set({ text })}
           placeholder="Filter events…"
-          className="min-w-56 flex-1"
+          className="min-w-0 flex-[1_1_14rem]"
           data-testid="audit-filter"
           aria-label="Filter events"
           onKeyDown={nav.onKeyDown}

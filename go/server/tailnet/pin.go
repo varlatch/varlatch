@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/varlatch/varlatch/go/server/tailnet/closed"
 )
 
 // The pin (ADR-0059 Decision 5): the tailnet varlatchd trusts, recorded at
@@ -78,17 +80,13 @@ type Observed struct {
 	Suffix     string `json:"suffix"`
 }
 
-// The ways a pin no longer holds.
+// The ways a pin no longer holds (their values: package closed, which
+// doctor reads too).
 const (
-	// PinControlURL: the node is configured for another control server.
-	PinControlURL = "control-url-changed"
-	// PinTailnet: the tailnet's StableID is another one.
-	PinTailnet = "tailnet-changed"
-	// PinSuffix: the MagicDNS suffix changed under the same tailnet: the
-	// one change a re-pin accepts.
-	PinSuffix = "suffix-changed"
-	// PinUnknown: the node does not know its tailnet yet.
-	PinUnknown = "tailnet-unknown"
+	PinControlURL = closed.PinControlURL
+	PinTailnet    = closed.PinTailnet
+	PinSuffix     = closed.PinSuffix
+	PinUnknown    = closed.PinUnknown
 )
 
 // Check is "" when the pin holds for observed, else the way it does not.

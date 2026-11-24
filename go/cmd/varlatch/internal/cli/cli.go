@@ -45,6 +45,12 @@ type Lister interface {
 	Environ() map[string]string
 }
 
+// OrderedLister is a Lister that also gives its variables' names in the
+// order the process got them (the first of names that repeat).
+type OrderedLister interface {
+	EnvironNames() []string
+}
+
 // IO is where a run reads and writes.
 type IO struct {
 	Stdin  io.Reader
@@ -91,6 +97,21 @@ func (r *Run) Environ() map[string]string {
 	return map[string]string{}
 }
 
+// parentVars is the run's environment with its names in order: the
+// process's own (OrderedLister), else sorted.
+func (r *Run) parentVars() parentVars {
+	values := r.Environ()
+	if o, ok := r.Env.(OrderedLister); ok {
+		return parentVars{names: o.EnvironNames(), values: values}
+	}
+	names := make([]string, 0, len(values))
+	for n := range values {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return parentVars{names: names, values: values}
+}
+
 // Getenv is the variable's value, "" when unset.
 func (r *Run) Getenv(key string) string {
 	v, _ := r.Env.LookupEnv(key)
@@ -105,12 +126,16 @@ type exitError struct {
 	// binary, holding nothing the person gave, so the fail-safe that masks
 	// message (which echoes what they gave) leaves it as it is.
 	usage string
-	code  int
+	// constant is printed between message and usage, outside the fail-safe
+	// as usage is: a constant of this binary too, such as a form that holds
+	// an at-sign (migrate's --to-image form), never what the person gave.
+	constant string
+	code     int
 	// silent: the command printed what it had to say (process.exitCode).
 	silent bool
 }
 
-func (e *exitError) Error() string { return e.message + e.usage }
+func (e *exitError) Error() string { return e.message + e.constant + e.usage }
 
 // Fail is the error that prints message on stderr and exits with code
 // (apps/cli/src/main.ts fail()).
@@ -199,6 +224,9 @@ func (r *Run) dispatch(hasCommand bool) error {
 		return r.println(Usage)
 	}
 	c := lookup(r.Command)
+	if run, ok := goOnlyCommands[r.Command]; c == nil && ok {
+		return run(r)
+	}
 	if c == nil {
 		shown := shownArgument(r.Command)
 		if clientctx.HasAtSign(shown) {
@@ -241,7 +269,7 @@ func (r *Run) finish(err error) int {
 	// Varlatch token reaches stderr (go/README.md, "Diagnostics never print
 	// credential values").
 	if !e.silent {
-		fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(e.message, r.inFlight...)+e.usage))
+		fmt.Fprintln(r.Stderr, jsval.NodeText(RedactDiagnostic(e.message, r.inFlight...)+e.constant+e.usage))
 	}
 	// A failure of scan is 1 (main.ts's fail()); a status scan sets itself
 	// (process.exitCode: ExitWith, silent), such as --find-files' 2, is
@@ -293,6 +321,22 @@ func (r *Run) ask(text string) error {
 // RedactValue), so ordinary output keeps its bytes.
 func RedactOutput(text string, values ...string) string {
 	return redactSpans(text, append(tokenSpans(text), valueSpans(text, values)...))
+}
+
+// redactOutputShowing is RedactOutput with one text left as it is: shown,
+// which this command prints on purpose (invite's enrollment token, in the
+// link it exists to print). Only its exact occurrences in Varlatch's token
+// format are kept; every other token, and each value in flight, is
+// redacted as RedactOutput redacts it. An empty shown keeps nothing.
+func redactOutputShowing(text, shown string, values ...string) string {
+	var spans []span
+	for _, s := range tokenSpans(text) {
+		if shown != "" && text[s.a:s.b] == shown {
+			continue
+		}
+		spans = append(spans, s)
+	}
+	return redactSpans(text, append(spans, valueSpans(text, values)...))
 }
 
 // RedactValue is a JSON value with the fail-safe applied to every string
@@ -535,6 +579,14 @@ func (r *Run) println(text string) error {
 // (RedactOutput). TestEveryWriteGoesThroughTheFailSafe fails on any other.
 func (r *Run) out(text string) error {
 	_, err := io.WriteString(r.Stdout, jsval.NodeText(RedactOutput(text, r.inFlight...)))
+	return err
+}
+
+// outShowing writes stdout through the fail-safe with one token shown
+// (redactOutputShowing): the only writer that lets a token through, for
+// `invite`'s enrollment link. A value in flight is still redacted.
+func (r *Run) outShowing(text, shown string) error {
+	_, err := io.WriteString(r.Stdout, jsval.NodeText(redactOutputShowing(text, shown, r.inFlight...)))
 	return err
 }
 

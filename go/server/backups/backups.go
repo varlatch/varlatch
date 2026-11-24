@@ -61,6 +61,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 )
@@ -156,7 +157,39 @@ func New(o Options) *Service {
 // Status is the backup status (backupStatus): the archives' records,
 // newest first, and the warnings.
 func (s *Service) Status() (backup.Status, error) {
-	return backup.ReadStatus(s.dir, s.o.Now())
+	life, err := s.lifecycle(context.Background())
+	if err != nil {
+		return backup.Status{}, err
+	}
+	return backup.ReadStatusFor(s.dir, s.o.Now(), life)
+}
+
+// lifecycle is the live database's (backup.Lifecycle): its installation
+// and schema_version's created_at. Without a store (or before the
+// installation exists), the zero one: every record counts.
+func (s *Service) lifecycle(ctx context.Context) (backup.Lifecycle, error) {
+	if s.o.Store == nil {
+		return backup.Lifecycle{}, nil
+	}
+	return ReadLifecycle(ctx, s.o.Store.Reader())
+}
+
+// ReadLifecycle reads the database's lifecycle (backup.Lifecycle): its
+// installation (none yet: no installation filter) and when the database
+// was made, which a migration's import is.
+func ReadLifecycle(ctx context.Context, db query.DBTX) (backup.Lifecycle, error) {
+	var life backup.Lifecycle
+	var created int64
+	if err := db.QueryRowContext(ctx, "SELECT created_at FROM schema_version").Scan(&created); err != nil {
+		return life, fmt.Errorf("backup: the database's schema_version: %w", err)
+	}
+	life.Since = time.UnixMicro(created).UTC()
+	switch err := db.QueryRowContext(ctx, "SELECT id FROM installation").Scan(&life.InstallationID); {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return life, fmt.Errorf("backup: the database's installation: %w", err)
+	}
+	return life, nil
 }
 
 // StatusJSON is Status as JSON, for getInstallationBackups.
@@ -409,7 +442,9 @@ func (s *Service) clean(backups string) {
 	entries, _ := os.ReadDir(backups)
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".work-") || strings.HasSuffix(name, ".partial") && strings.Contains(name, ".vltbak.") ||
+		// A killed run's work directory, a killed remote verification's
+		// download (.remote-<id>), a partial archive.
+		if strings.HasPrefix(name, ".work-") || strings.HasPrefix(name, ".remote-") || strings.HasSuffix(name, ".partial") && strings.Contains(name, ".vltbak.") ||
 			tests && strings.HasPrefix(name, bucketTestPrefix) {
 			if err := os.RemoveAll(filepath.Join(backups, name)); err != nil {
 				s.o.Log.Warn("backup: cannot remove a killed run's file", "file", name, "error", err)
@@ -548,6 +583,21 @@ func writeConfiguration(path string, cfg *config.Config) error {
 			settings["tailnet_browser_origins"] = strings.Join(t.BrowserOrigins, ",")
 		}
 	}
+	// Public HTTPS's settings, never its certificate or ACME account: both
+	// stay in this host's data directory (acme/), outside every archive,
+	// and a restored installation obtains its certificate again. The CA's
+	// root file is a path on this host, left out as the key files are.
+	if p := cfg.PublicHTTPS; p != nil {
+		settings["listen_https"] = p.Listen
+		settings["listen_http_redirect"] = "off"
+		if p.RedirectListen != "" {
+			settings["listen_http_redirect"] = p.RedirectListen
+		}
+		settings["acme_ca"] = p.CA
+		if p.Email != "" {
+			settings["acme_email"] = p.Email
+		}
+	}
 	b, err := json.Marshal(Configuration{FormatVersion: 1, Settings: settings})
 	if err != nil {
 		return err
@@ -643,8 +693,85 @@ func (s *Service) upload(ctx context.Context, id, archive string) (*backup.Deliv
 	return &backup.Delivery{Destination: cfg.BackupDestination, UploadedAt: iso(s.o.Now())}, nil
 }
 
-// retain keeps the newest backup_keep archives (by their status record's
-// creation time, else the file's), and removes the others' files.
+// ErrNoDestination refuses a remote verification with no destination.
+var ErrNoDestination = errors.New("No backup destination is configured (backup_destinations_file, backup_destination): there is no remote copy to verify")
+
+// HasDestination is whether a backup destination is configured.
+func (s *Service) HasDestination() bool {
+	return s.o.Config.BackupDestinationsFile != "" && s.o.Config.BackupDestination != ""
+}
+
+// VerifyRemote downloads the archive id's uploaded copy from the
+// configured destination, opens it and checks it as the run checked the
+// local one (integrity, this release restores it, the Root KEK opens its
+// canaries), and records the result as its delivery's remote
+// verification. The download is removed after. An archive with no
+// recorded upload is refused.
+func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verification, error) {
+	if !s.HasDestination() {
+		return backup.Verification{}, ErrNoDestination
+	}
+	// Never beside a run, whose clean removes a .remote-<id> left by a
+	// killed verification.
+	if !s.running.TryLock() {
+		return backup.Verification{}, ErrRunning
+	}
+	defer s.running.Unlock()
+	st, err := backup.ReadStatus(s.dir, s.o.Now())
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	var record *backup.StatusRecord
+	for i := range st.Archives {
+		if st.Archives[i].ArchiveID == id {
+			record = &st.Archives[i]
+		}
+	}
+	if record == nil || record.Delivery == nil {
+		return backup.Verification{}, fmt.Errorf("the archive %s has no recorded upload: there is no remote copy to verify", id)
+	}
+	bek, err := s.bek()
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	defer bek.Clear()
+	client, d, err := s.client()
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	key, err := backup.ObjectKey(d, id)
+	if err != nil {
+		return backup.Verification{}, err
+	}
+	work := filepath.Join(s.dir, Dir, ".remote-"+id)
+	_ = os.RemoveAll(work) // a killed verification's
+	if err := os.Mkdir(work, 0o700); err != nil {
+		return backup.Verification{}, err
+	}
+	defer os.RemoveAll(work)
+	downloaded := filepath.Join(work, id+".vltbak")
+	if _, err := client.Download(ctx, key, downloaded); err != nil {
+		return backup.Verification{}, err
+	}
+	v, err := s.verify(ctx, downloaded, bek, work, &backup.KeyCache{})
+	if err != nil {
+		return v, err
+	}
+	record.Delivery.RemoteVerification = &v
+	if err := backup.SaveStatus(s.dir, *record); err != nil {
+		return v, fmt.Errorf("the archive %s's remote copy was verified, but the result could not be recorded: %w", id, err)
+	}
+	return v, nil
+}
+
+// retain keeps the newest backup_keep of Go's own archives (by their status
+// record's creation time) and removes the others' files. It counts and
+// removes only an archive whose status record names a Go release: never a
+// TypeScript-format archive (go-step7 decision 18: restorable through the
+// converter, its retention the bucket's lifecycle rule or the operator's),
+// and never an archive without a readable record: one Go did not make, or
+// did not finish publishing (a run renames its archive into place before it
+// writes the record, and a failed write leaves none), is kept.
 func (s *Service) retain(backups string) []string {
 	type local struct {
 		id string
@@ -657,19 +784,17 @@ func (s *Service) retain(backups string) []string {
 		if !ok || !e.Type().IsRegular() || len(id) != 36 {
 			continue
 		}
-		at := time.Time{}
-		if info, err := e.Info(); err == nil {
-			at = info.ModTime()
+		raw, err := os.ReadFile(filepath.Join(backups, id+".json"))
+		if err != nil {
+			continue
 		}
-		if raw, err := os.ReadFile(filepath.Join(backups, id+".json")); err == nil {
-			var r struct {
-				CreatedAt string `json:"createdAt"`
-			}
-			if json.Unmarshal(raw, &r) == nil {
-				if t, err := time.Parse(time.RFC3339Nano, r.CreatedAt); err == nil {
-					at = t
-				}
-			}
+		var r backup.StatusRecord
+		if json.Unmarshal(raw, &r) != nil || !r.Go() {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, r.CreatedAt)
+		if err != nil {
+			continue
 		}
 		archives = append(archives, local{id, at})
 	}
@@ -745,14 +870,24 @@ func (s *Service) Loop(ctx context.Context) {
 func (s *Service) tick(ctx context.Context) time.Duration {
 	interval := s.o.Config.BackupInterval
 	now := s.o.Now()
-	if st, err := s.Status(); err != nil {
+	// Only this database's archives count (backup.Lifecycle): an earlier
+	// one's, kept through a migration rolled back and made again, says
+	// nothing of whether this one's backups are recent.
+	life, err := s.lifecycle(ctx)
+	if err != nil {
+		s.o.Log.Warn("backup: the database's lifecycle cannot be read; taking a backup", "error", err)
+	} else if st, err := backup.ReadStatusFor(s.dir, now, life); err != nil {
 		s.o.Log.Warn("backup: the status records cannot be read; taking a backup", "error", err)
 	} else {
 		// The newest archive not dated in the future decides. One from the
 		// future means the clock moved back: its age says nothing, so with
 		// no other recent archive a backup is taken now, not once the clock
 		// has caught up with it.
+		life = life.At(now)
 		for _, a := range st.Archives {
+			if !life.Holds(a) {
+				continue
+			}
 			created, err := time.Parse(time.RFC3339Nano, a.CreatedAt)
 			if err != nil {
 				continue

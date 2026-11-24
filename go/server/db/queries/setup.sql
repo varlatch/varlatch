@@ -49,3 +49,9 @@ UPDATE identities SET disabled = 0 WHERE id = ?;
 -- name: OpenOrganizationDeletion :one
 SELECT id, run_after FROM organization_deletions
 WHERE organization_id = ? AND cancelled_at IS NULL AND completed_at IS NULL;
+
+-- name: RevokeUnusedSetupLinks :execrows
+-- setup's reissue (admin bootstrap|recover --revoke-unused): the
+-- bootstrap and recovery links issued before and never used.
+UPDATE setup_grants SET revoked_at = @now
+WHERE kind IN ('bootstrap', 'recover') AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > @now;

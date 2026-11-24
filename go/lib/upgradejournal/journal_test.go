@@ -5,6 +5,7 @@ package upgradejournal
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,8 @@ func TestJournal(t *testing.T) {
 	if err := Write(dir, j); err != nil {
 		t.Fatal(err)
 	}
-	if info, err := os.Stat(filepath.Join(dir, File)); err != nil || info.Mode().Perm() != 0o644 {
+	// Windows has no Unix permission bits: a file there reads back 0666.
+	if info, err := os.Stat(filepath.Join(dir, File)); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o644) {
 		t.Fatalf("mode: %v, %v", info, err)
 	}
 	back, err := Read(dir)
@@ -68,5 +70,21 @@ func TestJournalRefuses(t *testing.T) {
 	}
 	if err := Write(dir, &Journal{ID: "x", From: "0.50.0", To: "0.50.1", State: "paused"}); err == nil {
 		t.Fatal("a journal in no state was written")
+	}
+}
+
+// A journal 0.50.0-rc.2 wrote: an upgrade that declared nothing and dated
+// no snapshot.
+func TestJournalOfRC2(t *testing.T) {
+	dir := t.TempDir()
+	body := `{"format":1,"id":"0011223344556677","from":"0.50.0-rc.2","to":"0.50.0-rc.3","fromSchema":4,"toSchema":4,"rollbackSafe":true,` +
+		`"state":"done","step":"checked","startedAt":"2026-11-24T10:00:00Z","updatedAt":"2026-11-24T10:01:00Z","binDir":"/usr/local/bin",` +
+		`"releases":"/usr/local/lib/varlatch/releases","dataDir":"/var/lib/varlatch","work":"/var/lib/varlatch/upgrades/0011223344556677","snapshot":"/s.vltbak"}`
+	if err := os.WriteFile(filepath.Join(dir, File), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	j, err := Read(dir)
+	if err != nil || j.Kind != Upgrade || j.DeclaredRollbackSafe || j.SnapshotAt != "" || j.Pending() || !j.Reached(Checked) {
+		t.Fatalf("%+v, %v", j, err)
 	}
 }

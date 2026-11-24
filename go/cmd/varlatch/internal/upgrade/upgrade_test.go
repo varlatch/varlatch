@@ -27,15 +27,37 @@ import (
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
-// Two prereleases of the Go line, built from this checkout: 0.50.0-rc.1,
-// and 0.50.0-rc.2 with G6's fixture schema step (schema 2, compatible from
-// 1: rollback-safe). "wrong" is rc.2's build saying rc.3 (a release whose
+// Two prereleases of the Go line, built from this checkout: 0.50.0-rc.3, on
+// this checkout's schema (fromSchema), and 0.50.0-rc.4 with G6's fixture
+// schema step (toSchema, compatible from 1: rollback-safe). "wrong" is rc.4's build saying rc.5 (a release whose
 // varlatchd is not the one its manifest names: its health checks fail);
 // "unsafe" the same step declared not rollback-safe.
 const (
-	fromVersion = "0.50.0-rc.1"
-	toVersion   = "0.50.0-rc.2"
+	fromVersion = "0.50.0-rc.3"
+	toVersion   = "0.50.0-rc.4"
 )
+
+// fromSchema is this checkout's schema version, as go/release/release.json
+// declares it (server/db/releasecheck holds it to server/db's); toSchema
+// is G6's fixture step's, one more.
+var (
+	fromSchema = checkoutSchema()
+	toSchema   = fromSchema + 1
+)
+
+func checkoutSchema() int64 {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "release", "release.json"))
+	if err != nil {
+		panic(err)
+	}
+	var d struct {
+		SchemaVersion int64 `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(b, &d); err != nil || d.SchemaVersion < 1 {
+		panic(fmt.Sprintf("go/release/release.json: schemaVersion %d, %v", d.SchemaVersion, err))
+	}
+	return d.SchemaVersion
+}
 
 var (
 	buildsOnce sync.Once
@@ -57,7 +79,7 @@ func build(t *testing.T, name string) []byte {
 		}
 		defer os.RemoveAll(dir)
 		for _, b := range []struct{ name, version, tags string }{
-			{"from", fromVersion, ""}, {"to", toVersion, "g6fixture"}, {"wrong", "0.50.0-rc.3", "g6fixture"}, {"unsafe", toVersion, "g6fixture,g6unsafe"},
+			{"from", fromVersion, ""}, {"to", toVersion, "g6fixture"}, {"wrong", "0.50.0-rc.5", "g6fixture"}, {"unsafe", toVersion, "g6fixture,g6unsafe"},
 		} {
 			out := filepath.Join(dir, b.name)
 			cmd := exec.Command("go", "build", "-tags", b.tags, "-trimpath",
@@ -99,7 +121,11 @@ func key(t *testing.T, path string) {
 	}
 }
 
-func newHost(t *testing.T) *host {
+func newHost(t *testing.T) *host { t.Helper(); return newHostOf(t, -1) }
+
+// newHostOf is newHost with varlatchd, its data directory and its keys
+// uid's, as the unit runs it as the varlatch user; -1 is the test's own.
+func newHostOf(t *testing.T, uid int) *host {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("a Go installation's host is Linux")
@@ -125,12 +151,30 @@ func newHost(t *testing.T) *host {
 	if err := os.WriteFile(filepath.Join(h.bin, "varlatch"), h.installedCLI, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h.svc = &fakeService{bin: h.bin, conf: h.conf}
+	h.svc = &fakeService{bin: h.bin, conf: h.conf, uid: uid}
+	if uid >= 0 {
+		for _, p := range []string{h.data, filepath.Join(dir, "keys"), filepath.Join(dir, "keys", "root-kek"), filepath.Join(dir, "keys", "backup-key")} {
+			if err := os.Chown(p, uid, uid); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for p := h.bin; p != dir; p = filepath.Dir(p) {
+			if err := os.Chmod(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// dir's parent is the test's own temporary directory, private.
+		for _, p := range []string{filepath.Dir(h.conf), filepath.Dir(filepath.Dir(h.conf)), dir, filepath.Dir(dir)} {
+			if err := os.Chmod(p, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	t.Cleanup(func() { _ = h.svc.Stop(context.Background()) })
 	if err := h.svc.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	h.upgrader(nil).mustServe(t, fromVersion, 1)
+	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
 	return h
 }
 
@@ -138,9 +182,12 @@ func newHost(t *testing.T) *host {
 // place when it starts.
 type fakeService struct {
 	bin, conf string
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	done      chan struct{}
+	uid       int
+	// kill: Stop kills varlatchd, as systemd does one that does not stop.
+	kill bool
+	mu   sync.Mutex
+	cmd  *exec.Cmd
+	done chan struct{}
 }
 
 func (f *fakeService) Start(context.Context) error {
@@ -150,6 +197,9 @@ func (f *fakeService) Start(context.Context) error {
 		return nil // as systemctl start: nothing to do for a running unit
 	}
 	cmd := exec.Command(filepath.Join(f.bin, "varlatchd"), "serve", "--config", f.conf)
+	if f.uid >= 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(f.uid), Gid: uint32(f.uid)}}
+	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Start(); err != nil {
@@ -165,6 +215,12 @@ func (f *fakeService) Stop(context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.cmd == nil {
+		return nil
+	}
+	if f.kill {
+		_ = f.cmd.Process.Kill()
+		<-f.done
+		f.cmd = nil
 		return nil
 	}
 	_ = f.cmd.Process.Signal(syscall.SIGTERM)
@@ -218,12 +274,17 @@ func (h *host) release(t *testing.T, varlatchd string, d release.Declaration) Re
 	return Release{Version: toVersion, Varlatch: []byte("#!/bin/sh\necho varlatch " + toVersion + "\n"), Varlatchd: build(t, varlatchd), Manifest: m}
 }
 
-var safe = release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: fromVersion, SchemaVersion: 1}}
+// reversible is every test release's declaration that a reverse migration
+// returns its data to the last TypeScript release, which lib/release
+// requires of a release (reversibleTo, go-step7 decision 17).
+var reversible = release.LastTypeScriptRelease
+
+var safe = release.Declaration{SchemaVersion: toSchema, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: fromVersion, SchemaVersion: fromSchema}, ReversibleTo: &reversible}
 
 func (h *host) inspect(t *testing.T) Installed {
 	t.Helper()
 	inst, err := h.upgrader(nil).Inspect(context.Background())
-	if err != nil || inst.Version != fromVersion || inst.Schema != 1 || inst.DataDir != h.data {
+	if err != nil || inst.Version != fromVersion || inst.Schema != fromSchema || inst.DataDir != h.data {
 		t.Fatalf("inspect: %+v, %v", inst, err)
 	}
 	return inst
@@ -237,11 +298,11 @@ func TestUpgradeBetweenTwoPrereleases(t *testing.T) {
 	inst := h.inspect(t)
 	rel := h.release(t, "to", safe)
 	if !RollbackSafe(rel.Manifest, inst) || !DeclaredRollbackSafe(rel.Manifest, inst) {
-		t.Fatal("a manifest declared rollback-safe for rc.1 and compatible from schema 1 is rollback-safe for it")
+		t.Fatal("a manifest declared rollback-safe for rc.3 and compatible from schema 1 is rollback-safe for it")
 	}
-	jump := h.release(t, "to", release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: "0.50.0-rc.0", SchemaVersion: 1}})
+	jump := h.release(t, "to", release.Declaration{SchemaVersion: toSchema, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: "0.50.0-rc.0", SchemaVersion: fromSchema}, ReversibleTo: &reversible})
 	if RollbackSafe(jump.Manifest, inst) || DeclaredRollbackSafe(jump.Manifest, inst) {
-		t.Fatal("a manifest checked against another release declares nothing about rc.1")
+		t.Fatal("a manifest checked against another release declares nothing about rc.3")
 	}
 	var log bytes.Buffer
 	u := h.upgrader(nil)
@@ -250,11 +311,11 @@ func TestUpgradeBetweenTwoPrereleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, log.String())
 	}
-	if j.State != journal.Done || j.Step != journal.Checked || !j.RollbackSafe || !j.DeclaredRollbackSafe || j.From != fromVersion || j.To != toVersion || j.ToSchema != 2 {
+	if j.State != journal.Done || j.Step != journal.Checked || !j.RollbackSafe || !j.DeclaredRollbackSafe || j.From != fromVersion || j.To != toVersion || j.ToSchema != toSchema {
 		t.Fatalf("journal: %+v", j)
 	}
-	u.mustServe(t, toVersion, 2)
-	if got := h.databaseSchema(); got != 2 {
+	u.mustServe(t, toVersion, toSchema)
+	if got := h.databaseSchema(); got != toSchema {
 		t.Fatalf("the database's schema: %d", got)
 	}
 	if b, _ := os.ReadFile(filepath.Join(h.bin, "varlatch")); !bytes.Contains(b, []byte(toVersion)) {
@@ -272,7 +333,7 @@ func TestUpgradeBetweenTwoPrereleases(t *testing.T) {
 			t.Fatalf("%s was left: %v", gone, err)
 		}
 	}
-	for _, want := range []string{"Verified " + toVersion, "pre-upgrade snapshot", "Stopped varlatchd " + fromVersion, "schema version 2", "serves, after its health checks"} {
+	for _, want := range []string{"Verified " + toVersion, "pre-upgrade snapshot", "Stopped varlatchd " + fromVersion, fmt.Sprintf("schema version %d", toSchema), "serves, after its health checks"} {
 		if !strings.Contains(log.String(), want) {
 			t.Fatalf("the log lacks %q:\n%s", want, log.String())
 		}
@@ -322,8 +383,8 @@ func previousServes(t *testing.T, h *host, j *journal.Journal) {
 	if j.State != journal.Undone {
 		t.Fatalf("not undone: %+v", j)
 	}
-	h.upgrader(nil).mustServe(t, fromVersion, 1)
-	if got := h.databaseSchema(); got != 1 {
+	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
+	if got := h.databaseSchema(); got != fromSchema {
 		t.Fatalf("the database's schema after the undo: %d", got)
 	}
 	if b, _ := os.ReadFile(filepath.Join(h.bin, "varlatch")); !bytes.Equal(b, h.installedCLI) {
@@ -359,7 +420,7 @@ func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
 				if j.State != journal.Done {
 					t.Fatalf("after its checks, finished: %+v", j)
 				}
-				h.upgrader(nil).mustServe(t, toVersion, 2)
+				h.upgrader(nil).mustServe(t, toVersion, toSchema)
 				return
 			}
 			previousServes(t, h, j)
@@ -428,7 +489,7 @@ func TestAFailedHealthCheckIsUndone(t *testing.T) {
 	u := h.upgrader(nil)
 	u.HealthTimeout = 3 * time.Second
 	j, err := u.Run(context.Background(), inst, h.release(t, "wrong", safe))
-	if err == nil || !strings.Contains(err.Error(), "it runs 0.50.0-rc.3, not "+toVersion) {
+	if err == nil || !strings.Contains(err.Error(), "it runs 0.50.0-rc.5, not "+toVersion) {
 		t.Fatalf("%v", err)
 	}
 	previousServes(t, h, j)
@@ -444,16 +505,16 @@ func TestAFailedHealthCheckIsUndone(t *testing.T) {
 func TestNotRollbackSafe(t *testing.T) {
 	h := newHost(t)
 	inst := h.inspect(t)
-	unsafe := release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, RollbackSafe: false, Previous: &release.Previous{Version: fromVersion, SchemaVersion: 1}}
+	unsafe := release.Declaration{SchemaVersion: toSchema, CompatibleFrom: toSchema, RollbackSafe: false, Previous: &release.Previous{Version: fromVersion, SchemaVersion: fromSchema}, ReversibleTo: &reversible}
 	rel := h.release(t, "unsafe", unsafe)
 	if RollbackSafe(rel.Manifest, inst) {
-		t.Fatal("compatible from 2 is not rollback-safe for schema 1")
+		t.Fatalf("compatible from %d is not rollback-safe for schema %d", toSchema, fromSchema)
 	}
 	j, err := h.upgrader(nil).Run(context.Background(), inst, rel)
 	if err != nil || j.State != journal.Done || j.RollbackSafe {
 		t.Fatalf("%+v, %v", j, err)
 	}
-	h.upgrader(nil).mustServe(t, toVersion, 2)
+	h.upgrader(nil).mustServe(t, toVersion, toSchema)
 }
 
 // Fetch takes a release's server assets from its signed SHA256SUMS, fail
@@ -473,7 +534,7 @@ func TestFetch(t *testing.T) {
 	files := map[string][]byte{cli: []byte("cli"), server: []byte("server"), name: manifest}
 	srv.Publish(toVersion, &fakerelease.Release{Files: files})
 	rel, err := Fetch(context.Background(), srv.Source(), toVersion, "amd64")
-	if err != nil || string(rel.Varlatchd) != "server" || string(rel.Varlatch) != "cli" || rel.Manifest.SchemaVersion != 2 {
+	if err != nil || string(rel.Varlatchd) != "server" || string(rel.Varlatch) != "cli" || rel.Manifest.SchemaVersion != toSchema {
 		t.Fatalf("%+v, %v", rel, err)
 	}
 	for _, c := range []struct {
@@ -485,7 +546,7 @@ func TestFetch(t *testing.T) {
 		{"a wrong identity", &fakerelease.Release{Files: files, Identity: release.Identity("0.50.0-rc.9")}, "does NOT verify"},
 		{"no signature", &fakerelease.Release{Files: files, NoSignature: true}, "has no signature"},
 		{"a changed download", &fakerelease.Release{Files: files, Served: map[string][]byte{server: []byte("other")}}, "does not match SHA256SUMS"},
-		{"another release's manifest", &fakerelease.Release{Files: map[string][]byte{cli: []byte("cli"), server: []byte("server"), name: mustManifest(t, "0.50.0-rc.1")}}, "is for 0.50.0-rc.1"},
+		{"another release's manifest", &fakerelease.Release{Files: map[string][]byte{cli: []byte("cli"), server: []byte("server"), name: mustManifest(t, "0.50.0-rc.3")}}, "is for 0.50.0-rc.3"},
 	} {
 		srv.Publish(toVersion, c.r)
 		if _, err := Fetch(context.Background(), srv.Source(), toVersion, "amd64"); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "nothing was changed") {
@@ -496,7 +557,7 @@ func TestFetch(t *testing.T) {
 
 func mustManifest(t *testing.T, version string) []byte {
 	t.Helper()
-	m, err := release.NewManifest(version, release.Declaration{SchemaVersion: 1, CompatibleFrom: 1})
+	m, err := release.NewManifest(version, release.Declaration{SchemaVersion: 1, CompatibleFrom: 1, ReversibleTo: &reversible})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +613,7 @@ func TestNotEnoughSpaceChangesNothing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.upgrader(nil).Releases(), toVersion)); !os.IsNotExist(err) {
 		t.Fatalf("the release was staged: %v", err)
 	}
-	h.upgrader(nil).mustServe(t, fromVersion, 1)
+	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
 
 	// Two paths on one filesystem are counted once, against its free space.
 	FreeSpace = func(path string) (uint64, uint64, error) { return 1 << 40, 7, nil }
@@ -586,5 +647,5 @@ func TestALinkedUpgradesDirectoryIsRefused(t *testing.T) {
 	if entries, _ := os.ReadDir(elsewhere); len(entries) != 1 || entries[0].Name() != "stale" {
 		t.Fatalf("written or removed through the link: %v", entries)
 	}
-	h.upgrader(nil).mustServe(t, fromVersion, 1)
+	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
 }

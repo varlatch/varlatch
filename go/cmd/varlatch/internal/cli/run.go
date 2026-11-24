@@ -22,9 +22,12 @@ import (
 // VARLATCH_RUN_CONTEXT; --omit leaves named items out; in assisted mode the
 // output is masked by internal/matcher and a Secret too short to mask stops
 // the run (78) unless the human allowed it (--allow-unmasked, outside
-// assisted mode). --strict (5.4f), --redact outside assisted mode (5.4c),
-// --agent-safe and a run inside an agent-safe run (5.5b) say they are not
-// built yet.
+// assisted mode); --redact (5.4c, redact.ts, ADR-0038 Decision 10) masks
+// the delivered Secrets outside assisted mode too, and refuses when stdout
+// or stderr is a terminal or the run is agent-safe; --strict (5.4f,
+// strictrun.go) validates the whole environment against the Contract
+// first; --agent-safe (with or without --strict, agentrun.go) and a run
+// inside an agent-safe run (nestedrun.go) are slice 5.5b's.
 
 const runUsage = "Usage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]... " +
 	"[--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]"
@@ -40,10 +43,6 @@ var runOptions = OptionSpec{
 
 // strictExit is STRICT_EXIT (EX_CONFIG).
 const strictExit = 78
-
-func runNotBuilt(what, slice string) error {
-	return UsageError("varlatch run: " + what + " is not in this build of the Go CLI yet (slice " + slice + "); use the TypeScript CLI for it until then")
-}
 
 // flagValues is main.ts's flags(): every value given after name.
 func flagValues(args []string, name string) []string {
@@ -184,8 +183,8 @@ func runCommand(r *Run) error {
 	if err != nil {
 		return err
 	}
-	if clientctx.AgentRunOf(r.Env) != "" {
-		return runNotBuilt("a run inside an agent-safe run", "5.5b")
+	if agentRun := clientctx.AgentRunOf(r.Env); agentRun != "" {
+		return r.nestedRun(agentRun, pre, command, commandArgs, omit)
 	}
 	agentSafe, noRedact, redact := hasArg(pre, "--agent-safe"), hasArg(pre, "--no-redact"), hasArg(pre, "--redact")
 	allowUnmasked, _ := allowUnmaskedNames(pre)
@@ -234,14 +233,13 @@ func runCommand(r *Run) error {
 	}
 	humanOverride := !r.Assisted.On && !agentSafe && len(allowUnmasked) > 0
 	assistedRedaction := (r.Assisted.On && !agentSafe) || humanOverride
-	if redact && !r.Assisted.On && !agentSafe {
-		return runNotBuilt("--redact outside assisted mode", "5.4c")
-	}
-	if hasArg(pre, "--strict") {
-		return runNotBuilt("--strict", "5.4f")
-	}
-	if agentSafe {
-		return runNotBuilt("--agent-safe", "5.5b")
+	// Output redaction (ADR-0038 Decision 10): refused before anything is
+	// fetched. Assisted mode gives the command pipes, so a terminal does not
+	// matter there.
+	if redact {
+		if refusal := redactRefusal(agentSafe, !r.Assisted.On && isTerminal(r.Stdout), !r.Assisted.On && isTerminal(r.Stderr)); refusal != "" {
+			return UsageError("varlatch: " + refusal + ". Nothing was started.")
+		}
 	}
 	if humanOverride {
 		r.eprintln("varlatch: showing " + strings.Join(allowUnmasked, ", ") + " unmasked in this run only, if too short to mask; every other known Secret stays masked.")
@@ -251,9 +249,27 @@ func runCommand(r *Run) error {
 		return contextError(err)
 	}
 	api := r.client(ctx)
+	if hasArg(pre, "--strict") && agentSafe {
+		opts, err := agentRunFlags(pre)
+		if err != nil {
+			return err
+		}
+		return agentSafeFailure(r.runAgentSafeStrict(ctx, api, opts, flagValues(pre, "--allow-inherited"), command, commandArgs))
+	}
+	if agentSafe {
+		// ADR-0022: Placeholders and a local Broker; the Agent gets no bearer.
+		opts, err := agentRunFlags(pre)
+		if err != nil {
+			return err
+		}
+		return agentSafeFailure(r.runAgentSafe(ctx, api, opts, command, commandArgs))
+	}
 	c, err := api.get()
 	if err != nil {
 		return err
+	}
+	if hasArg(pre, "--strict") {
+		return r.strictRun(ctx, c, pre, command, commandArgs, omit, allowUnmasked, assistedRedaction, redact)
 	}
 	return r.defaultRun(ctx, c, cwd, pre, command, commandArgs, omit, allowUnmasked, assistedRedaction, redact)
 }
@@ -359,7 +375,7 @@ func (r *Run) defaultRun(ctx *clientctx.Context, c *apiclient.Client, cwd string
 	if len(withheld) > 0 {
 		r.eprintln("varlatch: " + itoa(len(withheld)) + " value(s) withheld by policy: " + Printable(strings.Join(withheld, ", ")))
 	}
-	parent := r.Environ()
+	parent := r.parentVars()
 	env := buildEnv(r.parentEnv(), effective, omitted)
 	if got.encode != nil {
 		encoded, err := got.encode(effective, parent, omitted)
@@ -397,7 +413,11 @@ func (r *Run) defaultRun(ctx *clientctx.Context, c *apiclient.Client, cwd string
 	if notice != "" {
 		r.eprintln(notice)
 	}
-	code, err := r.runChild(command, commandArgs, env.Lines(), nil)
+	var redaction *matcher.OutputRedaction
+	if redact {
+		redaction = matcher.NewOutputRedaction(deliveredSecrets(effective, env), matcher.ModeRedact)
+	}
+	code, err := r.runChild(command, commandArgs, env.Lines(), redaction)
 	if err != nil {
 		return err
 	}
@@ -488,6 +508,31 @@ func buildEnv(base *orderedEnv, effective any, omitted map[string]bool) *ordered
 		}
 	}
 	return base
+}
+
+// redactRefusal is redact.ts's redactRefusal: why --redact refuses to
+// start, or "".
+func redactRefusal(agentSafe, stdoutIsTTY, stderrIsTTY bool) string {
+	if agentSafe {
+		return "--redact does not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets, " +
+			"so no Secret is delivered to it to mask, and an agent-safe run never fetches Secrets to build a filter"
+	}
+	var terminals []string
+	if stdoutIsTTY {
+		terminals = append(terminals, "stdout")
+	}
+	if stderrIsTTY {
+		terminals = append(terminals, "stderr")
+	}
+	if len(terminals) == 0 {
+		return ""
+	}
+	verb := "is a terminal"
+	if len(terminals) == 2 {
+		verb = "are terminals"
+	}
+	return "--redact works only when stdout and stderr are pipes or files, and " + strings.Join(terminals, " and ") + " " + verb +
+		". Redirect both, for example: varlatch run --redact -- <command> 2>&1 | tee run.log"
 }
 
 // deliveredSecrets is redact.ts's deliveredSecrets: the sensitive values

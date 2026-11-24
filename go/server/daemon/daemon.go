@@ -8,6 +8,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/x509"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -23,9 +24,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sigstore/sigstore-go/pkg/root"
+
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auditexport"
@@ -42,8 +47,10 @@ import (
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/orgdeletion"
 	"github.com/varlatch/varlatch/go/server/outbound"
+	"github.com/varlatch/varlatch/go/server/publictls"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/syncs"
 	"github.com/varlatch/varlatch/go/server/tailnet"
 	"github.com/varlatch/varlatch/go/server/values"
@@ -135,6 +142,12 @@ type hooks struct {
 	// Let's Encrypt).
 	tailnetControl string
 	tailnetCerts   tailnet.CertSource
+	// publicTLS tunes public HTTPS's certificate manager (tests: Pebble's
+	// root for its API, a short check interval and backoff), and
+	// publicReady receives the HTTPS and plain HTTP listeners' addresses
+	// (nil when that listener is off).
+	publicTLS   func(*publictls.Options)
+	publicReady func(https, http net.Addr)
 }
 
 // productionStorage is the storage engine's options for serving: the
@@ -188,6 +201,11 @@ func serve(opts Options, h *hooks) int {
 		}
 		return fail(ExitFailure, "cannot read the configuration file", "file", opts.ConfigPath, "error", err)
 	}
+	// Mid-migration, the old installation may still reopen: the new one
+	// does not serve until `varlatch migrate` opens it (go-step7 decision 14).
+	if err := migrationGate(cfg.DataDir); err != nil {
+		return fail(ExitConfig, "varlatchd does not start: "+err.Error())
+	}
 	material, err := os.ReadFile(cfg.RootKEKFile)
 	if err != nil {
 		return fail(ExitFailure, "cannot read the Root KEK file", "file", cfg.RootKEKFile, "error", err)
@@ -196,6 +214,21 @@ func serve(opts Options, h *hooks) int {
 	clear(material)
 	if err != nil {
 		return fail(ExitConfig, "the Root KEK file does not hold a Root KEK", "file", cfg.RootKEKFile, "error", err)
+	}
+	// No key in the environment (lib/keyenv): checked before anything is
+	// opened, against the Root KEK and, when one is configured, the BEK.
+	keys := []keyenv.Key{{What: keyenv.RootKEK, Bytes: rootKEK}}
+	if cfg.BackupKeyFile != "" {
+		if raw, err := os.ReadFile(cfg.BackupKeyFile); err == nil {
+			if bek, err := backup.ParseKey(string(raw)); err == nil {
+				keys = append(keys, keyenv.Key{What: keyenv.BEK, Bytes: bek})
+				defer clear(bek)
+			}
+			clear(raw)
+		}
+	}
+	if why := keyenv.Refusal(os.Environ(), keys...); why != "" {
+		return fail(ExitConfig, why)
 	}
 	if st, err := os.Stat(cfg.DataDir); err != nil || !st.IsDir() {
 		return fail(ExitFailure, "the data directory is not there", "dir", cfg.DataDir, "error", err)
@@ -302,7 +335,39 @@ func serve(opts Options, h *hooks) int {
 	} else if g != nil {
 		log.Warn("installation maintenance is active; varlatchd answers 503 MAINTENANCE until it ends", "kind", g.Kind, "lease", g.ID)
 	}
-	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups,
+	// Public HTTPS (step 6's decision 4), when listen_https is set: the
+	// certificate manager first, so the listeners report can show it.
+	var public *publictls.Manager
+	if p := cfg.PublicHTTPS; p != nil {
+		popts := publictls.Options{
+			Host: p.Host, CA: p.CA, Email: p.Email, DataDir: cfg.DataDir,
+			TLSPort: publictls.PortOf(p.Listen), HTTPPort: publictls.PortOf(p.RedirectListen), Log: log,
+			// The issuance count, in the database: it survives a backup and
+			// a restore (step 6 decision 16).
+			Issuances: publictls.StoreIssuances{DB: store}, IssuanceLimit: publictls.LimitFor(p.CA),
+		}
+		popts.ListenHost, _, _ = net.SplitHostPort(p.Listen)
+		if p.CARootFile != "" {
+			pem, err := os.ReadFile(p.CARootFile)
+			if err != nil {
+				return fail(ExitFailure, "cannot read acme_ca_root", "file", p.CARootFile, "error", err)
+			}
+			roots := x509.NewCertPool()
+			if !roots.AppendCertsFromPEM(pem) {
+				return fail(ExitConfig, "acme_ca_root holds no PEM certificate", "file", p.CARootFile)
+			}
+			popts.CARoots = roots
+		}
+		if h.publicTLS != nil {
+			h.publicTLS(&popts)
+		}
+		public, err = publictls.New(popts)
+		if err != nil {
+			return fail(ExitFailure, "public HTTPS", "error", err)
+		}
+		defer public.Close()
+	}
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public,
 		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready}
 	env.backups = newBackups(env)
 	// The tailnet listener (step 4.13b), when tailnet = on: its node starts
@@ -312,13 +377,18 @@ func serve(opts Options, h *hooks) int {
 	if cfg.Tailnet != nil {
 		var err error
 		controlURL := cfg.Tailnet.ControlURL
-		if h.tailnetControl != "" {
+		switch {
+		case h.tailnetControl != "":
 			controlURL = h.tailnetControl
+		case testTailnetControl != "":
+			// A crashpoint build's G5 gate only (tailnethook_crashpoint.go).
+			controlURL = testTailnetControl
 		}
 		if tn, err = startTailnet(cfg, controlURL, h.tailnetCerts, log); err != nil {
 			return fail(ExitFailure, "cannot start the tailnet node", "error", err)
 		}
 		env.tailnet = tn.manager
+		env.node = tn
 		// A start that fails after this point leaves the tailnet too.
 		defer tn.stop(context.Background())
 	}
@@ -473,6 +543,11 @@ func serve(opts Options, h *hooks) int {
 		apps.RunSweepLoop(ctx, githubapps.SweepInterval, admission.Enter)
 	}()
 	defer func() { cancel(); <-sweepDone }()
+	// A passkey's relying party is the public URL's host, and browsers
+	// refuse an IP address as one: the dashboard cannot sign in there.
+	if u := cfg.PublicURL; u != nil && net.ParseIP(u.Hostname()) != nil {
+		log.Warn("public_url names an IP address, which browsers refuse as a passkey's relying party: the dashboard cannot sign in at it. Use a host name, such as http://localhost:8686 on this machine", "publicUrl", u.String())
+	}
 	hopts := httpserver.Options{
 		Outbound:        policy,
 		Version:         buildinfo.Version,
@@ -493,6 +568,35 @@ func serve(opts Options, h *hooks) int {
 		Maintenance:     admission,
 		Backups:         env.backups,
 		Log:             log,
+	}
+	if public != nil {
+		hopts.PublicListener = func() any { return public.Report() }
+	}
+	if cfg.ServeCLI {
+		// serve_cli (ADR-0058 Decision 3; go/server/servecli): this
+		// release's CLI and installers, from github.com through the
+		// outbound policy, verified before anything is cached or served.
+		o := servecli.Options{
+			Version:  buildinfo.Version,
+			Origin:   cfg.PublicURL.Scheme + "://" + cfg.PublicURL.Host,
+			CacheDir: filepath.Join(cfg.DataDir, "cli"),
+			Source: servecli.GitHub(release.Downloader{
+				Hosts: release.GitHubHosts, Transport: policy.Transport(outbound.GitHub), UserAgent: "varlatchd/" + buildinfo.Version,
+			}, buildinfo.Version),
+			Trusted: func(ctx context.Context) (root.TrustedMaterial, error) {
+				return release.LiveTrustedRootWith(ctx, filepath.Join(cfg.DataDir, "sigstore"), policy.Client(outbound.GitHub))
+			},
+		}
+		if conformanceCLIRelease != nil {
+			conformanceCLIRelease(&o, log)
+		}
+		served := servecli.Start(ctx, o, log)
+		hopts.CLI = func() http.Handler {
+			if r := served.Current(); r != nil {
+				return r
+			}
+			return nil
+		}
 	}
 	if tn != nil {
 		hopts.TailnetListeners = tn.manager.Report
@@ -554,6 +658,22 @@ func serve(opts Options, h *hooks) int {
 	go func() { served <- srv.Serve(ln) }()
 	env.serving.Store(true)
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)
+	var publicServers []*http.Server
+	publicDone := make(chan struct{})
+	if public != nil {
+		servers, err := servePublic(cfg, public, root, log, served, h)
+		if err != nil {
+			_ = srv.Close()
+			return fail(ExitFailure, "cannot listen", "error", err)
+		}
+		publicServers = servers
+		go func() {
+			defer close(publicDone)
+			public.Run(ctx)
+		}()
+	} else {
+		close(publicDone)
+	}
 	if tn != nil {
 		go tn.serve(ctx, tailnetHandler, browserHandler)
 	}
@@ -578,14 +698,23 @@ func serve(opts Options, h *hooks) int {
 	}
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), StopTimeout)
 	defer stopCancel()
+	for _, ps := range publicServers {
+		go func() { _ = ps.Shutdown(stopCtx) }()
+	}
 	if err := srv.Shutdown(stopCtx); err != nil {
 		log.Warn("requests still in flight at the stop deadline were cut off", "error", err)
 		_ = srv.Close()
+	}
+	for _, ps := range publicServers {
+		if err := ps.Shutdown(stopCtx); err != nil {
+			_ = ps.Close()
+		}
 	}
 	if h.stopped != nil {
 		h.stopped()
 	}
 	cancel()
+	<-publicDone
 	if tn != nil {
 		tn.stop(stopCtx)
 		<-tn.done

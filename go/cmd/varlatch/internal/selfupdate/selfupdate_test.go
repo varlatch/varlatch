@@ -239,7 +239,12 @@ func TestFetchRefuses(t *testing.T) {
 // A copy a package manager installed is that package manager's; a link on
 // PATH is followed to the file it names.
 func TestLocate(t *testing.T) {
-	dir := t.TempDir()
+	// Resolved: on macOS the temporary directory is below a link
+	// (/var -> /private/var), and Locate answers the resolved path.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	file := func(parts ...string) string {
 		p := filepath.Join(append([]string{dir}, parts...)...)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -271,8 +276,15 @@ func TestLocate(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
+	// Locate resolves links, as for Homebrew's bin/varlatch into its Cellar,
+	// so the temporary directory's own links resolve too (macOS: /var is
+	// /private/var).
+	want, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := selfupdate.Locate(link)
-	if err != nil || got.Path != real || got.Kind != selfupdate.KindHomebrew || !strings.Contains(got.PackageManaged(), "brew upgrade varlatch") {
+	if err != nil || got.Path != want || got.Kind != selfupdate.KindHomebrew || !strings.Contains(got.PackageManaged(), "brew upgrade varlatch") {
 		t.Fatalf("%+v, %v", got, err)
 	}
 }

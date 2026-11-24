@@ -25,11 +25,8 @@ import (
 const changesUsage = "Usage: varlatchd admin changes --since <time> [--json] [--config <file>]"
 
 // changesShown is how many of the newest events are listed one by one;
-// revocationsShown how many of those restoreUndoes names.
-const (
-	changesShown     = 20
-	revocationsShown = 200
-)
+// those restoreUndoes names are all listed.
+const changesShown = 20
 
 // restoreUndoes are the audit event types whose effect a snapshot restore
 // takes back to the host's harm: a credential, grant, capability or binding
@@ -88,8 +85,8 @@ type changesJSON struct {
 	ByType map[string]int64 `json:"byType"`
 	// Latest are the newest events, at most changesShown, newest first.
 	Latest []changeJSON `json:"latest"`
-	// Revocations are the events of restoreUndoes since the time, newest
-	// first, at most revocationsShown of RevocationsTotal.
+	// Revocations are the RevocationsTotal events of restoreUndoes since
+	// the time, newest first.
 	RevocationsTotal int64        `json:"revocationsTotal"`
 	Revocations      []changeJSON `json:"revocations"`
 }
@@ -126,7 +123,10 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		}
 		out.ByType[t], out.Total = n, out.Total+n
 	}
-	rows.Close()
+	if err := closeRows(rows); err != nil {
+		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
+		return ExitFailure
+	}
 	rows, err = conn.Query("SELECT occurred_at, event_type, decision, organization_id FROM audit_events WHERE occurred_at >= ? ORDER BY event_order DESC LIMIT ?", at, changesShown)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
@@ -143,7 +143,10 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		c.OccurredAt = time.UnixMicro(micros).UTC().Format("2006-01-02T15:04:05.000Z")
 		out.Latest = append(out.Latest, c)
 	}
-	rows.Close()
+	if err := closeRows(rows); err != nil {
+		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
+		return ExitFailure
+	}
 	marks := strings.TrimSuffix(strings.Repeat("?, ", len(restoreUndoes)), ", ")
 	args := []any{at}
 	for _, t := range restoreUndoes {
@@ -153,11 +156,7 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 	// record these changes as info (a refusal is authorization.denied,
 	// another type), so a filter on the decision would hide them.
 	where := "occurred_at >= ? AND event_type IN (" + marks + ")"
-	if err := conn.QueryRow("SELECT count(*) FROM audit_events WHERE "+where, args...).Scan(&out.RevocationsTotal); err != nil {
-		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
-		return ExitFailure
-	}
-	rows, err = conn.Query("SELECT occurred_at, event_type, decision, organization_id, resource FROM audit_events WHERE "+where+" ORDER BY event_order DESC LIMIT ?", append(args, revocationsShown)...)
+	rows, err = conn.Query("SELECT occurred_at, event_type, decision, organization_id, resource FROM audit_events WHERE "+where+" ORDER BY event_order DESC", args...)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
 		return ExitFailure
@@ -173,7 +172,11 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		c.OccurredAt = time.UnixMicro(micros).UTC().Format("2006-01-02T15:04:05.000Z")
 		out.Revocations = append(out.Revocations, c)
 	}
-	rows.Close()
+	if err := closeRows(rows); err != nil {
+		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
+		return ExitFailure
+	}
+	out.RevocationsTotal = int64(len(out.Revocations))
 	if asJSON {
 		return printJSON(stdout, stderr, what, out)
 	}
@@ -186,4 +189,14 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stdout, "  %s  %s (%s, %s)\n", c.OccurredAt, c.EventType, c.Decision, org)
 	}
 	return ExitOK
+}
+
+// closeRows ends a read: the error that stopped it, if one did (a list cut
+// short would show less than the restore loses).
+func closeRows(rows *sql.Rows) error {
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	return rows.Close()
 }

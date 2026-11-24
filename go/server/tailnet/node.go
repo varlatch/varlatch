@@ -36,6 +36,11 @@ type NodeConfig struct {
 	AuthKey string
 	// Tags the node advertises (it is always tagged).
 	Tags []string
+	// KeyTags: the node's tags come from its auth key, and it advertises
+	// none. A self-hosted control server (Headscale) refuses a node that
+	// registers with a pre-auth key and advertises tags: its tags are the
+	// tagged key's, which must be Tags.
+	KeyTags bool
 	// Logf receives tsnet's logs; nil discards them.
 	Logf func(format string, args ...any)
 }
@@ -93,9 +98,13 @@ func newServer(cfg NodeConfig) (*tsnet.Server, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	advertise := slices.Clone(cfg.Tags)
+	if cfg.KeyTags {
+		advertise = nil
+	}
 	return &tsnet.Server{
 		Dir: cfg.Dir, Hostname: cfg.Hostname, ControlURL: controlURL, AuthKey: cfg.AuthKey,
-		Ephemeral: false, AdvertiseTags: slices.Clone(cfg.Tags), Logf: logf, UserLogf: logf,
+		Ephemeral: false, AdvertiseTags: advertise, Logf: logf, UserLogf: logf,
 	}, nil
 }
 
@@ -175,6 +184,27 @@ func (n *TSNode) SelfID(ctx context.Context) (string, error) {
 		return "", errors.New("tailnet: the node does not know its own identity yet")
 	}
 	return st.SelfID, nil
+}
+
+// DERPHosts are the host names of the DERP servers the node's current
+// DERP map (its control server's) lists.
+func (n *TSNode) DERPHosts(ctx context.Context) ([]string, error) {
+	m, err := n.lc.CurrentDERPMap(ctx)
+	if err != nil || m == nil {
+		return nil, err
+	}
+	var hosts []string
+	for _, r := range m.Regions {
+		if r == nil {
+			continue
+		}
+		for _, nd := range r.Nodes {
+			if nd != nil && nd.HostName != "" {
+				hosts = append(hosts, nd.HostName)
+			}
+		}
+	}
+	return hosts, nil
 }
 
 // Status is the node's status, without its peers.

@@ -5,6 +5,7 @@ package install
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/pem"
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func script(t *testing.T) []byte {
@@ -120,7 +122,9 @@ type result struct {
 // leaves there is reported in result.files.
 func runFile(shell, file, binDir, bashEnv, work string) result {
 	logFile := file + ".log"
-	cmd := exec.Command(shell, file)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, shell, file)
 	cmd.Dir = work
 	cmd.Env = []string{"PATH=" + binDir, "HOME=" + work, "SENTINEL_LOG=" + logFile}
 	if bashEnv != "" {
@@ -142,6 +146,82 @@ func runFile(shell, file, binDir, bashEnv, work string) result {
 		files = append(files, e.Name())
 	}
 	return result{code, norm(out), norm(log), strings.Join(files, ",")}
+}
+
+func hasScriptMessage(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		for _, m := range scriptMsgs {
+			if strings.HasPrefix(line, m) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func prefixRan(got result) bool {
+	// The script's own messages start a line; a shell's syntax error may
+	// quote the script's text inside one. A file left in the working
+	// directory means something ran, sentinel or not.
+	return got.log != "" || got.files != "" || hasScriptMessage(got.out)
+}
+
+// runBashSpan sources bashEnv once in a single bash process and evaluates
+// every prefix src[:n] for n in [lo, hi) inside an isolated subshell, with no
+// per-prefix process startup or per-prefix temp file.
+func runBashSpan(shell, srcFile string, srcLen, lo, hi int, binDir, bashEnv, work, logFile, outFile string) (ran bool, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	// Define _run before sourcing bashEnv so sentinel aliases never rewrite
+	// the driver, and invoke builtins via "builtin" (which sentinels never
+	// shadow). LC_ALL=C makes ${var:0:n} slice by byte. Each prefix runs in a
+	// subshell with stdin closed so syntax errors, set -eu, exit, or traps
+	// stay isolated.
+	const driver = `
+LC_ALL=C
+builtin export LC_ALL
+_run() {
+	(
+		builtin cd "$2" || builtin exit 99
+		HOME=$2
+		SENTINEL_LOG=$3
+		builtin export HOME SENTINEL_LOG
+		builtin eval -- "${_SRC:0:$1}" </dev/null >>"$4" 2>&1
+	)
+}
+IFS= builtin read -r -d '' _SRC < "$1"
+if (( ${#_SRC} != $8 )); then
+	builtin exit 97
+fi
+builtin source "$2" || builtin exit 98
+_N=$3
+_END=$4
+while (( _N < _END )); do
+	_run "$_N" "$5" "$6" "$7"
+	(( _N += 1 ))
+done
+builtin exit 0
+`
+	cmd := exec.CommandContext(ctx, shell, "-c", driver, "_",
+		srcFile, bashEnv,
+		fmt.Sprint(lo), fmt.Sprint(hi),
+		work, logFile, outFile,
+		fmt.Sprint(srcLen),
+	)
+	cmd.Env = []string{"PATH=" + binDir, "HOME=" + work, "SENTINEL_LOG=" + logFile}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return true, fmt.Errorf("bash prefix worker [%d,%d) failed: %w: %s", lo, hi, err, out)
+	}
+	if b, _ := os.ReadFile(logFile); len(b) > 0 {
+		return true, nil
+	}
+	if entries, _ := os.ReadDir(work); len(entries) > 0 {
+		return true, nil
+	}
+	if out, _ := os.ReadFile(outFile); hasScriptMessage(string(out)) {
+		return true, nil
+	}
+	return false, nil
 }
 
 // groupBounds checks the shape that makes the guarantee hold: the shebang,
@@ -220,7 +300,7 @@ func TestGroupBoundsRejectsCodeOutside(t *testing.T) {
 // or alias sentinels, and builtins such as ':' cannot be replaced in any
 // shell; the structure check above is what covers those.
 func TestSentinelsLoad(t *testing.T) {
-	binDir, bashEnv := sentinels(t, []byte("say uname"))
+	binDir, bashEnv := sentinels(t, []byte("say() { :; }\nsay uname\n"))
 	for name, shell := range shells(t) {
 		f := filepath.Join(t.TempDir(), "probe.sh")
 		if err := os.WriteFile(f, []byte("uname\nsay\n"), 0o644); err != nil {
@@ -234,10 +314,36 @@ func TestSentinelsLoad(t *testing.T) {
 					t.Errorf("bash: no function or alias sentinel ran for %s: %+v", word, got)
 				}
 			}
-			continue
-		}
-		if !strings.Contains(got.log, "COMMAND uname") {
+		} else if !strings.Contains(got.log, "COMMAND uname") {
 			t.Errorf("%s: the command sentinel did not run: %+v", name, got)
+		}
+		if name == "bash" {
+			// The batched bash runner must catch the same sentinels, file
+			// creation, early group closes, and script messages.
+			cases := map[string]string{
+				"command":     "uname\n{\n",
+				"function":    "say\n{\n",
+				"redirect":    ": > leaked\n{\n",
+				"message":     "printf 'varlatch install: leaked\\n'\n{\n",
+				"early-close": "{\n:\n}\nuname\n{\n",
+			}
+			for label, body := range cases {
+				d := t.TempDir()
+				p := filepath.Join(d, "bad.sh")
+				work := filepath.Join(d, "work")
+				if err := os.Mkdir(work, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				ran, err := runBashSpan(shell, p, len(body), len(body), len(body)+1, binDir, bashEnv, work, filepath.Join(d, "log"), filepath.Join(d, "out"))
+				if err != nil {
+					t.Errorf("bash batch %s: %v", label, err)
+				} else if !ran {
+					t.Errorf("bash batch %s: did not detect execution", label)
+				}
+			}
 		}
 	}
 }
@@ -246,6 +352,9 @@ func TestSentinelsLoad(t *testing.T) {
 // the whole script.
 func TestEveryPrefixRunsNothingOrEverything(t *testing.T) {
 	src := script(t)
+	if bytes.IndexByte(src, 0) >= 0 {
+		t.Fatal("install.sh contains a NUL byte")
+	}
 	closing, err := groupBounds(src)
 	if err != nil {
 		t.Fatal(err)
@@ -269,62 +378,159 @@ func TestEveryPrefixRunsNothingOrEverything(t *testing.T) {
 				t.Fatalf("the whole script did not run as expected: %+v", want)
 			}
 			var bad atomic.Int32
-			var wg sync.WaitGroup
-			lengths := make(chan int)
-			for range max(2, runtime.NumCPU()) {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					for n := range lengths {
-						f := filepath.Join(dir, fmt.Sprintf("p%d.sh", n))
-						if err := os.WriteFile(f, src[:n], 0o644); err != nil {
-							t.Error(err)
-							return
-						}
-						work := filepath.Join(dir, fmt.Sprintf("w%d", n))
-						if err := os.Mkdir(work, 0o755); err != nil {
-							t.Error(err)
-							return
-						}
-						if n > closing {
-							got := runFile(shell, f, binDir, "", work)
-							_ = os.RemoveAll(work)
-							_ = os.Remove(f)
-							_ = os.Remove(f + ".log")
-							if got.code != want.code || got.out != want.out || got.log != want.log {
-								if bad.Add(1) <= 5 {
-									t.Errorf("complete prefix of %d bytes ran differently:\ngot  %#v\nwant %#v", n, got, want)
+			if name == "bash" {
+				// Sourcing bashEnv per prefix is O(n^2) in script length:
+				// batch cut-off prefixes in bash workers that source bashEnv
+				// once and slice the script in memory, falling back to
+				// runFile to pinpoint any failing prefix.
+				type span struct{ lo, hi int }
+				const batchSize = 512
+				batches := make(chan span)
+				var wg sync.WaitGroup
+				for range max(2, runtime.NumCPU()) {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						for sp := range batches {
+							bdir := filepath.Join(dir, fmt.Sprintf("b%d", sp.lo))
+							work := filepath.Join(bdir, "work")
+							if err := os.MkdirAll(work, 0o755); err != nil {
+								t.Error(err)
+								return
+							}
+							logFile := filepath.Join(bdir, "sentinel.log")
+							outFile := filepath.Join(bdir, "out.log")
+							ran, err := runBashSpan(shell, full, len(src), sp.lo, sp.hi, binDir, bashEnv, work, logFile, outFile)
+							if ran || err != nil {
+								foundHit := false
+								for n := sp.lo; n < sp.hi; n++ {
+									f := filepath.Join(bdir, fmt.Sprintf("p%d.sh", n))
+									if wErr := os.WriteFile(f, src[:n], 0o644); wErr != nil {
+										t.Error(wErr)
+										break
+									}
+									pw := filepath.Join(bdir, fmt.Sprintf("w%d", n))
+									if mkErr := os.Mkdir(pw, 0o755); mkErr != nil {
+										t.Error(mkErr)
+										break
+									}
+									got := runFile(shell, f, binDir, bashEnv, pw)
+									if prefixRan(got) {
+										foundHit = true
+										if bad.Add(1) <= 5 {
+											t.Errorf("a prefix of %d bytes (ending %q) ran something: %+v", n, tail(src[:n]), got)
+										}
+									}
+								}
+								if !foundHit {
+									if bad.Add(1) <= 5 {
+										t.Errorf("batch [%d,%d) reported execution (err=%v) without an individual hit", sp.lo, sp.hi, err)
+									}
 								}
 							}
-							continue
+							_ = os.RemoveAll(bdir)
 						}
-						got := runFile(shell, f, binDir, bashEnv, work)
-						_ = os.Remove(f)
-						_ = os.Remove(f + ".log")
-						_ = os.RemoveAll(work)
-						// The script's own messages start a line; a shell's
-						// syntax error may quote the script's text inside one.
-						// A file left in the working directory means something
-						// ran, sentinel or not.
-						ran := got.log != "" || got.files != ""
-						for _, line := range strings.Split(got.out, "\n") {
-							for _, m := range scriptMsgs {
-								ran = ran || strings.HasPrefix(line, m)
-							}
-						}
-						if ran {
-							if bad.Add(1) <= 5 {
-								t.Errorf("a prefix of %d bytes (ending %q) ran something: %+v", n, tail(src[:n]), got)
-							}
+					}()
+				}
+				for lo := 0; lo <= closing; lo += batchSize {
+					batches <- span{lo, min(lo+batchSize, closing+1)}
+				}
+				close(batches)
+				wg.Wait()
+
+				// Also verify a sample of cut-off prefixes via direct
+				// bash <file> invocation with BASH_ENV.
+				sample := []int{0, closing}
+				for i := 1; i <= 12; i++ {
+					sample = append(sample, closing*i/13)
+				}
+				for _, n := range sample {
+					f := filepath.Join(dir, fmt.Sprintf("s%d.sh", n))
+					work := filepath.Join(dir, fmt.Sprintf("sw%d", n))
+					if err := os.Mkdir(work, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(f, src[:n], 0o644); err != nil {
+						t.Fatal(err)
+					}
+					got := runFile(shell, f, binDir, bashEnv, work)
+					_ = os.RemoveAll(work)
+					_ = os.Remove(f)
+					_ = os.Remove(f + ".log")
+					if prefixRan(got) {
+						if bad.Add(1) <= 5 {
+							t.Errorf("direct run of a %d-byte prefix (ending %q) ran something: %+v", n, tail(src[:n]), got)
 						}
 					}
-				}()
+				}
+
+				for n := closing + 1; n <= len(src); n++ {
+					f := filepath.Join(dir, fmt.Sprintf("c%d.sh", n))
+					work := filepath.Join(dir, fmt.Sprintf("cw%d", n))
+					if err := os.Mkdir(work, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(f, src[:n], 0o644); err != nil {
+						t.Fatal(err)
+					}
+					got := runFile(shell, f, binDir, "", work)
+					_ = os.RemoveAll(work)
+					_ = os.Remove(f)
+					_ = os.Remove(f + ".log")
+					if got.code != want.code || got.out != want.out || got.log != want.log {
+						if bad.Add(1) <= 5 {
+							t.Errorf("complete prefix of %d bytes ran differently:\ngot  %#v\nwant %#v", n, got, want)
+						}
+					}
+				}
+			} else {
+				var wg sync.WaitGroup
+				lengths := make(chan int)
+				for range max(2, runtime.NumCPU()) {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						for n := range lengths {
+							f := filepath.Join(dir, fmt.Sprintf("p%d.sh", n))
+							if err := os.WriteFile(f, src[:n], 0o644); err != nil {
+								t.Error(err)
+								return
+							}
+							work := filepath.Join(dir, fmt.Sprintf("w%d", n))
+							if err := os.Mkdir(work, 0o755); err != nil {
+								t.Error(err)
+								return
+							}
+							if n > closing {
+								got := runFile(shell, f, binDir, "", work)
+								_ = os.RemoveAll(work)
+								_ = os.Remove(f)
+								_ = os.Remove(f + ".log")
+								if got.code != want.code || got.out != want.out || got.log != want.log {
+									if bad.Add(1) <= 5 {
+										t.Errorf("complete prefix of %d bytes ran differently:\ngot  %#v\nwant %#v", n, got, want)
+									}
+								}
+								continue
+							}
+							got := runFile(shell, f, binDir, bashEnv, work)
+							_ = os.Remove(f)
+							_ = os.Remove(f + ".log")
+							_ = os.RemoveAll(work)
+							if prefixRan(got) {
+								if bad.Add(1) <= 5 {
+									t.Errorf("a prefix of %d bytes (ending %q) ran something: %+v", n, tail(src[:n]), got)
+								}
+							}
+						}
+					}()
+				}
+				for n := 0; n <= len(src); n++ {
+					lengths <- n
+				}
+				close(lengths)
+				wg.Wait()
 			}
-			for n := 0; n <= len(src); n++ {
-				lengths <- n
-			}
-			close(lengths)
-			wg.Wait()
 			if bad.Load() > 0 {
 				t.Fatalf("%d prefixes misbehaved", bad.Load())
 			}
@@ -364,6 +570,11 @@ type release struct {
 	cutOff string
 	// redirectHTTP names a file whose request is redirected to plain HTTP.
 	redirectHTTP string
+	// servedOnly answers only a serving installation's paths.
+	servedOnly bool
+	// redirect names a file whose request is redirected to the same file
+	// at the server's root.
+	redirect string
 }
 
 func goArch() string { return runtime.GOARCH }
@@ -401,7 +612,12 @@ func (r *release) serve(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		r.hits.Add(1)
-		name := strings.TrimPrefix(req.URL.Path, "/")
+		// A serving installation's layout (/cli/v<version>/<file>) too.
+		name := strings.TrimPrefix(strings.TrimPrefix(req.URL.Path, "/cli/v"+version), "/")
+		if r.servedOnly && !strings.HasPrefix(req.URL.Path, "/cli/v"+version+"/") {
+			http.NotFound(w, req)
+			return
+		}
 		if name == "SHA256SUMS" {
 			_, _ = w.Write([]byte(r.sha256sums()))
 			return
@@ -409,6 +625,10 @@ func (r *release) serve(t *testing.T) (*httptest.Server, string) {
 		data, ok := r.files[name]
 		if !ok {
 			http.NotFound(w, req)
+			return
+		}
+		if name == r.redirect && strings.HasPrefix(req.URL.Path, "/cli/") {
+			http.Redirect(w, req, "/"+name, http.StatusFound)
 			return
 		}
 		if name == r.redirectHTTP {
@@ -480,13 +700,28 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 		src = edit(t, src, "'@VARLATCH_VERSION@'", "'"+version+"'")
 	}
 	base := srv.URL
+	path := os.Getenv("PATH")
+	cwd := ""
 	var extra []string
 	for _, e := range env {
 		switch {
+		case strings.HasPrefix(e, "CWD="):
+			// The directory the script runs in (a relative --dir is its).
+			cwd = strings.TrimPrefix(e, "CWD=")
+		case strings.HasPrefix(e, "PATH_FIRST="):
+			// A directory searched before the run's own PATH.
+			path = strings.TrimPrefix(e, "PATH_FIRST=") + string(os.PathListSeparator) + path
 		case strings.HasPrefix(e, "BASE_URL="):
 			base = strings.TrimPrefix(e, "BASE_URL=")
 		case strings.HasPrefix(e, "ROOT="):
 			src = edit(t, src, rootLine, "root='"+strings.TrimPrefix(e, "ROOT=")+"'")
+		case strings.HasPrefix(e, "ORIGIN="):
+			// As a serving installation stamps it; "server" is the test's.
+			origin := strings.TrimPrefix(e, "ORIGIN=")
+			if origin == "server" {
+				origin = srv.URL
+			}
+			src = edit(t, src, "ORIGIN=''", "ORIGIN='"+origin+"'")
 		default:
 			extra = append(extra, e)
 		}
@@ -499,8 +734,9 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 	stubLog := filepath.Join(home, "stub.log")
 	tmpdir := t.TempDir()
 	cmd := exec.Command("sh", append([]string{file}, args...)...)
+	cmd.Dir = cwd
 	cmd.Env = append([]string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + tmpdir,
+		"PATH=" + path, "HOME=" + home, "TMPDIR=" + tmpdir,
 		"CURL_CA_BUNDLE=" + ca, "STUB_LOG=" + stubLog,
 	}, extra...)
 	out, _ := cmd.CombinedOutput()
@@ -573,6 +809,302 @@ func TestInstallCLIRerun(t *testing.T) {
 	second := install(t, r, true, []string{"--dir", srvDir})
 	if first.code != 0 || second.code != 0 || !strings.Contains(second.out, "already installed") {
 		t.Fatalf("first: %s\nsecond: %s", first.out, second.out)
+	}
+}
+
+// goStub is testdata/stubcli built for this machine: a Go binary, which,
+// like every Go varlatch, carries self-update's refusal for a Homebrew
+// copy ("installed with Homebrew").
+func goStub(t *testing.T) []byte {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go")
+	}
+	out := filepath.Join(t.TempDir(), "stubcli")
+	if b, err := exec.Command("go", "build", "-o", out, "./testdata/stubcli").CombinedOutput(); err != nil {
+		t.Fatalf("building the stub: %v\n%s", err, b)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("installed with Homebrew")) {
+		t.Fatal("the stub does not carry self-update's Homebrew message")
+	}
+	return b
+}
+
+// install.sh run again over its own install of a Go binary, and over an
+// older one, updates it: a binary carrying self-update's Homebrew message
+// is not Homebrew's (v0.50.0-rc.2's published check: every rerun was
+// refused as "installed with Homebrew").
+func TestInstallCLIRerunOverAGoBinary(t *testing.T) {
+	stub := goStub(t)
+	cli := "varlatch-" + version + "-linux-" + goArch()
+	newGoRelease := func() *release {
+		r := newRelease()
+		r.files[cli] = stub
+		return r
+	}
+	dir := t.TempDir()
+	first := install(t, newGoRelease(), true, []string{"--dir", dir})
+	second := install(t, newGoRelease(), true, []string{"--dir", dir})
+	if first.code != 0 || second.code != 0 || !strings.Contains(second.out, "already installed") {
+		t.Fatalf("first: %d %s\nsecond: %d %s", first.code, first.out, second.code, second.out)
+	}
+	// An older Go binary there (another file, the same message in it).
+	older := append(append([]byte{}, stub...), 0)
+	if err := os.WriteFile(filepath.Join(dir, "varlatch"), older, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	third := install(t, newGoRelease(), true, []string{"--dir", dir})
+	if third.code != 0 || !strings.Contains(third.out, "Installed varlatch "+version) || !bytes.Equal(installed(t, filepath.Join(dir, "varlatch")), stub) {
+		t.Fatalf("over an older Go binary: %d %s", third.code, third.out)
+	}
+	// And a Go binary on PATH elsewhere is no Homebrew copy either.
+	other := t.TempDir()
+	if err := os.WriteFile(filepath.Join(other, "varlatch"), stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fourth := install(t, newGoRelease(), true, nil, "PATH_FIRST="+other)
+	if fourth.code != 0 {
+		t.Fatalf("with a Go binary on PATH: %d %s", fourth.code, fourth.out)
+	}
+}
+
+// A copy Homebrew installed is refused, nothing written: by where it is
+// (in a Cellar, through a link as Homebrew links it, a linked directory,
+// or a chain of links), at the target or on PATH; and the TypeScript
+// CLI's formula's wrapper script, by what it says. The located copies
+// carry no Homebrew message, so only their place can tell (rc.2's script
+// let the first two through).
+func TestInstallRefusesHomebrew(t *testing.T) {
+	stub := goStub(t)
+	// A binary in a Cellar, with no "installed with Homebrew" in it.
+	plain := []byte(stubCLI)
+	cellar := func(t *testing.T) (prefix, file string) {
+		prefix = t.TempDir()
+		file = filepath.Join(prefix, "Cellar", "varlatch", version, "bin", "varlatch")
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, plain, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return prefix, file
+	}
+	link := func(t *testing.T, target, at string) {
+		if err := os.MkdirAll(filepath.Dir(at), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const wrapper = "#!/bin/bash\nif [ \"$1\" = \"self-update\" ]; then\n  echo \"varlatch: installed with Homebrew; update with: brew upgrade varlatch\" >&2\n  exit 1\nfi\nexec node /x/varlatch.cjs \"$@\"\n"
+	for _, tc := range []struct {
+		name  string
+		place func(t *testing.T, dir string) (env []string)
+	}{
+		{"the target, Homebrew's relative link into its Cellar", func(t *testing.T, dir string) []string {
+			prefix, _ := cellar(t)
+			// As Homebrew links bin/varlatch: ../Cellar/varlatch/<version>/bin/varlatch.
+			link(t, filepath.Join("..", "Cellar", "varlatch", version, "bin", "varlatch"), filepath.Join(prefix, "bin", "varlatch"))
+			link(t, filepath.Join(prefix, "bin", "varlatch"), filepath.Join(dir, "varlatch"))
+			return nil
+		}},
+		{"on PATH, Homebrew's bin", func(t *testing.T, dir string) []string {
+			prefix, _ := cellar(t)
+			link(t, filepath.Join("..", "Cellar", "varlatch", version, "bin", "varlatch"), filepath.Join(prefix, "bin", "varlatch"))
+			return []string{"PATH_FIRST=" + filepath.Join(prefix, "bin")}
+		}},
+		{"on PATH, the Cellar itself", func(t *testing.T, dir string) []string {
+			_, file := cellar(t)
+			return []string{"PATH_FIRST=" + filepath.Dir(file)}
+		}},
+		{"the target's directory, a link to a keg's bin", func(t *testing.T, dir string) []string {
+			_, file := cellar(t)
+			// dir itself is the link: --dir names it, and its varlatch is
+			// the keg's binary.
+			if err := os.Remove(dir); err != nil {
+				t.Fatal(err)
+			}
+			link(t, filepath.Dir(file), dir)
+			return nil
+		}},
+		{"the target, an absolute link straight into a Cellar", func(t *testing.T, dir string) []string {
+			_, file := cellar(t)
+			link(t, file, filepath.Join(dir, "varlatch"))
+			return nil
+		}},
+		{"the TypeScript formula's wrapper script", func(t *testing.T, dir string) []string {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "varlatch"), []byte(wrapper), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			env := tc.place(t, dir)
+			before, _ := os.Lstat(filepath.Join(dir, "varlatch"))
+			beforeBytes := installed(t, filepath.Join(dir, "varlatch"))
+			r := newRelease()
+			r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+			res := install(t, r, true, []string{"--dir", dir}, env...)
+			if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") || !strings.Contains(res.out, "brew upgrade varlatch") {
+				t.Fatalf("exit %d: %s", res.code, res.out)
+			}
+			after, _ := os.Lstat(filepath.Join(dir, "varlatch"))
+			if (before == nil) != (after == nil) || before != nil && before.Mode() != after.Mode() || !bytes.Equal(beforeBytes, installed(t, filepath.Join(dir, "varlatch"))) {
+				t.Fatal("the target changed")
+			}
+			emptyTmp(t, res)
+		})
+	}
+}
+
+// A relative --dir is the working directory's, whatever CDPATH says: with
+// ./bin a link to a keg's bin and $CDPATH/bin an ordinary directory, the
+// keg's binary is refused, not overwritten (the resolver once followed
+// CDPATH while the install wrote through ./bin).
+func TestInstallRelativeDirIgnoresCDPATH(t *testing.T) {
+	stub := goStub(t)
+	prefix := t.TempDir()
+	keg := filepath.Join(prefix, "Cellar", "varlatch", version, "bin")
+	if err := os.MkdirAll(keg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keg, "varlatch"), []byte(stubCLI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	work, cdpath := t.TempDir(), t.TempDir()
+	if err := os.Symlink(keg, filepath.Join(work, "bin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(cdpath, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", "bin"}, "CWD="+work, "CDPATH="+cdpath)
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if !bytes.Equal(installed(t, filepath.Join(keg, "varlatch")), []byte(stubCLI)) {
+		t.Fatal("the keg's binary was overwritten")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cdpath, "bin")); len(entries) != 0 {
+		t.Fatal("something was written in CDPATH's directory")
+	}
+	emptyTmp(t, res)
+}
+
+// A link at the target into a keg that is gone (the link left behind) is
+// still Homebrew's: refused, the link kept.
+func TestInstallRefusesADanglingKegLink(t *testing.T) {
+	stub := goStub(t)
+	missing := filepath.Join(t.TempDir(), "Cellar", "varlatch", version, "bin", "varlatch")
+	dir := t.TempDir()
+	target := filepath.Join(dir, "varlatch")
+	if err := os.Symlink(missing, target); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if got, err := os.Readlink(target); err != nil || got != missing {
+		t.Fatalf("the link changed: %q, %v", got, err)
+	}
+	emptyTmp(t, res)
+}
+
+// A link whose resolution reaches a keg that is gone, through another link
+// on the way (bin/varlatch -> ../opt/varlatch/bin/varlatch, opt/varlatch a
+// link into a missing keg), is Homebrew's: refused, the link kept. The
+// resolver follows the links that exist before it keeps the rest as
+// written.
+func TestInstallRefusesALinkThroughALinkIntoAMissingKeg(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	for _, d := range []string{filepath.Join(root, "bin"), filepath.Join(root, "opt"), filepath.Join(root, "brew", "Cellar")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The keg's version directory does not exist.
+	if err := os.Symlink(filepath.Join(root, "brew", "Cellar", "varlatch", version), filepath.Join(root, "opt", "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "bin", "varlatch")
+	if err := os.Symlink("../opt/varlatch/bin/varlatch", target); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", filepath.Join(root, "bin")})
+	if res.code == 0 || !strings.Contains(res.out, "is installed with Homebrew at") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if got, err := os.Readlink(target); err != nil || got != "../opt/varlatch/bin/varlatch" {
+		t.Fatalf("the link changed: %q, %v", got, err)
+	}
+	emptyTmp(t, res)
+}
+
+// A link through an existing Cellar's .. to a directory that does not
+// exist is no Homebrew copy: the .. is taken from the resolved Cellar, and
+// only the missing rest kept as written.
+func TestInstallThroughACellarToAMissingDirectory(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "Cellar"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(root+"/Cellar/../missing/varlatch", filepath.Join(dir, "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code != 0 || !strings.Contains(res.out, "Installed varlatch "+version) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+}
+
+// A link whose path goes through a Cellar but resolves outside it is no
+// Homebrew copy: the place that counts is the resolved one (and the path
+// as given), as for self-update, never a link's raw text.
+func TestInstallThroughACellarToElsewhere(t *testing.T) {
+	stub := goStub(t)
+	root := t.TempDir()
+	for _, d := range []string{filepath.Join(root, "Cellar"), filepath.Join(root, "plain")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elsewhere := filepath.Join(root, "plain", "varlatch")
+	if err := os.WriteFile(elsewhere, []byte(stubCLI), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	// The link's text as written, not cleaned (filepath.Join would drop
+	// the Cellar from it).
+	if err := os.Symlink(root+"/Cellar/../plain/varlatch", filepath.Join(dir, "varlatch")); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	r.files["varlatch-"+version+"-linux-"+goArch()] = stub
+	res := install(t, r, true, []string{"--dir", dir})
+	if res.code != 0 || !strings.Contains(res.out, "Installed varlatch "+version) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
 	}
 }
 
@@ -862,4 +1394,89 @@ func TestInstallLeavesTheTypeScriptCLI(t *testing.T) {
 		storeUnchanged(t, home)
 		emptyTmp(t, res)
 	})
+}
+
+// --- from a serving installation (varlatchd's serve_cli; decision 12) ---
+
+func TestInstallFromAnInstallation(t *testing.T) {
+	r := newRelease()
+	r.servedOnly = true
+	res := install(t, r, true, nil, "ORIGIN=server")
+	target := filepath.Join(res.dir, "varlatch")
+	if res.code != 0 || !bytes.Equal(installed(t, target), []byte(stubCLI)) {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	if !regexp.MustCompile(`Next: varlatch login --server https://127\.0\.0\.1:[0-9]+\n`).MatchString(res.out) {
+		t.Fatalf("no next step naming the installation in:\n%s", res.out)
+	}
+	// The downloaded CLI still checks the signature, as from github.com.
+	log, _ := os.ReadFile(res.stubLog)
+	if !regexp.MustCompile(`verify-release --version 0\.50\.0 --sums \S+/SHA256SUMS --bundle \S+/SHA256SUMS\.sigstore\.json --file \S+=varlatch-0\.50\.0-linux-`).Match(log) {
+		t.Fatalf("verify-release was not called as expected:\n%s", log)
+	}
+	emptyTmp(t, res)
+}
+
+// Plain http only to this machine, as the installation serves it there.
+func TestInstallFromALoopbackInstallation(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the end-to-end runs serve Linux binaries")
+	}
+	r := newRelease()
+	r.servedOnly = true
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		name := strings.TrimPrefix(req.URL.Path, "/cli/v"+version+"/")
+		if name == "SHA256SUMS" {
+			_, _ = w.Write([]byte(r.sha256sums()))
+			return
+		}
+		if b, ok := r.files[name]; ok && strings.HasPrefix(req.URL.Path, "/cli/") {
+			_, _ = w.Write(b)
+			return
+		}
+		http.NotFound(w, req)
+	}))
+	defer plain.Close()
+	res := install(t, r, true, nil, "ORIGIN="+plain.URL)
+	if res.code != 0 || !strings.Contains(res.out, "Next: varlatch login --server "+plain.URL+"\n") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+}
+
+func TestInstallFromAnInstallationRefuses(t *testing.T) {
+	for name, c := range map[string]struct {
+		origin, want string
+		args         []string
+		edit         func(*release)
+		noDownload   bool
+	}{
+		"plain http elsewhere":   {origin: "http://vault.example.invalid", want: "neither https: nor http: on this machine", noDownload: true},
+		"an address with a user": {origin: "https://user@vault.example.invalid", want: "not an address to install from", noDownload: true},
+		"a server":               {origin: "server", args: []string{"--server"}, want: "a server installs from github.com", noDownload: true},
+		"a redirect":             {origin: "server", edit: func(r *release) { r.redirect = "varlatch-" + version + "-linux-" + goArch() }, want: "a redirect is never followed"},
+		"a signature that fails": {origin: "server", want: "release signature does not verify"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRelease()
+			r.servedOnly = true
+			if c.edit != nil {
+				c.edit(r)
+			}
+			env := []string{"ORIGIN=" + c.origin}
+			if name == "a signature that fails" {
+				env = append(env, "STUB_VERIFY=fail")
+			}
+			res := install(t, r, true, c.args, env...)
+			if res.code == 0 || !strings.Contains(res.out, c.want) {
+				t.Fatalf("exit %d, want %q in:\n%s", res.code, c.want, res.out)
+			}
+			if installed(t, filepath.Join(res.dir, "varlatch")) != nil {
+				t.Fatal("something was installed")
+			}
+			if c.noDownload && r.hits.Load() != 0 {
+				t.Fatalf("%d requests before refusing", r.hits.Load())
+			}
+			emptyTmp(t, res)
+		})
+	}
 }

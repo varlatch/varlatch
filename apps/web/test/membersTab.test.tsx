@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * role, and a failed check is said, with a way to try again.
  */
 
-const fake = vi.hoisted(() => ({ api: {} as Record<string, ReturnType<typeof vi.fn>> }));
+const fake = vi.hoisted(() => ({ api: {} as Record<string, ReturnType<typeof vi.fn>>, capabilities: [] as string[] }));
 vi.hoisted(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   // useNow ticks with window timers; the filter input listens for its hotkey.
@@ -25,13 +25,13 @@ vi.hoisted(() => {
 vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api, identityId: "idn_me", accessChanged: () => {} }) }));
 vi.mock("../src/shell/Shell", () => ({ errorMessage: (err: unknown) => (err instanceof Error ? err.message : String(err)) }));
 vi.mock("../src/components/Toast", () => ({ useToast: () => ({ success: () => {}, error: () => {} }) }));
-vi.mock("../src/features/projects/hooks", () => ({ useCapability: (c: string) => c === "members.lifecycle", useMeta: () => ({ data: { capabilities: ["members.lifecycle"] } }) }));
+vi.mock("../src/features/projects/hooks", () => ({ useCapability: (c: string) => fake.capabilities.includes(c), useMeta: () => ({ data: { capabilities: fake.capabilities } }) }));
 vi.mock("../src/features/access/useAccessNames", () => ({
   useAccessNames: () => ({ names: { project: () => undefined, environment: () => undefined, team: () => undefined }, nameOf: String, roleName: () => null }),
 }));
-vi.mock("../src/features/access/shared", async () => {
+vi.mock("../src/features/access/shared", async (original) => {
   const { useQuery } = await import("@tanstack/react-query");
-  return { useIdentities: (org: string) => useQuery({ queryKey: ["identities", org], queryFn: () => fake.api.listIdentities!(org) }) };
+  return { ...(await original<typeof import("../src/features/access/shared")>()), useIdentities: (org: string) => useQuery({ queryKey: ["identities", org], queryFn: () => fake.api.listIdentities!(org) }) };
 });
 vi.mock("../src/components/Dialog", () => ({
   Dialog: ({ open, title, children, footer, "data-testid": id }: Record<string, React.ReactNode> & { open: boolean; "data-testid"?: string }) =>
@@ -59,14 +59,16 @@ const REPORT = {
 };
 
 let root: ReactTestRenderer;
+let client: QueryClient;
+const wrap = (element: React.ReactElement) => (
+  <QueryClientProvider client={client}>
+    <MemoryRouter>{element}</MemoryRouter>
+  </QueryClientProvider>
+);
 async function mount(element: React.ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => {
-    root = create(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>{element}</MemoryRouter>
-      </QueryClientProvider>,
-    );
+    root = create(wrap(element));
   });
   for (let i = 0; i < 4; i++) await act(async () => new Promise((resolve) => globalThis.setTimeout(resolve, 0)));
 }
@@ -75,6 +77,7 @@ const text = (node: ReactTestInstance | string): string =>
   typeof node === "string" ? node : node.children.map((c) => text(c as ReactTestInstance | string)).join("");
 
 beforeEach(() => {
+  fake.capabilities = ["members.lifecycle"];
   fake.api = {
     listIdentities: vi.fn(async () => ({
       items: [
@@ -117,7 +120,8 @@ describe("reports from the Members tab", () => {
     });
     await mount(<MembersTab org="acme" onGrant={() => {}} />);
     const [callout] = all("audit-access-error");
-    expect(text(callout!)).toContain("Network error");
+    expect(text(callout!)).toContain("Could not check whether you may read exposure reports");
+    expect(text(callout!)).not.toContain("Network error");
     fake.api.listAuditEvents = vi.fn(async () => ({ items: [], nextCursor: null }));
     const retry = callout!.findAll((n) => n.type === "button" || (typeof n.type !== "string" && typeof n.props.onClick === "function"))[0]!;
     await act(async () => retry.props.onClick());
@@ -133,6 +137,139 @@ describe("reports from the Members tab", () => {
     });
     await mount(<MembersTab org="acme" onGrant={() => {}} />);
     expect(text(all("reports-from-audit")[0]!)).toContain("open a report from an event in the audit log");
+  });
+});
+
+describe("the Members tab for someone who may not read or invite", () => {
+  const deny = () =>
+    vi.fn(async () => {
+      throw denied();
+    });
+  const may = (...actions: string[]) => vi.fn(async () => ({ organizationId: "org_a", role: "member", actions }));
+  const page = () => text(root.root);
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await act(async () => new Promise((resolve) => globalThis.setTimeout(resolve, 0)));
+  };
+  beforeEach(() => {
+    fake.capabilities = ["members.lifecycle", "invitations.manage", "organizations.permissions"];
+    fake.api.myOrganizationPermissions = may("organization.read", "identity.read");
+  });
+
+  it("says people cannot be seen, not that there are none, and offers no Invite", async () => {
+    fake.api.listIdentities = deny();
+    fake.api.listInvitations = deny();
+    fake.api.myOrganizationPermissions = may("organization.read");
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+    expect(text(all("people-denied")[0]!)).toContain("You do not have access to see members");
+    expect(page()).not.toContain("No members yet");
+    expect(page()).not.toContain("0 persons");
+    expect(all("open-invite")).toHaveLength(0);
+    expect(page()).not.toContain("Invite");
+  });
+
+  it("offers Invite to someone the server says may invite, people readable or not", async () => {
+    fake.api.myOrganizationPermissions = may("organization.read", "identity.manage");
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+    expect(fake.api.myOrganizationPermissions).toHaveBeenCalledWith("acme");
+    expect(all("open-invite")).toHaveLength(1);
+    await act(async () => root.unmount());
+    fake.api.listIdentities = deny();
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+    expect(all("people-denied")).toHaveLength(1);
+    expect(all("open-invite")).toHaveLength(1);
+  });
+
+  it("offers none to someone who may read people but not invite, whatever else answers", async () => {
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+    expect(fake.api.listInvitations).toHaveBeenCalled();
+    expect(all("open-invite")).toHaveLength(0);
+    expect(page()).toContain("Me");
+  });
+
+  it.each([
+    ["refused", () => denied()],
+    ["404", () => new VarlatchApiError(404, { code: "RESOURCE_NOT_FOUND", message: "Organization not found", requestId: "req_1" })],
+    ["500", () => new VarlatchApiError(500, { code: "INTERNAL_ERROR", message: "boom", requestId: "req_1" })],
+    ["a network failure", () => new Error("Network error")],
+  ])("offers none when the check ended in %s", async (_, error) => {
+    fake.api.myOrganizationPermissions = vi.fn(async () => {
+      throw error();
+    });
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+    expect(all("open-invite")).toHaveLength(0);
+    expect(page()).toContain("Me");
+  });
+
+  it("takes Invite away when a later check fails, though an earlier one allowed it", async () => {
+    fake.api.myOrganizationPermissions = may("identity.manage");
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+    expect(all("open-invite")).toHaveLength(1);
+    fake.api.myOrganizationPermissions = vi.fn(async () => {
+      throw new Error("Network error");
+    });
+    await act(async () => void client.invalidateQueries({ queryKey: ["org-permissions", "acme"] }));
+    await settle();
+    expect(all("open-invite")).toHaveLength(0);
+  });
+
+  it("offers none on a server that cannot be asked, or while its capabilities load", async () => {
+    for (const capabilities of [["members.lifecycle", "invitations.manage"], []]) {
+      fake.capabilities = capabilities;
+      fake.api.myOrganizationPermissions = may("identity.manage");
+      await mount(<MembersTab org="acme" onGrant={() => {}} />);
+      expect(fake.api.myOrganizationPermissions).not.toHaveBeenCalled();
+      expect(all("open-invite")).toHaveLength(0);
+      await act(async () => root.unmount());
+    }
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+  });
+
+  it("never shows it on the way to an answer: read-only, with the capabilities arriving late", async () => {
+    fake.capabilities = [];
+    const seen: number[] = [];
+    let answer!: (v: unknown) => void;
+    fake.api.myOrganizationPermissions = vi.fn(() => new Promise((resolve) => (answer = resolve)));
+    const tab = () => <MembersTab org="acme" onGrant={() => {}} />;
+    await mount(tab());
+    seen.push(all("open-invite").length);
+    fake.capabilities = ["members.lifecycle", "invitations.manage", "organizations.permissions"];
+    await act(async () => root.update(wrap(<MembersTab org="acme" onGrant={() => void 0} />)));
+    await settle();
+    seen.push(all("open-invite").length);
+    await act(async () => answer({ organizationId: "org_a", role: "member", actions: ["organization.read", "identity.read"] }));
+    await settle();
+    seen.push(all("open-invite").length);
+    expect(seen).toEqual([0, 0, 0]);
+  });
+
+  it("says neither while the people are on their way", async () => {
+    fake.api.listIdentities = vi.fn(() => new Promise(() => {}));
+    fake.api.myOrganizationPermissions = vi.fn(() => new Promise(() => {}));
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+    expect(all("people-loading")).toHaveLength(1);
+    expect(page()).not.toContain("No members yet");
+    expect(all("open-invite")).toHaveLength(0);
+  });
+
+  it("says when people could not be loaded, never with the server's words, and tries again on request", async () => {
+    const PRIVATE = "relation identities of org_private at 10.0.0.7";
+    fake.api.listIdentities = vi.fn(async () => {
+      throw new VarlatchApiError(500, { code: "INTERNAL_ERROR", message: PRIVATE, requestId: "req_1" });
+    });
+    fake.api.listAuditEvents = vi.fn(async () => {
+      throw new VarlatchApiError(500, { code: "INTERNAL_ERROR", message: PRIVATE, requestId: "req_1" });
+    });
+    await mount(<MembersTab org="acme" onGrant={() => {}} />);
+    expect(text(all("people-error")[0]!)).toContain("Members could not be loaded");
+    expect(all("audit-access-error")).toHaveLength(1);
+    expect(page()).not.toContain(PRIVATE);
+    expect(page()).not.toContain("No members yet");
+    fake.api.listIdentities = vi.fn(async () => ({ items: [], nextCursor: null }));
+    const retry = all("people-error")[0]!.findAll((n) => n.type === "button")[0]!;
+    await act(async () => retry.props.onClick());
+    await settle();
+    // Nobody at all, readable: that is when there are no members yet.
+    expect(page()).toContain("No members yet");
   });
 });
 

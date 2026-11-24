@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleCheck, Mail, MoreHorizontal, RefreshCw, UserPlus } from "lucide-react";
+import { CircleCheck, Lock, Mail, MoreHorizontal, RefreshCw, ShieldAlert, UserPlus } from "lucide-react";
 import type { Grant } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
@@ -19,6 +19,7 @@ import {
   type MenuItem,
   SectionCard,
   Segmented,
+  Skeleton,
   StatusDot,
   table,
   cn,
@@ -30,7 +31,7 @@ import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { useCapability } from "../projects/hooks";
 import { CLI_DOWNLOAD_CAPABILITY, installLine } from "../../lib/installCli";
-import { useIdentities } from "./shared";
+import { useIdentities, useOrganizationPermission } from "./shared";
 import { permissionPhrase, scopeParts, type Names } from "./model";
 import { useAccessNames } from "./useAccessNames";
 import { DemoteDialog, RemoveMemberDialog, type MemberRef } from "./MemberDialogs";
@@ -60,7 +61,11 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
   });
   const reports = lifecycle && auditAccess.data === true;
   // Reading reports needs audit.read; listing people here needs identity.read.
-  const peopleDenied = identities.error instanceof VarlatchApiError && identities.error.status === 403;
+  const peopleDenied = isDenied(identities.error);
+  // Inviting needs identity.manage. Invite shows only once the server has
+  // said this person has it: not while that is on its way, not when the
+  // question failed, not on a server that cannot be asked.
+  const mayInvite = useOrganizationPermission(org, "identity.manage") === "allowed";
   const [filter, setFilter] = useState("");
   const [inviting, setInviting] = useState(false);
   const [freshLink, setFreshLink] = useState<{ name: string; url: string } | null>(null);
@@ -125,21 +130,27 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <FilterInput
-          className="min-w-64 flex-1"
-          value={filter}
-          onChange={setFilter}
-          placeholder="Filter people…"
-          shown={shown.length}
-          total={people.length}
-          noun="person"
-          aria-label="Filter people"
-        />
-        <Button variant="primary" icon={<UserPlus size={15} />} data-testid="open-invite" onClick={() => setInviting(true)}>
-          Invite
-        </Button>
-      </div>
+      {(!peopleDenied || mayInvite) && (
+        <div className="flex flex-wrap items-center gap-3">
+          {!peopleDenied && (
+            <FilterInput
+              className="min-w-64 flex-1"
+              value={filter}
+              onChange={setFilter}
+              placeholder="Filter people…"
+              shown={shown.length}
+              total={people.length}
+              noun="person"
+              aria-label="Filter people"
+            />
+          )}
+          {mayInvite && (
+            <Button variant="primary" icon={<UserPlus size={15} />} data-testid="open-invite" onClick={() => setInviting(true)}>
+              Invite
+            </Button>
+          )}
+        </div>
+      )}
 
       {auditAccess.isError && (
         <Callout
@@ -152,7 +163,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
             </Button>
           }
         >
-          {errorMessage(auditAccess.error)}
+          The server did not answer as expected.
         </Callout>
       )}
       {reports && peopleDenied && (
@@ -163,10 +174,35 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
       )}
 
       <SectionCard title="Members" data-testid="people-section" bodyClassName={table.wrap}>
-        {people.length === 0 ? (
+        {peopleDenied ? (
+          <EmptyState
+            data-testid="people-denied"
+            icon={<Lock size={20} />}
+            title="You do not have access to see members"
+            description="Ask an admin of this organization if you need it."
+          />
+        ) : identities.isError && !identities.data ? (
+          <EmptyState
+            data-testid="people-error"
+            icon={<ShieldAlert size={20} />}
+            title="Members could not be loaded"
+            description="The server did not answer as expected. Try again in a moment."
+            actions={
+              <Button size="sm" variant="secondary" onClick={() => void identities.refetch()}>
+                Try again
+              </Button>
+            }
+          />
+        ) : identities.isPending ? (
+          <div className="space-y-3 p-5" data-testid="people-loading">
+            {Array.from({ length: 3 }, (_, i) => (
+              <Skeleton key={i} className="h-6 w-full" />
+            ))}
+          </div>
+        ) : people.length === 0 ? (
           <EmptyState
             title="No members yet"
-            description="Invite the first person: they open a one-time link on their own device and enroll a passkey."
+            description={mayInvite ? "Invite the first person: they open a one-time link on their own device and enroll a passkey." : undefined}
           />
         ) : (
           <table className={table.table}>
@@ -298,6 +334,8 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
     </div>
   );
 }
+
+const isDenied = (err: unknown) => err instanceof VarlatchApiError && err.status === 403;
 
 /** Built-in grants of the two organization roles, in words. */
 export const ROLE_ACCESS = {

@@ -9,12 +9,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
+	"github.com/varlatch/varlatch/go/lib/backup"
+	"github.com/varlatch/varlatch/go/lib/release"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
@@ -40,6 +44,24 @@ import (
 // it leaves, To the one it returns to), with the same steps, undo and
 // recovery: it ends with the release it left serving after its checks, or
 // the one it returns to.
+//
+// It changes nothing while the data directory holds a maintenance gate (a
+// migration's barrier, a restore, a capture), or a migration that is not
+// open or finished, or that switched after the upgrade began (the release
+// and the snapshot it would return to are from before it).
+
+// RollbackSince is the first release whose varlatch reads a rollback's
+// journal. The release returned to reads it (it finishes or undoes an
+// interrupted rollback once its varlatch is back in place, and upgrades
+// next), and a journal is refused over a member it does not know. So a
+// member added to the journal later, written by a rollback, raises this.
+const RollbackSince = "0.50.0-rc.3"
+
+// ReturnsTo is whether a rollback may return to a release (RollbackSince).
+func ReturnsTo(version string) bool {
+	order, ok := release.CompareVersions(version, RollbackSince)
+	return ok && order >= 0
+}
 
 // Changes are the audit events since a time, as `admin changes` counts
 // them: never a value.
@@ -78,6 +100,9 @@ type RollbackPlan struct {
 	// Lost, when not Safe: the changes since the snapshot, which the
 	// restore loses.
 	Lost *Changes
+	// Migration, of an installation that migrated: what the rollback
+	// leaves of the migration's own rollback window, "" when it has none.
+	Migration string
 }
 
 // lostMargin reaches back before the snapshot's recorded time, so a change
@@ -111,6 +136,13 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 		return RollbackPlan{}, fmt.Errorf("the last change was a rollback from %s to %s (%s): there is no upgrade to roll back. To restore the pre-upgrade snapshot by hand, stop varlatchd and run %s's varlatchd admin backup restore --in %s", last.From, last.To, last.State, last.To, last.Snapshot)
 	case last.State == journal.Undone:
 		return RollbackPlan{}, fmt.Errorf("the last upgrade, to %s, was undone and %s serves: there is nothing to roll back", last.To, last.From)
+	case !ReturnsTo(last.From):
+		return RollbackPlan{}, fmt.Errorf("%s's varlatch cannot read a rollback's journal (%s is the first that can), so it could neither finish an interrupted rollback nor upgrade after one. To go back by hand: stop varlatchd, put varlatch and varlatchd from %s in %s, run varlatchd admin backup restore --in %s (every change made since the upgrade is lost), and start varlatchd",
+			last.From, RollbackSince, filepath.Join(last.Releases, last.From), u.BinDir, last.Snapshot)
+	}
+	migration, err := rollbackHost(last, u.now())
+	if err != nil {
+		return RollbackPlan{}, err
 	}
 	installed, err := binaryVersion(ctx, u.varlatchd())
 	if err != nil {
@@ -133,12 +165,16 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 		return RollbackPlan{}, fmt.Errorf("%s's varlatchd admin schema status: %v", last.From, err)
 	}
 	var st struct {
-		Opens bool `json:"opens"`
+		Opens   bool   `json:"opens"`
+		DataDir string `json:"dataDir"`
 	}
 	if err := json.Unmarshal(out, &st); err != nil {
 		return RollbackPlan{}, fmt.Errorf("%s's varlatchd admin schema status gave no answer", last.From)
 	}
-	plan := RollbackPlan{Last: last, Declared: last.DeclaredRollbackSafe, Opens: st.Opens}
+	if st.DataDir != last.DataDir {
+		return RollbackPlan{}, fmt.Errorf("%s names the data directory %s, and the upgrade was made in %s: a rollback returns only that one", u.ConfigPath, st.DataDir, last.DataDir)
+	}
+	plan := RollbackPlan{Last: last, Declared: last.DeclaredRollbackSafe, Opens: st.Opens, Migration: migration}
 	plan.Safe = plan.Declared && plan.Opens
 	switch {
 	case plan.Safe:
@@ -178,6 +214,27 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	return plan, nil
 }
 
+// rollbackHost is whether the installation in last's data directory is one
+// a rollback may touch: no maintenance gate stands, and a migration it
+// made is one the upgrade came after (migrate.BeforeUpgrade, whose answer
+// about the migration's rollback window it returns).
+func rollbackHost(last *journal.Journal, now time.Time) (string, error) {
+	gate, err := backup.ReadGate(last.DataDir)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("the maintenance gate %s: %v", filepath.Join(last.DataDir, backup.GateFile), err)
+	case gate != nil && gate.Kind == "migration":
+		return "", fmt.Errorf("a migration's gate stands in %s (%s): finish or abort the migration first (varlatch migrate --status)", last.DataDir, backup.GateFile)
+	case gate.Active(now):
+		return "", fmt.Errorf("a maintenance gate stands in %s (%s, kind %s): end it first (varlatchd admin maintenance status)", last.DataDir, backup.GateFile, gate.Kind)
+	}
+	began, err := time.Parse(time.RFC3339, last.StartedAt)
+	if err != nil {
+		return "", errors.New("the upgrade journal does not say when the upgrade began")
+	}
+	return migrate.BeforeUpgrade(last.DataDir, last.To, began, now)
+}
+
 // binaryVersion is the release a varlatchd says it is.
 func binaryVersion(ctx context.Context, path string) (string, error) {
 	out, err := exec.CommandContext(ctx, path, "--version").Output()
@@ -202,6 +259,10 @@ func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan) (*journal.Jo
 	last := plan.Last
 	if now, err := journal.Read(u.configDir()); err != nil || now == nil || now.ID != last.ID || now.State != journal.Done || now.Kind != journal.Upgrade {
 		return nil, &Error{Message: "the upgrade journal changed since the rollback was planned; nothing was changed"}
+	}
+	// Again, now that it begins: the prompt may have waited.
+	if _, err := rollbackHost(last, u.now()); err != nil {
+		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
 	if err := upgradesDir(last.DataDir); err != nil {
 		return nil, &Error{Message: err.Error() + "; nothing was changed"}
@@ -277,7 +338,7 @@ func (u *Upgrader) rollbackSteps(ctx context.Context, j *journal.Journal) error 
 	if err := u.reach(j, journal.Swapped); err != nil {
 		return err
 	}
-	if err := u.Service.Start(ctx); err != nil {
+	if err := u.start(ctx, j); err != nil {
 		return fmt.Errorf("starting varlatchd %s: %w", j.To, err)
 	}
 	if err := u.reach(j, journal.Started); err != nil {
@@ -295,25 +356,34 @@ func (u *Upgrader) rollbackSteps(ctx context.Context, j *journal.Journal) error 
 // restoreSnapshot keeps a copy of the database the rollback replaces (the
 // undo puts it back; after a rollback it holds the changes it lost), then
 // restores the pre-upgrade snapshot into the data directory with the
-// previous release's varlatchd, varlatchd stopped.
+// previous release's varlatchd, varlatchd stopped. The copy has its name
+// (original) only once it is whole: an undo puts back what is there under
+// that name.
 func (u *Upgrader) restoreSnapshot(ctx context.Context, j *journal.Journal) error {
-	original := filepath.Join(j.Work, "original")
-	if err := u.workDir(j, original); err != nil {
+	copying := filepath.Join(j.Work, copyingDir)
+	if err := u.workDir(j, copying); err != nil {
 		return err
 	}
 	for _, name := range databaseFiles {
 		src := filepath.Join(j.DataDir, name)
-		if _, err := os.Stat(src); err != nil {
+		if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		if err := u.copyFile(src, filepath.Join(original, name), 0o600); err != nil {
+		if err := u.copyFile(src, filepath.Join(copying, name), 0o600); err != nil {
+			return err
+		}
+		if err := u.point("rollback:copying:" + name); err != nil {
 			return err
 		}
 	}
-	if err := ownAll(original, j.DataDir); err != nil {
+	if err := ownAll(copying, j.DataDir); err != nil {
 		return err
 	}
-	syncDir(original)
+	syncDir(copying)
+	if err := os.Rename(copying, filepath.Join(j.Work, "original")); err != nil {
+		return err
+	}
+	syncDir(j.Work)
 	if err := u.point("rollback:current-kept"); err != nil {
 		return err
 	}

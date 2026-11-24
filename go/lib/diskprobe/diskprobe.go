@@ -19,6 +19,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -74,7 +75,17 @@ type Options struct {
 	// OnSample, if set, is called after every sample (the G9a harness
 	// records them all).
 	OnSample func(kind Kind, start time.Time, latency time.Duration)
+	// Unnamed asks for files without a name (Linux's O_TMPFILE): they are
+	// written and synced on Dir's filesystem but never appear in Dir, so
+	// a read-only check (doctor) leaves the directory as it found it.
+	// Where the filesystem cannot, Run returns ErrUnnamed and writes
+	// nothing.
+	Unnamed bool
 }
+
+// ErrUnnamed is Run's error when Options.Unnamed is asked for and Dir's
+// filesystem (or this system) cannot make a file without a name.
+var ErrUnnamed = errors.New("diskprobe: the filesystem cannot make a file without a name")
 
 // Stats summarizes one kind of sample.
 type Stats struct {
@@ -152,12 +163,12 @@ func run(ctx context.Context, opts Options, e env) (Result, error) {
 		return Result{}, err
 	}
 
-	grow, err := tempFile(opts.Dir)
+	grow, err := tempFile(opts.Dir, opts.Unnamed)
 	if err != nil {
 		return Result{}, err
 	}
 	defer removeFile(grow)
-	reuse, err := tempFile(opts.Dir)
+	reuse, err := tempFile(opts.Dir, opts.Unnamed)
 	if err != nil {
 		return Result{}, err
 	}
@@ -238,7 +249,14 @@ func run(ctx context.Context, opts Options, e env) (Result, error) {
 	return r, nil
 }
 
-func tempFile(dir string) (*os.File, error) {
+func tempFile(dir string, unnamed bool) (*os.File, error) {
+	if unnamed {
+		f, err := unnamedFile(dir)
+		if err != nil {
+			return nil, err
+		}
+		return f, nil
+	}
 	f, err := os.CreateTemp(dir, ".varlatch-diskprobe-*")
 	if err != nil {
 		return nil, fmt.Errorf("diskprobe: %w", err)
@@ -246,8 +264,15 @@ func tempFile(dir string) (*os.File, error) {
 	return f, nil
 }
 
+// unnamedName ends the name an unnamed file is opened under: there is no
+// such entry to remove.
+const unnamedName = "(unnamed diskprobe file)"
+
 func removeFile(f *os.File) {
 	_ = f.Close() // before Remove: Windows cannot remove an open file
+	if strings.HasSuffix(f.Name(), unnamedName) {
+		return // it never had a name: closing it frees it
+	}
 	_ = os.Remove(f.Name())
 }
 

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
@@ -25,18 +26,19 @@ import (
 // go/README.md `upgrade-usage`; the TypeScript CLI's upgrade is a Compose
 // installation's, varlatch-ts upgrade).
 const upgradeUsage = `Usage:
-  varlatch upgrade [<version>] [--prerelease] [--accept-not-rollback-safe] [--yes] [--config <file>]
+  varlatch upgrade [<version>] [--prerelease] [--accept-not-rollback-safe] [--end-rollback-window] [--yes] [--config <file>]
   varlatch upgrade --check [--prerelease] [--json] [--config <file>]
   varlatch upgrade --rollback [--yes] [--accept-data-loss] [--config <file>]
                (a Go installation's upgrade, on its host, as root: downloads the release's varlatch, varlatchd and
                 release.json, checks that SHA256SUMS is signed by the release workflow of varlatch/varlatch for that
                 version, takes an encrypted snapshot kept 30 days, updates a copy of the database, swaps the binaries
                 and the database, restarts varlatchd and keeps the new release only when its health checks pass;
-                anything else ends with the previous release serving. --check looks for a newer release and records
-                what it found for the dashboard's notice. --rollback returns to the release the last upgrade came
-                from: keeping every change when that release opens the database as it is, else restoring the
-                pre-upgrade snapshot, after listing what is lost (--accept-data-loss). A Compose installation's
-                upgrade is varlatch-ts upgrade)`
+                anything else ends with the previous release serving. While a migration's rollback window is open, a
+                release that ends it is upgraded to only once confirmed (--end-rollback-window without a prompt).
+                --check looks for a newer release and records what it found for the dashboard's notice. --rollback
+                returns to the release the last upgrade came from: keeping every change when that release opens the
+                database as it is, else restoring the pre-upgrade snapshot, after listing what is lost
+                (--accept-data-loss). A Compose installation's upgrade is varlatch-ts upgrade)`
 
 // UpgradeHelp is upgradeUsage, for the transcripts' accepted difference.
 const UpgradeHelp = upgradeUsage
@@ -70,7 +72,7 @@ func upgradeCommand(r *Run) (bool, error) {
 func (r *Run) upgrade() error {
 	parsed, err := strictOptions("upgrade", r.Args, OptionSpec{
 		Values:      []string{"--config", "--repo"},
-		Booleans:    []string{"--check", "--json", "--yes", "--prerelease", "--accept-not-rollback-safe", "--rollback", "--accept-data-loss"},
+		Booleans:    []string{"--check", "--json", "--yes", "--prerelease", "--accept-not-rollback-safe", "--end-rollback-window", "--rollback", "--accept-data-loss"},
 		Positionals: 1,
 	}, upgradeUsage)
 	if err != nil {
@@ -85,8 +87,8 @@ func (r *Run) upgrade() error {
 	}
 	check := parsed.Has("--check")
 	rollback := parsed.Has("--rollback")
-	if rollback && (check || len(parsed.Positionals) > 0 || parsed.Has("--prerelease") || parsed.Has("--accept-not-rollback-safe") || parsed.Has("--json")) {
-		return UsageErrorWithUsage("varlatch upgrade: --rollback returns to the last upgrade's previous release: it takes no version, --check, --prerelease, --json or --accept-not-rollback-safe", "\n"+upgradeUsage)
+	if rollback && (check || len(parsed.Positionals) > 0 || parsed.Has("--prerelease") || parsed.Has("--accept-not-rollback-safe") || parsed.Has("--end-rollback-window") || parsed.Has("--json")) {
+		return UsageErrorWithUsage("varlatch upgrade: --rollback returns to the last upgrade's previous release: it takes no version, --check, --prerelease, --json, --accept-not-rollback-safe or --end-rollback-window", "\n"+upgradeUsage)
 	}
 	if parsed.Has("--accept-data-loss") && !rollback {
 		return UsageErrorWithUsage("varlatch upgrade: --accept-data-loss goes with --rollback", "\n"+upgradeUsage)
@@ -94,8 +96,8 @@ func (r *Run) upgrade() error {
 	if parsed.Has("--json") && !check {
 		return UsageErrorWithUsage("varlatch upgrade: --json goes with --check", "\n"+upgradeUsage)
 	}
-	if check && (parsed.Has("--accept-not-rollback-safe") || parsed.Has("--yes")) {
-		return UsageErrorWithUsage("varlatch upgrade: --check upgrades nothing: it takes no --yes or --accept-not-rollback-safe", "\n"+upgradeUsage)
+	if check && (parsed.Has("--accept-not-rollback-safe") || parsed.Has("--yes") || parsed.Has("--end-rollback-window")) {
+		return UsageErrorWithUsage("varlatch upgrade: --check upgrades nothing: it takes no --yes, --accept-not-rollback-safe or --end-rollback-window", "\n"+upgradeUsage)
 	}
 	config, given := parsed.Value("--config")
 	if !given {
@@ -150,6 +152,17 @@ func (r *Run) upgrade() error {
 		return upgradeFailure(err)
 	}
 	safe := upgrade.RollbackSafe(rel.Manifest, inst)
+	// Decision 17: a release that ends a migration's rollback window is
+	// upgraded to only once the operator confirms it, while the window is
+	// open (Go's migration journal, read as root on this host).
+	endsWindow, err := windowEnding(inst.DataDir, rel.Version, rel.Manifest.EndsRollbackWindow(), time.Now())
+	if err != nil {
+		return Fail("varlatch upgrade: "+err.Error()+" Nothing was changed.", ExitFailure)
+	}
+	goingBack := "Going back"
+	if upgrade.ReturnsTo(inst.Version) {
+		goingBack += " (varlatch upgrade --rollback)"
+	}
 	lines := []string{
 		"",
 		"  varlatchd " + inst.Version + " -> " + rel.Version + " (schema version " + fmt.Sprint(inst.Schema) + " -> " + fmt.Sprint(rel.Manifest.SchemaVersion) + ")",
@@ -160,25 +173,42 @@ func (r *Run) upgrade() error {
 	}
 	if safe {
 		lines = append(lines, "  rollback:  safe: "+rel.Version+"'s release.json declares it rollback-safe for "+inst.Version+", and "+inst.Version+" can open the",
-			"             upgraded database, so going back keeps every change")
+			"             upgraded database. "+goingBack+" keeps every change")
 	} else if !upgrade.DeclaredRollbackSafe(rel.Manifest, inst) {
 		checked := "no release"
 		if p := rel.Manifest.Previous; p != nil {
 			checked = p.Version
 		}
 		lines = append(lines, "  rollback:  NOT safe: "+rel.Version+"'s release.json does not declare it rollback-safe for "+inst.Version+" (it was checked",
-			"             against "+checked+"). Going back means restoring the pre-upgrade snapshot, which loses every change",
-			"             made after it. "+notCounted)
+			"             against "+checked+"). "+goingBack+" means restoring the pre-upgrade snapshot,",
+			"             which loses every change made after it. "+notCounted)
 	} else {
 		lines = append(lines, "  rollback:  NOT safe: once upgraded, the database needs varlatchd of schema "+fmt.Sprint(rel.Manifest.CompatibleFrom)+" or later,",
-			"             which "+inst.Version+" (schema "+fmt.Sprint(inst.Schema)+") is not. Going back means restoring the pre-upgrade",
-			"             snapshot, which loses every change made after it. "+notCounted)
+			"             which "+inst.Version+" (schema "+fmt.Sprint(inst.Schema)+") is not. "+goingBack+" means",
+			"             restoring the pre-upgrade snapshot, which loses every change made after it. "+notCounted)
+	}
+	if endsWindow {
+		lines = append(lines, "  migration: "+release.RollbackWindowNotice)
 	}
 	lines = append(lines, "")
 	for _, line := range lines {
 		if err := r.println(line); err != nil {
 			return err
 		}
+	}
+	confirmed := false
+	if endsWindow && !parsed.Has("--end-rollback-window") {
+		if !isTerminal(r.Stdin) || parsed.Has("--yes") {
+			return Fail("varlatch upgrade: "+rel.Version+" ends the migration's rollback window (above): pass --end-rollback-window to upgrade anyway, or end the window first (varlatch migrate --finish). Nothing was changed.", ExitFailure)
+		}
+		ok, err := newTerminalPrompter(r).confirm("Upgrade to "+rel.Version+", which ends the migration's rollback window?", false)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return r.println("Nothing was changed.")
+		}
+		confirmed = true
 	}
 	if !safe && !parsed.Has("--accept-not-rollback-safe") {
 		if !isTerminal(r.Stdin) || parsed.Has("--yes") {
@@ -191,7 +221,7 @@ func (r *Run) upgrade() error {
 		if !ok {
 			return r.println("Nothing was changed.")
 		}
-	} else if !parsed.Has("--yes") {
+	} else if !parsed.Has("--yes") && !confirmed {
 		if !isTerminal(r.Stdin) {
 			return Fail("varlatch upgrade: not a terminal: pass --yes to upgrade without a prompt. Nothing was changed.", ExitFailure)
 		}
@@ -203,10 +233,52 @@ func (r *Run) upgrade() error {
 			return r.println("Nothing was changed.")
 		}
 	}
+	if endsWindow {
+		// Recorded before anything is upgraded, in Go's journal beside the
+		// running varlatchd: from now no reverse starts, even if the
+		// upgrade is undone (its way back ends with the window).
+		host := &migrate.Host{Varlatchd: varlatchd, Config: config, Run: migrate.ExecRunner{Env: varlatchdEnviron(r)}}
+		if err := migrate.EndRollbackWindow(ctx, host, inst.DataDir, rel.Version, time.Now()); err != nil {
+			return Fail("varlatch upgrade: recording the end of the migration's rollback window: "+err.Error()+". Nothing was changed.", ExitFailure)
+		}
+		if err := r.println("The migration's rollback window ends: recorded in its journal (varlatch migrate --rollback now refuses)."); err != nil {
+			return err
+		}
+	}
 	if _, err := u.Run(ctx, inst, rel); err != nil {
 		return upgradeFailure(err)
 	}
-	return r.println("Upgraded to " + rel.Version + ". The pre-upgrade snapshot is kept 30 days with the upgrade.")
+	done := "Upgraded to " + rel.Version + ". The pre-upgrade snapshot is kept 30 days with the upgrade."
+	if upgrade.ReturnsTo(inst.Version) {
+		done += " varlatch upgrade --rollback goes back to " + inst.Version + "."
+	}
+	return r.println(done)
+}
+
+// windowEnding is whether upgrading to version (whose manifest ends the
+// rollback window when ends) ends an open migration's rollback window on
+// the installation whose data directory is dataDir. While a reverse is
+// under way it refuses: the window's end is recorded on an open journal
+// only, and a release that cannot reverse must not run mid-reverse.
+func windowEnding(dataDir, version string, ends bool, now time.Time) (bool, error) {
+	if !ends {
+		return false, nil
+	}
+	open, err := migrate.RollbackWindowOpen(dataDir, now)
+	if err != nil {
+		return false, fmt.Errorf("the migration journal in %s: %v.", dataDir, err)
+	}
+	if !open {
+		return false, nil
+	}
+	phase, err := migrate.ReverseUnderWay(dataDir)
+	if err != nil {
+		return false, fmt.Errorf("the migration journal in %s: %v.", dataDir, err)
+	}
+	if phase != "" {
+		return false, fmt.Errorf("a rollback is under way (the migration is in phase %s): %s ends its rollback window, so finish or abort the rollback first (varlatch migrate --resume, or --abort).", phase, version)
+	}
+	return true, nil
 }
 
 // upgradeCheck is `upgrade --check`: the newest release this host may go
@@ -330,6 +402,9 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 	}
 	last := plan.Last
 	lines := []string{"", "  varlatchd " + last.To + " -> back to " + last.From, "  rule:      " + plan.Rule}
+	if plan.Migration != "" {
+		lines = append(lines, "  migration: "+plan.Migration)
+	}
 	if plan.Safe {
 		lines = append(lines, "  database:  kept as it is, so every change made since the upgrade stays")
 	} else {
@@ -389,6 +464,9 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 			return r.println("Nothing was changed.")
 		}
 	}
+	// Its time begins now: the prompt may have waited.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), upgradeTimeout)
+	defer cancel()
 	j, err := u.Rollback(ctx, plan)
 	if err != nil {
 		return upgradeFailure(err)
@@ -411,6 +489,9 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 // audited changes it lists.
 const notCounted = "Only audited changes are counted. Also lost or reverted: sign-ins and sign-outs, pending approvals, and delivery and sync cursors (webhooks may be delivered again, and sync targets converge back)."
 
+// undoneShown is how many of them are shown, the newest.
+const undoneShown = 200
+
 // undoneLines are the revocations, removals, rotations, replacements,
 // deletions and freezes the restore takes back, listed before anything
 // else it loses.
@@ -419,7 +500,7 @@ func undoneLines(lost *upgrade.Changes) []string {
 		return []string{"  UNDONE:    no revocations, removals, rotations, replacements, deletions and freezes were recorded since the snapshot"}
 	}
 	lines := []string{fmt.Sprintf("  UNDONE:    revocations, removals, rotations, replacements, deletions and freezes made since the snapshot that the restore undoes (%d):", lost.RevocationsTotal)}
-	for _, c := range lost.Revocations {
+	for _, c := range lost.Revocations[:min(len(lost.Revocations), undoneShown)] {
 		org := "the installation"
 		if c.OrganizationID != nil {
 			org = Printable(*c.OrganizationID)
@@ -430,7 +511,7 @@ func undoneLines(lost *upgrade.Changes) []string {
 		}
 		lines = append(lines, "               "+Printable(c.OccurredAt)+"  "+Printable(c.EventType)+" ("+org+")"+what)
 	}
-	if more := lost.RevocationsTotal - int64(len(lost.Revocations)); more > 0 {
+	if more := lost.RevocationsTotal - undoneShown; more > 0 {
 		lines = append(lines, fmt.Sprintf("               and %d more (varlatchd admin changes --since %s --json lists them all)", more, lost.Since))
 	}
 	return lines

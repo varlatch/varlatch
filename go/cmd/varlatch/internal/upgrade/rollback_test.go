@@ -10,17 +10,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/release"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
-var unsafeDecl = release.Declaration{SchemaVersion: 2, CompatibleFrom: 2, Previous: &release.Previous{Version: fromVersion, SchemaVersion: 1}}
+var unsafeDecl = release.Declaration{SchemaVersion: toSchema, CompatibleFrom: toSchema, Previous: &release.Previous{Version: fromVersion, SchemaVersion: fromSchema}, ReversibleTo: &reversible}
 
-// upgraded is a host upgraded from rc.1 to rc.2 (rollback-safe, or not),
+// upgraded is a host upgraded from rc.3 to rc.4 (rollback-safe, or not),
 // with changes made after the upgrade: the installation bootstrapped by
 // the new release.
 func upgraded(t *testing.T, rollbackSafe bool) *host {
@@ -73,8 +77,8 @@ func TestARollbackSafeRollbackKeepsEveryChange(t *testing.T) {
 	if err != nil || j.State != journal.Done || j.Kind != journal.Rollback || j.From != toVersion || j.To != fromVersion || !j.RollbackSafe || j.RollbackRule != plan.Rule {
 		t.Fatalf("%+v, %v", j, err)
 	}
-	h.upgrader(nil).mustServe(t, fromVersion, 1)
-	if got := h.databaseSchema(); got != 2 {
+	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
+	if got := h.databaseSchema(); got != toSchema {
 		t.Fatalf("the database kept its schema: %d", got)
 	}
 	if after := h.auditEvents(t); after < before {
@@ -108,8 +112,8 @@ func TestARollbackFromTheSnapshotListsWhatIsLost(t *testing.T) {
 	if err != nil || j.State != journal.Done || j.RollbackSafe {
 		t.Fatalf("%+v, %v", j, err)
 	}
-	h.upgrader(nil).mustServe(t, fromVersion, 1)
-	if got := h.databaseSchema(); got != 1 {
+	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
+	if got := h.databaseSchema(); got != fromSchema {
 		t.Fatalf("the snapshot's schema: %d", got)
 	}
 	// The listed changes are gone: since the same time, only what the
@@ -154,7 +158,7 @@ func TestARollbackIsRefusedWithNothingToRollBackTo(t *testing.T) {
 	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "the pre-upgrade snapshot") || !strings.Contains(err.Error(), "is gone") {
 		t.Fatalf("no snapshot: %v", err)
 	}
-	h.upgrader(nil).mustServe(t, toVersion, 2)
+	h.upgrader(nil).mustServe(t, toVersion, toSchema)
 }
 
 // An upgrade that was undone has nothing to roll back.
@@ -178,12 +182,17 @@ func upgradedServes(t *testing.T, h *host, j *journal.Journal) {
 	if j.State != journal.Undone {
 		t.Fatalf("not undone: %+v", j)
 	}
-	h.upgrader(nil).mustServe(t, toVersion, 2)
-	if got := h.databaseSchema(); got != 2 {
+	h.upgrader(nil).mustServe(t, toVersion, toSchema)
+	if got := h.databaseSchema(); got != toSchema {
 		t.Fatalf("the database's schema after the undone rollback: %d", got)
 	}
 	if restoreGateOpen(h.data) {
 		t.Fatal("a restore gate is left open")
+	}
+	for _, name := range append([]string{filepath.Join("upgrades", j.ID, copyingDir)}, restoreLeftovers...) {
+		if _, err := os.Lstat(filepath.Join(h.data, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s is left: %v", name, err)
+		}
 	}
 	// The previous release's kept binaries survive the undo.
 	for _, name := range []string{"varlatch", "varlatchd"} {
@@ -207,7 +216,7 @@ func TestAKilledRollbackIsFinishedOrUndone(t *testing.T) {
 		safe   bool
 		points []string
 	}{
-		{false, []string{"verified", "stopping", "stop:done", "stopped", "rollback:current-kept", "rollback:restored", "prepared",
+		{false, []string{"verified", "stopping", "stop:done", "stopped", "rollback:copying:varlatch.db", "rollback:current-kept", "rollback:restored", "prepared",
 			"install:" + fromVersion + ":varlatchd", "install:" + fromVersion + ":varlatch", "swapped", "started", "checked"}},
 		{true, []string{"stop:done", "prepared", "install:" + fromVersion + ":varlatchd", "started", "checked"}},
 	} {
@@ -234,7 +243,7 @@ func TestAKilledRollbackIsFinishedOrUndone(t *testing.T) {
 					if j.State != journal.Done {
 						t.Fatalf("after its checks, finished: %+v", j)
 					}
-					h.upgrader(nil).mustServe(t, fromVersion, 1)
+					h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
 					return
 				}
 				upgradedServes(t, h, j)
@@ -257,7 +266,7 @@ func TestTheRollbackRuleNeedsTheDeclarationAndTheOpenCheck(t *testing.T) {
 		// Rollback-safe, but checked against another release (a skipped
 		// one): the previous varlatchd opens the database, yet nothing
 		// says it understands what is in it.
-		{"not declared, opens", "to", release.Declaration{SchemaVersion: 2, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: "0.50.0-rc.0", SchemaVersion: 1}},
+		{"not declared, opens", "to", release.Declaration{SchemaVersion: toSchema, CompatibleFrom: 1, RollbackSafe: true, Previous: &release.Previous{Version: "0.50.0-rc.0", SchemaVersion: fromSchema}, ReversibleTo: &reversible},
 			false, true, "does not declare it rollback-safe for " + fromVersion + ": though " + fromVersion + " opens the database"},
 		// Declared rollback-safe, but the database's compatible_from keeps
 		// the previous varlatchd out (a declaration the build does not keep).
@@ -274,10 +283,10 @@ func TestTheRollbackRuleNeedsTheDeclarationAndTheOpenCheck(t *testing.T) {
 			if err != nil || j.State != journal.Done || j.RollbackSafe || j.RollbackRule != plan.Rule {
 				t.Fatalf("%+v, %v", j, err)
 			}
-			h.upgrader(nil).mustServe(t, fromVersion, 1)
+			h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
 			// The snapshot's database, even where the previous varlatchd
 			// would have opened the upgraded one.
-			if got := h.databaseSchema(); got != 1 {
+			if got := h.databaseSchema(); got != fromSchema {
 				t.Fatalf("the snapshot was not restored: schema %d", got)
 			}
 		})
@@ -321,5 +330,301 @@ func TestARollbackIsRefusedOnAHostItDoesNotFit(t *testing.T) {
 	}
 	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "varlatchd is "+fromVersion+", not "+toVersion) {
 		t.Fatalf("another release installed: %v", err)
+	}
+}
+
+// A release before RollbackSince cannot read the journal a rollback to it
+// leaves: refused, with the way back by hand.
+func TestARollbackNeedsAReleaseThatReadsIt(t *testing.T) {
+	for v, want := range map[string]bool{"0.50.0-rc.2": false, "0.50.0-rc.3": true, "0.50.0-rc.10": true, "0.50.0": true, "0.51.0-rc.1": true, "0.23.0": false, "x": false} {
+		if ReturnsTo(v) != want {
+			t.Errorf("%s: %v", v, !want)
+		}
+	}
+	dir := t.TempDir()
+	u := &Upgrader{BinDir: filepath.Join(dir, "bin"), ConfigPath: filepath.Join(dir, "varlatchd.conf")}
+	if err := journal.Write(dir, &journal.Journal{ID: "x", From: "0.50.0-rc.2", To: "0.50.0-rc.3", State: journal.Done, Step: journal.Checked,
+		StartedAt: "2026-11-24T00:00:00Z", Releases: "/r", DataDir: dir, Snapshot: "/s.vltbak"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "0.50.0-rc.2's varlatch cannot read a rollback's journal") ||
+		!strings.Contains(err.Error(), "from /r/0.50.0-rc.2 in "+u.BinDir) || !strings.Contains(err.Error(), "backup restore --in /s.vltbak") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// migration writes a migration's journal into the data directory, at
+// phase, switched at at.
+func (h *host) migration(t *testing.T, phase migrate.Phase, at time.Time, change func(*migrate.Journal)) {
+	t.Helper()
+	j := &migrate.Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: phase, Ingress: migrate.Proxy,
+		History: []migrate.Step{{Phase: migrate.Switched, At: at.UTC().Format(time.RFC3339Nano)}}}
+	if change != nil {
+		change(j)
+	}
+	b, err := j.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.data, migrate.JournalFile), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Beside a migration's rollback window the rollback says what becomes of
+// it; one under way, or one the upgrade came before, or a gate, is refused
+// and nothing changes, also when it came after the plan.
+func TestARollbackBesideAMigration(t *testing.T) {
+	h := upgraded(t, true)
+	u := h.upgrader(nil)
+	before, after := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	for _, c := range []struct {
+		name   string
+		phase  migrate.Phase
+		at     time.Time
+		change func(*migrate.Journal)
+		gate   string
+		note   string
+		want   string
+	}{
+		{name: "the window open", phase: migrate.Open, at: before, note: "its rollback window stays open until "},
+		{name: "ended by the upgrade", phase: migrate.Open, at: before, change: func(j *migrate.Journal) {
+			j.WindowEnded = &migrate.WindowEndedRecord{Release: toVersion, At: before.UTC().Format(time.RFC3339Nano)}
+		}, note: "its rollback window was ended by the upgrade to " + toVersion + ", and stays ended"},
+		{name: "past the window", phase: migrate.Open, at: time.Now().Add(-31 * 24 * time.Hour)},
+		{name: "finished", phase: migrate.Finished, at: before},
+		{name: "migrated after the upgrade", phase: migrate.Open, at: after, want: "are from before the migration"},
+		{name: "finished after the upgrade", phase: migrate.Finished, at: after, want: "are from before the migration"},
+		{name: "a reverse under way", phase: migrate.Rollback, at: before, want: "in phase rollback: finish or abort it first"},
+		{name: "a transfer", phase: migrate.Transfer, at: before, want: "in phase transfer: finish or abort it first"},
+		{name: "rolled back", phase: migrate.RolledBack, at: before, want: "in phase rolled-back: finish or abort it first"},
+		{name: "no switch recorded", phase: migrate.Open, at: before, change: func(j *migrate.Journal) { j.History = nil }, want: "does not say when the migration switched"},
+		{name: "a barrier", phase: migrate.Open, at: before, gate: `{"id":"mig_aaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"migration","phase":"draining"}`, want: "a migration's gate stands"},
+		{name: "a restore", phase: migrate.Open, at: before, gate: `{"id":"x","kind":"restore","phase":"paused","archiveId":"a"}`, want: "kind restore): end it first"},
+		{name: "a capture", phase: migrate.Open, at: before, gate: `{"id":"x","kind":"capture","phase":"draining","expiresAt":` + strconv.FormatInt(after.UnixMilli(), 10) + `}`, want: "kind capture): end it first"},
+		{name: "a capture's lease expired", phase: migrate.Open, at: before, gate: `{"id":"x","kind":"capture","phase":"draining","expiresAt":` + strconv.FormatInt(before.UnixMilli(), 10) + `}`, note: "stays open until"},
+		{name: "a gate that cannot be read", phase: migrate.Open, at: before, gate: `{`, want: "the maintenance gate"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h.migration(t, c.phase, c.at, c.change)
+			gate := filepath.Join(h.data, backup.GateFile)
+			if c.gate != "" {
+				if err := os.WriteFile(gate, []byte(c.gate), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Remove(gate)
+			}
+			plan, err := u.PlanRollback(context.Background())
+			if c.want != "" {
+				if err == nil || !strings.Contains(err.Error(), c.want) {
+					t.Fatalf("%v, want %q", err, c.want)
+				}
+				return
+			}
+			if err != nil || c.note == "" && plan.Migration != "" || !strings.Contains(plan.Migration, c.note) {
+				t.Fatalf("%+v, %v", plan, err)
+			}
+		})
+	}
+	// Begun after the plan: refused, nothing changed.
+	h.migration(t, migrate.Open, before, nil)
+	plan, err := u.PlanRollback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.migration(t, migrate.Rollback, before, nil)
+	if _, err := u.Rollback(context.Background(), plan); err == nil || !strings.Contains(err.Error(), "in phase rollback") || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("%v", err)
+	}
+	u.mustServe(t, toVersion, toSchema)
+	h.migration(t, migrate.Open, before, nil)
+	if j, err := u.Rollback(context.Background(), plan); err != nil || j.State != journal.Done {
+		t.Fatalf("%+v, %v", j, err)
+	}
+	u.mustServe(t, fromVersion, fromSchema)
+}
+
+// Another data directory in the configuration than the upgrade's: refused.
+func TestARollbackIsRefusedInAnotherDataDirectory(t *testing.T) {
+	h := upgraded(t, true)
+	dir := filepath.Dir(h.conf)
+	j, err := journal.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.DataDir = filepath.Join(h.dir, "another")
+	if err := os.Mkdir(j.DataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.Write(dir, j); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(nil).PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "names the data directory "+h.data+", and the upgrade was made in "+j.DataDir) {
+		t.Fatalf("%v", err)
+	}
+}
+
+// putBack: the log and index beside a database that replaced the original
+// are not the original's; those with no database beside them are.
+func TestPutBack(t *testing.T) {
+	for _, c := range []struct {
+		name                 string
+		original, data, want string
+	}{
+		{"a killed server's log goes", "db", "DB,DB-wal,DB-shm", "db"},
+		{"the original's log comes back", "db,db-wal", "DB,DB-wal,DB-shm", "db,db-wal"},
+		{"a swap stopped after the database", "db", "db-wal,db-shm", "db,db-wal,db-shm"},
+		{"an undo stopped after the database", "db-wal", "db", "db,db-wal"},
+		{"nothing aside", "", "db,db-wal", "db,db-wal"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			original, data := t.TempDir(), t.TempDir()
+			put := func(dir, list string) {
+				for _, f := range strings.FieldsFunc(list, func(r rune) bool { return r == ',' }) {
+					if err := os.WriteFile(filepath.Join(dir, "varlatch."+strings.ToLower(f)), []byte(f), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			put(original, c.original)
+			put(data, c.data)
+			if left := putBack(original, data); left != nil {
+				t.Fatal(left)
+			}
+			var got []string
+			for _, name := range databaseFiles {
+				if b, err := os.ReadFile(filepath.Join(data, name)); err == nil {
+					got = append(got, string(b))
+				}
+			}
+			if strings.Join(got, ",") != c.want {
+				t.Fatalf("%q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// A varlatchd killed rather than stopped (the unit's 30 seconds over)
+// leaves its log: an undo, of an upgrade and of a rollback, does not give
+// it to the database it puts back.
+func TestAnUndoAfterAKilledServer(t *testing.T) {
+	t.Run("an upgrade", func(t *testing.T) {
+		h := newHost(t)
+		inst := h.inspect(t)
+		h.svc.kill = true
+		if _, err := h.upgrader(func(p string) bool { return p == "started" }).Run(context.Background(), inst, h.release(t, "to", safe)); !errors.Is(err, errKilled) {
+			t.Fatal(err)
+		}
+		h.upgrader(nil).mustServe(t, toVersion, toSchema)
+		j, err := h.upgrader(nil).Recover(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		previousServes(t, h, j)
+	})
+	t.Run("a rollback", func(t *testing.T) {
+		h := upgraded(t, false)
+		h.svc.kill = true
+		events := h.auditEvents(t)
+		plan, err := h.upgrader(nil).PlanRollback(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.upgrader(func(p string) bool { return p == "started" }).Rollback(context.Background(), plan); !errors.Is(err, errKilled) {
+			t.Fatal(err)
+		}
+		h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
+		j, err := h.upgrader(nil).Recover(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		upgradedServes(t, h, j)
+		if got := h.auditEvents(t); got < events {
+			t.Fatalf("%d audit events, %d before the rollback", got, events)
+		}
+	})
+}
+
+// While a varlatchd command of the interrupted run still holds the data
+// directory, an undo changes nothing in it; run again after, it undoes.
+func TestAnUndoWaitsForTheDataDirectory(t *testing.T) {
+	h := upgraded(t, false)
+	plan, err := h.upgrader(nil).PlanRollback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(func(p string) bool { return p == "rollback:restored" }).Rollback(context.Background(), plan); !errors.Is(err, errKilled) {
+		t.Fatal(err)
+	}
+	unlock, err := dataLock(h.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := h.upgrader(nil).Recover(context.Background())
+	unlock()
+	if err == nil || !strings.Contains(err.Error(), "the rollback to "+fromVersion+" failed") || !strings.Contains(err.Error(), "still uses "+h.data) || j.State != journal.Failed {
+		t.Fatalf("%+v, %v", j, err)
+	}
+	if got := h.databaseSchema(); got != fromSchema {
+		t.Fatalf("the database was put back under a lock: schema %d", got)
+	}
+	if j, err = h.upgrader(nil).Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	upgradedServes(t, h, j)
+}
+
+// A run whose time is over is undone all the same.
+func TestAnUndoOutlivesTheRunsTime(t *testing.T) {
+	h := upgraded(t, false)
+	plan, err := h.upgrader(nil).PlanRollback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	j, err := h.upgrader(func(p string) bool {
+		if p == "stopped" {
+			cancel()
+		}
+		return false
+	}).Rollback(ctx, plan)
+	if err == nil || !strings.Contains(err.Error(), "it was undone") {
+		t.Fatalf("%v", err)
+	}
+	upgradedServes(t, h, j)
+}
+
+// As root with varlatchd another user's, as the unit runs it: the database
+// the rollback restores is that user's, and served.
+func TestARollbackAsRootGivesTheServerItsDatabase(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("runs varlatchd as another user, as root (go.yml's Go container)")
+	}
+	const uid = 65534
+	h := newHostOf(t, uid)
+	inst := h.inspect(t)
+	if j, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "unsafe", unsafeDecl)); err != nil || j.State != journal.Done {
+		t.Fatalf("the upgrade: %+v, %v", j, err)
+	}
+	// Planned with varlatchd stopped too, as when the new release does not
+	// start: the reads leave nothing of root's that varlatchd meets.
+	if err := h.svc.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := h.upgrader(nil).PlanRollback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := h.upgrader(nil).Rollback(context.Background(), plan)
+	if err != nil || j.State != journal.Done {
+		t.Fatalf("%+v, %v", j, err)
+	}
+	h.upgrader(nil).mustServe(t, fromVersion, fromSchema)
+	for _, name := range databaseFiles {
+		info, err := os.Stat(filepath.Join(h.data, name))
+		if err == nil && info.Sys().(*syscall.Stat_t).Uid != uid {
+			t.Errorf("%s is uid %d's", name, info.Sys().(*syscall.Stat_t).Uid)
+		}
 	}
 }

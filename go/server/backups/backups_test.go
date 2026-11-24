@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -219,6 +220,70 @@ func TestRetention(t *testing.T) {
 	}
 }
 
+// Retention never removes a TypeScript-format archive (go-step7 decision
+// 18) nor an archive without a status record Go wrote, however old: it
+// counts and removes Go's own archives only. The status lists the
+// TypeScript ones apart.
+func TestRetentionLeavesTypeScriptArchives(t *testing.T) {
+	f := newFixture(t)
+	s := f.service(nil)
+	backups := filepath.Join(f.dir, Dir)
+	if err := os.MkdirAll(backups, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := f.clock().Add(-400 * 24 * time.Hour).Format("2006-01-02T15:04:05.000Z")
+	ts := backup.StatusRecord{ArchiveID: "00000000-0000-4000-8000-0000000000aa", InstallationID: f.inst, CreatedAt: old, Release: "0.22.4", RequiredKeyVersions: []int{1}}
+	if err := backup.SaveStatus(f.dir, ts); err != nil {
+		t.Fatal(err)
+	}
+	unrecorded := "00000000-0000-4000-8000-0000000000bb"
+	for _, id := range []string{ts.ArchiveID, unrecorded} {
+		path := filepath.Join(backups, id+".vltbak")
+		if err := os.WriteFile(path, []byte("an archive this installation did not make"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		past := f.clock().Add(-400 * 24 * time.Hour)
+		if err := os.Chtimes(path, past, past); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ids []string
+	for i := 0; i < 4; i++ {
+		res, err := s.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, res.ArchiveID)
+		for _, removed := range res.Removed {
+			if removed == ts.ArchiveID || removed == unrecorded {
+				t.Errorf("run %d removed %s", i, removed)
+			}
+		}
+		f.add(time.Hour)
+	}
+	for _, id := range []string{ts.ArchiveID, unrecorded, ids[2], ids[3]} {
+		if _, err := os.Stat(filepath.Join(backups, id+".vltbak")); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+	}
+	for _, id := range ids[:2] {
+		if _, err := os.Stat(filepath.Join(backups, id+".vltbak")); err == nil {
+			t.Errorf("%s was kept beyond backup_keep", id)
+		}
+	}
+	st, err := s.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Archives) != 4 || len(st.TypeScriptArchives) != 1 || st.TypeScriptArchives[0].ArchiveID != ts.ArchiveID {
+		t.Errorf("archives %d, typescriptArchives %+v", len(st.Archives), st.TypeScriptArchives)
+	}
+	js, err := s.StatusJSON()
+	if err != nil || !bytes.Contains(js, []byte(`"typescriptArchives":[{"archiveId":"`+ts.ArchiveID+`"`)) {
+		t.Errorf("status JSON %s %v", js, err)
+	}
+}
+
 // What a run refuses before it writes anything.
 func TestRefusals(t *testing.T) {
 	ctx := context.Background()
@@ -341,6 +406,18 @@ func (s *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>no</Message></Error>`)
 		return
 	}
+	if r.Method == http.MethodGet && (r.URL.RawQuery == "" || strings.HasPrefix(r.URL.RawQuery, "x-id=GetObject")) {
+		b, ok := s.objects[r.URL.Path]
+		if !ok {
+			w.WriteHeader(404)
+			io.WriteString(w, `<?xml version="1.0"?><Error><Code>NoSuchKey</Code><Message>no</Message></Error>`)
+			return
+		}
+		w.Header().Set("ETag", `"etag"`)
+		w.WriteHeader(200)
+		_, _ = w.Write(b)
+		return
+	}
 	if r.Method != http.MethodPut || r.URL.RawQuery != "" && !strings.HasPrefix(r.URL.RawQuery, "x-id=PutObject") {
 		w.WriteHeader(400)
 		return
@@ -430,6 +507,49 @@ func TestSchedule(t *testing.T) {
 	}
 	if st, _ := s.Status(); len(st.Archives) != 1 {
 		t.Errorf("%d archives", len(st.Archives))
+	}
+}
+
+// A data directory a migration imported into again (rolled back, its old
+// data deleted, then migrated anew: #414 keeps Go's backups/) holds the
+// earlier database's final archive record, two hours old, verified and
+// delivered. It says nothing of this database's backups: the first is due
+// at once, and until one exists the status warns of no archive within 48
+// hours. Another installation's record neither. Once this database has its
+// own, the schedule goes by it.
+func TestScheduleAfterAMigrationImportedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	s := f.service(nil)
+	life, err := ReadLifecycle(ctx, f.store.Reader())
+	if err != nil || life.InstallationID != f.inst || life.Since.IsZero() {
+		t.Fatalf("the lifecycle: %+v %v", life, err)
+	}
+	stamp := func(d time.Duration) string { return f.clock().Add(d).Format("2006-01-02T15:04:05.000Z") }
+	checked := &backup.Verification{Integrity: true, Compatibility: true, KeyMatch: true, CheckedAt: stamp(-2 * time.Hour), TargetRelease: "0.50.0"}
+	for _, r := range []backup.StatusRecord{
+		{ArchiveID: "00000000-0000-4000-8000-0000000000a1", InstallationID: f.inst, CreatedAt: stamp(-2 * time.Hour), Release: "0.50.0", RequiredKeyVersions: []int{1},
+			Verification: checked, Delivery: &backup.Delivery{Destination: "offsite", UploadedAt: stamp(-2 * time.Hour), RemoteVerification: checked}},
+		{ArchiveID: "00000000-0000-4000-8000-0000000000b1", InstallationID: "inst_other", CreatedAt: stamp(time.Second), Release: "0.50.0", RequiredKeyVersions: []int{1}, Verification: checked},
+	} {
+		if err := backup.SaveStatus(f.dir, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := s.Status()
+	if err != nil || len(st.Archives) != 2 || !slices.Contains(st.Warnings, "No archive created within the last 48 hours") {
+		t.Fatalf("before this database's first backup: %+v %v", st, err)
+	}
+	if wait := s.tick(ctx); wait != 24*time.Hour {
+		t.Fatalf("the first tick: %s (not due by the earlier database's archive?)", wait)
+	}
+	st, err = s.Status()
+	if err != nil || len(st.Archives) != 3 || slices.Contains(st.Warnings, "No archive created within the last 48 hours") {
+		t.Fatalf("after it: %+v %v", st, err)
+	}
+	f.add(10 * time.Hour)
+	if wait := s.tick(ctx); wait != 14*time.Hour {
+		t.Errorf("by its own archive: %s", wait)
 	}
 }
 
@@ -649,5 +769,153 @@ func TestConfigurationKeepsTheTailnetSettings(t *testing.T) {
 		conf.Settings["tailnet_tags"] != "tag:varlatch,tag:prod" || conf.Settings["tailnet_port"] != "8687" || bytes.Contains(raw, []byte("tailnet-auth-key")) ||
 		conf.Settings["tailnet_https_port"] != "8443" || conf.Settings["tailnet_browser_origins"] != "https://dash.example.com,http://localhost:5173" {
 		t.Errorf("configuration %s", raw)
+	}
+}
+
+// TestRunLeavesTheACMEStoreOut: with public HTTPS on, an archive holds
+// its settings (listen_https, the redirect listener, the CA, the contact)
+// and nothing of the ACME store in the data directory: two components,
+// the snapshot and the configuration, and neither holds a byte of the
+// account key or the certificate's key. A restored installation obtains
+// its certificate again.
+func TestRunLeavesTheACMEStoreOut(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.PublicHTTPS = &config.PublicHTTPS{Host: "vault.example.com", Listen: ":443", RedirectListen: ":80",
+		Email: "ops@example.com", CA: config.LetsEncryptDirectory, CARootFile: "/etc/varlatch/ca.pem"}
+	// A store as certmagic leaves it: the account's key and the
+	// certificate's, with markers no archive may hold. No key-shaped text
+	// is written in this source (a secret scanner reads it): the PEM
+	// header is put together here, and the markers are plain words.
+	pemHeader := "-----BEGIN EC " + "PRIVATE KEY-----"
+	pemFooter := "-----END EC " + "PRIVATE KEY-----"
+	accountMarker, certKeyMarker, certMarker := "marker-account-key", "marker-certificate-key", "marker-certificate"
+	pemOf := func(marker string) string { return pemHeader + "\n" + marker + "\n" + pemFooter + "\n" }
+	markers := map[string]string{
+		"acme/acme-v02.api.letsencrypt.org-directory/users/ops@example.com/ops.key":                        pemOf(accountMarker),
+		"acme/certificates/acme-v02.api.letsencrypt.org-directory/vault.example.com/vault.example.com.key": pemOf(certKeyMarker),
+		"acme/certificates/acme-v02.api.letsencrypt.org-directory/vault.example.com/vault.example.com.crt": certMarker,
+	}
+	for name, content := range markers {
+		p := filepath.Join(f.dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := f.service(nil).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bek, _ := backup.KeyBEK(f.bek)
+	o, err := backup.Open(res.Path, bek, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	var names []string
+	for _, c := range o.Manifest.Components {
+		names = append(names, c.Name)
+	}
+	if !slices.Equal(names, []string{backup.ComponentDatabase, backup.ComponentConfiguration}) {
+		t.Errorf("components %q", names)
+	}
+	for _, name := range names {
+		raw, err := os.ReadFile(o.Path(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, marker := range []string{accountMarker, certKeyMarker, certMarker, pemHeader, "PRIVATE " + "KEY"} {
+			if bytes.Contains(raw, []byte(marker)) {
+				t.Errorf("%s holds %s", name, marker)
+			}
+		}
+	}
+	if bytes.Contains(o.ManifestJSON, []byte("acme/")) {
+		t.Errorf("the manifest names the store: %s", o.ManifestJSON)
+	}
+	var conf Configuration
+	raw, _ := os.ReadFile(o.Path(backup.ComponentConfiguration))
+	if err := json.Unmarshal(raw, &conf); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"listen_https": ":443", "listen_http_redirect": ":80", "acme_ca": config.LetsEncryptDirectory, "acme_email": "ops@example.com"}
+	for k, v := range want {
+		if conf.Settings[k] != v {
+			t.Errorf("%s = %q, want %q", k, conf.Settings[k], v)
+		}
+	}
+	if _, ok := conf.Settings["acme_ca_root"]; ok {
+		t.Error("acme_ca_root, a path on this host, is in the archive")
+	}
+}
+
+// The uploaded copy downloaded back and checked (varlatch migrate
+// --finish's final archive): passed and recorded as the delivery's remote
+// verification; a damaged remote copy fails integrity; refused with no
+// destination, and for an archive never uploaded.
+func TestVerifyRemote(t *testing.T) {
+	f := newFixture(t)
+	fake := &fakeS3{objects: map[string][]byte{}}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	s := f.service(nil)
+	res, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.VerifyRemote(context.Background(), res.ArchiveID); !errors.Is(err, ErrNoDestination) {
+		t.Fatalf("no destination: %v", err)
+	}
+	conf := filepath.Join(f.dir, "conf")
+	os.Mkdir(conf, 0o700)
+	os.WriteFile(filepath.Join(conf, "destinations.json"), []byte(`{"offsite":{"endpoint":"`+srv.URL+`","region":"us-east-1","bucket":"b","writeCredentialsFile":"write.json"}}`), 0o600)
+	os.WriteFile(filepath.Join(conf, "write.json"), []byte(`{"accessKeyId":"AKIDTEST","secretAccessKey":"not-a-secret"}`), 0o600)
+	f.cfg.BackupDestinationsFile = filepath.Join(conf, "destinations.json")
+	s = f.service(nil)
+	if _, err := s.VerifyRemote(context.Background(), res.ArchiveID); err == nil || !strings.Contains(err.Error(), "no recorded upload") {
+		t.Fatalf("never uploaded: %v", err)
+	}
+	// A killed verification's download directory: the next run removes it.
+	killed := filepath.Join(f.dir, Dir, ".remote-"+res.ArchiveID)
+	if err := os.MkdirAll(killed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	up, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(killed); !os.IsNotExist(err) {
+		t.Errorf("a killed verification's directory after a run: %v", err)
+	}
+	v, err := s.VerifyRemote(context.Background(), up.ArchiveID)
+	if err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {
+		t.Fatalf("the remote copy: %+v %v", v, err)
+	}
+	st, _ := s.Status()
+	found := false
+	for _, a := range st.Archives {
+		if a.ArchiveID == up.ArchiveID && a.Delivery != nil && a.Delivery.RemoteVerification != nil && a.Delivery.RemoteVerification.Integrity {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the remote verification was not recorded")
+	}
+	key := "/b/varlatch/" + up.ArchiveID + ".vltbak"
+	fake.mu.Lock()
+	b := fake.objects[key]
+	b[len(b)/2] ^= 0xff
+	fake.mu.Unlock()
+	if v, err := s.VerifyRemote(context.Background(), up.ArchiveID); err != nil || v.Integrity {
+		t.Errorf("a damaged remote copy: %+v %v", v, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(f.dir, Dir)); len(entries) > 0 {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".remote-") {
+				t.Errorf("the download is left: %s", e.Name())
+			}
+		}
 	}
 }

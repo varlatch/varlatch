@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/varlatch/varlatch/go/lib/whatwg"
 )
@@ -206,7 +205,7 @@ func ParseAllow(spec string) ([]Entry, error) {
 	var out []Entry
 	for _, raw := range strings.Split(spec, ",") {
 		text := strings.Map(func(r rune) rune {
-			if isJSWhitespace(r) {
+			if whatwg.IsJSWhitespace(r) {
 				return -1
 			}
 			return r
@@ -221,11 +220,6 @@ func ParseAllow(spec string) ([]Entry, error) {
 		out = append(out, e)
 	}
 	return out, nil
-}
-
-// isJSWhitespace is JavaScript's \s.
-func isJSWhitespace(r rune) bool {
-	return whatwg.IsJSSpace(r) || unicode.Is(unicode.Zs, r)
 }
 
 // Warnings is allowListWarnings (ADR-0057 Decision 8): entries that add

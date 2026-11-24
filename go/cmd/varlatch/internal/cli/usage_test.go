@@ -90,8 +90,16 @@ func TestHelpIsTheUsageText(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if c.name == "admin" {
+		switch c.name {
+		case "admin":
 			help = adminUsage
+		case "doctor":
+			help = doctorUsage
+		case "setup":
+			help = setupUsage
+		}
+		if c.name == "move" {
+			help = moveUsage
 		}
 		for _, args := range [][]string{{c.name, "--help"}, {"help", c.name}} {
 			if code, out, errs := run(args...); code != ExitOK || out != help+"\n" || errs != "" {

@@ -76,7 +76,14 @@ type Case struct {
 	Callback *Callback `json:"callback,omitempty"`
 	// Signal sends Ctrl-C once stderr holds After.
 	Signal *Signal `json:"signal,omitempty"`
-	Expect Outcome `json:"expect"`
+	// Terminal runs the CLI on a pseudo-terminal, its controlling terminal
+	// and stdin, and its "stdout", "stderr" or "both" (onTerminal);
+	// Expect.Terminal is what the terminal displayed. Not replayed where
+	// there is no pseudo-terminal (Windows).
+	Terminal string `json:"terminal,omitempty"`
+	// Platform is the fake platforms' script (platform.go).
+	Platform []Exchange `json:"platform,omitempty"`
+	Expect   Outcome    `json:"expect"`
 }
 
 // Callback is a case's browser sign-in callback.
@@ -130,6 +137,11 @@ type Outcome struct {
 	Files    map[string]FileState `json:"files"`
 	// Callbacks is what each callback POST got: its status, or "refused".
 	Callbacks []string `json:"callbacks,omitempty"`
+	// PlatformRequests is every request the fake platforms received, when
+	// the case gives them a script.
+	PlatformRequests []PlatformRequest `json:"platformRequests,omitempty"`
+	// Terminal is what a terminal case's terminal displayed (Case.Terminal).
+	Terminal string `json:"terminal,omitempty"`
 }
 
 // Request is one request the fake server received.
@@ -268,8 +280,16 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		return Outcome{}, nil, err
 	}
 	defer srv.close()
+	var platforms *platformServer
+	if c.Platform != nil {
+		if platforms, err = newPlatformServer(c.Platform); err != nil {
+			return Outcome{}, nil, err
+		}
+		defer platforms.close()
+	}
 	fill := func(s string) string {
-		return strings.ReplaceAll(strings.ReplaceAll(s, "{{server}}", srv.origin), "{{dir}}", dir)
+		s = strings.ReplaceAll(strings.ReplaceAll(s, "{{server}}", srv.origin), "{{server-host}}", srv.host())
+		return strings.ReplaceAll(s, "{{dir}}", dir)
 	}
 	release := slices.Contains(c.Patterns, "release")
 	// Inputs get Node.js's default modes (0666 and 0777, less the umask), as
@@ -297,6 +317,9 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		"HOME":                filepath.Join(dir, "home"),
 		"VARLATCH_CONFIG_DIR": filepath.Join(dir, "config"),
 		"VARLATCH_NODE_CHECK": "off",
+		// A Node.js child's own warnings (an experimental API, say) depend
+		// on the Node.js that runs it: never part of a recording.
+		"NODE_NO_WARNINGS": "1",
 	}
 	if runtime.GOOS == "windows" {
 		env["USERPROFILE"] = env["HOME"]
@@ -307,6 +330,19 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	}
 	for k, v := range c.Env {
 		env[k] = fill(v)
+	}
+	// Windows's environment names are case-insensitive: a case that sets
+	// two names differing only in case (NO_PROXY and no_proxy) cannot be
+	// given there.
+	if runtime.GOOS == "windows" {
+		if a, b, ok := caseCollision(env); ok {
+			return Outcome{}, nil, fmt.Errorf("%w: %s and %s are one variable on Windows", ErrUnsupported, a, b)
+		}
+	}
+	// Not part of the case's environment: how the CLI under test reaches the fake platforms.
+	if platforms != nil {
+		env[PlatformEnv] = platforms.addr
+		env["NODE_EXTRA_CA_CERTS"] = platforms.cert
 	}
 	args := make([]string, len(c.Args))
 	for i, a := range c.Args {
@@ -327,36 +363,28 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	if c.Signal != nil && runtime.GOOS == "windows" {
 		return Outcome{}, nil, ErrUnsupported
 	}
-	watch := &watcher{c: c}
-	cmd.Stdout, cmd.Stderr = watch.stream(&watch.stdout), watch.stream(&watch.stderr)
-	began := time.Now().UnixMilli()
-	if err := cmd.Start(); err != nil {
-		return Outcome{}, nil, err
+	if c.Terminal != "" && (c.Signal != nil || c.Callback != nil || c.Stdin != "") {
+		return Outcome{}, nil, fmt.Errorf("case %s: a terminal case has no signal, callback or stdin", c.ID)
 	}
-	watch.mu.Lock()
-	watch.process = cmd.Process
-	watch.react() // what the run wrote before the process was known
-	watch.mu.Unlock()
-	timer := time.AfterFunc(60*time.Second, func() { _ = cmd.Process.Kill() })
-	err = cmd.Wait()
-	timer.Stop()
-	status := 0
-	if err != nil {
-		var exit *exec.ExitError
-		if !asExit(err, &exit) {
+	var status int
+	var stdout, stderr, shown string
+	var callbacks []string
+	var began, end int64
+	if c.Terminal != "" {
+		began = time.Now().UnixMilli()
+		if status, stdout, stderr, shown, err = onTerminal(cmd, c.Terminal); err != nil {
 			return Outcome{}, nil, err
 		}
-		status = exitStatus(exit)
+		end = time.Now().UnixMilli()
+	} else if status, stdout, stderr, callbacks, began, end, err = run(cmd, c); err != nil {
+		return Outcome{}, nil, err
 	}
-	callbacks := watch.callbacksDone()
-	end := time.Now().UnixMilli()
 	unfill := func(s string) string {
-		s = UnfillDir(strings.ReplaceAll(s, srv.origin, "{{server}}"), dir)
+		s = UnfillDir(strings.ReplaceAll(strings.ReplaceAll(s, srv.origin, "{{server}}"), srv.host(), "{{server-host}}"), dir)
 		s, _ = ApplyPatterns(c.Patterns, s, began, end)
 		return s
 	}
-	stdout, stderr := watch.text()
-	got := Outcome{Status: status, Stdout: unfill(stdout), Stderr: unfill(stderr), Files: map[string]FileState{}, Callbacks: callbacks}
+	got := Outcome{Status: status, Stdout: unfill(stdout), Stderr: unfill(stderr), Files: map[string]FileState{}, Callbacks: callbacks, Terminal: unfill(shown)}
 	for _, r := range srv.received() {
 		r.Path = unfill(r.Path)
 		for k, v := range r.Headers {
@@ -367,6 +395,14 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 	}
 	if slices.Contains(c.Patterns, "generated") {
 		got.Requests = GeneratedPattern(c.Args, got.Requests, stdout+stderr)
+	}
+	if platforms != nil {
+		got.PlatformRequests = []PlatformRequest{}
+		for _, r := range platforms.received() {
+			r.Path = unfill(r.Path)
+			r.Body = json.RawMessage(unfill(string(r.Body)))
+			got.PlatformRequests = append(got.PlatformRequests, r)
+		}
 	}
 	if got.Files, err = Tree(dir, unfill); err != nil {
 		return got, nil, err
@@ -381,6 +417,35 @@ func Replay(c Case, start Command, differences map[string]Difference) (Outcome, 
 		d(&want, got)
 	}
 	return got, Compare(want, got), nil
+}
+
+// run runs cmd with pipes, acting on what it writes as the case says (the
+// callback, Ctrl-C).
+func run(cmd *exec.Cmd, c Case) (status int, stdout, stderr string, callbacks []string, began, end int64, err error) {
+	watch := &watcher{c: c}
+	cmd.Stdout, cmd.Stderr = watch.stream(&watch.stdout), watch.stream(&watch.stderr)
+	began = time.Now().UnixMilli()
+	if err := cmd.Start(); err != nil {
+		return 0, "", "", nil, 0, 0, err
+	}
+	watch.mu.Lock()
+	watch.process = cmd.Process
+	watch.react() // what the run wrote before the process was known
+	watch.mu.Unlock()
+	timer := time.AfterFunc(60*time.Second, func() { _ = cmd.Process.Kill() })
+	waited := cmd.Wait()
+	timer.Stop()
+	if waited != nil {
+		var exit *exec.ExitError
+		if !asExit(waited, &exit) {
+			return 0, "", "", nil, 0, 0, waited
+		}
+		status = exitStatus(exit)
+	}
+	callbacks = watch.callbacksDone()
+	end = time.Now().UnixMilli()
+	stdout, stderr = watch.text()
+	return status, stdout, stderr, callbacks, began, end, nil
 }
 
 // UnfillDir is goKit.ts's unfillDir: the case directory as {{dir}}, both as
@@ -516,10 +581,25 @@ var callbackPort = regexp.MustCompile(`(callback=http%3A%2F%2F127\.0\.0\.1%3A)\d
 // laterName is a "now+<s>" pattern's name.
 var laterName = regexp.MustCompile(`^now\+(\d+)$`)
 
+var (
+	agentRunID       = regexp.MustCompile(`run_[0-9a-f]{16}([^0-9a-f]|$)`)
+	agentPlaceholder = regexp.MustCompile(`vlch_ph_v1_[0-9a-f]{32}`)
+	loopbackPort     = regexp.MustCompile(`127\.0\.0\.1:\d+`)
+)
+
+// AgentRunPattern is goKit.ts's agentRunPattern, the "agent-run" pattern:
+// an agent-safe run's identifier as run_{{id}}, a Placeholder as
+// {{placeholder}}, and the Broker's loopback port as 127.0.0.1:{{port}}.
+func AgentRunPattern(text string) string {
+	text = agentRunID.ReplaceAllString(text, "run_{{id}}$1")
+	text = agentPlaceholder.ReplaceAllString(text, "{{placeholder}}")
+	return loopbackPort.ReplaceAllString(text, "127.0.0.1:{{port}}")
+}
+
 // ApplyPatterns is goKit.ts's applyPatterns: the patterns a case names,
-// in order: "now", "now+<s>", "callback" (the loopback port as {{port}})
-// and "release" (ReleaseUnfill); "generated" applies to request bodies
-// (GeneratedPattern).
+// in order: "now", "now+<s>", "callback" (the loopback port as {{port}}),
+// "agent-run" (AgentRunPattern) and "release" (ReleaseUnfill); "generated"
+// applies to request bodies (GeneratedPattern).
 func ApplyPatterns(patterns []string, text string, start, end int64) (string, error) {
 	for _, name := range patterns {
 		switch m := laterName.FindStringSubmatch(name); {
@@ -530,6 +610,8 @@ func ApplyPatterns(patterns []string, text string, start, end int64) (string, er
 			text = LaterPattern(text, start, end, seconds)
 		case name == "callback":
 			text = callbackPort.ReplaceAllString(text, "${1}{{port}}${2}")
+		case name == "agent-run":
+			text = AgentRunPattern(text)
 		case name == "release":
 			text = ReleaseUnfill(text)
 		case name == "generated":
@@ -705,6 +787,7 @@ func mapKeys(m map[string]string) func(func(string) bool) {
 func clone(o Outcome) Outcome {
 	c := o
 	c.Requests = slices.Clone(o.Requests)
+	c.PlatformRequests = slices.Clone(o.PlatformRequests)
 	c.Files = map[string]FileState{}
 	for k, v := range o.Files {
 		c.Files[k] = v
@@ -726,6 +809,9 @@ func Compare(want, got Outcome) []string {
 	if want.Stderr != got.Stderr {
 		problems = append(problems, "stderr differs:\n"+diff(want.Stderr, got.Stderr))
 	}
+	if want.Terminal != got.Terminal {
+		problems = append(problems, "the terminal differs:\n"+diff(want.Terminal, got.Terminal))
+	}
 	for i := 0; i < max(len(want.Requests), len(got.Requests)); i++ {
 		switch {
 		case i >= len(got.Requests):
@@ -738,6 +824,7 @@ func Compare(want, got Outcome) []string {
 			}
 		}
 	}
+	problems = append(problems, comparePlatform(want.PlatformRequests, got.PlatformRequests)...)
 	names := map[string]bool{}
 	for k := range want.Files {
 		names[k] = true
@@ -905,7 +992,13 @@ func newServer(script []Exchange, dir string) (*server, error) {
 			}
 		}
 		s.mu.Lock()
-		s.got = append(s.got, Request{Method: r.Method, Path: r.URL.RequestURI(), Headers: headers, Body: recorded})
+		// An absolute URI (a request sent to a proxy, as `varlatch request`
+		// sends one) is recorded as received, as Node.js's server gives it.
+		target := r.URL.RequestURI()
+		if !strings.HasPrefix(r.RequestURI, "/") {
+			target = r.RequestURI
+		}
+		s.got = append(s.got, Request{Method: r.Method, Path: target, Headers: headers, Body: recorded})
 		var next *Exchange
 		if len(s.script) > 0 {
 			next = &s.script[0]
@@ -914,9 +1007,10 @@ func newServer(script []Exchange, dir string) (*server, error) {
 		s.mu.Unlock()
 		fill := func(t string) string {
 			t = strings.ReplaceAll(t, "{{server}}", s.origin)
+			t = strings.ReplaceAll(t, "{{server-host}}", s.host())
 			return strings.ReplaceAll(t, "{{dir}}", string(escapedDir[1:len(escapedDir)-1]))
 		}
-		if next == nil || next.Method != r.Method || fill(next.Path) != r.URL.RequestURI() {
+		if next == nil || next.Method != r.Method || fill(next.Path) != target {
 			w.Header().Set("content-type", "text/plain")
 			w.WriteHeader(599)
 			_, _ = io.WriteString(w, "unexpected request")
@@ -958,6 +1052,9 @@ func latin1(s string) string {
 	return b.String()
 }
 
+// host is the server's host and port: `{{server-host}}`.
+func (s *server) host() string { return strings.TrimPrefix(s.origin, "http://") }
+
 func (s *server) received() []Request {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -965,3 +1062,21 @@ func (s *server) received() []Request {
 }
 
 func (s *server) close() { _ = s.srv.Close() }
+
+// caseCollision gives two names of env that differ only in case, the first
+// in sorted order.
+func caseCollision(env map[string]string) (string, string, bool) {
+	names := make([]string, 0, len(env))
+	for k := range env {
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	seen := map[string]string{}
+	for _, n := range names {
+		if other, ok := seen[strings.ToUpper(n)]; ok {
+			return other, n, true
+		}
+		seen[strings.ToUpper(n)] = n
+	}
+	return "", "", false
+}

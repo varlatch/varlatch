@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/varlatch/varlatch/go/lib/jsjson"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 )
 
 // The host commands of a Go installation that are fronts for `varlatchd
@@ -42,6 +43,7 @@ const adminUsage = `Usage:
   varlatch admin maintenance begin --ttl <duration>
   varlatch admin maintenance end <lease id>
   varlatch admin maintenance status
+  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>]
                (a Go installation's host commands: each runs varlatchd admin with the same words on this host,
                 as root; each also takes --config <file>, the installation's varlatchd.conf, default
                 /etc/varlatch/varlatchd.conf. A Compose installation's are the TypeScript CLI's, varlatch-ts)`
@@ -71,15 +73,15 @@ var adminForms = []adminForm{
 	{words: []string{"maintenance", "status"}, json: true},
 }
 
-// adminCommand is `admin`'s partial: the forms above. `admin reenroll`
-// (slice 6.9) is not built yet; the TypeScript CLI's `backup create` and
+// adminCommand is `admin`'s partial: the forms above, and `admin
+// reenroll` (slice 6.9, move.go); the TypeScript CLI's `backup create` and
 // `backup verify` say what a Go installation runs instead.
 func adminCommand(r *Run) (bool, error) {
 	if len(r.Args) > 0 && r.Args[0] == "reenroll" {
-		return false, nil
+		return true, reenrollCommand(r)
 	}
 	if i := slices.Index(r.Args, "--dir"); i >= 0 {
-		return true, composeRefusal(r)
+		return true, composeRefusal(r, "admin")
 	}
 	if len(r.Args) >= 2 && r.Args[0] == "backup" && (r.Args[1] == "create" || r.Args[1] == "verify") {
 		return true, UsageError("varlatch admin backup " + r.Args[1] + ": a Go installation's backups are `varlatch admin backup run` (it makes the archive and verifies it) and `varlatch admin backup status`; `backup create` and `backup verify` are a Compose installation's, through the TypeScript CLI")
@@ -148,7 +150,7 @@ func (f adminForm) check(args []string) (config string, out []string, err error)
 
 // composeRefusal is decision 11's: a Compose installation keeps its
 // TypeScript CLI, installed beside the Go one as varlatch-ts.
-func composeRefusal(r *Run) error { return composeRefusalOf(r, "admin", "--dir") }
+func composeRefusal(r *Run, command string) error { return composeRefusalOf(r, command, "--dir") }
 
 // composeRefusalOf is composeRefusal for the host command named command
 // and the Compose option given (--dir, or another of a Compose
@@ -289,6 +291,42 @@ func varlatchdEnviron(r *Run) []string {
 	return out
 }
 
+// hostCredentials: the unit hands varlatchd its keys as credentials
+// (CREDENTIALS_DIRECTORY); a host command run as root, outside the unit,
+// finds them where setup wrote them, beside the configuration. So
+// CREDENTIALS_DIRECTORY is the one keyenv.CredentialsDir gives (the rule
+// varlatchd admin applies itself): the run's own when it set one (an empty
+// value is none), else, as root (root), the configuration's directory,
+// made absolute, when the Root KEK is there. Only a directory's name: no
+// key goes into the environment.
+func hostCredentials(env []string, config string, root bool) []string {
+	if config == "" {
+		config = "/etc/varlatch/varlatchd.conf"
+	}
+	set := ""
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, "CREDENTIALS_DIRECTORY="); ok {
+			set = v
+		}
+	}
+	dir := keyenv.CredentialsDir(func(name string) string {
+		if name == "CREDENTIALS_DIRECTORY" {
+			return set
+		}
+		return ""
+	}, config, root)
+	if dir == set {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "CREDENTIALS_DIRECTORY=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "CREDENTIALS_DIRECTORY="+dir)
+}
+
 // isCredentialVariable is whether name is a VARLATCH_* variable that holds
 // a credential: VARLATCH_TOKEN, VARLATCH_OIDC_TOKEN,
 // VARLATCH_KEK_PASSPHRASE and any other named for a token, passphrase,
@@ -311,45 +349,15 @@ func isCredentialVariable(name string) bool {
 // fail-safe (RedactValue), any other output and every line on stderr
 // through the fail-safe. Its exit status is the command's.
 func (r *Run) runVarlatchd(form adminForm, args []string, config string) error {
-	path, err := r.locateVarlatchd("varlatch admin")
+	answer, said, code, err := r.varlatchd("varlatch admin", args, config)
 	if err != nil {
 		return err
-	}
-	if config != "" {
-		args = append(args, "--config", config)
-	}
-	cmd := exec.Command(path, args...)
-	cmd.Env = varlatchdEnviron(r)
-	// What varlatchd prints is read whole, then shown through the
-	// fail-safe below: nothing of it reaches this process's streams as it
-	// is.
-	answer, said, err := runChild(cmd)
-	code := 0
-	if err != nil {
-		var exit *exec.ExitError
-		if !errors.As(err, &exit) {
-			return Fail("varlatch admin: could not run "+path+": "+err.Error(), ExitUnavailable)
-		}
-		code = exit.ExitCode()
-		if code < 0 {
-			code = ExitFailure // ended by a signal
-		}
 	}
 	if err := r.showVarlatchd(form, args, answer); err != nil {
 		return err
 	}
-	for _, line := range strings.Split(strings.TrimRight(string(said), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		if err := r.warn(line); err != nil {
-			return err
-		}
-	}
-	if code == ExitConfig && runtime.GOOS != "windows" && os.Geteuid() != 0 {
-		if err := r.warn("varlatch admin: the installation's configuration, data directory and control socket are its service's; run this as root (sudo varlatch admin ...)"); err != nil {
-			return err
-		}
+	if err := r.warnLines(said); err != nil {
+		return err
 	}
 	if code != 0 {
 		return ExitWith(code)

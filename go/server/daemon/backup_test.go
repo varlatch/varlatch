@@ -69,6 +69,11 @@ func TestBackupAndMaintenanceCommands(t *testing.T) {
 		t.Errorf("readyz after maintenance: %d", code)
 	}
 
+	// --verify-remote with no destination: refused before an archive is
+	// made (varlatch migrate --finish trusts only the remote copy).
+	if code, out, errOut := runAdmin(t, "backup", "run", "--json", "--verify-remote", "--config", in.conf); code != ExitFailure || out != "" || !strings.Contains(errOut, "No backup destination is configured") {
+		t.Errorf("--verify-remote with no destination: %d %q %q", code, out, errOut)
+	}
 	code, out, errOut = runAdmin(t, "backup", "run", "--config", in.conf)
 	m := archiveCreated.FindStringSubmatch(out)
 	if code != ExitOK || m == nil || m[1] != filepath.Join(in.data, "backups", m[2]+".vltbak") {
