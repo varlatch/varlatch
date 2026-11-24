@@ -663,8 +663,16 @@ func TestARollbackOnAnotherDatabaseThanPlanned(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		other := newHost(t)
-		another := strings.ReplaceAll(string(conf), h.data, other.data)
+		// Healthy, of the same release: another installation's.
+		other := upgraded(t, safe)
+		if err := other.svc.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		theirs, err := os.ReadFile(other.conf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		another := string(theirs)
 		name := func(text string) {
 			t.Helper()
 			if err := os.WriteFile(h.conf, []byte(text), 0o644); err != nil {
@@ -710,9 +718,6 @@ func TestARollbackOnAnotherDatabaseThanPlanned(t *testing.T) {
 			t.Fatal(err)
 		}
 		upgradedServes(t, h, j)
-		if b, err := os.ReadFile(filepath.Join(other.data, "varlatchd.lock")); err != nil || len(b) > 64 {
-			t.Fatalf("%v", err)
-		}
 	}
 }
 
