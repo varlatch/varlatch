@@ -270,7 +270,7 @@ func (h *standHost) upgrader(crash func(string) bool) *Upgrader {
 	}
 	h.crash = point
 	return &Upgrader{BinDir: h.bin, ConfigPath: h.conf, Service: h.svc, HealthTimeout: time.Nanosecond, Crash: point,
-		trace: h.shadow.event, run: h.run, free: func(string) (uint64, uint64, error) { return 1 << 40, 1, nil }, boot: func() string { return fmt.Sprint("boot", h.boots) }}
+		trace: h.shadow.event, run: h.run, version: h.read, free: func(string) (uint64, uint64, error) { return 1 << 40, 1, nil }, boot: func() string { return fmt.Sprint("boot", h.boots) }}
 }
 
 func (h *standHost) journal() *journal.Journal {
@@ -1832,5 +1832,30 @@ func TestEveryPairOfInterruptions(t *testing.T) {
 			}
 			t.Logf("%d pairs", pairs)
 		})
+	}
+}
+
+// An attempt cut short once it had put the new varlatch in place (before any
+// record), then another cut short and undone: the varlatch that comes back is
+// the previous release's, kept by the first.
+func TestAnAttemptAfterOneCutShort(t *testing.T) {
+	for _, second := range []string{"verified", "stopped", "kept", "swapped"} {
+		h := newStandHost(t, oldFrom, false, false)
+		if _, err := h.upgrader(func(p string) bool { return p == "install:"+standTo+":varlatch" }).Run(context.Background(), h.installed(), h.release()); !errors.Is(err, errKilled) || h.journal() != nil {
+			t.Fatalf("%v, %+v", err, h.journal())
+		}
+		if got := h.read(filepath.Join(h.bin, "varlatch")); got != "varlatch "+standTo {
+			t.Fatalf("%q", got)
+		}
+		if _, err := h.upgrader(func(p string) bool { return p == second }).Run(context.Background(), h.installed(), h.release()); !errors.Is(err, errKilled) {
+			t.Fatal(err)
+		}
+		if _, err := h.upgrader(nil).Recover(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		h.ends(second)
+		if got := h.read(filepath.Join(h.bin, "varlatch")); got != "varlatch "+oldFrom {
+			t.Fatalf("%s: varlatch is %q", second, got)
+		}
 	}
 }

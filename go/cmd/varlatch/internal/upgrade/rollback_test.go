@@ -550,7 +550,8 @@ To go back on it, from the first line that names the last command taken, down:
   6, 7: sudo sh -c "rm -f DIR/varlatch.db* DIR/maintenance.json DIR/restore-hold.json && cp -p /l/by-hand-x/varlatch.db* DIR/"
   5: sudo install -m 755 /l/by-hand-x/varlatch /l/by-hand-x/varlatchd BIN
   4: sudo mv DIR/upgrade-x.json DIR/upgrade.json
-  2, 3: sudo systemctl enable --now varlatchd`)
+  2, 3: sudo systemctl enable --now varlatchd
+Back, remove what was kept before the commands are taken again: sudo rm -r /l/by-hand-x`)
 		if byHand.How != want {
 			t.Fatalf("%s:\n%s\nwant\n%s", from, byHand.How, want)
 		}
@@ -602,7 +603,7 @@ func TestTheCommandsByHand(t *testing.T) {
 					continue
 				}
 				numbers, cmd, ok := strings.Cut(strings.TrimSpace(line), ": ")
-				if !ok {
+				if !ok || !strings.HasPrefix(line, "  ") {
 					continue
 				}
 				for _, n := range strings.Split(numbers, ", ") {
@@ -625,6 +626,10 @@ func TestTheCommandsByHand(t *testing.T) {
 			for _, line := range steps[:last] {
 				run(line)
 			}
+			_, remove, ok := strings.Cut(text, "before the commands are taken again: ")
+			if !ok {
+				t.Fatal(text)
+			}
 			if last == 8 {
 				u.mustServe(t, fromVersion, fromSchema)
 				if got := h.auditEvents(t); got >= events {
@@ -643,6 +648,13 @@ func TestTheCommandsByHand(t *testing.T) {
 			}
 			if now, err := journal.Read(filepath.Dir(h.conf)); err != nil || now == nil || now.ID != j.ID || Held(h.data) {
 				t.Fatalf("%+v, %v", now, err)
+			}
+			if last >= 3 {
+				run(remove)
+			}
+			// And again.
+			for _, line := range steps[:min(last, 4)] {
+				run(line)
 			}
 		})
 	}

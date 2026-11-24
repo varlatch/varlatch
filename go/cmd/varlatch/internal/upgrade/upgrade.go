@@ -220,6 +220,8 @@ type Upgrader struct {
 	boot       func() string
 	// run stands in for running a varlatchd (the tests').
 	run func(binary string, args ...string) ([]byte, error)
+	// version stands in for a varlatch's --version (the tests').
+	version func(path string) string
 	// free stands in for FreeSpace (the tests').
 	free func(path string) (uint64, uint64, error)
 	// held is the upgrade lock while a run holds it.
@@ -761,6 +763,14 @@ func (u *Upgrader) stage(j *journal.Journal, rel Release) error {
 			return fmt.Errorf("staging: %w", err)
 		}
 		for _, name := range binaryNames {
+			if v.version == j.From && name == "varlatch" && u.keptVarlatch(j) {
+				sum, err := fileSum(filepath.Join(dir, name))
+				if err != nil {
+					return fmt.Errorf("staging %s's %s: %w", v.version, name, err)
+				}
+				v.sums.Varlatch = sum
+				continue
+			}
 			r, err := v.open(name)
 			if err != nil {
 				return fmt.Errorf("staging %s's %s: %w", v.version, name, err)
@@ -785,6 +795,27 @@ func (u *Upgrader) stage(j *journal.Journal, rel Release) error {
 	}
 	j.Binaries = sums
 	return nil
+}
+
+// keptVarlatch is whether the previous release's varlatch is kept, and is not
+// the one installed: an attempt before was cut short once it had put another
+// in its place. The kept one is then what there is to go back to.
+func (u *Upgrader) keptVarlatch(j *journal.Journal) bool {
+	want := "varlatch " + j.From
+	kept := filepath.Join(j.Releases, j.From, "varlatch")
+	return u.versionOf(filepath.Join(u.BinDir, "varlatch")) != want && rootOwned(kept) == nil && u.versionOf(kept) == want
+}
+
+// versionOf is what a varlatch says its version is, "" when it says nothing.
+func (u *Upgrader) versionOf(path string) string {
+	if u.version != nil {
+		return u.version(path)
+	}
+	out, err := exec.Command(path, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // rootFS is the file system for root's own directories.
@@ -1578,8 +1609,8 @@ func (u *Upgrader) byHandText(j *journal.Journal) string {
 		cutoff = "taken " + j.SnapshotAt
 	}
 	keep := filepath.Join(filepath.Dir(j.Releases), "by-hand-"+j.ID)
-	return fmt.Sprintf("losing every change made since the pre-upgrade snapshot (%s), also those made before the upgrade stopped the server (the third command keeps the binaries and the database it replaces in %s):\n  %s\nTo go back on it, from the first line that names the last command taken, down:\n  8: %s\n  6, 7: %s\n  5: %s\n  4: %s\n  2, 3: %s",
-		cutoff, keep, strings.Join(steps, "\n  "), back[0], back[1], back[2], back[3], back[4])
+	return fmt.Sprintf("losing every change made since the pre-upgrade snapshot (%s), also those made before the upgrade stopped the server (the third command keeps the binaries and the database it replaces in %s):\n  %s\nTo go back on it, from the first line that names the last command taken, down:\n  8: %s\n  6, 7: %s\n  5: %s\n  4: %s\n  2, 3: %s\nBack, remove what was kept before the commands are taken again: sudo rm -r %s",
+		cutoff, keep, strings.Join(steps, "\n  "), back[0], back[1], back[2], back[3], back[4], shellWord(keep))
 }
 
 // shellWord is s as one word of a shell's.
