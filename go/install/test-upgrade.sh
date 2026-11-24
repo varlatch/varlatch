@@ -432,7 +432,7 @@ done
 for point in $UNDOS; do
   name=$(echo "undo-$point" | tr ':' '-')
   export VARLATCH_TEST_UPGRADE_KILL="$point"
-  upgrade "$name" "$VARLATCH" "$BROKEN" --yes
+  upgrade "$name" "$VARLATCH" "$BROKEN" --yes --accept-not-rollback-safe
   unset VARLATCH_TEST_UPGRADE_KILL
   case "$point" in
     data:*) check "$name: killed there" [ "$status" = 1 ] ;;
