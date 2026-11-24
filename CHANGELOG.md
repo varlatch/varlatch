@@ -7,6 +7,67 @@ fixes.
 
 ## Unreleased
 
+### What 0.50.0 is
+
+0.50.0 is a new Varlatch server and a new CLI (ADR-0059). The server is one
+program, `varlatchd`: the API, the dashboard, the live views, the sync to
+platforms, the audit export and the backups, with its database (SQLite) in
+one directory of its own. It runs as a systemd service on Linux (amd64 and
+arm64), or as the container image `ghcr.io/varlatch/varlatchd`. The CLI is
+one program too, for Linux, macOS and Windows. The `/v1` API, the encryption
+and the semantics of values, Contracts, grants and audit are those of 0.23.0;
+the differences are listed below.
+
+What left:
+
+- **Docker Compose, PostgreSQL and Convex**, for the server. Nothing of
+  Varlatch's but `varlatchd` runs on the host. (Convex stays a platform
+  values can be synced to.)
+- **Node.js.** The CLI is a native program; `varlatch-cli-<version>.cjs` is
+  not published any more.
+- **The server's `VARLATCH_*` settings** and `.env`. The server reads one
+  file, `/etc/varlatch/varlatchd.conf`. The variables the CLI and
+  applications read (`VARLATCH_TOKEN`, `VARLATCH_SERVER` and the like) stay.
+- **`NODE_EXTRA_CA_CERTS`**, for the server: it trusts the system's
+  certificate authorities, or the file `SSL_CERT_FILE` names.
+- **`varlatch adopt`, and the Compose forms of `setup`, `doctor`, `move`,
+  `upgrade` and `admin`** (`--dir`, `admin backup create` and `verify`). The
+  Go CLI's forms of those commands are a Go installation's: see `varlatch
+  --help`. For a Compose installation keep the 0.23.0 CLI, as `varlatch-ts`.
+- **The backup timer of `infra/host-backup`.** `varlatchd` makes its backups
+  itself (`backup_interval`), to the same kind of destination, under the same
+  Backup Encryption Key.
+
+### Upgrading to 0.50.0
+
+A Compose installation is not upgraded in place: `varlatch migrate` moves it,
+with a dry run, a short downtime and 30 days to go back. Follow
+[Migrating an installation to Varlatch 0.50](docs/operations/migrate-to-0.50.md).
+
+1. **Upgrade to 0.23.0 first**, with its published images, and let it run.
+   `varlatch migrate` starts from that release only.
+2. **Before:** Docker Compose 2.32.0 or later; a backup destination with read
+   credentials; the Backup Encryption Key and the Root KEK. Look for settings
+   without a counterpart: `varlatch migrate` carries the outbound allow list
+   over and warns of `NODE_EXTRA_CA_CERTS`.
+3. **The dry run** (`varlatch migrate --dry-run`) copies and checks everything
+   with no downtime, and says how long the migration will take.
+4. **The migration.** People sign in again, with the same passkey. CLIs,
+   machine credentials, OIDC and applications keep working at the same
+   address, released CLIs included.
+5. **After, check:** `sudo varlatch doctor`; `sudo varlatch admin backup run`
+   and `sudo varlatch admin backup test-bucket`; `sudo varlatch admin outbound
+   check`; the Sync Targets, the webhooks and the audit export in the
+   dashboard; a sign-in and a `varlatch run` from a client. Do not start,
+   recreate or redeploy the old installation.
+6. **To go back** within 30 days: `varlatch migrate --rollback`, which keeps
+   what changed since. **When you are sure:** `varlatch migrate --finish`,
+   which cannot be undone.
+
+An archive made by a release before 0.50 is turned into one 0.50 restores with
+`varlatch migrate --from-archive`. An installation of a 0.50 prerelease is upgraded
+in place, with `sudo varlatch upgrade`.
+
 ### API
 
 - **`GET /v1/installation/listeners` has a new node check reason,
@@ -234,19 +295,12 @@ fixes.
 ### Documentation
 
 - **Sharing the host with other workloads.** [Host requirements](docs/self-hosting/requirements.md#sharing-the-host-with-other-workloads)
-  explains how a host's other containers can take CPU from Varlatch, with
-  a measurement on a small host shared with Coolify, whose scheduler does
-  its periodic work at the start of every minute. It also explains how to
-  give varlatchd and PostgreSQL a higher CPU weight in
-  `docker-compose.override.yml` (`cpu_shares: 4096`, the value that raises
-  the weight under every runtime's conversion), and why the shipped Compose
-  files set none. It now gives one measurement of the weight's effect.
-  [Deploying on Coolify](infra/coolify/README.md#sharing-the-host) explains
-  that Coolify sets the CPU weight of an application it builds itself from
-  the application's CPU shares setting (1024 by default, which gives weight
-  39 on runtimes with the older conversion; set 4096), that a
-  `--cpu-shares` in its custom run options is overridden, and that a
-  Compose resource needs `cpu_shares` in its Compose file.
+  explains how a host's other containers can take CPU from Varlatch, with a
+  measurement on a small host shared with Coolify, whose scheduler does its
+  periodic work at the start of every minute. Its settings for a Compose
+  installation, and those of
+  [Deploying on Coolify](infra/coolify/README.md#sharing-the-host), are for
+  0.23.x.
 
 ### Releases
 
@@ -259,6 +313,177 @@ fixes.
   published only once the image is checked on both platforms, and its
   `varlatchd-image.txt`, listed in the signed `SHA256SUMS`, gives the
   image's digest to pin ([verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)).
+
+## 0.50.0-rc.4 (DATE AT TAG)
+
+The fourth prerelease of the Go line (ADR-0059), to test the Go server,
+its container image, upgrades, rollbacks and the Go CLI against real
+installations. **It is a prerelease and not for production.** The
+TypeScript line (0.23.x) is unaffected: its images, Compose set and CLI
+do not change.
+
+<!-- SLOT #461 (queued, head 17fa69da; recheck against the merged PR, then remove both markers) -->
+- **What it contains.** As in 0.50.0-rc.3: `varlatch`, the CLI, for Linux,
+  macOS and Windows on amd64 and arm64; `varlatchd`, the server, for Linux
+  on amd64 and arm64; `install.sh` and `install.ps1` for this version; the
+  `varlatchd` systemd unit and its example configuration; the server's
+  container image and `varlatchd-image.txt`; `release.json`, the release's
+  manifest, checked against 0.50.0-rc.3 (#461). `SHA256SUMS` lists every
+  asset and is signed keyless by the release workflow; the installers check
+  the signature before they install anything.
+<!-- END SLOT #461 -->
+
+Changes since 0.50.0-rc.3, by pull request:
+
+<!-- SLOT #452 (open, head b7d5aed5; recheck against the merged PR, then remove both markers; or drop) -->
+- **`varlatch upgrade` and backups on a newer schema this release opens
+  (#452).** After a rollback-safe release, the previous release serves a
+  database at the newer schema; before, `varlatch upgrade` and `admin backup
+  run` wanted the schemas to be equal, so the previous release could neither
+  publish a backup nor upgrade again. Both now accept a newer schema whose
+  `compatible_from` lets this release open it, and `varlatch upgrade` refuses
+  a release below the database's schema before asking anything or ending a
+  migration's rollback window. A restore checks the archive's own database
+  schema against its manifest before opening the gate or replacing the live
+  database. G6 exercises archive, restore and upgrade-again over a schema
+  step.
+<!-- END SLOT #452 -->
+<!-- SLOT #454 (open, head b6a416e4; recheck against the merged PR, then remove both markers; or drop) -->
+- **A restored installation is held until you resume it (#454).** An archive
+  brings back what was changed since it was made: a deletion cancelled since,
+  a webhook removed since, an old value. After every restore (`varlatch setup
+  --restore`, `varlatch admin backup restore`, in the image too) `varlatchd`
+  serves, but its background work does not run (sync, webhooks, audit
+  export, organization deletion) and no local backup is removed, until
+  `varlatch admin restore resume` (audited as
+  `installation.restore_resumed`). `varlatch admin restore status`,
+  `varlatch doctor`, `/readyz` (`"held":true`) and the log say so. `varlatch
+  upgrade` and a migration's rollback are refused until then. It holds
+  background work only: people and credentials in the archive can still
+  read and write, so keep clients away until you put right what changed.
+  Deadlines go on meanwhile, as on a stopped server: at the resume, due
+  deletions run, an export being drained past its deadline is given up, and
+  webhooks may repeat events.
+<!-- END SLOT #454 -->
+<!-- SLOT #450 (open, head df38c29b; PR head was b7986978; recheck against the merged PR, then remove both markers; or drop) -->
+- **Documentation for the Go installation (#450).** Operator guides rewritten
+  for 0.50 (running, configuring, backing up and restoring, moving, removing,
+  outbound policy, verifying a release, and setting up with an agent), with a
+  new self-hosting overview and upgrade guide. The Compose guide moves under
+  `/self-hosting/compose/` and is marked 0.23.0 and earlier. A Go test checks
+  that every `varlatchd.conf` setting is documented and in the example file.
+<!-- END SLOT #450 -->
+<!-- SLOT #455 (open, head 9cc031d0; PR head was 1c6673bc; recheck against the merged PR, then remove both markers; or drop) -->
+- **`varlatchd admin`, run as root, works as the data directory's owner
+  (#455).** Host commands that write in the data directory open what only
+  root may read first, load trusted certificates, give the owner any
+  root-owned files left by earlier releases (below the directory's descriptor
+  only, following no links), and drop to the directory's owner and group
+  before working there. This fixes `admin backup restore`, `admin backup run`
+  with `varlatchd` stopped, `maintenance begin`, and `varlatch migrate` into
+  a systemd host leaving root-owned files `varlatchd` could not open.
+  `setup --restore` refuses an earlier `varlatchd`, and CI runs the root
+  tests as root.
+<!-- END SLOT #455 -->
+<!-- SLOT #332 (open, head 1fcdcb6c; PR head was 177e1b9d; text from 4cd47e15 on first version of B, rewrite and recheck against B as merged for hold after snapshot rollback, by-hand steps, and engine hold, then remove both markers; or drop) -->
+- **`varlatch upgrade --rollback` (#332)** returns to the release the last
+  upgrade came from (0.50.0-rc.4 or later). When that upgrade's release
+  declared itself rollback-safe for it, and it opens the database as it is,
+  only the binaries go back and every change stays. Otherwise the pre-upgrade
+  snapshot is restored, after listing what is lost, and only with
+  `--accept-data-loss` or a yes. It refuses while a migration is under way,
+  and for an upgrade made before the migration. `varlatch doctor` now fails
+  on an upgrade or rollback left pending. An undone upgrade no longer gives
+  the previous database the write-ahead log of a server that was killed.
+<!-- END SLOT #332 -->
+<!-- SLOT UPGRADE-ENGINE (fix/upgrade-crash-safety, local head 68b4e80d; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **Crash-safe `varlatch upgrade` engine and upgrade hold.** `varlatchd`
+  holds startup and background work while an upgrade journal is pending,
+  until the upgrade ends or `Checked` is read back, while letting the
+  upgrade's own checks run. The upgrade engine verifies its copy and the
+  systemd unit's configuration, makes journal records durable across a
+  reboot, keeps the previous release's `varlatch` when an attempt is cut
+  short, and handles a missing or damaged journal safely.
+<!-- END SLOT UPGRADE-ENGINE -->
+<!-- SLOT REMOTE-ARCHIVE-ID (fix/remote-archive-id, local head 9228c8d2; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **The check of a backup's remote copy checks that it is that archive.**
+  `admin backup run --verify-remote`, and with it `varlatch migrate --finish
+  --delete-old-data`, accepted any archive sealed with the same keys at the
+  new one's place in the bucket, such as an older one. It now fails the
+  check, and `--finish --delete-old-data` deletes nothing. With a bucket key
+  that only uploads, no remote copy can be checked from the host: until a
+  first check was made, the backup status has no warning of it, and
+  `varlatch doctor` says that none was made.
+<!-- END SLOT REMOTE-ARCHIVE-ID -->
+<!-- SLOT GO-HELP (cli/go-help, local head 009489e9; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **`varlatch --help` shows a Go installation's host commands.** It had a
+  Compose installation's (`setup --dir`, `adopt`, `admin backup create`, the
+  Compose `upgrade`), which the Go CLI refuses, and neither `migrate` nor
+  `tailnet repin`; `varlatch tailnet --help` has `repin` now, and `varlatch
+  help migrate` prints its help. `varlatch agents guide self-hosting` gives
+  commands the Go CLI has.
+<!-- END SLOT GO-HELP -->
+<!-- SLOT DOCS-GO-MODEL (docs/go-model, local head 7494c2aa; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **README, threat model, CONTEXT and SECURITY updated for the Go server.**
+  Replaces Convex, PostgreSQL roles and Better Auth with the single process,
+  SQLite's triggers and freed space, and the live-update stream's limits;
+  narrows guarantees to what the code enforces, and names the Go test, replay
+  or suite that proves each, checked by a test.
+<!-- END SLOT DOCS-GO-MODEL -->
+<!-- SLOT THREAT-MODEL-PROOFS (test/threat-model-proofs, local head 19e74f25; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **Threat model proof tests.** Adds tests proving that every
+  `admin-step-up` operation asks for approval and that decryption follows its
+  audit commit, and updates the threat model to cite them. No change to what
+  is shipped.
+<!-- END SLOT THREAT-MODEL-PROOFS -->
+<!-- SLOT STREAM-SCOPE (fix/stream-scope, local head c7c63765; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **Live updates say nothing about an Organization you may not read.** The
+  Go server's stream kept sending change signals (which domains changed and
+  when, never what) to members of an Organization frozen for an incident,
+  and to people whose sign-in `passkey-verification` refuses. 0.23.0 sent
+  them none. A stream that loses an Organization this way closes
+  (`scope-changed`), and the dashboard reconnects and refreshes.
+<!-- END SLOT STREAM-SCOPE -->
+<!-- SLOT SETUP-DOCTOR-NAMES (fix/setup-doctor-names, local head b2981aa0; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **`varlatch setup` with a tailnet asks for the address people open**
+  (`--public-url`), without which no passkey could be enrolled, and copies
+  the node's auth key to `/etc/varlatch/tailnet-auth-key` for the service,
+  wherever the file you give is kept. `--tailnet-https-port` turns the
+  tailnet browser endpoint on.
+- **Messages name a Go installation's settings, and `varlatch doctor` reads
+  the release check.** The outbound policy's refusals, the audit export and
+  the GitHub App registration told the host operator about environment
+  variables of 0.23.0; they name `outbound_allow`, `audit_export` and
+  `public_url` in `varlatchd.conf`, and so does the CLI. `varlatch doctor`
+  reads the release check that `varlatch upgrade --check` records
+  (`release.latest`): it fails, as an advisory, on a newer release, and says
+  how to upgrade a service or an image.
+<!-- END SLOT SETUP-DOCTOR-NAMES -->
+<!-- SLOT DASHBOARD-HOST-COMMANDS (fix/dashboard-host-commands, local head 09426a3d; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **The Installation pages give a Go installation's commands and settings.**
+  Release, Archives, Tailnet and Outbound gave a Compose installation's
+  (`--dir`, `.env` variables, the Tailscale sidecar), which the Go CLI
+  refuses. They name `varlatchd.conf`'s settings now, and the commands for a
+  service or for the container image.
+<!-- END SLOT DASHBOARD-HOST-COMMANDS -->
+<!-- SLOT AUDIT-10-11 (fix/050-audit, local head 834aa6f0; add PR number, recheck against the merged PR, then remove both markers; or drop) -->
+- **`varlatch migrate` warns of `NODE_EXTRA_CA_CERTS`, and G5 on the
+  published 0.23.0.** The old server trusts the certificate authorities in
+  `NODE_EXTRA_CA_CERTS`; the new one does not read the variable. The
+  preflight names the file (it does not read it) and says where the new
+  server takes one: the system's trust store, or `SSL_CERT_FILE`. See
+  [What you need](docs/operations/migrate-to-0.50.md#what-you-need).
+  `go/test/rehearsal/published.sh` runs G5's restored rehearsal on 0.23.0's
+  published images in `release.yml` and nightly in `go.yml`.
+<!-- END SLOT AUDIT-10-11 -->
+
+- **Prerelease only.** It is published as a GitHub prerelease and never
+  becomes the latest release. What follows the latest release (`varlatch
+  upgrade` and the release notice of a final release, `varlatch
+  self-update` without `--prerelease`, the Homebrew formula) does not offer
+  it; a Go CLI or host that runs a prerelease is offered it by `varlatch
+  self-update` and `varlatch upgrade`. `varlatch migrate` migrates from the
+  last TypeScript release's published image (0.23.0) only.
 
 ## 0.50.0-rc.3 (2026-11-24)
 
