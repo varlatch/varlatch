@@ -173,6 +173,17 @@ fixes.
 
 ### Server
 
+- **The container image works with a read-only root filesystem.** SQLite
+  had nowhere to put its temporary files there, so a larger write failed
+  with a server error while smaller ones went on: enrolling the first
+  passkey, `admin bootstrap --cli-credential`, a new machine identity, and
+  a change set of five values or more (an import). The image now sets
+  `SQLITE_TMPDIR` to the data directory, and `varlatchd` does the same by
+  itself wherever it finds no writable temporary directory. It refuses to
+  start, and says what to set, when the data directory is not writable
+  either. The tailnet reach check keeps its state in the data directory
+  too when it has no other place. None of these files stays there: SQLite's
+  have no name in the directory, and the reach check removes its own.
 - **A stop during a certificate issuance ends `varlatchd`.** With
   `listen_https`, the Go server kept trying again without end after a stop
   interrupted an issuance or a renewal, until it was killed (after the 30
@@ -248,6 +259,181 @@ fixes.
   published only once the image is checked on both platforms, and its
   `varlatchd-image.txt`, listed in the signed `SHA256SUMS`, gives the
   image's digest to pin ([verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)).
+
+## 0.50.0-rc.3 (2026-11-24)
+
+The third prerelease of the Go line (ADR-0059), and the first to publish
+the server's container image, to test that image and more of the Go CLI
+against real installations. **It is a prerelease and not for
+production.** The TypeScript line (0.23.x) is unaffected: its images,
+Compose set and CLI do not change.
+
+- **What it contains.** As in 0.50.0-rc.2: `varlatch`, the CLI, for Linux,
+  macOS and Windows on amd64 and arm64; `varlatchd`, the server, for Linux
+  on amd64 and arm64; `install.sh` and `install.ps1` for this version; the
+  `varlatchd` systemd unit and its example configuration; `release.json`,
+  the release's manifest, checked against 0.50.0-rc.2 (#431). New: the
+  server's container image, and `varlatchd-image.txt`, which records it.
+  `SHA256SUMS` lists every asset and is signed keyless by the release
+  workflow; the installers check the signature before they install
+  anything.
+
+Changes since 0.50.0-rc.2, by pull request:
+
+- **The container image (#433, #434, #437).** The release pushes
+  `ghcr.io/varlatch/varlatchd:0.50.0-rc.3` for linux/amd64 and
+  linux/arm64, built from the release's own binaries. It is signed keyless
+  by the release workflow (the signature is in
+  `ghcr.io/varlatch/varlatch-signatures`) and carries build provenance and
+  an SBOM for each platform; an image built on a self-hosted runner has its
+  SBOMs as release files instead, listed in `SHA256SUMS`. Only the
+  version's tag is pushed, never `latest` or a minor version's. The release
+  is published only once the image has passed its checks on both
+  platforms.
+- **`varlatchd-image.txt` (#433).** One line, the image's tag and the
+  digest to pin, listed in the signed `SHA256SUMS`; the release notes name
+  the same reference. [Verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)
+  has a script that checks the record, the image's signature and its
+  attestations by digest, and stops at the first failure. It is the
+  reference `varlatch migrate --to-image` takes.
+- **A version's image is pushed once (#434, #437).** The release workflow
+  runs one release of a tag at a time and builds the image only when it
+  knows that the version has no GitHub release and no image yet; any
+  answer that does not say so stops it. A run that fails after the push
+  resumes with the failed jobs, and pushes nothing again.
+- **`install.sh` updates an existing Go install again (#429, #430).** In
+  0.50.0-rc.2 it took every installed Go `varlatch` for a Homebrew copy and
+  refused to replace it, a run over its own fresh install included. It now
+  tells a Homebrew copy by where the file is, as `varlatch self-update`
+  does, with every link on the way resolved. A link into a Homebrew
+  directory that no longer exists is refused too, and `CDPATH` has no
+  effect. `install.ps1` was not affected. To update 0.50.0-rc.2, run
+  `varlatch self-update`, or this release's `install.sh`: 0.50.0-rc.2's own
+  copy still refuses.
+- **`varlatch self-update` on Windows waits for a held file (#448).** When
+  another process holds the old or the new binary (a virus scanner, an
+  indexer), the replacement is tried again for up to 5 seconds, with the old
+  binary in its place during the waits; before, it failed at once. When the
+  old binary cannot be put back, the message says where it is.
+- **`varlatch migrate --to-image`, refused clearly (#435).** A reference
+  without a tag, or otherwise not pinned, was refused with a message whose
+  reference was masked. The refusal now names the repository and the digest
+  when the value is an image reference by digest, does not show any other
+  value, and gives the form to use, `repository:tag@sha256:<digest>`.
+- **`varlatch migrate` from a Coolify installation (#436).** A directory
+  Coolify deploys from can hold the repository's `docker-compose.yml`
+  beside the file that runs, and plain `docker compose` read the wrong one
+  there, possibly another installation's project on the same host; a
+  directory with Coolify's `docker-compose.yaml` only was refused.
+  `migrate` now takes the project, its directory and its files from the
+  containers' labels, names them in every `docker compose` command (the
+  TypeScript CLI's backup included), keeps them in the journal, and refuses
+  what does not agree instead of guessing. An installation with one
+  `docker-compose.yml` migrates as before.
+- **The address transfer on Coolify (#436).** A domain moved in Coolify
+  without a deploy does nothing on the host, and after a deploy of the Go
+  application both containers answered for the name, at random. `migrate`
+  now stops the TypeScript dashboard's container for the transfer, and
+  starts it again when it is undone; nothing depends on a domain set back
+  in Coolify.
+- **`--rollback` (#436).** It gives a Coolify installation its fresh volumes
+  by the names its rendered file uses; before, they were not used there. On
+  Coolify it begins only once a route you put in Coolify's proxy, which it
+  prints, reaches the TypeScript installation, and only behind the
+  migration's own gate. It pulls the images it needs and makes missing
+  containers again before anything is done, and refuses volumes other than
+  those the migration recorded; `--finish` removes no others either. After
+  a rollback, do not Deploy or Redeploy the TypeScript application in
+  Coolify: Coolify's own file still names the volumes from before the
+  migration. The rollback and the
+  [migration guide](docs/operations/migrate-to-0.50.md) say so.
+- **An undone rollback never leaves both servers taking requests (#436).**
+  The TypeScript installation's gate is put back first, and Go's barrier is
+  lifted last, only while that gate is there.
+- **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
+  refuses an earlier one before anything is done.
+- **The container image works with a read-only root filesystem (#457).**
+  SQLite had nowhere to put its temporary files there, so a larger write
+  failed with a server error while smaller ones went on: enrolling the first
+  passkey, `admin bootstrap --cli-credential`, a new machine identity, and a
+  change set of five values or more (an import). The image now sets
+  `SQLITE_TMPDIR` to the data directory, and `varlatchd` does the same by
+  itself wherever it finds no writable temporary directory. It refuses to
+  start, and says what to set, when the data directory is not writable
+  either. The tailnet reach check keeps its state in the data directory too
+  when it has no other place. None of these files stays there: SQLite's have
+  no name in the directory, and the reach check removes its own.
+- **`varlatch setup` on a terminal shows the first administrator's link
+  (#451).** In 0.50.0-rc.2 and earlier it showed `/enroll#[redacted]`, so an
+  interactive setup could not go on without a link from `varlatchd admin
+  bootstrap --revoke-unused`. Setup without a terminal, and the links of
+  `varlatch invite`, `move` and `admin reenroll`, were not affected. In
+  assisted mode setup neither asks nor shows anything on the terminal, as
+  without one: a coding agent would read the link and the keys.
+- **`varlatch migrate` says what an undo, a rollback and a wait are doing
+  (#446).** Each step says when it starts, every 15 seconds while it
+  lasts (how long so far, and what it waits for) and when it ends; so do the
+  final copy and `--finish`'s archive. Not with `--json`. A pipe nobody
+  reads holds no step up, and a closed one no longer ends `varlatch migrate`
+  half way. On Coolify, `--resume` before the domain's move is seen says the
+  whole step again. rc.2's entry on #423 is corrected: Ctrl-C or a kill ends
+  `varlatch migrate` at once, and the old node can stay on the tailnet until
+  `--resume`.
+- **A stop during a certificate issuance ends `varlatchd` (#440).** With
+  `listen_https`, the server kept trying again without end after a stop
+  interrupted an issuance or a renewal, until it was killed (after the 30
+  seconds of the shipped systemd unit). `infra/coolify/varlatchd.compose.yml`
+  gives the service 30 seconds to stop, as the unit does; for `docker run`,
+  give `--stop-timeout 30`.
+- **varlatchd's tailnet node starts on no cached network map (#444).** After
+  a rename, a node that started again could read its old name and tags from
+  a map on its disk: `varlatchd admin tailnet enroll` then refused a node
+  that was right, or accepted one by a name only the cache gave it. The node
+  now starts on the map the control plane sends at that start, and
+  `enroll`, `admin tailnet certificate obtain` and `take-name` wait, at most
+  30 seconds, for what they expect of the node before they refuse it. A
+  control plane that puts the node off (a rate limit) or does not answer is
+  waited for, and the listener opens without a restart. One that refuses the
+  node keeps it closed until varlatchd is restarted, whatever a check finds
+  meanwhile. The control plane's own words, which can repeat the auth key,
+  are in neither the log, `open`, `enroll` nor the probes' answers, and a
+  message of the tailnet client's log with the key in it is not logged.
+  `varlatch doctor` says to move the node's state directory away only for a
+  node no control server ever registered; any other keeps it. The client may
+  still write the node's own map while it runs; it is never read, and is
+  removed at start and at stop.
+- **Not-found and error pages in the dashboard (#439).** An address
+  without a page shows a not-found page of the dashboard, with its
+  navigation and a way back, where the router's developer error page
+  showed. A page that fails shows a plain message with Reload and a way
+  back, and never the error's text. In an Organization frozen for an
+  incident the banner stays above the not-found page.
+- **Access and Audit in the dashboard (#439).** Under Access, People,
+  someone who may not read the members is told so, where the page said "No
+  members yet", and Invite shows only to someone who may invite; the server
+  refused both before too. A members list that cannot be read says so, with
+  Try again. The Audit page fits a phone's width.
+- **The migration's rehearsals (#435, #447).** Fixes to the rehearsal harness
+  for the image target and for a public address with its own certificate
+  authority; Coolify and the Tailscale sidecar together, and `--resume` after
+  a kill. No change to what is shipped.
+- **The release process (#438).** The G1 gate reads its walkthrough record
+  from a commit of its own (`walkthrough_ref`), which differs from the
+  candidate it judges only in regular files added or changed under
+  `docs/evidence/`. No change to what is shipped.
+- **CI (#441, #442, #443).** CI takes MinIO's pinned image from its own
+  cache, and pulls it with retries when the cache has none. The migration's
+  gate (G5) has 45 minutes. No change to what is shipped.
+- **Tests (#445).** Three Go tests no longer pick a port and let it go before
+  they use it. No change to what is shipped.
+
+- **Prerelease only.** It is published as a GitHub prerelease and never
+  becomes the latest release. What follows the latest release (`varlatch
+  upgrade` and the release notice of a final release, `varlatch
+  self-update` without `--prerelease`, the Homebrew formula) does not offer
+  it; a Go CLI or host that runs a prerelease is offered it by `varlatch
+  self-update` and `varlatch upgrade`. `varlatch migrate` migrates from the
+  last TypeScript release's published image (0.23.0) only.
 
 ## 0.50.0-rc.2 (2026-11-23)
 
@@ -667,6 +853,86 @@ Changes since 0.50.0-rc.1, by pull request:
   migrate` migrates from the last TypeScript release's published image
   (0.23.0) only.
 
+## 0.23.0 (2026-11-22)
+
+The last release of the current server line: the 0.50 line replaces it.
+An installation moves to it with `varlatch migrate`, which runs the
+commands this release adds. An installation that never runs them behaves
+as on 0.22.4.
+
+### Server
+
+- **`varlatchd admin migration`.** The commands the 0.50 line's `varlatch
+  migrate` runs on a 0.23.0 installation:
+  - `barrier` stops the installation at a fixed point: it drains the
+    requests in flight, then pauses every request and background loop
+    until `release` or `mark-migrated-out`. `status` shows the barrier.
+  - `release` lifts the barrier: the installation serves again, as it
+    was. That is how a move is called off before the switch.
+  - `export` writes the installation, as it stands behind the barrier,
+    to a migration bundle (a new file, mode 0600, or standard output with
+    `--out -`, its summary then the last line of standard error). With `--dry-run` it
+    reads a consistent snapshot of a running installation instead, with
+    no barrier, to check the export before the move.
+  - `mark-migrated-out` marks an installation that moved: from then on it
+    answers no request, reads included. A backup of it can still be made
+    (`varlatch admin backup create`), since its data no longer changes:
+    the old installation's final archive. Behind the barrier, while the
+    data moves, a backup is refused.
+  - `import` rebuilds the database of a stopped installation from a
+    bundle the 0.50 line wrote (a file, or standard input with `--in -`), which moves an installation back; once it
+    commits, the installation answers requests again.
+  - `backfill` finishes, in one run and with varlatchd stopped, the audit
+    backfill an export needs, for a database brought forward from a
+    release before 0.20.0.
+- **A new audit event, `installation.migrated`.** The 0.50 line records it
+  when an installation moves to it, and an installation moved back keeps
+  it. The dashboard shows it as "Installation migrated"; audit exports and
+  webhooks deliver it like any other event.
+- An `admin migration` command that fails unexpectedly says what failed:
+  a system error's code, call and path, or PostgreSQL's error code and the
+  table or column it names, never what it read.
+- The Convex supervisor stops the backend behind the migration barrier and
+  on a migrated-out installation, as it does under a backup or restore.
+
+### Coolify
+
+- **Coolify installations run the release's published images.** Both
+  Coolify files, `docker-compose.coolify-tailscale.yml` and the new
+  `docker-compose.coolify.yml` (without the Tailscale sidecar), pull
+  varlatchd, varlatch-web and convex-deploy by digest instead of building
+  them from the checkout, so a Coolify installation runs exactly the
+  images the release signed. `varlatch migrate` requires that of its
+  source. The digests are Coolify variables, published with each release
+  as `coolify-image-digests.env` and in its release notes; a deploy without
+  them stops before anything starts, naming the variable.
+- The release images carry the `org.opencontainers.image.version` label.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.23.0.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`. It changes only its version.
+- The server: to move an installation to 0.23.0, follow the 0.22.1 notes
+  below with the 0.23.0 CLI and version.
+- Coolify: before deploying 0.23.0, set the four variables of this
+  release's `coolify-image-digests.env` (checked against `SHA256SUMS`) in
+  the resource's environment, then update the repository ref as usual
+  ([Deploying on Coolify](infra/coolify/README.md#upgrades)). A resource
+  that deploys the canonical `docker-compose.yml` switches its Docker
+  Compose Location to `docker-compose.coolify.yml` in the same upgrade.
+  That file carries the Coolify settings the Tailscale one has: varlatchd
+  trusts `coolify-proxy` as well as the dashboard, the dashboard and Convex
+  join the default network explicitly, and `convex-deploy` runs on every
+  deploy.
+- Audit consumers that list the event types they accept: add
+  `installation.migrated`.
+
+Backups: archives of 0.22.4 and earlier still restore into this release.
+
 ## 0.50.0-rc.1 (2026-11-20)
 
 A prerelease of the Go line (ADR-0059): the first release built from the
@@ -688,6 +954,146 @@ the release assets. **It is not for production.** The TypeScript line
   (`varlatch upgrade`, the release notice, the CLI's self-update) offers
   it. The Go server has no container image, `setup`, `upgrade` or `doctor`
   yet, and there is no migration from a TypeScript installation.
+
+## 0.22.4 (2026-11-20)
+
+A CLI release: a fix to the agent-safe Broker's response scrubbing. The
+server is unchanged apart from its version and the CLI its image carries
+(for the backup job and `/cli/varlatch.cjs`).
+
+### CLI
+
+- **A destination's reset ends a scrubbed response as an abort.** When a
+  destination reset its connection during a scrubbed response that has no
+  declared length, the Broker treated the reset as the end of the body, so
+  a destination reset could release held bytes. The Broker now treats it
+  as an abort: it releases nothing it holds, closes the Agent's
+  connection, and reports the abort. A response that ends cleanly is
+  unchanged.
+- An abort after the response headers is reported once, not twice.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.22.4.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`.
+- The server: nothing changes but its version and the CLI in its image.
+  To move an installation to 0.22.4, follow the 0.22.1 notes below with
+  the 0.22.4 CLI and version.
+
+Backups: archives of 0.22.3 and earlier still restore into this release.
+
+## 0.22.3 (2026-11-19)
+
+A security release for the web image. Nothing else changes.
+
+### Web
+
+- **nginx 1.31.9.** The `varlatch-web` image moves from `nginx:1.29-alpine`
+  to `nginx:1.31.9-alpine`, which fixes the nginx2root vulnerabilities
+  disclosed on 2026-11-18. The 1.29 line gets no fix. The image's
+  `/convex/` location uses `resolver` with a variable `proxy_pass`, which is
+  the setup CVE-2026-123634 (a use-after-free in nginx's DNS resolver)
+  needs. Any installation that serves the web image is affected, whatever
+  proxy sits in front of it.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The server: move the `varlatch-web` image to 0.22.3. Upgrade the
+  other images too, so every image runs the same version. To move an
+  installation to 0.22.3, follow the 0.22.1 notes below with the 0.22.3
+  CLI and version.
+- The CLI: unchanged apart from its version.
+
+Backups: archives of 0.22.2 and earlier still restore into this release.
+
+## 0.22.2 (2026-11-17)
+
+A CLI release: security hardening of agent file installation and of
+credential display. The server is unchanged apart from its version and
+the CLI its image carries (for the backup job and `/cli/varlatch.cjs`).
+
+### CLI
+
+- **Agent file installation.** `varlatch agents install`, `--check` and
+  `--remove` stop with status 78 before reading or changing anything when
+  a directory below the project (with `--scope user`, below the home
+  directory) on the way to a file they manage is a symbolic link. Replace
+  the link with a directory and run the command again. `varlatch init`
+  still writes `varlatch.toml` in that case, prints a warning, and skips
+  the agent files. A changed file is replaced as a whole and keeps its
+  permission bits; `AGENTS.md` and a `CLAUDE.md` that is the same file
+  stay one file, and a file with any other second name (a hard link) stops
+  the command with status 78.
+- **Credential display.** The CLI never prints a credential or a server
+  URL's user name and password. A stored credential that cannot be sent is
+  named, not quoted; such a URL is shown with `[redacted]` in their place
+  in `status`, `server`, `context`, `login`, `logout`, `whoami`,
+  `varlatch mcp` and every message that names a server. A URL without them
+  is printed as before.
+- **`varlatch init`** refuses a server URL with a user name or password
+  (status 64) and writes nothing, since `varlatch.toml` is committed.
+- **An empty `VARLATCH_CONFIG_DIR` or `HOME`** counts as unset: the CLI
+  uses the default configuration directory and the home directory the
+  operating system records. With no home directory at all, commands exit
+  64 and say to set `HOME` or `VARLATCH_CONFIG_DIR`.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.22.2.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`.
+- The server: nothing changes but its version and the CLI in its image.
+  To move an installation to 0.22.2, follow the 0.22.1 notes below with
+  the 0.22.2 CLI and version.
+- Scripts that run `varlatch agents install` in a checkout whose `.claude`,
+  `.agents`, `.codex`, `.cursor`, `.vscode` or `.gemini` directory is a
+  symbolic link now get status 78: replace the link with a directory.
+
+Backups: archives of 0.22.1 and earlier still restore into this release.
+
+## 0.22.1 (2026-11-16)
+
+### Access control
+
+- **A Grant can name only its own Organization's groups and roles.**
+  Creating or replacing a Grant whose group or role belongs to another
+  Organization is refused, and the Grants an identity holds count only
+  through its own Organization's groups and roles.
+- **Only an Organization Admin can invite an admin.** Inviting someone with
+  the admin role needs a live admin of the Organization, as changing a
+  member's role already does. `identity.manage`, through a Grant, a custom
+  role or a machine identity, still invites members. A refused admin
+  invitation answers `403 PERMISSION_DENIED` and is recorded in the audit
+  log as `authorization.denied`.
+
+### Upgrading
+
+Database schema: unchanged, migration 52. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- From 0.22.0: run `varlatch upgrade 0.22.1 --bek-file /secure/backup-key
+  --kek-file /secure/root-kek-copy` on the Compose host, as
+  [the Compose guide](infra/compose/README.md) describes, then replace the
+  host CLI with `varlatch-cli-0.22.1.cjs`, or run `varlatch self-update`.
+- From 0.21.0 or older: follow the 0.22.0 notes below with the 0.22.1 CLI
+  and version.
+- Scripts that invite admins with a machine credential, or as a member who
+  holds `identity.manage`, now get `403`: invite them as an Organization
+  Admin instead.
+
+Backups: archives of 0.22.0 and earlier still restore into this release.
 
 ## 0.22.0 (2026-11-13)
 

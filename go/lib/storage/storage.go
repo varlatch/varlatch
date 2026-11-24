@@ -207,6 +207,14 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 		return nil, fmt.Errorf("storage: directory of %s: not a directory or missing", path)
 	}
 
+	// Temporary files: before SQLite is first used, and proven (temp.go).
+	if _, err := PrepareTemp(filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("storage: %w", err)
+	}
+	if err := proveTemp(ctx, filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("storage: %w", err)
+	}
+
 	db := &DB{
 		opts:   opts,
 		ws:     &writerState{deferFKs: opts.DeferForeignKeys},
