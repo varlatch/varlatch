@@ -706,7 +706,7 @@ func TestNotEnoughSpaceChangesNothing(t *testing.T) {
 	}
 	_, err := h.upgrader(nil).Run(context.Background(), inst, h.release(t, "to", safe))
 	if err == nil || !strings.Contains(err.Error(), "not enough space on the filesystem of") || !strings.Contains(err.Error(), "nothing was changed") ||
-		!strings.Contains(err.Error(), "a copy of the database and a snapshot, the new binaries and the kept ones, and 64 MiB to spare") {
+		!strings.Contains(err.Error(), "a copy of the database and a snapshot, the new binaries, the kept ones and the kept snapshot, and 64 MiB to spare") {
 		t.Fatalf("%v", err)
 	}
 	if j, err := journal.Read(filepath.Dir(h.conf)); j != nil || err != nil {
@@ -722,8 +722,36 @@ func TestNotEnoughSpaceChangesNothing(t *testing.T) {
 
 	// Two paths on one filesystem are counted once, against its free space.
 	FreeSpace = func(path string) (uint64, uint64, error) { return 1 << 40, 7, nil }
-	if err := h.upgrader(nil).enoughSpace(context.Background(), inst, h.release(t, "to", safe)); err != nil {
+	u, rel := h.upgrader(nil), h.release(t, "to", safe)
+	if err := u.enoughSpace(context.Background(), inst, rel); err != nil {
 		t.Fatal(err)
+	}
+
+	// Root's copy of the snapshot is on the binaries' filesystem, where that
+	// is another: what holds the binaries alone does not do.
+	size, err := u.data(context.Background(), dataOp{Op: "size", DataDir: inst.DataDir})
+	if err != nil || size.Bytes == 0 {
+		t.Fatalf("%+v, %v", size, err)
+	}
+	binaries := 2 * int64(len(rel.Varlatch)+len(rel.Varlatchd))
+	for _, name := range []string{"varlatch", "varlatchd"} {
+		info, err := os.Stat(filepath.Join(h.bin, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		binaries += info.Size()
+	}
+	for free, want := range map[int64]bool{binaries + spaceMargin: false, binaries + size.Bytes + spaceMargin: true} {
+		FreeSpace = func(path string) (uint64, uint64, error) {
+			if path == h.bin {
+				return uint64(free), 8, nil
+			}
+			return 1 << 40, 7, nil
+		}
+		err := u.enoughSpace(context.Background(), inst, rel)
+		if (err == nil) != want || err != nil && !strings.Contains(err.Error(), "not enough space on the filesystem of "+h.bin) {
+			t.Fatalf("%d bytes free: %v", free, err)
+		}
 	}
 }
 

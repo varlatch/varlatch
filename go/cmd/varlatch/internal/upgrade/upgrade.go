@@ -1737,8 +1737,8 @@ var FreeSpace = freeSpace
 // enoughSpace refuses an upgrade the disks cannot hold, before anything is
 // written: on the data directory's filesystem, a copy of the database (and
 // its log) and a snapshot of about its size; on the binaries' filesystem,
-// the new binaries staged and written beside their places, and the
-// installed ones kept; each with spaceMargin to spare.
+// the new binaries staged and written beside their places, the installed
+// ones kept, and root's copy of the snapshot; each with spaceMargin to spare.
 func (u *Upgrader) enoughSpace(ctx context.Context, inst Installed, rel Release) error {
 	size, err := u.data(ctx, dataOp{Op: "size", DataDir: inst.DataDir})
 	if err != nil {
@@ -1752,7 +1752,7 @@ func (u *Upgrader) enoughSpace(ctx context.Context, inst Installed, rel Release)
 	}
 	return u.spaceFor("the upgrade", []need{
 		{inst.DataDir, 2 * size.Bytes, "a copy of the database and a snapshot"},
-		{u.BinDir, 2*int64(len(rel.Varlatch)+len(rel.Varlatchd)) + installed, "the new binaries and the kept ones"},
+		{u.BinDir, 2*int64(len(rel.Varlatch)+len(rel.Varlatchd)) + installed + size.Bytes, "the new binaries, the kept ones and the kept snapshot"},
 	})
 }
 
