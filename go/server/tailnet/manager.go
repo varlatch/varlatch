@@ -248,17 +248,21 @@ func SameTags(a, b []string) bool { return slices.Equal(tagSet(a), tagSet(b)) }
 
 // SetJoin says why the node is not on its tailnet yet (WaitingForControl,
 // LoginNeeded or JoinRefused) and what that means, for Closed, Explain and
-// the report; "" once it has joined.
+// the report; "" once it has joined. JoinRefused stays: the listener's
+// goroutine ended with it, so nothing listens until varlatchd is started
+// again, though tsnet goes on trying and the node may come to run.
 func (m *Manager) SetJoin(reason, detail string) {
 	m.mu.Lock()
-	m.joinReason, m.joinDetail = reason, detail
-	m.mu.Unlock()
+	defer m.mu.Unlock()
+	if m.joinReason != JoinRefused {
+		m.joinReason, m.joinDetail = reason, detail
+	}
 }
 
 // joinLocked is why the node is not on its tailnet yet, and what that
-// means: nothing once a check found it on one.
+// means: nothing once a check found it on one, except after a refusal.
 func (m *Manager) joinLocked() (reason, detail string) {
-	if m.observed != nil {
+	if m.observed != nil && m.joinReason != JoinRefused {
 		return "", ""
 	}
 	return m.joinReason, m.joinDetail
@@ -371,6 +375,9 @@ func (m *Manager) Closed() string {
 	defer m.mu.Unlock()
 	joining, _ := m.joinLocked()
 	switch {
+	case joining == JoinRefused:
+		// Whatever else closes it, nothing listens until a restart.
+		return joining
 	case m.missing:
 		return PinMissing
 	case m.pin != nil && m.pin.Closed != nil:
@@ -395,8 +402,8 @@ func (m *Manager) Closed() string {
 func (m *Manager) Explain() (detail string, warnings []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, detail = m.joinLocked()
-	if d := m.tagsDetailLocked(); d != "" {
+	reason, detail := m.joinLocked()
+	if d := m.tagsDetailLocked(); d != "" && reason != JoinRefused {
 		detail = d
 	}
 	return detail, m.warningsLocked()

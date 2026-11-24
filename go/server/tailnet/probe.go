@@ -156,7 +156,7 @@ func probeJoin(ctx context.Context, c ProbeConfig, look func(context.Context, *l
 	jctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	if err := srv.Start(); err != nil {
-		return err
+		return keyless(err, c.AuthKey)
 	}
 	if err := join(jctx, nil, upOf(srv), nil); err != nil {
 		return err

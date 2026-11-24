@@ -2150,8 +2150,12 @@ serves the tailnet listener on the node's own addresses
   `warnings` say what it waits for (`waiting-for-control`, or `login-needed`
   when it must be logged in or approved there). A control plane that refuses
   the node (`join-refused`: an auth key it does not take) ends the wait: the
-  listener stays closed until varlatchd is restarted. The refusal's own words
-  are in the log only.
+  listener stays closed, and doctor says so, until varlatchd is restarted,
+  though tsnet goes on and the node may come to run. The refusal's own words,
+  which may repeat the auth key, are in neither the log, the report nor
+  `open`'s answer; the host commands show them without the key. A control
+  server that answers a registration with a plain HTTP error (a 403) is not
+  told from one that does not answer.
 - **Coordination server.** Tailscale's by default (`tailnet_control_url`
   unset, or Tailscale's own URL), and the node is always given its control
   URL explicitly (an empty one would let tsnet read `TS_CONTROL_URL`).

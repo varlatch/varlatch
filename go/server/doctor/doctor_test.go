@@ -197,7 +197,7 @@ func TestFailingChecks(t *testing.T) {
 		{"a node waiting for its control server", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
 			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "waiting-for-control"
 			f.in.Live.TailnetDetail = "The node is waiting for control: its control server has not answered since varlatchd started."
-		}, "tailnet access is closed: The node is waiting for control: its control server has not answered since varlatchd started.", "nothing needs restarting here"},
+		}, "tailnet access is closed: The node is waiting for control: its control server has not answered since varlatchd started.", "After 5 minutes of this, the control server may also be refusing the node: check the auth key"},
 		{"a node that must be logged in", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
 			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "login-needed"
 			f.in.Live.TailnetDetail = "The node must be logged in or approved at its control server."

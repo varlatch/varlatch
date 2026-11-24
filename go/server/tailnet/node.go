@@ -114,6 +114,9 @@ func newServer(cfg NodeConfig) (*tsnet.Server, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	// tsnet logs the control server's answers.
+	say := logf
+	logf = func(format string, args ...any) { say("%s", withoutKey(fmt.Sprintf(format, args...), cfg.AuthKey)) }
 	advertise := slices.Clone(cfg.Tags)
 	if cfg.KeyTags {
 		advertise = nil
@@ -189,7 +192,7 @@ func StartNode(cfg NodeConfig) (*TSNode, error) {
 	prepareTsnet()
 	dropNetmapCache(cfg.Dir)
 	if err := srv.Start(); err != nil {
-		return nil, fmt.Errorf("tailnet: starting the node: %w", err)
+		return nil, fmt.Errorf("tailnet: starting the node: %w", keyless(err, cfg.AuthKey))
 	}
 	lc, err := srv.LocalClient()
 	if err != nil {

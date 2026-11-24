@@ -158,13 +158,17 @@ func (r *tailnetRunner) browserEndpoint() *httpserver.BrowserEndpoint {
 // wait; then it is looked at every tailnet.CheckEvery. Tests shorten it.
 var joinNotice = 15 * time.Second
 
-// What the report and doctor say of a node that has not joined: never the
-// control server's own words, which are the log's.
+// errJoinRefused is a join the control server refused, as the log and open
+// say it: never in the control server's own words, which may repeat the auth
+// key it was given.
+var errJoinRefused = errors.New("its control server refused it (its answer is not shown, since it may repeat the auth key: check the key, whether it expired, was used or was revoked, and the control server's own log)")
+
+// What the report and doctor say of a node that has not joined.
 const (
-	waitingDetail = "The node is waiting for control: its control server has not answered since varlatchd started. Tailnet access is closed; the tailnet listener opens by itself when the node joins."
+	waitingDetail = "The node is waiting for control: its control server has not answered since varlatchd started. Tailnet access is closed; the tailnet listener opens by itself when the node joins. After 5 minutes of this, the control server may also be refusing the node without saying so: check the auth key and the control server."
 	limitedDetail = "The node is waiting for control: its control server limits its registrations (rate limited), and varlatchd tries again by itself. Tailnet access is closed; the tailnet listener opens by itself when the node joins."
 	loginDetail   = "The node must be logged in or approved at its control server (its key expired, the node was removed there, or it awaits approval). Tailnet access is closed; the tailnet listener opens by itself once it is."
-	refusedDetail = "The node's control server refused it (its answer is in varlatchd's log). Tailnet access stays closed until that is put right (a new auth key, most often) and varlatchd is restarted."
+	refusedDetail = "The node's control server refused it. Tailnet access stays closed until that is put right (the auth key, most often: varlatch doctor says how; see also the control server's own log) and varlatchd is restarted."
 )
 
 // join waits for the node to join its tailnet, and says meanwhile why it
@@ -200,7 +204,10 @@ func (r *tailnetRunner) join(ctx context.Context) error {
 				return nil
 			}
 			var refused *tailnet.RefusedError
-			if ctx.Err() == nil && errors.As(err, &refused) {
+			if errors.As(err, &refused) {
+				err = errJoinRefused
+			}
+			if ctx.Err() == nil && errors.Is(err, errJoinRefused) {
 				r.manager.SetJoin(tailnet.JoinRefused, refusedDetail)
 				r.manager.Listening(false)
 				r.manager.Check(ctx)

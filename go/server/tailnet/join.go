@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,7 +22,9 @@ import (
 // once at one that says the control server will not have the node.
 
 // RefusedError is a join the control server refused (an auth key it does
-// not take, a node it does not know): trying again answers the same.
+// not take, a node it does not know): trying again answers the same. Its
+// text is the control server's own, the auth key taken out (withoutKey): for
+// the operator at a terminal, never a log.
 type RefusedError struct{ Err error }
 
 func (e *RefusedError) Error() string { return e.Err.Error() }
@@ -40,10 +44,12 @@ const (
 const (
 	// backendError begins an error of Up that tsnet's backend reported.
 	backendError = "tsnet.Up: backend: "
-	// Of those, the ones that pass by themselves: a registration the
-	// control server limits, and a watch that fell behind.
-	rateLimited = "rate limited"
-	watchBehind = "IPN bus consumer fell behind"
+	// Of those, the ones that pass by themselves, whole: a registration the
+	// control server limits (with how long tsnet waits), and a watch that
+	// fell behind. Any other text is the control server's refusal, whatever
+	// words it has in it.
+	limitedFor  = "node registration rate limited; will retry after "
+	watchBehind = "IPN bus consumer fell behind; closing watch"
 )
 
 // passing is whether a join that ended with err may still succeed as it
@@ -51,11 +57,55 @@ const (
 // answered.
 func passing(err error) bool {
 	said, ok := strings.CutPrefix(err.Error(), backendError)
-	return !ok || strings.Contains(said, rateLimited) || strings.Contains(said, watchBehind)
+	return !ok || said == watchBehind || RateLimited(err)
 }
 
-// RateLimited is whether err is a join the control server put off.
-func RateLimited(err error) bool { return err != nil && strings.Contains(err.Error(), rateLimited) }
+// RateLimited is whether err is tsnet's report of a registration the control
+// server put off.
+func RateLimited(err error) bool {
+	if err == nil {
+		return false
+	}
+	wait, ok := strings.CutPrefix(err.Error(), backendError+limitedFor)
+	if !ok {
+		return false
+	}
+	_, perr := time.ParseDuration(wait)
+	return perr == nil
+}
+
+// keyShape is an auth key as Tailscale and Headscale write them.
+var keyShape = regexp.MustCompile(`(?i)\b(ts|hs)key-[\w-]+`)
+
+// withoutKey is text with the auth key the node joins with taken out, whole
+// or as it is sent (without its parameters, or the signature wrapped into
+// it), and anything shaped like one: a control server's answer may repeat
+// what it was given.
+func withoutKey(text, authKey string) string {
+	sent, _, _ := strings.Cut(authKey, "--TL")
+	bare, _, _ := strings.Cut(sent, "?")
+	for _, k := range []string{authKey, sent, bare} {
+		if k != "" {
+			text = strings.ReplaceAll(text, k, keyTaken)
+			text = strings.ReplaceAll(text, url.QueryEscape(k), keyTaken)
+		}
+	}
+	return keyShape.ReplaceAllString(text, keyTaken)
+}
+
+const keyTaken = "[auth key]"
+
+// keyless is err without the auth key in its text; err itself when there is
+// none in it.
+func keyless(err error, authKey string) error {
+	if err == nil {
+		return nil
+	}
+	if text := withoutKey(err.Error(), authKey); text != err.Error() {
+		return errors.New(text)
+	}
+	return err
+}
 
 // join waits until up says the node is on its tailnet, through every error
 // that passes (waiting, when set, hears each one, before the pause), until
@@ -92,11 +142,11 @@ func join(ctx context.Context, closed <-chan struct{}, up func(context.Context) 
 	}
 }
 
-// upOf is srv's Up, its status left out.
+// upOf is srv's Up, its status and its auth key left out.
 func upOf(srv *tsnet.Server) func(context.Context) error {
 	return func(ctx context.Context) error {
 		_, err := srv.Up(ctx)
-		return err
+		return keyless(err, srv.AuthKey)
 	}
 }
 

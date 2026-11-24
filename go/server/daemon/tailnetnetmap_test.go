@@ -442,7 +442,14 @@ func TestEnrollTakesTheNameAndTheTagsTogether(t *testing.T) {
 			if res.Node.Name, res.Node.Tags = right, nil; n > 8 {
 				res.Node.Tags, res.Node.StableID = tagged, "TESTCTRLffffffff"
 			}
-		}, `StableID "TESTCTRLffffffff" \(first "TESTCTRL`},
+		}, `StableID changed from TESTCTRL00000001 to TESTCTRLffffffff while it was looked at`},
+		{"another node, and then the first again", func(n int, res *tailcfg.MapResponse) {
+			if res.Node.Name, res.Node.Tags = right, nil; n > 8 && n <= 16 {
+				res.Node.StableID = "TESTCTRLffffffff"
+			} else if n > 16 {
+				res.Node.Tags = tagged
+			}
+		}, `StableID changed from TESTCTRL00000001 to TESTCTRLffffffff while it was looked at`},
 	} {
 		t.Run(c.what, func(t *testing.T) {
 			control := startTestControl(t)

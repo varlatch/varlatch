@@ -393,14 +393,23 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	// is up: waited for, all of it within one nodeWait, and never taken for
 	// granted.
 	begun := time.Now()
-	stableID := ""
+	// Another StableID, once seen, is refused for good, whatever is seen
+	// after it.
+	actx, another := context.WithCancel(ctx)
+	defer another()
+	var stableID, otherID string
 	named := func(st tailnet.Status) bool { return st.BackendState == "Running" && st.Label() == c.hostname }
 	tagged := func(st tailnet.Status) bool { return t.ControlURL == "" || tailnet.SameTags(st.Tags, t.Tags) }
-	st, ready, err := node.AwaitStatus(ctx, nodeWait, func(st tailnet.Status) bool {
-		if stableID == "" {
+	st, ready, err := node.AwaitStatus(actx, nodeWait, func(st tailnet.Status) bool {
+		switch {
+		case st.SelfID == "":
+		case stableID == "":
 			stableID = st.SelfID
+		case st.SelfID != stableID:
+			otherID = st.SelfID
+			another()
 		}
-		return named(st) && st.SelfID != "" && st.SelfID == stableID && st.Suffix != "" && tagged(st)
+		return otherID == "" && named(st) && st.SelfID != "" && st.Suffix != "" && tagged(st)
 	})
 	if err != nil {
 		return fail("the node's status: %v", err)
@@ -411,6 +420,8 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	}
 	switch {
 	case ready:
+	case otherID != "":
+		return fail("the node's StableID changed from %s to %s while it was looked at: it is not one node, so nothing of it is taken; run enroll again (%s)", stableID, otherID, unheld)
 	case !named(st) && rehold:
 		return fail("the node is enrolled as %s and not held for a handoff: enroll holds again only a node named %s, which the control plane did not name it in %s; nothing was changed", st.DNSName, c.hostname, waited(begun))
 	case !named(st):
@@ -419,8 +430,8 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	case !tagged(st):
 		return fail("%s They did not match in %s; then run enroll again (%s).", tailnet.TagsDetail(st.Tags, t.Tags), waited(begun), unheld)
 	default:
-		return fail("the node is %s with StableID %q (first %q) on the tailnet %q, after %s: it is not on its tailnet as one node yet; run enroll again (%s)",
-			st.BackendState, st.SelfID, stableID, st.Suffix, waited(begun), unheld)
+		return fail("the node is %s with StableID %q on the tailnet %q, after %s: it is not on its tailnet yet; run enroll again (%s)",
+			st.BackendState, st.SelfID, st.Suffix, waited(begun), unheld)
 	}
 	if rehold {
 		if err := tailnet.SaveHold(cfg.DataDir, &tailnet.Hold{Hostname: c.hostname, Since: time.Now().UTC()}); err != nil {

@@ -656,6 +656,9 @@ func certificate(cfg *config.Config, live *Live) Check {
 	return c
 }
 
+// newKey is how a node takes another auth key.
+const newKey = "a new auth key (tailnet_auth_key_file) is read only while the node has no state: stop varlatchd, move <data_dir>/tailnet away, start varlatchd, and it enrols as a new node"
+
 func tailnetPin(live *Live) Check {
 	c := Check{ID: "tailnet.pin", Title: "Tailnet pin", Class: Mandatory}
 	switch {
@@ -673,11 +676,11 @@ func tailnetPin(live *Live) Check {
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetDetail
 		switch live.TailnetClosed {
 		case closed.WaitingForControl:
-			c.Remedy = "Check that this host reaches the tailnet's control server; nothing needs restarting here"
+			c.Remedy = "Check that this host reaches the tailnet's control server; the listener then opens with no restart. After 5 minutes of this, the control server may also be refusing the node: check the auth key and the control server (" + newKey + ")"
 		case closed.LoginNeeded:
-			c.Remedy = "Approve the node, or extend its key, in the tailnet's admin console; to enrol it anew, give a new auth key (tailnet_auth_key_file)"
+			c.Remedy = "Approve the node, or extend its key, in the tailnet's admin console, or enrol it anew: " + newKey
 		default:
-			c.Remedy = "Read the control server's answer in varlatchd's log, put it right, then restart varlatchd"
+			c.Remedy = "Check the auth key (expired, used or revoked?) and the control server's own log, put it right, then restart varlatchd; " + newKey
 		}
 	case live.TailnetClosed != "":
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetClosed
