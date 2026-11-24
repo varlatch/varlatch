@@ -44,7 +44,19 @@ sudo varlatch admin backup status
 sudo varlatch admin backup test-bucket
 ```
 
-Backups are encrypted and verified; restoring is a human decision.
+Backups are encrypted and verified. Restoring is a human decision, and a
+restored installation stays closed to clients until the human resumes it.
+
+## In a container
+
+An installation that runs the container image (Docker, Coolify) has no
+`varlatch setup` or `varlatch upgrade`: the image's digest is the version,
+and changing it is a deployment. The other commands run in the container:
+
+```text
+docker exec <container> varlatch admin backup status
+docker exec <container> varlatch --assisted doctor --json
+```
 
 ## From a Compose installation
 
