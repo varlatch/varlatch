@@ -161,7 +161,11 @@ func (s *Service) Status() (backup.Status, error) {
 	if err != nil {
 		return backup.Status{}, err
 	}
-	return backup.ReadStatusFor(s.dir, s.o.Now(), life)
+	st, err := backup.ReadStatusFor(s.dir, s.o.Now(), life)
+	if err != nil {
+		return backup.Status{}, err
+	}
+	return st.WithoutRemoteCheck(), nil
 }
 
 // lifecycle is the live database's (backup.Lifecycle): its installation
@@ -342,7 +346,7 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	// The snapshot is not needed any more: free its room before the check.
 	_ = os.Remove(snapshot)
 
-	verification, err := s.verify(ctx, staged, bek, work, keys)
+	verification, err := s.verify(ctx, id, staged, bek, work, keys)
 	if testHooks.verified != nil {
 		testHooks.verified()
 	}
@@ -668,9 +672,11 @@ func schemaOf(ctx context.Context, path string) (version, compatibleFrom int64, 
 	return version, compatibleFrom, nil
 }
 
-// verify opens the archive again (its integrity), and checks this release
-// restores it and the Root KEK opens its canaries.
-func (s *Service) verify(ctx context.Context, archive string, bek backup.BEK, scratch string, keys *backup.KeyCache) (backup.Verification, error) {
+// verify opens the archive again (its integrity: it opens, and is the
+// archive id and not another one sealed under the same key, such as an
+// older copy at its key in the bucket), and checks this release restores it
+// and the Root KEK opens its canaries.
+func (s *Service) verify(ctx context.Context, id, archive string, bek backup.BEK, scratch string, keys *backup.KeyCache) (backup.Verification, error) {
 	v := backup.Verification{TargetRelease: buildinfo.Version}
 	// Every check of an unpaced Open, paced like the sealing, with the key
 	// the sealing derived.
@@ -680,6 +686,9 @@ func (s *Service) verify(ctx context.Context, archive string, bek backup.BEK, sc
 	}
 	if err != nil {
 		s.o.Log.Warn("backup: the archive does not open", "archive", archive, "error", err)
+	} else if o.Manifest.ArchiveID != id {
+		s.o.Log.Warn("backup: the archive is another one", "archive", archive, "archiveId", id, "found", o.Manifest.ArchiveID)
+		_ = o.Close()
 	} else {
 		v.Integrity = true
 		v.Compatibility = Compatible(ctx, o.Manifest, o.Path(backup.ComponentDatabase))
@@ -738,7 +747,7 @@ func (s *Service) HasDestination() bool {
 
 // VerifyRemote downloads the archive id's uploaded copy from the
 // configured destination, opens it and checks it as the run checked the
-// local one (integrity, this release restores it, the Root KEK opens its
+// local one (integrity: it opens and is the archive id; this release restores it, the Root KEK opens its
 // canaries), and records the result as its delivery's remote
 // verification. The download is removed after. An archive with no
 // recorded upload is refused.
@@ -788,7 +797,7 @@ func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verificat
 	if _, err := client.Download(ctx, key, downloaded); err != nil {
 		return backup.Verification{}, err
 	}
-	v, err := s.verify(ctx, downloaded, bek, work, &backup.KeyCache{})
+	v, err := s.verify(ctx, id, downloaded, bek, work, &backup.KeyCache{})
 	if err != nil {
 		return v, err
 	}
