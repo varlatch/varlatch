@@ -522,7 +522,8 @@ func TestAFailedHealthCheckIsUndone(t *testing.T) {
 	u := h.upgrader(nil)
 	u.HealthTimeout = 3 * time.Second
 	j, err := u.Run(context.Background(), inst, h.release(t, "wrong", safe))
-	if err == nil || !strings.Contains(err.Error(), "it runs 0.50.0-rc.6, not "+toVersion) {
+	// (Another release than the one the journal lets start: it does not.)
+	if err == nil || !strings.Contains(err.Error(), "the health checks of "+toVersion) || !strings.Contains(err.Error(), "it was undone") {
 		t.Fatalf("%v", err)
 	}
 	previousServes(t, h, j)
