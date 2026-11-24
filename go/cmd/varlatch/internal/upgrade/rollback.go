@@ -144,10 +144,9 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	case last.State == journal.Undone:
 		return RollbackPlan{}, fmt.Errorf("the last upgrade, to %s, was undone and %s serves: there is nothing to roll back", last.To, last.From)
 	case !ReturnsTo(last.From):
-		return RollbackPlan{}, fmt.Errorf("%s's varlatch cannot read a rollback's journal (%s is the first that can), so it could neither finish an interrupted rollback nor upgrade after one. By hand, losing every change made since the upgrade:\n%s",
-			last.From, RollbackSince, u.byHand(last))
+		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("%s's varlatch cannot read a rollback's journal (%s is the first that can), so it could neither finish an interrupted rollback nor upgrade after one", last.From, RollbackSince), Steps: u.byHand(last)}
 	case last.Format == journal.FormatOne || last.Binaries == nil:
-		return RollbackPlan{}, fmt.Errorf("the upgrade to %s was made by a varlatch that did not record its binaries' checksums: they are not run unchecked. By hand, losing every change made since the upgrade:\n%s", last.To, u.byHand(last))
+		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("the upgrade to %s was made by a varlatch that did not record its binaries' checksums: they are not run unchecked", last.To), Steps: u.byHand(last)}
 	}
 	if err := u.trusted(); err != nil {
 		return RollbackPlan{}, err
@@ -238,9 +237,17 @@ func (u *Upgrader) bothKept(last *journal.Journal) error {
 	return nil
 }
 
-// byHand are the steps back for a release a rollback does not return to,
-// as they are run.
-func (u *Upgrader) byHand(last *journal.Journal) string {
+// ByHand refuses a rollback that is made by hand: Steps, each a command as it
+// is run, in order.
+type ByHand struct {
+	Why   string
+	Steps []string
+}
+
+func (e *ByHand) Error() string { return e.Why }
+
+// byHand are the steps back for a release a rollback does not return to.
+func (u *Upgrader) byHand(last *journal.Journal) []string {
 	kept := filepath.Join(last.Releases, last.From)
 	uid, gid, _, err := ownerToBe(last.DataDir)
 	owner := fmt.Sprintf("%d:%d", uid, gid)
@@ -258,8 +265,7 @@ func (u *Upgrader) byHand(last *journal.Journal) string {
 		journalPath := filepath.Join(u.configDir(), journal.File)
 		lines = append(lines, fmt.Sprintf("sudo mv %s %s", shellWord(journalPath), shellWord(filepath.Join(u.configDir(), "upgrade-"+last.ID+".json"))))
 	}
-	lines = append(lines, "sudo systemctl start varlatchd")
-	return "  " + strings.Join(lines, "\n  ")
+	return append(lines, "sudo systemctl start varlatchd")
 }
 
 // shellWord is s as one word of a shell's.

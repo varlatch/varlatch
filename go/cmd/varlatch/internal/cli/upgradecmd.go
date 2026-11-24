@@ -401,6 +401,10 @@ func runQuiet(ctx context.Context, name string, args ...string) error {
 // the snapshot is restored, every change it loses), then the rollback.
 func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acceptLoss bool) error {
 	plan, err := u.PlanRollback(ctx)
+	var byHand *upgrade.ByHand
+	if errors.As(err, &byHand) {
+		return Fail(byHandMessage(byHand), ExitFailure)
+	}
 	if err != nil {
 		return Fail("varlatch upgrade --rollback: "+err.Error()+". Nothing was changed.", ExitFailure)
 	}
@@ -485,6 +489,12 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 		}
 	}
 	return nil
+}
+
+// byHandMessage refuses with the steps to take instead, each line a command
+// and nothing else.
+func byHandMessage(e *upgrade.ByHand) string {
+	return "varlatch upgrade --rollback: " + e.Why + ". Nothing was changed. By hand, losing every change made since the upgrade:\n  " + strings.Join(e.Steps, "\n  ")
 }
 
 // notCounted is what a snapshot restore also loses or reverts beyond the

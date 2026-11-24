@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -275,7 +276,8 @@ func TestARollbackIsRefusedBeforeTheStop(t *testing.T) {
 	if err := journal.Write(filepath.Dir(h.conf), &noSums); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := u.PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), "did not record its binaries' checksums") || !strings.Contains(err.Error(), "backup restore --in "+j.Snapshot) {
+	var byHand *ByHand
+	if _, err := u.PlanRollback(context.Background()); !errors.As(err, &byHand) || !strings.Contains(byHand.Why, "did not record its binaries' checksums") || !strings.Contains(strings.Join(byHand.Steps, "\n"), "backup restore --in "+j.Snapshot) {
 		t.Fatalf("no checksums: %v", err)
 	}
 	if err := journal.Write(filepath.Dir(h.conf), j); err != nil {
@@ -522,23 +524,40 @@ func TestARollbackNeedsAReleaseThatReadsIt(t *testing.T) {
 	for _, c := range []struct {
 		from   string
 		format int
-		want   string
+		want   []string
 	}{
-		{"0.50.0-rc.2", journal.FormatOne, "0.50.0-rc.2's varlatch cannot read a rollback's journal (0.50.0-rc.4 is the first that can), so it could neither finish an interrupted rollback nor upgrade after one. By hand, losing every change made since the upgrade:\n" +
-			"  sudo systemctl stop varlatchd\n" +
-			"  sudo install -m 755 /r/0.50.0-rc.2/varlatch /r/0.50.0-rc.2/varlatchd BIN\n" +
-			"  sudo BIN/varlatchd admin backup restore --in '/s p.vltbak' --config CONF\n" +
-			fmt.Sprintf("  sudo chown -R --no-dereference --from=0 %d:%d DIR\n", uid, gid) +
-			"  sudo systemctl start varlatchd"},
-		{"0.50.0-rc.3", journal.Format, "  sudo mv DIR/upgrade.json DIR/upgrade-x.json\n  sudo systemctl start varlatchd"},
+		{"0.50.0-rc.2", journal.FormatOne, []string{
+			"sudo systemctl stop varlatchd",
+			"sudo install -m 755 /r/0.50.0-rc.2/varlatch /r/0.50.0-rc.2/varlatchd BIN",
+			"sudo BIN/varlatchd admin backup restore --in '/s p.vltbak' --config CONF",
+			fmt.Sprintf("sudo chown -R --no-dereference --from=0 %d:%d DIR", uid, gid),
+			"sudo systemctl start varlatchd",
+		}},
+		// Its journal is one the release returned to refuses.
+		{"0.50.0-rc.3", journal.Format, []string{
+			"sudo systemctl stop varlatchd",
+			"sudo install -m 755 /r/0.50.0-rc.3/varlatch /r/0.50.0-rc.3/varlatchd BIN",
+			"sudo BIN/varlatchd admin backup restore --in '/s p.vltbak' --config CONF",
+			fmt.Sprintf("sudo chown -R --no-dereference --from=0 %d:%d DIR", uid, gid),
+			"sudo mv DIR/upgrade.json DIR/upgrade-x.json",
+			"sudo systemctl start varlatchd",
+		}},
 	} {
 		if err := journal.Write(dir, &journal.Journal{Format: c.format, ID: "x", From: c.from, To: "0.50.0-rc.4", State: journal.Done, Step: journal.Checked,
 			StartedAt: "2026-11-24T00:00:00Z", Releases: "/r", DataDir: dir, Snapshot: "/s p.vltbak"}); err != nil {
 			t.Fatal(err)
 		}
-		want := strings.NewReplacer("BIN", u.BinDir, "CONF", u.ConfigPath, "DIR", dir).Replace(c.want)
-		if _, err := u.PlanRollback(context.Background()); err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("%v\nwant\n%s", err, want)
+		_, err := u.PlanRollback(context.Background())
+		var byHand *ByHand
+		if !errors.As(err, &byHand) || !strings.HasPrefix(byHand.Why, c.from+"'s varlatch cannot read a rollback's journal (0.50.0-rc.4 is the first that can)") {
+			t.Fatalf("%s: %v", c.from, err)
+		}
+		in := strings.NewReplacer("BIN", u.BinDir, "CONF", u.ConfigPath, "DIR", dir)
+		for i := range c.want {
+			c.want[i] = in.Replace(c.want[i])
+		}
+		if !slices.Equal(byHand.Steps, c.want) {
+			t.Fatalf("%s:\n%s\nwant\n%s", c.from, strings.Join(byHand.Steps, "\n"), strings.Join(c.want, "\n"))
 		}
 	}
 }

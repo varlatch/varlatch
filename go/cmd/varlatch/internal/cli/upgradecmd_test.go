@@ -443,6 +443,14 @@ func (s *cliService) Stop(context.Context) error {
 	return nil
 }
 
+// The steps by hand are lines of their own, the last one too.
+func TestByHandMessage(t *testing.T) {
+	got := byHandMessage(&upgrade.ByHand{Why: "why", Steps: []string{"sudo one", "sudo two"}})
+	if got != "varlatch upgrade --rollback: why. Nothing was changed. By hand, losing every change made since the upgrade:\n  sudo one\n  sudo two" {
+		t.Fatalf("%q", got)
+	}
+}
+
 // A recovered rollback says so, and that it can be run again.
 func TestRecoveredMessage(t *testing.T) {
 	j := &journal.Journal{From: "0.50.0-rc.5", To: "0.50.0-rc.4", Kind: journal.Rollback, State: journal.Undone, Reason: "interrupted after step \"stopped\"", Snapshot: "/s/x/snapshot.vltbak"}
