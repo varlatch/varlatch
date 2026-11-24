@@ -515,29 +515,36 @@ func TestDeletingAnEnvironmentEndsItsSeeds(t *testing.T) {
 	}
 }
 
-// A derived environment inherits its parent's seed, and overrides it with
-// another seed or a value.
+// A derived environment inherits its parent's seed, overrides a parent's seed
+// with a value or another seed, and overrides a parent's value with a seed.
 func TestInheritedSeeds(t *testing.T) {
 	w := newWorld(t)
 	w.want("set", w.setSeed(otpItem, uriA), 200, "")
 	w.want("preview", w.call("POST", "/v1/organizations/cap/projects/api/environments", "alice", map[string]any{"name": "development/pr-1", "kind": "preview", "parentEnvironmentId": w.env("development")}), 201, "")
 	preview := "/v1/organizations/cap/projects/api/environments/development%2Fpr-1"
-	listed := func() map[string]any {
+	listed := func(name string) map[string]any {
 		t.Helper()
+		var found map[string]any
 		for _, i := range w.want("listed", w.call("GET", preview+"/effective-configuration?include=values", "alice", nil), 200, "").body["items"].([]any) {
-			if m := i.(map[string]any); m["name"] == otpItem {
-				return m
+			if m := i.(map[string]any); m["name"] == name {
+				if found != nil {
+					t.Fatalf("duplicate item %s in effective-configuration: %v and %v", name, found, m)
+				}
+				found = m
 			}
 		}
-		t.Fatal("not listed")
-		return nil
+		if found == nil {
+			t.Fatalf("%s not listed", name)
+		}
+		return found
 	}
-	if m := listed(); m["source"] != "parent" || m["totp"] == nil || m["value"] != nil || m["sensitive"] != true {
+	if m := listed(otpItem); m["source"] != "parent" || m["totp"] == nil || m["value"] != nil || m["sensitive"] != true {
 		t.Errorf("inherited: %v", m)
 	}
-	// A value in the child is its own row: the parent's seed is not behind it.
+	// Parent's seed under a child's value: the child's value wins and hides
+	// the parent's seed completely (no duplicate item, no seed disclosed).
 	w.want("a value", w.call("PUT", preview+"/values/"+otpItem, "alice", map[string]any{"value": "child"}), 200, "")
-	if m := listed(); m["source"] != "self" || m["totp"] != nil {
+	if m := listed(otpItem); m["source"] != "self" || m["totp"] != nil {
 		t.Errorf("overridden by a value: %v", m)
 	}
 	all := w.want("disclosed", w.call("POST", preview+"/disclosures", "alice", map[string]any{"scope": "all-authorized-secrets"}), 200, "")
@@ -545,9 +552,30 @@ func TestInheritedSeeds(t *testing.T) {
 	if !strings.Contains(all.raw, `"value":"child"`) {
 		t.Errorf("%s", all.raw)
 	}
+	seedDisc := w.want("disclose totpSeeds", w.call("POST", preview+"/disclosures", "alice", map[string]any{"items": []string{otpItem}, "totpSeeds": true}), 200, "")
+	noSeed(t, "disclose totpSeeds on child value", seedDisc.raw)
+	// Child's seed over a parent's value (SECRET_A = "a-secret" in parent):
+	// the child's seed wins and hides the parent's value completely.
+	w.want("child seed over parent value", w.call("PUT", preview+"/values/SECRET_A", "alice", map[string]any{"otpauth": uriA}), 200, "")
+	if m := listed("SECRET_A"); m["source"] != "self" || m["totp"] == nil || m["value"] != nil {
+		t.Errorf("child seed over parent value: %v", m)
+	}
+	discChildSeed := w.want("disclose child seed", w.call("POST", preview+"/disclosures", "alice", map[string]any{"items": []string{"SECRET_A"}}), 200, "")
+	if strings.Contains(discChildSeed.raw, "a-secret") || !strings.Contains(discChildSeed.raw, `"withheld":["SECRET_A"]`) {
+		t.Errorf("parent value leaked under child seed: %s", discChildSeed.raw)
+	}
+	previewCap := w.want("issue on preview", w.call("POST", preview+"/capabilities", "broker", w.issueBody(nil)), 201, "")
+	exChild := w.want("exercise child seed", w.call("POST", preview+"/capabilities/"+previewCap.body["id"].(string)+"/exercises", "broker", map[string]any{
+		"capabilitySecret": previewCap.body["secret"].(string),
+		"destination":      map[string]any{"host": "api.example.com", "port": 443},
+		"placements":       []any{map[string]any{"item": "SECRET_A", "target": "header:authorization"}},
+	}), 200, "")
+	if strings.Contains(exChild.raw, "a-secret") || !strings.Contains(exChild.raw, `"kind":"totp"`) {
+		t.Errorf("exercise returned parent value instead of child seed code: %s", exChild.raw)
+	}
 	w.want("delete", w.call("DELETE", preview+"/values/"+otpItem, "alice", nil), 204, "")
 	w.want("a seed", w.call("PUT", preview+"/values/"+otpItem, "alice", map[string]any{"otpauth": uriB}), 200, "")
-	if m := listed(); m["source"] != "self" || m["totp"].(map[string]any)["digits"] != 8.0 {
+	if m := listed(otpItem); m["source"] != "self" || m["totp"].(map[string]any)["digits"] != 8.0 {
 		t.Errorf("overridden by a seed: %v", m)
 	}
 	// A seed whose parameters this server does not know hides the parent's
