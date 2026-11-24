@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -94,9 +95,9 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 	if len(in.Destinations) == 0 {
 		return nil, nil, invalid("A Capability names explicit destinations")
 	}
-	selectors, parsed := make([]string, len(in.Destinations)), make([]authz.DestinationSelector, len(in.Destinations))
+	selectors, parsed := make([]string, len(in.Destinations)), make([]authz.Place, len(in.Destinations))
 	for i, raw := range in.Destinations {
-		sel, ok := authz.ParseDestinationSelector(raw)
+		sel, ok := authz.ParsePlace(raw)
 		if !ok {
 			return nil, nil, invalid("Invalid destination selector: " + raw)
 		}
@@ -106,7 +107,7 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 	if in.Targets == nil {
 		return nil, nil, invalid("Capabilities need substitution targets for every item; issue them with Varlatch CLI 0.11.0 or later (--target NAME=kind:location)")
 	}
-	canonical, err := targets.Canonical(in.Items, in.Targets)
+	canonical, err := targets.CanonicalAny(in.Items, in.Targets)
 	var te *targets.Error
 	if errors.As(err, &te) {
 		return nil, nil, invalid(te.Message)
@@ -121,6 +122,9 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 	issuer, broker := p.Identity.ID, p.Identity.ID
 	if in.BrokerIdentityID != nil {
 		broker = *in.BrokerIdentityID
+	}
+	if err := checkPlaces(parsed, canonical, broker); err != nil {
+		return nil, nil, err
 	}
 	// For itself, as a Broker always could; for another, or asked for by
 	// what is no Broker, with capability.issue.
@@ -284,6 +288,39 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 		out = append(out, jsvalue.Member{Key: "preflightItems", Value: list})
 	}
 	return out, reports, nil
+}
+
+// checkPlaces refuses destinations and targets that do not go together
+// (ADR-0064).
+//
+// Pages and applications are not mixed with hosts in one Capability: a server
+// that does not know them matches none of theirs and all of a host's, and
+// would let a value for a field go to a host. Every target has a destination
+// that takes it, and an application is on the machine of the Broker that
+// exercises, since only that Broker does.
+func checkPlaces(places []authz.Place, given []targets.Item, broker string) error {
+	kinds := map[string]bool{}
+	for _, p := range places {
+		kinds[p.Kind] = true
+		if p.Kind == authz.PlaceApp && p.Machine != broker {
+			return refused("app-machine", "The destination "+p.String()+" is on another machine: an application is on the machine of the Broker the Capability is for ("+broker+")")
+		}
+	}
+	if kinds[authz.PlaceHost] && len(kinds) > 1 {
+		return refused("mixed-destinations", "A Capability's destinations are hosts, or pages and applications, not both: issue one for each")
+	}
+	for _, it := range given {
+		for _, t := range it.Targets {
+			if !slices.ContainsFunc(places, func(p authz.Place) bool { return authz.Takes(p.Kind, targets.Kind(t)) }) {
+				return refused("target-without-destination", "None of the destinations takes the target "+t+" of "+it.Name+": a field is of a page or an application, a pipe goes to an application or with a host, and any other target is of a request to a host")
+			}
+		}
+	}
+	return nil
+}
+
+func refused(reason, message string) error {
+	return &domainerr.Error{Code: "VALIDATION_FAILED", Message: message, Details: jsvalue.Object{{Key: "reason", Value: reason}}}
 }
 
 // mayIssueFor decides, in the issuing job, that p may issue a Capability

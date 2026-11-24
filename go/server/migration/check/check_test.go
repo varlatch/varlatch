@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -869,6 +870,55 @@ func TestTheReverseChecksWithEntryLinks(t *testing.T) {
 	if err := again.QueryRow("SELECT (SELECT count(*) FROM entry_links), (SELECT count(*) FROM value_versions WHERE id = ? AND created_by IS NULL), (SELECT count(*) FROM grants WHERE id = 'grt_entry' AND actions LIKE '%entry-link.create-open%')",
 		version).Scan(&n, &nobodys, &grants); err != nil || n != 0 || nobodys != 1 || grants != 1 {
 		t.Errorf("%d links, %d versions by nobody known, %d grants (%v)", n, nobodys, grants, err)
+	}
+}
+
+// A Capability for pages and applications (ADR-0064) goes back and forth as it
+// is: rows whose destinations the TypeScript server reads as none of any.
+func TestTheReverseChecksWithPlaces(t *testing.T) {
+	s := setUp(t)
+	path := copyDB(t, s)
+	const destinations, given = `["web:https://portal.example.com:443/login","app:CRM Client@idn_4iryusqsiqavj5y6z57obhc4cm"]`, `{"API_KEY": ["field:Password", "pipe:/a/0"]}`
+	damage(t, path, "UPDATE capabilities SET destinations = '"+destinations+"', targets = '"+given+"' WHERE id = (SELECT min(id) FROM capabilities)")
+	keep := filepath.Join(t.TempDir(), "keep")
+	var rev bytes.Buffer
+	if _, err := migrate.ExportReverse(context.Background(), &rev, migrate.Options{DataDir: filepath.Dir(path), Keep: keep, Release: "0.50.0-check"}); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := migrationtest.FromReverse(t, rev.Bytes(), s.source.RootKEK)
+	kept := openRO(t, filepath.Join(keep, config.DatabaseFile))
+	defer kept.Close()
+	decisions := []bundle.Decision{}
+	for _, d := range tuples(t, kept) {
+		got, err := check.Evaluate(context.Background(), kept, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decisions = append(decisions, got)
+	}
+	b := migrationtest.Bundle(t, rebuilt, migrationtest.Options{Sections: &migrationtest.Sections{Digests: migrationtest.Digests(t, rebuilt, s.runKey), Decisions: decisions, At: 1}})
+	rep, err := check.Run(context.Background(), kept, bytes.NewReader(b), check.Options{RootKEK: s.source.RootKEK, RunKey: s.runKey, Reverse: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Passed {
+		t.Fatalf("the reverse checks:\n%s", rep.Text())
+	}
+	dir := t.TempDir()
+	if _, err := migrate.Import(context.Background(), bytes.NewReader(b), migrate.Options{DataDir: dir, RootKEK: s.source.RootKEK, Release: "0.50.0-check"}); err != nil {
+		t.Fatal(err)
+	}
+	again := openRO(t, filepath.Join(dir, config.DatabaseFile))
+	defer again.Close()
+	var dests, targets string
+	if err := again.QueryRow("SELECT destinations, targets FROM capabilities WHERE id = (SELECT min(id) FROM capabilities)").Scan(&dests, &targets); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range [][2]string{{dests, destinations}, {targets, given}} {
+		var got, want any
+		if json.Unmarshal([]byte(c[0]), &got) != nil || json.Unmarshal([]byte(c[1]), &want) != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s, want %s", c[0], c[1])
+		}
 	}
 }
 

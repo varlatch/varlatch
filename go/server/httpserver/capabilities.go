@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -79,12 +80,52 @@ var issueCapabilityBody = zObject{
 	}, optional: true},
 }
 
-var exerciseCapabilityBody = zObject{
-	{name: "capabilitySecret", schema: zString{min: 1}},
-	{name: "destination", schema: zObject{
+// exerciseCapabilityBody is an exercise's body for a destination of a kind:
+// a host and port, as it always was; a page or an application (ADR-0064).
+func exerciseCapabilityBody(destination zObject) zObject {
+	return append(zObject{{name: "capabilitySecret", schema: zString{min: 1}}, {name: "destination", schema: destination}}, exerciseCapabilityRest...)
+}
+
+var (
+	exerciseHost = zObject{
 		{name: "host", schema: zString{min: 1}},
 		{name: "port", schema: zNumber{min: bound(1), max: bound(65535)}},
-	}},
+	}
+	exercisePage = zObject{
+		{name: "url", schema: zString{min: 1, max: authz.MaxReported}},
+		{name: "topUrl", schema: zString{min: 1, max: authz.MaxReported}, optional: true},
+	}
+	exerciseApp = zObject{
+		{name: "app", schema: zString{min: 1, max: 200}},
+		{name: "window", schema: zString{max: 1000}, optional: true},
+	}
+)
+
+// reportedDestination is a body's destination, of the one kind its members
+// name: a body that names none is judged as a host's, and one that names
+// members of two is refused, so no part of a report is ignored.
+func reportedDestination(body any) (zObject, error) {
+	o, _ := body.(jsvalue.Object)
+	v, _ := o.Get("destination")
+	d, _ := v.(jsvalue.Object)
+	var kinds []string
+	schema := exerciseHost
+	for _, k := range []struct {
+		name    string
+		members []string
+		schema  zObject
+	}{{"a host", []string{"host", "port"}, exerciseHost}, {"a page", []string{"url", "topUrl"}, exercisePage}, {"an application", []string{"app", "window"}, exerciseApp}} {
+		if slices.ContainsFunc(k.members, func(m string) bool { return has(d, m) }) {
+			kinds, schema = append(kinds, k.name), k.schema
+		}
+	}
+	if len(kinds) > 1 {
+		return nil, domainerr.New("VALIDATION_FAILED", "destination: "+strings.Join(kinds, " and ")+": report one destination")
+	}
+	return schema, nil
+}
+
+var exerciseCapabilityRest = zObject{
 	// Each substitution the Broker will make (ADR-0039 Decision 7).
 	{name: "placements", schema: zArray{element: zObject{
 		{name: "item", schema: zString{min: 1}},
@@ -326,16 +367,27 @@ func (o *operations) ExerciseCapability(ctx context.Context, _ api.ExerciseCapab
 		if err != nil {
 			return values.Exercise{}, err
 		}
-		parsed, err := zParse(exerciseCapabilityBody, body)
+		schema, err := reportedDestination(body)
+		if err != nil {
+			return values.Exercise{}, err
+		}
+		parsed, err := zParse(exerciseCapabilityBody(schema), body)
 		if err != nil {
 			return values.Exercise{}, err
 		}
 		obj := parsed.(jsvalue.Object)
 		secret, _ := obj.Get("capabilitySecret")
-		dest, _ := obj.Get("destination")
-		host, _ := dest.(jsvalue.Object).Get("host")
-		port, _ := dest.(jsvalue.Object).Get("port")
-		in := values.Exercise{Secret: secret.(string), Host: host.(string), Port: int(port.(float64))}
+		v, _ := obj.Get("destination")
+		dest := v.(jsvalue.Object)
+		in := values.Exercise{Secret: secret.(string)}
+		switch {
+		case has(dest, "url"):
+			in.Destination = authz.Reported{Kind: authz.PlaceWeb, URL: str(dest, "url"), Top: str(dest, "topUrl")}
+		case has(dest, "app"):
+			in.Destination = authz.Reported{Kind: authz.PlaceApp, App: str(dest, "app"), Window: str(dest, "window")}
+		default:
+			in.Destination = authz.Reported{Kind: authz.PlaceHost, Host: authz.Destination{Host: str(dest, "host"), Port: int(number(dest, "port"))}}
+		}
 		if list, ok := obj.Get("placements"); ok {
 			in.Placements = []values.Placement{}
 			for _, e := range list.([]any) {

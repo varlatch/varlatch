@@ -58,6 +58,21 @@ type Connection struct {
 	Account, Label      string
 }
 
+// reaches is whether the access token may go to r: every host it goes to is
+// one of the connection's, where it names any. An application is none.
+func (c *Connection) reaches(r authz.Reading) bool {
+	if len(c.Params.Hosts) == 0 {
+		return true
+	}
+	hosts := r.Hosts()
+	for _, h := range hosts {
+		if !c.Params.Reaches(h) {
+			return false
+		}
+	}
+	return len(hosts) > 0
+}
+
 // The states of a connection.
 const (
 	NotConnected   = "not_connected"
@@ -491,15 +506,20 @@ func ConnectionsIn(ctx context.Context, db query.DBTX, environmentID, parentID s
 
 // CheckConnectionDestinations refuses destinations that widen where a
 // connection's token may go.
-func CheckConnectionDestinations(connections map[string]oauthparams.Params, items []string, selectors []authz.DestinationSelector) error {
+func CheckConnectionDestinations(connections map[string]oauthparams.Params, items []string, places []authz.Place) error {
 	for _, name := range items {
 		p, ok := connections[name]
 		if !ok {
 			continue
 		}
-		if i := slices.IndexFunc(selectors, func(sel authz.DestinationSelector) bool { return !p.Covers(sel) }); i >= 0 {
-			return &domainerr.Error{Code: "VALIDATION_FAILED", Message: "The OAuth connection " + name + " does not allow " + selectors[i].String() + " among its hosts",
-				Details: jsvalue.Object{{Key: "reason", Value: "connection-host"}, {Key: "item", Value: name}, {Key: "destination", Value: selectors[i].String()}}}
+		// An application is no host, nor is a page without TLS: a connection
+		// that names hosts allows none.
+		if i := slices.IndexFunc(places, func(x authz.Place) bool {
+			host, is := x.Host()
+			return len(p.Hosts) > 0 && (!is || !p.Covers(host))
+		}); i >= 0 {
+			return &domainerr.Error{Code: "VALIDATION_FAILED", Message: "The OAuth connection " + name + " does not allow " + places[i].String() + " among its hosts",
+				Details: jsvalue.Object{{Key: "reason", Value: "connection-host"}, {Key: "item", Value: name}, {Key: "destination", Value: places[i].String()}}}
 		}
 	}
 	return nil

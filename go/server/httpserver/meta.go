@@ -90,9 +90,11 @@ var Capabilities = []string{
 // codes: a seed in a value's place, an exercise's minValiditySeconds and
 // fresh, a disclosure's totpSeeds. And oauth.connections, ADR-0062's: OAuth
 // connections, whose access token an exercise gives. And values.entry-links,
-// ADR-0063's: links a person enters a value with. The TypeScript server
-// lists none of them.
-var GoCapabilities = []string{"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links", "auth.session", "realtime.sse"}
+// ADR-0063's: links a person enters a value with. And ADR-0064's:
+// capabilities.destination-kinds (web: and app: destinations, a page or an
+// application in an exercise) and capabilities.target-kinds (pipe: and field:
+// targets). The TypeScript server lists none of them.
+var GoCapabilities = []string{"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links", "capabilities.destination-kinds", "capabilities.target-kinds", "auth.session", "realtime.sse"}
 
 // SemanticsVersions are the Contract Semantics versions the server
 // evaluates (packages/contract/src/semantics.ts SEMANTICS_VERSIONS).
@@ -130,7 +132,7 @@ func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (a
 		hidden["auth.device"] = true
 	}
 	caps := slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return hidden[c] })
-	caps = append(caps, "capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links")
+	caps = append(caps, "capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links", "capabilities.destination-kinds", "capabilities.target-kinds")
 	if s.browser != nil {
 		caps = append(caps, "auth.session")
 		if s.opts.Realtime != nil {

@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -233,10 +232,10 @@ type Placement struct{ Item, Target string }
 
 // Exercise is an exercise's body.
 type Exercise struct {
-	Secret     string
-	Host       string
-	Port       int
-	Placements []Placement
+	Secret string
+	// Destination is where the Broker says the values go (ADR-0064).
+	Destination authz.Reported
+	Placements  []Placement
 	// MinValiditySeconds and Fresh are about the one-time codes (ADR-0061) and
 	// access tokens (ADR-0062) among the items: how long each must still be
 	// valid (0: no matter), and, for a code, that it was not given before.
@@ -386,7 +385,20 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 		return nil, nil, s.refused(ctx, req, t, err)
 	}
 	broker := req.Principal.Identity.ID
-	destination := in.Host + ":" + strconv.Itoa(in.Port)
+	reading := in.Destination.Read(broker)
+	// where is the destination in the audit log: of a host as it always was,
+	// of a page or an application its kind too, the page around it, and the
+	// window's title.
+	where := jsvalue.Object{{Key: "destination", Value: reading.Text}}
+	if reading.Kind != authz.PlaceHost {
+		where = append(where, jsvalue.Member{Key: "destinationKind", Value: reading.Kind})
+		if reading.Top != "" {
+			where = append(where, jsvalue.Member{Key: "topDestination", Value: reading.Top})
+		}
+		if w := authz.Window(in.Destination.Window); w != "" {
+			where = append(where, jsvalue.Member{Key: "window", Value: w})
+		}
+	}
 	resource := func() jsvalue.Object {
 		var agent any
 		if row != nil {
@@ -405,8 +417,7 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 	// spent is set while this exercise holds a single-use Capability's use.
 	spent := false
 	deny := func(reason string, detail ...jsvalue.Member) error {
-		md := append(jsvalue.Object{{Key: "reason", Value: reason}, {Key: "destination", Value: destination}}, detail...)
-		md = append(md, issuer()...)
+		md := slices.Concat(jsvalue.Object{{Key: "reason", Value: reason}}, where, detail, issuer())
 		event := audit.Event{
 			Type: "capability.denied", Decision: audit.Deny, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
 			Action: ptr("secret.use"), Resource: resource(), RequestID: ptr(req.RequestID), Metadata: md,
@@ -464,13 +475,14 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 	if err != nil {
 		return nil, nil, err
 	}
-	matched := false
+	places := make([]authz.Place, 0, len(selectors))
 	for _, raw := range selectors {
-		if sel, ok := authz.ParseDestinationSelector(raw); ok && sel.Matches(authz.Destination{Host: in.Host, Port: in.Port}) {
-			matched = true
+		if p, ok := authz.ParsePlace(raw); ok {
+			places = append(places, p)
 		}
 	}
-	if !matched {
+	matched, ok := reading.Match(places)
+	if !ok {
 		return nil, nil, deny("destination-mismatch")
 	}
 
@@ -495,6 +507,9 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 		}
 		if l, ok := list.([]any); !ok || !slices.Contains(l, any(p.Target)) {
 			return nil, nil, deny("placement-not-targeted", jsvalue.Member{Key: "item", Value: p.Item}, jsvalue.Member{Key: "target", Value: p.Target})
+		}
+		if !authz.Takes(reading.Kind, targets.Kind(p.Target)) {
+			return nil, nil, deny("placement-not-for-destination", jsvalue.Member{Key: "item", Value: p.Item}, jsvalue.Member{Key: "target", Value: p.Target})
 		}
 	}
 	var placed []string
@@ -559,7 +574,7 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 	var stale []Item
 	for _, it := range selectedConnections {
 		c, item := it.Connection, jsvalue.Member{Key: "item", Value: it.Name}
-		if !c.Params.Reaches(authz.Destination{Host: in.Host, Port: in.Port}) {
+		if !c.reaches(reading) {
 			return nil, nil, deny("destination-mismatch", item)
 		}
 		if why := c.usable(); why != "" {
@@ -612,6 +627,9 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 			versions = append(versions, it.RetiringVersionID)
 		}
 	}
+	if reading.Kind != authz.PlaceHost {
+		where = append(where, jsvalue.Member{Key: "selector", Value: matched.String()})
+	}
 	// exercised is capability.exercised of these items, with the placements
 	// and the withheld names that are theirs.
 	exercised := func(items []Item, theirs func(name string) bool, withheld int) audit.Event {
@@ -631,10 +649,10 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 		return audit.Event{
 			Type: "capability.exercised", Decision: audit.Allow, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
 			Action: ptr("secret.use"), Resource: resource(), Authz: authz.AuditAuthz(use), RequestID: ptr(req.RequestID),
-			Metadata: append(jsvalue.Object{
-				{Key: "destination", Value: destination}, {Key: "items", Value: strings.Join(entries, ",")},
+			Metadata: slices.Concat(where, jsvalue.Object{
+				{Key: "items", Value: strings.Join(entries, ",")},
 				{Key: "placements", Value: strings.Join(placements, ";")}, {Key: "withheld", Value: withheld}, {Key: "runId", Value: runID},
-			}, issuer()...),
+			}, issuer()),
 		}
 	}
 	isCode := func(name string) bool { _, ok := codes[name]; return ok }
@@ -949,6 +967,8 @@ func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 	case "capability-without-targets":
 		return &domainerr.Error{Code: "PERMISSION_DENIED", Details: details,
 			Message: "This Capability was issued before substitution targets were required. Restart the agent-safe run with Varlatch CLI 0.11.0 or later."}
+	case "placement-not-for-destination":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The target " + get("target") + " of " + get("item") + " is none of a destination of this kind", Details: details}
 	case "placement-not-targeted":
 		msg := "The Broker named a placement this Capability does not hold"
 		if get("item") != "" {
