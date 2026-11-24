@@ -82,3 +82,35 @@ func TestCanonical(t *testing.T) {
 		}
 	}
 }
+
+// Parse is the CLI's Broker's, which sends requests alone: it refuses the
+// kinds of a Broker that types or pipes (ADR-0064), and ParseAny takes them
+// beside its own.
+func TestParseAny(t *testing.T) {
+	for raw, want := range map[string]string{
+		"pipe:/token": "pipe:/token", "pipe:/a~0b/~1/0": "pipe:/a~0b/~1/0", "field:Password": "field:Password", "field:form:pw": "field:form:pw",
+		"header:X-Api-Key": "header:x-api-key", "json:/a": "json:/a",
+	} {
+		if got, err := ParseAny(raw); err != nil || got != want {
+			t.Errorf("ParseAny(%q) = %q, %v", raw, got, err)
+		}
+	}
+	for _, raw := range []string{"pipe:", "pipe:token", "pipe:/a~2", "pipe:/a~", "pipe:/a\nb", "pipe:/" + strings.Repeat("a", 512), "field:", "field:a\x00", "field:" + strings.Repeat("a", 257),
+		"PIPE:/a", "Field:a", "keyboard:a", "field", "", "header:host"} {
+		if got, err := ParseAny(raw); err == nil {
+			t.Errorf("ParseAny(%q) = %q", raw, got)
+		}
+	}
+	for _, raw := range []string{"pipe:/token", "field:Password"} {
+		var e *Error
+		if _, err := Parse(raw); !errors.As(err, &e) || !strings.Contains(e.Message, "is not a target kind") {
+			t.Errorf("Parse(%q): %v", raw, err)
+		}
+		if _, err := Canonical([]string{"A"}, []Item{{"A", []string{raw}}}); err == nil {
+			t.Errorf("Canonical takes %q", raw)
+		}
+		if out, err := CanonicalAny([]string{"A"}, []Item{{"A", []string{raw}}}); err != nil || len(out) != 1 || Kind(out[0].Targets[0]) != Kind(raw) {
+			t.Errorf("CanonicalAny(%q): %v, %v", raw, out, err)
+		}
+	}
+}

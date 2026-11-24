@@ -90,6 +90,50 @@ func Parse(raw string) (string, error) {
 	return "", fail(`"` + kind + `" is not a target kind: expected header, query, json, or form`)
 }
 
+// Kinds of target (ADR-0064) beside where in a request: a value in a JSON
+// document that a Broker hands to a process over a pipe, at an RFC 6901
+// pointer (pipe:/token), and one it types into a field, by the name the
+// Broker knows the field by (field:Password).
+const (
+	KindPipe  = "pipe"
+	KindField = "field"
+)
+
+// Kind is a target's kind.
+func Kind(target string) string {
+	kind, _, _ := strings.Cut(target, ":")
+	return kind
+}
+
+// ParseAny is Parse, for a Broker that does more than send requests: pipe and
+// field targets too. The CLI's Broker reads its own with Parse, which knows
+// neither.
+func ParseAny(raw string) (string, error) {
+	kind, location, _ := strings.Cut(raw, ":")
+	switch kind {
+	case KindPipe:
+		if len(location) > 512 {
+			return "", fail("a pipe target is at most 512 bytes")
+		}
+		if _, err := Parse("json:" + location); err != nil {
+			return "", err
+		}
+		if control.MatchString(location) {
+			return "", fail("a pipe target cannot contain control characters")
+		}
+		return raw, nil
+	case KindField:
+		if n := utf16Len(location); n == 0 || n > 256 {
+			return "", fail("a field target needs a name of 1 to 256 characters")
+		}
+		if control.MatchString(location) {
+			return "", fail("a field target name cannot contain control characters")
+		}
+		return raw, nil
+	}
+	return Parse(raw)
+}
+
 // Item is one item's targets as sent: the item's name and its targets.
 type Item struct {
 	Name    string
@@ -102,6 +146,15 @@ type Item struct {
 // enumerates them. The result is per item, items and targets sorted as
 // JavaScript sorts strings.
 func Canonical(items []string, given []Item) ([]Item, error) {
+	return canonical(items, given, Parse)
+}
+
+// CanonicalAny is Canonical with ParseAny's kinds.
+func CanonicalAny(items []string, given []Item) ([]Item, error) {
+	return canonical(items, given, ParseAny)
+}
+
+func canonical(items []string, given []Item, parse func(string) (string, error)) ([]Item, error) {
 	for _, g := range given {
 		if !slices.Contains(items, g.Name) {
 			return nil, fail("targets name " + g.Name + ", which is not an item of this Capability")
@@ -124,15 +177,15 @@ func Canonical(items []string, given []Item) ([]Item, error) {
 		if len(raw) > MaxPerItem {
 			return nil, fail(name + " has " + strconv.Itoa(len(raw)) + " targets; at most " + strconv.Itoa(MaxPerItem) + " are allowed")
 		}
-		canonical := make([]string, len(raw))
+		list := make([]string, len(raw))
 		for i, t := range raw {
-			c, err := Parse(t)
+			c, err := parse(t)
 			if err != nil {
 				return nil, err
 			}
-			canonical[i] = c
+			list[i] = c
 		}
-		sorted := slices.Clone(canonical)
+		sorted := slices.Clone(list)
 		slices.SortFunc(sorted, Compare)
 		if len(slices.Compact(slices.Clone(sorted))) != len(sorted) {
 			return nil, fail(name + " repeats a target")
