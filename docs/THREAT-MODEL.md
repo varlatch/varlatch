@@ -118,8 +118,9 @@ replay or a suite named here does not exist.
 | On a server that does not know OAuth connections such an item has no value, and nothing of it is refreshed; a reverse migration carries no tokens | **SHIPPED GUARANTEE** | `server/capabilities.TestAnOlderServerReadsNoConnection`; `server/migration/check.TestTheReverseChecksWithConnections` |
 | An entry link (Go server) writes one item's value, once, while the item's value is the one there was when the link was made, its parent's included; of several submissions at once, one is taken, in the job that writes the value; nothing reads through a link, and looking at one, a scanner that runs the page included, uses nothing up | **SHIPPED GUARANTEE** | `server/capabilities.TestAValueIsEnteredOnce`, `server/capabilities.TestSubmittedByManyAtOnce` (`-race`), `server/capabilities.TestAChangedValueEndsTheLink`, `server/capabilities.TestReplacing`, `server/capabilities.TestAnInheritedValueIsNotOverridden`, `server/capabilities.TestAnEntryLinkIsDurable` |
 | Who makes an entry link gains no read, reveal or overwrite by it: `entry-link.create` and `entry-link.create-open` are in no role, count for no agent and no person, and replacing needs `config.value.write`; the maker's right, the freeze, and who the link is for are decided again when the value is entered | **SHIPPED GUARANTEE** | `server/capabilities.TestWhoMayMakeEntryLinks`, `server/capabilities.TestEntryLinkActionsAreNoBuiltInRoles`, `server/capabilities.TestWhoMayEnter`, `server/capabilities.TestWhatEndsWithItsMaker`, `server/capabilities.TestFrozenAndDeleted`, `server/capabilities.TestPasskeyVerification` |
-| An entry link ends with the credential that made it, decided in the job that writes the value: a machine's when it is revoked, its identity retired, a service credential expired or an exchanged one's binding revoked; a person's when they revoke it or their other browser sessions from elsewhere, or lose the membership. The expiry of a short credential and signing out end none. Its holder is not told why | **SHIPPED GUARANTEE** | `server/capabilities.TestAMachinesLinkEndsWithItsCredential`, `server/capabilities.TestALinkOutlivesNoServiceCredential`, `server/capabilities.TestALinkOfAnExchangedCredential`, `server/capabilities.TestAPersonsLinkEndsWithAWithdrawal`, `server/capabilities.TestAPersonsOrdinaryEndsEndNoLink`, `server/capabilities.TestRevokedWhileALinkIsUsed`, `server/capabilities.TestRevokedWhileLinksAreMade` (`-race`) |
-| An entry link's secret is in no request's address or header, no log, audit event, webhook or table (its hash is), and the value entered is in none of them and in no answer; the entry page loads nothing from another origin, sends no referrer, cannot be framed, and shows the caller's words as text without links, marked as the caller's | **SHIPPED GUARANTEE** | `server/capabilities.TestAValueIsEnteredOnce` (every row); `server/httpserver.TestTheEntryPagesHeaders`; `server/entry.TestDescriptions`, `FuzzDescription`; `apps/web` `entryLinks.test.tsx` |
+| An entry link ends with the credential that made it, decided in the job that writes the value: a machine's when it is revoked, its identity retired, a service credential expired or an exchanged one's binding revoked; a person's when they revoke any of their credentials from elsewhere than the browser session or login it was made with, or lose the membership. The expiry of a short credential and signing out end none. Its holder is not told why | **SHIPPED GUARANTEE** | `server/capabilities.TestAMachinesLinkEndsWithItsCredential`, `server/capabilities.TestALinkOutlivesNoServiceCredential`, `server/capabilities.TestALinkOfAnExchangedCredential`, `server/capabilities.TestAPersonsLinkEndsWithAWithdrawal`, `server/capabilities.TestAPersonsOrdinaryEndsEndNoLink`, `server/capabilities.TestRevokedWhileALinkIsUsed`, `server/capabilities.TestRevokedWhileLinksAreMade` (`-race`) |
+| Unknown entry links, however many somebody asks for, stop no link that there is, behind the same address either | **SHIPPED GUARANTEE** | `server/capabilities.TestUnknownLinks` |
+| An entry link's secret is in no request's address or header, no log, audit event, webhook or table (its hash is), and the value entered is in none of them and in no answer; the entry page loads nothing from another origin, sends no referrer, cannot be framed, and shows the caller's words as text without links, marked as the caller's, and never one link's words over another's secret | **SHIPPED GUARANTEE** | `server/capabilities.TestAValueIsEnteredOnce` (every row); `server/httpserver.TestTheEntryPagesHeaders`; `server/entry.TestDescriptions`, `FuzzDescription`; `apps/web` `entryLinks.test.tsx` |
 | These limits fail closed on a server that does not know them (an earlier release after a rollback, the TypeScript server after a reverse migration): it accepts neither the credential, nor an exchange under the binding, nor the Capability | **SHIPPED GUARANTEE** | `server/capabilities.TestLimitsFailClosedOnAnOlderServer`; `server/migration/check.TestTheReverseChecksWithLimits` |
 | Reference expansion at exercise is strict and capability-bound: referenced Secrets must be named in the Capability, non-sensitive pull-ins require the Agent's `config.value.read` and are audited before use, and any unresolvable reference denies the exercise rather than sending literal `${NAME}` upstream | **SHIPPED GUARANTEE** | replay `capabilities`; `server/values.TestExpandReferences`; suite `broker` |
 | Destination constraints are canonical host+port; wildcards never match the apex; every hop is independently checked and successful exercise is audited (host+port + `item@versionId`) before decryption | **SHIPPED GUARANTEE** | `server/authz.TestDestinationVectors`; replay `capabilities`; suite `broker` |
@@ -337,10 +338,11 @@ no other Secret out with it. The limits:
 - **A stolen credential** makes links that end with it. Revoke it, also if it
   has expired: an exchanged OIDC credential's own expiry ends no link, which
   lives up to an hour past it. Revoking its binding does too.
-- **A stolen dashboard session** of a person: "Sign out everywhere else", in
-  another session, ends the links made in it while a bearer of one of those
-  sessions lives (15 minutes). After that its links are cancelled one by one,
-  or end within the hour. Removing a passkey ends none.
+- **A stolen login** of a person: "Sign out everywhere else", in another
+  session, ends every link made with any other login or session of theirs,
+  one that was given up before included. Where nothing else is live there is
+  nothing to sign out: the links are cancelled one by one, or end within the
+  hour. Removing a passkey ends none.
 - **A compromised orchestrator or broker** that also holds `config.value.write`
   can write values anyway; a link adds that a person's key replaces one.
 - **Whoever may read the item** reads what was entered: a link says nothing
@@ -352,8 +354,9 @@ no other Secret out with it. The limits:
 - **The browser**: an extension, malware or a shared screen sees what is typed.
   The page keeps the link's secret and the value in memory, until they are
   sent or the page is left.
-- **Guessing** a link takes guessing 256 random bits; 20 unknown ones from an
-  address and it waits ten minutes. People behind one address share that.
+- **Guessing** a link takes guessing 256 random bits, at one read of an index a
+  try. After 20 unknown ones from an address the next ones are told to wait ten
+  minutes; a link that there is works for everybody all the same.
 - **A proxy in front of Varlatch** sees the requests' bodies if it terminates
   TLS: the link's secret and the value, as it sees every value written. It sees
   nothing in an address.

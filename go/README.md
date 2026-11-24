@@ -1921,7 +1921,8 @@ may use; it never adds to the Agent's Grants.
     machine's in that job, so any revocation counts, an older server's too. A
     person's credentials end in the ordinary way all the time, so theirs are
     ended by what takes a session away, in its own job (`auth/entrylinks.go`):
-    `RevokeOwnCredential` of another credential, `endMembership`,
+    `RevokeOwnCredential` of another credential (all the person's links but
+    those of the session or login it is done with), `endMembership`,
     `CompletePublicURLChange`. `Create` looks again in its job, so no link is
     made that a revocation did not see.
   - `/v1/entry-links/lookup` and `/submit` read a bearer credential when there
