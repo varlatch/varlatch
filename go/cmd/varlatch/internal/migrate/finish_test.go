@@ -101,10 +101,10 @@ func TestServeForArchiveAPartialStart(t *testing.T) {
 	run := &archiveRunner{running: []string{"postgres"}, host: gatedHost()}
 	c := stockCompose(t, run)
 	started, err := c.ServeForArchive(context.Background(), gate1)
-	if err == nil || !slices.Equal(started, []string{"varlatchd"}) {
+	if err == nil || !slices.Equal(started, []string{"convex-backend"}) {
 		t.Fatalf("a partial start: started %v, %v", started, err)
 	}
-	if err := c.StopStarted(context.Background(), started); err != nil || !slices.Equal(run.stopped, []string{"varlatchd"}) {
+	if err := c.StopStarted(context.Background(), started); err != nil || !slices.Equal(run.stopped, []string{"convex-backend"}) {
 		t.Fatalf("stopped %v, %v", run.stopped, err)
 	}
 	// Without its gate varlatchd is not started, nor anything else.

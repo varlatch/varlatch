@@ -305,6 +305,9 @@ func (e *Engine) finishAgrees(ctx context.Context, j *Journal) error {
 		}
 		return fmt.Errorf("the target's journal (--config) says %v, not the migration %s %s: nothing was done", says, j.ID, after)
 	}
+	if after == Open && j.Rollback != nil && j.Rollback.Unrestored != "" {
+		return fmt.Errorf("the last reverse of the migration %s was undone, but the TypeScript installation is not put back (%s): varlatch migrate --resume first; nothing was done", j.ID, j.Rollback.Unrestored)
+	}
 	if after == Open && st.Barrier != "" {
 		return fmt.Errorf("a reverse's barrier stands on the Go installation (%s): varlatch migrate --resume first", st.Barrier)
 	}
@@ -871,12 +874,19 @@ func (c *Compose) ServeForArchive(ctx context.Context, g GateRef) ([]string, err
 			"would bring the old Tailscale node back beside Go's. Its data volumes are kept. By hand: 1. make a backup of them by your own means and test that it restores; "+
 			"2. remove them: docker volume rm %s (on Coolify instead: delete the TypeScript application, its volumes included)", owner, owner, strings.Join(names, " "))
 	}
-	if slices.Contains(start, service) {
+	up := slices.DeleteFunc(slices.Clone(start), func(s string) bool { return s == service })
+	if len(up) < len(start) {
 		if err := c.CheckGate(ctx, g); err != nil {
 			return nil, err
 		}
 	}
-	if err := c.compose(ctx, "docker compose up -d --no-deps "+strings.Join(start, " "), append([]string{"up", "-d", "--no-deps", "--no-recreate"}, start...)...); err != nil {
+	if len(up) > 0 {
+		err = c.compose(ctx, "docker compose up -d --no-deps "+strings.Join(up, " "), append([]string{"up", "-d", "--no-deps", "--no-recreate"}, up...)...)
+	}
+	if err == nil && len(up) < len(start) {
+		err = c.startGated(ctx, g, false, "--no-recreate")
+	}
+	if err != nil {
 		// An up that failed part way may have started some: those it did,
 		// running now and not before, are this run's to stop again.
 		now, perr := c.running(ctx)

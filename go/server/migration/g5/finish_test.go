@@ -214,7 +214,7 @@ func TestG5Finish(t *testing.T) {
 		// The first --finish took the TypeScript services down; its backup
 		// needs them: started without their dependencies (never Caddy or
 		// Tailscale), then down again before the volumes went.
-		if !slices.Contains(w.calls("docker-calls"), "compose up -d --no-deps --no-recreate postgres varlatchd convex-backend") {
+		if !slices.Contains(w.calls("docker-calls"), "compose up -d --no-deps --no-recreate postgres convex-backend") || !slices.Contains(w.calls("docker-calls"), "start g5-varlatchd-1") {
 			t.Errorf("the services not started for the archive: %q", w.calls("docker-calls"))
 		}
 		if !w.stopped("postgres") || !w.stopped("varlatchd") || !w.stopped("caddy") {

@@ -5,14 +5,24 @@
 package migrate
 
 import (
+	"archive/tar"
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 )
 
 // The source's gate is exactly the migration's: its volume, its kind, its
@@ -77,6 +87,18 @@ func TestCheckGate(t *testing.T) {
 		}
 		if len(run.ran) > 1 || len(host.made) > 0 {
 			t.Errorf("%s: ran %q, made %v", c.name, run.ran, host.made)
+		}
+		// The same through varlatchd's own container, stopped or running.
+		for _, status := range []string{"created", "exited", "running"} {
+			l := ownCtr(cmp, "varlatchd")
+			l.status = status
+			host.containers, run.ran = []composeContainer{l}, nil
+			if err := cmp.CheckGate(t.Context(), g); (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s, through its container: %v, want %q", c.name, err, c.want)
+			}
+			if len(run.ran) > 1 || len(host.made) > 0 {
+				t.Errorf("%s, through its container: ran %q, made %v", c.name, run.ran, host.made)
+			}
 		}
 	}
 	// Its container on another volume; another state directory; a bind mount.
@@ -262,7 +284,7 @@ func TestTheUndosGateIsKnownLater(t *testing.T) {
 // varlatchd starts behind it only.
 func TestTheUndoStartsBehindAGate(t *testing.T) {
 	const status, barrier, mark, up = "docker compose run --rm -T --no-deps varlatchd admin migration status", "docker compose run --rm -T --no-deps varlatchd admin migration barrier",
-		"docker compose run --rm -T --no-deps varlatchd admin migration mark-migrated-out --id ", "docker compose up -d --no-deps varlatchd"
+		"docker compose run --rm -T --no-deps varlatchd admin migration mark-migrated-out --id ", "docker start made"
 	made := strings.Replace(gateText, "gate-1", "gate-9", 1)
 	for _, c := range []struct {
 		name, status, file string
@@ -285,7 +307,9 @@ func TestTheUndoStartsBehindAGate(t *testing.T) {
 		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker compose stop ": {}, "docker compose up ": {}, "docker compose ps ": {},
 			status: {Answer: []byte(c.status)}, barrier: {Answer: []byte(`{"gate":{"kind":"migration","id":"gate-9"}}`)}, mark: {}}}
 		var gated []string
-		err := stockCompose(t, run).UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile}, gate1, func(id string) error {
+		cmp := stockCompose(t, run)
+		run.onRun = makes(cmp, host, false)
+		err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile}, gate1, func(id string) error {
 			gated = append(gated, id)
 			if slices.ContainsFunc(run.ran, func(r string) bool { return strings.HasPrefix(r, mark) }) {
 				t.Errorf("%s: journalled after it was marked", c.name)
@@ -371,5 +395,496 @@ func TestTheComposeVersion(t *testing.T) {
 	run := &scripted{t: t, version: &Ran{Code: 1, Answer: []byte("5.2.0")}}
 	if err := stockCompose(t, run).checkVersion(t.Context()); err == nil {
 		t.Error("a failed docker compose version")
+	}
+}
+
+// The state directory is the whole of its volume, in the very container
+// that starts: a part of it, another mount, one in it or over it is refused.
+func TestTheContainersStateDirectory(t *testing.T) {
+	const (
+		env  = `["PATH=/x","VARLATCH_STATE_DIR=/var/lib/varlatch"]`
+		own  = `{"Type":"volume","Name":"varlatch_varlatch-state","Destination":"/var/lib/varlatch","Driver":"local","RW":true}`
+		none = ` null null`
+	)
+	for _, c := range []struct{ name, inspect, want string }{
+		{"as the stock file has it", env + " [" + own + "]" + none, ""},
+		{"the image's own state directory, the long form", `["PATH=/x"] [` + own + `,{"Type":"bind","Destination":"/backups","RW":true}] [{"Type":"volume","Source":"varlatch_varlatch-state","Target":"/var/lib/varlatch"}] {"/tmp":""}`, ""},
+		{"an empty subpath", env + " [" + own + `] [{"Type":"volume","Source":"varlatch_varlatch-state","Target":"/var/lib/varlatch","VolumeOptions":{"Subpath":""}}] null`, ""},
+		{"a part of the volume", env + " [" + own + `] [{"Type":"volume","Source":"varlatch_varlatch-state","Target":"/var/lib/varlatch/","VolumeOptions":{"Subpath":"other"}}] null`, "a part of it"},
+		{"another volume", env + ` [{"Type":"volume","Name":"another","Destination":"/var/lib/varlatch","Driver":"local","RW":true}]` + none, "it is another"},
+		{"a bind mount", env + ` [{"Type":"bind","Destination":"/var/lib/varlatch","RW":true}]` + none, "it is a bind"},
+		{"nothing there", env + ` [{"Type":"bind","Destination":"/backups","RW":true}]` + none, "mounted there 0 times"},
+		{"twice", env + " [" + own + "," + own + "]" + none, "mounted there 2 times"},
+		{"the gate's own file mounted over it", env + " [" + own + `,{"Type":"bind","Destination":"/var/lib/varlatch/maintenance.json","RW":true}]` + none, "something is mounted in it, at /var/lib/varlatch/maintenance.json"},
+		{"a file mounted in it, as asked", env + " [" + own + `] [{"Type":"bind","Source":"/x","Target":"/var/lib/varlatch/x"}] null`, "or something else"},
+		{"a volume mounted in it, as asked", env + " [" + own + `] [{"Type":"volume","Source":"x","Target":"/var/lib/varlatch/x"}] null`, "or something else"},
+		{"a temporary file system over it", env + " [" + own + `] null {"/var/lib/varlatch":""}`, "a temporary file system"},
+		{"read only", env + ` [{"Type":"volume","Name":"varlatch_varlatch-state","Destination":"/var/lib/varlatch","Driver":"local","RW":false}]` + none, "read only"},
+		{"another driver", env + ` [{"Type":"volume","Name":"varlatch_varlatch-state","Destination":"/var/lib/varlatch","Driver":"nfs","RW":true}]` + none, "driver is nfs"},
+		{"another state directory", `["VARLATCH_STATE_DIR=/elsewhere"] [` + own + "]" + none, "in another directory than /var/lib/varlatch"},
+		{"unreadable", "null", "did not give the container's mounts"},
+	} {
+		host := gatedHost()
+		cmp := stockCompose(t, &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker compose ps ": {}, "docker compose up ": {}}})
+		l := ownCtr(cmp, "varlatchd")
+		l.id, l.status = "c1", "exited"
+		host.containers, host.inspects = []composeContainer{l}, map[string]string{"c1": c.inspect}
+		for what, do := range map[string]func() error{
+			"gate":  func() error { return cmp.CheckGate(t.Context(), gate1) },
+			"start": func() error { return cmp.startGated(t.Context(), gate1, false) },
+			"state": func() error { _, err := cmp.CheckState(t.Context()); return err },
+		} {
+			host.containers[0].status = "exited"
+			if err := do(); (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
+				t.Errorf("%s, %s: %v, want %q", c.name, what, err, c.want)
+			}
+			if started := host.containers[0].status == "running"; started != (what == "start" && c.want == "") {
+				t.Errorf("%s, %s: started %v", c.name, what, started)
+			}
+		}
+	}
+	// Its value is never said, whatever it holds.
+	host := gatedHost()
+	cmp := stockCompose(t, &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}}})
+	l := ownCtr(cmp, "varlatchd")
+	l.id = "c1"
+	host.containers, host.inspects = []composeContainer{l}, map[string]string{"c1": `["X=not-to-be-said","VARLATCH_STATE_DIR=/not-to-be-said"] [] null null`}
+	if err := cmp.CheckGate(t.Context(), gate1); err == nil || strings.Contains(err.Error(), "not-to-be-said") {
+		t.Errorf("%v", err)
+	}
+}
+
+// The gate's file is a plain one of its own, read as JavaScript reads it.
+func TestTheGatesFile(t *testing.T) {
+	at := func(b []byte) error {
+		host := gatedHost()
+		cmp := stockCompose(t, &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}}})
+		l := ownCtr(cmp, "varlatchd")
+		l.id = "c1"
+		host.containers, host.tars = []composeContainer{l}, map[string][]byte{"c1": b}
+		return cmp.CheckGate(t.Context(), gate1)
+	}
+	plain := tarOf("maintenance.json", gateText, tar.TypeReg)
+	two := append(slices.Clone(plain[:1024]), plain...)
+	for name, c := range map[string]struct {
+		b    []byte
+		want string
+	}{
+		"a file":         {plain, ""},
+		"a link":         {tarOf("maintenance.json", "", tar.TypeSymlink), "is not a plain file"},
+		"a directory":    {tarOf("maintenance.json", "", tar.TypeDir), "is not a plain file"},
+		"another name":   {tarOf("maintenance.json.1", gateText, tar.TypeReg), "is not a plain file"},
+		"a large one":    {tarOf("maintenance.json", gateText+strings.Repeat(" ", maxGate), tar.TypeReg), "is not a plain file"},
+		"two of them":    {two, "is not one file"},
+		"not an archive": {[]byte("x"), "cannot be read"},
+	} {
+		if err := at(c.b); (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", name, err, c.want)
+		}
+	}
+	const rest = `"phase":"paused","expiresAt":null,"archiveId":null`
+	for text, want := range map[string]string{
+		gateText: "",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + `}`:                                                              "",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + `,"frozenPosition":"46","frozenSnapshot":"00000003-0000001B-1"}`: "",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + `,"frozenPosition":null,"frozenSnapshot":null}`:                  "",
+		// A capture, which the release clears at its start, read as migrated
+		// out by a decoder that takes any case, or the last of two.
+		`{"id":"gate-1","kind":"capture",` + rest + `,"Kind":"migrated-out"}`:                                                                 "a key a gate has not",
+		`{"id":"gate-1","kind":"capture","expiresAt":1795000000000,"phase":"paused","archiveId":null,"KIND":"migrated-out","EXPIRESAT":null}`: "a key a gate has not",
+		`{"id":"gate-1","kind":"capture",` + rest + `,"kind":"migrated-out"}`:                                                                 "kind twice",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + `,"kind":"capture"}`:                                                                 "kind twice",
+		`{"id":"gate-1","kind":"capture",` + rest + `,"\u006bind":"migrated-out"}`:                                                            "kind twice",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + `,"more":1}`:                                                                         "a key a gate has not",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + `}{}`:                                                                                "something follows it",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + "}\n":                                                                                "something follows it",
+		`[{"id":"gate-1","kind":"migrated-out",` + rest + `}]`:                                                                                "not one JSON object",
+		`{"id":"gate-1","kind":"migrated-out",` + rest:                                                                                        "not one JSON object",
+		`{"id":"gate-1","kind":"migrated-out","phase":"paused","expiresAt":null}`:                                                             "it has no archiveId",
+		`{"id":"gate-1","kind":"migrated-out","phase":"paused","archiveId":null}`:                                                             "it has no expiresAt",
+		`{"id":"gate-1","kind":"migrated-out","phase":"paused","expiresAt":0,"archiveId":null}`:                                               "not the migration's own",
+		`{"id":"gate-1","kind":"migrated-out","phase":"paused","expiresAt":null,"archiveId":"x"}`:                                             "not the migration's own",
+		`{"id":"gate-1","kind":"migrated-out","phase":"paused","expiresAt":{},"archiveId":null}`:                                              "is not a value",
+		`{"id":1,"kind":"migrated-out",` + rest + `}`:                                                                                         "id is not a text",
+		`{"id":"gate-1","kind":["migrated-out"],` + rest + `}`:                                                                                "kind is not a text",
+		`{"id":"","kind":"migrated-out",` + rest + `}`:                                                                                        "id is not a text",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + `,"frozenPosition":"x"}`:                                                             "not a position",
+		`{"id":"gate-1","kind":"migrated-out",` + rest + `,"frozenSnapshot":"x"}`:                                                             "not a snapshot",
+		"{\"id\":\"gate-1\",\"kind\":\"migrated-out\"," + rest + ",\"frozenPosition\":\"4\xff\"}":                                             "not UTF-8",
+		"\ufeff" + gateText: "not one JSON object",
+		"null":              "not one JSON object",
+		"":                  "",
+	} {
+		if text == "" {
+			continue
+		}
+		if err := at(tarOf("maintenance.json", text, tar.TypeReg)); (err == nil) != (want == "") || err != nil && !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v, want %q", text, err, want)
+		}
+		// The same through migrate's own container.
+		host := gatedHost()
+		host.gates[stateVol.Name] = text
+		cmp := stockCompose(t, &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}}})
+		if err := cmp.CheckGate(t.Context(), gate1); (err == nil) != (want == "") || err != nil && !strings.Contains(err.Error(), want) {
+			t.Errorf("%s, without a container: %v, want %q", text, err, want)
+		}
+	}
+}
+
+// The container whose gate was read is the one that starts, and the one
+// that is the installation's after: one Compose makes on another volume, one
+// made again meanwhile, a gate that went, are not started behind.
+func TestTheCheckedContainerStarts(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		set  func(cmp *Compose, h *labelled, run *scripted)
+		want string
+		runs string // the container that runs after
+	}{
+		{"made, read and started", func(*Compose, *labelled, *scripted) {}, "", "made"},
+		{"its gate gone once it is made", func(_ *Compose, h *labelled, run *scripted) {
+			made := run.onRun
+			run.onRun = func(key string) {
+				if made(key); strings.Contains(key, "--no-start") {
+					h.gates[stateVol.Name] = ""
+				}
+			}
+		}, "holds no gate", ""},
+		{"made with a part of the volume", func(_ *Compose, h *labelled, _ *scripted) {
+			h.inspects = map[string]string{"made": `[] [{"Type":"volume","Name":"varlatch_varlatch-state","Destination":"/var/lib/varlatch","Driver":"local","RW":true}] [{"Type":"volume","Source":"varlatch_varlatch-state","Target":"/var/lib/varlatch","VolumeOptions":{"Subpath":"other"}}] null`}
+		}, "a part of it", ""},
+		{"deployed again before it starts", func(cmp *Compose, h *labelled, run *scripted) {
+			reads := 0
+			h.seen = func() {
+				// After the read of the gate, the next listing.
+				if h.reads == 1 {
+					if reads++; reads == 1 {
+						l := ownCtr(cmp, "varlatchd")
+						l.id, l.status = "another", "running"
+						h.containers = []composeContainer{l}
+					}
+				}
+			}
+		}, "was made again while it was started", "another"},
+		{"the volume lost once it is made", func(_ *Compose, h *labelled, run *scripted) {
+			made := run.onRun
+			run.onRun = func(key string) {
+				if made(key); strings.Contains(key, "--no-start") {
+					v := stateVol
+					v.CreatedAt = "2026-11-23T00:00:00Z"
+					h.volumes[v.Name] = v
+				}
+			}
+		}, "is not the one that carried the gate", ""},
+		{"the volume lost before", func(_ *Compose, h *labelled, _ *scripted) { delete(h.volumes, stateVol.Name) }, "is not there", ""},
+	} {
+		host := gatedHost()
+		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker compose up ": {}}}
+		cmp := stockCompose(t, run)
+		run.onRun = makes(cmp, host, false)
+		c.set(cmp, host, run)
+		err := cmp.startGated(t.Context(), gate1, true)
+		if (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+		runs := ""
+		for _, l := range host.containers {
+			if l.status == "running" {
+				runs += l.id
+			}
+		}
+		if runs != c.runs {
+			t.Errorf("%s: %q runs, want %q", c.name, runs, c.runs)
+		}
+		if c.name == "the volume lost before" && len(run.ran) > 1 {
+			t.Errorf("%s: ran %q", c.name, run.ran)
+		}
+	}
+	if err := stockCompose(t, &scripted{t: t}).startGated(t.Context(), GateRef{}, true); err == nil || !strings.Contains(err.Error(), "records no gate") {
+		t.Errorf("no gate: %v", err)
+	}
+}
+
+// An undo does not leave it to Compose to see that Postgres and Convex are
+// on the fresh volumes (an earlier one does not): those containers go, by
+// their ids, and nothing else.
+func TestTheUndoOnAnOldCompose(t *testing.T) {
+	plan := RebuildRecord{Override: OverrideFile, Owner: "mig_x", Volumes: []string{"varlatch_postgres-data-abcdefgh", "varlatch_convex-data-abcdefgh"}}
+	for _, v := range stockVolumes {
+		v.CreatedAt, v.Project = "2026-01-01T00:00:00Z", "varlatch"
+		plan.Retained = append(plan.Retained, v)
+	}
+	for _, c := range []struct {
+		name string
+		old  bool
+		set  func(h *labelled)
+		want string
+		rm   []string
+	}{
+		{"an old one", true, func(*labelled) {}, "", []string{"docker rm c-postgres-0", "docker rm c-convex-backend-1"}},
+		{"a newer one", false, func(*labelled) {}, "", []string{"docker rm c-postgres-0", "docker rm c-convex-backend-1"}},
+		{"Convex not rebuilt yet", true, func(h *labelled) { h.containers[1].mounts[0].Name = stockVolumes[1].Name }, "", []string{"docker rm c-postgres-0"}},
+		{"on a volume of neither", true, func(h *labelled) { h.containers[0].mounts[0].Name = "theirs" }, "neither the volume from before the reverse", nil},
+		{"the volume from before gone", true, func(h *labelled) { delete(h.volumes, stockVolumes[0].Name) }, "is not there", nil},
+		{"the volume from before another", true, func(h *labelled) {
+			v := h.volumes[stockVolumes[1].Name]
+			v.CreatedAt = "2026-11-01T00:00:00Z"
+			h.volumes[v.Name] = v
+		}, "is not the one convex-backend was on", []string{"docker rm c-postgres-0"}},
+	} {
+		host := gatedHost()
+		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker compose up ": {}, "docker compose ps ": {},
+			"docker compose run --rm -T --no-deps varlatchd admin migration status": {Answer: []byte(`{"gate":{"kind":"migrated-out","id":"gate-1"}}`)}}}
+		cmp := stockCompose(t, run)
+		run.onRun = makes(cmp, host, c.old)
+		for i, d := range dataMounts {
+			l := ownCtr(cmp, d.service)
+			l.mounts = []containerMount{{Type: "volume", Name: plan.Volumes[i], Destination: d.target}}
+			host.containers = append(host.containers, l)
+			host.volumes[plan.Volumes[i]] = VolumeRecord{Name: plan.Volumes[i], Project: "varlatch", Owner: "mig_x"}
+			host.volumes[stockVolumes[i].Name] = plan.Retained[i]
+		}
+		// A killed run's import, still going, and another service.
+		imp := ctr("varlatch", importService, filepath.Join(cmp.Directory, "docker-compose.yml"), cmp.Directory, "True")
+		imp.id = "import"
+		host.containers = append(host.containers, imp, ownCtr(cmp, "varlatch-web"))
+		c.set(host)
+		err := cmp.UndoRebuild(t.Context(), plan, gate1, ungated)
+		if (err == nil) != (c.want == "") || err != nil && !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+		var rm []string
+		for _, r := range run.ran {
+			if strings.HasPrefix(r, "docker rm ") {
+				rm = append(rm, r)
+			}
+		}
+		if !slices.Equal(rm, c.rm) || run.ran[0] != "docker stop c-postgres-0 c-convex-backend-1 import" {
+			t.Errorf("%s: %q", c.name, run.ran)
+		}
+		if removed := c.want == ""; removed != slices.Equal(host.removed, plan.Volumes) {
+			t.Errorf("%s: removed %v", c.name, host.removed)
+		}
+		for _, l := range host.containers {
+			if l.service == "varlatch-web" && l.status != "" {
+				t.Errorf("%s: the dashboard was %s", c.name, l.status)
+			}
+		}
+	}
+	// What Compose did is held, not taken from its exit status: nothing made,
+	// or still on the reverse's volume.
+	for _, left := range []string{"", plan.Volumes[0]} {
+		host := gatedHost()
+		run := &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker compose up ": {}}}
+		cmp := stockCompose(t, run)
+		for i, d := range dataMounts {
+			host.volumes[stockVolumes[i].Name] = plan.Retained[i]
+			l := ownCtr(cmp, d.service)
+			l.mounts = []containerMount{{Type: "volume", Name: stockVolumes[i].Name, Destination: d.target}}
+			host.containers = append(host.containers, l)
+		}
+		run.onRun = func(key string) {
+			if !strings.HasPrefix(key, "docker compose up ") {
+				return
+			}
+			if host.containers[0].mounts[0].Name = left; left == "" {
+				host.containers = host.containers[1:]
+			}
+		}
+		if err := cmp.restoreVolumes(t.Context(), plan); err == nil || !strings.Contains(err.Error(), "postgres did not go back to the volume from before the reverse") {
+			t.Errorf("left on %q: %v", left, err)
+		}
+	}
+	// What does not stop is said, not taken for stopped.
+	host := gatedHost()
+	run := &scripted{t: t, host: host}
+	cmp := stockCompose(t, run)
+	l := ownCtr(cmp, "varlatchd")
+	l.name, l.status = "the-server", "running"
+	host.containers = []composeContainer{l}
+	host.acted = func(string, string) { host.containers[0].status = "restarting" }
+	if err := cmp.StopServers(t.Context()); err == nil || !strings.Contains(err.Error(), "the-server did not stop") {
+		t.Errorf("not stopped: %v", err)
+	}
+	host.acted = nil
+	if err := cmp.StopServers(t.Context()); err != nil || host.containers[0].status != "exited" {
+		t.Errorf("stopped: %v", err)
+	}
+}
+
+// Go's outage does not wait for the TypeScript side's recovery: its server
+// held stopped, Go opens and its barrier is lifted; --resume (or --abort)
+// puts the rest back, and no reverse and no --finish begins before. A server
+// that may run keeps Go behind its barrier.
+func TestTheUndoEndsGosOutage(t *testing.T) {
+	stuck := errors.New("postgres did not go back")
+	for _, kind := range []Ingress{Coolify, Public} {
+		for _, how := range []string{"--resume", "--abort"} {
+			w, src, _ := rolledWorld(t, RollbackChecked, kind)
+			tgt := w.eng.Target.(*reverseTargetFake)
+			src.undoErr, src.remade = stuck, "gate-9"
+			_, err := w.eng.Abort(t.Context())
+			after, _ := readJournal(w.src.dir)
+			if err == nil || !strings.Contains(err.Error(), "is not put back") || after.Phase != Open || tgt.released != 1 || !strings.Contains(after.Rollback.Unrestored, stuck.Error()) || after.Rollback.Undoing || !after.Rollback.Undone.Released || after.SourceGate != "gate-9" ||
+				!slices.Equal(src.did, []string{"undo p_postgres-data-abcdefgh", "stop servers"}) || !w.tgt.running {
+				t.Fatalf("%s: %v: %+v, %v, lifted %d", kind, err, after.Rollback, src.did, tgt.released)
+			}
+			src.did = nil
+			if _, err := w.eng.Rollback(t.Context()); err == nil || !strings.Contains(err.Error(), "varlatch migrate --resume first") || len(src.did) != 0 {
+				t.Errorf("%s: another reverse: %v %v", kind, err, src.did)
+			}
+			w.eng.Source = &finishFake{reverseFake: src}
+			if _, err := w.eng.Finish(t.Context(), true); err == nil || !strings.Contains(err.Error(), "varlatch migrate --resume first") || len(src.did) != 0 {
+				t.Errorf("%s: --finish: %v %v", kind, err, src.did)
+			}
+			w.eng.Source = src
+			again := func() error {
+				var err error
+				if how == "--abort" {
+					_, err = w.eng.Abort(t.Context())
+				} else {
+					_, err = w.eng.Resume(t.Context())
+				}
+				return err
+			}
+			if err := again(); !errors.Is(err, stuck) || !strings.Contains(err.Error(), "Go serves") || !slices.Equal(src.did, []string{"undo p_postgres-data-abcdefgh", "stop servers"}) || tgt.released != 1 {
+				t.Errorf("%s, %s, still stuck: %v %v", kind, how, err, src.did)
+			}
+			src.did, src.undoErr, src.remade = nil, nil, ""
+			if err := again(); err != nil || !slices.Equal(src.did, []string{"undo p_postgres-data-abcdefgh"}) {
+				t.Errorf("%s, %s: %v %v", kind, how, err, src.did)
+			}
+			if after, _ := readJournal(w.src.dir); after.Rollback.Unrestored != "" || after.Phase != Open || src.gates[len(src.gates)-1].ID != "gate-9" {
+				t.Errorf("%s, %s: after: %+v", kind, how, after.Rollback)
+			}
+		}
+	}
+	// Through --resume of an interrupted reverse: said, with what not to do.
+	w, src, _ := rolledWorld(t, RollbackImported, Coolify)
+	src.undoErr = stuck
+	_, err := w.eng.Resume(t.Context())
+	for _, want := range []string{"the reverse was undone: Go runs and takes requests again", "is not put back", stuck.Error(), "its server is stopped", "Do not start it", "varlatch migrate --resume puts it back"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%v, want %q", err, want)
+		}
+	}
+	// Its server may run: Go stays behind its barrier.
+	w, src, _ = rolledWorld(t, RollbackImported, Coolify)
+	src.undoErr, src.stopErr = stuck, errors.New("docker does not answer")
+	_, err = w.eng.Resume(t.Context())
+	after, _ := readJournal(w.src.dir)
+	if !errors.Is(err, stuck) && !strings.Contains(fmt.Sprint(err), stuck.Error()) || w.eng.Target.(*reverseTargetFake).released != 0 || after.Phase == Open || !after.Rollback.Undoing {
+		t.Errorf("not stopped: %v, phase %s", err, after.Phase)
+	}
+}
+
+// What waiting does not change is not waited for: a program that is not
+// there or not to be run, an installation that is another's. A network's
+// refusal, even a forbidden one, is.
+func TestPermanent(t *testing.T) {
+	dir := t.TempDir()
+	noExec, script := filepath.Join(dir, "closed"), filepath.Join(dir, "garbage")
+	for p, mode := range map[string]os.FileMode{noExec: 0o600, script: 0o700} {
+		if err := os.WriteFile(p, []byte("\x00not a program"), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, program := range map[string]string{"not there": filepath.Join(dir, "none"), "not on the path": "vl-no-such-program", "not to be executed": noExec, "not a program": script, "a directory": dir} {
+		if _, err := (ExecRunner{}).Run(t.Context(), "", program, nil, nil); err == nil || !permanent(err) || !permanent(fmt.Errorf("asking: %w", err)) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if _, err := (ExecRunner{}).Stream(t.Context(), "", program, nil, nil, io.Discard); err == nil || !permanent(err) {
+			t.Errorf("%s, streamed: %v", name, err)
+		}
+	}
+	if !permanent(fmt.Errorf("x: %w", &ProjectChangedError{})) {
+		t.Error("another installation")
+	}
+	for name, err := range map[string]error{
+		"a failure":           errors.New("exit 1"),
+		"a forbidden network": &net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.EACCES)},
+		"no more processes":   &StartError{Name: "x", Err: syscall.EAGAIN},
+		"the deadline":        context.DeadlineExceeded,
+		"no":                  nil,
+	} {
+		if permanent(err) {
+			t.Errorf("%s", name)
+		}
+	}
+	// The wait for the source's server.
+	w := newTailnetWorld(t)
+	w.src.running = true
+	w.src.fail = map[string]error{"gate": &StartError{Name: "docker", Err: fs.ErrNotExist}}
+	start := w.src.clock.now()
+	if err := w.eng.sourceAnswers(t.Context()); err == nil || w.src.clock.now() != start {
+		t.Errorf("%v after %s", err, w.src.clock.now().Sub(start))
+	}
+	// The reach probe: its exit status says which.
+	for code, want := range map[int]bool{exitConfig: true, 1: false} {
+		h := &Host{Varlatchd: "varlatchd", Run: &scripted{t: t, answers: map[string]Ran{"varlatchd admin tailnet reaches": {Code: code, Said: []byte("permission denied")}}}}
+		var perm *tailhandoff.PermanentError
+		if _, err := h.TailnetReaches(t.Context(), "vault", "n1", time.Second); err == nil || errors.As(err, &perm) != want || !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("exit %d: %v", code, err)
+		}
+	}
+	h := &Host{Varlatchd: filepath.Join(dir, "none"), Run: ExecRunner{}}
+	var perm *tailhandoff.PermanentError
+	if _, err := h.TailnetReaches(t.Context(), "vault", "n1", time.Second); !errors.As(err, &perm) {
+		t.Errorf("no varlatchd: %v", err)
+	}
+}
+
+// The image's user's programs are given an environment of their own: its
+// temporary directory and home are one migrate made for it, held to be
+// writable before anything; nothing of the user migrate runs as.
+func TestTheImagesEnvironment(t *testing.T) {
+	env := imageEnv([]string{"PATH=/bin", "HOME=/root", "TMPDIR=/tmp/user/0", "XDG_RUNTIME_DIR=/run/user/0", "USER=root", "SSL_CERT_FILE=/r.pem", "https_proxy=http://p:1", "NO_PROXY=x", "VARLATCH_X=1", "MAIL=/x", "TZ=UTC"}, "/own")
+	if want := []string{"HOME=/own", "TMPDIR=/own", "PATH=/bin", "SSL_CERT_FILE=/r.pem", "https_proxy=http://p:1", "NO_PROXY=x", "VARLATCH_X=1", "TZ=UTC"}; !slices.Equal(env, want) {
+		t.Errorf("%q", env)
+	}
+	me := Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}
+	root := t.TempDir()
+	data, keys, conf := filepath.Join(root, "data"), filepath.Join(root, "keys"), filepath.Join(root, "varlatchd.conf")
+	for _, d := range []string{data, keys} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(conf, []byte("root_kek_file = /keys/root-kek\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(root, "varlatchd")
+	const state = `{"journal":null,"database":false,"dataDir":"/x","release":"0.50.0","publicUrl":"https://vault.example.test","listen":"x","listenHttps":"","migrationGate":false,"running":false}`
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho \"$TMPDIR $HOME $PWD\" >> "+filepath.Join(root, "seen")+"\necho '"+state+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	img := &Image{Host: &Host{Varlatchd: fake, Run: ExecRunner{Env: []string{"PATH=" + os.Getenv("PATH"), "TMPDIR=/closed", "HOME=/closed"}, As: &me}}, Service: "varlatch-go",
+		Ref: "ghcr.io/varlatch/varlatchd:0.50.0@sha256:" + hexOf(randomBytes(32)), DataDir: data, KeysDir: keys, ServiceConfig: conf, User: me}
+	stage := t.TempDir()
+	cleanup, err := PrepareImage(t.Context(), img, stage, true)
+	defer cleanup()
+	seen, _ := os.ReadFile(filepath.Join(root, "seen"))
+	own := filepath.Join(filepath.Dir(img.Host.Config), "tmp")
+	if err != nil || string(seen) != own+" "+own+" /\n" {
+		t.Errorf("%v: %q, want %s", err, seen, own)
+	}
+	if st, err := os.Stat(own); err != nil || st.Mode().Perm() != 0o700 {
+		t.Errorf("%v %v", st, err)
+	}
+	// One it cannot write in: refused, nothing of the target asked.
+	if os.Getuid() == 0 {
+		return
+	}
+	_ = os.Remove(filepath.Join(root, "seen"))
+	sh := filepath.Join(root, "sh")
+	if err := os.WriteFile(sh, []byte("#!/bin/sh\necho 'Permission denied' >&2; exit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
+	img.Host.Run = ExecRunner{As: &me}
+	again, err := PrepareImage(t.Context(), img, stage, true)
+	defer again()
+	if _, serr := os.Stat(filepath.Join(root, "seen")); err == nil || !strings.Contains(err.Error(), "cannot write in") || !strings.Contains(err.Error(), "TMPDIR set to a directory every user can pass through") || !os.IsNotExist(serr) {
+		t.Errorf("%v, asked %v", err, serr)
 	}
 }

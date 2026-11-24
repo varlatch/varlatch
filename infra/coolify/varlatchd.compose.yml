@@ -35,7 +35,14 @@ services:
     cap_drop:
       - ALL
     restart: unless-stopped
+    # varlatchd gives requests in flight 20 seconds at a stop; Docker's
+    # default, 10 seconds, would cut that short. The same as the systemd
+    # unit's TimeoutStopSec.
+    stop_grace_period: 30s
     volumes:
+      # Coolify mounts the default paths, whatever the variables below are set
+      # to (README.md); they are for plain Docker Compose.
+      #
       # Writable data directory: SQLite database, local backups, control
       # socket, ACME cache, and in-process tsnet tailnet state. Owned by
       # 65532:65532 (mode 0700).

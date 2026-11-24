@@ -153,19 +153,27 @@ func TestTheReverseUndoneStartsVarlatchdWithoutItsDependency(t *testing.T) {
 				t.Fatal(err)
 			}
 			run := &scripted{t: t, answers: map[string]Ran{
-				"docker compose stop ":                                                  {},
 				"docker compose up -d postgres convex-backend":                          {},
-				"docker ps -a --filter volume=":                                         {},
-				"docker volume rm -f ":                                                  {},
+				"docker compose up --no-start --no-deps varlatchd":                      {},
 				"docker compose config --no-interpolate --format json":                  {Answer: []byte(c.config)},
 				"docker compose ps --status running --services":                         {Answer: []byte(c.running)},
 				"docker compose run --rm -T --no-deps varlatchd admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)},
-				"docker compose up -d --no-deps varlatchd":                              {},
 			}}
 			run.host = gatedHost()
 			cmp := &Compose{Directory: dir, resolved: testProject(dir), Run: run}
+			for i, svc := range []string{"postgres", "convex-backend", "varlatchd"} {
+				l := ownCtr(cmp, svc)
+				if i < 2 {
+					l.mounts = []containerMount{{Type: "volume", Name: stockVolumes[i].Name, Destination: dataMounts[i].target}}
+				}
+				run.host.containers = append(run.host.containers, l)
+			}
+			run.onRun = makes(cmp, run.host, false)
 			err := cmp.UndoRebuild(t.Context(), RebuildRecord{Override: OverrideFile, Volumes: []string{"varlatch_postgres-data-abcdefgh"}}, gate1, ungated)
-			started := slices.Contains(run.ran, "docker compose up -d --no-deps varlatchd")
+			started := slices.Contains(run.ran, "docker start made")
+			if run.ran[0] != "docker stop c-postgres-0 c-convex-backend-1 c-varlatchd-2" {
+				t.Errorf("ran %q first", run.ran[0])
+			}
 			for _, r := range run.ran {
 				if r == "docker compose up -d varlatchd" || strings.HasPrefix(r, "docker compose up -d --no-deps tailscale") || strings.HasPrefix(r, "docker compose start") {
 					t.Errorf("ran %q", r)

@@ -663,12 +663,21 @@ func goneDevice(err error, id string) bool {
 	return errors.As(err, &gone) && gone.ID == id
 }
 
+// PermanentError is a failure that trying again does not change: a program
+// or a file that is not there, or not permitted. A check that fails so is
+// not tried again.
+type PermanentError struct{ Err error }
+
+func (e *PermanentError) Error() string { return e.Err.Error() }
+func (e *PermanentError) Unwrap() error { return e.Err }
+
 // final reports whether a control-plane failure will not pass by trying
 // again.
 func final(err error) bool {
 	var rb *tailcontrol.ReadBackError
 	var gone *GoneError
-	return errors.Is(err, tailcontrol.ErrNameTaken) || errors.As(err, &rb) || errors.As(err, &gone)
+	var perm *PermanentError
+	return errors.Is(err, tailcontrol.ErrNameTaken) || errors.As(err, &rb) || errors.As(err, &gone) || errors.As(err, &perm)
 }
 
 func (e *Engine) retry(ctx context.Context, f func() error) error {
@@ -720,6 +729,9 @@ func (e *Engine) reaches(ctx context.Context, name, nodeID string) error {
 		ok, err := e.Resolver.Reaches(ctx, name, nodeID)
 		if err == nil && ok {
 			return nil
+		}
+		if final(err) {
+			return fmt.Errorf("%s does not reach the incoming node from a client: %w", name, err)
 		}
 		select {
 		case <-ctx.Done():
