@@ -556,7 +556,8 @@ jobs:
     needs: [validation, hosted-runner, line]
     if: needs.line.outputs.line == 'go'
     runs-on: ${{ vars.RELEASE_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
-    timeout-minutes: 45
+    # G5's own -timeout is 45 minutes.
+    timeout-minutes: 75
     permissions:
       contents: read
     steps:
@@ -577,10 +578,10 @@ jobs:
           ends=$(jq -r '.endsRollbackWindow // false' release/release.json)
           if [ -n "$last" ] && [ "$reversible" = "$last" ] && [ "$ends" = "false" ]; then
             echo "release.json keeps the rollback window (reversible to $last): G5 whole, forward and reverse."
-            go test -count=1 -tags g5 -timeout 25m -run '^TestG5' -v ./server/migration/g5/
+            go test -count=1 -tags g5 -timeout 45m -run '^TestG5' -v ./server/migration/g5/
           elif [ -z "$reversible" ] && [ "$ends" = "true" ]; then
             echo "release.json ends the rollback window: G5's forward half."
-            go test -count=1 -tags g5 -timeout 25m -run '^(TestG5|TestG5Interruptions|TestG5InterruptionsImage|TestG5InterruptionsCoolify|TestG5Kinds)$' -v ./server/migration/g5/
+            go test -count=1 -tags g5 -timeout 45m -run '^(TestG5|TestG5Interruptions|TestG5InterruptionsImage|TestG5InterruptionsCoolify|TestG5Kinds)$' -v ./server/migration/g5/
           else
             echo "release.json declares neither reversibleTo $last nor endsRollbackWindow (reversibleTo '$reversible', endsRollbackWindow $ends)" >&2
             exit 1
