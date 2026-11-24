@@ -809,6 +809,69 @@ func TestTheReverseChecksWithConnections(t *testing.T) {
 	}
 }
 
+// Entry links (ADR-0063) stay behind: the reverse checks pass, the bundle
+// carries none, and an import brings none back. A value entered through one,
+// by nobody known, is a value version and goes both ways.
+func TestTheReverseChecksWithEntryLinks(t *testing.T) {
+	s := setUp(t)
+	path := copyDB(t, s)
+	db := openRO(t, path)
+	var org, project, env, identity, value, version string
+	if err := db.QueryRow(`SELECT p.organization_id, p.id, e.id, (SELECT id FROM identities LIMIT 1), v.id, v.current_version_id FROM env_values v
+		JOIN value_versions x ON x.id = v.current_version_id JOIN environments e ON e.id = v.environment_id JOIN projects p ON p.id = e.project_id
+		WHERE x.erased_at IS NULL AND v.deleted_at IS NULL ORDER BY v.id LIMIT 1`).Scan(&org, &project, &env, &identity, &value, &version); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	damage(t, path,
+		"INSERT INTO entry_links (id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, restricted_to, description, requested_by, created_at, expires_at) VALUES ('enl_kept', '"+
+			strings.Repeat("0f", 32)+"', '"+org+"', '"+project+"', '"+env+"', 'A_KEY', 'value', 0, 'anyone', 'words of its maker', '"+identity+"', 1, 2)",
+		"UPDATE value_versions SET created_by = NULL WHERE id = '"+version+"'",
+		"INSERT INTO grants (id, organization_id, subject_identity_id, scope, actions, created_at) VALUES ('grt_entry', '"+org+"', '"+identity+
+			"', '{\"kind\": \"organization\"}', '[\"entry-link.create\",\"entry-link.create-open\"]', 1000)")
+	keep := filepath.Join(t.TempDir(), "keep")
+	var rev bytes.Buffer
+	if _, err := migrate.ExportReverse(context.Background(), &rev, migrate.Options{DataDir: filepath.Dir(path), Keep: keep, Release: "0.50.0-check"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, kept := range []string{"entry_links", "enl_kept", "words of its maker", strings.Repeat("0f", 32)} {
+		if bytes.Contains(rev.Bytes(), []byte(kept)) {
+			t.Errorf("the reverse bundle has %s", kept)
+		}
+	}
+	rebuilt := migrationtest.FromReverse(t, rev.Bytes(), s.source.RootKEK)
+	kept := openRO(t, filepath.Join(keep, config.DatabaseFile))
+	defer kept.Close()
+	decisions := []bundle.Decision{}
+	for _, d := range tuples(t, kept) {
+		got, err := check.Evaluate(context.Background(), kept, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decisions = append(decisions, got)
+	}
+	b := migrationtest.Bundle(t, rebuilt, migrationtest.Options{Sections: &migrationtest.Sections{Digests: migrationtest.Digests(t, rebuilt, s.runKey), Decisions: decisions, At: 1}})
+	rep, err := check.Run(context.Background(), kept, bytes.NewReader(b), check.Options{RootKEK: s.source.RootKEK, RunKey: s.runKey, Reverse: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Passed {
+		t.Fatalf("the reverse checks:\n%s", rep.Text())
+	}
+	dir := t.TempDir()
+	if _, err := migrate.Import(context.Background(), bytes.NewReader(b), migrate.Options{DataDir: dir, RootKEK: s.source.RootKEK, Release: "0.50.0-check"}); err != nil {
+		t.Fatal(err)
+	}
+	again := openRO(t, filepath.Join(dir, config.DatabaseFile))
+	defer again.Close()
+	// The Grants do go there and back: no one asks for such an action there.
+	var n, nobodys, grants int
+	if err := again.QueryRow("SELECT (SELECT count(*) FROM entry_links), (SELECT count(*) FROM value_versions WHERE id = ? AND created_by IS NULL), (SELECT count(*) FROM grants WHERE id = 'grt_entry' AND actions LIKE '%entry-link.create-open%')",
+		version).Scan(&n, &nobodys, &grants); err != nil || n != 0 || nobodys != 1 || grants != 1 {
+		t.Errorf("%d links, %d versions by nobody known, %d grants (%v)", n, nobodys, grants, err)
+	}
+}
+
 // The reverse checks: the transformed copy a reverse export kept, held
 // against the stand-in TypeScript release's export of the database it
 // rebuilt from the reverse bundle, pass with every check reading

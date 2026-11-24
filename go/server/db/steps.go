@@ -107,4 +107,36 @@ CREATE TABLE oauth_authorizations (
 ) STRICT;
 CREATE INDEX oauth_authorizations_expires ON oauth_authorizations (expires_at);
 `},
+	// 76: entry links (ADR-0063). A new table only, so rollback-safe: an older
+	// varlatchd never reads it. A link is no more than its row: there, nobody
+	// can enter a value with one.
+	{To: 7, CompatibleFrom: 1, SQL: `
+CREATE TABLE entry_links (
+  id TEXT NOT NULL PRIMARY KEY,
+  token_hash TEXT NOT NULL CONSTRAINT entry_links_token_hash_unique UNIQUE CONSTRAINT entry_links_token_hash_check CHECK (length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'),
+  organization_id TEXT NOT NULL REFERENCES organizations (id),
+  project_id TEXT NOT NULL REFERENCES projects (id),
+  environment_id TEXT NOT NULL REFERENCES environments (id),
+  item_name TEXT NOT NULL,
+  accepts TEXT NOT NULL CONSTRAINT entry_links_accepts_check CHECK (accepts IN ('value', 'otpauth')),
+  replaces INTEGER NOT NULL CONSTRAINT entry_links_replaces_check CHECK (replaces IN (0, 1)),
+  bound_version_id TEXT,
+  restricted_to TEXT NOT NULL CONSTRAINT entry_links_restricted_to_check CHECK (restricted_to IN ('anyone', 'member', 'identity')),
+  identity_id TEXT REFERENCES identities (id),
+  description TEXT,
+  requested_by TEXT NOT NULL REFERENCES identities (id),
+  status TEXT NOT NULL DEFAULT 'pending' CONSTRAINT entry_links_status_check CHECK (status IN ('pending', 'entered', 'cancelled')),
+  reason TEXT,
+  refusals INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  CONSTRAINT entry_links_identity_check CHECK ((restricted_to = 'identity') = (identity_id IS NOT NULL)),
+  CONSTRAINT entry_links_bound_check CHECK (replaces = 1 OR bound_version_id IS NULL),
+  CONSTRAINT entry_links_ended_check CHECK ((status = 'pending') = (ended_at IS NULL))
+) STRICT;
+CREATE INDEX entry_links_environment ON entry_links (environment_id, created_at);
+CREATE INDEX entry_links_requested_by ON entry_links (requested_by, created_at);
+CREATE INDEX entry_links_expires ON entry_links (expires_at);
+`},
 }

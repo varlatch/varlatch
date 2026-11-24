@@ -25,6 +25,7 @@ const (
 	v3Marker  = "\n-- Exercise-only credentials and tokens exchanged once"
 	v4Marker  = "\n-- One-time codes given (ADR-0061)"
 	v5Marker  = "\n-- OAuth connections"
+	v6Marker  = "\n-- Entry links (ADR-0063)"
 )
 
 // schemaBefore is schema.sql as released before marker's section.
@@ -116,7 +117,7 @@ func TestV2DatabaseUpgradesToVersion3(t *testing.T) {
 // adds is a step of its own, never more of that one.
 func TestEveryEarlierVersionUpgrades(t *testing.T) {
 	ctx := context.Background()
-	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker, v5Marker}
+	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker, v5Marker, v6Marker}
 	if len(markers) != SchemaVersion-1 {
 		t.Fatalf("%d markers for schema version %d", len(markers), SchemaVersion)
 	}
@@ -147,6 +148,7 @@ func TestEveryEarlierVersionUpgrades(t *testing.T) {
 			"INSERT INTO exercise_credentials (credential_id, oidc_binding_id) VALUES ('crd_none', 'oib_none')",
 			"INSERT INTO one_time_codes_given (version_id, step) VALUES ('ver_none', 1)",
 			"INSERT INTO oauth_connections (value_id, version_id, status) VALUES ('val_none', 'ver_none', 'connected')",
+			"INSERT INTO entry_links (id, token_hash, organization_id, project_id, environment_id, item_name, accepts, replaces, restricted_to, requested_by, created_at, expires_at) VALUES ('enl', '" + key + "', 'org_none', 'prj_none', 'env_none', 'A', 'value', 0, 'anyone', 'idn_none', 1, 2)",
 		} {
 			if err := tryExec(older, bad); err == nil {
 				t.Errorf("from %d: accepted: %s", from, bad)

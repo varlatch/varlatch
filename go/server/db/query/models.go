@@ -262,6 +262,28 @@ type DeviceSignInChallenge struct {
 	ConsumedAt     sql.NullInt64
 }
 
+type EntryLink struct {
+	ID             string
+	TokenHash      string
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ItemName       string
+	Accepts        string
+	Replaces       int64
+	BoundVersionID sql.NullString
+	RestrictedTo   string
+	IdentityID     sql.NullString
+	Description    sql.NullString
+	RequestedBy    string
+	Status         string
+	Reason         sql.NullString
+	Refusals       int64
+	CreatedAt      int64
+	ExpiresAt      int64
+	EndedAt        sql.NullInt64
+}
+
 type EnvValue struct {
 	ID                string
 	EnvironmentID     string
