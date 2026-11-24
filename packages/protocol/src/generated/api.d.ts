@@ -268,7 +268,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Create a new immutable Value version for a Config Item in this environment */
+        /** Create a new immutable Value version for a Config Item in this environment: a value, or the seed of one-time codes (otpauth, capability values.totp, ADR-0061), never both. A seed's use is its code: no retrieval delivers it. A value is refused where a seed is (delete it first), and a seed for an item the Contract marks not sensitive, both with VALIDATION_FAILED. */
         put: operations["setValue"];
         post?: never;
         /** Remove the Config Item's value from this environment (versions retained per audit rules) */
@@ -287,7 +287,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Begin a dual-phase rotation (capability values.rotation, ADR-0027): write a new primary version and keep the prior value retrievable alongside it for a bounded grace window, so running consumers migrate without an outage. Reads resolve the primary; the retiring value is exposed only through explicit disclosure and capability exercise. Rejected with ROTATION_IN_PROGRESS if one is already active. */
+        /** Begin a dual-phase rotation (capability values.rotation, ADR-0027): write a new primary version and keep the prior value retrievable alongside it for a bounded grace window, so running consumers migrate without an outage. Reads resolve the primary; the retiring value is exposed only through explicit disclosure and capability exercise. Rejected with ROTATION_IN_PROGRESS if one is already active. A seed of one-time codes rotates to another seed (otpauth, capability values.totp): until the rotation ends an exercise gives the codes of both. A value never rotates to a seed, nor a seed to a value. */
         post: operations["beginRotation"];
         delete?: never;
         options?: never;
@@ -355,7 +355,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else. */
+        /** Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else. A seed of one-time codes is disclosed only to a request that names its item and says totpSeeds (capability values.totp): otherwise it is withheld, and the all-authorized scope leaves it out. */
         post: operations["discloseSecrets"];
         delete?: never;
         options?: never;
@@ -2579,6 +2579,7 @@ export interface components {
             previousVersionId?: string | null;
             /** Format: date-time */
             createdAt: string;
+            totp?: components["schemas"]["OneTimeCode"];
         };
         EffectiveConfigurationItem: {
             name: string;
@@ -2592,6 +2593,22 @@ export interface components {
             rawValue?: string;
             /** @description True while a dual-phase rotation (ADR-0027) is active for this item. Metadata only — the retiring plaintext is exposed solely through explicit disclosure and capability exercise. */
             rotating?: boolean;
+            totp?: components["schemas"]["OneTimeCode"];
+        };
+        /** @description The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it. */
+        OtpauthURI: string;
+        /** @description Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code. */
+        OneTimeCode: {
+            /** @description Who the code is for; may be empty. */
+            issuer: string;
+            /** @description The account there; may be empty. */
+            account: string;
+            /** @enum {string} */
+            algorithm: "SHA1" | "SHA256" | "SHA512";
+            /** @enum {integer} */
+            digits: 6 | 8;
+            /** @enum {integer} */
+            periodSeconds: 30 | 60;
         };
         /** @description Rotation state after a begin/complete operation (no plaintext). */
         ValueRotation: {
@@ -2651,10 +2668,13 @@ export interface components {
         CallerView: {
             withheld: {
                 name: string;
+                /**
+                 * @description one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
+                 * @enum {string}
+                 */
+                reason: "permission" | "requirement" | "one-time-code";
                 /** @enum {string} */
-                reason: "permission" | "requirement";
-                /** @enum {string} */
-                requires: "config.value.read" | "secret.reveal";
+                requires: "config.value.read" | "secret.reveal" | "secret.use";
             }[];
             unexpanded: {
                 name: string;
@@ -2698,6 +2718,7 @@ export interface components {
                     value: string;
                 };
                 rotating?: boolean;
+                totp?: components["schemas"]["OneTimeCode"];
             }[];
             callerView: components["schemas"]["CallerView"];
             validation: components["schemas"]["ValidationReport"];
@@ -3313,11 +3334,45 @@ export interface components {
             items: {
                 name: string;
                 versionId: string;
+                /** @description The value or, with kind totp, the one-time code. */
                 value: string;
-                /** @description The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window. Absent when the item is stable. */
+                /**
+                 * @description Present for a one-time code (capability values.totp).
+                 * @enum {string}
+                 */
+                kind?: "totp";
+                /**
+                 * Format: date-time
+                 * @description Present while the code's period has not started, as the server's clock has it.
+                 */
+                notBefore?: string;
+                /** @description Present with notBefore. How long to wait from this answer. */
+                startsInSeconds?: number;
+                /**
+                 * Format: date-time
+                 * @description Of a code. When its period ends
+                 */
+                expiresAt?: string;
+                /** @description Of a code: whole seconds from this answer until its period ends. */
+                expiresInSeconds?: number;
+                /** @description The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window; of a one-time code, the previous seed's code for the same conditions. Absent when the item is stable. */
                 retiring?: {
                     versionId: string;
                     value: string;
+                    /**
+                     * Format: date-time
+                     * @description Present while the code's period has not started, as the server's clock has it.
+                     */
+                    notBefore?: string;
+                    /** @description Present with notBefore. How long to wait from this answer. */
+                    startsInSeconds?: number;
+                    /**
+                     * Format: date-time
+                     * @description Of a code. When its period ends
+                     */
+                    expiresAt?: string;
+                    /** @description Of a code: whole seconds from this answer until its period ends. */
+                    expiresInSeconds?: number;
                 };
             }[];
             withheld: string[];
@@ -5084,7 +5139,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    value: string;
+                    value?: string;
+                    otpauth?: components["schemas"]["OtpauthURI"];
                     /** @description Optimistic concurrency; rejects stale writes with VERSION_CONFLICT. */
                     expectedVersionId?: string;
                 };
@@ -5152,7 +5208,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    value: string;
+                    value?: string;
+                    otpauth?: components["schemas"]["OtpauthURI"];
                     /** @description Optimistic concurrency against the current primary. */
                     expectedVersionId?: string;
                     /** @description Overlap window; clamped to [1, 2592000] and defaulted from the contract's per-item rotationGraceSeconds, else 24h. */
@@ -5299,6 +5356,8 @@ export interface operations {
                 "application/json": {
                     items: string[];
                     purpose?: components["schemas"]["DisclosurePurpose"];
+                    /** @description Disclose the seeds of one-time codes among items too (capability values.totp), each as its otpauth:// URI. Refused with a purpose or with the all-authorized scope. */
+                    totpSeeds?: boolean;
                 } | {
                     /** @enum {string} */
                     scope: "all-authorized-secrets";
@@ -5323,6 +5382,7 @@ export interface operations {
                                 versionId: string;
                                 value: string;
                             };
+                            totp?: components["schemas"]["OneTimeCode"];
                         }[];
                         withheld: string[];
                         /** @description Present when the caller also holds config.metadata.read. */
@@ -5479,6 +5539,10 @@ export interface operations {
                         item: string;
                         target: string;
                     }[];
+                    /** @description How long the one-time codes among the items must still be valid (capability values.totp). When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. More than an item's period is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected. */
+                    minValiditySeconds?: number;
+                    /** @description Only codes this server has not given before (capability values.totp): the current period's, else the next one's. When both were given the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected. */
+                    fresh?: boolean;
                 };
             };
         };
@@ -5520,7 +5584,8 @@ export interface operations {
                         /** @enum {string} */
                         op: "set";
                         item: string;
-                        value: string;
+                        value?: string;
+                        otpauth?: components["schemas"]["OtpauthURI"];
                         expectedVersionId?: string;
                     } | {
                         /** @enum {string} */

@@ -593,7 +593,13 @@ paths:
     put:
       tags: [values]
       operationId: setValue
-      summary: Create a new immutable Value version for a Config Item in this environment
+      summary: >
+        Create a new immutable Value version for a Config Item in this
+        environment: a value, or the seed of one-time codes (otpauth,
+        capability values.totp, ADR-0061), never both. A seed's use is its
+        code: no retrieval delivers it. A value is refused where a seed is
+        (delete it first), and a seed for an item the Contract marks not
+        sensitive, both with VALIDATION_FAILED.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -606,9 +612,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [value]
+              description: Either value or otpauth.
               properties:
                 value: { type: string }
+                otpauth: { $ref: "#/components/schemas/OtpauthURI" }
                 expectedVersionId:
                   description: Optimistic concurrency; rejects stale writes with VERSION_CONFLICT.
                   type: string
@@ -644,7 +651,10 @@ paths:
         alongside it for a bounded grace window, so running consumers migrate
         without an outage. Reads resolve the primary; the retiring value is
         exposed only through explicit disclosure and capability exercise.
-        Rejected with ROTATION_IN_PROGRESS if one is already active.
+        Rejected with ROTATION_IN_PROGRESS if one is already active. A seed of
+        one-time codes rotates to another seed (otpauth, capability
+        values.totp): until the rotation ends an exercise gives the codes of
+        both. A value never rotates to a seed, nor a seed to a value.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -656,9 +666,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [value]
+              description: Either value or otpauth.
               properties:
                 value: { type: string }
+                otpauth: { $ref: "#/components/schemas/OtpauthURI" }
                 expectedVersionId:
                   description: Optimistic concurrency against the current primary.
                   type: string
@@ -796,7 +807,10 @@ paths:
         values, each such expansion audited; unauthorized or unknown
         references stay literal. An optional purpose (capability
         secrets.disclosure-purpose) is recorded in the disclosure's audit
-        events and changes nothing else.
+        events and changes nothing else. A seed of one-time codes is disclosed
+        only to a request that names its item and says totpSeeds (capability
+        values.totp): otherwise it is withheld, and the all-authorized scope
+        leaves it out.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -816,6 +830,13 @@ paths:
                       minItems: 1
                       items: { type: string }
                     purpose: { $ref: "#/components/schemas/DisclosurePurpose" }
+                    totpSeeds:
+                      type: boolean
+                      description: >
+                        Disclose the seeds of one-time codes among items too
+                        (capability values.totp), each as its otpauth:// URI.
+                        Refused with a purpose or with the all-authorized
+                        scope.
                 - type: object
                   required: [scope]
                   properties:
@@ -849,6 +870,7 @@ paths:
                           properties:
                             versionId: { type: string }
                             value: { type: string }
+                        totp: { $ref: "#/components/schemas/OneTimeCode" }
                   withheld:
                     type: array
                     items: { type: string }
@@ -1065,6 +1087,29 @@ paths:
                     properties:
                       item: { type: string }
                       target: { type: string }
+                minValiditySeconds:
+                  type: integer
+                  minimum: 0
+                  maximum: 86400
+                  description: >
+                    How long the one-time codes among the items must still be
+                    valid (capability values.totp). When the current code ends
+                    sooner, the next one is answered, with the time it starts
+                    (notBefore, startsInSeconds): the caller waits for it, the
+                    server does not. More than an item's period is refused
+                    with VALIDATION_FAILED, reason min-validity-too-long, and
+                    uses up nothing. Other items are not affected.
+                fresh:
+                  type: boolean
+                  description: >
+                    Only codes this server has not given before (capability
+                    values.totp): the current period's, else the next one's.
+                    When both were given the exercise is refused with
+                    RATE_LIMITED (429, Retry-After), reason no-fresh-code and
+                    retryAfterSeconds, and uses up nothing. Every code given
+                    counts, asked for as fresh or not; one made from a copy of
+                    the seed elsewhere is not known here. Other items are not
+                    affected.
       responses:
         "200":
           description: Exercised secret material (Cache-Control no-store)
@@ -1102,11 +1147,13 @@ paths:
                   items:
                     oneOf:
                       - type: object
-                        required: [op, item, value]
+                        required: [op, item]
+                        description: "With op set: either value or otpauth."
                         properties:
                           op: { type: string, enum: [set] }
                           item: { type: string }
                           value: { type: string }
+                          otpauth: { $ref: "#/components/schemas/OtpauthURI" }
                           expectedVersionId: { type: string }
                       - type: object
                         required: [op, item]
@@ -5962,6 +6009,7 @@ components:
         sensitive: { type: boolean }
         previousVersionId: { type: [string, "null"] }
         createdAt: { type: string, format: date-time }
+        totp: { $ref: "#/components/schemas/OneTimeCode" }
 
     EffectiveConfigurationItem:
       type: object
@@ -5991,6 +6039,34 @@ components:
             True while a dual-phase rotation (ADR-0027) is active for this
             item. Metadata only — the retiring plaintext is exposed solely
             through explicit disclosure and capability exercise.
+        totp: { $ref: "#/components/schemas/OneTimeCode" }
+
+    OtpauthURI:
+      type: string
+      maxLength: 4096
+      description: >
+        The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what
+        an authenticator's QR code holds: a base32 secret of 80 bits or more,
+        SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a
+        period of 30 (the default) or 60 seconds. It goes where a value would
+        (capability values.totp): a server without the capability refuses the
+        request for want of a value. Refused with VALIDATION_FAILED, which
+        never repeats any of it.
+
+    OneTimeCode:
+      type: object
+      description: >
+        Present when the item holds the seed of one-time codes (capability
+        values.totp, ADR-0061): what may be read of it. Such an item is always
+        sensitive and its value is never delivered: exercising a Capability
+        that names it gives the code.
+      required: [issuer, account, algorithm, digits, periodSeconds]
+      properties:
+        issuer: { type: string, description: Who the code is for; may be empty. }
+        account: { type: string, description: The account there; may be empty. }
+        algorithm: { type: string, enum: [SHA1, SHA256, SHA512] }
+        digits: { type: integer, enum: [6, 8] }
+        periodSeconds: { type: integer, enum: [30, 60] }
 
     ValueRotation:
       type: object
@@ -6093,8 +6169,14 @@ components:
             required: [name, reason, requires]
             properties:
               name: { type: string }
-              reason: { type: string, enum: [permission, requirement] }
-              requires: { type: string, enum: [config.value.read, secret.reveal] }
+              reason:
+                type: string
+                enum: [permission, requirement, one-time-code]
+                description: >
+                  one-time-code (strict retrieval): the item holds the seed of
+                  one-time codes, which is delivered to nobody; its code is
+                  used through a Capability (requires secret.use).
+              requires: { type: string, enum: [config.value.read, secret.reveal, secret.use] }
         unexpanded:
           type: array
           items:
@@ -6166,6 +6248,7 @@ components:
                   versionId: { type: string }
                   value: { type: string }
               rotating: { type: boolean }
+              totp: { $ref: "#/components/schemas/OneTimeCode" }
         callerView: { $ref: "#/components/schemas/CallerView" }
         validation: { $ref: "#/components/schemas/ValidationReport" }
 
@@ -7088,17 +7171,38 @@ components:
             properties:
               name: { type: string }
               versionId: { type: string }
-              value: { type: string }
+              value:
+                type: string
+                description: The value or, with kind totp, the one-time code.
+              kind:
+                type: string
+                enum: [totp]
+                description: Present for a one-time code (capability values.totp).
+              notBefore:
+                type: string
+                format: date-time
+                description: Present while the code's period has not started, as the server's clock has it.
+              startsInSeconds: { type: integer, minimum: 1, description: Present with notBefore. How long to wait from this answer. }
+              expiresAt: { type: string, format: date-time, description: Of a code. When its period ends, as the server's clock has it. }
+              expiresInSeconds: { type: integer, minimum: 0, description: "Of a code: whole seconds from this answer until its period ends." }
               retiring:
                 description: >
                   The previous value during a dual-phase rotation (ADR-0027),
                   injected as-is so the consumer accepts either during the
-                  window. Absent when the item is stable.
+                  window; of a one-time code, the previous seed's code for the
+                  same conditions. Absent when the item is stable.
                 type: object
                 required: [versionId, value]
                 properties:
                   versionId: { type: string }
                   value: { type: string }
+                  notBefore:
+                    type: string
+                    format: date-time
+                    description: Present while the code's period has not started, as the server's clock has it.
+                  startsInSeconds: { type: integer, minimum: 1, description: Present with notBefore. How long to wait from this answer. }
+                  expiresAt: { type: string, format: date-time, description: Of a code. When its period ends, as the server's clock has it. }
+                  expiresInSeconds: { type: integer, minimum: 0, description: "Of a code: whole seconds from this answer until its period ends." }
         withheld:
           type: array
           items: { type: string }

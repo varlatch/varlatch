@@ -577,6 +577,7 @@ func (e AuditExportRetentionMode) Valid() bool {
 
 // Defines values for CallerViewWithheldReason.
 const (
+	CallerViewWithheldReasonOneTimeCode CallerViewWithheldReason = "one-time-code"
 	CallerViewWithheldReasonPermission  CallerViewWithheldReason = "permission"
 	CallerViewWithheldReasonRequirement CallerViewWithheldReason = "requirement"
 )
@@ -584,6 +585,8 @@ const (
 // Valid indicates whether the value is a known member of the CallerViewWithheldReason enum.
 func (e CallerViewWithheldReason) Valid() bool {
 	switch e {
+	case CallerViewWithheldReasonOneTimeCode:
+		return true
 	case CallerViewWithheldReasonPermission:
 		return true
 	case CallerViewWithheldReasonRequirement:
@@ -597,6 +600,7 @@ func (e CallerViewWithheldReason) Valid() bool {
 const (
 	CallerViewWithheldRequiresConfigValueRead CallerViewWithheldRequires = "config.value.read"
 	CallerViewWithheldRequiresSecretReveal    CallerViewWithheldRequires = "secret.reveal"
+	CallerViewWithheldRequiresSecretUse       CallerViewWithheldRequires = "secret.use"
 )
 
 // Valid indicates whether the value is a known member of the CallerViewWithheldRequires enum.
@@ -605,6 +609,23 @@ func (e CallerViewWithheldRequires) Valid() bool {
 	case CallerViewWithheldRequiresConfigValueRead:
 		return true
 	case CallerViewWithheldRequiresSecretReveal:
+		return true
+	case CallerViewWithheldRequiresSecretUse:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CapabilityExerciseItemsKind.
+const (
+	Totp CapabilityExerciseItemsKind = "totp"
+)
+
+// Valid indicates whether the value is a known member of the CapabilityExerciseItemsKind enum.
+func (e CapabilityExerciseItemsKind) Valid() bool {
+	switch e {
+	case Totp:
 		return true
 	default:
 		return false
@@ -1838,6 +1859,63 @@ func (e ObservedCheckStatus) Valid() bool {
 	case ObservedCheckStatusPass:
 		return true
 	case ObservedCheckStatusUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodeAlgorithm.
+const (
+	SHA1   OneTimeCodeAlgorithm = "SHA1"
+	SHA256 OneTimeCodeAlgorithm = "SHA256"
+	SHA512 OneTimeCodeAlgorithm = "SHA512"
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodeAlgorithm enum.
+func (e OneTimeCodeAlgorithm) Valid() bool {
+	switch e {
+	case SHA1:
+		return true
+	case SHA256:
+		return true
+	case SHA512:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodeDigits.
+const (
+	N6 OneTimeCodeDigits = 6
+	N8 OneTimeCodeDigits = 8
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodeDigits enum.
+func (e OneTimeCodeDigits) Valid() bool {
+	switch e {
+	case N6:
+		return true
+	case N8:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodePeriodSeconds.
+const (
+	N30 OneTimeCodePeriodSeconds = 30
+	N60 OneTimeCodePeriodSeconds = 60
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodePeriodSeconds enum.
+func (e OneTimeCodePeriodSeconds) Valid() bool {
+	switch e {
+	case N30:
+		return true
+	case N60:
 		return true
 	default:
 		return false
@@ -3653,13 +3731,15 @@ type CallerView struct {
 		References []string `json:"references"`
 	} `json:"unexpanded"`
 	Withheld []struct {
-		Name     string                     `json:"name"`
+		Name string `json:"name"`
+
+		// Reason one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
 		Reason   CallerViewWithheldReason   `json:"reason"`
 		Requires CallerViewWithheldRequires `json:"requires"`
 	} `json:"withheld"`
 }
 
-// CallerViewWithheldReason defines model for CallerView.Withheld.Reason.
+// CallerViewWithheldReason one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
 type CallerViewWithheldReason string
 
 // CallerViewWithheldRequires defines model for CallerView.Withheld.Requires.
@@ -3691,13 +3771,40 @@ type Capability struct {
 // CapabilityExercise defines model for CapabilityExercise.
 type CapabilityExercise struct {
 	Items []struct {
-		Name string `json:"name"`
+		// ExpiresAt Of a code. When its period ends
+		ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 
-		// Retiring The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window. Absent when the item is stable.
+		// ExpiresInSeconds Of a code: whole seconds from this answer until its period ends.
+		ExpiresInSeconds *int `json:"expiresInSeconds,omitempty"`
+
+		// Kind Present for a one-time code (capability values.totp).
+		Kind *CapabilityExerciseItemsKind `json:"kind,omitempty"`
+		Name string                       `json:"name"`
+
+		// NotBefore Present while the code's period has not started, as the server's clock has it.
+		NotBefore *time.Time `json:"notBefore,omitempty"`
+
+		// Retiring The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window; of a one-time code, the previous seed's code for the same conditions. Absent when the item is stable.
 		Retiring *struct {
-			Value     string `json:"value"`
-			VersionId string `json:"versionId"`
+			// ExpiresAt Of a code. When its period ends
+			ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+			// ExpiresInSeconds Of a code: whole seconds from this answer until its period ends.
+			ExpiresInSeconds *int `json:"expiresInSeconds,omitempty"`
+
+			// NotBefore Present while the code's period has not started, as the server's clock has it.
+			NotBefore *time.Time `json:"notBefore,omitempty"`
+
+			// StartsInSeconds Present with notBefore. How long to wait from this answer.
+			StartsInSeconds *int   `json:"startsInSeconds,omitempty"`
+			Value           string `json:"value"`
+			VersionId       string `json:"versionId"`
 		} `json:"retiring,omitempty"`
+
+		// StartsInSeconds Present with notBefore. How long to wait from this answer.
+		StartsInSeconds *int `json:"startsInSeconds,omitempty"`
+
+		// Value The value or, with kind totp, the one-time code.
 		Value     string `json:"value"`
 		VersionId string `json:"versionId"`
 	} `json:"items"`
@@ -3706,6 +3813,9 @@ type CapabilityExercise struct {
 	Targets  map[string][]string `json:"targets"`
 	Withheld []string            `json:"withheld"`
 }
+
+// CapabilityExerciseItemsKind Present for a one-time code (capability values.totp).
+type CapabilityExerciseItemsKind string
 
 // ConfigItemSearchResult One (project, item name) search hit (ADR-0030). Metadata only — never Values, version history, or value-derived fields. The environments list contains only authorized, navigable Environments in which the name is effectively present; it is bounded and its truncation flag never reveals hidden-candidate counts.
 type ConfigItemSearchResult struct {
@@ -3937,6 +4047,9 @@ type EffectiveConfigurationItem struct {
 	Rotating  *bool                            `json:"rotating,omitempty"`
 	Sensitive bool                             `json:"sensitive"`
 	Source    EffectiveConfigurationItemSource `json:"source"`
+
+	// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+	Totp *OneTimeCode `json:"totp,omitempty"`
 
 	// Value Present only when include=values and the caller is authorized; null for items the caller may know exist but not read.
 	Value     nullable.Nullable[string] `json:"value,omitempty"`
@@ -4868,6 +4981,27 @@ type OidcBinding struct {
 	Subject        string `json:"subject"`
 }
 
+// OneTimeCode Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+type OneTimeCode struct {
+	// Account The account there; may be empty.
+	Account   string               `json:"account"`
+	Algorithm OneTimeCodeAlgorithm `json:"algorithm"`
+	Digits    OneTimeCodeDigits    `json:"digits"`
+
+	// Issuer Who the code is for; may be empty.
+	Issuer        string                   `json:"issuer"`
+	PeriodSeconds OneTimeCodePeriodSeconds `json:"periodSeconds"`
+}
+
+// OneTimeCodeAlgorithm defines model for OneTimeCode.Algorithm.
+type OneTimeCodeAlgorithm string
+
+// OneTimeCodeDigits defines model for OneTimeCode.Digits.
+type OneTimeCodeDigits int
+
+// OneTimeCodePeriodSeconds defines model for OneTimeCode.PeriodSeconds.
+type OneTimeCodePeriodSeconds int
+
 // Organization defines model for Organization.
 type Organization struct {
 	CreatedAt time.Time `json:"createdAt"`
@@ -4906,6 +5040,9 @@ type OrganizationPermissionsActions string
 
 // OrganizationPermissionsRole The caller's role; null for a machine identity.
 type OrganizationPermissionsRole string
+
+// OtpauthURI The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+type OtpauthURI = string
 
 // OutboundDestinationKind defines model for OutboundDestinationKind.
 type OutboundDestinationKind string
@@ -5420,6 +5557,9 @@ type StrictRetrieval struct {
 		Sensitive bool                       `json:"sensitive"`
 		Source    StrictRetrievalItemsSource `json:"source"`
 
+		// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+		Totp *OneTimeCode `json:"totp,omitempty"`
+
 		// Value The delivered value, references expanded; null when withheld.
 		Value     nullable.Nullable[string] `json:"value"`
 		VersionId string                    `json:"versionId"`
@@ -5709,7 +5849,10 @@ type ValueVersion struct {
 	ItemName          string                    `json:"itemName"`
 	PreviousVersionId nullable.Nullable[string] `json:"previousVersionId,omitempty"`
 	Sensitive         bool                      `json:"sensitive"`
-	VersionId         string                    `json:"versionId"`
+
+	// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+	Totp      *OneTimeCode `json:"totp,omitempty"`
+	VersionId string       `json:"versionId"`
 }
 
 // Webhook defines model for Webhook.
@@ -6561,6 +6704,12 @@ type ExerciseCapabilityJSONBody struct {
 		Port int    `json:"port"`
 	} `json:"destination"`
 
+	// Fresh Only codes this server has not given before (capability values.totp): the current period's, else the next one's. When both were given the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected.
+	Fresh *bool `json:"fresh,omitempty"`
+
+	// MinValiditySeconds How long the one-time codes among the items must still be valid (capability values.totp). When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. More than an item's period is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected.
+	MinValiditySeconds *int `json:"minValiditySeconds,omitempty"`
+
 	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed.
 	Placements *[]struct {
 		Item   string `json:"item"`
@@ -6584,7 +6733,10 @@ type ApplyChangeSetJSONBodyChanges0 struct {
 	ExpectedVersionId *string                          `json:"expectedVersionId,omitempty"`
 	Item              string                           `json:"item"`
 	Op                ApplyChangeSetJSONBodyChanges0Op `json:"op"`
-	Value             string                           `json:"value"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // ApplyChangeSetJSONBodyChanges0Op defines parameters for ApplyChangeSet.
@@ -6625,6 +6777,9 @@ type DiscloseSecretsJSONBody0 struct {
 
 	// Purpose Why the caller asks for a disclosure, recorded as `purpose` in the disclosure's `secret.disclosed` audit event and in any reference-expansion `value.disclosed` events it causes. `scan`: a local secret scan (`varlatch scan`). `export`: read for an env file (capability `disclosure.purpose.export`, ADR-0053); it proves neither that a file was saved nor which values went into it. Any other value is refused with VALIDATION_FAILED.
 	Purpose *DisclosurePurpose `json:"purpose,omitempty"`
+
+	// TotpSeeds Disclose the seeds of one-time codes among items too (capability values.totp), each as its otpauth:// URI. Refused with a purpose or with the all-authorized scope.
+	TotpSeeds *bool `json:"totpSeeds,omitempty"`
 }
 
 // DiscloseSecretsJSONBody1 defines parameters for DiscloseSecrets.
@@ -6703,7 +6858,10 @@ type PauseSyncTargetParamsWait string
 type SetValueJSONBody struct {
 	// ExpectedVersionId Optimistic concurrency; rejects stale writes with VERSION_CONFLICT.
 	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
-	Value             string  `json:"value"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // SetValueParams defines parameters for SetValue.
@@ -6718,8 +6876,11 @@ type BeginRotationJSONBody struct {
 	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
 
 	// GraceSeconds Overlap window; clamped to [1, 2592000] and defaulted from the contract's per-item rotationGraceSeconds, else 24h.
-	GraceSeconds *int   `json:"graceSeconds,omitempty"`
-	Value        string `json:"value"`
+	GraceSeconds *int `json:"graceSeconds,omitempty"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // ListRequirementsParams defines parameters for ListRequirements.
