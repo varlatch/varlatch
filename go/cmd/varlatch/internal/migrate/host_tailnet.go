@@ -105,14 +105,27 @@ func (h *Host) TailnetOpen(ctx context.Context) error {
 	return nil
 }
 
+// exitConfig is varlatchd's exit status for a failure of this host's own
+// making (EX_CONFIG).
+const exitConfig = 78
+
 // TailnetReaches is `admin tailnet reaches --json`.
 func (h *Host) TailnetReaches(ctx context.Context, name, stableID string, wait time.Duration) (bool, error) {
 	r, err := h.tailnetAdmin(ctx, "reaches", "--name", name, "--stable-id", stableID, "--wait", wait.Truncate(time.Second).String(), "--json")
 	if err != nil {
+		if permanent(err) {
+			err = &tailhandoff.PermanentError{Err: err}
+		}
 		return false, err
 	}
 	if r.Code != 0 {
-		return false, failure("varlatchd admin tailnet reaches", r)
+		err := failure("varlatchd admin tailnet reaches", r)
+		if r.Code == exitConfig {
+			// What it needs on this host is not there: asking again does
+			// not change that.
+			err = &tailhandoff.PermanentError{Err: err}
+		}
+		return false, err
 	}
 	var out struct {
 		Reaches *bool  `json:"reaches"`

@@ -65,14 +65,29 @@ func TestRollbackWindowOpen(t *testing.T) {
 type archiveRunner struct {
 	running []string
 	stopped []string
+	host    *labelled
+	config  string
 }
 
 func (a *archiveRunner) Run(_ context.Context, _, _ string, args []string, _ []byte) (Ran, error) {
+	for len(args) > 2 && args[0] == "compose" && (args[1] == "-f" || strings.HasPrefix(args[1], "--project-")) {
+		args = append([]string{"compose"}, args[3:]...)
+	}
+	if a.host != nil && args[0] != "ps" {
+		if r, ok := a.host.answer(args); ok {
+			return r, nil
+		}
+	}
 	switch j := strings.Join(args, " "); {
+	case strings.HasPrefix(j, "ps -a -q --no-trunc --filter label="):
+		return Ran{}, nil
 	case j == "compose ps --status running --services":
 		return Ran{Answer: []byte(strings.Join(a.running, "\n") + "\n")}, nil
 	case j == "compose config --no-interpolate --format json":
-		return Ran{Answer: []byte(`{"name":"varlatch","services":{"varlatchd":{}}}`)}, nil
+		if a.config != "" {
+			return Ran{Answer: []byte(a.config)}, nil
+		}
+		return Ran{Answer: []byte(stockConfig)}, nil
 	case strings.HasPrefix(j, "compose up -d --no-deps --no-recreate "):
 		a.running = append(a.running, args[5])
 		return Ran{Code: 1, Said: []byte("dependency failed to start")}, nil
@@ -87,18 +102,31 @@ func (a *archiveRunner) Run(_ context.Context, _, _ string, args []string, _ []b
 // start (running now, not before), so that is stopped again; what ran
 // before is never named.
 func TestServeForArchiveAPartialStart(t *testing.T) {
-	run := &archiveRunner{running: []string{"postgres"}}
-	c := &Compose{Directory: t.TempDir(), Run: run}
-	started, err := c.ServeForArchive(context.Background())
-	if err == nil || !slices.Equal(started, []string{"varlatchd"}) {
+	run := &archiveRunner{running: []string{"postgres"}, host: gatedHost()}
+	c := stockCompose(t, run)
+	started, err := c.ServeForArchive(context.Background(), gate1)
+	if err == nil || !slices.Equal(started, []string{"convex-backend"}) {
 		t.Fatalf("a partial start: started %v, %v", started, err)
 	}
-	if err := c.StopStarted(context.Background(), started); err != nil || !slices.Equal(run.stopped, []string{"varlatchd"}) {
+	if err := c.StopStarted(context.Background(), started); err != nil || !slices.Equal(run.stopped, []string{"convex-backend"}) {
 		t.Fatalf("stopped %v, %v", run.stopped, err)
+	}
+	// Without its gate varlatchd is not started, nor anything else.
+	run = &archiveRunner{running: []string{"postgres"}, host: gatedHost()}
+	run.host.gates[stateVol.Name] = ""
+	if started, err := stockCompose(t, run).ServeForArchive(context.Background(), gate1); err == nil || !strings.Contains(err.Error(), "holds no gate") || len(started) != 0 || len(run.running) != 1 {
+		t.Fatalf("the gate lost: started %v, running %v, %v", started, run.running, err)
+	}
+	// Its varlatchd in a stopped sidecar's network, running still.
+	for sidecar, refused := range map[string]bool{"": true, "tailscale": false} {
+		run = &archiveRunner{running: []string{"postgres", "varlatchd", "convex-backend", sidecar}, config: sidecarConfig}
+		if started, err := stockCompose(t, run).ServeForArchive(context.Background(), gate1); len(started) != 0 || (err != nil) != refused || refused && !strings.Contains(err.Error(), "would bring the old Tailscale node back") {
+			t.Fatalf("the sidecar %q: %v %v", sidecar, started, err)
+		}
 	}
 	// Everything running already: nothing started, nothing to stop.
 	run = &archiveRunner{running: []string{"postgres", "varlatchd", "convex-backend"}}
-	if started, err := (&Compose{Directory: t.TempDir(), Run: run}).ServeForArchive(context.Background()); err != nil || len(started) != 0 {
+	if started, err := stockCompose(t, run).ServeForArchive(context.Background(), gate1); err != nil || len(started) != 0 {
 		t.Fatalf("all running: %v %v", started, err)
 	}
 }

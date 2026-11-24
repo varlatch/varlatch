@@ -315,7 +315,7 @@ func migrateCommand(r *Run) error {
 	}
 	run := migrate.ExecRunner{Env: environ(r)}
 	e := &migrate.Engine{
-		Source: &migrate.Compose{Directory: o.from, Run: run, TSCLI: o.tsCLI, KEKFile: o.kekFile, BEKFile: o.bekFile,
+		Source: &migrate.Compose{Directory: o.from, Run: run, Env: run.Env, TSCLI: o.tsCLI, KEKFile: o.kekFile, BEKFile: o.bekFile,
 			Destination: o.destination, DestinationsFile: o.destinationsFile, ReadCredentialsFile: o.readCredentials},
 		Target: &migrate.Host{Varlatchd: varlatchd, Config: o.config, Run: migrate.ExecRunner{Env: targetCredentials(varlatchdEnviron(r), o.config)}, Unit: o.unit},
 		Options: migrate.Options{MaxDowntime: o.maxDowntime, Drain: o.drain, TransferTimeout: o.transferTimeout, Ingress: migrate.Ingress(o.ingress),
@@ -466,6 +466,9 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		}
 		if u := rb.Undone; u != nil {
 			fmt.Fprintf(&b, " undone from phase %s: %s", u.From, u.Why)
+			if rb.Unrestored != "" {
+				fmt.Fprintf(&b, "; the TypeScript installation is not put back (%s), its server stopped: do not start it, varlatch migrate --resume puts it back", rb.Unrestored)
+			}
 		}
 		b.WriteString("\n")
 		for _, a := range rb.Archives {
