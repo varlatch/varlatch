@@ -173,6 +173,15 @@ fixes.
 
 ### Server
 
+- **The check of a backup's remote copy checks that it is that archive.**
+  `admin backup run --verify-remote`, and with it `varlatch migrate --finish
+  --delete-old-data`, accepted any archive sealed with the same keys at the
+  new one's place in the bucket, such as an older one. It now fails the check,
+  and `--finish --delete-old-data` deletes nothing.
+- **No warning that can never clear.** With a bucket key that only uploads, no
+  remote copy can be checked from the host: until a first check was made, the
+  backup status has no warning of it, and `varlatch doctor` says that none
+  was made.
 - **The container image works with a read-only root filesystem.** SQLite
   had nowhere to put its temporary files there, so a larger write failed
   with a server error while smaller ones went on: enrolling the first

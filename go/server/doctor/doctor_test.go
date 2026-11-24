@@ -126,6 +126,35 @@ func TestHealthyInstallation(t *testing.T) {
 	}
 }
 
+// The remote copy's check: a host that never made one (its key may only
+// upload) says so and passes, as no check there could clear a warning; once
+// one was made, an old or failed one is a problem.
+func TestRemoteCopyUnchecked(t *testing.T) {
+	f := newFixture(t, "")
+	hour := f.now.Add(-time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+	record := func(remote *backup.Verification) {
+		t.Helper()
+		if err := backup.SaveStatus(f.cfg.DataDir, backup.StatusRecord{ArchiveID: "0f0e0d0c-0b0a-4908-8706-050403020100", InstallationID: "inst_test", CreatedAt: hour, Release: "0.50.0", RequiredKeyVersions: []int{1},
+			Verification: &backup.Verification{Integrity: true, Compatibility: true, KeyMatch: true, TargetRelease: "0.50.0", CheckedAt: hour},
+			Delivery:     &backup.Delivery{Destination: "offsite", UploadedAt: hour, RemoteVerification: remote}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record(nil)
+	if c := checkOf(t, f.run(t), "backups.status"); c.Status != Pass || !strings.Contains(c.Detail, "no remote copy was ever checked from this host") || strings.Contains(c.Detail, "30 days") {
+		t.Errorf("never checked: %+v", c)
+	}
+	old := f.now.Add(-31 * 24 * time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+	record(&backup.Verification{Integrity: true, Compatibility: true, KeyMatch: true, TargetRelease: "0.50.0", CheckedAt: old})
+	if c := checkOf(t, f.run(t), "backups.status"); c.Status != Fail || !strings.Contains(c.Detail, "No remote copy has passed") {
+		t.Errorf("checked long ago: %+v", c)
+	}
+	record(&backup.Verification{TargetRelease: "0.50.0", CheckedAt: hour})
+	if c := checkOf(t, f.run(t), "backups.status"); c.Status != Fail || !strings.Contains(c.Detail, "failed retrieval and verification") {
+		t.Errorf("failed: %+v", c)
+	}
+}
+
 // TestFailingChecks: each failing check, with its status, class, what it
 // says and its remedy (step 6.5's acceptance list).
 func TestFailingChecks(t *testing.T) {

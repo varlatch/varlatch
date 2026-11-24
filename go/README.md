@@ -1279,7 +1279,12 @@ daemon's maintenance admission and its one backup at a time.
     (`statusSchema`: identity, `verification`, `delivery`, `capture`),
     kept after local retention removes its archive, since the copy in the
     bucket and its Root KEK version remain. `getInstallationBackups`
-    answers them, newest first, with `backupStatus`'s warnings;
+    answers them, newest first, with `backupStatus`'s warnings, without
+    "No remote copy has passed retrieval and verification within the last 30
+    days" while no remote copy was ever checked (a difference from the
+    TypeScript server: an upload-only key can never clear it; doctor's
+    `backups.status` says none was checked; `TestUpload`,
+    `TestRemoteCopyUnchecked`);
   - `backups/.work-<archive id>/`, a run's temporary files, and
     `backups/<archive id>.vltbak.<hex>.partial`, a sealing in progress;
     both are removed by the next run if a run was killed, as is a killed

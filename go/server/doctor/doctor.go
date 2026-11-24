@@ -755,6 +755,11 @@ func backupsStatus(in Inputs) Check {
 		c.Status, c.Detail = Unknown, "the backups' status cannot be read: "+oneLine(err.Error())
 		return c
 	}
+	unchecked := ""
+	if st.RemoteUnchecked() {
+		unchecked = "; no remote copy was ever checked from this host (with a key that may read: sudo varlatchd admin backup run --json --verify-remote)"
+	}
+	st = st.WithoutRemoteCheck()
 	var problems []string
 	if cfg.BackupDestinationsFile == "" {
 		problems = append(problems, "no destination: archives stay on this host, lost with it")
@@ -772,7 +777,7 @@ func backupsStatus(in Inputs) Check {
 				break
 			}
 		}
-		c.Status, c.Detail = Pass, fmt.Sprintf("%d archives; the newest %s, %s", n, newest.ArchiveID, newest.CreatedAt)
+		c.Status, c.Detail = Pass, fmt.Sprintf("%d archives; the newest %s, %s%s", n, newest.ArchiveID, newest.CreatedAt, unchecked)
 		return c
 	}
 	c.Status, c.Detail = Pass, "no archive yet"
