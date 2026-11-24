@@ -3,7 +3,7 @@ import { useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import { useToast } from "../components/Toast";
-import { useMeSignal } from "./realtime";
+import { useLiveUpdatesBack, useMeSignal } from "./realtime";
 import { useSession } from "./session";
 
 /**
@@ -64,7 +64,10 @@ export async function dropLostOrganizations(
   return lost;
 }
 
-/** Mounted once in the shell: acts on the signed-in person's membership signal. */
+/**
+ * Mounted once in the shell: acts on the signed-in person's membership signal,
+ * and when live updates open again after a gap, in which one may have been lost.
+ */
 export function useMembershipWatcher(): void {
   const qc = useQueryClient();
   const { api, accessChanged } = useSession();
@@ -73,7 +76,7 @@ export function useMembershipWatcher(): void {
   const { org } = useParams();
   const current = useRef(org);
   current.current = org;
-  useMeSignal(["membership"], () => {
+  const recheck = () => {
     // Revealed values are masked and the realtime token minted again first.
     accessChanged();
     void (async () => {
@@ -89,5 +92,7 @@ export function useMembershipWatcher(): void {
       // Another role changes what every remaining page may show.
       await qc.invalidateQueries();
     })().catch(() => undefined);
-  });
+  };
+  useMeSignal(["membership"], recheck);
+  useLiveUpdatesBack(recheck);
 }

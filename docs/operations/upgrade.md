@@ -168,6 +168,10 @@ prints the commands to run by hand, each on a line of its own, with your
 paths in them, and how to go back on each. They restore the snapshot: every
 change made since it was taken is lost, and no list of them is printed.
 
+Nor can those releases read an archive that 0.50.0-rc.4 or later made, which is
+compressed: they answer `Unsupported archive format`. Keep one they made
+themselves.
+
 Those releases have no hold after a restore. Once the last command starts
 `varlatchd`, revoked credentials work again, and its background work runs at
 once, as the snapshot has it: webhooks, sync, audit exports, and an

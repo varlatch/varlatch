@@ -341,7 +341,7 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | github.com/in-toto/attestation | v1.2.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/in-toto/in-toto-golang | v0.11.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/jsimonetti/rtnetlink | v1.4.2 | MIT | varlatchd |
-| github.com/klauspost/compress | v1.20.2 | Apache-2.0 AND BSD-3-Clause AND MIT | varlatchd |
+| github.com/klauspost/compress | v1.20.2 | Apache-2.0 AND BSD-3-Clause AND MIT | varlatch, varlatchd |
 | github.com/klauspost/cpuid/v2 | v2.4.0 | MIT | varlatchd |
 | github.com/libdns/libdns | v1.1.1 | MIT | varlatchd |
 | github.com/mdlayher/netlink | v1.11.2 | MIT | varlatchd |

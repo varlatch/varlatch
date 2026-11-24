@@ -211,6 +211,30 @@ fixes.
 
 ### Server
 
+- **`varlatch migrate --rollback` with a dashboard open.** The rollback's
+  barrier waited for every request, and an open dashboard's live updates are
+  one that does not end: the rollback was undone, with the new server serving
+  on, for as long as anyone had the dashboard open. The barrier ends them now,
+  and dashboards reconnect by themselves.
+- **The dashboard checks your access again when its live updates come back.**
+  What was signalled while they were down is lost, a change of your own role
+  among it: a secret you had revealed stayed on the page until its five minutes
+  were over. Now what is revealed is masked, and the organizations read again.
+- **Backup archives are compressed** (zstd), before they are sealed. An
+  installation's audit history takes a fraction of the room it took; sealed
+  values little less. `varlatchd` reads the archives 0.50.0-rc.1 to rc.3 and
+  their converter made; those prereleases do not read the new ones ("Unsupported
+  archive format"). `admin backup run` prints both sizes.
+- **An archive's check asks what a restore asks.** A backup's own check,
+  `--verify-remote` and `admin backup restore --check` also read the archive's
+  settings and its database's installation; the last two also make a
+  restore's writes, in a copy they throw away. An archive whose settings
+  could not be read passed them and was then refused. A restore does all of
+  it before it changes the data directory.
+- **An offline backup does not take its time.** `admin backup run` with
+  `varlatchd` stopped, `varlatch migrate --finish`'s final archive, the
+  converter's, and the copy `varlatch migrate --rollback` is made from were
+  paced as if somebody were served meanwhile.
 - **The check of a backup's remote copy checks that it is that archive.**
   `admin backup run --verify-remote`, and with it `varlatch migrate --finish
   --delete-old-data`, accepted any archive sealed with the same keys at the

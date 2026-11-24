@@ -136,6 +136,30 @@ describe("the signal stream", () => {
     expect(h.last().closed).toBe(true);
   });
 
+  it("goes on through a maintenance, however many answers it lasts, and opens again after it", () => {
+    const h = harness();
+    const stream = new SignalStream(h.deps);
+    const connected: boolean[] = [];
+    stream.onConnection((c) => connected.push(c));
+    stream.start();
+    h.last().emit("ready", {});
+    h.last().emit("change", { organizationId: "org_a", lastEventId: "evt_1", domains: [] });
+    // The server ends the stream as a barrier begins; behind it every attempt is 503, an error to the browser.
+    h.last().emit("close", { reason: "shutdown" });
+    h.last().fail();
+    for (let attempt = 0; attempt < 40; attempt++) {
+      expect(h.fire()).toBe(reconnectDelay(attempt, () => 0.5));
+      expect(stream.isConnected()).toBe(false);
+      h.last().fail();
+    }
+    expect(stream.orgDocs("org_a")).toEqual([{ data: { lastEventId: "evt_1", domains: [] } }]);
+    h.fire();
+    h.last().emit("ready", {});
+    expect(stream.isConnected()).toBe(true);
+    expect(connected).toEqual([true, false, true]);
+    stream.stop();
+  });
+
   it("waits longer after the server replaced the stream with another tab's", () => {
     const h = harness();
     const stream = new SignalStream(h.deps);
@@ -190,17 +214,19 @@ describe("realtime.ts's hooks over server-sent events", () => {
     const backendModule = await import("../src/lib/backend");
     backendModule.chooseBackend({ session: "varlatchd", realtime: "sse" });
     vi.doMock("../src/lib/session", () => ({ useSession: () => ({ api: {} }) }));
-    const { useMirrorInvalidation, useMeSignal, useRealtimeConnected } = await import("../src/lib/realtime");
+    const { useLiveUpdatesBack, useMirrorInvalidation, useMeSignal, useRealtimeConnected } = await import("../src/lib/realtime");
     const { SseProvider } = await import("../src/lib/sseProvider");
     const h = harness();
     const qc = new QueryClient();
     const invalidated: unknown[] = [];
     qc.invalidateQueries = (async (filters?: { queryKey?: unknown }) => void invalidated.push(filters?.queryKey)) as typeof qc.invalidateQueries;
     const membership: number[] = [];
+    let back = 0;
     let connected = false;
     function Page() {
       useMirrorInvalidation("org_a", ["project"], [["projects", "org_a"]]);
       useMeSignal(["membership"], () => membership.push(1));
+      useLiveUpdatesBack(() => back++);
       connected = useRealtimeConnected();
       return null;
     }
@@ -229,8 +255,18 @@ describe("realtime.ts's hooks over server-sent events", () => {
     expect(membership).toEqual([]);
     await send("identity", { lastEventId: "evt_5", domains: ["membership"] });
     expect(membership).toEqual([1]);
+    // A gap: nothing on the drop itself or on a failed attempt, once when it is over.
     await act(async () => h.last().fail());
     expect(connected).toBe(false);
+    await act(async () => void h.fire());
+    await act(async () => h.last().fail());
+    expect(back).toBe(0);
+    await act(async () => void h.fire());
+    await send("ready", { identityId: "idn_1" });
+    expect(connected).toBe(true);
+    expect(back).toBe(1);
+    await send("identity", { lastEventId: "evt_6", domains: ["credential"] });
+    expect(back).toBe(1);
     await act(async () => root!.unmount());
     root = null;
     expect(h.sources.every((s) => s.closed)).toBe(true);
