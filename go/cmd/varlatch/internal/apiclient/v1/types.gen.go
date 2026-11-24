@@ -64,27 +64,29 @@ func (e AccessCheckWhere) Valid() bool {
 
 // Defines values for Action.
 const (
-	ActionAuditRead          Action = "audit.read"
-	ActionCapabilityIssue    Action = "capability.issue"
-	ActionConfigMetadataRead Action = "config.metadata.read"
-	ActionConfigSyncManage   Action = "config.sync.manage"
-	ActionConfigValueRead    Action = "config.value.read"
-	ActionConfigValueWrite   Action = "config.value.write"
-	ActionContractActivate   Action = "contract.activate"
-	ActionContractRead       Action = "contract.read"
-	ActionContractSubmit     Action = "contract.submit"
-	ActionEnvironmentManage  Action = "environment.manage"
-	ActionEnvironmentRead    Action = "environment.read"
-	ActionIdentityManage     Action = "identity.manage"
-	ActionIdentityRead       Action = "identity.read"
-	ActionOrganizationManage Action = "organization.manage"
-	ActionOrganizationRead   Action = "organization.read"
-	ActionPolicyManage       Action = "policy.manage"
-	ActionPolicyRead         Action = "policy.read"
-	ActionProjectManage      Action = "project.manage"
-	ActionProjectRead        Action = "project.read"
-	ActionSecretReveal       Action = "secret.reveal"
-	ActionSecretUse          Action = "secret.use"
+	ActionAuditRead           Action = "audit.read"
+	ActionCapabilityIssue     Action = "capability.issue"
+	ActionConfigMetadataRead  Action = "config.metadata.read"
+	ActionConfigSyncManage    Action = "config.sync.manage"
+	ActionConfigValueRead     Action = "config.value.read"
+	ActionConfigValueWrite    Action = "config.value.write"
+	ActionContractActivate    Action = "contract.activate"
+	ActionContractRead        Action = "contract.read"
+	ActionContractSubmit      Action = "contract.submit"
+	ActionEntryLinkCreate     Action = "entry-link.create"
+	ActionEntryLinkCreateOpen Action = "entry-link.create-open"
+	ActionEnvironmentManage   Action = "environment.manage"
+	ActionEnvironmentRead     Action = "environment.read"
+	ActionIdentityManage      Action = "identity.manage"
+	ActionIdentityRead        Action = "identity.read"
+	ActionOrganizationManage  Action = "organization.manage"
+	ActionOrganizationRead    Action = "organization.read"
+	ActionPolicyManage        Action = "policy.manage"
+	ActionPolicyRead          Action = "policy.read"
+	ActionProjectManage       Action = "project.manage"
+	ActionProjectRead         Action = "project.read"
+	ActionSecretReveal        Action = "secret.reveal"
+	ActionSecretUse           Action = "secret.use"
 )
 
 // Valid indicates whether the value is a known member of the Action enum.
@@ -107,6 +109,10 @@ func (e Action) Valid() bool {
 	case ActionContractRead:
 		return true
 	case ActionContractSubmit:
+		return true
+	case ActionEntryLinkCreate:
+		return true
+	case ActionEntryLinkCreateOpen:
 		return true
 	case ActionEnvironmentManage:
 		return true
@@ -776,6 +782,195 @@ func (e EffectiveConfigurationItemSource) Valid() bool {
 	case EffectiveConfigurationItemSourceParent:
 		return true
 	case EffectiveConfigurationItemSourceSelf:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkAccepts.
+const (
+	EntryLinkAcceptsOtpauth EntryLinkAccepts = "otpauth"
+	EntryLinkAcceptsValue   EntryLinkAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkAccepts enum.
+func (e EntryLinkAccepts) Valid() bool {
+	switch e {
+	case EntryLinkAcceptsOtpauth:
+		return true
+	case EntryLinkAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkReason.
+const (
+	EntryLinkReasonCancelled    EntryLinkReason = "cancelled"
+	EntryLinkReasonValueChanged EntryLinkReason = "value-changed"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkReason enum.
+func (e EntryLinkReason) Valid() bool {
+	switch e {
+	case EntryLinkReasonCancelled:
+		return true
+	case EntryLinkReasonValueChanged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkRestrictedTo.
+const (
+	EntryLinkRestrictedToAnyone   EntryLinkRestrictedTo = "anyone"
+	EntryLinkRestrictedToIdentity EntryLinkRestrictedTo = "identity"
+	EntryLinkRestrictedToMember   EntryLinkRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkRestrictedTo enum.
+func (e EntryLinkRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkRestrictedToAnyone:
+		return true
+	case EntryLinkRestrictedToIdentity:
+		return true
+	case EntryLinkRestrictedToMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkInputAccepts.
+const (
+	EntryLinkInputAcceptsOtpauth EntryLinkInputAccepts = "otpauth"
+	EntryLinkInputAcceptsValue   EntryLinkInputAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkInputAccepts enum.
+func (e EntryLinkInputAccepts) Valid() bool {
+	switch e {
+	case EntryLinkInputAcceptsOtpauth:
+		return true
+	case EntryLinkInputAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkInputRestrictedTo.
+const (
+	EntryLinkInputRestrictedToAnyone   EntryLinkInputRestrictedTo = "anyone"
+	EntryLinkInputRestrictedToIdentity EntryLinkInputRestrictedTo = "identity"
+	EntryLinkInputRestrictedToMember   EntryLinkInputRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkInputRestrictedTo enum.
+func (e EntryLinkInputRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkInputRestrictedToAnyone:
+		return true
+	case EntryLinkInputRestrictedToIdentity:
+		return true
+	case EntryLinkInputRestrictedToMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkStatus.
+const (
+	EntryLinkStatusCancelled EntryLinkStatus = "cancelled"
+	EntryLinkStatusEntered   EntryLinkStatus = "entered"
+	EntryLinkStatusExpired   EntryLinkStatus = "expired"
+	EntryLinkStatusPending   EntryLinkStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkStatus enum.
+func (e EntryLinkStatus) Valid() bool {
+	switch e {
+	case EntryLinkStatusCancelled:
+		return true
+	case EntryLinkStatusEntered:
+		return true
+	case EntryLinkStatusExpired:
+		return true
+	case EntryLinkStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewAccepts.
+const (
+	EntryLinkViewAcceptsOtpauth EntryLinkViewAccepts = "otpauth"
+	EntryLinkViewAcceptsValue   EntryLinkViewAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewAccepts enum.
+func (e EntryLinkViewAccepts) Valid() bool {
+	switch e {
+	case EntryLinkViewAcceptsOtpauth:
+		return true
+	case EntryLinkViewAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewRequestedByKind.
+const (
+	EntryLinkViewRequestedByKindAgent    EntryLinkViewRequestedByKind = "agent"
+	EntryLinkViewRequestedByKindBroker   EntryLinkViewRequestedByKind = "broker"
+	EntryLinkViewRequestedByKindCi       EntryLinkViewRequestedByKind = "ci"
+	EntryLinkViewRequestedByKindHuman    EntryLinkViewRequestedByKind = "human"
+	EntryLinkViewRequestedByKindService  EntryLinkViewRequestedByKind = "service"
+	EntryLinkViewRequestedByKindWorkload EntryLinkViewRequestedByKind = "workload"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewRequestedByKind enum.
+func (e EntryLinkViewRequestedByKind) Valid() bool {
+	switch e {
+	case EntryLinkViewRequestedByKindAgent:
+		return true
+	case EntryLinkViewRequestedByKindBroker:
+		return true
+	case EntryLinkViewRequestedByKindCi:
+		return true
+	case EntryLinkViewRequestedByKindHuman:
+		return true
+	case EntryLinkViewRequestedByKindService:
+		return true
+	case EntryLinkViewRequestedByKindWorkload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewRestrictedTo.
+const (
+	EntryLinkViewRestrictedToAnyone   EntryLinkViewRestrictedTo = "anyone"
+	EntryLinkViewRestrictedToIdentity EntryLinkViewRestrictedTo = "identity"
+	EntryLinkViewRestrictedToMember   EntryLinkViewRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewRestrictedTo enum.
+func (e EntryLinkViewRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkViewRestrictedToAnyone:
+		return true
+	case EntryLinkViewRestrictedToIdentity:
+		return true
+	case EntryLinkViewRestrictedToMember:
 		return true
 	default:
 		return false
@@ -3038,6 +3233,21 @@ func (e DecideDeviceSignIn200JSONResponseBodyDecision) Valid() bool {
 	}
 }
 
+// Defines values for SubmitEntryLink200JSONResponseBodyStatus.
+const (
+	SubmitEntryLink200JSONResponseBodyStatusEntered SubmitEntryLink200JSONResponseBodyStatus = "entered"
+)
+
+// Valid indicates whether the value is a known member of the SubmitEntryLink200JSONResponseBodyStatus enum.
+func (e SubmitEntryLink200JSONResponseBodyStatus) Valid() bool {
+	switch e {
+	case SubmitEntryLink200JSONResponseBodyStatusEntered:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListAuditEventsParamsDecision.
 const (
 	ListAuditEventsParamsDecisionAllow ListAuditEventsParamsDecision = "allow"
@@ -4001,6 +4211,14 @@ type ContractRevision struct {
 	SemanticsVersion int `json:"semanticsVersion"`
 }
 
+// CreatedEntryLink defines model for CreatedEntryLink.
+type CreatedEntryLink struct {
+	Link EntryLink `json:"link"`
+
+	// Url The page's address, on this installation's public URL. What follows the # is the link's secret, which a browser sends to no server and to no proxy; Varlatch keeps its hash only.
+	Url string `json:"url"`
+}
+
 // CreatedIdentity The new machine identity and its first credential. Not an Identity: it carries no createdAt, lastSeenAt or member fields.
 type CreatedIdentity struct {
 	// Credential Shown exactly once at creation; stored hashed; never retrievable.
@@ -4208,6 +4426,107 @@ type EffectiveConfigurationItemSource string
 
 // EntityVersion Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 type EntityVersion = int
+
+// EntryLink defines model for EntryLink.
+type EntryLink struct {
+	// Accepts A value, or the seed of a one-time code (capability values.totp).
+	Accepts     EntryLinkAccepts          `json:"accepts"`
+	CreatedAt   time.Time                 `json:"createdAt"`
+	Description nullable.Nullable[string] `json:"description"`
+
+	// EndedAt When the value was entered, or the link cancelled.
+	EndedAt       nullable.Nullable[time.Time] `json:"endedAt"`
+	EnvironmentId string                       `json:"environmentId"`
+	ExpiresAt     time.Time                    `json:"expiresAt"`
+	Id            string                       `json:"id"`
+
+	// IdentityId Present when restrictedTo is identity.
+	IdentityId *string `json:"identityId,omitempty"`
+	Item       string  `json:"item"`
+
+	// Reason Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+	Reason *EntryLinkReason `json:"reason,omitempty"`
+
+	// Replace It replaces the value there was when it was made.
+	Replace               bool   `json:"replace"`
+	RequestedByIdentityId string `json:"requestedByIdentityId"`
+
+	// RestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+	RestrictedTo EntryLinkRestrictedTo `json:"restrictedTo"`
+
+	// Status pending until the value is entered, the link expires, or it is cancelled.
+	Status EntryLinkStatus `json:"status"`
+}
+
+// EntryLinkAccepts A value, or the seed of a one-time code (capability values.totp).
+type EntryLinkAccepts string
+
+// EntryLinkReason Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+type EntryLinkReason string
+
+// EntryLinkRestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+type EntryLinkRestrictedTo string
+
+// EntryLinkInput defines model for EntryLinkInput.
+type EntryLinkInput struct {
+	// Accepts value when absent.
+	Accepts *EntryLinkInputAccepts `json:"accepts,omitempty"`
+
+	// Description A few words for the person, shown on the page as the caller's own: plain text in one line, with no link, address or markup (VALIDATION_FAILED otherwise). In the audit log.
+	Description *string `json:"description,omitempty"`
+
+	// IdentityId With restrictedTo identity, the person, a member of the Organization.
+	IdentityId *string `json:"identityId,omitempty"`
+	Item       string  `json:"item"`
+
+	// Replace Replace the value there is now. Entering is refused when it is another one by then.
+	Replace *bool `json:"replace,omitempty"`
+
+	// RestrictedTo member when absent.
+	RestrictedTo *EntryLinkInputRestrictedTo `json:"restrictedTo,omitempty"`
+
+	// TtlSeconds 900 when absent.
+	TtlSeconds *int `json:"ttlSeconds,omitempty"`
+}
+
+// EntryLinkInputAccepts value when absent.
+type EntryLinkInputAccepts string
+
+// EntryLinkInputRestrictedTo member when absent.
+type EntryLinkInputRestrictedTo string
+
+// EntryLinkStatus pending until the value is entered, the link expires, or it is cancelled.
+type EntryLinkStatus string
+
+// EntryLinkView defines model for EntryLinkView.
+type EntryLinkView struct {
+	Accepts          *EntryLinkViewAccepts     `json:"accepts,omitempty"`
+	Description      nullable.Nullable[string] `json:"description,omitempty"`
+	Environment      *string                   `json:"environment,omitempty"`
+	ExpiresAt        *time.Time                `json:"expiresAt,omitempty"`
+	ExpiresInSeconds *int                      `json:"expiresInSeconds,omitempty"`
+	Item             *string                   `json:"item,omitempty"`
+	Organization     *string                   `json:"organization,omitempty"`
+	Project          *string                   `json:"project,omitempty"`
+	Replace          *bool                     `json:"replace,omitempty"`
+	RequestedBy      *struct {
+		Kind EntryLinkViewRequestedByKind `json:"kind"`
+		Name string                       `json:"name"`
+	} `json:"requestedBy,omitempty"`
+	RestrictedTo EntryLinkViewRestrictedTo `json:"restrictedTo"`
+
+	// SignInRequired Whether a person has to sign in first; then nothing below is there.
+	SignInRequired bool `json:"signInRequired"`
+}
+
+// EntryLinkViewAccepts defines model for EntryLinkView.Accepts.
+type EntryLinkViewAccepts string
+
+// EntryLinkViewRequestedByKind defines model for EntryLinkView.RequestedBy.Kind.
+type EntryLinkViewRequestedByKind string
+
+// EntryLinkViewRestrictedTo defines model for EntryLinkView.RestrictedTo.
+type EntryLinkViewRestrictedTo string
 
 // Environment defines model for Environment.
 type Environment struct {
@@ -6355,6 +6674,9 @@ type AuditUntil = time.Time
 // Cursor defines model for cursor.
 type Cursor = string
 
+// EntryLinkParameter defines model for entryLink.
+type EntryLinkParameter = string
+
 // EnvironmentParameter defines model for environment.
 type EnvironmentParameter = string
 
@@ -6422,6 +6744,24 @@ type ListDeletedOrganizationAuditEventsParams struct {
 	// Cursor Opaque cursor from a previous response; never parse.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
+
+// LookupEntryLinkJSONBody defines parameters for LookupEntryLink.
+type LookupEntryLinkJSONBody struct {
+	Token string `json:"token"`
+}
+
+// SubmitEntryLinkJSONBody defines parameters for SubmitEntryLink.
+type SubmitEntryLinkJSONBody struct {
+	// Otpauth For a link that accepts the seed of a one-time code, an otpauth://totp/ URI.
+	Otpauth *string `json:"otpauth,omitempty"`
+	Token   string  `json:"token"`
+
+	// Value For a link that accepts a value.
+	Value *string `json:"value,omitempty"`
+}
+
+// SubmitEntryLink200JSONResponseBodyStatus defines parameters for SubmitEntryLink.
+type SubmitEntryLink200JSONResponseBodyStatus string
 
 // ApproveApprovalJSONBody defines parameters for ApproveApproval.
 type ApproveApprovalJSONBody struct {
@@ -6497,7 +6837,7 @@ type ListAuditEventsParams struct {
 	// ActorIdentityId Only events whose actor is this identity ID (capability audit.filters).
 	ActorIdentityId *AuditActorIdentityId `form:"actorIdentityId,omitempty" json:"actorIdentityId,omitempty"`
 
-	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
+	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
 	Actor *ListAuditEventsParamsActor `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// ProjectId Only events whose resource names this project ID (capability audit.filters).
@@ -6533,7 +6873,7 @@ type ExportAuditEventsParams struct {
 	// ActorIdentityId Only events whose actor is this identity ID (capability audit.filters).
 	ActorIdentityId *AuditActorIdentityId `form:"actorIdentityId,omitempty" json:"actorIdentityId,omitempty"`
 
-	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
+	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
 	Actor *ExportAuditEventsParamsActor `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// ProjectId Only events whose resource names this project ID (capability audit.filters).
@@ -7506,6 +7846,12 @@ type LookupDeviceSignInJSONRequestBody LookupDeviceSignInJSONBody
 // CollectDeviceSignInJSONRequestBody defines body for CollectDeviceSignIn for application/json ContentType.
 type CollectDeviceSignInJSONRequestBody CollectDeviceSignInJSONBody
 
+// LookupEntryLinkJSONRequestBody defines body for LookupEntryLink for application/json ContentType.
+type LookupEntryLinkJSONRequestBody LookupEntryLinkJSONBody
+
+// SubmitEntryLinkJSONRequestBody defines body for SubmitEntryLink for application/json ContentType.
+type SubmitEntryLinkJSONRequestBody SubmitEntryLinkJSONBody
+
 // ApproveApprovalJSONRequestBody defines body for ApproveApproval for application/json ContentType.
 type ApproveApprovalJSONRequestBody ApproveApprovalJSONBody
 
@@ -7628,6 +7974,9 @@ type ApplyChangeSetJSONRequestBody ApplyChangeSetJSONBody
 
 // DiscloseSecretsJSONRequestBody defines body for DiscloseSecrets for application/json ContentType.
 type DiscloseSecretsJSONRequestBody DiscloseSecretsJSONBody
+
+// CreateEntryLinkJSONRequestBody defines body for CreateEntryLink for application/json ContentType.
+type CreateEntryLinkJSONRequestBody = EntryLinkInput
 
 // CreateOAuthConnectionJSONRequestBody defines body for CreateOAuthConnection for application/json ContentType.
 type CreateOAuthConnectionJSONRequestBody = OAuthConnectionInput

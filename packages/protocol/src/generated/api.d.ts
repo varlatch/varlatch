@@ -539,6 +539,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/projects/{project}/environments/{environment}/entry-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The environment's entry links (capability values.entry-links, ADR-0063), newest first, at most 200, kept until a day after they expire. A machine identity sees what it asked for; a person needs config.value.write and sees all of them. Never a link's address, and nothing of a value. */
+        get: operations["listEntryLinks"];
+        put?: never;
+        /** Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read. */
+        post: operations["createEntryLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One entry link, as listEntryLinks shows it: its status says whether the value was entered. */
+        get: operations["getEntryLink"];
+        put?: never;
+        post?: never;
+        /** Cancel a pending entry link: who asked for it, with or without its right still, or a person holding config.value.write. Works while the Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND. */
+        delete: operations["cancelEntryLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entry-links/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status); PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED after 20 unknown tokens from one address in ten minutes. Never cacheable. */
+        post: operations["lookupEntryLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entry-links/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable. */
+        post: operations["submitEntryLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/projects/{project}/environments/{environment}/changes": {
         parameters: {
             query?: never;
@@ -3707,8 +3777,97 @@ export interface components {
                 [key: string]: string[];
             };
         };
+        /**
+         * @description pending until the value is entered, the link expires, or it is cancelled.
+         * @enum {string}
+         */
+        EntryLinkStatus: "pending" | "entered" | "expired" | "cancelled";
+        EntryLink: {
+            id: string;
+            environmentId: string;
+            item: string;
+            /**
+             * @description A value, or the seed of a one-time code (capability values.totp).
+             * @enum {string}
+             */
+            accepts: "value" | "otpauth";
+            /** @description It replaces the value there was when it was made. */
+            replace: boolean;
+            /**
+             * @description Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+             * @enum {string}
+             */
+            restrictedTo: "anyone" | "member" | "identity";
+            /** @description Present when restrictedTo is identity. */
+            identityId?: string;
+            description: string | null;
+            requestedByIdentityId: string;
+            status: components["schemas"]["EntryLinkStatus"];
+            /**
+             * @description Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+             * @enum {string}
+             */
+            reason?: "cancelled" | "value-changed";
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /**
+             * Format: date-time
+             * @description When the value was entered, or the link cancelled.
+             */
+            endedAt: string | null;
+        };
+        EntryLinkInput: {
+            item: string;
+            /**
+             * @description value when absent.
+             * @enum {string}
+             */
+            accepts?: "value" | "otpauth";
+            /** @description Replace the value there is now. Entering is refused when it is another one by then. */
+            replace?: boolean;
+            /**
+             * @description member when absent.
+             * @enum {string}
+             */
+            restrictedTo?: "anyone" | "member" | "identity";
+            /** @description With restrictedTo identity, the person, a member of the Organization. */
+            identityId?: string;
+            /** @description A few words for the person, shown on the page as the caller's own: plain text in one line, with no link, address or markup (VALIDATION_FAILED otherwise). In the audit log. */
+            description?: string;
+            /** @description 900 when absent. */
+            ttlSeconds?: number;
+        };
+        CreatedEntryLink: {
+            link: components["schemas"]["EntryLink"];
+            /** @description The page's address, on this installation's public URL. What follows the # is the link's secret, which a browser sends to no server and to no proxy; Varlatch keeps its hash only. */
+            url: string;
+        };
+        EntryLinkView: {
+            /** @enum {string} */
+            restrictedTo: "anyone" | "member" | "identity";
+            /** @description Whether a person has to sign in first; then nothing below is there. */
+            signInRequired: boolean;
+            organization?: string;
+            project?: string;
+            environment?: string;
+            item?: string;
+            /** @enum {string} */
+            accepts?: "value" | "otpauth";
+            replace?: boolean;
+            description?: string | null;
+            requestedBy?: {
+                name: string;
+                /** @enum {string} */
+                kind: "human" | "service" | "workload" | "ci" | "broker" | "agent";
+            };
+            /** Format: date-time */
+            expiresAt?: string;
+            expiresInSeconds?: number;
+        };
         /** @enum {string} */
-        Action: "organization.read" | "organization.manage" | "project.read" | "project.manage" | "environment.read" | "environment.manage" | "config.metadata.read" | "config.value.read" | "config.value.write" | "secret.reveal" | "secret.use" | "capability.issue" | "contract.read" | "contract.submit" | "contract.activate" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read" | "config.sync.manage";
+        Action: "organization.read" | "organization.manage" | "project.read" | "project.manage" | "environment.read" | "environment.manage" | "config.metadata.read" | "config.value.read" | "config.value.write" | "secret.reveal" | "secret.use" | "capability.issue" | "entry-link.create" | "entry-link.create-open" | "contract.read" | "contract.submit" | "contract.activate" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read" | "config.sync.manage";
         GrantScope: {
             /** @enum {string} */
             kind: "organization";
@@ -4742,6 +4901,8 @@ export interface components {
         environment: string;
         /** @description Config Item name */
         item: string;
+        /** @description Entry link ID */
+        entryLink: string;
         limit: number;
         /** @description Opaque cursor from a previous response; never parse. */
         cursor: string;
@@ -4751,7 +4912,7 @@ export interface components {
         auditEventType: string;
         /** @description Only events whose actor is this identity ID (capability audit.filters). */
         auditActorIdentityId: string;
-        /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+        /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
         auditActor: "varlatch";
         /** @description Only events whose resource names this project ID (capability audit.filters). */
         auditProjectId: string;
@@ -6182,6 +6343,194 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OAuthDisconnection"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listEntryLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["EntryLink"][];
+                        nextCursor: components["schemas"]["NextCursor"];
+                    };
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    createEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EntryLinkInput"];
+            };
+        };
+        responses: {
+            /** @description The link, with its address */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedEntryLink"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Entry link ID */
+                entryLink: components["parameters"]["entryLink"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryLink"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    cancelEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Entry link ID */
+                entryLink: components["parameters"]["entryLink"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelled */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    lookupEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description What the page shows */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryLinkView"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    submitEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                    /** @description For a link that accepts a value. */
+                    value?: string;
+                    /** @description For a link that accepts the seed of a one-time code, an otpauth://totp/ URI. */
+                    otpauth?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Entered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        status: "entered";
+                    };
                 };
             };
             429: components["responses"]["RequestWindow"];
@@ -9270,7 +9619,7 @@ export interface operations {
                 eventType?: components["parameters"]["auditEventType"];
                 /** @description Only events whose actor is this identity ID (capability audit.filters). */
                 actorIdentityId?: components["parameters"]["auditActorIdentityId"];
-                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
                 actor?: components["parameters"]["auditActor"];
                 /** @description Only events whose resource names this project ID (capability audit.filters). */
                 projectId?: components["parameters"]["auditProjectId"];
@@ -9321,7 +9670,7 @@ export interface operations {
                 eventType?: components["parameters"]["auditEventType"];
                 /** @description Only events whose actor is this identity ID (capability audit.filters). */
                 actorIdentityId?: components["parameters"]["auditActorIdentityId"];
-                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
                 actor?: components["parameters"]["auditActor"];
                 /** @description Only events whose resource names this project ID (capability audit.filters). */
                 projectId?: components["parameters"]["auditProjectId"];

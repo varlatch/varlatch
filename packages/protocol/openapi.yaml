@@ -48,6 +48,10 @@ tags:
     description: >
       OAuth connections (ADR-0062): varlatchd only, behind the capability
       oauth.connections.
+  - name: entry-links
+    description: >
+      Entry links (ADR-0063): varlatchd only, behind the capability
+      values.entry-links.
 
 paths:
   /installation/backups:
@@ -1396,6 +1400,196 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OAuthDisconnection" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/entry-links:
+    get:
+      tags: [entry-links]
+      operationId: listEntryLinks
+      summary: >
+        The environment's entry links (capability values.entry-links,
+        ADR-0063), newest first, at most 200, kept until a day after they
+        expire. A machine identity sees what it asked for; a person needs
+        config.value.write and sees all of them. Never a link's address, and
+        nothing of a value.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: The links
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/EntryLink" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [entry-links]
+      operationId: createEntryLink
+      summary: >
+        Make a link a person enters one Secret's value with, once, on
+        Varlatch's own page. A service, workload, ci or broker identity needs
+        entry-link.create here (entry-link.create-open when restrictedTo is
+        anyone), which no built-in role holds; a person needs
+        config.value.write. Replacing a value needs config.value.write of
+        either. Whoever makes the link gets no value by it, and their right
+        is decided again when the value is entered. The item must have no
+        value here, inherited ones included (VERSION_CONFLICT otherwise),
+        unless replace; it must be sensitive, and no OAuth connection
+        (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one
+        the active Contract names when the caller has no config.value.write
+        (not-in-contract). Under
+        passkey-verification's enforce a link open to anyone is refused
+        (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond
+        100 pending links, or 300 an hour, of one identity. The address is in
+        this answer only; it is never cacheable, and an Idempotency-Key is
+        not read.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EntryLinkInput" }
+      responses:
+        "201":
+          description: The link, with its address
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedEntryLink" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink}:
+    get:
+      tags: [entry-links]
+      operationId: getEntryLink
+      summary: >
+        One entry link, as listEntryLinks shows it: its status says whether
+        the value was entered.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/entryLink"
+      responses:
+        "200":
+          description: The link
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntryLink" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [entry-links]
+      operationId: cancelEntryLink
+      summary: >
+        Cancel a pending entry link: who asked for it, with or without its
+        right still, or a person holding config.value.write. Works while the
+        Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/entryLink"
+      responses:
+        "204": { description: Cancelled }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /entry-links/lookup:
+    post:
+      tags: [entry-links]
+      operationId: lookupEntryLink
+      summary: >
+        What an entry link's page shows before a value is entered. The token
+        in the body is what is asked for; a link made for a member, or for one
+        person, also needs that person's bearer credential, and without one
+        answers signInRequired and no names. Nothing is used up and nothing
+        recorded, however often it is asked. RESOURCE_NOT_FOUND for a token
+        there is no link of; CONSUMED (410) after the value was entered,
+        EXPIRED (410) once expired or cancelled (details.status);
+        PERMISSION_DENIED for another person (reason not-for-you), or when
+        whoever made the link may no longer (requester-not-allowed).
+        RATE_LIMITED after 20 unknown tokens from one address in ten minutes.
+        Never cacheable.
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: What the page shows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntryLinkView" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /entry-links/submit:
+    post:
+      tags: [entry-links]
+      operationId: submitEntryLink
+      summary: >
+        Enter the value of an entry link, once. Authenticated as
+        lookupEntryLink, with the same refusals, and the passkey-verification
+        checkpoint of a value write for a signed-in person. One request of
+        several at once enters it. Refused (STATE_CHANGED), and the link
+        cancelled, when the item's value changed since the link was made. A
+        refusal does not use the link up otherwise: a value that holds a
+        ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing
+        of the value. Never cacheable.
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, minLength: 1, maxLength: 200 }
+                value:
+                  type: string
+                  minLength: 1
+                  maxLength: 65536
+                  description: For a link that accepts a value.
+                otpauth:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                  description: For a link that accepts the seed of a one-time code, an otpauth://totp/ URI.
+      responses:
+        "200":
+          description: Entered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: entered }
         "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
@@ -5645,6 +5839,12 @@ components:
       required: true
       description: Config Item name
       schema: { type: string, pattern: "^[A-Z][A-Z0-9_]*$" }
+    entryLink:
+      name: entryLink
+      in: path
+      required: true
+      description: Entry link ID
+      schema: { type: string }
     limit:
       name: limit
       in: query
@@ -5678,7 +5878,8 @@ components:
       description: >
         varlatch: only Varlatch's own events, those with no actor identity
         (sync delivery, webhooks, operator commands), except
-        authentication.* events, whose missing actor is an unknown caller
+        authentication.* events, whose missing actor is an unknown caller,
+        and what somebody did with an entry link open to anyone
         (capability audit.attribution). Given with actorIdentityId it is
         refused with VALIDATION_FAILED.
       schema: { type: string, enum: [varlatch] }
@@ -7817,6 +8018,114 @@ components:
             type: array
             items: { type: string }
 
+    EntryLinkStatus:
+      type: string
+      description: >
+        pending until the value is entered, the link expires, or it is
+        cancelled.
+      enum: [pending, entered, expired, cancelled]
+
+    EntryLink:
+      type: object
+      required: [id, environmentId, item, accepts, replace, restrictedTo, description, requestedByIdentityId, status, createdAt, expiresAt, endedAt]
+      properties:
+        id: { type: string }
+        environmentId: { type: string }
+        item: { type: string }
+        accepts:
+          type: string
+          enum: [value, otpauth]
+          description: A value, or the seed of a one-time code (capability values.totp).
+        replace: { type: boolean, description: It replaces the value there was when it was made. }
+        restrictedTo:
+          type: string
+          enum: [anyone, member, identity]
+          description: >
+            Who may enter the value: whoever holds the link, a signed-in
+            member of the Organization, or the one person in identityId.
+        identityId: { type: string, description: Present when restrictedTo is identity. }
+        description: { type: [string, "null"] }
+        requestedByIdentityId: { type: string }
+        status: { $ref: "#/components/schemas/EntryLinkStatus" }
+        reason:
+          type: string
+          enum: [cancelled, value-changed]
+          description: >
+            Present when the status is cancelled: somebody cancelled it, or
+            the item's value changed before a value was entered.
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        endedAt:
+          type: [string, "null"]
+          format: date-time
+          description: When the value was entered, or the link cancelled.
+
+    EntryLinkInput:
+      type: object
+      required: [item]
+      properties:
+        item: { type: string, minLength: 1, maxLength: 200 }
+        accepts: { type: string, enum: [value, otpauth], description: value when absent. }
+        replace:
+          type: boolean
+          description: >
+            Replace the value there is now. Entering is refused when it is
+            another one by then.
+        restrictedTo: { type: string, enum: [anyone, member, identity], description: member when absent. }
+        identityId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: With restrictedTo identity, the person, a member of the Organization.
+        description:
+          type: string
+          maxLength: 280
+          description: >
+            A few words for the person, shown on the page as the caller's own:
+            plain text in one line, with no link, address or markup
+            (VALIDATION_FAILED otherwise). In the audit log.
+        ttlSeconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          description: 900 when absent.
+
+    CreatedEntryLink:
+      type: object
+      required: [link, url]
+      properties:
+        link: { $ref: "#/components/schemas/EntryLink" }
+        url:
+          type: string
+          description: >
+            The page's address, on this installation's public URL. What
+            follows the # is the link's secret, which a browser sends to no
+            server and to no proxy; Varlatch keeps its hash only.
+
+    EntryLinkView:
+      type: object
+      required: [restrictedTo, signInRequired]
+      properties:
+        restrictedTo: { type: string, enum: [anyone, member, identity] }
+        signInRequired:
+          type: boolean
+          description: Whether a person has to sign in first; then nothing below is there.
+        organization: { type: string }
+        project: { type: string }
+        environment: { type: string }
+        item: { type: string }
+        accepts: { type: string, enum: [value, otpauth] }
+        replace: { type: boolean }
+        description: { type: [string, "null"] }
+        requestedBy:
+          type: object
+          required: [name, kind]
+          properties:
+            name: { type: string }
+            kind: { type: string, enum: [human, service, workload, ci, broker, agent] }
+        expiresAt: { type: string, format: date-time }
+        expiresInSeconds: { type: integer, minimum: 0 }
+
     Action:
       type: string
       enum:
@@ -7832,6 +8141,8 @@ components:
         - secret.reveal
         - secret.use
         - capability.issue
+        - entry-link.create
+        - entry-link.create-open
         - contract.read
         - contract.submit
         - contract.activate

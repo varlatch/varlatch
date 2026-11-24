@@ -72,27 +72,29 @@ func (e AccessCheckWhere) Valid() bool {
 
 // Defines values for Action.
 const (
-	ActionAuditRead          Action = "audit.read"
-	ActionCapabilityIssue    Action = "capability.issue"
-	ActionConfigMetadataRead Action = "config.metadata.read"
-	ActionConfigSyncManage   Action = "config.sync.manage"
-	ActionConfigValueRead    Action = "config.value.read"
-	ActionConfigValueWrite   Action = "config.value.write"
-	ActionContractActivate   Action = "contract.activate"
-	ActionContractRead       Action = "contract.read"
-	ActionContractSubmit     Action = "contract.submit"
-	ActionEnvironmentManage  Action = "environment.manage"
-	ActionEnvironmentRead    Action = "environment.read"
-	ActionIdentityManage     Action = "identity.manage"
-	ActionIdentityRead       Action = "identity.read"
-	ActionOrganizationManage Action = "organization.manage"
-	ActionOrganizationRead   Action = "organization.read"
-	ActionPolicyManage       Action = "policy.manage"
-	ActionPolicyRead         Action = "policy.read"
-	ActionProjectManage      Action = "project.manage"
-	ActionProjectRead        Action = "project.read"
-	ActionSecretReveal       Action = "secret.reveal"
-	ActionSecretUse          Action = "secret.use"
+	ActionAuditRead           Action = "audit.read"
+	ActionCapabilityIssue     Action = "capability.issue"
+	ActionConfigMetadataRead  Action = "config.metadata.read"
+	ActionConfigSyncManage    Action = "config.sync.manage"
+	ActionConfigValueRead     Action = "config.value.read"
+	ActionConfigValueWrite    Action = "config.value.write"
+	ActionContractActivate    Action = "contract.activate"
+	ActionContractRead        Action = "contract.read"
+	ActionContractSubmit      Action = "contract.submit"
+	ActionEntryLinkCreate     Action = "entry-link.create"
+	ActionEntryLinkCreateOpen Action = "entry-link.create-open"
+	ActionEnvironmentManage   Action = "environment.manage"
+	ActionEnvironmentRead     Action = "environment.read"
+	ActionIdentityManage      Action = "identity.manage"
+	ActionIdentityRead        Action = "identity.read"
+	ActionOrganizationManage  Action = "organization.manage"
+	ActionOrganizationRead    Action = "organization.read"
+	ActionPolicyManage        Action = "policy.manage"
+	ActionPolicyRead          Action = "policy.read"
+	ActionProjectManage       Action = "project.manage"
+	ActionProjectRead         Action = "project.read"
+	ActionSecretReveal        Action = "secret.reveal"
+	ActionSecretUse           Action = "secret.use"
 )
 
 // Valid indicates whether the value is a known member of the Action enum.
@@ -115,6 +117,10 @@ func (e Action) Valid() bool {
 	case ActionContractRead:
 		return true
 	case ActionContractSubmit:
+		return true
+	case ActionEntryLinkCreate:
+		return true
+	case ActionEntryLinkCreateOpen:
 		return true
 	case ActionEnvironmentManage:
 		return true
@@ -784,6 +790,195 @@ func (e EffectiveConfigurationItemSource) Valid() bool {
 	case EffectiveConfigurationItemSourceParent:
 		return true
 	case EffectiveConfigurationItemSourceSelf:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkAccepts.
+const (
+	EntryLinkAcceptsOtpauth EntryLinkAccepts = "otpauth"
+	EntryLinkAcceptsValue   EntryLinkAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkAccepts enum.
+func (e EntryLinkAccepts) Valid() bool {
+	switch e {
+	case EntryLinkAcceptsOtpauth:
+		return true
+	case EntryLinkAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkReason.
+const (
+	EntryLinkReasonCancelled    EntryLinkReason = "cancelled"
+	EntryLinkReasonValueChanged EntryLinkReason = "value-changed"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkReason enum.
+func (e EntryLinkReason) Valid() bool {
+	switch e {
+	case EntryLinkReasonCancelled:
+		return true
+	case EntryLinkReasonValueChanged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkRestrictedTo.
+const (
+	EntryLinkRestrictedToAnyone   EntryLinkRestrictedTo = "anyone"
+	EntryLinkRestrictedToIdentity EntryLinkRestrictedTo = "identity"
+	EntryLinkRestrictedToMember   EntryLinkRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkRestrictedTo enum.
+func (e EntryLinkRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkRestrictedToAnyone:
+		return true
+	case EntryLinkRestrictedToIdentity:
+		return true
+	case EntryLinkRestrictedToMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkInputAccepts.
+const (
+	EntryLinkInputAcceptsOtpauth EntryLinkInputAccepts = "otpauth"
+	EntryLinkInputAcceptsValue   EntryLinkInputAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkInputAccepts enum.
+func (e EntryLinkInputAccepts) Valid() bool {
+	switch e {
+	case EntryLinkInputAcceptsOtpauth:
+		return true
+	case EntryLinkInputAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkInputRestrictedTo.
+const (
+	EntryLinkInputRestrictedToAnyone   EntryLinkInputRestrictedTo = "anyone"
+	EntryLinkInputRestrictedToIdentity EntryLinkInputRestrictedTo = "identity"
+	EntryLinkInputRestrictedToMember   EntryLinkInputRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkInputRestrictedTo enum.
+func (e EntryLinkInputRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkInputRestrictedToAnyone:
+		return true
+	case EntryLinkInputRestrictedToIdentity:
+		return true
+	case EntryLinkInputRestrictedToMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkStatus.
+const (
+	EntryLinkStatusCancelled EntryLinkStatus = "cancelled"
+	EntryLinkStatusEntered   EntryLinkStatus = "entered"
+	EntryLinkStatusExpired   EntryLinkStatus = "expired"
+	EntryLinkStatusPending   EntryLinkStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkStatus enum.
+func (e EntryLinkStatus) Valid() bool {
+	switch e {
+	case EntryLinkStatusCancelled:
+		return true
+	case EntryLinkStatusEntered:
+		return true
+	case EntryLinkStatusExpired:
+		return true
+	case EntryLinkStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewAccepts.
+const (
+	EntryLinkViewAcceptsOtpauth EntryLinkViewAccepts = "otpauth"
+	EntryLinkViewAcceptsValue   EntryLinkViewAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewAccepts enum.
+func (e EntryLinkViewAccepts) Valid() bool {
+	switch e {
+	case EntryLinkViewAcceptsOtpauth:
+		return true
+	case EntryLinkViewAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewRequestedByKind.
+const (
+	EntryLinkViewRequestedByKindAgent    EntryLinkViewRequestedByKind = "agent"
+	EntryLinkViewRequestedByKindBroker   EntryLinkViewRequestedByKind = "broker"
+	EntryLinkViewRequestedByKindCi       EntryLinkViewRequestedByKind = "ci"
+	EntryLinkViewRequestedByKindHuman    EntryLinkViewRequestedByKind = "human"
+	EntryLinkViewRequestedByKindService  EntryLinkViewRequestedByKind = "service"
+	EntryLinkViewRequestedByKindWorkload EntryLinkViewRequestedByKind = "workload"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewRequestedByKind enum.
+func (e EntryLinkViewRequestedByKind) Valid() bool {
+	switch e {
+	case EntryLinkViewRequestedByKindAgent:
+		return true
+	case EntryLinkViewRequestedByKindBroker:
+		return true
+	case EntryLinkViewRequestedByKindCi:
+		return true
+	case EntryLinkViewRequestedByKindHuman:
+		return true
+	case EntryLinkViewRequestedByKindService:
+		return true
+	case EntryLinkViewRequestedByKindWorkload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewRestrictedTo.
+const (
+	EntryLinkViewRestrictedToAnyone   EntryLinkViewRestrictedTo = "anyone"
+	EntryLinkViewRestrictedToIdentity EntryLinkViewRestrictedTo = "identity"
+	EntryLinkViewRestrictedToMember   EntryLinkViewRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewRestrictedTo enum.
+func (e EntryLinkViewRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkViewRestrictedToAnyone:
+		return true
+	case EntryLinkViewRestrictedToIdentity:
+		return true
+	case EntryLinkViewRestrictedToMember:
 		return true
 	default:
 		return false
@@ -3046,6 +3241,21 @@ func (e DecideDeviceSignIn200JSONResponseBodyDecision) Valid() bool {
 	}
 }
 
+// Defines values for SubmitEntryLink200JSONResponseBodyStatus.
+const (
+	SubmitEntryLink200JSONResponseBodyStatusEntered SubmitEntryLink200JSONResponseBodyStatus = "entered"
+)
+
+// Valid indicates whether the value is a known member of the SubmitEntryLink200JSONResponseBodyStatus enum.
+func (e SubmitEntryLink200JSONResponseBodyStatus) Valid() bool {
+	switch e {
+	case SubmitEntryLink200JSONResponseBodyStatusEntered:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListAuditEventsParamsDecision.
 const (
 	ListAuditEventsParamsDecisionAllow ListAuditEventsParamsDecision = "allow"
@@ -4009,6 +4219,14 @@ type ContractRevision struct {
 	SemanticsVersion int `json:"semanticsVersion"`
 }
 
+// CreatedEntryLink defines model for CreatedEntryLink.
+type CreatedEntryLink struct {
+	Link EntryLink `json:"link"`
+
+	// Url The page's address, on this installation's public URL. What follows the # is the link's secret, which a browser sends to no server and to no proxy; Varlatch keeps its hash only.
+	Url string `json:"url"`
+}
+
 // CreatedIdentity The new machine identity and its first credential. Not an Identity: it carries no createdAt, lastSeenAt or member fields.
 type CreatedIdentity struct {
 	// Credential Shown exactly once at creation; stored hashed; never retrievable.
@@ -4216,6 +4434,107 @@ type EffectiveConfigurationItemSource string
 
 // EntityVersion Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 type EntityVersion = int
+
+// EntryLink defines model for EntryLink.
+type EntryLink struct {
+	// Accepts A value, or the seed of a one-time code (capability values.totp).
+	Accepts     EntryLinkAccepts          `json:"accepts"`
+	CreatedAt   time.Time                 `json:"createdAt"`
+	Description nullable.Nullable[string] `json:"description"`
+
+	// EndedAt When the value was entered, or the link cancelled.
+	EndedAt       nullable.Nullable[time.Time] `json:"endedAt"`
+	EnvironmentId string                       `json:"environmentId"`
+	ExpiresAt     time.Time                    `json:"expiresAt"`
+	Id            string                       `json:"id"`
+
+	// IdentityId Present when restrictedTo is identity.
+	IdentityId *string `json:"identityId,omitempty"`
+	Item       string  `json:"item"`
+
+	// Reason Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+	Reason *EntryLinkReason `json:"reason,omitempty"`
+
+	// Replace It replaces the value there was when it was made.
+	Replace               bool   `json:"replace"`
+	RequestedByIdentityId string `json:"requestedByIdentityId"`
+
+	// RestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+	RestrictedTo EntryLinkRestrictedTo `json:"restrictedTo"`
+
+	// Status pending until the value is entered, the link expires, or it is cancelled.
+	Status EntryLinkStatus `json:"status"`
+}
+
+// EntryLinkAccepts A value, or the seed of a one-time code (capability values.totp).
+type EntryLinkAccepts string
+
+// EntryLinkReason Present when the status is cancelled: somebody cancelled it, or the item's value changed before a value was entered.
+type EntryLinkReason string
+
+// EntryLinkRestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+type EntryLinkRestrictedTo string
+
+// EntryLinkInput defines model for EntryLinkInput.
+type EntryLinkInput struct {
+	// Accepts value when absent.
+	Accepts *EntryLinkInputAccepts `json:"accepts,omitempty"`
+
+	// Description A few words for the person, shown on the page as the caller's own: plain text in one line, with no link, address or markup (VALIDATION_FAILED otherwise). In the audit log.
+	Description *string `json:"description,omitempty"`
+
+	// IdentityId With restrictedTo identity, the person, a member of the Organization.
+	IdentityId *string `json:"identityId,omitempty"`
+	Item       string  `json:"item"`
+
+	// Replace Replace the value there is now. Entering is refused when it is another one by then.
+	Replace *bool `json:"replace,omitempty"`
+
+	// RestrictedTo member when absent.
+	RestrictedTo *EntryLinkInputRestrictedTo `json:"restrictedTo,omitempty"`
+
+	// TtlSeconds 900 when absent.
+	TtlSeconds *int `json:"ttlSeconds,omitempty"`
+}
+
+// EntryLinkInputAccepts value when absent.
+type EntryLinkInputAccepts string
+
+// EntryLinkInputRestrictedTo member when absent.
+type EntryLinkInputRestrictedTo string
+
+// EntryLinkStatus pending until the value is entered, the link expires, or it is cancelled.
+type EntryLinkStatus string
+
+// EntryLinkView defines model for EntryLinkView.
+type EntryLinkView struct {
+	Accepts          *EntryLinkViewAccepts     `json:"accepts,omitempty"`
+	Description      nullable.Nullable[string] `json:"description,omitempty"`
+	Environment      *string                   `json:"environment,omitempty"`
+	ExpiresAt        *time.Time                `json:"expiresAt,omitempty"`
+	ExpiresInSeconds *int                      `json:"expiresInSeconds,omitempty"`
+	Item             *string                   `json:"item,omitempty"`
+	Organization     *string                   `json:"organization,omitempty"`
+	Project          *string                   `json:"project,omitempty"`
+	Replace          *bool                     `json:"replace,omitempty"`
+	RequestedBy      *struct {
+		Kind EntryLinkViewRequestedByKind `json:"kind"`
+		Name string                       `json:"name"`
+	} `json:"requestedBy,omitempty"`
+	RestrictedTo EntryLinkViewRestrictedTo `json:"restrictedTo"`
+
+	// SignInRequired Whether a person has to sign in first; then nothing below is there.
+	SignInRequired bool `json:"signInRequired"`
+}
+
+// EntryLinkViewAccepts defines model for EntryLinkView.Accepts.
+type EntryLinkViewAccepts string
+
+// EntryLinkViewRequestedByKind defines model for EntryLinkView.RequestedBy.Kind.
+type EntryLinkViewRequestedByKind string
+
+// EntryLinkViewRestrictedTo defines model for EntryLinkView.RestrictedTo.
+type EntryLinkViewRestrictedTo string
 
 // Environment defines model for Environment.
 type Environment struct {
@@ -6363,6 +6682,9 @@ type AuditUntil = time.Time
 // Cursor defines model for cursor.
 type Cursor = string
 
+// EntryLinkParameter defines model for entryLink.
+type EntryLinkParameter = string
+
 // EnvironmentParameter defines model for environment.
 type EnvironmentParameter = string
 
@@ -6430,6 +6752,24 @@ type ListDeletedOrganizationAuditEventsParams struct {
 	// Cursor Opaque cursor from a previous response; never parse.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
+
+// LookupEntryLinkJSONBody defines parameters for LookupEntryLink.
+type LookupEntryLinkJSONBody struct {
+	Token string `json:"token"`
+}
+
+// SubmitEntryLinkJSONBody defines parameters for SubmitEntryLink.
+type SubmitEntryLinkJSONBody struct {
+	// Otpauth For a link that accepts the seed of a one-time code, an otpauth://totp/ URI.
+	Otpauth *string `json:"otpauth,omitempty"`
+	Token   string  `json:"token"`
+
+	// Value For a link that accepts a value.
+	Value *string `json:"value,omitempty"`
+}
+
+// SubmitEntryLink200JSONResponseBodyStatus defines parameters for SubmitEntryLink.
+type SubmitEntryLink200JSONResponseBodyStatus string
 
 // ApproveApprovalJSONBody defines parameters for ApproveApproval.
 type ApproveApprovalJSONBody struct {
@@ -6505,7 +6845,7 @@ type ListAuditEventsParams struct {
 	// ActorIdentityId Only events whose actor is this identity ID (capability audit.filters).
 	ActorIdentityId *AuditActorIdentityId `form:"actorIdentityId,omitempty" json:"actorIdentityId,omitempty"`
 
-	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
+	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
 	Actor *ListAuditEventsParamsActor `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// ProjectId Only events whose resource names this project ID (capability audit.filters).
@@ -6541,7 +6881,7 @@ type ExportAuditEventsParams struct {
 	// ActorIdentityId Only events whose actor is this identity ID (capability audit.filters).
 	ActorIdentityId *AuditActorIdentityId `form:"actorIdentityId,omitempty" json:"actorIdentityId,omitempty"`
 
-	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
+	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
 	Actor *ExportAuditEventsParamsActor `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// ProjectId Only events whose resource names this project ID (capability audit.filters).
@@ -7514,6 +7854,12 @@ type LookupDeviceSignInJSONRequestBody LookupDeviceSignInJSONBody
 // CollectDeviceSignInJSONRequestBody defines body for CollectDeviceSignIn for application/json ContentType.
 type CollectDeviceSignInJSONRequestBody CollectDeviceSignInJSONBody
 
+// LookupEntryLinkJSONRequestBody defines body for LookupEntryLink for application/json ContentType.
+type LookupEntryLinkJSONRequestBody LookupEntryLinkJSONBody
+
+// SubmitEntryLinkJSONRequestBody defines body for SubmitEntryLink for application/json ContentType.
+type SubmitEntryLinkJSONRequestBody SubmitEntryLinkJSONBody
+
 // ApproveApprovalJSONRequestBody defines body for ApproveApproval for application/json ContentType.
 type ApproveApprovalJSONRequestBody ApproveApprovalJSONBody
 
@@ -7636,6 +7982,9 @@ type ApplyChangeSetJSONRequestBody ApplyChangeSetJSONBody
 
 // DiscloseSecretsJSONRequestBody defines body for DiscloseSecrets for application/json ContentType.
 type DiscloseSecretsJSONRequestBody DiscloseSecretsJSONBody
+
+// CreateEntryLinkJSONRequestBody defines body for CreateEntryLink for application/json ContentType.
+type CreateEntryLinkJSONRequestBody = EntryLinkInput
 
 // CreateOAuthConnectionJSONRequestBody defines body for CreateOAuthConnection for application/json ContentType.
 type CreateOAuthConnectionJSONRequestBody = OAuthConnectionInput
@@ -8519,6 +8868,12 @@ type ServerInterface interface {
 	// ExportDeletedOrganizationAuditEvents Stream a deleted Organization's audit log as NDJSON, oldest first, for the same readers as the listing (ADR-0051 Decision 8). Anyone else gets RESOURCE_NOT_FOUND.
 	// (GET /deleted-organizations/{organization}/audit-events/export)
 	ExportDeletedOrganizationAuditEvents(w http.ResponseWriter, r *http.Request, organization string)
+	// LookupEntryLink What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status); PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED after 20 unknown tokens from one address in ten minutes. Never cacheable.
+	// (POST /entry-links/lookup)
+	LookupEntryLink(w http.ResponseWriter, r *http.Request)
+	// SubmitEntryLink Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable.
+	// (POST /entry-links/submit)
+	SubmitEntryLink(w http.ResponseWriter, r *http.Request)
 	// GetInstallationBackups Installation Admin only, per-archive backup checks and delivery status
 	// (GET /installation/backups)
 	GetInstallationBackups(w http.ResponseWriter, r *http.Request)
@@ -8854,6 +9209,18 @@ type ServerInterface interface {
 	// GetEffectiveConfiguration Bulk-resolve the Effective Configuration (child overrides over parent values). With include=values, plaintext is returned for items the caller is authorized for (config.value.read for non-sensitive, secret.reveal for Secrets) and every disclosure is audited before material is returned. Values may reference sibling items as ${NAME} (capability values.references): references are expanded server-side using only values the caller receives in the same response; anything else stays a literal ${NAME}. $${NAME} escapes to a literal ${NAME}.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/effective-configuration)
 	GetEffectiveConfiguration(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, params GetEffectiveConfigurationParams)
+	// ListEntryLinks The environment's entry links (capability values.entry-links, ADR-0063), newest first, at most 200, kept until a day after they expire. A machine identity sees what it asked for; a person needs config.value.write and sees all of them. Never a link's address, and nothing of a value.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
+	ListEntryLinks(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// CreateEntryLink Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
+	CreateEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// CancelEntryLink Cancel a pending entry link: who asked for it, with or without its right still, or a person holding config.value.write. Works while the Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND.
+	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink})
+	CancelEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, entryLink EntryLinkParameter)
+	// GetEntryLink One entry link, as listEntryLinks shows it: its status says whether the value was entered.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink})
+	GetEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, entryLink EntryLinkParameter)
 	// ListOAuthConnections The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
 	ListOAuthConnections(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
@@ -9155,6 +9522,34 @@ func (siw *ServerInterfaceWrapper) ExportDeletedOrganizationAuditEvents(w http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ExportDeletedOrganizationAuditEvents(w, r, organization)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LookupEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) LookupEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LookupEntryLink(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SubmitEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) SubmitEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitEntryLink(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13811,6 +14206,200 @@ func (siw *ServerInterfaceWrapper) GetEffectiveConfiguration(w http.ResponseWrit
 	handler.ServeHTTP(w, r)
 }
 
+// ListEntryLinks operation middleware
+func (siw *ServerInterfaceWrapper) ListEntryLinks(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListEntryLinks(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) CreateEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateEntryLink(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) CancelEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "entryLink" -------------
+	var entryLink EntryLinkParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entryLink", r.PathValue("entryLink"), &entryLink, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entryLink", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelEntryLink(w, r, org, project, environment, entryLink)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) GetEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "entryLink" -------------
+	var entryLink EntryLinkParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entryLink", r.PathValue("entryLink"), &entryLink, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entryLink", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEntryLink(w, r, org, project, environment, entryLink)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListOAuthConnections operation middleware
 func (siw *ServerInterfaceWrapper) ListOAuthConnections(w http.ResponseWriter, r *http.Request) {
 
@@ -16608,6 +17197,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete", wrapper.CompleteOAuthAuthorization)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh", wrapper.RefreshOAuthConnection)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect", wrapper.DisconnectOAuthConnection)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/entry-links", wrapper.ListEntryLinks)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/entry-links", wrapper.CreateEntryLink)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink}", wrapper.CancelEntryLink)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink}", wrapper.GetEntryLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/entry-links/lookup", wrapper.LookupEntryLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/entry-links/submit", wrapper.SubmitEntryLink)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/changes", wrapper.ApplyChangeSet)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/validate", wrapper.ValidateEnvironment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/contract", wrapper.GetActiveContract)
@@ -17115,6 +17710,120 @@ type ExportDeletedOrganizationAuditEventsdefaultJSONResponse struct {
 }
 
 func (response ExportDeletedOrganizationAuditEventsdefaultJSONResponse) VisitExportDeletedOrganizationAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupEntryLinkRequestObject struct {
+	Body *LookupEntryLinkJSONRequestBody
+}
+
+type LookupEntryLinkResponseObject interface {
+	VisitLookupEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type LookupEntryLink200JSONResponse EntryLinkView
+
+func (response LookupEntryLink200JSONResponse) VisitLookupEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response LookupEntryLink429JSONResponse) VisitLookupEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response LookupEntryLinkdefaultJSONResponse) VisitLookupEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitEntryLinkRequestObject struct {
+	Body *SubmitEntryLinkJSONRequestBody
+}
+
+type SubmitEntryLinkResponseObject interface {
+	VisitSubmitEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type SubmitEntryLink200JSONResponse struct {
+	Status SubmitEntryLink200JSONResponseBodyStatus `json:"status"`
+}
+
+func (response SubmitEntryLink200JSONResponse) VisitSubmitEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response SubmitEntryLink429JSONResponse) VisitSubmitEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response SubmitEntryLinkdefaultJSONResponse) VisitSubmitEntryLinkResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -24203,6 +24912,240 @@ func (response GetEffectiveConfigurationdefaultJSONResponse) VisitGetEffectiveCo
 	return err
 }
 
+type ListEntryLinksRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+}
+
+type ListEntryLinksResponseObject interface {
+	VisitListEntryLinksResponse(w http.ResponseWriter) error
+}
+
+type ListEntryLinks200JSONResponse struct {
+	Items []EntryLink `json:"items"`
+
+	// NextCursor Opaque; null when no further pages exist.
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
+}
+
+func (response ListEntryLinks200JSONResponse) VisitListEntryLinksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListEntryLinks429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response ListEntryLinks429JSONResponse) VisitListEntryLinksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListEntryLinksdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response ListEntryLinksdefaultJSONResponse) VisitListEntryLinksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEntryLinkRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Body        *CreateEntryLinkJSONRequestBody
+}
+
+type CreateEntryLinkResponseObject interface {
+	VisitCreateEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type CreateEntryLink201JSONResponse CreatedEntryLink
+
+func (response CreateEntryLink201JSONResponse) VisitCreateEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response CreateEntryLink429JSONResponse) VisitCreateEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response CreateEntryLinkdefaultJSONResponse) VisitCreateEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelEntryLinkRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	EntryLink   EntryLinkParameter   `json:"entryLink"`
+}
+
+type CancelEntryLinkResponseObject interface {
+	VisitCancelEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type CancelEntryLink204Response struct {
+}
+
+func (response CancelEntryLink204Response) VisitCancelEntryLinkResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type CancelEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response CancelEntryLink429JSONResponse) VisitCancelEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response CancelEntryLinkdefaultJSONResponse) VisitCancelEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEntryLinkRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	EntryLink   EntryLinkParameter   `json:"entryLink"`
+}
+
+type GetEntryLinkResponseObject interface {
+	VisitGetEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type GetEntryLink200JSONResponse EntryLink
+
+func (response GetEntryLink200JSONResponse) VisitGetEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response GetEntryLink429JSONResponse) VisitGetEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetEntryLinkdefaultJSONResponse) VisitGetEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListOAuthConnectionsRequestObject struct {
 	Org         Org                  `json:"org"`
 	Project     ProjectParameter     `json:"project"`
@@ -27664,6 +28607,12 @@ type StrictServerInterface interface {
 	// ExportDeletedOrganizationAuditEvents Stream a deleted Organization's audit log as NDJSON, oldest first, for the same readers as the listing (ADR-0051 Decision 8). Anyone else gets RESOURCE_NOT_FOUND.
 	// (GET /deleted-organizations/{organization}/audit-events/export)
 	ExportDeletedOrganizationAuditEvents(ctx context.Context, request ExportDeletedOrganizationAuditEventsRequestObject) (ExportDeletedOrganizationAuditEventsResponseObject, error)
+	// LookupEntryLink What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status); PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED after 20 unknown tokens from one address in ten minutes. Never cacheable.
+	// (POST /entry-links/lookup)
+	LookupEntryLink(ctx context.Context, request LookupEntryLinkRequestObject) (LookupEntryLinkResponseObject, error)
+	// SubmitEntryLink Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable.
+	// (POST /entry-links/submit)
+	SubmitEntryLink(ctx context.Context, request SubmitEntryLinkRequestObject) (SubmitEntryLinkResponseObject, error)
 	// GetInstallationBackups Installation Admin only, per-archive backup checks and delivery status
 	// (GET /installation/backups)
 	GetInstallationBackups(ctx context.Context, request GetInstallationBackupsRequestObject) (GetInstallationBackupsResponseObject, error)
@@ -27999,6 +28948,18 @@ type StrictServerInterface interface {
 	// GetEffectiveConfiguration Bulk-resolve the Effective Configuration (child overrides over parent values). With include=values, plaintext is returned for items the caller is authorized for (config.value.read for non-sensitive, secret.reveal for Secrets) and every disclosure is audited before material is returned. Values may reference sibling items as ${NAME} (capability values.references): references are expanded server-side using only values the caller receives in the same response; anything else stays a literal ${NAME}. $${NAME} escapes to a literal ${NAME}.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/effective-configuration)
 	GetEffectiveConfiguration(ctx context.Context, request GetEffectiveConfigurationRequestObject) (GetEffectiveConfigurationResponseObject, error)
+	// ListEntryLinks The environment's entry links (capability values.entry-links, ADR-0063), newest first, at most 200, kept until a day after they expire. A machine identity sees what it asked for; a person needs config.value.write and sees all of them. Never a link's address, and nothing of a value.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
+	ListEntryLinks(ctx context.Context, request ListEntryLinksRequestObject) (ListEntryLinksResponseObject, error)
+	// CreateEntryLink Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
+	CreateEntryLink(ctx context.Context, request CreateEntryLinkRequestObject) (CreateEntryLinkResponseObject, error)
+	// CancelEntryLink Cancel a pending entry link: who asked for it, with or without its right still, or a person holding config.value.write. Works while the Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND.
+	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink})
+	CancelEntryLink(ctx context.Context, request CancelEntryLinkRequestObject) (CancelEntryLinkResponseObject, error)
+	// GetEntryLink One entry link, as listEntryLinks shows it: its status says whether the value was entered.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink})
+	GetEntryLink(ctx context.Context, request GetEntryLinkRequestObject) (GetEntryLinkResponseObject, error)
 	// ListOAuthConnections The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
 	ListOAuthConnections(ctx context.Context, request ListOAuthConnectionsRequestObject) (ListOAuthConnectionsResponseObject, error)
@@ -28375,6 +29336,68 @@ func (sh *strictHandler) ExportDeletedOrganizationAuditEvents(w http.ResponseWri
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ExportDeletedOrganizationAuditEventsResponseObject); ok {
 		if err := validResponse.VisitExportDeletedOrganizationAuditEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LookupEntryLink operation middleware
+func (sh *strictHandler) LookupEntryLink(w http.ResponseWriter, r *http.Request) {
+	var request LookupEntryLinkRequestObject
+
+	var body LookupEntryLinkJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LookupEntryLink(ctx, request.(LookupEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LookupEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LookupEntryLinkResponseObject); ok {
+		if err := validResponse.VisitLookupEntryLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SubmitEntryLink operation middleware
+func (sh *strictHandler) SubmitEntryLink(w http.ResponseWriter, r *http.Request) {
+	var request SubmitEntryLinkRequestObject
+
+	var body SubmitEntryLinkJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SubmitEntryLink(ctx, request.(SubmitEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SubmitEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SubmitEntryLinkResponseObject); ok {
+		if err := validResponse.VisitSubmitEntryLinkResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -31628,6 +32651,127 @@ func (sh *strictHandler) GetEffectiveConfiguration(w http.ResponseWriter, r *htt
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetEffectiveConfigurationResponseObject); ok {
 		if err := validResponse.VisitGetEffectiveConfigurationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListEntryLinks operation middleware
+func (sh *strictHandler) ListEntryLinks(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request ListEntryLinksRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListEntryLinks(ctx, request.(ListEntryLinksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListEntryLinks")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListEntryLinksResponseObject); ok {
+		if err := validResponse.VisitListEntryLinksResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateEntryLink operation middleware
+func (sh *strictHandler) CreateEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request CreateEntryLinkRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	var body CreateEntryLinkJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateEntryLink(ctx, request.(CreateEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateEntryLinkResponseObject); ok {
+		if err := validResponse.VisitCreateEntryLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CancelEntryLink operation middleware
+func (sh *strictHandler) CancelEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, entryLink EntryLinkParameter) {
+	var request CancelEntryLinkRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.EntryLink = entryLink
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelEntryLink(ctx, request.(CancelEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelEntryLinkResponseObject); ok {
+		if err := validResponse.VisitCancelEntryLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEntryLink operation middleware
+func (sh *strictHandler) GetEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, entryLink EntryLinkParameter) {
+	var request GetEntryLinkRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.EntryLink = entryLink
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEntryLink(ctx, request.(GetEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEntryLinkResponseObject); ok {
+		if err := validResponse.VisitGetEntryLinkResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
